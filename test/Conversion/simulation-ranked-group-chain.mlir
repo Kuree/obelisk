@@ -1,15 +1,15 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir 2> %t.trace
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 
 // A periodic source feeds continuous copies. The copies share one ranked
 // computation body under the shared dispatcher.
-// TRACE: obelisk eval owner: bit=0 actor=6 continuation=9 compute_node=15 group=__obelisk_eval_ranked_group_0 executor=__obelisk_direct_fragment_6_9.__obelisk_execute
-// TRACE: obelisk eval owner: bit=1 actor=2 continuation=12 compute_node=1 group=__obelisk_eval_ranked_group_0 executor=__obelisk_direct_fragment_2_12.__obelisk_execute
-// TRACE: obelisk eval dependency: owner=0 island=0 body=step1.__obelisk_eval_body_0 successors=1
-// TRACE: obelisk eval dependency: owner=1 island=0 body=step2.__obelisk_eval_body_0 successors=2
-// PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
-// PLAN-SAME: schedule.eval.dataflow_fallback = @__obelisk_eval_ranked_group_0.fallback
+// TRACE: talos eval owner: bit=0 actor=6 continuation=9 compute_node=15 group=__talos_eval_ranked_group_0 executor=__talos_direct_fragment_6_9.__talos_execute
+// TRACE: talos eval owner: bit=1 actor=2 continuation=12 compute_node=1 group=__talos_eval_ranked_group_0 executor=__talos_direct_fragment_2_12.__talos_execute
+// TRACE: talos eval dependency: owner=0 island=0 body=step1.__talos_eval_body_0 successors=1
+// TRACE: talos eval dependency: owner=1 island=0 body=step2.__talos_eval_body_0 successors=2
+// PLAN-LABEL: llvm.func @__talos_eval_ranked_group_0(
+// PLAN-SAME: schedule.eval.dataflow_fallback = @__talos_eval_ranked_group_0.fallback
 // PLAN-SAME: schedule.eval.materialized_group_calls = 5 : i64
 // PLAN-SAME: schedule.eval.predicated_dataflow
 // PLAN-SAME: schedule.eval.ranked_members = array<i32: 0, 1, 2, 3, 4>
@@ -23,12 +23,12 @@
 // PLAN-NOT: llvm.br
 // PLAN-NOT: llvm.call
 // PLAN: llvm.return
-// PLAN: llvm.call @__obelisk_eval_ranked_group_0.fallback
-// PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
+// PLAN: llvm.call @__talos_eval_ranked_group_0.fallback
+// PLAN-LABEL: llvm.func @__talos_eval_ranked_group_0.fallback(
 // PLAN-SAME: schedule.eval.ssa_ready_words = 1 : i64
 // PLAN-SAME: schedule.eval.ssa_value_ranges = 4 : i64
-// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// PLAN: llvm.call @__obelisk_eval_ranked_group_0
+// PLAN-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// PLAN: llvm.call @__talos_eval_ranked_group_0
 !ref = !simulation.ref<i1>
 !vref = !simulation.ref<i8>
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 3 : i32, native.debug_timing} {

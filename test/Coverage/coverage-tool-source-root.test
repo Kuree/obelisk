@@ -1,9 +1,9 @@
 # RUN: %coverage-fixture %t.obcov 1 alpha 1
-# RUN: cd %S/Inputs && obelisk-cov report --format=html --source-root=%S/Inputs/bad-source-root %t.obcov | FileCheck %s --check-prefix=FALLBACK
-# RUN: cd %S && obelisk-cov report --format=html --source-root=%S/Inputs/bad-source-root -o %t.mismatch.html %t.obcov
+# RUN: cd %S/Inputs && talos-cov report --format=html --source-root=%S/Inputs/bad-source-root %t.obcov | FileCheck %s --check-prefix=FALLBACK
+# RUN: cd %S && talos-cov report --format=html --source-root=%S/Inputs/bad-source-root -o %t.mismatch.html %t.obcov
 # RUN: FileCheck %s --check-prefix=MISMATCH < %t.mismatch.html
 # RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.mismatch.html 'dut.sv' 'Source digest mismatch' %}
-# RUN: cd %S && obelisk-cov report --format=html -o %t.missing.html %t.obcov
+# RUN: cd %S && talos-cov report --format=html -o %t.missing.html %t.obcov
 # RUN: FileCheck %s --check-prefix=MISSING < %t.missing.html
 # RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.missing.html 'dut.sv' 'Source unavailable' %}
 

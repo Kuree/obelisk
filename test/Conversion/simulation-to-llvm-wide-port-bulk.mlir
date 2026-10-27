@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --split-input-file \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // A wide full-range port alias with one ordinary driver is published as two
 // vector ranges.  The proof lives entirely in native lowering; the simulation
@@ -32,8 +32,8 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @wide_port_bulk
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_signal_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-COUNT-2: llvm.call @talos_rt_v1_scheduler_signal_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -70,10 +70,10 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @narrow_port_scalar
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-COUNT-2: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -109,10 +109,10 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @competing_port_scalar
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-COUNT-4: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -149,10 +149,10 @@ module attributes {
 
 // CHECK-LABEL: llvm.func @reversed_port_scalar
 // CHECK: llvm.intr.bitreverse(%{{.*}}) : (i64) -> i64
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-COUNT-4: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -189,10 +189,10 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @partial_port_scalar
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-COUNT-4: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -228,10 +228,10 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @wired_port_scalar
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-COUNT-4: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -267,10 +267,10 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @strength_port_scalar
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-COUNT-4: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -306,7 +306,7 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @delayed_port_scalar
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_plane
+// CHECK-COUNT-2: llvm.call @talos_rt_v1_native_state_store_plane
 // CHECK: llvm.return
 
 // -----
@@ -341,8 +341,8 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @pass_port_scalar
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_resolve_drivers
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_signal_transition
 // CHECK: llvm.return
 
 // -----
@@ -381,8 +381,8 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @override_port_scalar
-// CHECK: llvm.call @obelisk_rt_v1_native_override
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_scheduler_signal_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK: llvm.call @talos_rt_v1_native_override
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-COUNT-4: llvm.call @talos_rt_v1_scheduler_signal_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: llvm.return

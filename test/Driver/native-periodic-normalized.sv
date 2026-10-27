@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
+// RUN: talos -O3 --native-scheduler=auto %s -o %t.auto
+// RUN: talos -O0 --native-scheduler=generic %s -o %t.reference
 // RUN: %t.reference > %t.reference.out
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto 2> %t.auto.diag | diff -u %t.reference.out -
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.auto 2> %t.auto.diag | diff -u %t.reference.out -
 // RUN: FileCheck %s < %t.reference.out
 // RUN: FileCheck %s --check-prefix=DIAG < %t.auto.diag
 

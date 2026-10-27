@@ -1,6 +1,6 @@
 # Procedural force and assign
 
-Obelisk supports continuously reevaluated right-hand sides for these language
+Talos supports continuously reevaluated right-hand sides for these language
 forms:
 
 - whole statically allocated variables with `force`/`release`

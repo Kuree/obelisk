@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-native-state-layout-analysis 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-native-state-layout-analysis 2>&1 | FileCheck %s
 
 // A conditional primitive is one logical uwire driver even though its L/H
 // interval is retained in two complementary physical driver banks.

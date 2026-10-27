@@ -1,8 +1,8 @@
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 #include "mlir/IR/Operation.h"
 #define GET_SCHEDULE_FIELD_NAMES
-#include "obelisk/Dialect/Schedule/ScheduleFields.h.inc"
-namespace obelisk::schedule {
+#include "talos/Dialect/Schedule/ScheduleFields.h.inc"
+namespace talos::schedule {
 mlir::Attribute getAttribute(mlir::Operation *operation, Field field) {
   return operation->getAttr(getFieldName(field));
 }
@@ -15,4 +15,4 @@ void set(mlir::Operation *operation, Field field, mlir::Attribute value) {
 mlir::Attribute remove(mlir::Operation *operation, Field field) {
   return operation->removeAttr(getFieldName(field));
 }
-} // namespace obelisk::schedule
+} // namespace talos::schedule

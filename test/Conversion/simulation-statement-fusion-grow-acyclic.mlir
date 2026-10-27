@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{max-members=3},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s --check-prefix=CAP
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{grow-acyclic=false},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s --check-prefix=NOGROW
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{max-members=3},talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s --check-prefix=CAP
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{grow-acyclic=false},talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s --check-prefix=NOGROW
 
 // Every design has an `initial` sink that reads the roots only written by
 // the processes under test; a write-only root would lose its stores and then
@@ -17,11 +17,11 @@
 // CHECK-LABEL: simulation.design @grow
 // CHECK-DAG: simulation.spawn @flop
 // CHECK-DAG: simulation.spawn @island
-// CHECK-DAG: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK-DAG: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn
 // Only @flop's outputs wake the kernel. It runs @before, the cyclic pair and
 // @after in data order, then @woken.
-// CHECK-LABEL: simulation.func private @__obelisk_region_kernel_0_0
+// CHECK-LABEL: simulation.func private @__talos_region_kernel_0_0
 // CHECK: %[[IN4:.*]] = simulation.context.storage %arg0[4]
 // CHECK: %[[IN6:.*]] = simulation.context.storage %arg0[6]
 // CHECK: ^bb1:
@@ -47,7 +47,7 @@
 // CAP-DAG: simulation.spawn @before
 // CAP-DAG: simulation.spawn @after
 // CAP-DAG: simulation.spawn @woken
-// CAP-DAG: simulation.spawn @__obelisk_region_kernel_0_0
+// CAP-DAG: simulation.spawn @__talos_region_kernel_0_0
 // CAP: simulation.return
 // Without growth only the cyclic pair forms a cohort.
 // NOGROW-LABEL: simulation.design @grow
@@ -56,7 +56,7 @@
 // NOGROW-DAG: simulation.spawn @after
 // NOGROW-DAG: simulation.spawn @woken
 // NOGROW-DAG: simulation.spawn @island
-// NOGROW-DAG: simulation.spawn @__obelisk_region_kernel_0_0
+// NOGROW-DAG: simulation.spawn @__talos_region_kernel_0_0
 // NOGROW-NOT: simulation.spawn
 // NOGROW: simulation.return
 !c = !simulation.context
@@ -195,7 +195,7 @@ module {
 // CHECK-DAG: simulation.spawn @watcher
 // CHECK-DAG: simulation.spawn @pre
 // CHECK-DAG: simulation.spawn @gate
-// CHECK-DAG: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK-DAG: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn
 // CHECK: simulation.return
 !c = !simulation.context
@@ -370,7 +370,7 @@ module {
 // form one.
 // CHECK-LABEL: simulation.design @seedless
 // CHECK-DAG: simulation.spawn @flop
-// CHECK-DAG: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK-DAG: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn
 // CHECK: simulation.return
 // NOGROW-LABEL: simulation.design @seedless
@@ -439,7 +439,7 @@ module {
 // certificate admits the whole cohort.
 // CHECK-LABEL: simulation.design @two_cohorts
 // CHECK-DAG: simulation.spawn @watcher
-// CHECK-DAG: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK-DAG: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn
 // CHECK: simulation.return
 !c = !simulation.context
@@ -582,9 +582,9 @@ module {
 // CHECK-DAG: simulation.spawn @observed
 // CHECK-DAG: simulation.spawn @watcher
 // CHECK-DAG: simulation.spawn @bridge
-// CHECK-DAG: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK-DAG: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn
-// CHECK-LABEL: simulation.func private @__obelisk_region_kernel_0_0
+// CHECK-LABEL: simulation.func private @__talos_region_kernel_0_0
 // CHECK-DAG: simulation.context.storage %arg0[5]
 // CHECK-DAG: simulation.context.storage %arg0[6]
 // CHECK-NOT: simulation.context.storage %arg0[1]

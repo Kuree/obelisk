@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s
 
 // A clockless event-driven design still uses the generated coordinator. The
@@ -100,7 +100,7 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
+// CHECK-LABEL: llvm.func @__talos_aot_schedule_run_v1
+// CHECK: llvm.call @talos_rt_v1_scheduler_run_aot_nodes
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1
 // CHECK: llvm.switch

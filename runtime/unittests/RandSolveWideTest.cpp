@@ -1,7 +1,7 @@
 //===- RandSolveWideTest.cpp - Wide residual solver tests ----------------===//
 
 #include "../lib/RuntimeInternal.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "gtest/gtest.h"
 
@@ -50,7 +50,7 @@ struct DomainRecord {
 struct SolveBeforeEdge {
   std::vector<uint64_t> before;
   std::vector<uint64_t> after;
-  uint32_t block = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
+  uint32_t block = TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
   bool functionPriority = false;
 };
 
@@ -74,16 +74,16 @@ std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
                              std::vector<WeightedRecord> weighted = {}) {
   std::vector<uint64_t> literals;
   for (Instruction &instruction : instructions) {
-    if (instruction.opcode != OBELISK_RT_RANDOM_PUSH_LITERAL_V1)
+    if (instruction.opcode != TALOS_RT_RANDOM_PUSH_LITERAL_V1)
       continue;
     instruction.auxiliary = static_cast<uint32_t>(literals.size());
     literals.insert(literals.end(), instruction.literal.begin(),
                     instruction.literal.end());
   }
   std::vector<uint8_t> bytes;
-  append32(bytes, OBELISK_RT_RANDOM_PROGRAM_MAGIC);
-  append16(bytes, OBELISK_RT_RANDOM_PROGRAM_VERSION_V2);
-  append16(bytes, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2);
+  append32(bytes, TALOS_RT_RANDOM_PROGRAM_MAGIC);
+  append16(bytes, TALOS_RT_RANDOM_PROGRAM_VERSION_V2);
+  append16(bytes, TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2);
   append32(bytes, aggregateWidth);
   append32(bytes, static_cast<uint32_t>(instructions.size()));
   append32(bytes, captureCount);
@@ -100,7 +100,7 @@ std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
   }
   for (uint64_t literal : literals)
     append64(bytes, literal);
-  if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0) {
+  if ((flags & TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0) {
     append32(bytes, static_cast<uint32_t>(edges.size()));
     for (const SolveBeforeEdge &edge : edges) {
       for (uint64_t word : edge.before)
@@ -109,13 +109,13 @@ std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
         append64(bytes, word);
       append32(bytes, edge.block);
       append32(bytes, edge.functionPriority
-                          ? OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY
+                          ? TALOS_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY
                           : 0u);
     }
   }
-  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)
+  if (flags & TALOS_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)
     append32(bytes, 0);
-  if (flags & OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) {
+  if (flags & TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) {
     uint32_t groups = 0;
     for (const auto &record : weighted)
       groups = std::max(groups, record.group + 1);
@@ -134,7 +134,7 @@ std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
       append32(bytes, record.flags);
     }
   }
-  if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0) {
+  if ((flags & TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0) {
     uint32_t groupCount = 0;
     for (const DomainRecord &domain : domains)
       groupCount = std::max(groupCount, domain.group + 1);
@@ -157,25 +157,25 @@ std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
 class RandSolveWideTest : public testing::Test {
 protected:
   void SetUp() override {
-    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_context_create(&context), TALOS_RT_OK);
   }
 
   void TearDown() override {
     if (context)
-      obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_context_destroy(context);
   }
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
 };
 
 TEST_F(RandSolveWideTest, SolvesHardConstraintWithWideCapture) {
   std::vector<uint8_t> bytes =
       program(128, 1,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 0},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 128},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 0},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
   uint64_t start[] = {0, 1};
   uint64_t mutableMask[] = {7, 0};
   uint64_t capture[] = {5, 1};
@@ -183,11 +183,11 @@ TEST_F(RandSolveWideTest, SolvesHardConstraintWithWideCapture) {
   uint64_t assignment[] = {UINT64_MAX, UINT64_MAX};
   uint32_t success = 0;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                 8, 17, 3, capture, 2, captureWidths, 1, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 5u);
   EXPECT_EQ(assignment[1], 1u);
@@ -197,12 +197,12 @@ TEST_F(RandSolveWideTest, SolvesHardConstraintWithWideCapture) {
 TEST_F(RandSolveWideTest, SupportsWideExpressionsOverNarrowAssignments) {
   std::vector<uint8_t> bytes =
       program(8, 1,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 8},
-               {OBELISK_RT_RANDOM_CAST_V1, 128},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 0},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 8},
+               {TALOS_RT_RANDOM_CAST_V1, 128},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 0},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
   uint64_t start[] = {0};
   uint64_t mutableMask[] = {7};
   uint64_t capture[] = {5, 0};
@@ -210,11 +210,11 @@ TEST_F(RandSolveWideTest, SupportsWideExpressionsOverNarrowAssignments) {
   uint64_t assignment[] = {0};
   uint32_t success = 0;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 1, 0,
                 8, 23, 3, capture, 2, captureWidths, 1, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 5u);
 }
@@ -222,11 +222,11 @@ TEST_F(RandSolveWideTest, SupportsWideExpressionsOverNarrowAssignments) {
 TEST_F(RandSolveWideTest, AcceptsWordPaddedNarrowCaptureStorage) {
   std::vector<uint8_t> bytes =
       program(1, 1,
-              {{OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 8, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 0, {5}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+              {{TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 8, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 0, {5}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
   uint64_t start[] = {0};
   uint64_t mutableMask[] = {0};
   uint64_t capture[] = {5};
@@ -234,11 +234,11 @@ TEST_F(RandSolveWideTest, AcceptsWordPaddedNarrowCaptureStorage) {
   uint64_t assignment[] = {UINT64_MAX};
   uint32_t success = 0;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 1, 0,
                 1, 21, 3, capture, 1, captureWidths, 1, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 0u);
 }
@@ -246,16 +246,16 @@ TEST_F(RandSolveWideTest, AcceptsWordPaddedNarrowCaptureStorage) {
 TEST_F(RandSolveWideTest, UsesMaximumWidthForRepeatedCaptureReferences) {
   std::vector<uint8_t> bytes =
       program(1, 1,
-              {{OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 64, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {5}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {5, 1}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+              {{TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 64, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {5}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {5, 1}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
   uint64_t start[] = {0};
   uint64_t mutableMask[] = {0};
   uint64_t capture[] = {5, 1};
@@ -263,11 +263,11 @@ TEST_F(RandSolveWideTest, UsesMaximumWidthForRepeatedCaptureReferences) {
   uint64_t assignment[] = {UINT64_MAX};
   uint32_t success = 0;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 1, 0,
                 1, 27, 3, capture, 2, captureWidths, 1, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 0u);
 }
@@ -275,16 +275,16 @@ TEST_F(RandSolveWideTest, UsesMaximumWidthForRepeatedCaptureReferences) {
 TEST_F(RandSolveWideTest, RejectsMismatchedCaptureBoundaries) {
   std::vector<uint8_t> bytes =
       program(1, 2,
-              {{OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 64, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {5}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 1},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {6, 1}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+              {{TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 64, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {5}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 1},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {6, 1}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
   uint64_t start[] = {0};
   uint64_t mutableMask[] = {0};
   uint64_t captures[] = {5, 6, 1};
@@ -292,11 +292,11 @@ TEST_F(RandSolveWideTest, RejectsMismatchedCaptureBoundaries) {
   uint64_t assignment[] = {UINT64_MAX};
   uint32_t success = 1;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 1, 0,
                 1, 25, 3, captures, 3, swappedWidths, 2, assignment, &success,
                 &nextState),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
   EXPECT_EQ(success, 0u);
   EXPECT_EQ(nextState, 25u);
 }
@@ -304,23 +304,23 @@ TEST_F(RandSolveWideTest, RejectsMismatchedCaptureBoundaries) {
 TEST_F(RandSolveWideTest, EvaluatesWideLiteralArithmetic) {
   std::vector<uint8_t> bytes =
       program(128, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {1, 1}},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {3, 0}},
-               {OBELISK_RT_RANDOM_MUL_V1, 128},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 128},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {1, 1}},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {3, 0}},
+               {TALOS_RT_RANDOM_MUL_V1, 128},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
   uint64_t start[] = {0, 3};
   uint64_t mutableMask[] = {7, 0};
   uint64_t assignment[] = {0, 0};
   uint32_t success = 0;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                 8, 29, 5, nullptr, 0, nullptr, 0, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 3u);
   EXPECT_EQ(assignment[1], 3u);
@@ -328,45 +328,45 @@ TEST_F(RandSolveWideTest, EvaluatesWideLiteralArithmetic) {
 }
 
 TEST_F(RandSolveWideTest, EvaluatesWideSignedDivisionRemainderAndShift) {
-  constexpr uint8_t signedFlag = OBELISK_RT_RANDOM_INSTRUCTION_SIGNED;
+  constexpr uint8_t signedFlag = TALOS_RT_RANDOM_INSTRUCTION_SIGNED;
   std::vector<uint8_t> bytes =
       program(1, 1,
-              {{OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {2, 0}},
-               {OBELISK_RT_RANDOM_DIV_V1, 128, signedFlag},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1,
+              {{TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {2, 0}},
+               {TALOS_RT_RANDOM_DIV_V1, 128, signedFlag},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1,
                 128,
                 0,
                 0,
                 0,
                 {UINT64_MAX - 3, UINT64_MAX}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {2, 0}},
-               {OBELISK_RT_RANDOM_MOD_V1, 128, signedFlag},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1,
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {2, 0}},
+               {TALOS_RT_RANDOM_MOD_V1, 128, signedFlag},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1,
                 128,
                 0,
                 0,
                 0,
                 {UINT64_MAX, UINT64_MAX}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {1, 0}},
-               {OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1, 128, signedFlag},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1,
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 128, 0, 0, 0, {1, 0}},
+               {TALOS_RT_RANDOM_SHIFT_RIGHT_ARITH_V1, 128, signedFlag},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1,
                 128,
                 0,
                 0,
                 0,
                 {UINT64_MAX - 4, UINT64_MAX}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
   uint64_t start[] = {0};
   uint64_t mutableMask[] = {0};
   uint64_t capture[] = {UINT64_MAX - 8, UINT64_MAX};
@@ -374,11 +374,11 @@ TEST_F(RandSolveWideTest, EvaluatesWideSignedDivisionRemainderAndShift) {
   uint64_t assignment[] = {UINT64_MAX};
   uint32_t success = 0;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 1, 0,
                 1, 31, 5, capture, 2, captureWidths, 1, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 0u);
   EXPECT_EQ(nextState, 31u);
@@ -387,21 +387,21 @@ TEST_F(RandSolveWideTest, EvaluatesWideSignedDivisionRemainderAndShift) {
 TEST_F(RandSolveWideTest, CarriesEnumerationAcrossWordBoundary) {
   std::vector<uint8_t> bytes =
       program(65, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 65},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {0, 1}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 65},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {0, 1}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
   uint64_t start[] = {UINT64_MAX, 0};
   uint64_t mutableMask[] = {UINT64_MAX, 1};
   uint64_t assignment[] = {0, 0};
   uint32_t success = 0;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                 2, 41, 7, nullptr, 0, nullptr, 0, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 0u);
   EXPECT_EQ(assignment[1], 1u);
@@ -410,23 +410,23 @@ TEST_F(RandSolveWideTest, CarriesEnumerationAcrossWordBoundary) {
 TEST_F(RandSolveWideTest, TraversesFiniteDomainAcrossWordBoundary) {
   std::vector<uint8_t> bytes =
       program(65, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 63},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 0, {2}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-              OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS,
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 63},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 0, {2}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS,
               {{0, 63, 2, 3, 1}, {0, 63, 2, 3, 2}});
   uint64_t start[] = {0, 0};
   uint64_t mutableMask[] = {uint64_t{1} << 63, 1};
   uint64_t assignment[] = {UINT64_MAX, UINT64_MAX};
   uint32_t success = 0;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                 2, 73, 17, nullptr, 0, nullptr, 0, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 0u);
   EXPECT_EQ(assignment[1], 1u);
@@ -436,32 +436,32 @@ TEST_F(RandSolveWideTest, TraversesFiniteDomainAcrossWordBoundary) {
 TEST_F(RandSolveWideTest, AllowsUnnamedValueInInactiveFiniteDomain) {
   std::vector<uint8_t> bytes =
       program(65, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-              OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS,
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS,
               {{0, 63, 2, 3, 1}, {0, 63, 2, 3, 2}});
   uint64_t start[] = {0, 0};
   uint64_t mutableMask[] = {0, 0};
   uint64_t assignment[] = {UINT64_MAX, UINT64_MAX};
   uint32_t success = 0;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                 1, 79, 19, nullptr, 0, nullptr, 0, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 0u);
   EXPECT_EQ(assignment[1], 0u);
   EXPECT_EQ(nextState, 79u);
 
   mutableMask[0] = uint64_t{1} << 63;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                 1, 79, 19, nullptr, 0, nullptr, 0, assignment, &success,
                 &nextState),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
   EXPECT_EQ(success, 0u);
 }
 
@@ -472,24 +472,24 @@ TEST_F(RandSolveWideTest, RejectsMalformedFiniteDomainMetadata) {
     uint64_t assignment[] = {0, 0};
     uint32_t success = 1;
     uint64_t nextState = 0;
-    EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                   1, 83, 21, nullptr, 0, nullptr, 0, assignment, &success,
                   &nextState),
-              OBELISK_RT_INVALID_ARGUMENT);
+              TALOS_RT_INVALID_ARGUMENT);
     EXPECT_EQ(success, 0u);
   };
   std::vector<Instruction> truth = {
-      {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
-      {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-       OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}};
+      {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+      {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+       TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}};
 
-  rejects(program(65, 0, truth, OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS,
+  rejects(program(65, 0, truth, TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS,
                   {{1, 63, 2, 3, 1}}));
-  rejects(program(65, 0, truth, OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS,
+  rejects(program(65, 0, truth, TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS,
                   {{0, 63, 2, 3, 1}, {1, 64, 1, 1, 0}}));
   std::vector<uint8_t> truncated = program(
-      65, 0, truth, OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS, {{0, 63, 2, 3, 1}});
+      65, 0, truth, TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS, {{0, 63, 2, 3, 1}});
   truncated.pop_back();
   rejects(std::move(truncated));
 }
@@ -499,22 +499,22 @@ TEST_F(RandSolveWideTest, RejectsMalformedWideSolveOrderMetadata) {
     uint64_t start[] = {0, 0}, mutableMask[] = {UINT64_MAX, 1};
     uint64_t assignment[] = {0, 0}, nextState = 0;
     uint32_t success = 1;
-    EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), start, mutableMask, 2,
                   UINT64_MAX, 1, 83, 21, nullptr, 0, nullptr, 0, assignment,
                   &success, &nextState),
-              OBELISK_RT_INVALID_ARGUMENT);
+              TALOS_RT_INVALID_ARGUMENT);
     EXPECT_EQ(success, 0u);
     EXPECT_EQ(nextState, 83u);
   };
   std::vector<Instruction> truth = {
-      {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
-      {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-       OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}};
+      {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+      {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+       TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}};
   auto encode = [&](std::vector<SolveBeforeEdge> edges) {
     return program(65, 0, truth,
-                   OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                       OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
+                   TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                       TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
                    {}, std::move(edges));
   };
   rejects(encode({}));
@@ -533,7 +533,7 @@ TEST_F(RandSolveWideTest, RejectsMalformedWideSolveOrderMetadata) {
   bytes.pop_back();
   rejects(bytes);
   bytes = encode({{{1, 0}, {0, 1}}});
-  bytes[20] &= ~OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
+  bytes[20] &= ~TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   rejects(bytes);
 }
 
@@ -543,54 +543,54 @@ TEST_F(RandSolveWideTest, ReportsSolveOrderCycleOnlyAmongActiveBlocks) {
   // randomize() fail and records an error.
   std::vector<uint8_t> bytes =
       program(65, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-              OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                  OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                  TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
               {}, {{{1, 0}, {0, 1}, 0}, {{0, 1}, {1, 0}, 1}});
   uint64_t start[] = {0, 0}, mutableMask[] = {UINT64_MAX, 1};
   uint64_t assignment[] = {0, 0}, nextState = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 2,
                 0b10, 4, 83, 21, nullptr, 0, nullptr, 0, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
-  EXPECT_EQ(context->schedulerFinishStatus, OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerFinishStatus, TALOS_RT_OK);
 
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                 4, 83, 21, nullptr, 0, nullptr, 0, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 0u);
-  EXPECT_EQ(context->schedulerFinishStatus, OBELISK_RT_FATAL);
+  EXPECT_EQ(context->schedulerFinishStatus, TALOS_RT_FATAL);
 }
 
 TEST_F(RandSolveWideTest, HonorsConstraintModeMask) {
   std::vector<uint8_t> bytes =
       program(65, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 65},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {5, 0}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 65},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {6, 0}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0}});
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 65},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {5, 0}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 65},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {6, 0}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 0}});
   uint64_t start[] = {0, 0};
   uint64_t mutableMask[] = {7, 0};
   uint64_t assignment[] = {0, 0};
   uint32_t success = 0;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 2, 1,
                 8, 61, 11, nullptr, 0, nullptr, 0, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 5u);
   EXPECT_EQ(assignment[1], 0u);
@@ -599,30 +599,30 @@ TEST_F(RandSolveWideTest, HonorsConstraintModeMask) {
 TEST_F(RandSolveWideTest, SelectsBestSoftPriorityAfterCompleteTraversal) {
   std::vector<uint8_t> bytes =
       program(65, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 65},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {3, 0}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 65},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {5, 0}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 1}},
-              OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT);
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 65},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {3, 0}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 65},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {5, 0}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 1}},
+              TALOS_RT_RANDOM_PROGRAM_HAS_SOFT);
   uint64_t start[] = {0, 0};
   uint64_t mutableMask[] = {7, 0};
   uint64_t assignment[] = {0, 0};
   uint32_t success = 0;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                 8, 67, 13, nullptr, 0, nullptr, 0, assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 5u);
   EXPECT_EQ(assignment[1], 0u);
@@ -631,28 +631,28 @@ TEST_F(RandSolveWideTest, SelectsBestSoftPriorityAfterCompleteTraversal) {
 TEST_F(RandSolveWideTest, DisableSoftUsesLiveConstraintMask) {
   std::vector<uint8_t> bytes =
       program(65, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 65},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {1, 0}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0, 63},
-               {OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0}},
-              OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT);
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 65},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {1, 0}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0, 63},
+               {TALOS_RT_RANDOM_LOGICAL_OR_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0}},
+              TALOS_RT_RANDOM_PROGRAM_HAS_SOFT);
   for (uint64_t disabled : {UINT64_C(0), UINT64_C(1) << 63}) {
     uint64_t start[] = {2, 0};
     uint64_t mutableMask[] = {3, 0};
     uint64_t assignment[] = {0, 0};
     uint32_t success = 0;
     uint64_t nextState = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), start, mutableMask, 2,
                   disabled, 4, 67, 13, nullptr, 0, nullptr, 0, assignment,
                   &success, &nextState),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(success, 1u);
     EXPECT_EQ(assignment[0], disabled == 0 ? 2u : 1u);
     EXPECT_EQ(assignment[1], 0u);
@@ -673,27 +673,27 @@ TEST_F(RandSolveWideTest, IntegralSystemFunctionsCountAcrossWordBoundaries) {
                     Case{UINT64_MAX, UINT64_MAX, 128, 128}}) {
     std::vector<uint8_t> bytes = program(
         128, 0,
-        {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
-         {OBELISK_RT_RANDOM_COUNT_ONES_V1, 32},
-         {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, 0, {test.ones}},
-         {OBELISK_RT_RANDOM_EQ_V1, 1},
-         {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
-         {OBELISK_RT_RANDOM_CLOG2_V1, 32},
-         {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, 0, {test.logarithm}},
-         {OBELISK_RT_RANDOM_EQ_V1, 1},
-         {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
-         {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+        {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 128},
+         {TALOS_RT_RANDOM_COUNT_ONES_V1, 32},
+         {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, 0, {test.ones}},
+         {TALOS_RT_RANDOM_EQ_V1, 1},
+         {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 128},
+         {TALOS_RT_RANDOM_CLOG2_V1, 32},
+         {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, 0, {test.logarithm}},
+         {TALOS_RT_RANDOM_EQ_V1, 1},
+         {TALOS_RT_RANDOM_LOGICAL_AND_V1, 1},
+         {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+          TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
     uint64_t start[] = {test.low, test.high};
     uint64_t mutableMask[] = {0, 0};
     uint64_t assignment[] = {0, 0};
     uint32_t success = 0;
     uint64_t nextState = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                   1, 67, 13, nullptr, 0, nullptr, 0, assignment, &success,
                   &nextState),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(success, 1u);
     EXPECT_EQ(assignment[0], test.low);
     EXPECT_EQ(assignment[1], test.high);
@@ -703,25 +703,25 @@ TEST_F(RandSolveWideTest, IntegralSystemFunctionsCountAcrossWordBoundaries) {
 
 TEST_F(RandSolveWideTest, RejectsMalformedConstraintEnabledInstructions) {
   for (Instruction instruction :
-       {Instruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 2},
-        Instruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1,
-                    OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-        Instruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0, 64},
-        Instruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0, 0,
+       {Instruction{TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 2},
+        Instruction{TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1,
+                    TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+        Instruction{TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0, 64},
+        Instruction{TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0, 0,
                     1}}) {
     std::vector<uint8_t> bytes =
         program(65, 0,
                 {instruction,
-                 {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                  OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+                 {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                  TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
     uint64_t start[] = {0, 0}, mutableMask[] = {3, 0}, assignment[] = {0, 0};
     uint32_t success = 1;
     uint64_t nextState = 0;
-    EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                   4, 67, 13, nullptr, 0, nullptr, 0, assignment, &success,
                   &nextState),
-              OBELISK_RT_INVALID_ARGUMENT);
+              TALOS_RT_INVALID_ARGUMENT);
     EXPECT_EQ(success, 0u);
   }
 }
@@ -729,21 +729,21 @@ TEST_F(RandSolveWideTest, RejectsMalformedConstraintEnabledInstructions) {
 TEST_F(RandSolveWideTest, RejectsNonCanonicalLiteralPadding) {
   std::vector<uint8_t> bytes =
       program(65, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 65},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {0, 2}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 65},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {0, 2}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
   uint64_t start[] = {0, 0};
   uint64_t mutableMask[] = {UINT64_MAX, 1};
   uint64_t assignment[] = {UINT64_MAX, UINT64_MAX};
   uint32_t success = 1;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                 2, 53, 9, nullptr, 0, nullptr, 0, assignment, &success,
                 &nextState),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
   EXPECT_EQ(success, 0u);
   EXPECT_EQ(nextState, 53u);
 }
@@ -751,54 +751,54 @@ TEST_F(RandSolveWideTest, RejectsNonCanonicalLiteralPadding) {
 TEST_F(RandSolveWideTest, RejectsNonContiguousSoftPriorities) {
   std::vector<uint8_t> bytes =
       program(1, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 1}},
-              OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT);
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 1}},
+              TALOS_RT_RANDOM_PROGRAM_HAS_SOFT);
   uint64_t start[] = {0};
   uint64_t mutableMask[] = {0};
   uint64_t assignment[] = {UINT64_MAX};
   uint32_t success = 1;
   uint64_t nextState = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 1, 0,
                 1, 71, 15, nullptr, 0, nullptr, 0, assignment, &success,
                 &nextState),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
   EXPECT_EQ(success, 0u);
   EXPECT_EQ(nextState, 71u);
 }
 
-#ifdef OBELISK_TEST_COMPILED_SAMPLER
+#ifdef TALOS_TEST_COMPILED_SAMPLER
 TEST_F(RandSolveWideTest, FunctionArgumentStagesPreserveWideFailureSemantics) {
   auto bytes = program(131, 0,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 130},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 130},
-                        {OBELISK_RT_RANDOM_CAST_V1, 130},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 130},
-                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
-                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                           OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
-                           OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY,
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 130},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 130},
+                        {TALOS_RT_RANDOM_CAST_V1, 130},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 130},
+                        {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
+                       TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                           TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
+                           TALOS_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY,
                        {}, {{{0, 0, 4}, {UINT64_MAX, UINT64_MAX, 3}, 0, true}});
   unsigned accepted = 0;
   uint64_t start[] = {0, 0, 0}, mask[] = {UINT64_MAX, UINT64_MAX, 7};
   for (unsigned seed = 0; seed != 128; ++seed) {
-    obelisk_rt_random_state_v1 state;
-    obelisk_rt_v1_random_state_seed(&state, seed, 17);
+    talos_rt_random_state_v1 state;
+    talos_rt_v1_random_state_seed(&state, seed, 17);
     uint64_t original = state.state, assignment[3] = {};
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), start, mask, 3, 0, 1,
                   state.state, state.increment, nullptr, 0, nullptr, 0,
                   assignment, &success, &state.state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(assignment[0] | assignment[1] | assignment[2], 0u);
     if (success)
       ++accepted;
@@ -811,15 +811,15 @@ TEST_F(RandSolveWideTest, FunctionArgumentStagesPreserveWideFailureSemantics) {
 
 TEST_F(RandSolveWideTest, OrderedProjectionSpansWordsAndHonorsModes) {
   auto bytes = program(131, 1,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 130},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 130},
-                        {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 130},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                           OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 130},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 130},
+                        {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 130},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                         TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                           TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
                        {}, {{{0, 0, 4}, {UINT64_MAX, UINT64_MAX, 3}, 0}});
   uint64_t start[] = {0, 0, 0}, mutableMask[] = {UINT64_MAX, UINT64_MAX, 7};
   uint64_t captures[] = {7, UINT64_C(0x123456789abcdef0), 2},
@@ -827,7 +827,7 @@ TEST_F(RandSolveWideTest, OrderedProjectionSpansWordsAndHonorsModes) {
   uint32_t widths[] = {130}, success = 0;
   uint64_t state = 71;
   auto solve = [&](uint64_t disabled) {
-    return obelisk_rt_v1_random_solve_wide_modes_state(
+    return talos_rt_v1_random_solve_wide_modes_state(
         context, bytes.data(), bytes.size(), start, mutableMask, 3, disabled, 1,
         state, 15, captures, 3, widths, 1, assignment, &success, &state);
   };
@@ -835,7 +835,7 @@ TEST_F(RandSolveWideTest, OrderedProjectionSpansWordsAndHonorsModes) {
   uint64_t ones[3] = {}, zeros[3] = {};
   for (unsigned iteration = 0; iteration != 128; ++iteration) {
     captures[0] = iteration & 1 ? 11 : 7;
-    ASSERT_EQ(solve(0), OBELISK_RT_OK);
+    ASSERT_EQ(solve(0), TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     if (assignment[2] & 4) {
       ++guardTrue;
@@ -860,7 +860,7 @@ TEST_F(RandSolveWideTest, OrderedProjectionSpansWordsAndHonorsModes) {
   EXPECT_EQ(zeros[2] & 3, 3u);
   // Disabling the ordering block restores the ordinary joint distribution.
   for (unsigned iteration = 0; iteration != 16; ++iteration) {
-    ASSERT_EQ(solve(1), OBELISK_RT_OK);
+    ASSERT_EQ(solve(1), TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     EXPECT_EQ(assignment[2] & 4, 0u);
   }
@@ -868,7 +868,7 @@ TEST_F(RandSolveWideTest, OrderedProjectionSpansWordsAndHonorsModes) {
   start[2] = 4;
   mutableMask[2] = 3;
   uint64_t unchanged = state;
-  ASSERT_EQ(solve(0), OBELISK_RT_OK);
+  ASSERT_EQ(solve(0), TALOS_RT_OK);
   ASSERT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], captures[0]);
   EXPECT_EQ(assignment[1], captures[1]);
@@ -878,16 +878,16 @@ TEST_F(RandSolveWideTest, OrderedProjectionSpansWordsAndHonorsModes) {
 
 TEST_F(RandSolveWideTest, OrderedDomainsFollowVariableLengthEdges) {
   auto bytes = program(65, 1,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 64},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
-                        {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                           OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
-                           OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS,
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 64},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+                        {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 32},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                         TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                           TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
+                           TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS,
                        {{0, 0, 32, UINT32_MAX, 7}, {0, 0, 32, UINT32_MAX, 11}},
                        {{{0, 1}, {UINT64_MAX, 0}}});
   uint64_t start[] = {0, 0}, mutableMask[] = {UINT64_MAX, 1};
@@ -895,11 +895,11 @@ TEST_F(RandSolveWideTest, OrderedDomainsFollowVariableLengthEdges) {
   uint32_t width = 32, success = 0;
   unsigned guardTrue = 0;
   for (unsigned iteration = 0; iteration != 64; ++iteration) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
                   1, state, 15, &capture, 1, &width, 1, assignment, &success,
                   &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     EXPECT_TRUE(uint32_t(assignment[0]) == 7 || uint32_t(assignment[0]) == 11);
     if (assignment[1]) {
@@ -913,14 +913,14 @@ TEST_F(RandSolveWideTest, OrderedDomainsFollowVariableLengthEdges) {
 
 TEST_F(RandSolveWideTest, UniformSparseComponentWithWideFreeAndFrozenFields) {
   auto bytes = program(192, 1,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
-                        {OBELISK_RT_RANDOM_MUL_V1, 32},
-                        {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+                        {TALOS_RT_RANDOM_MUL_V1, 32},
+                        {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                         TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
   uint64_t start[] = {0, 0, UINT64_C(0x1234567800000000)};
   uint64_t mutableMask[] = {UINT64_MAX, UINT64_MAX, UINT32_MAX};
   uint64_t captures[] = {49}, assignment[3] = {};
@@ -929,11 +929,11 @@ TEST_F(RandSolveWideTest, UniformSparseComponentWithWideFreeAndFrozenFields) {
   uint32_t seen = 0;
   uint64_t freeOnes = 0, freeZeros = 0;
   for (unsigned iteration = 0; iteration != 64; ++iteration) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), start, mutableMask, 3, 0,
                   1, state, 15, captures, 1, widths, 1, assignment, &success,
                   &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     uint32_t root = assignment[0];
     EXPECT_EQ(uint32_t(uint64_t(root) * root), 49u);
@@ -954,11 +954,11 @@ TEST_F(RandSolveWideTest, UniformSparseComponentWithWideFreeAndFrozenFields) {
   EXPECT_EQ(freeZeros, UINT64_MAX);
   captures[0] = 2;
   uint64_t unchanged = state;
-  ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mutableMask, 3, 0,
                 1, state, 15, captures, 1, widths, 1, assignment, &success,
                 &state),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 0u);
   EXPECT_EQ(state, unchanged);
   EXPECT_EQ(assignment[0] | assignment[1] | assignment[2], 0u);
@@ -967,42 +967,42 @@ TEST_F(RandSolveWideTest, UniformSparseComponentWithWideFreeAndFrozenFields) {
 TEST_F(RandSolveWideTest, SolvesWideSystemFunctionsWithCaptureBoundaries) {
   std::vector<uint8_t> bytes =
       program(128, 2,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
-               {OBELISK_RT_RANDOM_COUNT_ONES_V1, 32},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, 0, {1}},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
-               {OBELISK_RT_RANDOM_CLOG2_V1, 32},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 1},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-              OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 128},
+               {TALOS_RT_RANDOM_COUNT_ONES_V1, 32},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, 0, {1}},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 128},
+               {TALOS_RT_RANDOM_CLOG2_V1, 32},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 128},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 128, 0, 1},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
   uint64_t start[] = {0, 0}, mutableMask[] = {UINT64_MAX, UINT64_MAX};
   uint64_t captures[] = {96, 0, uint64_t{1} << 32};
   uint32_t captureWidths[] = {32, 128};
   uint64_t assignment[] = {0, 0}, nextState = 0;
   uint32_t success = 0;
   auto solve = [&] {
-    return obelisk_rt_v1_random_solve_wide_modes_state(
+    return talos_rt_v1_random_solve_wide_modes_state(
         context, bytes.data(), bytes.size(), start, mutableMask, 2, 0, 1, 71,
         15, captures, 3, captureWidths, 2, assignment, &success, &nextState);
   };
-  ASSERT_EQ(solve(), OBELISK_RT_OK);
+  ASSERT_EQ(solve(), TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], 0u);
   EXPECT_EQ(assignment[1], uint64_t{1} << 32);
   EXPECT_EQ(nextState, 71u);
   // Freezing the required bit at zero makes the relation unsatisfiable.
   mutableMask[1] ^= uint64_t{1} << 32;
-  ASSERT_EQ(solve(), OBELISK_RT_OK);
+  ASSERT_EQ(solve(), TALOS_RT_OK);
   EXPECT_EQ(success, 0u);
   EXPECT_EQ(assignment[0], 0u);
   EXPECT_EQ(assignment[1], 0u);
@@ -1014,37 +1014,37 @@ TEST_F(RandSolveWideTest, WeightedWideMassIgnoresCompanionMultiplicity) {
   // The wide unsigned weights 2^64 and 3*2^64 still require x's ratio 1:3.
   auto bytes = program(
       130, 2,
-      {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
-       {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 129, 0, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX},
-       {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 129, 0, 0},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
-       {OBELISK_RT_RANDOM_GT_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 129, 0, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
-       {OBELISK_RT_RANDOM_GT_V1, 1},
-       {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}},
-      OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-          OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED,
+      {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+       {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 129, 0, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_LOGICAL_OR_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX},
+       {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 129, 0, 0},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
+       {TALOS_RT_RANDOM_GT_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 129, 0, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
+       {TALOS_RT_RANDOM_GT_V1, 1},
+       {TALOS_RT_RANDOM_LOGICAL_AND_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}},
+      TALOS_RT_RANDOM_PROGRAM_HAS_DIST |
+          TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED,
       {}, {},
-      {{0, UINT32_MAX, 0, 1, 0, 1, 0, 0, OBELISK_RT_RANDOM_DIST_RAW_WEIGHT},
-       {0, UINT32_MAX, 0, 1, 1, 1, 1, 1, OBELISK_RT_RANDOM_DIST_RAW_WEIGHT}});
+      {{0, UINT32_MAX, 0, 1, 0, 1, 0, 0, TALOS_RT_RANDOM_DIST_RAW_WEIGHT},
+       {0, UINT32_MAX, 0, 1, 1, 1, 1, 1, TALOS_RT_RANDOM_DIST_RAW_WEIGHT}});
   uint64_t start[] = {0, 0, 0}, mask[] = {UINT64_MAX, UINT64_MAX, 3};
   uint64_t captures[] = {0, 1, 0, 0, 3, 0}, assignment[3] = {};
   uint32_t widths[] = {129, 129}, success = 0;
   uint64_t state = 713, companionSeen = 0;
   unsigned ones = 0;
   for (unsigned draw = 0; draw != 192; ++draw) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), start, mask, 3, 0, 1,
                   state, 15, captures, 6, widths, 2, assignment, &success,
                   &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     if (assignment[0] & 1) {
       ++ones;
@@ -1064,30 +1064,30 @@ TEST_F(RandSolveWideTest, WeightedFull64BitRangeAndLargeMassNeverOverflow) {
   // :/ can describe a full 2^64 range, and := mass can exceed 128 bits.
   // Other constraints leave only the value 3; weights cannot make it fail.
   for (bool perRange : {false, true}) {
-    uint32_t flags = OBELISK_RT_RANDOM_DIST_RAW_WEIGHT |
-                     (perRange ? OBELISK_RT_RANDOM_DIST_PER_RANGE : 0u);
+    uint32_t flags = TALOS_RT_RANDOM_DIST_RAW_WEIGHT |
+                     (perRange ? TALOS_RT_RANDOM_DIST_PER_RANGE : 0u);
     auto bytes =
         program(64, 1,
-                {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 64},
-                 {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {3}},
-                 {OBELISK_RT_RANDOM_EQ_V1, 1},
-                 {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX},
-                 {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 129},
-                 {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
-                 {OBELISK_RT_RANDOM_GT_V1, 1},
-                 {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}},
-                OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-                    OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED,
+                {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 64},
+                 {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {3}},
+                 {TALOS_RT_RANDOM_EQ_V1, 1},
+                 {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX},
+                 {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 129},
+                 {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
+                 {TALOS_RT_RANDOM_GT_V1, 1},
+                 {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}},
+                TALOS_RT_RANDOM_PROGRAM_HAS_DIST |
+                    TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED,
                 {}, {}, {{0, UINT32_MAX, 0, 64, 0, 0, 0, 0, flags}});
     uint64_t start = 0, mask = UINT64_MAX,
              captures[] = {UINT64_MAX, UINT64_MAX, 1};
     uint64_t assignment = 0, state = 713;
     uint32_t width = 129, success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
                   state, 15, captures, 3, &width, 1, &assignment, &success,
                   &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(success, 1u);
     EXPECT_EQ(assignment, 3u);
   }
@@ -1098,25 +1098,25 @@ TEST_F(RandSolveWideTest, RetainsMoreThanSixtyFourSoftPriorities) {
   // constraints: 70 preferences that each set one bit are all retained except
   // the one a hard constraint contradicts.
   std::vector<Instruction> instructions = {
-      {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 5},
-      {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-      {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}};
+      {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 5},
+      {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+      {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}};
   for (uint32_t priority = 0; priority != 70; ++priority) {
-    instructions.push_back({OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, priority});
+    instructions.push_back({TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, priority});
     instructions.push_back(
-        {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0, UINT32_MAX, priority});
+        {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0, UINT32_MAX, priority});
   }
   auto bytes = program(70, 0, instructions,
-                       OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
-                           OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
+                       TALOS_RT_RANDOM_PROGRAM_HAS_SOFT |
+                           TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
   uint64_t start[] = {0, 0}, mask[] = {UINT64_MAX, 63}, assignment[2] = {};
   uint64_t state = 713;
   uint32_t success = 0;
-  ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), start, mask, 2, 0, 1,
                 state, 15, nullptr, 0, nullptr, 0, assignment, &success,
                 &state),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment[0], ~(uint64_t{1} << 5));
   EXPECT_EQ(assignment[1], 63u);
@@ -1127,46 +1127,46 @@ TEST_F(RandSolveWideTest, WeightedExpressionTargetWeighsEachValue) {
   // fields weighs values of the expression, not (a, b) pairs: the value 3
   // has four witnesses and 6 has one, yet both get 1/12 of the draws.
   std::vector<Instruction> sum = {
-      {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-      {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {3}},
-      {OBELISK_RT_RANDOM_BIT_AND_V1, 4},
-      {OBELISK_RT_RANDOM_CAST_V1, 3},
-      {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-      {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {2}},
-      {OBELISK_RT_RANDOM_SHIFT_RIGHT_V1, 4},
-      {OBELISK_RT_RANDOM_CAST_V1, 3},
-      {OBELISK_RT_RANDOM_ADD_V1, 3}};
+      {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+      {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {3}},
+      {TALOS_RT_RANDOM_BIT_AND_V1, 4},
+      {TALOS_RT_RANDOM_CAST_V1, 3},
+      {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+      {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {2}},
+      {TALOS_RT_RANDOM_SHIFT_RIGHT_V1, 4},
+      {TALOS_RT_RANDOM_CAST_V1, 3},
+      {TALOS_RT_RANDOM_ADD_V1, 3}};
   std::vector<Instruction> instructions = sum;
-  instructions.push_back({OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 3, 0, 0, 0, {6}});
-  instructions.push_back({OBELISK_RT_RANDOM_LE_V1, 1});
-  instructions.push_back({OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX});
-  instructions.push_back({OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 64});
-  instructions.push_back({OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {0}});
-  instructions.push_back({OBELISK_RT_RANDOM_GT_V1, 1});
-  instructions.push_back({OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX});
+  instructions.push_back({TALOS_RT_RANDOM_PUSH_LITERAL_V1, 3, 0, 0, 0, {6}});
+  instructions.push_back({TALOS_RT_RANDOM_LE_V1, 1});
+  instructions.push_back({TALOS_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX});
+  instructions.push_back({TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 64});
+  instructions.push_back({TALOS_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {0}});
+  instructions.push_back({TALOS_RT_RANDOM_GT_V1, 1});
+  instructions.push_back({TALOS_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX});
   instructions.insert(instructions.end(), sum.begin(), sum.end());
   for (uint32_t bit = 0; bit != 3; ++bit)
     instructions.push_back(
-        {OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1, 3, 0, 0, bit});
-  uint32_t target = OBELISK_RT_RANDOM_DIST_RAW_WEIGHT |
-                    OBELISK_RT_RANDOM_DIST_EXPRESSION_TARGET;
+        {TALOS_RT_RANDOM_END_DIST_TARGET_BIT_V1, 3, 0, 0, bit});
+  uint32_t target = TALOS_RT_RANDOM_DIST_RAW_WEIGHT |
+                    TALOS_RT_RANDOM_DIST_EXPRESSION_TARGET;
   auto bytes = program(
       4, 1, instructions,
-      OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-          OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED,
+      TALOS_RT_RANDOM_PROGRAM_HAS_DIST |
+          TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED,
       {}, {},
       {{0, UINT32_MAX, 0, 3, 0, 1, 0, 0, target},
        {0, UINT32_MAX, 0, 3, 1, 6, 1, 0,
-        target | OBELISK_RT_RANDOM_DIST_PER_RANGE}});
+        target | TALOS_RT_RANDOM_DIST_PER_RANGE}});
   uint64_t start = 0, mask = 15, weight = 1, assignment = 0, state = 713;
   uint32_t width = 64, success = 0;
   unsigned values[8] = {};
   for (unsigned draw = 0; draw != 1200; ++draw) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
                   state, 15, &weight, 1, &width, 1, &assignment, &success,
                   &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     ASSERT_LT(assignment, 16u);
     ++values[(assignment & 3) + (assignment >> 2)];
@@ -1185,19 +1185,19 @@ TEST_F(RandSolveWideTest, WeightedProjectionNormalizesHugeLegalCardinalities) {
   // retains the same :/ mass as singleton 1. This exercises a large exact
   // denominator and overlapping contributions without traversing the domain.
   uint32_t raw =
-      OBELISK_RT_RANDOM_DIST_RAW_WEIGHT | OBELISK_RT_RANDOM_DIST_PER_RANGE;
+      TALOS_RT_RANDOM_DIST_RAW_WEIGHT | TALOS_RT_RANDOM_DIST_PER_RANGE;
   auto bytes =
       program(64, 1,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 64},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {0}},
-               {OBELISK_RT_RANDOM_NE_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 129},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
-               {OBELISK_RT_RANDOM_GT_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}},
-              OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-                  OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED,
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 64},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {0}},
+               {TALOS_RT_RANDOM_NE_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 129},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
+               {TALOS_RT_RANDOM_GT_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}},
+              TALOS_RT_RANDOM_PROGRAM_HAS_DIST |
+                  TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED,
               {}, {},
               {{0, UINT32_MAX, 0, 64, 0, 0, 0, 0, raw},
                {0, UINT32_MAX, 0, 64, 1, 1, 1, 0, raw}});
@@ -1207,11 +1207,11 @@ TEST_F(RandSolveWideTest, WeightedProjectionNormalizesHugeLegalCardinalities) {
   uint32_t width = 129, success = 0;
   unsigned ones = 0;
   for (unsigned draw = 0; draw != 64; ++draw) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
                   state, 15, captures, 3, &width, 1, &assignment, &success,
                   &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     ASSERT_NE(assignment, 0u);
     ones += assignment == 1;
@@ -1229,18 +1229,18 @@ TEST_F(RandSolveWideTest, SamplesIndependentFieldsApart) {
   constexpr unsigned fields = 64, fieldWidth = 16;
   std::vector<Instruction> instructions;
   for (unsigned field = 0; field != fields; ++field) {
-    instructions.push_back({OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, fieldWidth, 0,
+    instructions.push_back({TALOS_RT_RANDOM_PUSH_VARIABLE_V1, fieldWidth, 0,
                             field * fieldWidth});
     instructions.push_back(
-        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, fieldWidth, 0, 0, 0, {1000}});
-    instructions.push_back({OBELISK_RT_RANDOM_LT_V1, 1});
+        {TALOS_RT_RANDOM_PUSH_LITERAL_V1, fieldWidth, 0, 0, 0, {1000}});
+    instructions.push_back({TALOS_RT_RANDOM_LT_V1, 1});
     if (field)
-      instructions.push_back({OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1});
+      instructions.push_back({TALOS_RT_RANDOM_LOGICAL_AND_V1, 1});
   }
-  instructions.push_back({OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1});
+  instructions.push_back({TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                          TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1});
   auto bytes = program(fields * fieldWidth, 0, instructions,
-                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
+                       TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
   constexpr size_t words = fields * fieldWidth / 64;
   std::vector<uint64_t> start(words, 0), mask(words, UINT64_MAX),
       assignment(words, 0);
@@ -1248,11 +1248,11 @@ TEST_F(RandSolveWideTest, SamplesIndependentFieldsApart) {
   uint64_t state = 71;
   uint32_t success = 0;
   for (unsigned draw = 0; draw != 16; ++draw) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), start.data(),
                   mask.data(), words, 0, 1, state, 15, nullptr, 0, nullptr, 0,
                   assignment.data(), &success, &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     for (unsigned field = 0; field != fields; ++field) {
       uint64_t value =
@@ -1270,25 +1270,25 @@ TEST_F(RandSolveWideTest, SamplesIndependentFieldsApart) {
 // choice from each, and an unconstrained field stays uniform alongside them.
 TEST_F(RandSolveWideTest, IndependentComponentsStayJointlyUniform) {
   auto bytes = program(6, 0,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 0, {0}},
-                        {OBELISK_RT_RANDOM_NE_V1, 1},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 2},
-                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 0, {3}},
-                        {OBELISK_RT_RANDOM_NE_V1, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+                        {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 0, {0}},
+                        {TALOS_RT_RANDOM_NE_V1, 1},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 2},
+                        {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 0, {3}},
+                        {TALOS_RT_RANDOM_NE_V1, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_AND_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                         TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
   uint64_t start = 0, mask = 0x3f, assignment = 0, state = 71;
   uint32_t success = 0;
   unsigned pairs[16] = {}, free[4] = {};
   for (unsigned draw = 0; draw != 9000; ++draw) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
                   state, 15, nullptr, 0, nullptr, 0, &assignment, &success,
                   &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     ++pairs[assignment & 15];
     ++free[assignment >> 4];
@@ -1314,40 +1314,40 @@ TEST_F(RandSolveWideTest, IndependentComponentsStayJointlyUniform) {
 // apart; once the size is chosen, the elements separate again.
 TEST_F(RandSolveWideTest, SizeLayerSeparatesGuardedElements) {
   std::vector<Instruction> instructions{
-      {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-      {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {3}},
-      {OBELISK_RT_RANDOM_LE_V1, 1},
-      {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-       OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}};
+      {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+      {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {3}},
+      {TALOS_RT_RANDOM_LE_V1, 1},
+      {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+       TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}};
   for (unsigned element = 0; element != 3; ++element) {
     instructions.push_back(
-        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {element}});
-    instructions.push_back({OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4});
-    instructions.push_back({OBELISK_RT_RANDOM_LT_V1, 1});
+        {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {element}});
+    instructions.push_back({TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4});
+    instructions.push_back({TALOS_RT_RANDOM_LT_V1, 1});
     instructions.push_back(
-        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 4 + 4 * element});
+        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 4 + 4 * element});
     instructions.push_back(
-        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {5}});
-    instructions.push_back({OBELISK_RT_RANDOM_LT_V1, 1});
-    instructions.push_back({OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1});
+        {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {5}});
+    instructions.push_back({TALOS_RT_RANDOM_LT_V1, 1});
+    instructions.push_back({TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1});
     if (element)
-      instructions.push_back({OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1});
+      instructions.push_back({TALOS_RT_RANDOM_LOGICAL_AND_V1, 1});
   }
-  instructions.push_back({OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1});
+  instructions.push_back({TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                          TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1});
   auto bytes = program(16, 0, instructions,
-                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                           OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
+                       TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                           TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
                        {}, {{{0xf}, {0xfff0}}});
   uint64_t start = 0, mask = 0xffff, assignment = 0, state = 71;
   uint32_t success = 0;
   unsigned sizes[4] = {}, unguardedLarge = 0, unguarded = 0;
   for (unsigned draw = 0; draw != 4000; ++draw) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
                   state, 15, nullptr, 0, nullptr, 0, &assignment, &success,
                   &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     uint64_t size = assignment & 0xf;
     ASSERT_LE(size, 3u);
@@ -1377,34 +1377,34 @@ TEST_F(RandSolveWideTest, SizeLayerSeparatesGuardedElements) {
 // and the projection keeps it. (1 < s) -> (e < s - 2) excludes s == 2.
 TEST_F(RandSolveWideTest, SizeLayerKeepsGuardsThatRestrictIt) {
   auto bytes = program(8, 0,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {3}},
-                        {OBELISK_RT_RANDOM_LE_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {1}},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-                        {OBELISK_RT_RANDOM_LT_V1, 1},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 4},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {2}},
-                        {OBELISK_RT_RANDOM_SUB_V1, 4},
-                        {OBELISK_RT_RANDOM_LT_V1, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                           OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+                        {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {3}},
+                        {TALOS_RT_RANDOM_LE_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                         TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+                        {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {1}},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+                        {TALOS_RT_RANDOM_LT_V1, 1},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 4},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+                        {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {2}},
+                        {TALOS_RT_RANDOM_SUB_V1, 4},
+                        {TALOS_RT_RANDOM_LT_V1, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                         TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                           TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
                        {}, {{{0xf}, {0xf0}}});
   uint64_t start = 0, mask = 0xff, assignment = 0, state = 71;
   uint32_t success = 0;
   unsigned sizes[4] = {};
   for (unsigned draw = 0; draw != 3000; ++draw) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                   context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
                   state, 15, nullptr, 0, nullptr, 0, &assignment, &success,
                   &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     uint64_t size = assignment & 0xf, element = (assignment >> 4) & 0xf;
     ASSERT_LE(size, 3u);
@@ -1423,28 +1423,28 @@ TEST_F(RandSolveWideTest, SizeLayerKeepsGuardsThatRestrictIt) {
 // still be checked: violated frozen values fail without consuming a draw.
 TEST_F(RandSolveWideTest, FrozenViolatedRelationFailsWithoutDraws) {
   auto bytes = program(8, 0,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {3}},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+                        {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {3}},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                         TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
   uint64_t start = 5, mask = 0, assignment = 0, state = 71;
   uint32_t success = 1;
-  ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
                 state, 15, nullptr, 0, nullptr, 0, &assignment, &success,
                 &state),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 0u);
   EXPECT_EQ(state, 71u);
   EXPECT_EQ(assignment, 0u);
   start = 3;
-  ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+  ASSERT_EQ(talos_rt_v1_random_solve_wide_modes_state(
                 context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
                 state, 15, nullptr, 0, nullptr, 0, &assignment, &success,
                 &state),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(state, 71u);
   EXPECT_EQ(assignment, 3u);
@@ -1454,16 +1454,16 @@ TEST_F(RandSolveWideTest, FrozenViolatedRelationFailsWithoutDraws) {
 // field section is rejected before specialization.
 TEST_F(RandSolveWideTest, RejectsMalformedFreeFields) {
   auto bytes = program(8, 0,
-                       {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {1}},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-                        {OBELISK_RT_RANDOM_LT_V1, 1},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 4},
-                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {5}},
-                        {OBELISK_RT_RANDOM_LT_V1, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
+                       {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {1}},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+                        {TALOS_RT_RANDOM_LT_V1, 1},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 4},
+                        {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {5}},
+                        {TALOS_RT_RANDOM_LT_V1, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                         TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
   const uint8_t magic[] = {'F', 'R', 'E', 'E'};
   auto section = std::search(bytes.begin(), bytes.end(), std::begin(magic),
                              std::end(magic));
@@ -1472,20 +1472,20 @@ TEST_F(RandSolveWideTest, RejectsMalformedFreeFields) {
   auto solve = [&](const std::vector<uint8_t> &variant) {
     uint64_t start = 0, mask = 0xff, assignment = 0, state = 71;
     uint32_t success = 0;
-    return obelisk_rt_v1_random_solve_wide_modes_state(
+    return talos_rt_v1_random_solve_wide_modes_state(
         context, variant.data(), variant.size(), &start, &mask, 1, 0, 1, state,
         15, nullptr, 0, nullptr, 0, &assignment, &success, &state);
   };
-  EXPECT_EQ(solve(bytes), OBELISK_RT_OK);
+  EXPECT_EQ(solve(bytes), TALOS_RT_OK);
   auto zeroWidth = bytes;
   std::fill_n(zeroWidth.begin() + entry + 8, 4, 0);
-  EXPECT_EQ(solve(zeroWidth), OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(solve(zeroWidth), TALOS_RT_INVALID_ARGUMENT);
   auto outside = bytes;
   outside[entry + 4] = 8;
-  EXPECT_EQ(solve(outside), OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(solve(outside), TALOS_RT_INVALID_ARGUMENT);
   auto badMagic = bytes;
   badMagic[section - bytes.begin()] = 'X';
-  EXPECT_EQ(solve(badMagic), OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(solve(badMagic), TALOS_RT_INVALID_ARGUMENT);
 }
 
 #endif

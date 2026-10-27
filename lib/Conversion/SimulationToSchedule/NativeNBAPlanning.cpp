@@ -2,17 +2,17 @@
 
 #include "../SimulationToLLVMCoroutine/SimulationNBALowering.h"
 #include "../SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
-#include "obelisk/Analysis/GraphAlgorithms.h"
-#include "obelisk/Analysis/NBAInfluenceAnalysis.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/StorageWriteAnalysis.h"
-#include "obelisk/Conversion/SimulationRuntime.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/GraphAlgorithms.h"
+#include "talos/Analysis/NBAInfluenceAnalysis.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/StorageWriteAnalysis.h"
+#include "talos/Conversion/SimulationRuntime.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -27,7 +27,7 @@
 using namespace mlir;
 
 #include "NativeNBAUtils.h"
-namespace obelisk::detail {
+namespace talos::detail {
 /// Return true when `enqueue` cannot execute more than once between two NBA
 /// barriers. Its statement must occur once in this call closure, sit
 /// in a function no call can re-enter. Dense dataflow proves the execution
@@ -74,9 +74,9 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
       return module.emitError(
                  "static NBA commit references an unknown storage descriptor"),
              failure();
-    obelisk_rt_stable_handle_v1 decoded{};
-    if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset != 0)
+    talos_rt_stable_handle_v1 decoded{};
+    if (!talos_rt_stable_handle_decode(handle->second, &decoded) ||
+        decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC || decoded.offset != 0)
       return module.emitError(
                  "static NBA commit has an invalid native state root"),
              failure();
@@ -98,9 +98,9 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     plan.generatedCommitRegions.push_back(UINT32_MAX);
     plan.generatedFullRootStages.push_back(false);
     plan.generatedFixedWriteMasks.push_back(0);
-    if (bound->width <= OBELISK_RT_GENERATED_NBA_MAX_BITS)
+    if (bound->width <= TALOS_RT_GENERATED_NBA_MAX_BITS)
       plan.generatedAccumulators.back() =
-          ("__obelisk_aot_nba_accumulator_" + Twine(root)).str();
+          ("__talos_aot_nba_accumulator_" + Twine(root)).str();
     auto appendSites = [&](DenseI64ArrayAttr ids, uint32_t storage) {
       for (int64_t id : ids.asArrayRef()) {
         if (id < 0)
@@ -110,9 +110,9 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
       return success();
     };
     if (failed(
-            appendSites(commit.getSlots(), OBELISK_RT_STATIC_NBA_FIXED_SLOT)) ||
+            appendSites(commit.getSlots(), TALOS_RT_STATIC_NBA_FIXED_SLOT)) ||
         failed(appendSites(commit.getAccumulatorSites(),
-                           OBELISK_RT_STATIC_NBA_ROOT_ACCUMULATOR)))
+                           TALOS_RT_STATIC_NBA_ROOT_ACCUMULATOR)))
       return module.emitError("static NBA site identity is negative"),
              failure();
   }
@@ -125,14 +125,14 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
                          }) != plan.sites.end())
     return module.emitError("static NBA site identity is duplicated"),
            failure();
-  for (const obelisk_rt_static_nba_site &site : plan.sites)
+  for (const talos_rt_static_nba_site &site : plan.sites)
     plan.siteRoots.try_emplace(site.site, site.root);
   module.walk([&](sim::SimNBAEnqueueOp enqueue) {
     schedule::NBASiteAttr site = enqueue.getSiteAttr();
     if (!site)
       return;
     auto origin =
-        ::obelisk::schedule::get<::obelisk::schedule::Field::EvalOriginNbaSite>(
+        ::talos::schedule::get<::talos::schedule::Field::EvalOriginNbaSite>(
             enqueue);
     plan.siteSemanticOrigins.try_emplace(
         site.getId(), origin ? origin.getValue().getZExtValue() : site.getId());
@@ -168,7 +168,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   auto recordEnqueueLane = [&](sim::SimNBAEnqueueOp enqueue) {
     auto function = enqueue->getParentOfType<sim::SimFuncOp>();
     if (!function ||
-        !::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+        !::talos::schedule::has<::talos::schedule::Field::EvalRawCaptures>(
             function))
       return;
     auto site = enqueue.getSiteAttr();
@@ -197,12 +197,12 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     auto target = writesFor(function).lookup(reference);
     auto handle = target.hasRoot() ? stateLayout.storage.find(target.descriptor)
                                    : stateLayout.storage.end();
-    obelisk_rt_stable_handle_v1 decoded{};
+    talos_rt_stable_handle_v1 decoded{};
     if (!target.hasLane() || target.clipped || !width || !*width ||
         *width > 64 || *width != target.width ||
         handle == stateLayout.storage.end() ||
-        !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+        !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+        decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC ||
         decoded.id != root.static_state || decoded.offset != 0 ||
         target.rootWidth != root.bit_width)
       return reject();
@@ -258,7 +258,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   // body later owns them.
   llvm::SmallVector<llvm::SmallDenseSet<uint64_t, 4>> originsByRoot(
       plan.roots.size());
-  for (const obelisk_rt_static_nba_site &entry : plan.sites) {
+  for (const talos_rt_static_nba_site &entry : plan.sites) {
     auto root = plan.siteRoots.find(entry.site);
     if (root == plan.siteRoots.end() || root->second >= plan.roots.size())
       continue;
@@ -452,7 +452,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     // A root seen only by change waits merges with a transient mask. Every
     // generated and runtime merge of a scalar root maintains that mask.
     plan.trackTransients[index] =
-        root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS &&
+        root.bit_width <= TALOS_RT_SCALAR_NBA_MAX_BITS &&
         mergeSafety.commitNeedsTransients(root.commit_node);
     unobservable[index] = mergeSafety.commitMayMerge(root.commit_node) ||
                           plan.trackTransients[index] ||
@@ -499,7 +499,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   if (native::has<native::DebugTiming>(module))
     for (uint32_t root = 0; root != plan.roots.size(); ++root)
       if (!plan.mergeSafeRoots[root])
-        llvm::errs() << "obelisk NBA root keeps ordered commits: root=" << root
+        llvm::errs() << "talos NBA root keeps ordered commits: root=" << root
                      << " width=" << plan.roots[root].bit_width
                      << " semantic-sites=" << originsByRoot[root].size()
                      << " independent-lanes="
@@ -521,7 +521,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     if (mapped == plan.siteRoots.end())
       return;
     uint32_t rootIndex = mapped->second;
-    const obelisk_rt_static_nba_root &root = plan.roots[rootIndex];
+    const talos_rt_static_nba_root &root = plan.roots[rootIndex];
     seen[rootIndex] = true;
     std::optional<unsigned> width =
         nativeStateWidth(enqueue.getValue().getType());
@@ -548,8 +548,8 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     }
     uint32_t homeRegion =
         function ? getRuntimeEventRegion(function.getHomeRegion()) : UINT32_MAX;
-    uint32_t commitRegion = homeRegion == OBELISK_RT_REGION_ACTIVE ||
-                                    homeRegion == OBELISK_RT_REGION_REACTIVE
+    uint32_t commitRegion = homeRegion == TALOS_RT_REGION_ACTIVE ||
+                                    homeRegion == TALOS_RT_REGION_REACTIVE
                                 ? homeRegion + 2
                                 : UINT32_MAX;
     immediateOnly[rootIndex] =
@@ -558,7 +558,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
         isa<sim::RefType>(enqueue.getDestination().getType()) &&
         bool(sim::getPackedWidth(enqueue.getValue().getType())) &&
         site.getStorage() != schedule::ComputeNBAStorageKind::DynamicFrontier &&
-        commitRegion == OBELISK_RT_REGION_NBA;
+        commitRegion == TALOS_RT_REGION_NBA;
     bool direct =
         width && root.bit_width <= 64 && destination &&
         *width <= root.bit_width && destination->offset <= root.bit_width &&
@@ -609,15 +609,15 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     completeWriters = false;
     if (native::has<native::DebugTiming>(module) &&
         explainedIncompleteWriters++ < 3)
-      llvm::errs() << "obelisk NBA writer proof: " << function.getSymName()
+      llvm::errs() << "talos NBA writer proof: " << function.getSymName()
                    << " reason=" << reason << '\n';
   };
   auto recordDescriptor = [&](uint64_t descriptor) {
     auto handle = stateLayout.storage.find(descriptor);
-    obelisk_rt_stable_handle_v1 decoded{};
+    talos_rt_stable_handle_v1 decoded{};
     if (handle == stateLayout.storage.end() ||
-        !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC)
+        !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+        decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC)
       return false;
     immediateWriters.insert(decoded.id);
     return true;
@@ -657,11 +657,11 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
              effect.getEffect() != schedule::ComputeEffectKind::Drive))
           continue;
         auto handle = stateLayout.storage.find(effect.getDescriptor());
-        obelisk_rt_stable_handle_v1 decoded{};
+        talos_rt_stable_handle_v1 decoded{};
         if (effect.getTarget() != schedule::ComputeTargetKind::Descriptor ||
             handle == stateLayout.storage.end() ||
-            !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-            decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC) {
+            !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+            decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC) {
           incompleteWriter(function, "unmapped immediate storage writer");
           continue;
         }
@@ -677,7 +677,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
         immediateOnly[index] && !immediateWriters.contains(root.static_state);
   }
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk native unchanged NBA roots: "
+    llvm::errs() << "talos native unchanged NBA roots: "
                  << llvm::count(plan.unchangedSafeRoots, true) << "/"
                  << plan.roots.size() << " complete-writers=" << completeWriters
                  << " immediate-only=" << llvm::count(immediateOnly, true)
@@ -687,4 +687,4 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   return plan;
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

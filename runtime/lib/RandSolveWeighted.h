@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace obelisk::runtime {
+namespace talos::runtime {
 
 struct WeightedInterval {
   uint64_t lower;
@@ -63,22 +63,22 @@ inline bool parseWeightedGroups(const uint8_t *bytes, size_t size,
       value |= uint64_t(p[byte]) << (byte * 8);
     return value;
   };
-  if (size < OBELISK_RT_RANDOM_DIST_HEADER_SIZE)
+  if (size < TALOS_RT_RANDOM_DIST_HEADER_SIZE)
     return false;
   uint32_t count = read32(bytes);
   uint32_t records = read32(bytes + 4);
   if (count == 0 || count > records ||
-      records != (size - OBELISK_RT_RANDOM_DIST_HEADER_SIZE) /
-                     OBELISK_RT_RANDOM_DIST_RECORD_SIZE ||
-      (size - OBELISK_RT_RANDOM_DIST_HEADER_SIZE) %
-              OBELISK_RT_RANDOM_DIST_RECORD_SIZE !=
+      records != (size - TALOS_RT_RANDOM_DIST_HEADER_SIZE) /
+                     TALOS_RT_RANDOM_DIST_RECORD_SIZE ||
+      (size - TALOS_RT_RANDOM_DIST_HEADER_SIZE) %
+              TALOS_RT_RANDOM_DIST_RECORD_SIZE !=
           0)
     return false;
   groups.assign(count, {});
   std::vector<std::unordered_map<uint64_t, size_t>> items(count);
-  const uint8_t *record = bytes + OBELISK_RT_RANDOM_DIST_HEADER_SIZE;
+  const uint8_t *record = bytes + TALOS_RT_RANDOM_DIST_HEADER_SIZE;
   for (uint32_t index = 0; index != records;
-       ++index, record += OBELISK_RT_RANDOM_DIST_RECORD_SIZE) {
+       ++index, record += TALOS_RT_RANDOM_DIST_RECORD_SIZE) {
     uint32_t groupIndex = read32(record);
     uint32_t block = read32(record + 4);
     uint32_t offset = read32(record + 8);
@@ -90,34 +90,34 @@ inline bool parseWeightedGroups(const uint8_t *bytes, size_t size,
     uint32_t capture = read32(record + 40);
     uint32_t flags = read32(record + 44);
     bool expressionTarget =
-        (flags & OBELISK_RT_RANDOM_DIST_EXPRESSION_TARGET) != 0;
+        (flags & TALOS_RT_RANDOM_DIST_EXPRESSION_TARGET) != 0;
     if (groupIndex >= count || width == 0 || width > 64 ||
         (expressionTarget ? offset != 0
                           : offset > aggregateWidth ||
                                 width > aggregateWidth - offset) ||
-        (block != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 && block >= 64) ||
+        (block != TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 && block >= 64) ||
         capture >= captureCount ||
-        !(flags & OBELISK_RT_RANDOM_DIST_RAW_WEIGHT) ||
-        (flags & ~(OBELISK_RT_RANDOM_DIST_RAW_WEIGHT |
-                   OBELISK_RT_RANDOM_DIST_PER_RANGE |
-                   OBELISK_RT_RANDOM_DIST_TARGET_SIGNED |
-                   OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL |
-                   OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT |
-                   OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT |
-                   OBELISK_RT_RANDOM_DIST_EXPRESSION_TARGET)))
+        !(flags & TALOS_RT_RANDOM_DIST_RAW_WEIGHT) ||
+        (flags & ~(TALOS_RT_RANDOM_DIST_RAW_WEIGHT |
+                   TALOS_RT_RANDOM_DIST_PER_RANGE |
+                   TALOS_RT_RANDOM_DIST_TARGET_SIGNED |
+                   TALOS_RT_RANDOM_DIST_CAPTURED_INTERVAL |
+                   TALOS_RT_RANDOM_DIST_DEFAULT_COMPLEMENT |
+                   TALOS_RT_RANDOM_DIST_EXPRESSION_WEIGHT |
+                   TALOS_RT_RANDOM_DIST_EXPRESSION_TARGET)))
       return false;
     uint64_t mask = width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
-    bool captured = (flags & OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL) != 0;
-    bool isDefault = (flags & OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT) != 0;
+    bool captured = (flags & TALOS_RT_RANDOM_DIST_CAPTURED_INTERVAL) != 0;
+    bool isDefault = (flags & TALOS_RT_RANDOM_DIST_DEFAULT_COMPLEMENT) != 0;
     if (captured ? lower >= captureCount || cardinality >= captureCount
                  : lower > mask ||
                        (cardinality == 0 ? width != 64 || lower != 0
                                          : cardinality - 1 > mask - lower))
       return false;
-    bool signedTarget = (flags & OBELISK_RT_RANDOM_DIST_TARGET_SIGNED) != 0;
-    bool perRange = (flags & OBELISK_RT_RANDOM_DIST_PER_RANGE) != 0;
+    bool signedTarget = (flags & TALOS_RT_RANDOM_DIST_TARGET_SIGNED) != 0;
+    bool perRange = (flags & TALOS_RT_RANDOM_DIST_PER_RANGE) != 0;
     bool expressionWeight =
-        (flags & OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT) != 0;
+        (flags & TALOS_RT_RANDOM_DIST_EXPRESSION_WEIGHT) != 0;
     if ((captured && !perRange) ||
         (isDefault &&
          (captured || !perRange || lower != 0 || cardinality != mask + 1)))
@@ -217,4 +217,4 @@ inline bool resolveWeightedIntervals(std::vector<WeightedGroup> &groups,
   return true;
 }
 
-} // namespace obelisk::runtime
+} // namespace talos::runtime

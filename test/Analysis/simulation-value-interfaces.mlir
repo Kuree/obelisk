@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --test-obelisk-integer-interfaces -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-integer-interfaces -o /dev/null 2>&1 | FileCheck %s
 
-// Use MLIR's unmodified sparse IntegerRangeAnalysis, not an Obelisk opcode
+// Use MLIR's unmodified sparse IntegerRangeAnalysis, not an Talos opcode
 // switch. Facts from Simulation ops must compose with ordinary arith ops.
 func.func @ranges(%input: !simulation.logic<65>, %control: !simulation.logic<1>, %bits: i65, %unpacked: !simulation.unpacked_struct<[#simulation.field<name = "a", type = i8, ordinal = 0, packedOffset = 0>, #simulation.field<name = "b", type = i32, ordinal = 1, packedOffset = 0>]>) -> (i32, i32, i32, i32, i1) {
   %count = simulation.logic.count_bits %input matching %control, %control {test.fact = "count"} : (!simulation.logic<65>, !simulation.logic<1>, !simulation.logic<1>) -> i32

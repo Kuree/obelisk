@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-static-superstep))' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-plan-static-superstep))' \
 // RUN:   | FileCheck %s
 
 // Exercise only the static-superstep planner.  A conventional digital clock

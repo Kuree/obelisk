@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt --test-obelisk-native-backend='stop-after=graph' | obelisk-opt --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=RESOLVED
-// RUN: obelisk -emit-slang -DCLOBBER %s | obelisk-opt --test-obelisk-native-backend='stop-after=graph' | obelisk-opt --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CLOBBERED
+// RUN: talos -emit-slang %s | talos-opt --test-talos-native-backend='stop-after=graph' | talos-opt --pass-pipeline='builtin.module(simulation.design(talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=RESOLVED
+// RUN: talos -emit-slang -DCLOBBER %s | talos-opt --test-talos-native-backend='stop-after=graph' | talos-opt --pass-pipeline='builtin.module(simulation.design(talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CLOBBERED
 
 // IEEE 1800-2023 13.5 writes an `output` actual when the task returns. The
 // actual reaches the task as a reference, so only the task's formal-target

@@ -1,4 +1,4 @@
-// Minimal WASI preview1 host for running a compiled Obelisk simulation.
+// Minimal WASI preview1 host for running a compiled Talos simulation.
 //
 // Scope is deliberately narrow: enough for a design to print ($display,
 // $write), read the clock, draw randomness, persist coverage and waveforms in
@@ -540,8 +540,8 @@ export async function runSimulation(
   // stays the thing runSimulation resolves to. A module built before these
   // exports existed simply never reports.
   const reportSimulatedTime = () => {
-    const readTime = instance.exports.obelisk_final_time;
-    const readPrecision = instance.exports.obelisk_time_precision_fs;
+    const readTime = instance.exports.talos_final_time;
+    const readPrecision = instance.exports.talos_time_precision_fs;
     if (typeof readTime !== 'function' || typeof readPrecision !== 'function')
       return;
     try {

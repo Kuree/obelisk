@@ -1,6 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON --implicit-check-not='"role":11'
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON --implicit-check-not='"role":11'
 
 // IEEE 1800-2023 19.6.1.2 counts distinct associated values in each bin tuple.
 // A parent with evaluates all values in the child's selected bins, including

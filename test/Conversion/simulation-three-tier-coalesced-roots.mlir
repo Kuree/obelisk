@@ -1,22 +1,22 @@
-// RUN: obelisk-opt %s --obelisk-sim-materialize-graph-regions -o %t
+// RUN: talos-opt %s --talos-sim-materialize-graph-regions -o %t
 // RUN: FileCheck %s < %t
-// RUN: obelisk-opt %t | diff %t -
-// RUN: obelisk-opt %t \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>" replace-to="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 17, owner = 0, tier = tier1>"' \
-// RUN:   | not obelisk-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXTRA
-// RUN: obelisk-opt %t \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 9, formal = 0, low = 4, width = 8, dynamic = false, deferred = false, trigger = none>" replace-to="#schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 9, formal = 0, low = 4, width = 4, dynamic = false, deferred = false, trigger = none>"' \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 9, formal = 0, low = 8, width = 8, dynamic = false, deferred = false, trigger = none>" replace-to="#schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 9, formal = 0, low = 9, width = 7, dynamic = false, deferred = false, trigger = none>"' \
-// RUN:   | not obelisk-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXTRA
-// RUN: obelisk-opt %t \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>" replace-to="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 15, owner = 0, tier = tier1>"' \
-// RUN:   | not obelisk-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING
-// RUN: obelisk-opt %t \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>" replace-to="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier3>"' \
-// RUN:   | not obelisk-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=TIER
-// RUN: obelisk-opt %t \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="[#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>]" replace-to="[#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>, #schedule.scheduled_root<resource = storage, descriptor = 9, low = 8, width = 8, owner = 0, tier = tier1>]"' \
-// RUN:   | not obelisk-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=OVERLAP
+// RUN: talos-opt %t | diff %t -
+// RUN: talos-opt %t \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>" replace-to="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 17, owner = 0, tier = tier1>"' \
+// RUN:   | not talos-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXTRA
+// RUN: talos-opt %t \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 9, formal = 0, low = 4, width = 8, dynamic = false, deferred = false, trigger = none>" replace-to="#schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 9, formal = 0, low = 4, width = 4, dynamic = false, deferred = false, trigger = none>"' \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 9, formal = 0, low = 8, width = 8, dynamic = false, deferred = false, trigger = none>" replace-to="#schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 9, formal = 0, low = 9, width = 7, dynamic = false, deferred = false, trigger = none>"' \
+// RUN:   | not talos-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXTRA
+// RUN: talos-opt %t \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>" replace-to="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 15, owner = 0, tier = tier1>"' \
+// RUN:   | not talos-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: talos-opt %t \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>" replace-to="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier3>"' \
+// RUN:   | not talos-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=TIER
+// RUN: talos-opt %t \
+// RUN:   '--test-talos-edit-attributes=replace-from="[#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>]" replace-to="[#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>, #schedule.scheduled_root<resource = storage, descriptor = 9, low = 8, width = 8, owner = 0, tier = tier1>]"' \
+// RUN:   | not talos-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=OVERLAP
 
 // Adjacent partial writes have one owner after kernel formation. The compact
 // root covers both writes, although neither write covers the whole root.

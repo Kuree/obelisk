@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file --schedule-optimize-native-words | FileCheck %s
-// RUN: obelisk-opt %s --split-input-file --schedule-optimize-native-words --convert-schedule-word-regions --canonicalize | FileCheck %s --check-prefix=LOWER
+// RUN: talos-opt %s --split-input-file --schedule-optimize-native-words | FileCheck %s
+// RUN: talos-opt %s --split-input-file --schedule-optimize-native-words --convert-schedule-word-regions --canonicalize | FileCheck %s --check-prefix=LOWER
 
 // Native width is justified by bounded lane dataflow, independently of X/Z.
 // The input has no knownness certificate: XOR must retain both planes.

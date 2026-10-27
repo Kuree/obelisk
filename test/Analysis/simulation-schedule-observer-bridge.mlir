@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(test-obelisk-simulation-schedule-analysis)' \
+// RUN: talos-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(test-talos-simulation-schedule-analysis)' \
 // RUN:   2>&1 | FileCheck %s
 
 // Observer capture bridges are physical CFG blocks but not compute-graph

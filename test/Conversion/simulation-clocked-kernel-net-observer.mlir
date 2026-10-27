@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-clocked-kernels))' | FileCheck %s
 
 // IEEE 1800-2023 10.3.1 and 4.9.1: `wire t = q;` is a continuous assignment
 // process. Connecting `t` to a port merges it with the port net into one
@@ -59,7 +59,7 @@ module attributes {
       simulation.nba.enqueue %zero to %clk : (!bit, !ref) -> ()
       cf.br ^low
     }
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK: simulation.suspend.edge posedge
     // CHECK: simulation.logic.unary logical_not
     // CHECK-NEXT: simulation.ref.store %{{.*}} to %{{.*}} : !simulation.logic<1>
@@ -163,7 +163,7 @@ module attributes {
       simulation.nba.enqueue %zero to %clk : (!bit, !ref) -> ()
       cf.br ^low
     }
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK: simulation.suspend.edge posedge
     // CHECK: simulation.ref.load
     // CHECK: simulation.ref.store %{{.*}} to %{{.*}} : !simulation.logic<1>

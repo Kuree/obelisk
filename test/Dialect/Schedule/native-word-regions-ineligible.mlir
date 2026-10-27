@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --schedule-optimize-native-words | FileCheck %s --implicit-check-not=schedule.word.region
+// RUN: talos-opt %s --split-input-file --schedule-optimize-native-words | FileCheck %s --implicit-check-not=schedule.word.region
 
 // Reversing an aliased destination creates a cross-lane recurrence.
 // CHECK-LABEL: simulation.func @alias

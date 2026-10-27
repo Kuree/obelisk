@@ -1,6 +1,6 @@
-// RUN: env OBELISK_TEST_INPUT=%s %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.CompiledResolutionProbes
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=LLVM
+// RUN: env TALOS_TEST_INPUT=%s %obj_root/test/talos-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.CompiledResolutionProbes
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=full' --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=LLVM
 module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   simulation.design @resolution_frames {
     simulation.scope.decl 0 hierarchy "$root"
@@ -64,7 +64,7 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
   }
 }
 // BYTECODE: id=0x00011017 inputs=1 outputs=1 flags=0
-// LLVM: llvm.call @obelisk_rt_v1_vpi_resolution_prepare
-// LLVM: llvm.call @obelisk_rt_v1_vpi_resolution_prepare
-// LLVM: llvm.call @obelisk_rt_v1_vpi_frame_enter_prepared
+// LLVM: llvm.call @talos_rt_v1_vpi_resolution_prepare
+// LLVM: llvm.call @talos_rt_v1_vpi_resolution_prepare
+// LLVM: llvm.call @talos_rt_v1_vpi_frame_enter_prepared
 // LLVM-NOT: simulation.vpi.

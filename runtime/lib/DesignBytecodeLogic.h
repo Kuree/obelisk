@@ -1,7 +1,7 @@
 //===- DesignBytecodeLogic.h - Bytecode integer value semantics -*- C++ -*-===//
 
-#ifndef OBELISK_RUNTIME_LIB_DESIGNBYTECODELOGIC_H
-#define OBELISK_RUNTIME_LIB_DESIGNBYTECODELOGIC_H
+#ifndef TALOS_RUNTIME_LIB_DESIGNBYTECODELOGIC_H
+#define TALOS_RUNTIME_LIB_DESIGNBYTECODELOGIC_H
 
 #include "CanonicalPlane.h"
 #include <array>
@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace obelisk::designbytecode {
+namespace talos::designbytecode {
 
 // Bytecode values are overwhelmingly one or two machine words wide. Keep
 // those limbs in the value itself and use dynamic storage only for wider
@@ -157,6 +157,6 @@ std::pair<Logic, Logic> divide(const Logic &dividend, const Logic &divisor,
 Logic bitwise(const Logic &left, const Logic &right, uint16_t opcode);
 Logic shift(const Logic &input, const Logic &amount, uint16_t opcode);
 
-} // namespace obelisk::designbytecode
+} // namespace talos::designbytecode
 
-#endif // OBELISK_RUNTIME_LIB_DESIGNBYTECODELOGIC_H
+#endif // TALOS_RUNTIME_LIB_DESIGNBYTECODELOGIC_H

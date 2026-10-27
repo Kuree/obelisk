@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // A 4096-bit destination retains one source snapshot and two qualification
 // cells per static edge rule. Lowering emits one packed actor and one inertial
 // group per distinct delay; none of these counts scale with destination bits.
 
-!logic4096 = !obelisk.integral<4096, false, true, 4095 : 0, logic>
+!logic4096 = !talos.integral<4096, false, true, 4095 : 0, logic>
 
 module {
   simulation.design @edge_specify_wide {
@@ -92,13 +92,13 @@ module {
                       #simulation.argument_binding<path = "top.epoch2", argument = 10, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.pending3", argument = 11, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.epoch3", argument = 12, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {
+      talos.sv.expression.assignment attributes {
           assignment_kind = 0 : i32, node_id = 1 : i64,
           semantic_type = !logic4096} {
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 2 : i64, referenced_path = "top.out",
             referenced_symbol = @out, semantic_type = !logic4096} {}
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 3 : i64, referenced_path = "top.data",
             referenced_symbol = @data, semantic_type = !logic4096} {}
       }

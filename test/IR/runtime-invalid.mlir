@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 func.func @leak(%ctx: !runtime.context) {
   // expected-error @+1 {{owned buffer requires one release and at most one size and one packed read}}

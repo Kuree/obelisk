@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --schedule-optimize-native-words -o %t.words
+// RUN: talos-opt %s --schedule-optimize-native-words -o %t.words
 // RUN: FileCheck %s --check-prefix=WORD < %t.words
-// RUN: obelisk-opt %t.words --convert-schedule-word-regions --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %t.words --convert-schedule-word-regions --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe | FileCheck %s
 

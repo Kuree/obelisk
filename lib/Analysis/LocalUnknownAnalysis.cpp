@@ -1,14 +1,14 @@
 //===- LocalUnknownAnalysis.cpp - X/Z inside one gated activation ---------===//
 
-#include "obelisk/Analysis/LocalUnknownAnalysis.h"
-#include "obelisk/Analysis/KnownVersioningAnalysis.h"
-#include "obelisk/Analysis/LocalStorageAnalysis.h"
-#include "obelisk/Analysis/RangeSet.h"
-#include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
-#include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Analysis/UnknownBitGeometry.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationTypes.h"
+#include "talos/Analysis/LocalUnknownAnalysis.h"
+#include "talos/Analysis/KnownVersioningAnalysis.h"
+#include "talos/Analysis/LocalStorageAnalysis.h"
+#include "talos/Analysis/RangeSet.h"
+#include "talos/Analysis/ScopedIntegerRangeAnalysis.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
+#include "talos/Analysis/UnknownBitGeometry.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationTypes.h"
 
 #include "mlir/Analysis/CallGraph.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
@@ -29,7 +29,7 @@
 #include <memory>
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
 using ReadKind = LocalUnknownAnalysis::ReadKind;
@@ -1834,4 +1834,4 @@ LocalUnknownAnalysis::summarize(sim::SimDesignOp design,
   return summaries;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --implicit-check-not='simulation.func private @first' --implicit-check-not='simulation.func private @second'
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s --implicit-check-not='simulation.func private @first' --implicit-check-not='simulation.func private @second'
 
 // First reject a backwards cohort after creating its temporary kernel, then
 // accept the ordered cohort with the same generated base name. Finally revisit
@@ -87,8 +87,8 @@ module attributes {
   }
 }
 
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0(
-// CHECK: simulation.func private @__obelisk_region_kernel_0_0(
+// CHECK: simulation.spawn @__talos_region_kernel_0_0(
+// CHECK: simulation.func private @__talos_region_kernel_0_0(
 // CHECK-SAME: entry_kind = 7 : i32
 // CHECK: ^bb{{[0-9]+}}(%[[INITIAL:.*]]: i1, %[[PREV0:.*]]: !simulation.logic<1>, %[[PREV1:.*]]: !simulation.logic<1>):
 // CHECK: simulation.logic.compare case_eq
@@ -104,4 +104,4 @@ module attributes {
 // CHECK-NOT: simulation.func private @first
 // CHECK-NOT: simulation.func private @second
 
-// CHECK-NOT: simulation.func private @__obelisk_region_kernel_
+// CHECK-NOT: simulation.func private @__talos_region_kernel_

@@ -5,17 +5,17 @@ The mode controls design observability and mutation; shared libraries are
 ordinary positional inputs:
 
 ```sh
-obelisk --vpi=read design.sv plugin.so -o simulator
-obelisk --vpi=full design.sv uvm_backdoor.so helpers.a -o simulator
+talos --vpi=read design.sv plugin.so -o simulator
+talos --vpi=full design.sv uvm_backdoor.so helpers.a -o simulator
 ```
 
-On Linux, Obelisk probes each shared object during compilation for the standard
+On Linux, Talos probes each shared object during compilation for the standard
 `vlog_startup_routines` symbol. A module exporting that table is rejected under
 `--vpi=off`. Probing loads the DSO and can run its ELF constructors, so native
 inputs must be trusted.
 
 On Linux, every detected module is already present through `DT_NEEDED`.
-Obelisk obtains a handle with `RTLD_NOLOAD`, resolves the startup table on that
+Talos obtains a handle with `RTLD_NOLOAD`, resolves the startup table on that
 specific handle, validates its ELF symbol extent and null terminator, and calls
 the tables in positional-input order. Repeated filesystem identities are
 deduplicated. In accordance with IEEE 1800-2017 36.10.2, startup-table routines
@@ -25,7 +25,7 @@ DPI, class, and native-state registration and before the root process is
 spawned. The VPI context remains active through scheduler execution, including
 DPI calls, and is deactivated before context destruction.
 
-Windows DLLs use the same VPI lifecycle, callbacks, and value API. Obelisk
+Windows DLLs use the same VPI lifecycle, callbacks, and value API. Talos
 inspects PE tables without loading DLLs into the compiler and generates import
 libraries with LLVM. The runtime resolves startup tables in their linked
 modules and bounds table reads by readable mapped storage. See
@@ -426,7 +426,7 @@ implemented.
 Static `vpiStrength0` and `vpiStrength1` queries cover explicit continuous
 assignments and built-in gates. Ordinary defaults reuse the shared primitive
 subtype or continuous-assignment kind; only nondefault strengths need image
-rows. Pull sources ignore the opposite polarity under 28.10; Obelisk reports
+rows. Pull sources ignore the opposite polarity under 28.10; Talos reports
 canonical Pull for that unused polarity, matching its executable driver
 representation. Switch strengths depend on their inputs and remain unavailable
 through these static queries.
@@ -451,10 +451,10 @@ described in [Waveform dumping](waveforms.md); it reads the same design
 database as the backdoor and needs no plugin.
 
 The complete canonical `vpi_user.h`, `sv_vpi_user.h`,
-`vpi_compatibility.h`, and Obelisk `svdpi.h` are staged under:
+`vpi_compatibility.h`, and Talos `svdpi.h` are staged under:
 
 ```sh
-$(obelisk --print-resource-dir)/include
+$(talos --print-resource-dir)/include
 ```
 
 Lexical class inheritance is retained for unused generic classes as distinct

@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s | talos-opt | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 // IEEE 1800-2023 7.8.5: an index of any type with an equality operator. The
 // key `struct { logic [3:0] l; string s; }` is four-state with a string
@@ -90,22 +90,22 @@ module attributes {
 // {STRING, 64, 0, 0}. Its trace names the string word at byte 8. The
 // dynamic-array key's plan is a SEQUENCE of 4-byte elements whose body
 // compares 32 bits.
-// NATIVE-DAG: llvm.mlir.global internal constant @__obelisk_assoc_key_plan_[[KEY:[0-9]+]]("AKPK\01\00\00\00\02\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00@\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
-// NATIVE-DAG: llvm.mlir.global internal constant @__obelisk_element_trace_[[KEY]]("\08\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00")
-// NATIVE-DAG: llvm.mlir.global internal constant @__obelisk_assoc_key_plan_{{[0-9]+}}("AKPK\01\00\00\00\02\00\00\00\00\00\00\00\04\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00 \00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
+// NATIVE-DAG: llvm.mlir.global internal constant @__talos_assoc_key_plan_[[KEY:[0-9]+]]("AKPK\01\00\00\00\02\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00@\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
+// NATIVE-DAG: llvm.mlir.global internal constant @__talos_element_trace_[[KEY]]("\08\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00")
+// NATIVE-DAG: llvm.mlir.global internal constant @__talos_assoc_key_plan_{{[0-9]+}}("AKPK\01\00\00\00\02\00\00\00\00\00\00\00\04\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00 \00\00\00\00\00\00\00\00\00\00\00\00\00\00\00")
 // NATIVE-LABEL: llvm.func @struct_key
-// NATIVE: %[[KEY_TRACE:.*]] = llvm.mlir.addressof @__obelisk_element_trace_[[KEY]]
-// NATIVE: %[[PLAN:.*]] = llvm.mlir.addressof @__obelisk_assoc_key_plan_[[KEY]]
-// NATIVE: llvm.call @obelisk_rt_v1_assoc_create_element_keyed({{.*}}, %[[KEY_TRACE]], %{{.*}}, %[[PLAN]], %{{.*}}, %{{.*}})
-// NATIVE: llvm.call @obelisk_rt_v1_assoc_write_checked
-// NATIVE: llvm.call @obelisk_rt_v1_assoc_read_checked
-// NATIVE: llvm.call @obelisk_rt_v1_assoc_exists
-// NATIVE: llvm.call @obelisk_rt_v1_assoc_next
-// NATIVE: llvm.call @obelisk_rt_v1_reference_path_assoc_create
-// NATIVE: llvm.call @obelisk_rt_v1_assoc_delete
+// NATIVE: %[[KEY_TRACE:.*]] = llvm.mlir.addressof @__talos_element_trace_[[KEY]]
+// NATIVE: %[[PLAN:.*]] = llvm.mlir.addressof @__talos_assoc_key_plan_[[KEY]]
+// NATIVE: llvm.call @talos_rt_v1_assoc_create_element_keyed({{.*}}, %[[KEY_TRACE]], %{{.*}}, %[[PLAN]], %{{.*}}, %{{.*}})
+// NATIVE: llvm.call @talos_rt_v1_assoc_write_checked
+// NATIVE: llvm.call @talos_rt_v1_assoc_read_checked
+// NATIVE: llvm.call @talos_rt_v1_assoc_exists
+// NATIVE: llvm.call @talos_rt_v1_assoc_next
+// NATIVE: llvm.call @talos_rt_v1_reference_path_assoc_create
+// NATIVE: llvm.call @talos_rt_v1_assoc_delete
 // NATIVE-LABEL: llvm.func @sequence_key
-// NATIVE: llvm.call @obelisk_rt_v1_assoc_create_element_keyed
-// NATIVE: llvm.call @obelisk_rt_v1_assoc_first
+// NATIVE: llvm.call @talos_rt_v1_assoc_create_element_keyed
+// NATIVE: llvm.call @talos_rt_v1_assoc_first
 // NATIVE-NOT: unrealized_conversion_cast
 
 // An element-keyed creation carries the key descriptor, trace and plan.

@@ -1,7 +1,7 @@
 //===- PassIRDump.h - Stop a compile around one pass for replay -*- C++ -*-===//
 
-#ifndef OBELISK_DRIVER_PASSIRDUMP_H
-#define OBELISK_DRIVER_PASSIRDUMP_H
+#ifndef TALOS_DRIVER_PASSIRDUMP_H
+#define TALOS_DRIVER_PASSIRDUMP_H
 
 #include "TargetBackend.h"
 #include "mlir/Bytecode/BytecodeWriter.h"
@@ -17,7 +17,7 @@
 #include <mutex>
 #include <string>
 
-namespace obelisk::driver {
+namespace talos::driver {
 
 /// Implements PassIRDumpOptions for one pass manager.
 class PassIRDump final : public mlir::PassInstrumentation {
@@ -81,6 +81,6 @@ inline void addPassIRDump(mlir::PassManager &manager,
     manager.addInstrumentation(std::make_unique<PassIRDump>(options));
 }
 
-} // namespace obelisk::driver
+} // namespace talos::driver
 
-#endif // OBELISK_DRIVER_PASSIRDUMP_H
+#endif // TALOS_DRIVER_PASSIRDUMP_H

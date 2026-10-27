@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-sim-state-domain -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-sim-state-domain -o /dev/null 2>&1 | FileCheck %s
 module {
   simulation.design @partial_knownness {
     simulation.scope.decl 0

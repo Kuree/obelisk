@@ -2,8 +2,8 @@
 
 #include "AnalysisTestPasses.h"
 
-#include "obelisk/Analysis/NativeAOTAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/NativeAOTAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -22,15 +22,15 @@ public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(NativeAOTAnalysisTestPass)
 
   StringRef getArgument() const final {
-    return "test-obelisk-native-aot-analysis";
+    return "test-talos-native-aot-analysis";
   }
   StringRef getDescription() const final {
     return "print native AOT scheduler eligibility facts";
   }
 
   void runOnOperation() final {
-    obelisk::analysis::NativeAOTAnalysis analysis =
-        obelisk::analysis::NativeAOTAnalysis::compute(getOperation());
+    talos::analysis::NativeAOTAnalysis analysis =
+        talos::analysis::NativeAOTAnalysis::compute(getOperation());
     llvm::errs() << "native-aot eligible="
                  << (analysis.isEligible() ? "true" : "false")
                  << " fully=" << (analysis.isFullyEligible() ? "true" : "false")
@@ -45,7 +45,7 @@ public:
 
     SmallVector<std::pair<StringRef, uint32_t>> actors;
     for (auto [operation, slot] : analysis.getActorSlots())
-      if (auto function = dyn_cast<obelisk::sim::SimFuncOp>(operation))
+      if (auto function = dyn_cast<talos::sim::SimFuncOp>(operation))
         actors.emplace_back(function.getSymName(), slot);
     llvm::sort(actors, [](const auto &left, const auto &right) {
       if (left.second != right.second)
@@ -61,7 +61,7 @@ public:
     };
     SmallVector<BytecodeFragment> bytecodeFragments;
     for (const auto &[operation, blocks] : analysis.getBytecodeFragments()) {
-      auto function = dyn_cast<obelisk::sim::SimFuncOp>(operation);
+      auto function = dyn_cast<talos::sim::SimFuncOp>(operation);
       if (!function)
         continue;
       SmallVector<Block *> orderedBlocks;
@@ -93,10 +93,10 @@ public:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 
 void registerNativeAOTAnalysisTestPass() {
   PassRegistration<NativeAOTAnalysisTestPass>();
 }
 
-} // namespace obelisk
+} // namespace talos

@@ -5,10 +5,10 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/DPI/DPIDialect.h"
-#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/DPI/DPIDialect.h"
+#include "talos/Dialect/Runtime/RuntimeDialect.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -18,7 +18,7 @@
 #include <memory>
 #include <vector>
 
-extern "C" void obelisk_rt_v1_dpi_import_bytecode_link_anchor(void);
+extern "C" void talos_rt_v1_dpi_import_bytecode_link_anchor(void);
 
 namespace {
 enum class Engine { Bytecode, Native, AOT };
@@ -29,7 +29,7 @@ struct LifecycleProbe {
   uint64_t token = 0, taskControl = 0, blockControl = 0, blockID = 0;
   std::array<vpiHandle, 4> frames{};
   vpiHandle thread = nullptr, statement = nullptr;
-  const obelisk_rt_process_descriptor_v1 *middle = nullptr, *inner = nullptr;
+  const talos_rt_process_descriptor_v1 *middle = nullptr, *inner = nullptr;
   std::vector<unsigned> phases;
 };
 
@@ -39,16 +39,16 @@ void expectExpired(vpiHandle handle) {
   EXPECT_NE(vpi_chk_error(nullptr), 0);
 }
 
-void expectDepth(obelisk_rt_context *context, uint64_t expected) {
+void expectDepth(talos_rt_context *context, uint64_t expected) {
   uint64_t depth = UINT64_MAX;
-  ASSERT_EQ(obelisk_rt_v1_vpi_frame_depth(context, &depth), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_frame_depth(context, &depth), TALOS_RT_OK);
   EXPECT_EQ(depth, expected);
 }
 
-void inspectLifecycle(obelisk_rt_context *context, LifecycleProbe &probe,
+void inspectLifecycle(talos_rt_context *context, LifecycleProbe &probe,
                       unsigned phase) {
   probe.phases.push_back(phase);
-  const uint64_t current = obelisk_rt_v1_process_current(context);
+  const uint64_t current = talos_rt_v1_process_current(context);
   ASSERT_NE(current, 0u);
   if (phase == 0)
     probe.token = current;
@@ -58,28 +58,28 @@ void inspectLifecycle(obelisk_rt_context *context, LifecycleProbe &probe,
     // entry. Controls precede their frame entry, matching compiler ordering.
     expectDepth(context, phase);
     if (phase == 1)
-      ASSERT_EQ(obelisk_rt_v1_control_enter(context, 888, &probe.taskControl),
-                OBELISK_RT_OK);
+      ASSERT_EQ(talos_rt_v1_control_enter(context, 888, &probe.taskControl),
+                TALOS_RT_OK);
     uint64_t activation = 0;
     const uint64_t unit = phase == 0 ? 44 : phase == 3 ? 46 : 45;
-    const uint32_t kind = phase == 0   ? OBELISK_RT_VPI_FRAME_CODE_UNIT_SCOPE
-                          : phase == 2 ? OBELISK_RT_VPI_FRAME_STATEMENT_SCOPE
-                                       : OBELISK_RT_VPI_FRAME_CALL;
+    const uint32_t kind = phase == 0   ? TALOS_RT_VPI_FRAME_CODE_UNIT_SCOPE
+                          : phase == 2 ? TALOS_RT_VPI_FRAME_STATEMENT_SCOPE
+                                       : TALOS_RT_VPI_FRAME_CALL;
     const uint64_t origin = phase == 0   ? 44
                             : phase == 1 ? 20
                             : phase == 2 ? 12
                                          : 21;
     ASSERT_EQ(
-        obelisk_rt_v1_vpi_frame_enter(context, unit, kind, origin, &activation),
-        OBELISK_RT_OK);
+        talos_rt_v1_vpi_frame_enter(context, unit, kind, origin, &activation),
+        TALOS_RT_OK);
     if (phase == 2)
       probe.blockID = activation;
     probe.frames[phase] = vpi_handle(vpiFrame, nullptr);
     ASSERT_NE(probe.frames[phase], nullptr);
     EXPECT_EQ(vpi_get(vpiActive, probe.frames[phase]), 1);
     expectDepth(context, phase + 1);
-    ASSERT_EQ(obelisk_rt_v1_vpi_frame_checkpoint(context, 11 + phase),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_frame_checkpoint(context, 11 + phase),
+              TALOS_RT_OK);
     if (phase == 0) {
       probe.thread = vpi_handle(vpiThread, probe.frames[0]);
       ASSERT_NE(probe.thread, nullptr);
@@ -92,8 +92,8 @@ void inspectLifecycle(obelisk_rt_context *context, LifecycleProbe &probe,
     expectDepth(context, 4);
     EXPECT_EQ(vpi_get(vpiActive, probe.frames[3]), 1);
     if (phase == 4 && probe.exit == Exit::EscapeBlock) {
-      ASSERT_EQ(obelisk_rt_v1_control_disable(context, 777, 0, 1),
-                OBELISK_RT_OK);
+      ASSERT_EQ(talos_rt_v1_control_disable(context, 777, 0, 1),
+                TALOS_RT_OK);
       expectDepth(context, 2);
       expectExpired(probe.frames[2]);
       expectExpired(probe.frames[3]);
@@ -104,15 +104,15 @@ void inspectLifecycle(obelisk_rt_context *context, LifecycleProbe &probe,
     expectDepth(context, 3);
     expectExpired(probe.frames[3]);
     EXPECT_EQ(vpi_get(vpiActive, probe.frames[2]), 1);
-    ASSERT_EQ(obelisk_rt_v1_vpi_frame_leave(context, probe.blockID),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_frame_leave(context, probe.blockID),
+              TALOS_RT_OK);
   } else if (phase == 7) {
     expectDepth(context, 2);
     expectExpired(probe.frames[2]);
     expectExpired(probe.frames[3]);
     EXPECT_EQ(vpi_get(vpiActive, probe.frames[1]), 1);
-    ASSERT_EQ(obelisk_rt_v1_control_leave(context, probe.taskControl),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_control_leave(context, probe.taskControl),
+              TALOS_RT_OK);
   } else {
     ASSERT_EQ(phase, 8u);
     expectDepth(context, 1);
@@ -124,27 +124,27 @@ void inspectLifecycle(obelisk_rt_context *context, LifecycleProbe &probe,
   // Their return must restore the exact saved caller depth in the scheduler.
 }
 
-obelisk_rt_status
-inspectLifecycleImport(obelisk_rt_context *context, uint32_t importID,
-                       const obelisk_rt_import_input_v1 *inputs,
-                       uint32_t inputCount, obelisk_rt_import_output_v1 *,
+talos_rt_status
+inspectLifecycleImport(talos_rt_context *context, uint32_t importID,
+                       const talos_rt_import_input_v1 *inputs,
+                       uint32_t inputCount, talos_rt_import_output_v1 *,
                        uint32_t outputCount, void *userData) {
   EXPECT_EQ(importID, 123u);
   EXPECT_EQ(outputCount, 0u);
   if (inputCount != 1 || !inputs || !inputs[0].value)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   inspectLifecycle(context, *static_cast<LifecycleProbe *>(userData),
                    inputs[0].value[0]);
-  return ::testing::Test::HasFatalFailure() ? OBELISK_RT_FATAL : OBELISK_RT_OK;
+  return ::testing::Test::HasFatalFailure() ? TALOS_RT_FATAL : TALOS_RT_OK;
 }
 
 struct NativeFrame {
-  obelisk_rt_wait_record_v1 wait;
-  obelisk_rt_wait_entry_v1 event;
+  talos_rt_wait_record_v1 wait;
+  talos_rt_wait_entry_v1 event;
   LifecycleProbe *probe;
 };
 
-obelisk_rt_status nativeLifecycle(obelisk_rt_process_instance_v1 *instance) {
+talos_rt_status nativeLifecycle(talos_rt_process_instance_v1 *instance) {
   auto &frame = *static_cast<NativeFrame *>(instance->frame);
   auto &probe = *frame.probe;
   auto *context = instance->context;
@@ -153,85 +153,85 @@ obelisk_rt_status nativeLifecycle(obelisk_rt_process_instance_v1 *instance) {
     inspectLifecycle(context, probe, phase);
     return !::testing::Test::HasFatalFailure();
   };
-  auto call = [&](const obelisk_rt_process_descriptor_v1 *descriptor) {
-    obelisk_rt_process_instance_v1 *callee = nullptr;
-    auto status = obelisk_rt_v1_process_instance_create(descriptor, &callee);
-    if (status != OBELISK_RT_OK)
+  auto call = [&](const talos_rt_process_descriptor_v1 *descriptor) {
+    talos_rt_process_instance_v1 *callee = nullptr;
+    auto status = talos_rt_v1_process_instance_create(descriptor, &callee);
+    if (status != TALOS_RT_OK)
       return status;
     static_cast<NativeFrame *>(callee->frame)->probe = &probe;
-    *instance->action = {OBELISK_RT_FRAGMENT_TASK_CALL,
-                         OBELISK_RT_SUSPEND_NONE,
+    *instance->action = {TALOS_RT_FRAGMENT_TASK_CALL,
+                         TALOS_RT_SUSPEND_NONE,
                          1,
                          0,
                          reinterpret_cast<uintptr_t>(callee),
                          0};
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   };
   const uint64_t unit = instance->descriptor->handle.id;
   if (unit == 47) {
-    EXPECT_NE(obelisk_rt_v1_process_current(context), probe.token);
-    auto status = obelisk_rt_v1_control_disable(
+    EXPECT_NE(talos_rt_v1_process_current(context), probe.token);
+    auto status = talos_rt_v1_control_disable(
         context, probe.exit == Exit::DisableTask ? 888 : 777, 0, 1);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
   } else if (unit == 44) {
     if (instance->continuation == 0) {
       if (!inspect(0))
-        return OBELISK_RT_FATAL;
+        return TALOS_RT_FATAL;
       return call(probe.middle);
     }
     if (!inspect(8))
-      return OBELISK_RT_FATAL;
+      return TALOS_RT_FATAL;
   } else if (unit == 45) {
     if (instance->continuation == 0) {
       if (!inspect(1))
-        return OBELISK_RT_FATAL;
+        return TALOS_RT_FATAL;
       auto status =
-          obelisk_rt_v1_control_enter(context, 777, &probe.blockControl);
-      if (status != OBELISK_RT_OK)
+          talos_rt_v1_control_enter(context, 777, &probe.blockControl);
+      if (status != TALOS_RT_OK)
         return status;
-      status = obelisk_rt_v1_control_boundary(context, probe.blockControl, 2);
-      if (status != OBELISK_RT_OK)
+      status = talos_rt_v1_control_boundary(context, probe.blockControl, 2);
+      if (status != TALOS_RT_OK)
         return status;
       if (!inspect(2))
-        return OBELISK_RT_FATAL;
+        return TALOS_RT_FATAL;
       return call(probe.inner);
     }
     if (instance->continuation == 1) {
       if (!inspect(6))
-        return OBELISK_RT_FATAL;
-      auto status = obelisk_rt_v1_control_leave(context, probe.blockControl);
-      if (status != OBELISK_RT_OK)
+        return TALOS_RT_FATAL;
+      auto status = talos_rt_v1_control_leave(context, probe.blockControl);
+      if (status != TALOS_RT_OK)
         return status;
     }
     if (!inspect(7))
-      return OBELISK_RT_FATAL;
+      return TALOS_RT_FATAL;
   } else {
     EXPECT_EQ(unit, 46u);
     if (instance->continuation == 0) {
       if (!inspect(3))
-        return OBELISK_RT_FATAL;
-      frame.wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EVENT, 0, 1, 0, 0};
-      frame.event = {7, OBELISK_RT_WAIT_EDGE_NONE, 0};
-      *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
-                           OBELISK_RT_SUSPEND_EVENT,
+        return TALOS_RT_FATAL;
+      frame.wait = {TALOS_RT_VERSION, TALOS_RT_SUSPEND_EVENT, 0, 1, 0, 0};
+      frame.event = {7, TALOS_RT_WAIT_EDGE_NONE, 0};
+      *instance->action = {TALOS_RT_FRAGMENT_SUSPEND,
+                           TALOS_RT_SUSPEND_EVENT,
                            1,
-                           OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                           TALOS_RT_ACTION_FRAME_WAIT_RECORD,
                            0,
                            sizeof(frame.wait) + sizeof(frame.event)};
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (!inspect(4))
-      return OBELISK_RT_FATAL;
-    if (!obelisk_rt_v1_control_escape_pending(context) && !inspect(5))
-      return OBELISK_RT_FATAL;
+      return TALOS_RT_FATAL;
+    if (!talos_rt_v1_control_escape_pending(context) && !inspect(5))
+      return TALOS_RT_FATAL;
   }
   *instance->action = {
-      OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
-  return OBELISK_RT_OK;
+      TALOS_RT_FRAGMENT_TERMINATE, TALOS_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  return TALOS_RT_OK;
 }
 
-uint64_t layoutChecksum(const obelisk_rt_frame_layout_v1 &layout) {
+uint64_t layoutChecksum(const talos_rt_frame_layout_v1 &layout) {
   uint64_t hash = UINT64_C(14695981039346656037);
   auto append = [&](const void *data, size_t size) {
     auto *bytes = static_cast<const uint8_t *>(data);
@@ -254,17 +254,17 @@ uint64_t layoutChecksum(const obelisk_rt_frame_layout_v1 &layout) {
 }
 
 struct NativeDescriptor {
-  std::array<obelisk_rt_frame_field_v1, 2> fields{
-      {{OBELISK_RT_FRAME_WAIT, 0, 0,
-        sizeof(obelisk_rt_wait_record_v1) + sizeof(obelisk_rt_wait_entry_v1),
-        alignof(obelisk_rt_wait_record_v1), 0},
-       {OBELISK_RT_FRAME_CAPTURE, 0, offsetof(NativeFrame, probe),
+  std::array<talos_rt_frame_field_v1, 2> fields{
+      {{TALOS_RT_FRAME_WAIT, 0, 0,
+        sizeof(talos_rt_wait_record_v1) + sizeof(talos_rt_wait_entry_v1),
+        alignof(talos_rt_wait_record_v1), 0},
+       {TALOS_RT_FRAME_CAPTURE, 0, offsetof(NativeFrame, probe),
         sizeof(LifecycleProbe *), alignof(LifecycleProbe *), 0}}};
   std::array<uint32_t, 3> continuations{{0, 1, 2}};
-  obelisk_rt_frame_layout_v1 layout{};
-  obelisk_rt_process_descriptor_v1 descriptor{};
+  talos_rt_frame_layout_v1 layout{};
+  talos_rt_process_descriptor_v1 descriptor{};
   explicit NativeDescriptor(uint64_t id) {
-    layout = {OBELISK_RT_VERSION,
+    layout = {TALOS_RT_VERSION,
               0,
               sizeof(NativeFrame),
               alignof(NativeFrame),
@@ -275,27 +275,27 @@ struct NativeDescriptor {
               0};
     layout.checksum = layoutChecksum(layout);
     descriptor = {
-        {OBELISK_RT_DESCRIPTOR_PROCESS, 0, id},
-        OBELISK_RT_VERSION,
+        {TALOS_RT_DESCRIPTOR_PROCESS, 0, id},
+        TALOS_RT_VERSION,
         0,
-        OBELISK_RT_TIER_MASK_NATIVE,
+        TALOS_RT_TIER_MASK_NATIVE,
         0,
         &layout,
         [](uint64_t *size, uint64_t *alignment) {
           *size = 0;
           *alignment = 1;
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
         },
         nativeLifecycle,
-        [](obelisk_rt_process_instance_v1 *p) { p->native_handle = nullptr; },
+        [](talos_rt_process_instance_v1 *p) { p->native_handle = nullptr; },
         nullptr,
         nullptr,
         nullptr};
   }
-  obelisk_rt_process_instance_v1 *create(LifecycleProbe &probe) {
-    obelisk_rt_process_instance_v1 *instance = nullptr;
-    EXPECT_EQ(obelisk_rt_v1_process_instance_create(&descriptor, &instance),
-              OBELISK_RT_OK);
+  talos_rt_process_instance_v1 *create(LifecycleProbe &probe) {
+    talos_rt_process_instance_v1 *instance = nullptr;
+    EXPECT_EQ(talos_rt_v1_process_instance_create(&descriptor, &instance),
+              TALOS_RT_OK);
     if (instance)
       static_cast<NativeFrame *>(instance->frame)->probe = &probe;
     return instance;
@@ -303,27 +303,27 @@ struct NativeDescriptor {
 };
 
 TEST(GeneratedDesignDatabase, FrameSchedulerLifecycle) {
-  obelisk_rt_v1_dpi_import_bytecode_link_anchor();
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  talos_rt_v1_dpi_import_bytecode_link_anchor();
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry
       .insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-              obelisk::dpi::DPIDialect, obelisk::runtime::ObeliskRuntimeDialect,
-              obelisk::sim::ObeliskSimulationDialect>();
+              talos::dpi::DPIDialect, talos::runtime::TalosRuntimeDialect,
+              talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_VERSION;
+  talos_rt_execution_descriptor_v1 execution{};
+  execution.version = TALOS_RT_VERSION;
   execution.flags = encoded->executionFlags;
   execution.bytecode = encoded->bytecode.data();
   execution.bytecode_size = encoded->bytecode.size();
@@ -331,12 +331,12 @@ TEST(GeneratedDesignDatabase, FrameSchedulerLifecycle) {
   execution.design_database_size = encoded->designDatabase.size();
   execution.state_bit_count = encoded->stateBitCount;
   execution.checksum = checksum;
-  const obelisk_rt_dpi_scope_v1 scopes[] = {
+  const talos_rt_dpi_scope_v1 scopes[] = {
       {0, UINT64_MAX, "$root", 5, -9, -12, 0}, {1, 0, "top", 3, -9, -12, 0}};
   execution.dpi_scopes = scopes;
   execution.dpi_scope_count = 2;
   execution.dpi_time_precision = -12;
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
   const auto startup = std::find_if(
       encoded->functions.begin(), encoded->functions.end(),
       [](const auto &function) { return function.symbol == "startup"; });
@@ -354,81 +354,81 @@ TEST(GeneratedDesignDatabase, FrameSchedulerLifecycle) {
         descriptor->descriptor.execution = &execution;
       probe.middle = &middle.descriptor;
       probe.inner = &inner.descriptor;
-      obelisk_rt_process_instance_v1 *actor = nullptr;
-      obelisk_rt_native_schedule_plan plan{};
-      obelisk_rt_context *rawContext = nullptr;
+      talos_rt_process_instance_v1 *actor = nullptr;
+      talos_rt_native_schedule_plan plan{};
+      talos_rt_context *rawContext = nullptr;
       ASSERT_EQ(
-          obelisk_rt_v1_context_create_for_design(&execution, &rawContext),
-          OBELISK_RT_OK);
-      std::unique_ptr<obelisk_rt_context,
-                      decltype(&obelisk_rt_v1_context_destroy)>
-          runtime(rawContext, obelisk_rt_v1_context_destroy);
-      ASSERT_EQ(obelisk_rt_v1_context_register_import(
+          talos_rt_v1_context_create_for_design(&execution, &rawContext),
+          TALOS_RT_OK);
+      std::unique_ptr<talos_rt_context,
+                      decltype(&talos_rt_v1_context_destroy)>
+          runtime(rawContext, talos_rt_v1_context_destroy);
+      ASSERT_EQ(talos_rt_v1_context_register_import(
                     runtime.get(), 123, inspectLifecycleImport, &probe),
-                OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime.get(), nullptr, 0),
-                OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime.get()), OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime.get()),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_vpi_startup(runtime.get(), nullptr, 0),
+                TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime.get()), TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime.get()),
+                TALOS_RT_OK);
       if (engine == Engine::AOT) {
         plan.size = sizeof(plan);
         plan.graph_layout_checksum = execution.checksum;
-        plan.flags = OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC;
+        plan.flags = TALOS_RT_NATIVE_SCHEDULE_FULLY_STATIC;
         plan.mutable_state = &actor;
         plan.mutable_state_size = sizeof(actor);
         plan.actor_capacity = 1;
-        plan.bind = [](void *state, obelisk_rt_context *, uint32_t slot,
-                       obelisk_rt_process_instance_v1 *instance) {
+        plan.bind = [](void *state, talos_rt_context *, uint32_t slot,
+                       talos_rt_process_instance_v1 *instance) {
           if (slot != 0)
-            return OBELISK_RT_INVALID_ARGUMENT;
-          *static_cast<obelisk_rt_process_instance_v1 **>(state) = instance;
-          return OBELISK_RT_OK;
+            return TALOS_RT_INVALID_ARGUMENT;
+          *static_cast<talos_rt_process_instance_v1 **>(state) = instance;
+          return TALOS_RT_OK;
         };
-        plan.run = [](void *, obelisk_rt_context *ctx) {
-          constexpr obelisk_rt_native_schedule_node nodes[] = {
+        plan.run = [](void *, talos_rt_context *ctx) {
+          constexpr talos_rt_native_schedule_node nodes[] = {
               {0, 0, UINT32_MAX}, {0, 1, UINT32_MAX}};
-          return obelisk_rt_v1_scheduler_run_aot_nodes(ctx, nodes,
+          return talos_rt_v1_scheduler_run_aot_nodes(ctx, nodes,
                                                        std::size(nodes));
         };
-        plan.fallback_snapshot = [](void *, obelisk_rt_context *ctx,
-                                    obelisk_rt_aot_deopt_snapshot *snapshot) {
-          return obelisk_rt_v1_scheduler_snapshot_aot(ctx, snapshot);
+        plan.fallback_snapshot = [](void *, talos_rt_context *ctx,
+                                    talos_rt_aot_deopt_snapshot *snapshot) {
+          return talos_rt_v1_scheduler_snapshot_aot(ctx, snapshot);
         };
-        ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(runtime.get(), &plan),
-                  OBELISK_RT_OK);
+        ASSERT_EQ(talos_rt_v1_scheduler_install_aot(runtime.get(), &plan),
+                  TALOS_RT_OK);
       }
       if (engine == Engine::Bytecode) {
-        obelisk_rt_design_bytecode_entry_v1 entry{&execution, startup->index,
+        talos_rt_design_bytecode_entry_v1 entry{&execution, startup->index,
                                                   0};
         uint64_t scratchSize = 0, scratchAlignment = 0;
-        ASSERT_EQ(obelisk_rt_validate_design_bytecode(
+        ASSERT_EQ(talos_rt_validate_design_bytecode(
                       entry, runtime.get(), &scratchSize, &scratchAlignment),
-                  OBELISK_RT_OK);
+                  TALOS_RT_OK);
         ASSERT_LE(scratchAlignment, alignof(uint64_t));
         std::vector<uint64_t> frame((scratchSize + 7) / 8);
-        obelisk_rt_fragment_action_v1 action{};
-        ASSERT_EQ(obelisk_rt_execute_design_bytecode(
+        talos_rt_fragment_action_v1 action{};
+        ASSERT_EQ(talos_rt_execute_design_bytecode(
                       entry, runtime.get(), frame.data(), frame.size() * 8, 0,
                       scratchSize, 0, 0, &action),
-                  OBELISK_RT_OK);
-        ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+                  TALOS_RT_OK);
+        ASSERT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
       } else {
         auto *instance = outer.create(probe);
         ASSERT_NE(instance, nullptr);
         ASSERT_EQ(engine == Engine::AOT
-                      ? obelisk_rt_v1_scheduler_add_aot(runtime.get(), instance,
+                      ? talos_rt_v1_scheduler_add_aot(runtime.get(), instance,
                                                         0, 0, 0, nullptr,
                                                         nullptr, 0, nullptr, 0)
-                      : obelisk_rt_v1_scheduler_add(runtime.get(), instance, 0),
-                  OBELISK_RT_OK);
+                      : talos_rt_v1_scheduler_add(runtime.get(), instance, 0),
+                  TALOS_RT_OK);
       }
       auto run = [&] {
         return engine == Engine::AOT
-                   ? obelisk_rt_v1_scheduler_run_aot(runtime.get())
-                   : obelisk_rt_v1_scheduler_run(runtime.get());
+                   ? talos_rt_v1_scheduler_run_aot(runtime.get())
+                   : talos_rt_v1_scheduler_run(runtime.get());
       };
-      ASSERT_EQ(run(), OBELISK_RT_OK);
+      ASSERT_EQ(run(), TALOS_RT_OK);
       ASSERT_EQ(probe.phases, (std::vector<unsigned>{0, 1, 2, 3}));
       if (engine == Engine::AOT) {
         EXPECT_EQ(runtime->nativeSchedulePlan, &plan);
@@ -449,30 +449,30 @@ TEST(GeneratedDesignDatabase, FrameSchedulerLifecycle) {
       const uint64_t aotExecutions =
           runtime->signalDiagnostics.aotNodeExecutions;
       if (exit == Exit::Kill) {
-        obelisk_rt_process_control_disposition disposition{};
-        auto status = obelisk_rt_v1_process_control(
-            runtime.get(), probe.token, OBELISK_RT_PROCESS_CONTROL_KILL,
+        talos_rt_process_control_disposition disposition{};
+        auto status = talos_rt_v1_process_control(
+            runtime.get(), probe.token, TALOS_RT_PROCESS_CONTROL_KILL,
             &disposition);
         if (engine == Engine::AOT) {
           // process.control is deliberately excluded from installed AOT plans.
           // Rejection must retain the suspended activation; resume normally.
-          EXPECT_EQ(status, OBELISK_RT_TIER_UNAVAILABLE);
-          EXPECT_EQ(disposition, OBELISK_RT_PROCESS_CONTROL_CONTINUE);
+          EXPECT_EQ(status, TALOS_RT_TIER_UNAVAILABLE);
+          EXPECT_EQ(disposition, TALOS_RT_PROCESS_CONTROL_CONTINUE);
           for (auto frame : probe.frames)
             EXPECT_EQ(vpi_get(vpiType, frame), vpiFrame);
-          obelisk_rt_v1_scheduler_event(runtime.get(), 7, 0);
+          talos_rt_v1_scheduler_event(runtime.get(), 7, 0);
         } else {
-          ASSERT_EQ(status, OBELISK_RT_OK);
+          ASSERT_EQ(status, TALOS_RT_OK);
         }
       } else if (exit == Exit::DisableTask || exit == Exit::DisableBlock) {
         auto *instance = controller.create(probe);
         ASSERT_NE(instance, nullptr);
-        ASSERT_EQ(obelisk_rt_v1_scheduler_add(runtime.get(), instance, 0),
-                  OBELISK_RT_OK);
+        ASSERT_EQ(talos_rt_v1_scheduler_add(runtime.get(), instance, 0),
+                  TALOS_RT_OK);
       } else {
-        obelisk_rt_v1_scheduler_event(runtime.get(), 7, 0);
+        talos_rt_v1_scheduler_event(runtime.get(), 7, 0);
       }
-      ASSERT_EQ(run(), OBELISK_RT_OK);
+      ASSERT_EQ(run(), TALOS_RT_OK);
       if (engine == Engine::AOT) {
         EXPECT_EQ(runtime->nativeSchedulePlan, &plan);
         EXPECT_FALSE(runtime->nativeScheduleDeoptimized);
@@ -492,9 +492,9 @@ TEST(GeneratedDesignDatabase, FrameSchedulerLifecycle) {
         expectExpired(frame);
       expectExpired(probe.thread);
       uint64_t depth = UINT64_MAX;
-      ASSERT_EQ(obelisk_rt_vpi_frame_depth_process(runtime.get(), probe.token,
+      ASSERT_EQ(talos_rt_vpi_frame_depth_process(runtime.get(), probe.token,
                                                    &depth),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
       EXPECT_EQ(depth, 0u);
       EXPECT_EQ(vpi_get(vpiType, probe.statement), vpiTaskCall);
       EXPECT_EQ(vpi_release_handle(probe.statement), 1);

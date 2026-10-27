@@ -1,50 +1,50 @@
-// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph --obelisk-sim-specialize-static-state-nba \
+// RUN: talos-opt %s --talos-sim-build-compute-graph --talos-sim-specialize-static-state-nba \
 // RUN:   --prepare-native-schedule-inputs --schedule-plan-native-state \
 // RUN:   --prepare-native-process-frames --schedule-plan-native-transfers \
 // RUN:   --schedule-share-native-transfers \
 // RUN:   | FileCheck %s --check-prefix=BOUND
-// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph --obelisk-sim-specialize-static-state-nba \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --talos-sim-build-compute-graph --talos-sim-specialize-static-state-nba \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=LOWERED
-// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph --obelisk-sim-specialize-static-state-nba \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 0, width = 8, direct = false, guarded = true, nba = false>"' \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 1, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 1, width = 8, direct = false, guarded = true, nba = false>"' \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 2, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 2, width = 8, direct = false, guarded = true, nba = false>"' \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 3, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 3, width = 8, direct = false, guarded = true, nba = false>"' \
+// RUN: talos-opt %s --talos-sim-build-compute-graph --talos-sim-specialize-static-state-nba \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 0, width = 8, direct = false, guarded = true, nba = false>"' \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 1, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 1, width = 8, direct = false, guarded = true, nba = false>"' \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 2, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 2, width = 8, direct = false, guarded = true, nba = false>"' \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 3, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 3, width = 8, direct = false, guarded = true, nba = false>"' \
 // RUN:   --prepare-native-schedule-inputs --schedule-plan-native-state \
 // RUN:   --prepare-native-process-frames --schedule-plan-native-transfers \
 // RUN:   --schedule-share-native-transfers \
 // RUN:   | FileCheck %s --check-prefix=BOUND
-// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph --obelisk-sim-specialize-static-state-nba \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 0, width = 8, direct = false, guarded = false, nba = false>"' \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 1, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 1, width = 8, direct = false, guarded = false, nba = false>"' \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 2, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 2, width = 8, direct = false, guarded = false, nba = false>"' \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="[#schedule.static_actor_root<function = @first, descriptor = 0, read = true, write = false>, #schedule.static_actor_root<function = @first, descriptor = 1, read = false, write = true>, #schedule.static_actor_root<function = @second, descriptor = 1, read = true, write = false>, #schedule.static_actor_root<function = @second, descriptor = 2, read = false, write = true>]" replace-to=[]' \
+// RUN: talos-opt %s --talos-sim-build-compute-graph --talos-sim-specialize-static-state-nba \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 0, width = 8, direct = false, guarded = false, nba = false>"' \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 1, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 1, width = 8, direct = false, guarded = false, nba = false>"' \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 2, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 2, width = 8, direct = false, guarded = false, nba = false>"' \
+// RUN:   '--test-talos-edit-attributes=replace-from="[#schedule.static_actor_root<function = @first, descriptor = 0, read = true, write = false>, #schedule.static_actor_root<function = @first, descriptor = 1, read = false, write = true>, #schedule.static_actor_root<function = @second, descriptor = 1, read = true, write = false>, #schedule.static_actor_root<function = @second, descriptor = 2, read = false, write = true>]" replace-to=[]' \
 // RUN:   -o %t.mixed
-// RUN: obelisk-opt %t.mixed \
+// RUN: talos-opt %t.mixed \
 // RUN:   --prepare-native-schedule-inputs --schedule-plan-native-state \
 // RUN:   --prepare-native-process-frames --schedule-plan-native-transfers \
 // RUN:   --schedule-share-native-transfers \
 // RUN:   | FileCheck %s --check-prefix=SHARED
-// RUN: obelisk-opt %t.mixed \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 0, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = false>"' \
+// RUN: talos-opt %t.mixed \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 0, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = false>"' \
 // RUN:   --prepare-native-schedule-inputs --schedule-plan-native-state \
 // RUN:   --prepare-native-process-frames --schedule-plan-native-transfers \
 // RUN:   --schedule-share-native-transfers \
 // RUN:   | FileCheck %s --check-prefix=SOURCE
-// RUN: obelisk-opt %t.mixed \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 2, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 2, width = 8, direct = true, guarded = false, nba = false>"' \
+// RUN: talos-opt %t.mixed \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 2, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 2, width = 8, direct = true, guarded = false, nba = false>"' \
 // RUN:   --prepare-native-schedule-inputs --schedule-plan-native-state \
 // RUN:   --prepare-native-process-frames --schedule-plan-native-transfers \
 // RUN:   --schedule-share-native-transfers \
 // RUN:   | FileCheck %s --check-prefix=DESTINATION
-// RUN: not obelisk-opt %t.mixed \
+// RUN: not talos-opt %t.mixed \
 // RUN:   --prepare-native-schedule-inputs --schedule-plan-native-state \
 // RUN:   --prepare-native-process-frames --schedule-plan-native-transfers \
 // RUN:   --schedule-share-native-transfers \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 0, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = false>"' \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 1, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 1, width = 8, direct = true, guarded = false, nba = false>"' \
-// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 2, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 2, width = 8, direct = true, guarded = false, nba = false>"' \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 0, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = false>"' \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 1, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 1, width = 8, direct = true, guarded = false, nba = false>"' \
+// RUN:   '--test-talos-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 2, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 2, width = 8, direct = true, guarded = false, nba = false>"' \
 // RUN:   --schedule-plan-native-actors --schedule-specialize-native-captures \
 // RUN:   --convert-simulation-to-native-schedule --prepare-native-managed-roots \
 // RUN:   --schedule-mark-clean-native-nba --schedule-specialize-native-eval \
@@ -58,22 +58,22 @@
 // roots (third RUN) still carry descriptor-bound accesses.
 // BOUND-LABEL: module
 // BOUND-NOT: schedule.transfer.
-// LOWERED-NOT: __obelisk_transfer_kernel
-// LOWERED: llvm.func @first.__obelisk_group_body
-// LOWERED-NOT: __obelisk_transfer_kernel
-// LOWERED: llvm.func @second.__obelisk_group_body
-// LOWERED-NOT: __obelisk_transfer_kernel
+// LOWERED-NOT: __talos_transfer_kernel
+// LOWERED: llvm.func @first.__talos_group_body
+// LOWERED-NOT: __talos_transfer_kernel
+// LOWERED: llvm.func @second.__talos_group_body
+// LOWERED-NOT: __talos_transfer_kernel
 
 // With generic captures on the copied roots, an unrelated specialized root
 // must not disable all transfer sharing.
 // SHARED: schedule.transfer.activation
 // SHARED-SAME: actor = @copies::@first
-// SHARED-SAME: kernel = @__obelisk_transfer_kernel_0
+// SHARED-SAME: kernel = @__talos_transfer_kernel_0
 // SHARED: schedule.transfer.activation
 // SHARED-SAME: actor = @copies::@second
-// SHARED-SAME: kernel = @__obelisk_transfer_kernel_0
+// SHARED-SAME: kernel = @__talos_transfer_kernel_0
 // SHARED: schedule.transfer.kernel
-// SHARED-SAME: sym_name = "__obelisk_transfer_kernel_0"
+// SHARED-SAME: sym_name = "__talos_transfer_kernel_0"
 
 // A direct source root keeps only the copy that reads it unshared.
 // SOURCE-LABEL: module

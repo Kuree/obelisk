@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines -o /dev/null
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",

@@ -1,14 +1,14 @@
-#include "obelisk/Conversion/SimulationToSchedule.h"
+#include "talos/Conversion/SimulationToSchedule.h"
 #include "mlir/Pass/PassManager.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-namespace obelisk {
+#include "talos/Dialect/Simulation/SimulationOps.h"
+namespace talos {
 void registerSimulationToSchedulePipeline() {
   mlir::PassPipelineRegistration<>(
       "convert-simulation-to-schedule",
       "Derive the verified schedule from executable simulation IR",
       [](mlir::OpPassManager &manager) {
         manager.addNestedPass<sim::SimDesignOp>(
-            createObeliskSimBuildComputeGraphPass());
+            createTalosSimBuildComputeGraphPass());
       });
 }
-} // namespace obelisk
+} // namespace talos

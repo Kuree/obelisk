@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
 // Dynamic blocking stores clip to the packed root. Unknown payload bits are
@@ -8,7 +8,7 @@
 // overlaps the 32-bit root; its clipped window mask blends the payload into
 // both planes, so an invalid index leaves the cell unchanged. Observers are
 // woken only when either plane actually changed.
-// PLAN-LABEL: llvm.func @publish.__obelisk_eval_body_0(
+// PLAN-LABEL: llvm.func @publish.__talos_eval_body_0(
 // PLAN: llvm.load {{.*}} -> i32
 // PLAN: %[[INDEX_UNKNOWN:.*]] = llvm.load {{.*}} -> i32
 // PLAN: %[[KNOWN:.*]] = llvm.icmp "eq" %[[INDEX_UNKNOWN]], %{{.*}} : i32
@@ -26,9 +26,9 @@
 // PLAN: %[[SAME:.*]] = llvm.icmp "eq" %{{.*}}, %{{.*}} : i64
 // PLAN-NEXT: llvm.cond_br %[[SAME]], ^[[DONE:bb[0-9]+]], ^[[WAKE:bb[0-9]+]]
 // PLAN-NEXT: ^[[WAKE]]:
-// PLAN: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// PLAN: llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // PLAN: ^[[DONE]]:
-// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1
+// PLAN-LABEL: llvm.func @__talos_eval_dispatch_v1
 !wide = !simulation.logic<32>
 !wref = !simulation.ref<!wide>
 !ref = !simulation.ref<i1>

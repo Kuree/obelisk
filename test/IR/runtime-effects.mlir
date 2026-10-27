@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --cse %s | FileCheck %s
+// RUN: talos-opt --cse %s | FileCheck %s
 
 // Runtime status failures update per-thread context error state. Stream reads
 // also advance the cursor and may update EOF/error indicators, so neither kind

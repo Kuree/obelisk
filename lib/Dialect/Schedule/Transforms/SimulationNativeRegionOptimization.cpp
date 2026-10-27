@@ -1,12 +1,12 @@
 //===- SimulationNativeRegionOptimization.cpp - Native region SSA -------===//
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -21,10 +21,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMOPTIMIZENATIVEREGIONSPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMOPTIMIZENATIVEREGIONSPASS
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 
@@ -38,7 +38,7 @@ public:
       const OptimizeNativeFunctionRegionPass &other)
       : PassWrapper(other) {}
   StringRef getArgument() const final {
-    return "obelisk-sim-optimize-native-function-region";
+    return "talos-sim-optimize-native-function-region";
   }
   void runOnOperation() override;
 
@@ -459,7 +459,7 @@ bool forwardRegionNextState(sim::SimFuncOp function,
 
 void OptimizeNativeFunctionRegionPass::runOnOperation() {
   sim::SimFuncOp function = getOperation();
-  if (!::obelisk::schedule::has<schedule::metadata::nativeRegionBody>(function))
+  if (!::talos::schedule::has<schedule::metadata::nativeRegionBody>(function))
     return;
   auto cached = getCachedParentAnalysis<analysis::NBAMergeSafety>(
       function->getParentOfType<sim::SimDesignOp>());
@@ -479,7 +479,7 @@ void OptimizeNativeFunctionRegionPass::runOnOperation() {
   // Each update remains observable according to its own design's proof
   // (IEEE 1800-2023 4.6(b)), including when several designs share a module.
   if (!retainDirectBody)
-    ::obelisk::schedule::remove<schedule::metadata::nativeRegionBody>(function);
+    ::talos::schedule::remove<schedule::metadata::nativeRegionBody>(function);
   uint64_t roots = 0;
   uint64_t stages = 0;
   if (forwardRegionNextState(function, mergeSafety, roots, stages)) {
@@ -489,9 +489,9 @@ void OptimizeNativeFunctionRegionPass::runOnOperation() {
   }
 }
 
-class ObeliskSimOptimizeNativeRegionsPass final
-    : public impl::ObeliskSimOptimizeNativeRegionsPassBase<
-          ObeliskSimOptimizeNativeRegionsPass> {
+class TalosSimOptimizeNativeRegionsPass final
+    : public impl::TalosSimOptimizeNativeRegionsPassBase<
+          TalosSimOptimizeNativeRegionsPass> {
 public:
   void runOnOperation() override {
     auto design = getOperation();
@@ -505,4 +505,4 @@ public:
 };
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --canonicalize -o %t
+// RUN: talos-opt %s --canonicalize -o %t
 // RUN: FileCheck %s < %t
-// RUN: obelisk-opt %t --canonicalize -o %t.twice
+// RUN: talos-opt %t --canonicalize -o %t.twice
 // RUN: diff %t %t.twice
 
 // Dialect patterns must compose across multiple producers and converge.

@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-obelisk %s 2>&1 | FileCheck %s
+// RUN: not talos -emit-talos %s 2>&1 | FileCheck %s
 
 module dpi_deprecated_unsupported;
   import "DPI" function int legacy_import(input int value);

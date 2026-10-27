@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=full},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-vpi-write-tier1-runtime.test.
@@ -7,8 +7,8 @@
 // update the canonical planes; force must survive NBA writes; variable release
 // retains the forced value until the next assignment. Depositing X invalidates
 // two-state promotion, and a later known deposit permits recovery.
-// PLAN-DAG: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// PLAN-DAG: llvm.func @__obelisk_eval_dispatch_v1
+// PLAN-DAG: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
+// PLAN-DAG: llvm.func @__talos_eval_dispatch_v1
 // Both long, writer-free intervals must use Tier 1. Runtime work stays
 // bounded by the seven actual mutations, including recovery after release.
 // The shared loop counts bootstrap, plan-node and barrier iterations as well

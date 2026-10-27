@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=off}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-simplify-bodies{vpi=off}))' | FileCheck %s
 
 // IEEE 1800-2023 9.6.2, 4.3: a named-block activation that no `disable`
 // targets and that registers no boundary has no user-visible effect; its

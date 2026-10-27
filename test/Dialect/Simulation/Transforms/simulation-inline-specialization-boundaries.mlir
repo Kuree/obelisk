@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=2 caller-growth-percent=10000 caller-growth-constant=10000 design-growth-percent=10000 design-growth-constant=10000}))' | FileCheck %s --check-prefix=O2
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3 caller-growth-percent=10000 caller-growth-constant=10000 design-growth-percent=10000 design-growth-constant=10000}))' | FileCheck %s --check-prefix=O3
-// RUN: not obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{max-iterations=4294967296}))' 2>&1 | FileCheck %s --check-prefix=ITERATION-ERROR
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=2 caller-growth-percent=10000 caller-growth-constant=10000 design-growth-percent=10000 design-growth-constant=10000}))' | FileCheck %s --check-prefix=O2
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=3 caller-growth-percent=10000 caller-growth-constant=10000 design-growth-percent=10000 design-growth-constant=10000}))' | FileCheck %s --check-prefix=O3
+// RUN: not talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{max-iterations=4294967296}))' 2>&1 | FileCheck %s --check-prefix=ITERATION-ERROR
 
 module {
   simulation.design @specialization_boundaries {

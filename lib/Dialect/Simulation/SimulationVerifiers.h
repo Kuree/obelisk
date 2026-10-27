@@ -1,19 +1,19 @@
 //===- SimulationVerifiers.h - Shared verifier helpers ---------*- C++ -*-===//
 //
 // Helpers shared by the simulation dialect's verifier translation units.
-// These are implementation details of ObeliskSimulationIR and are not part of
+// These are implementation details of TalosSimulationIR and are not part of
 // the dialect's public interface.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef OBELISK_LIB_DIALECT_SIMULATION_SIMULATIONVERIFIERS_H
-#define OBELISK_LIB_DIALECT_SIMULATION_SIMULATIONVERIFIERS_H
+#ifndef TALOS_LIB_DIALECT_SIMULATION_SIMULATIONVERIFIERS_H
+#define TALOS_LIB_DIALECT_SIMULATION_SIMULATIONVERIFIERS_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include <optional>
 
-namespace obelisk::sim {
+namespace talos::sim {
 
 /// Verify declaration-owned interface dispatch contracts across the design.
 mlir::LogicalResult verifyVPIInterfaceDispatch(SimDesignOp design);
@@ -72,6 +72,6 @@ verifyVPITypeSemantics(llvm::function_ref<mlir::InFlightDiagnostic()> emitError,
                        mlir::Type executableType,
                        VPITypeSemanticsAttr semantics);
 
-} // namespace obelisk::sim
+} // namespace talos::sim
 
-#endif // OBELISK_LIB_DIALECT_SIMULATION_SIMULATIONVERIFIERS_H
+#endif // TALOS_LIB_DIALECT_SIMULATION_SIMULATIONVERIFIERS_H

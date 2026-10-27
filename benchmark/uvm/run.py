@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Compile and execute the real-UVM smoke benchmark with Obelisk -O3."""
+"""Compile and execute the real-UVM smoke benchmark with Talos -O3."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OBELISK = REPO_ROOT / "build/tools/driver/obelisk"
-DEFAULT_UVM = REPO_ROOT / "build/_deps/obelisk_uvm-src/src"
+DEFAULT_TALOS = REPO_ROOT / "build/tools/driver/talos"
+DEFAULT_UVM = REPO_ROOT / "build/_deps/talos_uvm-src/src"
 SMOKE = Path(__file__).with_name("smoke.sv")
 
 
@@ -37,7 +37,7 @@ def available_cpu_count() -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--obelisk", type=Path, default=DEFAULT_OBELISK)
+    parser.add_argument("--talos", type=Path, default=DEFAULT_TALOS)
     parser.add_argument("--uvm-root", type=Path, default=DEFAULT_UVM)
     parser.add_argument(
         "--execution-tier", choices=("bytecode", "native"), default="bytecode"
@@ -76,7 +76,7 @@ def main() -> int:
     if args.compile_threads < 1:
         print("error: --compile-threads must be at least 1", file=sys.stderr)
         return 2
-    compiler = args.obelisk.resolve()
+    compiler = args.talos.resolve()
     uvm_root = args.uvm_root.resolve()
     uvm_package = uvm_root / "uvm_pkg.sv"
     for required in (compiler, uvm_package, SMOKE):
@@ -84,7 +84,7 @@ def main() -> int:
             print(f"error: required file does not exist: {required}", file=sys.stderr)
             return 2
 
-    with tempfile.TemporaryDirectory(prefix="obelisk-uvm-bench-") as directory:
+    with tempfile.TemporaryDirectory(prefix="talos-uvm-bench-") as directory:
         binary = Path(directory) / "uvm-smoke"
         command = [
             str(compiler),
@@ -94,7 +94,7 @@ def main() -> int:
             str(uvm_root),
             "-D",
             "UVM_NO_DPI",
-            "--top=obelisk_uvm_smoke_top",
+            "--top=talos_uvm_smoke_top",
             "--std=1800-2017",
             "-O3",
             f"--execution-tier={args.execution_tier}",
@@ -145,7 +145,7 @@ def main() -> int:
         sys.stderr.write(simulated.stderr)
         passed = (
             simulated.returncode == 0
-            and "[OBELISK_SMOKE] run_phase completed at 1ns" in simulated.stdout
+            and "[TALOS_SMOKE] run_phase completed at 1ns" in simulated.stdout
             and "UVM_ERROR :    0" in simulated.stdout
             and "UVM_FATAL :    0" in simulated.stdout
         )

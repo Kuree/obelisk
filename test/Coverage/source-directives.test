@@ -1,13 +1,13 @@
 # RUN: %split-file %s %t
-# RUN: obelisk -O0 --coverage=line -I%t %t/top.sv -o %t/sim
+# RUN: talos -O0 --coverage=line -I%t %t/top.sv -o %t/sim
 # RUN: %t/sim --coverage-output=%t/coverage.obcov
-# RUN: obelisk-cov report --format=text %t/coverage.obcov | \
+# RUN: talos-cov report --format=text %t/coverage.obcov | \
 # RUN:   FileCheck %s --check-prefix=REPORT
-# RUN: obelisk-cov report --format=lcov %t/coverage.obcov -o %t/coverage.lcov
+# RUN: talos-cov report --format=lcov %t/coverage.obcov -o %t/coverage.lcov
 # RUN: FileCheck %s --check-prefix=CONTROL < %t/coverage.lcov
-# RUN: not obelisk --coverage=toggle -emit-sim %t/unbalanced.sv \
+# RUN: not talos --coverage=toggle -emit-sim %t/unbalanced.sv \
 # RUN:   -o %t/unbalanced.mlir 2>&1 | FileCheck %s --check-prefix=UNBALANCED
-# RUN: not obelisk -O0 --coverage=line %t/unknown.sv \
+# RUN: not talos -O0 --coverage=line %t/unknown.sv \
 # RUN:   -o %t/unknown 2>&1 | FileCheck %s --check-prefix=UNKNOWN
 
 # REPORT: line:
@@ -25,9 +25,9 @@
 # UNKNOWN: metrics must be unique line, toggle, functional, assertion, or fsm names
 
 #--- defs.svh
-// obelisk coverage off line reason="macro definition region"
+// talos coverage off line reason="macro definition region"
 `define FROM_DISABLED_DEFINITION value = value + 1;
-// obelisk coverage on line
+// talos coverage on line
 
 `define FROM_ENABLED_DEFINITION value = value + 1;
 
@@ -36,23 +36,23 @@
 module top;
   integer value;
   initial begin
-    // obelisk coverage off line reason="outer generated region"
+    // talos coverage off line reason="outer generated region"
     value = 1;
-    // obelisk coverage off line reason="nested generated region"
+    // talos coverage off line reason="nested generated region"
     value = 2;
-    // obelisk coverage on line
+    // talos coverage on line
     value = 3;
-    // obelisk coverage on line
+    // talos coverage on line
     value = 4;
     if (value) begin
-      // obelisk coverage off line reason="nested control body"
+      // talos coverage off line reason="nested control body"
       value = 5;
-      // obelisk coverage on line
+      // talos coverage on line
     end
     `FROM_DISABLED_DEFINITION
-    // obelisk coverage off line reason="macro expansion region"
+    // talos coverage off line reason="macro expansion region"
     `FROM_ENABLED_DEFINITION
-    // obelisk coverage on line
+    // talos coverage on line
     $finish;
   end
 endmodule
@@ -61,14 +61,14 @@ endmodule
 module unbalanced;
   // No executable line candidates: directive validation is source-level.
 endmodule
-// obelisk coverage off line
+// talos coverage off line
 
 #--- unknown.sv
 module unknown;
   integer value;
   initial begin
-    // obelisk coverage off branch
+    // talos coverage off branch
     value = 1;
-    // obelisk coverage on branch
+    // talos coverage on branch
   end
 endmodule

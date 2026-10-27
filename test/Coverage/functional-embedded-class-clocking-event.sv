@@ -1,7 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
+// RUN: %talos --std=1800-2023 -O0 --target=native \
 // RUN:   --coverage=functional -o %t.native %s
 // RUN: %t.native --no-coverage-dump > %t.native.out
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
+// RUN: %talos --std=1800-2023 -O3 --execution-tier=bytecode \
 // RUN:   --coverage=functional -o %t.bytecode %s
 // RUN: %t.bytecode --no-coverage-dump > %t.bytecode.out
 // RUN: diff -u %t.native.out %t.bytecode.out

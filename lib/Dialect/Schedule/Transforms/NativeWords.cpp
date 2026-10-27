@@ -11,20 +11,20 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/CSE.h"
-#include "obelisk/Analysis/HandleDataflowAnalysis.h"
-#include "obelisk/Analysis/NativeWordAnalysis.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/HandleDataflowAnalysis.h"
+#include "talos/Analysis/NativeWordAnalysis.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_OPTIMIZENATIVEWORDSPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 namespace {
 using Kind = analysis::WordLaneKind;
 bool isLaneReference(Kind kind) {
@@ -904,7 +904,7 @@ public:
           if (diagnostics) {
             std::string message;
             llvm::raw_string_ostream os(message);
-            os << "obelisk native word formed: " << function.getSymName() << " "
+            os << "talos native word formed: " << function.getSymName() << " "
                << location << '\n';
             result.messages.push_back(std::move(message));
           }
@@ -984,7 +984,7 @@ public:
         if (diagnostics) {
           std::string message;
           llvm::raw_string_ostream os(message);
-          os << "obelisk native word rejected: " << function.getSymName() << " "
+          os << "talos native word rejected: " << function.getSymName() << " "
              << location << " " << reason << '\n';
           rejections.push_back(std::move(message));
         }
@@ -1036,7 +1036,7 @@ private:
       return;
     }
     if (diagnostics)
-      llvm::errs() << "obelisk native word regions: formed=" << formed
+      llvm::errs() << "talos native word regions: formed=" << formed
                    << " predication-candidates=" << predicationCandidates
                    << " predication-budget-skipped=" << predicationSkipped
                    << '\n';
@@ -1046,4 +1046,4 @@ private:
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

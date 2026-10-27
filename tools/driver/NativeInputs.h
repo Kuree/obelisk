@@ -1,8 +1,8 @@
 //===- NativeInputs.h - Direct source/native input classification -*- C++
 //-*-===//
 
-#ifndef OBELISK_TOOLS_DRIVER_NATIVEINPUTS_H
-#define OBELISK_TOOLS_DRIVER_NATIVEINPUTS_H
+#ifndef TALOS_TOOLS_DRIVER_NATIVEINPUTS_H
+#define TALOS_TOOLS_DRIVER_NATIVEINPUTS_H
 
 #include "TargetBackend.h"
 
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace obelisk::driver {
+namespace talos::driver {
 
 struct ClassifiedInputs {
   std::vector<std::string> systemVerilog;
@@ -29,6 +29,6 @@ mlir::LogicalResult classifyDirectInputs(llvm::ArrayRef<std::string> inputs,
                                          llvm::StringRef vpiMode,
                                          ClassifiedInputs &result);
 
-} // namespace obelisk::driver
+} // namespace talos::driver
 
-#endif // OBELISK_TOOLS_DRIVER_NATIVEINPUTS_H
+#endif // TALOS_TOOLS_DRIVER_NATIVEINPUTS_H

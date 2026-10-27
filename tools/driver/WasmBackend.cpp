@@ -41,7 +41,7 @@ extern "C" void LLVMInitializeWebAssemblyTarget();
 extern "C" void LLVMInitializeWebAssemblyTargetMC();
 extern "C" void LLVMInitializeWebAssemblyAsmPrinter();
 
-namespace obelisk::driver {
+namespace talos::driver {
 namespace {
 
 constexpr StringLiteral kTargetTriple = "wasm32-unknown-emscripten";
@@ -67,17 +67,17 @@ FailureOr<SmallString<256>> findWasmSysroot(StringRef explicitSysroot) {
     sysroot = *emsdk;
     sys::path::append(sysroot, "upstream", "emscripten", "cache", "sysroot");
   } else {
-    errs() << "obelisk: error: no wasm sysroot; pass --sysroot=<dir> or set "
+    errs() << "talos: error: no wasm sysroot; pass --sysroot=<dir> or set "
               "EMSDK\n";
     return failure();
   }
   if (sys::fs::make_absolute(sysroot)) {
-    errs() << "obelisk: error: invalid wasm sysroot '" << sysroot << "'\n";
+    errs() << "talos: error: invalid wasm sysroot '" << sysroot << "'\n";
     return failure();
   }
   sys::path::remove_dots(sysroot, true);
   if (!sys::fs::is_directory(sysroot)) {
-    errs() << "obelisk: error: wasm sysroot '" << sysroot
+    errs() << "talos: error: wasm sysroot '" << sysroot
            << "' is not a directory\n";
     return failure();
   }
@@ -88,7 +88,7 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
                              StringRef supportRoot,
                              const NativeOutputOptions &options) {
   if (!options.sharedLibraryInputs.empty()) {
-    errs() << "obelisk: error: shared libraries are not linkable into a wasm "
+    errs() << "talos: error: shared libraries are not linkable into a wasm "
               "module; link them statically instead\n";
     return failure();
   }
@@ -101,16 +101,16 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
   SmallString<256> libraryDirectory(*sysroot);
   sys::path::append(libraryDirectory, "lib", "wasm32-emscripten");
   if (!sys::fs::is_directory(libraryDirectory)) {
-    errs() << "obelisk: error: wasm sysroot '" << *sysroot
+    errs() << "talos: error: wasm sysroot '" << *sysroot
            << "' has no wasm32-emscripten libraries; a wasm64 sysroot cannot "
               "satisfy the 32-bit runtime ABI\n";
     return failure();
   }
 
   SmallString<256> runtimeArchive(supportRoot);
-  sys::path::append(runtimeArchive, "libobelisk_rt.a");
+  sys::path::append(runtimeArchive, "libtalos_rt.a");
   if (!sys::fs::exists(runtimeArchive)) {
-    errs() << "obelisk: error: wasm support is missing '" << runtimeArchive
+    errs() << "talos: error: wasm support is missing '" << runtimeArchive
            << "'\n";
     return failure();
   }
@@ -121,7 +121,7 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
     SmallString<256> path(libraryDirectory);
     sys::path::append(path, filename);
     if (!sys::fs::exists(path)) {
-      errs() << "obelisk: error: wasm sysroot is missing '" << path << "'\n";
+      errs() << "talos: error: wasm sysroot is missing '" << path << "'\n";
       return failure();
     }
   }
@@ -129,7 +129,7 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
   FailureOr<SmallString<256>> temporary =
       makeTemporaryBeside(outputPath, ".wasm");
   if (failed(temporary)) {
-    errs() << "obelisk: error: could not create temporary module beside '"
+    errs() << "talos: error: could not create temporary module beside '"
            << outputPath << "'\n";
     return failure();
   }
@@ -148,10 +148,10 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
   // The host reads the design's final simulation time after main returns.
   // Both accessors are optional to a host, but wasm-ld drops anything not
   // reachable from an explicit export.
-  owned.push_back("--export=obelisk_final_time");
-  owned.push_back("--export=obelisk_time_precision_fs");
+  owned.push_back("--export=talos_final_time");
+  owned.push_back("--export=talos_time_precision_fs");
   if (options.vpi != "off")
-    owned.push_back("--export=obelisk_rt_v1_vpi_object_model");
+    owned.push_back("--export=talos_rt_v1_vpi_object_model");
   owned.push_back("--export-memory");
   owned.push_back("--allow-undefined");
   owned.push_back("-o");
@@ -247,4 +247,4 @@ std::unique_ptr<TargetBackend> createWasmBackend() {
   return std::make_unique<WasmBackend>();
 }
 
-} // namespace obelisk::driver
+} // namespace talos::driver

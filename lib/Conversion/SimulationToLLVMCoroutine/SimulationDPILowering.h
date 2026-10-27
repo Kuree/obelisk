@@ -1,9 +1,9 @@
 //===- SimulationDPILowering.h - Shared native DPI lowering support ------===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONDPILOWERING_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONDPILOWERING_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONDPILOWERING_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONDPILOWERING_H
 
-#include "obelisk/Dialect/Simulation/SimulationAttrs.h"
+#include "talos/Dialect/Simulation/SimulationAttrs.h"
 
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Operation.h"
@@ -11,7 +11,7 @@
 
 #include <cstdint>
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 mlir::Value makeDPIPlaneStorage(mlir::OpBuilder &builder,
                                 mlir::Location location, mlir::Value value,
@@ -40,6 +40,6 @@ parseDPIOperandABI(mlir::Attribute attribute, mlir::Operation *operation) {
   };
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONDPILOWERING_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONDPILOWERING_H

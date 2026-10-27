@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | obelisk-translate --mlir-to-llvmir \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off require-bytecode=true},convert-talos-sim-processes-to-llvm-coroutines)' \
+// RUN:   | talos-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
 // RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
@@ -32,7 +32,7 @@ module attributes {
     simulation.code_unit.decl 9980001 in 0 always hierarchy "top.observe"
     simulation.code_unit.decl 9980002 in 0 initial hierarchy "top.drive"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9980000 : i64} {
       %a = simulation.context.storage %ctx[0] :

@@ -1,14 +1,14 @@
-// RUN: obelisk-opt %S/simulation-ranked-group-external-clock.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=off},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=NO-WRITE
-// RUN: obelisk-opt %S/simulation-ranked-group-external-clock.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=NO-WRITE
-// RUN: obelisk-opt %S/simulation-ranked-group-external-clock.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=WRITE
+// RUN: talos-opt %S/simulation-ranked-group-external-clock.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph{vpi=off},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=NO-WRITE
+// RUN: talos-opt %S/simulation-ranked-group-external-clock.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph{vpi=read},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=read},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=NO-WRITE
+// RUN: talos-opt %S/simulation-ranked-group-external-clock.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=full},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=WRITE
 
 // Read-only observation uses canonical state at existing cuts (LRM 38.15).
 // Only writable VPI emits local scheduling/override routing (38.34/10.6.2).
-// NO-WRITE-NOT: __obelisk_eval_write_guard_
-// NO-WRITE-NOT: obelisk_rt_v1_scheduler_prepare_eval_nba_local_write
-// NO-WRITE-NOT: obelisk_rt_v1_static_nba_specialization_guard_write
+// NO-WRITE-NOT: __talos_eval_write_guard_
+// NO-WRITE-NOT: talos_rt_v1_scheduler_prepare_eval_nba_local_write
+// NO-WRITE-NOT: talos_rt_v1_static_nba_specialization_guard_write
 // NO-WRITE-NOT: schedule.nba.guarded_private_influence
-// WRITE: llvm.func @__obelisk_eval_write_guard_
-// WRITE: llvm.call @obelisk_rt_v1_static_specialization_guard
-// WRITE: llvm.func @__obelisk_eval_dispatch_v1
-// WRITE: llvm.call @obelisk_rt_v1_scheduler_execute_aot_actor
+// WRITE: llvm.func @__talos_eval_write_guard_
+// WRITE: llvm.call @talos_rt_v1_static_specialization_guard
+// WRITE: llvm.func @__talos_eval_dispatch_v1
+// WRITE: llvm.call @talos_rt_v1_scheduler_execute_aot_actor

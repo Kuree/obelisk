@@ -9,9 +9,9 @@
 
 #include "AnalysisTestPasses.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/RandomSamplerPlan.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/RandomSamplerPlan.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -29,7 +29,7 @@ namespace {
 StringRef opcodeName(unsigned opcode) {
   switch (opcode) {
 #define OPCODE(name)                                                           \
-  case OBELISK_RT_RANDOM_##name##_V1:                                          \
+  case TALOS_RT_RANDOM_##name##_V1:                                          \
     return #name;
     OPCODE(PUSH_VARIABLE)
     OPCODE(PUSH_CAPTURE)
@@ -133,7 +133,7 @@ private:
 /// conjunct they belong to.
 LogicalResult printPlan(Operation *op, const RandomProgramReader &reader,
                         size_t size, raw_ostream &os) {
-  using namespace obelisk::random;
+  using namespace talos::random;
   if (size < samplerPlanTrailerSize)
     return op->emitError("random program sampler plan is truncated");
   size_t trailer = size - samplerPlanTrailerSize;
@@ -194,11 +194,11 @@ LogicalResult printPlan(Operation *op, const RandomProgramReader &reader,
 
 LogicalResult printProgram(Operation *op, StringRef bytes, raw_ostream &os) {
   RandomProgramReader reader(bytes);
-  if (!reader.fits(0, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE) ||
-      reader.read(0, 4) != OBELISK_RT_RANDOM_PROGRAM_MAGIC)
+  if (!reader.fits(0, TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE) ||
+      reader.read(0, 4) != TALOS_RT_RANDOM_PROGRAM_MAGIC)
     return op->emitError("random program has no valid header");
   unsigned version = reader.read(4, 2);
-  bool wide = version == OBELISK_RT_RANDOM_PROGRAM_VERSION_V2;
+  bool wide = version == TALOS_RT_RANDOM_PROGRAM_VERSION_V2;
   size_t header = reader.read(6, 2);
   uint64_t width = reader.read(8, 4), instructions = reader.read(12, 4),
            captures = reader.read(16, 4), flags = reader.read(20, 4);
@@ -210,18 +210,18 @@ LogicalResult printProgram(Operation *op, StringRef bytes, raw_ostream &os) {
   os << " flags ";
   printFlags(
       os, flags,
-      {{OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT, "HAS_SOFT"},
-       {OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE, "HAS_SOLVE_BEFORE"},
-       {OBELISK_RT_RANDOM_PROGRAM_HAS_DIST, "HAS_DIST"},
-       {OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS, "HAS_DOMAINS"},
-       {OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM, "EXACT_UNIFORM"},
-       {OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY,
+      {{TALOS_RT_RANDOM_PROGRAM_HAS_SOFT, "HAS_SOFT"},
+       {TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE, "HAS_SOLVE_BEFORE"},
+       {TALOS_RT_RANDOM_PROGRAM_HAS_DIST, "HAS_DIST"},
+       {TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS, "HAS_DOMAINS"},
+       {TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM, "EXACT_UNIFORM"},
+       {TALOS_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY,
         "HAS_FUNCTION_PRIORITY"},
-       {OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED, "EXACT_WEIGHTED"},
-       {OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS,
+       {TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED, "EXACT_WEIGHTED"},
+       {TALOS_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS,
         "HAS_GUARD_INPUT_MASKS"},
-       {OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN, "HAS_SAMPLER_PLAN"},
-       {OBELISK_RT_RANDOM_PROGRAM_HAS_REAL, "HAS_REAL"}});
+       {TALOS_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN, "HAS_SAMPLER_PLAN"},
+       {TALOS_RT_RANDOM_PROGRAM_HAS_REAL, "HAS_REAL"}});
   os << "\n";
   size_t offset = header;
   size_t pool = header + instructions * 16;
@@ -242,7 +242,7 @@ LogicalResult printProgram(Operation *op, StringRef bytes, raw_ostream &os) {
       os << " flags " << instructionFlags;
     if (operand)
       os << " operand " << operand;
-    if (opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
+    if (opcode == TALOS_RT_RANDOM_PUSH_LITERAL_V1) {
       // A version 2 literal is a pool index; print its low word.
       if (wide && auxiliary >= literals)
         return op->emitError("random program literal is out of range");
@@ -255,33 +255,33 @@ LogicalResult printProgram(Operation *op, StringRef bytes, raw_ostream &os) {
   }
   offset += literals * 8;
   uint64_t words = std::max<uint64_t>(1, (width + 63) / 64);
-  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) {
+  if (flags & TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) {
     if (!reader.fits(offset, 4))
       return op->emitError("random program solve edges are truncated");
     offset += 4 + reader.read(offset, 4) *
                       (wide ? words * 16 +
-                                  OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2
-                            : OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE);
+                                  TALOS_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2
+                            : TALOS_RT_RANDOM_SOLVE_EDGE_SIZE);
   }
-  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) {
+  if (flags & TALOS_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) {
     if (!reader.fits(offset, 4))
       return op->emitError("random program priority inputs are truncated");
     offset += 4 + reader.read(offset, 4) *
-                      (OBELISK_RT_RANDOM_PRIORITY_INPUT_RECORD_HEADER_SIZE +
+                      (TALOS_RT_RANDOM_PRIORITY_INPUT_RECORD_HEADER_SIZE +
                        2 * words * 8);
   }
-  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) {
-    if (!reader.fits(offset, OBELISK_RT_RANDOM_DIST_HEADER_SIZE))
+  if (flags & TALOS_RT_RANDOM_PROGRAM_HAS_DIST) {
+    if (!reader.fits(offset, TALOS_RT_RANDOM_DIST_HEADER_SIZE))
       return op->emitError("random program dist records are truncated");
     uint64_t records = reader.read(offset + 4, 4);
-    offset += OBELISK_RT_RANDOM_DIST_HEADER_SIZE;
-    if (!reader.fits(offset, records * OBELISK_RT_RANDOM_DIST_RECORD_SIZE))
+    offset += TALOS_RT_RANDOM_DIST_HEADER_SIZE;
+    if (!reader.fits(offset, records * TALOS_RT_RANDOM_DIST_RECORD_SIZE))
       return op->emitError("random program dist records are truncated");
     for (uint64_t index = 0; index != records;
-         ++index, offset += OBELISK_RT_RANDOM_DIST_RECORD_SIZE) {
+         ++index, offset += TALOS_RT_RANDOM_DIST_RECORD_SIZE) {
       uint32_t block = reader.read(offset + 4, 4);
       os << "  dist group " << reader.read(offset, 4) << " block ";
-      if (block == OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1)
+      if (block == TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1)
         os << "unmasked";
       else
         os << block;
@@ -294,18 +294,18 @@ LogicalResult printProgram(Operation *op, StringRef bytes, raw_ostream &os) {
          << reader.read(offset + 40, 4) << " flags ";
       printFlags(
           os, reader.read(offset + 44, 4),
-          {{OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED, "WEIGHT_SIGNED"},
-           {OBELISK_RT_RANDOM_DIST_TARGET_SIGNED, "TARGET_SIGNED"},
-           {OBELISK_RT_RANDOM_DIST_RAW_WEIGHT, "RAW_WEIGHT"},
-           {OBELISK_RT_RANDOM_DIST_PER_RANGE, "PER_RANGE"},
-           {OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL, "CAPTURED_INTERVAL"},
-           {OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT, "DEFAULT_COMPLEMENT"},
-           {OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT, "EXPRESSION_WEIGHT"},
-           {OBELISK_RT_RANDOM_DIST_EXPRESSION_TARGET, "EXPRESSION_TARGET"}});
+          {{TALOS_RT_RANDOM_DIST_WEIGHT_SIGNED, "WEIGHT_SIGNED"},
+           {TALOS_RT_RANDOM_DIST_TARGET_SIGNED, "TARGET_SIGNED"},
+           {TALOS_RT_RANDOM_DIST_RAW_WEIGHT, "RAW_WEIGHT"},
+           {TALOS_RT_RANDOM_DIST_PER_RANGE, "PER_RANGE"},
+           {TALOS_RT_RANDOM_DIST_CAPTURED_INTERVAL, "CAPTURED_INTERVAL"},
+           {TALOS_RT_RANDOM_DIST_DEFAULT_COMPLEMENT, "DEFAULT_COMPLEMENT"},
+           {TALOS_RT_RANDOM_DIST_EXPRESSION_WEIGHT, "EXPRESSION_WEIGHT"},
+           {TALOS_RT_RANDOM_DIST_EXPRESSION_TARGET, "EXPRESSION_TARGET"}});
       os << "\n";
     }
   }
-  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN)
+  if (flags & TALOS_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN)
     return printPlan(op, reader, bytes.size(), os);
   return success();
 }
@@ -316,7 +316,7 @@ public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(RandomProgramTestPass)
 
   StringRef getArgument() const final {
-    return "test-obelisk-print-random-programs";
+    return "test-talos-print-random-programs";
   }
   StringRef getDescription() const final {
     return "Print the decoded residual programs of random solve operations";
@@ -325,11 +325,11 @@ public:
   void runOnOperation() override {
     WalkResult result = getOperation().walk([&](Operation *op) {
       StringAttr program;
-      if (auto solve = dyn_cast<obelisk::sim::SimRandomSolveOp>(op))
+      if (auto solve = dyn_cast<talos::sim::SimRandomSolveOp>(op))
         program = solve.getProgramAttr();
-      else if (auto solve = dyn_cast<obelisk::sim::SimRandomSolveWideOp>(op))
+      else if (auto solve = dyn_cast<talos::sim::SimRandomSolveWideOp>(op))
         program = solve.getProgramAttr();
-      else if (auto sample = dyn_cast<obelisk::sim::SimRandomCycleSampleOp>(op))
+      else if (auto sample = dyn_cast<talos::sim::SimRandomCycleSampleOp>(op))
         program = sample.getProgramAttr();
       if (!program)
         return WalkResult::advance();
@@ -344,8 +344,8 @@ public:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 void registerRandomProgramTestPass() {
   PassRegistration<RandomProgramTestPass>();
 }
-} // namespace obelisk
+} // namespace talos

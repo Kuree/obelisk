@@ -1,9 +1,9 @@
 //===- RandSolveOrder.h - Constraint variable ordering --------------------===//
 
-#ifndef OBELISK_RUNTIME_RANDSOLVEORDER_H
-#define OBELISK_RUNTIME_RANDSOLVEORDER_H
+#ifndef TALOS_RUNTIME_RANDSOLVEORDER_H
+#define TALOS_RUNTIME_RANDSOLVEORDER_H
 
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace obelisk::runtime {
+namespace talos::runtime {
 
 using OrderMask = std::vector<uint64_t>;
 struct PriorityInput {
@@ -41,12 +41,12 @@ inline bool readPriorityInputs(const uint8_t *program, size_t size,
                                PriorityInputs &inputs, size_t captureCount = 0,
                                bool dynamicMasks = false) {
   if (offset > size ||
-      size - offset < OBELISK_RT_RANDOM_PRIORITY_INPUT_HEADER_SIZE)
+      size - offset < TALOS_RT_RANDOM_PRIORITY_INPUT_HEADER_SIZE)
     return false;
   uint32_t count = orderRead32(program + offset);
-  offset += OBELISK_RT_RANDOM_PRIORITY_INPUT_HEADER_SIZE;
+  offset += TALOS_RT_RANDOM_PRIORITY_INPUT_HEADER_SIZE;
   size_t words = (uint64_t(width) + 63) / 64;
-  uint64_t stride = OBELISK_RT_RANDOM_PRIORITY_INPUT_RECORD_HEADER_SIZE +
+  uint64_t stride = TALOS_RT_RANDOM_PRIORITY_INPUT_RECORD_HEADER_SIZE +
                     uint64_t(words) * 16;
   if (count > (size - offset) / stride)
     return false;
@@ -58,8 +58,8 @@ inline bool readPriorityInputs(const uint8_t *program, size_t size,
         (maskCapture && (!dynamicMasks || maskCapture >= captureCount)))
       return false;
     uint8_t opcode = program[header + size_t(index) * 16];
-    if (opcode != OBELISK_RT_RANDOM_END_HARD_V1 &&
-        opcode != OBELISK_RT_RANDOM_END_SOFT_V1)
+    if (opcode != TALOS_RT_RANDOM_END_HARD_V1 &&
+        opcode != TALOS_RT_RANDOM_END_SOFT_V1)
       return false;
     PriorityInput input;
     input.maskCapture = maskCapture;
@@ -85,8 +85,8 @@ inline bool readPriorityInputs(const uint8_t *program, size_t size,
   if (count != 0)
     for (uint32_t index = 0; index != instructionCount; ++index) {
       uint8_t opcode = program[header + size_t(index) * 16];
-      if ((opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||
-           opcode == OBELISK_RT_RANDOM_END_SOFT_V1) &&
+      if ((opcode == TALOS_RT_RANDOM_END_HARD_V1 ||
+           opcode == TALOS_RT_RANDOM_END_SOFT_V1) &&
           inputs.find(index) == inputs.end())
         return false;
     }
@@ -137,11 +137,11 @@ buildSolveOrderLayers(const std::vector<SolveOrderEdge> &edges,
   for (const SolveOrderEdge &edge : edges) {
     if (edge.before.size() != mutableMask.size() ||
         edge.after.size() != mutableMask.size() ||
-        (edge.block != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+        (edge.block != TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
          edge.block >= 64))
       return false;
     if ((explicitOnly && edge.functionPriority) ||
-        (edge.block != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+        (edge.block != TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
          ((disabledBlocks >> edge.block) & 1) != 0))
       continue;
     SolveOrderEdge filtered{OrderMask(mutableMask.size()),
@@ -267,12 +267,12 @@ validateSolveOrderDeclarations(const std::vector<SolveOrderEdge> &edges,
 // constraint blocks is an error, and randomize() then fails (18.6.3). Declared
 // metadata is validated per block, so a layering failure at solve time is
 // such a cycle.
-inline void reportActiveSolveOrderCycle(obelisk_rt_context *context) {
+inline void reportActiveSolveOrderCycle(talos_rt_context *context) {
   std::fprintf(stderr, "error: solve before ordering of the active "
                        "constraint blocks contains a cycle\n");
-  obelisk_rt_v1_scheduler_error(context);
+  talos_rt_v1_scheduler_error(context);
 }
 
-} // namespace obelisk::runtime
+} // namespace talos::runtime
 
 #endif

@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --schedule-cache-pure-cones='minimum-cost=2 maximum-cost=20' -o %t.cache
-// RUN: obelisk-opt %t.cache --schedule-cache-pure-cones='minimum-cost=2 maximum-cost=20' | FileCheck %s
-// RUN: %llvm_dist/bin/mlir-opt %t.cache --convert-arith-to-llvm --convert-cf-to-llvm | obelisk-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %s --schedule-cache-pure-cones='minimum-cost=2 maximum-cost=20' -o %t.cache
+// RUN: talos-opt %t.cache --schedule-cache-pure-cones='minimum-cost=2 maximum-cost=20' | FileCheck %s
+// RUN: %llvm_dist/bin/mlir-opt %t.cache --convert-arith-to-llvm --convert-cf-to-llvm | talos-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang %t.o -o %t.exe
 // RUN: %t.exe
 module {
-  // CHECK: llvm.mlir.global internal thread_local @__obelisk_pure_cache.pure
+  // CHECK: llvm.mlir.global internal thread_local @__talos_pure_cache.pure
   llvm.mlir.global internal @state(0 : i64) : i64
   // CHECK-LABEL: llvm.func internal @pure
   // CHECK: schedule.pure_cache = array<i32: 0, 1>
@@ -19,7 +19,7 @@ module {
   // CHECK-LABEL: llvm.func internal @reader(
   // CHECK-SAME: -> i64 {
   // CHECK: llvm.load
-  // CHECK: llvm.call @reader.__obelisk_pure_cone
+  // CHECK: llvm.call @reader.__talos_pure_cone
   // CHECK: llvm.return
   llvm.func internal @reader(%x: i64) -> i64 {
     %p = llvm.mlir.addressof @state : !llvm.ptr
@@ -28,7 +28,7 @@ module {
     %b = arith.xori %a, %s : i64
     llvm.return %b : i64
   }
-  // CHECK-LABEL: llvm.func internal @reader.__obelisk_pure_cone
+  // CHECK-LABEL: llvm.func internal @reader.__talos_pure_cone
   // CHECK-SAME: schedule.pure_cache
   // CHECK-LABEL: llvm.func @main
   llvm.func @main() -> i32 {

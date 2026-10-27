@@ -1,5 +1,5 @@
 # RUN: %coverage-fixture %t.obcov 21 'line SF:injected.sv' 1
-# RUN: obelisk-cov report --format=lcov %t.obcov | FileCheck %s --implicit-check-not=SF:injected.sv
+# RUN: talos-cov report --format=lcov %t.obcov | FileCheck %s --implicit-check-not=SF:injected.sv
 
 # A test name cannot start another LCOV record: characters outside the record
 # grammar are replaced, so the name stays inside its TN: line and the report

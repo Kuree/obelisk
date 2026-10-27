@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s | FileCheck %s
+// RUN: talos -emit-slang %s | FileCheck %s
 
 // Source-front-end acceptance only. Controlled-pass execution and lowering
 // are covered from hand-authored simulation MLIR.

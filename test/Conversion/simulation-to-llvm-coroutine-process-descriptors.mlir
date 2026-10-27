@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --talos-sim-plan-native-partitions \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=PARTITION
 
 module attributes {
@@ -34,49 +34,49 @@ module attributes {
   }
 }
 
-// CHECK: llvm.mlir.global external constant @process.__obelisk_process_descriptor
+// CHECK: llvm.mlir.global external constant @process.__talos_process_descriptor
 // CHECK-SAME: alignment = 8 : i64
 // CHECK: llvm.mlir.constant(6 : i32)
 // CHECK: llvm.mlir.constant(42 : i64)
-// CHECK: llvm.mlir.addressof @process.__obelisk_frame_layout
-// CHECK: llvm.mlir.addressof @process.__obelisk_native_requirements
-// CHECK: llvm.mlir.addressof @process.__obelisk_native_execute
+// CHECK: llvm.mlir.addressof @process.__talos_frame_layout
+// CHECK: llvm.mlir.addressof @process.__talos_native_requirements
+// CHECK: llvm.mlir.addressof @process.__talos_native_execute
 
 // PARTITION: module attributes {
 // PARTITION-SAME: native.physical_partition_manifest = [
-// PARTITION-SAME: #native.partition<id = "primary", members = [{{[^]]*}}], imports = [@process.__obelisk_native_execute, @process.__obelisk_native_requirements, @task.__obelisk_native_execute], exports = [@__obelisk_current_context, @__obelisk_native_coro_execute_v1, @process.__obelisk_process_descriptor, @task.__obelisk_process_descriptor], dependencies = ["unit:42", "unit:43"]
-// PARTITION-SAME: #native.partition<id = "unit:42", members = [@process.__obelisk_coro_ramp, @process.__obelisk_native_execute, @process.__obelisk_native_requirements, @process.__obelisk_schedule_continuations, @process.__obelisk_schedule_ranks, @process.__obelisk_spawn, @process.__obelisk_spawn_plan], imports = [@__obelisk_native_coro_execute_v1, @process.__obelisk_process_descriptor], exports = [@process.__obelisk_native_execute, @process.__obelisk_native_requirements], dependencies = ["primary"]>
-// PARTITION: llvm.mlir.global internal constant @process.__obelisk_schedule_ranks
+// PARTITION-SAME: #native.partition<id = "primary", members = [{{[^]]*}}], imports = [@process.__talos_native_execute, @process.__talos_native_requirements, @task.__talos_native_execute], exports = [@__talos_current_context, @__talos_native_coro_execute_v1, @process.__talos_process_descriptor, @task.__talos_process_descriptor], dependencies = ["unit:42", "unit:43"]
+// PARTITION-SAME: #native.partition<id = "unit:42", members = [@process.__talos_coro_ramp, @process.__talos_native_execute, @process.__talos_native_requirements, @process.__talos_schedule_continuations, @process.__talos_schedule_ranks, @process.__talos_spawn, @process.__talos_spawn_plan], imports = [@__talos_native_coro_execute_v1, @process.__talos_process_descriptor], exports = [@process.__talos_native_execute, @process.__talos_native_requirements], dependencies = ["primary"]>
+// PARTITION: llvm.mlir.global internal constant @process.__talos_schedule_ranks
 // PARTITION-SAME: native.partition = "unit:42"
-// PARTITION: llvm.mlir.global internal constant @process.__obelisk_schedule_continuations
+// PARTITION: llvm.mlir.global internal constant @process.__talos_schedule_continuations
 // PARTITION-SAME: native.partition = "unit:42"
-// PARTITION: llvm.func @process.__obelisk_coro_ramp
+// PARTITION: llvm.func @process.__talos_coro_ramp
 // PARTITION-SAME: native.partition = "unit:42"
-// PARTITION: llvm.func @process.__obelisk_native_requirements
+// PARTITION: llvm.func @process.__talos_native_requirements
 // PARTITION-SAME: native.partition = "unit:42"
-// PARTITION: llvm.func @process.__obelisk_native_execute
+// PARTITION: llvm.func @process.__talos_native_execute
 // PARTITION-SAME: native.partition = "unit:42"
-// PARTITION: llvm.func @process.__obelisk_spawn
+// PARTITION: llvm.func @process.__talos_spawn
 // PARTITION-SAME: native.partition = "unit:42"
 // PARTITION: llvm.func @task
 // PARTITION-SAME: native.partition = "unit:43"
-// PARTITION: llvm.func internal @task.__obelisk_activate_checked
+// PARTITION: llvm.func internal @task.__talos_activate_checked
 // PARTITION-SAME: native.partition = "unit:43"
-// PARTITION: llvm.func @task.__obelisk_activate
+// PARTITION: llvm.func @task.__talos_activate
 // PARTITION-SAME: native.partition = "unit:43"
-// CHECK: llvm.mlir.addressof @__obelisk_native_coro_destroy_v1
-// CHECK: llvm.mlir.global internal constant @process.__obelisk_frame_layout
+// CHECK: llvm.mlir.addressof @__talos_native_coro_destroy_v1
+// CHECK: llvm.mlir.global internal constant @process.__talos_frame_layout
 // CHECK-SAME: alignment = 8 : i64
 // CHECK: llvm.mlir.constant(1 : i32)
-// CHECK: llvm.mlir.addressof @[[FIELDS:__obelisk_frame_fields_[0-9a-f]+]]
-// CHECK: llvm.mlir.addressof @process.__obelisk_continuations
-// CHECK: llvm.mlir.global internal constant @process.__obelisk_continuations
+// CHECK: llvm.mlir.addressof @[[FIELDS:__talos_frame_fields_[0-9a-f]+]]
+// CHECK: llvm.mlir.addressof @process.__talos_continuations
+// CHECK: llvm.mlir.global internal constant @process.__talos_continuations
 // CHECK-SAME: alignment = 4 : i64
 // CHECK: llvm.mlir.global internal constant @[[FIELDS]](
 // CHECK-SAME: alignment = 8 : i64
-// CHECK-LABEL: llvm.func internal @task.__obelisk_activate_checked(
+// CHECK-LABEL: llvm.func internal @task.__talos_activate_checked(
 // CHECK-SAME: %[[TASK_CTX:.*]]: !llvm.ptr,
-// CHECK: llvm.call @obelisk_rt_v1_process_instance_create_for_context(%[[TASK_CTX]], {{.*}}, {{.*}})
-// CHECK-LABEL: llvm.func @task.__obelisk_activate(
-// CHECK: llvm.call @task.__obelisk_activate_checked
-// CHECK: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK: llvm.call @talos_rt_v1_process_instance_create_for_context(%[[TASK_CTX]], {{.*}}, {{.*}})
+// CHECK-LABEL: llvm.func @task.__talos_activate(
+// CHECK: llvm.call @task.__talos_activate_checked
+// CHECK: llvm.call @talos_rt_v1_native_state_release

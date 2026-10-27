@@ -2,8 +2,8 @@
 
 #include "../lib/RuntimeInternal.h"
 #include "TestEnvironment.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "sv_vpi_user.h"
 
@@ -38,14 +38,14 @@ uint32_t designRecordKind(uint32_t physicalKind, uint32_t vpiKind) {
 }
 
 uint64_t nameHash(const std::string &name) {
-  return obelisk_stable_hash(reinterpret_cast<const uint8_t *>(name.data()),
+  return talos_stable_hash(reinterpret_cast<const uint8_t *>(name.data()),
                              name.size());
 }
 
 uint64_t imageChecksum(const std::vector<uint8_t> &bytes) {
-  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
+  uint64_t hash = TALOS_STABLE_HASH_OFFSET_BASIS;
   for (size_t index = 0; index != bytes.size(); ++index)
-    hash = obelisk_stable_hash_append_byte(
+    hash = talos_stable_hash_append_byte(
         hash, index >= 32 && index < 40 ? uint8_t{0} : bytes[index]);
   return hash;
 }
@@ -152,9 +152,9 @@ struct DesignImage {
 
     bytes.assign(static_cast<size_t>(indexOffset + index.size() * 24), 0);
     std::memcpy(bytes.data(), "OBDSGN1\0", 8);
-    put32(bytes, 8, OBELISK_RT_VERSION);
-    put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ);
-    put32(bytes, 20, OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+    put32(bytes, 8, TALOS_RT_VERSION);
+    put32(bytes, 16, TALOS_RT_DESIGN_PROFILE_READ);
+    put32(bytes, 20, TALOS_RT_DESIGN_DATABASE_HEADER_SIZE);
     put64(bytes, 24, bytes.size());
     put64(bytes, 40, scopeOffset);
     put64(bytes, 48, scopeOffset);
@@ -172,15 +172,15 @@ struct DesignImage {
     put64(bytes, 160, stringOffset);
 
     // top: children are clk, data, bus, then the sub scope.
-    put32(bytes, scopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);
-    put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+    put32(bytes, scopeOffset, TALOS_RT_DESIGN_RECORD_SCOPE);
+    put32(bytes, scopeOffset + 4, TALOS_RT_DESIGN_CAP_ITERATE);
     put64(bytes, scopeOffset + 8, 1);
     put64(bytes, scopeOffset + 24, clkOffset);
     put64(bytes, scopeOffset + 40, topName);
 
     put32(bytes, subScopeOffset,
-          designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
-    put32(bytes, subScopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+          designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, vpiModule));
+    put32(bytes, subScopeOffset + 4, TALOS_RT_DESIGN_CAP_ITERATE);
     put64(bytes, subScopeOffset + 8, 2);
     put64(bytes, subScopeOffset + 16, scopeOffset);
     put64(bytes, subScopeOffset + 24, countOffset);
@@ -191,9 +191,9 @@ struct DesignImage {
                       uint64_t parent, uint64_t next, uint64_t name,
                       uint64_t type, uint64_t width, int64_t left,
                       int64_t right, uint64_t stateBit) {
-      uint32_t vpiKind = kind == OBELISK_RT_DESIGN_RECORD_NET ? vpiNet : vpiReg;
+      uint32_t vpiKind = kind == TALOS_RT_DESIGN_RECORD_NET ? vpiNet : vpiReg;
       put32(bytes, offset, designRecordKind(kind, vpiKind));
-      put32(bytes, offset + 4, OBELISK_RT_DESIGN_CAP_READ);
+      put32(bytes, offset + 4, TALOS_RT_DESIGN_CAP_READ);
       put64(bytes, offset + 8, stableID);
       put64(bytes, offset + 16, parent);
       put64(bytes, offset + 24, next);
@@ -204,31 +204,31 @@ struct DesignImage {
       put64(bytes, offset + 72, static_cast<uint64_t>(right));
       put64(bytes, offset + 80, stateBit);
     };
-    object(clkOffset, OBELISK_RT_DESIGN_RECORD_NET, 1, scopeOffset, dataOffset,
+    object(clkOffset, TALOS_RT_DESIGN_RECORD_NET, 1, scopeOffset, dataOffset,
            clkName, scalarType, 1, 0, 0, kClkBit);
-    object(dataOffset, OBELISK_RT_DESIGN_RECORD_STORAGE, 2, scopeOffset,
+    object(dataOffset, TALOS_RT_DESIGN_RECORD_STORAGE, 2, scopeOffset,
            busOffset, dataName, byteType, 8, 7, 0, kDataBit);
-    object(busOffset, OBELISK_RT_DESIGN_RECORD_NET, 3, scopeOffset,
+    object(busOffset, TALOS_RT_DESIGN_RECORD_NET, 3, scopeOffset,
            subScopeOffset, busName, byteType, 8, 7, 0, kDataBit);
-    object(countOffset, OBELISK_RT_DESIGN_RECORD_STORAGE, 4, subScopeOffset, 0,
+    object(countOffset, TALOS_RT_DESIGN_RECORD_STORAGE, 4, subScopeOffset, 0,
            countName, nibbleType, 4, 3, 0, kCountBit);
-    object(realOffset, OBELISK_RT_DESIGN_RECORD_STORAGE, 5, scopeOffset,
+    object(realOffset, TALOS_RT_DESIGN_RECORD_STORAGE, 5, scopeOffset,
            escapedOffset, realName, realType, 64, 63, 0, kRealBit);
-    object(escapedOffset, OBELISK_RT_DESIGN_RECORD_STORAGE, 6, scopeOffset,
+    object(escapedOffset, TALOS_RT_DESIGN_RECORD_STORAGE, 6, scopeOffset,
            structOffset, escapedName, scalarType, 1, 0, 0, 23);
-    object(structOffset, OBELISK_RT_DESIGN_RECORD_STORAGE, 7, scopeOffset,
+    object(structOffset, TALOS_RT_DESIGN_RECORD_STORAGE, 7, scopeOffset,
            arrayOffset, structName, structType, 8, 7, 0, kStructBit);
     // An unpacked array's declared range enumerates elements, so its bounds
     // deliberately disagree with its 12-bit extent.
-    object(arrayOffset, OBELISK_RT_DESIGN_RECORD_STORAGE, 8, scopeOffset, 0,
+    object(arrayOffset, TALOS_RT_DESIGN_RECORD_STORAGE, 8, scopeOffset, 0,
            arrayName, arrayType, 12, 0, 2, kArrayBit);
 
     auto type = [&](uint64_t offset, uint64_t width, int64_t left) {
-      put32(bytes, offset, OBELISK_RT_DESIGN_RECORD_TYPE);
+      put32(bytes, offset, TALOS_RT_DESIGN_RECORD_TYPE);
       put32(bytes, offset + 4,
-            OBELISK_RT_DESIGN_TYPE_SCALAR |
-                ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE |
-                  OBELISK_RT_DESIGN_TYPE_PACKED)
+            TALOS_RT_DESIGN_TYPE_SCALAR |
+                ((TALOS_RT_DESIGN_TYPE_FOUR_STATE |
+                  TALOS_RT_DESIGN_TYPE_PACKED)
                  << 8));
       put64(bytes, offset + 8, width);
       put64(bytes, offset + 16, static_cast<uint64_t>(left));
@@ -238,18 +238,18 @@ struct DesignImage {
     type(byteType, 8, 7);
     type(nibbleType, 4, 3);
     // A real is a scalar type whose only distinguishing mark is its name.
-    put32(bytes, realType, OBELISK_RT_DESIGN_RECORD_TYPE);
-    put32(bytes, realType + 4, OBELISK_RT_DESIGN_TYPE_SCALAR);
+    put32(bytes, realType, TALOS_RT_DESIGN_RECORD_TYPE);
+    put32(bytes, realType + 4, TALOS_RT_DESIGN_TYPE_SCALAR);
     put64(bytes, realType + 8, 64);
     put64(bytes, realType + 16, 63);
     put64(bytes, realType + 72, realTypeName);
 
     // A packed struct of two four-state nibbles.
-    put32(bytes, structType, OBELISK_RT_DESIGN_RECORD_TYPE);
+    put32(bytes, structType, TALOS_RT_DESIGN_RECORD_TYPE);
     put32(
         bytes, structType + 4,
-        OBELISK_RT_DESIGN_TYPE_STRUCT |
-            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED)
+        TALOS_RT_DESIGN_TYPE_STRUCT |
+            ((TALOS_RT_DESIGN_TYPE_FOUR_STATE | TALOS_RT_DESIGN_TYPE_PACKED)
              << 8));
     put64(bytes, structType + 8, 8);
     put64(bytes, structType + 16, 7);
@@ -258,10 +258,10 @@ struct DesignImage {
     put64(bytes, structType + 72, pairTypeName);
     auto field = [&](uint64_t offset, uint64_t ordinal, uint64_t packedOffset,
                      uint64_t name) {
-      put32(bytes, offset, OBELISK_RT_DESIGN_RECORD_TYPE);
+      put32(bytes, offset, TALOS_RT_DESIGN_RECORD_TYPE);
       put32(bytes, offset + 4,
-            OBELISK_RT_DESIGN_TYPE_FIELD |
-                (OBELISK_RT_DESIGN_TYPE_FOUR_STATE << 8));
+            TALOS_RT_DESIGN_TYPE_FIELD |
+                (TALOS_RT_DESIGN_TYPE_FOUR_STATE << 8));
       put64(bytes, offset + 8, 4);
       put64(bytes, offset + 16, 3);
       put64(bytes, offset + 32, nibbleType);
@@ -273,10 +273,10 @@ struct DesignImage {
     field(field1Type, 1, 0, loName);
 
     // An unpacked array of three nibbles: three elements, twelve bits.
-    put32(bytes, arrayType, OBELISK_RT_DESIGN_RECORD_TYPE);
+    put32(bytes, arrayType, TALOS_RT_DESIGN_RECORD_TYPE);
     put32(bytes, arrayType + 4,
-          OBELISK_RT_DESIGN_TYPE_ARRAY |
-              (OBELISK_RT_DESIGN_TYPE_FOUR_STATE << 8));
+          TALOS_RT_DESIGN_TYPE_ARRAY |
+              (TALOS_RT_DESIGN_TYPE_FOUR_STATE << 8));
     put64(bytes, arrayType + 8, 12);
     put64(bytes, arrayType + 16, 0);
     put64(bytes, arrayType + 24, 2);
@@ -301,7 +301,7 @@ struct DesignImage {
     constexpr uint64_t stringOffset = typeOffset + 640;
     constexpr uint64_t stringTypeName = stringOffset + 123;
     put32(bytes, realOffset,
-          designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiStringVar));
+          designRecordKind(TALOS_RT_DESIGN_RECORD_STORAGE, vpiStringVar));
     put64(bytes, realType + 72, stringTypeName);
     put64(bytes, 32, imageChecksum(bytes));
   }
@@ -320,15 +320,15 @@ struct DesignImage {
 
 struct Fixture {
   DesignImage image;
-  obelisk_rt_execution_descriptor_v1 execution{};
-  obelisk_rt_context *context = nullptr;
+  talos_rt_execution_descriptor_v1 execution{};
+  talos_rt_context *context = nullptr;
   std::string path;
   std::filesystem::path directory;
 
   Fixture() {
-    execution.version = OBELISK_RT_VERSION;
-    execution.flags = OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                      OBELISK_RT_EXECUTION_WAVEFORM_METADATA;
+    execution.version = TALOS_RT_VERSION;
+    execution.flags = TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                      TALOS_RT_EXECUTION_WAVEFORM_METADATA;
     execution.design_database = image.bytes.data();
     execution.design_database_size = image.bytes.size();
     execution.state_bit_count = kStateBits;
@@ -336,7 +336,7 @@ struct Fixture {
     auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     do {
       directory = std::filesystem::temp_directory_path() /
-                  ("obelisk-vcd-" + std::to_string(stamp) + "-" +
+                  ("talos-vcd-" + std::to_string(stamp) + "-" +
                    std::to_string(sequence.fetch_add(1)));
     } while (!std::filesystem::create_directory(directory));
     path = (directory / "dump.vcd").string();
@@ -344,14 +344,14 @@ struct Fixture {
 
   ~Fixture() {
     if (context)
-      obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_context_destroy(context);
     std::remove(path.c_str());
     std::error_code error;
     std::filesystem::remove(directory, error);
   }
 
-  obelisk_rt_status create() {
-    return obelisk_rt_v1_context_create_for_design(&execution, &context);
+  talos_rt_status create() {
+    return talos_rt_v1_context_create_for_design(&execution, &context);
   }
 
   void setBits(uint64_t bit, uint64_t width, uint64_t value, uint64_t unknown) {
@@ -372,20 +372,20 @@ struct Fixture {
   // Close the slot that is ending and move to the next one, mirroring what the
   // scheduler does around each time advance.
   void advanceTo(uint64_t time) {
-    ASSERT_EQ(obelisk_rt_dump_slot_unlocked(context), OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_dump_slot_unlocked(context), TALOS_RT_OK);
     context->schedulerTime = time;
   }
 
   std::string read() {
-    obelisk_rt_v1_dump_close(context);
+    talos_rt_v1_dump_close(context);
     std::ifstream stream(path, std::ios::binary);
     std::ostringstream text;
     text << stream.rdbuf();
     return text.str();
   }
 
-  obelisk_rt_status openDump() {
-    return obelisk_rt_v1_dump_open(
+  talos_rt_status openDump() {
+    return talos_rt_v1_dump_open(
         context, reinterpret_cast<const uint8_t *>(path.data()), path.size());
   }
 };
@@ -459,11 +459,11 @@ std::vector<std::string> namesUsingCode(const std::string &text,
 
 TEST(VCD, HeaderDeclaresHierarchy) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_timescale(fixture.context, -9), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_timescale(fixture.context, -9), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   std::string text = fixture.read();
 
@@ -478,10 +478,10 @@ TEST(VCD, HeaderDeclaresHierarchy) {
 
 TEST(VCD, TimescaleFallsBackToTheDesignDefault) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   EXPECT_NE(fixture.read().find("$timescale\n\t1ns\n$end\n"),
             std::string::npos);
@@ -489,11 +489,11 @@ TEST(VCD, TimescaleFallsBackToTheDesignDefault) {
 
 TEST(VCD, TimescaleUsesAScaledUnitWhenThePrecisionIsNotAPowerOfAThousand) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_timescale(fixture.context, -10), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_timescale(fixture.context, -10), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   EXPECT_NE(fixture.read().find("$timescale\n\t100ps\n$end\n"),
             std::string::npos);
@@ -501,11 +501,11 @@ TEST(VCD, TimescaleUsesAScaledUnitWhenThePrecisionIsNotAPowerOfAThousand) {
 
 TEST(VCD, TimescaleAcceptsThePositiveLegalExponentRange) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_timescale(fixture.context, 2), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_timescale(fixture.context, 2), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   EXPECT_NE(fixture.read().find("$timescale\n\t100s\n$end\n"),
             std::string::npos);
@@ -522,10 +522,10 @@ TEST(VCD, TimescaleAcceptsThePositiveLegalExponentRange) {
 
 TEST(VCD, AliasesShareOneIdentifierCode) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   std::string text = fixture.read();
 
@@ -543,10 +543,10 @@ TEST(VCD, AliasesShareOneIdentifierCode) {
 
 TEST(VCD, AliasesAreEachDeclaredWithTheirOwnName) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   std::string text = fixture.read();
 
@@ -563,10 +563,10 @@ TEST(VCD, AliasesAreEachDeclaredWithTheirOwnName) {
 
 TEST(VCD, AliasedRangeIsDumpedOnlyOnceInitially) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.setBits(kDataBit, 8, 0xa5, 0);
   fixture.advanceTo(10);
   std::string text = fixture.read();
@@ -577,10 +577,10 @@ TEST(VCD, AliasedRangeIsDumpedOnlyOnceInitially) {
 
 TEST(VCD, AliasedRangeProducesOneRecordPerChange) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.setBits(kDataBit, 8, 0x00, 0);
   fixture.advanceTo(10);
   fixture.setBits(kDataBit, 8, 0x03, 0);
@@ -597,10 +597,10 @@ TEST(VCD, AliasedRangeProducesOneRecordPerChange) {
 
 TEST(VCD, AliasedRangeIsDifferencedOnce) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   std::string text = fixture.read();
 
@@ -608,7 +608,7 @@ TEST(VCD, AliasedRangeIsDifferencedOnce) {
   // ten declarations over nine distinct ranges, since `data` and `bus` share.
   ASSERT_NE(fixture.context->vcdState, nullptr);
   EXPECT_EQ(countOccurrences(text, "$var "), 10u);
-  EXPECT_EQ(obelisk_rt_dump_traced_range_count(fixture.context), 9u);
+  EXPECT_EQ(talos_rt_dump_traced_range_count(fixture.context), 9u);
 }
 
 // A real is stored as an IEEE-754 bit pattern in the same planes as everything
@@ -616,10 +616,10 @@ TEST(VCD, AliasedRangeIsDifferencedOnce) {
 // declared `$var real` and emitted as an `r` record.
 TEST(VCD, RealsAreDumpedAsNumbersNotBitPatterns) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   uint64_t bits = 0;
   double value = 1.5;
   std::memcpy(&bits, &value, sizeof(bits));
@@ -645,7 +645,7 @@ TEST(VCD, ShortRealsArePromotedAndDumpedAsNumbers) {
   constexpr uint64_t realType = 176 + 2 * 64 + 8 * 96 + 3 * 80;
   constexpr uint64_t stringOffset = 176 + 2 * 64 + 8 * 96 + 8 * 80;
   put32(fixture.image.bytes, realObject,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiShortRealVar));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STORAGE, vpiShortRealVar));
   put64(fixture.image.bytes, realObject + 56, 32);
   put64(fixture.image.bytes, realObject + 64, 31);
   put64(fixture.image.bytes, realType + 8, 32);
@@ -653,10 +653,10 @@ TEST(VCD, ShortRealsArePromotedAndDumpedAsNumbers) {
   put64(fixture.image.bytes, realType + 72, stringOffset + 113);
   put64(fixture.image.bytes, 32, imageChecksum(fixture.image.bytes));
 
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   float value = 1.5f;
   uint32_t bits = 0;
   std::memcpy(&bits, &value, sizeof(bits));
@@ -677,12 +677,12 @@ TEST(VCD, ShortRealsArePromotedAndDumpedAsNumbers) {
 
 TEST(VCD, RealsAreNotCheckpointedAsXByDumpOff) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
-  ASSERT_EQ(obelisk_rt_v1_dump_control(fixture.context, 0), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_control(fixture.context, 0), TALOS_RT_OK);
   std::string text = fixture.read();
 
   std::string rv = identifierFor(text, "rv");
@@ -697,10 +697,10 @@ TEST(VCD, RealsAreNotCheckpointedAsXByDumpOff) {
 // emitted as a single vector whose declared bounds match its bit extent.
 TEST(VCD, PackedStructsAreDumpedAsOneVector) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   // hi = 1, lo = 2 across the two nibbles.
   fixture.setBits(kStructBit, 8, 0x12, 0);
   fixture.advanceTo(10);
@@ -720,10 +720,10 @@ TEST(VCD, PackedStructsAreDumpedAsOneVector) {
 // once per field.
 TEST(VCD, PackedStructEmitsOneRecordWhenAnyFieldChanges) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.setBits(kStructBit, 8, 0x00, 0);
   fixture.advanceTo(10);
   // Only the high nibble moves.
@@ -741,10 +741,10 @@ TEST(VCD, PackedStructEmitsOneRecordWhenAnyFieldChanges) {
 // declared range on each element describes its bits, never the element bounds.
 TEST(VCD, UnpackedArraysAreExpandedPerElement) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   std::string text = fixture.read();
 
@@ -766,10 +766,10 @@ TEST(VCD, UnpackedArraysAreExpandedPerElement) {
 // leftmost declared index, so values land on the element that was written.
 TEST(VCD, UnpackedArrayElementsAreDifferencedIndependently) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   // mem[0] = 0, mem[1] = 5, mem[2] = 0.
   fixture.setBits(kArrayBit, 12, 0x050, 0);
   fixture.advanceTo(10);
@@ -792,12 +792,12 @@ TEST(VCD, UnpackedArrayElementsAreDifferencedIndependently) {
 // present three independent signals as a single value.
 TEST(VCD, OversizedUnpackedArraysAreOmittedNotSmashed) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(setTestEnvironment("OBELISK_RT_DUMP_MAX_ARRAY", "2"), 0);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(unsetTestEnvironment("OBELISK_RT_DUMP_MAX_ARRAY"), 0);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(setTestEnvironment("TALOS_RT_DUMP_MAX_ARRAY", "2"), 0);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(unsetTestEnvironment("TALOS_RT_DUMP_MAX_ARRAY"), 0);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   std::string text = fixture.read();
 
@@ -808,17 +808,17 @@ TEST(VCD, OversizedUnpackedArraysAreOmittedNotSmashed) {
   // Everything else is still traced.
   EXPECT_FALSE(identifierFor(text, "clk").empty());
   EXPECT_FALSE(identifierFor(text, "st").empty());
-  EXPECT_EQ(obelisk_rt_dump_traced_range_count(fixture.context), 6u);
+  EXPECT_EQ(talos_rt_dump_traced_range_count(fixture.context), 6u);
 }
 
 // An escaped identifier may contain a dot, so the leaf name cannot be found by
 // splitting the hierarchical path on its last separator.
 TEST(VCD, EscapedNamesContainingDotsKeepTheirWholeLeaf) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   std::string text = fixture.read();
 
@@ -829,10 +829,10 @@ TEST(VCD, EscapedNamesContainingDotsKeepTheirWholeLeaf) {
 
 TEST(VCD, SelectingOnlyOneAliasStillTracesTheSharedRange) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 1, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 1, nullptr, 0),
+            TALOS_RT_OK);
   fixture.setBits(kDataBit, 8, 0x01, 0);
   fixture.advanceTo(10);
   std::string text = fixture.read();
@@ -845,10 +845,10 @@ TEST(VCD, SelectingOnlyOneAliasStillTracesTheSharedRange) {
 
 TEST(VCD, InitialValuesAreDumpedOnceAtTheSelectingSlot) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.setBits(kClkBit, 1, 1, 0);
   fixture.setBits(kDataBit, 8, 0xa5, 0);
   fixture.advanceTo(5);
@@ -865,10 +865,10 @@ TEST(VCD, InitialValuesAreDumpedOnceAtTheSelectingSlot) {
 
 TEST(VCD, OnlyChangedVariablesAreEmittedPerSlot) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   // Uninitialized canonical state is X, so drive known values into the slot
   // that carries the initial section.
   fixture.setBits(kClkBit, 1, 0, 0);
@@ -902,10 +902,10 @@ TEST(VCD, OnlyChangedVariablesAreEmittedPerSlot) {
 
 TEST(VCD, VectorsDropRedundantLeadingCharacters) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   fixture.setBits(kDataBit, 8, 0x05, 0);
   fixture.advanceTo(20);
@@ -926,10 +926,10 @@ TEST(VCD, VectorsDropRedundantLeadingCharacters) {
 
 TEST(VCD, VectorsKeepKnownZeroBeforeUnknownOrHighImpedance) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   // 0X10 must not shorten to X10: the latter left-extends with X, not zero.
   fixture.setBits(kCountBit, 4, 0x2, 0x4);
   fixture.advanceTo(10);
@@ -944,13 +944,13 @@ TEST(VCD, VectorsKeepKnownZeroBeforeUnknownOrHighImpedance) {
 
 TEST(VCD, ScopeSelectionRestrictsTheTracedSet) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
   const std::string scope = "top.sub";
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(
+  ASSERT_EQ(talos_rt_v1_dump_vars(
                 fixture.context, 0,
                 reinterpret_cast<const uint8_t *>(scope.data()), scope.size()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   std::string text = fixture.read();
 
@@ -965,10 +965,10 @@ TEST(VCD, ScopeSelectionRestrictsTheTracedSet) {
 TEST(VCD, ManagedStringStorageIsNotTracedAsItsGCHandleBits) {
   Fixture fixture;
   fixture.image.makeRealObjectAString();
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   std::string text = fixture.read();
 
@@ -979,10 +979,10 @@ TEST(VCD, ManagedStringStorageIsNotTracedAsItsGCHandleBits) {
 TEST(VCD, FieldNamedStringDoesNotHideAnOrdinaryPackedStruct) {
   Fixture fixture;
   fixture.image.makeStructFieldNamedString();
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   std::string text = fixture.read();
 
@@ -991,16 +991,16 @@ TEST(VCD, FieldNamedStringDoesNotHideAnOrdinaryPackedStruct) {
 
 TEST(VCD, VariableSelectionRestrictsTheTracedSetWithoutEnablingVPI) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_vpi_startup(fixture.context, nullptr, 0),
-            OBELISK_RT_PERMISSION_DENIED);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_vpi_startup(fixture.context, nullptr, 0),
+            TALOS_RT_PERMISSION_DENIED);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
   const std::string variable = "top.sub.count";
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(
+  ASSERT_EQ(talos_rt_v1_dump_vars(
                 fixture.context, 0,
                 reinterpret_cast<const uint8_t *>(variable.data()),
                 variable.size()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   std::string text = fixture.read();
 
@@ -1013,10 +1013,10 @@ TEST(VCD, VariableSelectionRestrictsTheTracedSetWithoutEnablingVPI) {
 
 TEST(VCD, DepthLimitedSelectionExcludesNestedScopes) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 1, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 1, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   std::string text = fixture.read();
 
@@ -1027,16 +1027,16 @@ TEST(VCD, DepthLimitedSelectionExcludesNestedScopes) {
 
 TEST(VCD, DumpOffCheckpointsXAndDumpOnRepublishes) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.setBits(kClkBit, 1, 1, 0);
   fixture.advanceTo(10);
-  ASSERT_EQ(obelisk_rt_v1_dump_control(fixture.context, 0), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_control(fixture.context, 0), TALOS_RT_OK);
   fixture.setBits(kClkBit, 1, 0, 0);
   fixture.advanceTo(20);
-  ASSERT_EQ(obelisk_rt_v1_dump_control(fixture.context, 1), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_control(fixture.context, 1), TALOS_RT_OK);
   fixture.advanceTo(30);
   std::string text = fixture.read();
 
@@ -1055,14 +1055,14 @@ TEST(VCD, DumpOffCheckpointsXAndDumpOnRepublishes) {
 
 TEST(VCD, DumpAllEmitsEverySelectedVariable) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.setBits(kClkBit, 1, 0, 0);
   fixture.advanceTo(10);
   // Nothing changed in this slot, so only $dumpall can republish the value.
-  ASSERT_EQ(obelisk_rt_v1_dump_all(fixture.context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_all(fixture.context), TALOS_RT_OK);
   std::string text = fixture.read();
 
   std::string clk = identifierFor(text, "clk");
@@ -1075,14 +1075,14 @@ TEST(VCD, DumpAllEmitsEverySelectedVariable) {
 
 TEST(VCD, DumpAllUpdatesTheActiveShadowWithoutDuplicateSlotRecords) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.setBits(kClkBit, 1, 0, 0);
   fixture.advanceTo(10);
   fixture.setBits(kClkBit, 1, 1, 0);
-  ASSERT_EQ(obelisk_rt_v1_dump_all(fixture.context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_all(fixture.context), TALOS_RT_OK);
   fixture.advanceTo(20);
   std::string text = fixture.read();
 
@@ -1093,17 +1093,17 @@ TEST(VCD, DumpAllUpdatesTheActiveShadowWithoutDuplicateSlotRecords) {
 
 TEST(VCD, DumpAllRemainsObservableWhileOrdinaryDumpingIsOff) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.setBits(kClkBit, 1, 0, 0);
   fixture.advanceTo(10);
-  ASSERT_EQ(obelisk_rt_v1_dump_control(fixture.context, 0), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_control(fixture.context, 0), TALOS_RT_OK);
   fixture.setBits(kClkBit, 1, 1, 0);
-  ASSERT_EQ(obelisk_rt_v1_dump_all(fixture.context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_all(fixture.context), TALOS_RT_OK);
   fixture.advanceTo(20);
-  ASSERT_EQ(obelisk_rt_v1_dump_control(fixture.context, 1), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_control(fixture.context, 1), TALOS_RT_OK);
   std::string text = fixture.read();
 
   EXPECT_EQ(valueRecords(text, identifierFor(text, "clk")),
@@ -1120,12 +1120,12 @@ TEST(VCD, DumpAllRemainsObservableWhileOrdinaryDumpingIsOff) {
 
 TEST(VCD, DumpAllDoesNotConsumeThePendingEndOfSlotInitialSample) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.setBits(kClkBit, 1, 0, 0);
-  ASSERT_EQ(obelisk_rt_v1_dump_all(fixture.context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_all(fixture.context), TALOS_RT_OK);
   fixture.setBits(kClkBit, 1, 1, 0);
   fixture.advanceTo(10);
   std::string text = fixture.read();
@@ -1141,11 +1141,11 @@ TEST(VCD, DumpAllDoesNotConsumeThePendingEndOfSlotInitialSample) {
 
 TEST(VCD, DumpLimitStopsWriting) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_limit(fixture.context, 64), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_limit(fixture.context, 64), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   fixture.setBits(kDataBit, 8, 0xff, 0);
   fixture.advanceTo(20);
@@ -1155,46 +1155,46 @@ TEST(VCD, DumpLimitStopsWriting) {
   ASSERT_NE(comment, std::string::npos);
   EXPECT_LE(comment, 65u);
   EXPECT_EQ(text.find("$enddefinitions"), std::string::npos);
-  EXPECT_FALSE(obelisk_rt_dump_active_unlocked(fixture.context));
+  EXPECT_FALSE(talos_rt_dump_active_unlocked(fixture.context));
 }
 
 TEST(VCD, ExactAndZeroDumpLimitsStopWithOneComment) {
   Fixture exact;
-  ASSERT_EQ(exact.create(), OBELISK_RT_OK);
-  ASSERT_EQ(exact.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(exact.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(exact.create(), TALOS_RT_OK);
+  ASSERT_EQ(exact.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(exact.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   exact.advanceTo(10);
-  ASSERT_EQ(obelisk_rt_v1_dump_flush(exact.context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_flush(exact.context), TALOS_RT_OK);
   std::ifstream exactFile(exact.path, std::ios::binary | std::ios::ate);
   ASSERT_TRUE(exactFile.good());
   uint64_t written = static_cast<uint64_t>(exactFile.tellg());
   ASSERT_NE(written, 0u);
-  ASSERT_EQ(obelisk_rt_v1_dump_limit(exact.context, written), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_limit(exact.context, written), TALOS_RT_OK);
   std::string exactText = exact.read();
   EXPECT_EQ(countOccurrences(exactText, "$comment dump limit of "), 1u);
-  EXPECT_FALSE(obelisk_rt_dump_active_unlocked(exact.context));
+  EXPECT_FALSE(talos_rt_dump_active_unlocked(exact.context));
 
   Fixture zero;
-  ASSERT_EQ(zero.create(), OBELISK_RT_OK);
-  ASSERT_EQ(zero.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_limit(zero.context, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(zero.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(zero.create(), TALOS_RT_OK);
+  ASSERT_EQ(zero.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_limit(zero.context, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(zero.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   std::string zeroText = zero.read();
   EXPECT_NE(zeroText.find("$comment dump limit of 0 bytes reached $end"),
             std::string::npos);
   EXPECT_EQ(zeroText.find("$enddefinitions"), std::string::npos);
-  EXPECT_FALSE(obelisk_rt_dump_active_unlocked(zero.context));
+  EXPECT_FALSE(talos_rt_dump_active_unlocked(zero.context));
 }
 
 TEST(VCD, HeaderLimitClosesImmediatelyAndDoesNotRetryPerSlot) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_limit(fixture.context, 8), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_limit(fixture.context, 8), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dump_vars(fixture.context, 0, nullptr, 0),
+            TALOS_RT_OK);
   fixture.advanceTo(10);
   fixture.setBits(kClkBit, 1, 1, 0);
   fixture.advanceTo(20);
@@ -1202,32 +1202,32 @@ TEST(VCD, HeaderLimitClosesImmediatelyAndDoesNotRetryPerSlot) {
 
   EXPECT_EQ(countOccurrences(text, "$comment dump limit of 8 bytes reached"),
             1u);
-  EXPECT_FALSE(obelisk_rt_dump_active_unlocked(fixture.context));
+  EXPECT_FALSE(talos_rt_dump_active_unlocked(fixture.context));
 }
 
 TEST(VCD, SelectingAMissingScopeIsRejected) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
-  ASSERT_EQ(fixture.openDump(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
+  ASSERT_EQ(fixture.openDump(), TALOS_RT_OK);
   const std::string scope = "top.absent";
-  ASSERT_EQ(obelisk_rt_v1_dump_vars(
+  ASSERT_EQ(talos_rt_v1_dump_vars(
                 fixture.context, 0,
                 reinterpret_cast<const uint8_t *>(scope.data()), scope.size()),
-            OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_dump_slot_unlocked(fixture.context),
-            OBELISK_RT_INVALID_HANDLE);
+            TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_dump_slot_unlocked(fixture.context),
+            TALOS_RT_INVALID_HANDLE);
   // The failure is reported once; later slots neither retry nor write.
-  EXPECT_EQ(obelisk_rt_dump_slot_unlocked(fixture.context), OBELISK_RT_OK);
-  EXPECT_FALSE(obelisk_rt_dump_active_unlocked(fixture.context));
+  EXPECT_EQ(talos_rt_dump_slot_unlocked(fixture.context), TALOS_RT_OK);
+  EXPECT_FALSE(talos_rt_dump_active_unlocked(fixture.context));
 }
 
 TEST(VCD, DumpingWithoutAnOpenFileIsInert) {
   Fixture fixture;
-  ASSERT_EQ(fixture.create(), OBELISK_RT_OK);
+  ASSERT_EQ(fixture.create(), TALOS_RT_OK);
   ASSERT_EQ(fixture.context->vcdState, nullptr);
-  EXPECT_EQ(obelisk_rt_dump_slot_unlocked(fixture.context), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_dump_all(fixture.context), OBELISK_RT_OK);
-  EXPECT_FALSE(obelisk_rt_dump_active_unlocked(fixture.context));
+  EXPECT_EQ(talos_rt_dump_slot_unlocked(fixture.context), TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_dump_all(fixture.context), TALOS_RT_OK);
+  EXPECT_FALSE(talos_rt_dump_active_unlocked(fixture.context));
   EXPECT_EQ(fixture.context->vcdState, nullptr);
 }
 

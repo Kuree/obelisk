@@ -1,4 +1,4 @@
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.native
+// RUN: talos -O3 --native-scheduler=eval %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
 

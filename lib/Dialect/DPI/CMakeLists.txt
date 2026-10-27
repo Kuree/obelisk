@@ -1,15 +1,15 @@
-add_mlir_library(ObeliskDPIIR
+add_mlir_library(TalosDPIIR
   DPIDialect.cpp
 
   DEPENDS
-  ObeliskDPIAttrsIncGen
-  ObeliskDPIDialectIncGen
-  ObeliskDPIEnumsIncGen
+  TalosDPIAttrsIncGen
+  TalosDPIDialectIncGen
+  TalosDPIEnumsIncGen
 
   LINK_LIBS PUBLIC
   MLIRIR
 )
 
-target_include_directories(ObeliskDPIIR PRIVATE
+target_include_directories(TalosDPIIR PRIVATE
   ${PROJECT_SOURCE_DIR}/runtime/include
 )

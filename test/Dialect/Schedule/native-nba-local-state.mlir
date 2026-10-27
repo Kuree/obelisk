@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --convert-native-schedule-actions-to-llvm -o %t.lowered
+// RUN: talos-opt %s --convert-native-schedule-actions-to-llvm -o %t.lowered
 // RUN: FileCheck %s --implicit-check-not=llvm.alloca < %t.lowered
-// RUN: %llvm_dist/bin/mlir-opt %t.lowered --convert-arith-to-llvm --convert-cf-to-llvm | obelisk-translate --mlir-to-llvmir > %t.ll
+// RUN: %llvm_dist/bin/mlir-opt %t.lowered --convert-arith-to-llvm --convert-cf-to-llvm | talos-translate --mlir-to-llvmir > %t.ll
 // RUN: %llvm_dist/bin/clang -O0 %t.ll -o %t.o0
 // RUN: %t.o0
 // RUN: %llvm_dist/bin/clang -O3 %t.ll -o %t.o3
@@ -12,8 +12,8 @@
 // CHECK-LABEL: llvm.func @exercise
 // CHECK-NOT: llvm.alloca
 // CHECK-NOT: llvm.alloca
-// CHECK-DAG: llvm.call @obelisk_rt_v1_static_nba_batch_knownness
-// CHECK-DAG: llvm.call @obelisk_rt_v1_static_nba_batch_finish
+// CHECK-DAG: llvm.call @talos_rt_v1_static_nba_batch_knownness
+// CHECK-DAG: llvm.call @talos_rt_v1_static_nba_batch_finish
 #batch = #schedule.nba_batch_layout<plan = @plan, value = @value, unknown = @unknown, dirty = @dirty, summary = @summary, ingress = @ingress, bitCount = 16, rootCount = 4, capacity = 4>
 #slot0 = #schedule.nba_slot_layout<offset = @offset, value = @s0, unknown = @u0, valid = @valid0, width = 3, constantOffset = 0 : i64>
 #slot1 = #schedule.nba_slot_layout<offset = @offset, value = @zero, unknown = @zero, valid = @valid1, width = 3, constantOffset = 0 : i64>
@@ -47,7 +47,7 @@ module {
   llvm.mlir.global internal @changed(8 : i32) : i32
   llvm.mlir.global internal @acc1(dense<[0, 0, 0, 0, 0, 0, 0, 0, 15, 0, 0, 0, 8589934593, 1, 0, 0, 0]> : tensor<17xi64>) : !llvm.array<17 x i64>
   llvm.mlir.global internal @acc2(dense<[15, 0, 0, 0, 0, 0, 0, 0, 15, 0, 0, 0, 17179869185, 0, 0, 0, 0]> : tensor<17xi64>) : !llvm.array<17 x i64>
-  llvm.func @obelisk_rt_v1_static_nba_batch_guard(%ctx: !llvm.ptr, %plan: !llvm.ptr, %region: i32) -> i32 {
+  llvm.func @talos_rt_v1_static_nba_batch_guard(%ctx: !llvm.ptr, %plan: !llvm.ptr, %region: i32) -> i32 {
     %p = llvm.mlir.addressof @allowed : !llvm.ptr
     %v = llvm.load %p : !llvm.ptr -> i32
     llvm.return %v : i32
@@ -60,7 +60,7 @@ module {
     llvm.store %next, %p : i32, !llvm.ptr
     llvm.return
   }
-  llvm.func @obelisk_rt_v1_static_nba_batch_knownness(%ctx: !llvm.ptr, %low: i64, %width: i64, %old: i64, %new: i64) {
+  llvm.func @talos_rt_v1_static_nba_batch_knownness(%ctx: !llvm.ptr, %low: i64, %width: i64, %old: i64, %new: i64) {
     %vp = llvm.mlir.addressof @value : !llvm.ptr
     %up = llvm.mlir.addressof @unknown : !llvm.ptr
     %v = llvm.load %vp : !llvm.ptr -> i16
@@ -84,7 +84,7 @@ module {
     llvm.store %next, %p : i64, !llvm.ptr
     llvm.return
   }
-  llvm.func @obelisk_rt_v1_static_nba_batch_finish(%ctx: !llvm.ptr, %stages: i64, %commits: i64, %pending: i32) {
+  llvm.func @talos_rt_v1_static_nba_batch_finish(%ctx: !llvm.ptr, %stages: i64, %commits: i64, %pending: i32) {
     %stagesp = llvm.mlir.addressof @stages : !llvm.ptr
     %stagesold = llvm.load %stagesp : !llvm.ptr -> i64
     %stagesnext = llvm.add %stagesold, %stages : i64

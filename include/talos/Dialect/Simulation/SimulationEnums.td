@@ -1,0 +1,872 @@
+//===- SimulationEnums.td - Executable simulation enumerations -*- td -*-===//
+
+#ifndef TALOS_DIALECT_SIMULATION_SIMULATIONENUMS_TD
+#define TALOS_DIALECT_SIMULATION_SIMULATIONENUMS_TD
+
+include "mlir/IR/EnumAttr.td"
+
+// Mutable functional-coverage options. Keep these values aligned with the sole
+// v1 runtime ABI; verification restricts type-only options to their owners.
+def SimCovergroupOptionWeight
+    : I32EnumAttrCase<"Weight", 1, "weight">;
+def SimCovergroupOptionGoal
+    : I32EnumAttrCase<"Goal", 2, "goal">;
+def SimCovergroupOptionComment
+    : I32EnumAttrCase<"Comment", 3, "comment">;
+def SimCovergroupOptionAtLeast
+    : I32EnumAttrCase<"AtLeast", 4, "at_least">;
+def SimCovergroupOptionMergeInstances
+    : I32EnumAttrCase<"MergeInstances", 5, "merge_instances">;
+def SimCovergroupOptionCrossNumPrintMissing
+    : I32EnumAttrCase<"CrossNumPrintMissing", 6,
+                      "cross_num_print_missing">;
+def SimCovergroupOptionDistributeFirst
+    : I32EnumAttrCase<"DistributeFirst", 7, "distribute_first">;
+def SimCovergroupOptionAutoBinMax
+    : I32EnumAttrCase<"AutoBinMax", 8, "auto_bin_max">;
+def SimCovergroupOptionDetectOverlap
+    : I32EnumAttrCase<"DetectOverlap", 9, "detect_overlap">;
+def SimCovergroupOptionPerInstance
+    : I32EnumAttrCase<"PerInstance", 10, "per_instance">;
+def SimCovergroupOptionGetInstCoverage
+    : I32EnumAttrCase<"GetInstCoverage", 11, "get_inst_coverage">;
+def SimCovergroupOptionCrossRetainAutoBins
+    : I32EnumAttrCase<"CrossRetainAutoBins", 12, "cross_retain_auto_bins">;
+def SimCovergroupOptionName
+    : I32EnumAttrCase<"Name", 13, "name">;
+def SimCovergroupInstanceOptionKind
+    : I32EnumAttr<"CovergroupInstanceOptionKind",
+                  "functional-coverage option", [
+        SimCovergroupOptionWeight, SimCovergroupOptionGoal,
+        SimCovergroupOptionComment, SimCovergroupOptionAtLeast,
+        SimCovergroupOptionMergeInstances,
+        SimCovergroupOptionCrossNumPrintMissing,
+        SimCovergroupOptionDistributeFirst, SimCovergroupOptionAutoBinMax,
+        SimCovergroupOptionDetectOverlap, SimCovergroupOptionPerInstance,
+        SimCovergroupOptionGetInstCoverage,
+        SimCovergroupOptionCrossRetainAutoBins, SimCovergroupOptionName
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimEntryRootInitializer
+    : I32EnumAttrCase<"RootInitializer", 0, "root_initializer">;
+def SimEntryInitial : I32EnumAttrCase<"Initial", 1, "initial">;
+def SimEntryFinal : I32EnumAttrCase<"Final", 2, "final">;
+def SimEntryAlways : I32EnumAttrCase<"Always", 3, "always">;
+def SimEntryAlwaysComb : I32EnumAttrCase<"AlwaysComb", 4, "always_comb">;
+def SimEntryAlwaysFF : I32EnumAttrCase<"AlwaysFF", 5, "always_ff">;
+def SimEntryAlwaysLatch : I32EnumAttrCase<"AlwaysLatch", 6, "always_latch">;
+def SimEntryContinuous : I32EnumAttrCase<"Continuous", 7, "continuous">;
+def SimEntryFunction : I32EnumAttrCase<"Function", 8, "function">;
+def SimEntryPortInput : I32EnumAttrCase<"PortInput", 9, "port_input">;
+def SimEntryPortOutput : I32EnumAttrCase<"PortOutput", 10, "port_output">;
+def SimEntryPortInitialize
+    : I32EnumAttrCase<"PortInitialize", 11, "port_initialize">;
+def SimEntryTask : I32EnumAttrCase<"Task", 12, "task">;
+def SimEntryFork : I32EnumAttrCase<"Fork", 13, "fork">;
+def SimEntryObserver : I32EnumAttrCase<"Observer", 14, "observer">;
+def SimEntryKind : I32EnumAttr<"EntryKind", "simulation code-unit kind", [
+  SimEntryRootInitializer, SimEntryInitial, SimEntryFinal, SimEntryAlways,
+  SimEntryAlwaysComb, SimEntryAlwaysFF, SimEntryAlwaysLatch, SimEntryContinuous,
+  SimEntryFunction, SimEntryPortInput, SimEntryPortOutput,
+  SimEntryPortInitialize, SimEntryTask, SimEntryFork, SimEntryObserver
+]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimVPIStatementSourceScope
+    : I32EnumAttrCase<"Scope", 0, "scope">;
+def SimVPIStatementSourceCodeUnit
+    : I32EnumAttrCase<"CodeUnit", 1, "code_unit">;
+def SimVPIStatementSourceStatement
+    : I32EnumAttrCase<"Statement", 2, "statement">;
+def SimVPIStatementSourceAnchor
+    : I32EnumAttrCase<"Anchor", 3, "anchor">;
+def SimVPIStatementSourceKind : I32EnumAttr<
+    "VPIStatementSourceKind", "VPI statement-relation source kind", [
+      SimVPIStatementSourceScope, SimVPIStatementSourceCodeUnit,
+      SimVPIStatementSourceStatement, SimVPIStatementSourceAnchor
+    ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// Stable logical identities used by explicit direct-object VPI relations.
+// These are resolved to compact image-table indices only during design-
+// database serialization. Add endpoint categories only with a producer and a
+// collision policy for relations synthesized by the serializer.
+def SimVPIObjectRefStatement : I32EnumAttrCase<"Statement", 0, "statement">;
+def SimVPIObjectRefStorage : I32EnumAttrCase<"Storage", 1, "storage">;
+def SimVPIObjectRefNet : I32EnumAttrCase<"Net", 2, "net">;
+def SimVPIObjectRefNetIdentity
+    : I32EnumAttrCase<"NetIdentity", 3, "net_identity">;
+def SimVPIObjectRefPort : I32EnumAttrCase<"Port", 4, "port">;
+def SimVPIObjectRefSymbol : I32EnumAttrCase<"Symbol", 5, "symbol">;
+def SimVPIObjectRefDefinitionMember
+    : I32EnumAttrCase<"DefinitionMember", 6, "definition_member">;
+def SimVPIObjectRefKind : I32EnumAttr<
+    "VPIObjectRefKind", "stable VPI relation endpoint identity", [
+      SimVPIObjectRefStatement, SimVPIObjectRefStorage, SimVPIObjectRefNet,
+      SimVPIObjectRefNetIdentity, SimVPIObjectRefPort, SimVPIObjectRefSymbol,
+      SimVPIObjectRefDefinitionMember
+    ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimVPIRelationHandle : I32EnumAttrCase<"Handle", 0, "handle">;
+def SimVPIRelationIterate : I32EnumAttrCase<"Iterate", 1, "iterate">;
+def SimVPIRelationMode : I32EnumAttr<
+    "VPIRelationMode", "VPI relation access mode", [
+      SimVPIRelationHandle, SimVPIRelationIterate
+    ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// A source VPI identity may alias an executable descriptor that already has
+// a compact runtime representation.  Keeping the backing category explicit
+// lets serialization reuse that object instead of creating a duplicate
+// handle, while unbacked anchors become static reflection records directly.
+def SimVPIObjectBackingScope
+    : I32EnumAttrCase<"Scope", 0, "scope">;
+def SimVPIObjectBackingClass
+    : I32EnumAttrCase<"Class", 1, "class">;
+def SimVPIObjectBackingCodeUnit
+    : I32EnumAttrCase<"CodeUnit", 2, "code_unit">;
+def SimVPIObjectBackingNet
+    : I32EnumAttrCase<"Net", 3, "net">;
+def SimVPIObjectBackingStorage
+    : I32EnumAttrCase<"Storage", 4, "storage">;
+def SimVPIObjectBackingKind : I32EnumAttr<
+    "VPIObjectBackingKind", "physical descriptor backing a VPI anchor", [
+      SimVPIObjectBackingScope, SimVPIObjectBackingClass,
+      SimVPIObjectBackingCodeUnit, SimVPIObjectBackingNet,
+      SimVPIObjectBackingStorage
+    ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// Source-semantic type categories retained only in immutable reflection
+// inventory. Executable operations continue to use normalized simulation
+// types, so VPI metadata cannot inhibit canonicalization or tier formation.
+def SimVPITypeUnknown : I32EnumAttrCase<"Unknown", 0, "unknown">;
+def SimVPITypeGenericIntegral
+    : I32EnumAttrCase<"GenericIntegral", 1, "generic_integral">;
+def SimVPITypeBit : I32EnumAttrCase<"Bit", 2, "bit">;
+def SimVPITypeLogic : I32EnumAttrCase<"Logic", 3, "logic">;
+def SimVPITypeReg : I32EnumAttrCase<"Reg", 4, "reg">;
+def SimVPITypeByte : I32EnumAttrCase<"Byte", 5, "byte">;
+def SimVPITypeShortInt : I32EnumAttrCase<"ShortInt", 6, "shortint">;
+def SimVPITypeInt : I32EnumAttrCase<"Int", 7, "int">;
+def SimVPITypeLongInt : I32EnumAttrCase<"LongInt", 8, "longint">;
+def SimVPITypeInteger : I32EnumAttrCase<"Integer", 9, "integer">;
+def SimVPITypeEnum : I32EnumAttrCase<"Enum", 10, "enum">;
+def SimVPITypeTime : I32EnumAttrCase<"Time", 11, "time">;
+def SimVPITypeShortReal : I32EnumAttrCase<"ShortReal", 12, "shortreal">;
+def SimVPITypeReal : I32EnumAttrCase<"Real", 13, "real">;
+def SimVPITypeRealtime : I32EnumAttrCase<"Realtime", 14, "realtime">;
+def SimVPITypeString : I32EnumAttrCase<"String", 15, "string">;
+def SimVPITypeChandle : I32EnumAttrCase<"Chandle", 16, "chandle">;
+def SimVPITypePackedArray
+    : I32EnumAttrCase<"PackedArray", 17, "packed_array">;
+def SimVPITypeUnpackedArray
+    : I32EnumAttrCase<"UnpackedArray", 18, "unpacked_array">;
+def SimVPITypePackedStruct
+    : I32EnumAttrCase<"PackedStruct", 19, "packed_struct">;
+def SimVPITypeUnpackedStruct
+    : I32EnumAttrCase<"UnpackedStruct", 20, "unpacked_struct">;
+def SimVPITypePackedUnion
+    : I32EnumAttrCase<"PackedUnion", 21, "packed_union">;
+def SimVPITypeUnpackedUnion
+    : I32EnumAttrCase<"UnpackedUnion", 22, "unpacked_union">;
+def SimVPITypeDynamicArray
+    : I32EnumAttrCase<"DynamicArray", 23, "dynamic_array">;
+def SimVPITypeQueue : I32EnumAttrCase<"Queue", 24, "queue">;
+def SimVPITypeAssocArray
+    : I32EnumAttrCase<"AssocArray", 25, "assoc_array">;
+def SimVPITypeClass : I32EnumAttrCase<"Class", 26, "class">;
+def SimVPITypeVirtualInterface
+    : I32EnumAttrCase<"VirtualInterface", 27, "virtual_interface">;
+def SimVPITypeEvent : I32EnumAttrCase<"Event", 28, "event">;
+def SimVPITypePackedOpenArray
+    : I32EnumAttrCase<"PackedOpenArray", 29, "packed_open_array">;
+def SimVPITypeUnpackedOpenArray
+    : I32EnumAttrCase<"UnpackedOpenArray", 30, "unpacked_open_array">;
+def SimVPITypeProcess : I32EnumAttrCase<"Process", 31, "process">;
+def SimVPITypeCovergroup
+    : I32EnumAttrCase<"Covergroup", 32, "covergroup">;
+def SimVPITypeMailbox : I32EnumAttrCase<"Mailbox", 33, "mailbox">;
+def SimVPITypeSemaphore : I32EnumAttrCase<"Semaphore", 34, "semaphore">;
+def SimVPITypeVoid : I32EnumAttrCase<"Void", 35, "void">;
+def SimVPITypeUntyped : I32EnumAttrCase<"Untyped", 36, "untyped">;
+def SimVPITypeSequence : I32EnumAttrCase<"Sequence", 37, "sequence">;
+def SimVPITypeProperty : I32EnumAttrCase<"Property", 38, "property">;
+def SimVPITypeKind : I32EnumAttr<
+    "VPITypeKind", "source-semantic VPI reflection type category", [
+      SimVPITypeUnknown, SimVPITypeGenericIntegral, SimVPITypeBit,
+      SimVPITypeLogic, SimVPITypeReg, SimVPITypeByte, SimVPITypeShortInt,
+      SimVPITypeInt, SimVPITypeLongInt, SimVPITypeInteger, SimVPITypeEnum,
+      SimVPITypeTime, SimVPITypeShortReal, SimVPITypeReal,
+      SimVPITypeRealtime, SimVPITypeString, SimVPITypeChandle,
+      SimVPITypePackedArray, SimVPITypeUnpackedArray, SimVPITypePackedStruct,
+      SimVPITypeUnpackedStruct, SimVPITypePackedUnion,
+      SimVPITypeUnpackedUnion, SimVPITypeDynamicArray, SimVPITypeQueue,
+      SimVPITypeAssocArray, SimVPITypeClass, SimVPITypeVirtualInterface,
+      SimVPITypeEvent, SimVPITypePackedOpenArray,
+      SimVPITypeUnpackedOpenArray, SimVPITypeProcess, SimVPITypeCovergroup,
+      SimVPITypeMailbox, SimVPITypeSemaphore, SimVPITypeVoid,
+      SimVPITypeUntyped, SimVPITypeSequence, SimVPITypeProperty
+    ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// Condition of a module path (IEEE 1800-2023 30.4.4).
+def SimTimingPathUnconditional : I32EnumAttrCase<"Unconditional", 0, "none">;
+def SimTimingPathIf : I32EnumAttrCase<"If", 1, "if">;
+def SimTimingPathIfNone : I32EnumAttrCase<"IfNone", 2, "ifnone">;
+def SimTimingPathConditionKind
+    : I32EnumAttr<"TimingPathConditionKind", "module path condition", [
+        SimTimingPathUnconditional, SimTimingPathIf, SimTimingPathIfNone
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// Direction of a subroutine formal argument (IEEE 1800-2023 13.5).
+def SimFormalIn : I32EnumAttrCase<"In", 0, "in">;
+def SimFormalOut : I32EnumAttrCase<"Out", 1, "out">;
+def SimFormalInOut : I32EnumAttrCase<"InOut", 2, "inout">;
+def SimFormalRef : I32EnumAttrCase<"Ref", 3, "ref">;
+def SimFormalDirection
+    : I32EnumAttr<"FormalDirection", "subroutine formal argument direction", [
+        SimFormalIn, SimFormalOut, SimFormalInOut, SimFormalRef
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimPortInput : I32EnumAttrCase<"Input", 0, "input">;
+def SimPortOutput : I32EnumAttrCase<"Output", 1, "output">;
+def SimPortInOut : I32EnumAttrCase<"InOut", 2, "inout">;
+def SimPortDirection
+    : I32EnumAttr<"PortDirection", "elaborated module-port direction", [
+        SimPortInput, SimPortOutput, SimPortInOut
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// Exact IEEE 1800 VPI direction values. Keep this distinct from the physical
+// module-port direction above: an IO declaration may be a ref argument or may
+// deliberately have no direction for an interface/modport reference.
+def SimVPIIOUndefined : I32EnumAttrCase<"Undefined", 0, "undefined">;
+def SimVPIIOInput : I32EnumAttrCase<"Input", 1, "input">;
+def SimVPIIOOutput : I32EnumAttrCase<"Output", 2, "output">;
+def SimVPIIOInOut : I32EnumAttrCase<"InOut", 3, "inout">;
+def SimVPIIOMixed : I32EnumAttrCase<"Mixed", 4, "mixed">;
+def SimVPIIONone : I32EnumAttrCase<"None", 5, "none">;
+def SimVPIIORef : I32EnumAttrCase<"Ref", 6, "ref">;
+def SimVPIIODirection
+    : I32EnumAttr<"VPIIODirection", "source IO-declaration direction", [
+        SimVPIIOUndefined, SimVPIIOInput, SimVPIIOOutput, SimVPIIOInOut,
+        SimVPIIOMixed, SimVPIIONone, SimVPIIORef
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimManagedWatchField
+    : I32EnumAttrCase<"Field", 1, "field">;
+def SimManagedWatchContainerSize
+    : I32EnumAttrCase<"ContainerSize", 2, "container_size">;
+def SimManagedWatchKind
+    : I32EnumAttr<"ManagedWatchKind", "managed mutation dependency", [
+        SimManagedWatchField, SimManagedWatchContainerSize
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// A direct packed class property that participates in object randomization.
+// Object handles and containers have distinct executable metadata because
+// their storage and LRM semantics are not scalar assignment slots.
+def SimRandomVariableRand
+    : I32EnumAttrCase<"Rand", 1, "rand">;
+def SimRandomVariableRandC
+    : I32EnumAttrCase<"RandC", 2, "randc">;
+def SimRandomVariableKind
+    : I32EnumAttr<"RandomVariableKind",
+                  "direct packed random class-property kind", [
+        SimRandomVariableRand, SimRandomVariableRandC
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// A reusable constraint template evaluates references relative either to the
+// active object that owns the template or to immutable design-storage
+// identity.  Keep the root classification typed: runtime composition must not
+// infer object-vs-design semantics from symbol spelling.
+def SimRandomValueObjectField
+    : I32EnumAttrCase<"ObjectField", 0, "object_field">;
+def SimRandomValueStorage
+    : I32EnumAttrCase<"Storage", 1, "storage">;
+def SimRandomValueReferenceKind
+    : I32EnumAttr<"RandomValueReferenceKind",
+                  "symbolic random-constraint value root", [
+        SimRandomValueObjectField, SimRandomValueStorage
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// Non-static constraint_mode state belongs to the active object. A static
+// constraint block instead uses one design-storage bit shared by every
+// instance (IEEE 1800-2017 18.5.11).
+def SimRandomConstraintObjectBlock
+    : I32EnumAttrCase<"ObjectBlock", 0, "object_block">;
+def SimRandomConstraintStorage
+    : I32EnumAttrCase<"Storage", 1, "storage">;
+def SimRandomConstraintBlockReferenceKind
+    : I32EnumAttr<"RandomConstraintBlockReferenceKind",
+                  "constraint template mode-state root", [
+        SimRandomConstraintObjectBlock, SimRandomConstraintStorage
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// IEEE 1800-2023 event regions in their normative scheduling order. These
+// remain distinct from schedule::ComputeRegionKind: the latter is a coarse graph
+// partition and is not an executable scheduler queue.
+def SimRegionPreponed
+    : I32EnumAttrCase<"Preponed", 0, "preponed">;
+def SimRegionPreActive
+    : I32EnumAttrCase<"PreActive", 1, "pre_active">;
+def SimRegionActive
+    : I32EnumAttrCase<"Active", 2, "active">;
+def SimRegionInactive
+    : I32EnumAttrCase<"Inactive", 3, "inactive">;
+def SimRegionPreNBA
+    : I32EnumAttrCase<"PreNBA", 4, "pre_nba">;
+def SimRegionNBA
+    : I32EnumAttrCase<"NBA", 5, "nba">;
+def SimRegionPostNBA
+    : I32EnumAttrCase<"PostNBA", 6, "post_nba">;
+def SimRegionPreObserved
+    : I32EnumAttrCase<"PreObserved", 7, "pre_observed">;
+def SimRegionObserved
+    : I32EnumAttrCase<"Observed", 8, "observed">;
+def SimRegionPostObserved
+    : I32EnumAttrCase<"PostObserved", 9, "post_observed">;
+def SimRegionReactive
+    : I32EnumAttrCase<"Reactive", 10, "reactive">;
+def SimRegionReInactive
+    : I32EnumAttrCase<"ReInactive", 11, "re_inactive">;
+def SimRegionPreReNBA
+    : I32EnumAttrCase<"PreReNBA", 12, "pre_re_nba">;
+def SimRegionReNBA
+    : I32EnumAttrCase<"ReNBA", 13, "re_nba">;
+def SimRegionPostReNBA
+    : I32EnumAttrCase<"PostReNBA", 14, "post_re_nba">;
+def SimRegionPrePostponed
+    : I32EnumAttrCase<"PrePostponed", 15, "pre_postponed">;
+def SimRegionPostponed
+    : I32EnumAttrCase<"Postponed", 16, "postponed">;
+def SimEventRegion
+    : I32EnumAttr<"EventRegion", "IEEE executable event-region queue", [
+        SimRegionPreponed, SimRegionPreActive, SimRegionActive,
+        SimRegionInactive, SimRegionPreNBA, SimRegionNBA, SimRegionPostNBA,
+        SimRegionPreObserved, SimRegionObserved, SimRegionPostObserved,
+        SimRegionReactive, SimRegionReInactive, SimRegionPreReNBA,
+        SimRegionReNBA, SimRegionPostReNBA, SimRegionPrePostponed,
+        SimRegionPostponed
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimDomainDesign
+    : I32EnumAttrCase<"Design", 0, "design">;
+def SimDomainProgram
+    : I32EnumAttrCase<"Program", 1, "program">;
+def SimExecutionDomain
+    : I32EnumAttr<"ExecutionDomain", "procedural scheduling domain", [
+        SimDomainDesign, SimDomainProgram
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// Node kinds of a symbolic integer return summary.
+def SimIntegerExpressionConstant : I32EnumAttrCase<"Constant", 0, "constant">;
+def SimIntegerExpressionArgument : I32EnumAttrCase<"Argument", 1, "argument">;
+def SimIntegerExpressionIdentity : I32EnumAttrCase<"Identity", 2, "identity">;
+def SimIntegerExpressionSExt : I32EnumAttrCase<"SExt", 3, "sext">;
+def SimIntegerExpressionZExt : I32EnumAttrCase<"ZExt", 4, "zext">;
+def SimIntegerExpressionTrunc : I32EnumAttrCase<"Trunc", 5, "trunc">;
+def SimIntegerExpressionAdd : I32EnumAttrCase<"Add", 6, "add">;
+def SimIntegerExpressionSub : I32EnumAttrCase<"Sub", 7, "sub">;
+def SimIntegerExpressionMul : I32EnumAttrCase<"Mul", 8, "mul">;
+def SimIntegerExpressionAnd : I32EnumAttrCase<"And", 9, "and">;
+def SimIntegerExpressionOr : I32EnumAttrCase<"Or", 10, "or">;
+def SimIntegerExpressionXor : I32EnumAttrCase<"Xor", 11, "xor">;
+def SimIntegerExpressionKind
+    : I32EnumAttr<"IntegerExpressionKind", "integer return summary node", [
+        SimIntegerExpressionConstant, SimIntegerExpressionArgument,
+        SimIntegerExpressionIdentity, SimIntegerExpressionSExt,
+        SimIntegerExpressionZExt, SimIntegerExpressionTrunc,
+        SimIntegerExpressionAdd, SimIntegerExpressionSub,
+        SimIntegerExpressionMul, SimIntegerExpressionAnd,
+        SimIntegerExpressionOr, SimIntegerExpressionXor
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// Operand of a concurrent property whose sequence alternatives were minimized.
+def SimBooleanMinimizationAntecedent
+    : I32EnumAttrCase<"Antecedent", 0, "antecedent">;
+def SimBooleanMinimizationConsequent
+    : I32EnumAttrCase<"Consequent", 1, "consequent">;
+def SimBooleanMinimizationProperty
+    : I32EnumAttrCase<"Property", 2, "property">;
+def SimBooleanMinimizationScope
+    : I32EnumAttr<"BooleanMinimizationScope", "minimized property operand", [
+        SimBooleanMinimizationAntecedent, SimBooleanMinimizationConsequent,
+        SimBooleanMinimizationProperty
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimNetWire : I32EnumAttrCase<"Wire", 0, "wire">;
+def SimNetTri : I32EnumAttrCase<"Tri", 1, "tri">;
+def SimNetUWire : I32EnumAttrCase<"UWire", 2, "uwire">;
+def SimNetWAnd : I32EnumAttrCase<"WAnd", 3, "wand">;
+def SimNetWOr : I32EnumAttrCase<"WOr", 4, "wor">;
+def SimNetTri0 : I32EnumAttrCase<"Tri0", 5, "tri0">;
+def SimNetTri1 : I32EnumAttrCase<"Tri1", 6, "tri1">;
+def SimNetSupply0 : I32EnumAttrCase<"Supply0", 7, "supply0">;
+def SimNetSupply1 : I32EnumAttrCase<"Supply1", 8, "supply1">;
+def SimNetTriReg : I32EnumAttrCase<"TriReg", 9, "trireg">;
+def SimNetResolutionKind
+    : I32EnumAttr<"NetResolutionKind", "supported net resolution kind", [
+        SimNetWire, SimNetTri, SimNetUWire, SimNetWAnd, SimNetWOr,
+        SimNetTri0, SimNetTri1, SimNetSupply0, SimNetSupply1, SimNetTriReg
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// Numeric values are the positions on the IEEE 1800-2017 Figure 28-2
+// strength scale. Charge-only positions are retained so runtime resolution
+// can use one representation for all strength ranges.
+def SimStrengthHighZ : I32EnumAttrCase<"HighZ", 0, "highz">;
+def SimStrengthSmall : I32EnumAttrCase<"Small", 1, "small">;
+def SimStrengthMedium : I32EnumAttrCase<"Medium", 2, "medium">;
+def SimStrengthWeak : I32EnumAttrCase<"Weak", 3, "weak">;
+def SimStrengthLarge : I32EnumAttrCase<"Large", 4, "large">;
+def SimStrengthPull : I32EnumAttrCase<"Pull", 5, "pull">;
+def SimStrengthStrong : I32EnumAttrCase<"Strong", 6, "strong">;
+def SimStrengthSupply : I32EnumAttrCase<"Supply", 7, "supply">;
+def SimStrength : I32EnumAttr<"Strength", "signal strength scale position", [
+  SimStrengthHighZ, SimStrengthSmall, SimStrengthMedium, SimStrengthWeak,
+  SimStrengthLarge, SimStrengthPull, SimStrengthStrong, SimStrengthSupply
+]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimCaptureContext : I32EnumAttrCase<"Context", 0, "context">;
+def SimCaptureFormal : I32EnumAttrCase<"Formal", 1, "formal">;
+def SimCaptureValue : I32EnumAttrCase<"Value", 2, "value">;
+def SimCaptureStorage : I32EnumAttrCase<"Storage", 3, "storage">;
+def SimCaptureNet : I32EnumAttrCase<"Net", 4, "net">;
+def SimCaptureDriver : I32EnumAttrCase<"Driver", 5, "driver">;
+def SimCaptureEvent : I32EnumAttrCase<"Event", 6, "event">;
+def SimCaptureKind : I32EnumAttr<"CaptureKind", "entry argument binding kind", [
+  SimCaptureContext, SimCaptureFormal, SimCaptureValue, SimCaptureStorage,
+  SimCaptureNet, SimCaptureDriver, SimCaptureEvent
+]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// Transient binding roles used while the prepare pass freezes each isolated
+// code unit. These are deliberately distinct from CaptureKind: the latter is
+// stable ABI metadata on a function argument, while these roles describe how
+// unit lowering reconstructs source-level names from that ABI.
+def SimUnitArgumentDirect
+    : I32EnumAttrCase<"Direct", 0, "direct">;
+def SimUnitArgumentLValueOnly
+    : I32EnumAttrCase<"LValueOnly", 1, "lvalue_only">;
+def SimUnitArgumentFormalLocal
+    : I32EnumAttrCase<"FormalLocal", 2, "formal_local">;
+def SimUnitArgumentCopyOutDestination
+    : I32EnumAttrCase<"CopyOutDestination", 3, "copy_out_destination">;
+def SimUnitArgumentKind
+    : I32EnumAttr<"UnitArgumentKind",
+                  "frozen unit argument binding role", [
+        SimUnitArgumentDirect, SimUnitArgumentLValueOnly,
+        SimUnitArgumentFormalLocal, SimUnitArgumentCopyOutDestination
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimLifetimeAutomatic : I32EnumAttrCase<"Automatic", 0, "automatic">;
+def SimLifetimeStatic : I32EnumAttrCase<"Static", 1, "static">;
+def SimLifetimeDesign : I32EnumAttrCase<"Design", 2, "design">;
+def SimLifetime : I32EnumAttr<"Lifetime", "simulation object lifetime", [
+  SimLifetimeAutomatic, SimLifetimeStatic, SimLifetimeDesign
+]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimEdgeChange : I32EnumAttrCase<"Change", 0, "change">;
+def SimEdgePosedge : I32EnumAttrCase<"Posedge", 1, "posedge">;
+def SimEdgeNegedge : I32EnumAttrCase<"Negedge", 2, "negedge">;
+def SimEdgeBoth : I32EnumAttrCase<"Both", 3, "both">;
+def SimEdgeKind : I32EnumAttr<"EdgeKind", "suspension edge kind", [
+  SimEdgeChange, SimEdgePosedge, SimEdgeNegedge, SimEdgeBoth
+]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimUnaryPlus : I32EnumAttrCase<"Plus", 0, "plus">;
+def SimUnaryNegate : I32EnumAttrCase<"Negate", 1, "negate">;
+def SimUnaryBitNot : I32EnumAttrCase<"BitNot", 2, "bit_not">;
+def SimUnaryLogicalNot : I32EnumAttrCase<"LogicalNot", 3, "logical_not">;
+def SimUnaryKind
+    : I32EnumAttr<"UnaryKind", "normalized four-state unary operation", [
+      SimUnaryPlus, SimUnaryNegate, SimUnaryBitNot, SimUnaryLogicalNot
+    ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimReductionAnd : I32EnumAttrCase<"And", 0, "and">;
+def SimReductionOr : I32EnumAttrCase<"Or", 1, "or">;
+def SimReductionXor : I32EnumAttrCase<"Xor", 2, "xor">;
+def SimReductionNand : I32EnumAttrCase<"Nand", 3, "nand">;
+def SimReductionNor : I32EnumAttrCase<"Nor", 4, "nor">;
+def SimReductionXnor : I32EnumAttrCase<"Xnor", 5, "xnor">;
+def SimReductionKind
+    : I32EnumAttr<"ReductionKind", "normalized four-state reduction", [
+      SimReductionAnd, SimReductionOr, SimReductionXor, SimReductionNand,
+      SimReductionNor, SimReductionXnor
+    ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimJoinAll : I32EnumAttrCase<"All", 0, "all">;
+def SimJoinAny : I32EnumAttrCase<"Any", 1, "any">;
+def SimJoinKind : I32EnumAttr<"JoinKind", "process join mode", [
+  SimJoinAll, SimJoinAny
+]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimBinaryAdd : I32EnumAttrCase<"Add", 0, "add">;
+def SimBinarySub : I32EnumAttrCase<"Sub", 1, "sub">;
+def SimBinaryMul : I32EnumAttrCase<"Mul", 2, "mul">;
+def SimBinaryUDiv : I32EnumAttrCase<"UDiv", 3, "udiv">;
+def SimBinarySDiv : I32EnumAttrCase<"SDiv", 4, "sdiv">;
+def SimBinaryUMod : I32EnumAttrCase<"UMod", 5, "umod">;
+def SimBinarySMod : I32EnumAttrCase<"SMod", 6, "smod">;
+def SimBinaryAnd : I32EnumAttrCase<"And", 7, "and">;
+def SimBinaryOr : I32EnumAttrCase<"Or", 8, "or">;
+def SimBinaryXor : I32EnumAttrCase<"Xor", 9, "xor">;
+def SimBinaryXnor : I32EnumAttrCase<"Xnor", 10, "xnor">;
+def SimBinaryKind
+    : I32EnumAttr<"BinaryKind", "normalized four-state binary operation", [
+      SimBinaryAdd, SimBinarySub, SimBinaryMul, SimBinaryUDiv, SimBinarySDiv,
+      SimBinaryUMod, SimBinarySMod, SimBinaryAnd, SimBinaryOr, SimBinaryXor,
+      SimBinaryXnor
+    ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimLogicalAnd : I32EnumAttrCase<"And", 0, "and">;
+def SimLogicalOr : I32EnumAttrCase<"Or", 1, "or">;
+def SimLogicalKind : I32EnumAttr<"LogicalKind", "four-state logical operation",
+                                 [SimLogicalAnd, SimLogicalOr]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimShiftLeft : I32EnumAttrCase<"Left", 0, "left">;
+def SimShiftRight : I32EnumAttrCase<"Right", 1, "right">;
+def SimShiftRightArith : I32EnumAttrCase<"RightArith", 2, "right_arith">;
+def SimShiftKind
+    : I32EnumAttr<"ShiftKind", "four-state shift operation",
+                  [SimShiftLeft, SimShiftRight, SimShiftRightArith]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimCmpEq : I32EnumAttrCase<"Eq", 0, "eq">;
+def SimCmpNe : I32EnumAttrCase<"Ne", 1, "ne">;
+def SimCmpCaseEq : I32EnumAttrCase<"CaseEq", 2, "case_eq">;
+def SimCmpCaseNe : I32EnumAttrCase<"CaseNe", 3, "case_ne">;
+def SimCmpULT : I32EnumAttrCase<"ULT", 4, "ult">;
+def SimCmpULE : I32EnumAttrCase<"ULE", 5, "ule">;
+def SimCmpUGT : I32EnumAttrCase<"UGT", 6, "ugt">;
+def SimCmpUGE : I32EnumAttrCase<"UGE", 7, "uge">;
+def SimCmpSLT : I32EnumAttrCase<"SLT", 8, "slt">;
+def SimCmpSLE : I32EnumAttrCase<"SLE", 9, "sle">;
+def SimCmpSGT : I32EnumAttrCase<"SGT", 10, "sgt">;
+def SimCmpSGE : I32EnumAttrCase<"SGE", 11, "sge">;
+def SimCmpWildEq : I32EnumAttrCase<"WildEq", 12, "wild_eq">;
+def SimCmpWildNe : I32EnumAttrCase<"WildNe", 13, "wild_ne">;
+def SimCmpCaseZEq : I32EnumAttrCase<"CaseZEq", 14, "casez_eq">;
+def SimCmpCaseXZEq : I32EnumAttrCase<"CaseXZEq", 15, "casexz_eq">;
+def SimCompareKind
+    : I32EnumAttr<"CompareKind", "normalized comparison operation", [
+      SimCmpEq, SimCmpNe, SimCmpCaseEq, SimCmpCaseNe, SimCmpULT, SimCmpULE,
+      SimCmpUGT, SimCmpUGE, SimCmpSLT, SimCmpSLE, SimCmpSGT, SimCmpSGE,
+      SimCmpWildEq, SimCmpWildNe, SimCmpCaseZEq, SimCmpCaseXZEq
+    ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimMailboxWaitNotEmpty
+    : I32EnumAttrCase<"NotEmpty", 0, "not_empty">;
+def SimMailboxWaitNotFull
+    : I32EnumAttrCase<"NotFull", 1, "not_full">;
+def SimMailboxWaitKind
+    : I32EnumAttr<"MailboxWaitKind", "mailbox readiness predicate", [
+        SimMailboxWaitNotEmpty, SimMailboxWaitNotFull
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// IEEE 1800 process object control methods. Keep these as a typed enum so
+// Simulation IR never relies on stringly-typed built-in method names.
+def SimProcessControlKill
+    : I32EnumAttrCase<"Kill", 0, "kill">;
+def SimProcessControlSuspend
+    : I32EnumAttrCase<"Suspend", 1, "suspend">;
+def SimProcessControlResume
+    : I32EnumAttrCase<"Resume", 2, "resume">;
+def SimProcessControlKind
+    : I32EnumAttr<"ProcessControlKind", "process object control kind", [
+        SimProcessControlKill, SimProcessControlSuspend,
+        SimProcessControlResume
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// How a persistent typespec entered the reflection inventory.  This is kept
+// distinct from the concrete VPI typespec kind: an enum typedef and an
+// anonymous enum definition have the same VPI kind but different ownership
+// and vpiTypedef behavior.
+def SimVPITypespecTypedef
+    : I32EnumAttrCase<"Typedef", 0, "typedef">;
+def SimVPITypespecInterface
+    : I32EnumAttrCase<"Interface", 1, "interface">;
+def SimVPITypespecAnonymousEnum
+    : I32EnumAttrCase<"AnonymousEnum", 2, "anonymous_enum">;
+def SimVPITypespecClassSpecialization
+    : I32EnumAttrCase<"ClassSpecialization", 3, "class_specialization">;
+def SimVPITypespecBuiltinClass
+    : I32EnumAttrCase<"BuiltinClass", 4, "builtin_class">;
+def SimVPITypespecSourceDefault
+    : I32EnumAttrCase<"SourceDefault", 5, "source_default">;
+def SimVPITypespecOrigin
+    : I32EnumAttr<"VPITypespecOrigin", "VPI typespec inventory origin", [
+        SimVPITypespecTypedef, SimVPITypespecInterface,
+        SimVPITypespecAnonymousEnum, SimVPITypespecClassSpecialization,
+        SimVPITypespecBuiltinClass, SimVPITypespecSourceDefault
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimManagedRootExact : I32EnumAttrCase<"Exact", 0, "exact">;
+def SimManagedRootCandidate : I32EnumAttrCase<"Candidate", 1, "candidate">;
+def SimManagedRootMode
+    : I32EnumAttr<"ManagedRootMode", "managed root classification", [
+        SimManagedRootExact, SimManagedRootCandidate
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+def SimDumpPortsOff : I32EnumAttrCase<"Off", 0, "off">;
+def SimDumpPortsOn : I32EnumAttrCase<"On", 1, "on">;
+def SimDumpPortsAll : I32EnumAttrCase<"All", 2, "all">;
+def SimDumpPortsFlush : I32EnumAttrCase<"Flush", 3, "flush">;
+def SimDumpPortsLimit : I32EnumAttrCase<"Limit", 4, "limit">;
+def SimDumpPortsAction
+    : I32EnumAttr<"DumpPortsAction", "EVCD session control action", [
+        SimDumpPortsOff, SimDumpPortsOn, SimDumpPortsAll,
+        SimDumpPortsFlush, SimDumpPortsLimit
+      ]> {
+  let cppNamespace = "::talos::sim";
+}
+
+// Closed executable classifications. Numeric values match the runtime ABI;
+// lowering converts to ABI integers only at the runtime/bytecode boundary.
+def SimElementKindBits : I32EnumAttrCase<"Bits", 1, "bits">;
+def SimElementKindLogic : I32EnumAttrCase<"Logic", 2, "logic">;
+def SimElementKindReal : I32EnumAttrCase<"Real", 3, "real">;
+def SimElementKindClassHandle
+    : I32EnumAttrCase<"ClassHandle", 4, "class_handle">;
+def SimElementKindString : I32EnumAttrCase<"String", 5, "string">;
+def SimElementKindContainerHandle
+    : I32EnumAttrCase<"ContainerHandle", 6, "container_handle">;
+def SimElementKindAggregate : I32EnumAttrCase<"Aggregate", 7, "aggregate">;
+def SimElementKindEvent : I32EnumAttrCase<"Event", 8, "event">;
+def SimElementKind : I32EnumAttr<"ElementKind", "simulation element kind", [
+  SimElementKindBits, SimElementKindLogic, SimElementKindReal,
+  SimElementKindClassHandle, SimElementKindString,
+  SimElementKindContainerHandle, SimElementKindAggregate, SimElementKindEvent
+]> {
+  let cppNamespace = "::talos::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimContainerKindDynamicArray
+    : I32EnumAttrCase<"DynamicArray", 1, "dynamic_array">;
+def SimContainerKindQueue : I32EnumAttrCase<"Queue", 2, "queue">;
+def SimContainerKind
+    : I32EnumAttr<"ContainerKind", "simulation container kind", [
+  SimContainerKindDynamicArray, SimContainerKindQueue
+]> {
+  let cppNamespace = "::talos::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimAssocKeyKindUnsigned : I32EnumAttrCase<"Unsigned", 1, "unsigned">;
+def SimAssocKeyKindSigned : I32EnumAttrCase<"Signed", 2, "signed">;
+def SimAssocKeyKindString : I32EnumAttrCase<"String", 3, "string">;
+def SimAssocKeyKindClass : I32EnumAttrCase<"Class", 4, "class">;
+def SimAssocKeyKindProcess : I32EnumAttrCase<"Process", 5, "process">;
+def SimAssocKeyKindWildcard : I32EnumAttrCase<"Wildcard", 6, "wildcard">;
+// Any other index type with an equality operator (IEEE 1800-2023 7.8.5),
+// compared through its equality plan (sim::getAssocKeyPlan).
+def SimAssocKeyKindElement : I32EnumAttrCase<"Element", 7, "element">;
+def SimAssocKeyKind : I32EnumAttr<"AssocKeyKind", "simulation assoc key kind", [
+  SimAssocKeyKindUnsigned, SimAssocKeyKindSigned, SimAssocKeyKindString,
+  SimAssocKeyKindClass, SimAssocKeyKindProcess, SimAssocKeyKindWildcard,
+  SimAssocKeyKindElement
+]> {
+  let cppNamespace = "::talos::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimRandomDistributionUniform : I32EnumAttrCase<"Uniform", 0, "uniform">;
+def SimRandomDistributionNormal : I32EnumAttrCase<"Normal", 1, "normal">;
+def SimRandomDistributionExponential
+    : I32EnumAttrCase<"Exponential", 2, "exponential">;
+def SimRandomDistributionPoisson : I32EnumAttrCase<"Poisson", 3, "poisson">;
+def SimRandomDistributionChiSquare
+    : I32EnumAttrCase<"ChiSquare", 4, "chi_square">;
+def SimRandomDistributionT : I32EnumAttrCase<"T", 5, "t">;
+def SimRandomDistributionErlang : I32EnumAttrCase<"Erlang", 6, "erlang">;
+def SimRandomDistribution
+    : I32EnumAttr<"RandomDistribution", "simulation random distribution", [
+  SimRandomDistributionUniform, SimRandomDistributionNormal,
+  SimRandomDistributionExponential, SimRandomDistributionPoisson,
+  SimRandomDistributionChiSquare, SimRandomDistributionT,
+  SimRandomDistributionErlang
+]> {
+  let cppNamespace = "::talos::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimStochasticQueueActionInitialize
+    : I32EnumAttrCase<"Initialize", 0, "initialize">;
+def SimStochasticQueueActionAdd : I32EnumAttrCase<"Add", 1, "add">;
+def SimStochasticQueueActionRemove : I32EnumAttrCase<"Remove", 2, "remove">;
+def SimStochasticQueueActionFull : I32EnumAttrCase<"Full", 3, "full">;
+def SimStochasticQueueActionExam : I32EnumAttrCase<"Exam", 4, "exam">;
+def SimStochasticQueueAction
+    : I32EnumAttr<
+        "StochasticQueueAction", "simulation stochastic queue action", [
+  SimStochasticQueueActionInitialize, SimStochasticQueueActionAdd,
+  SimStochasticQueueActionRemove, SimStochasticQueueActionFull,
+  SimStochasticQueueActionExam
+]> {
+  let cppNamespace = "::talos::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimAssertionControlActionLock : I32EnumAttrCase<"Lock", 1, "lock">;
+def SimAssertionControlActionUnlock : I32EnumAttrCase<"Unlock", 2, "unlock">;
+def SimAssertionControlActionOn : I32EnumAttrCase<"On", 3, "on">;
+def SimAssertionControlActionOff : I32EnumAttrCase<"Off", 4, "off">;
+def SimAssertionControlActionKill : I32EnumAttrCase<"Kill", 5, "kill">;
+def SimAssertionControlActionPassOn : I32EnumAttrCase<"PassOn", 6, "pass_on">;
+def SimAssertionControlActionPassOff
+    : I32EnumAttrCase<"PassOff", 7, "pass_off">;
+def SimAssertionControlActionFailOn : I32EnumAttrCase<"FailOn", 8, "fail_on">;
+def SimAssertionControlActionFailOff
+    : I32EnumAttrCase<"FailOff", 9, "fail_off">;
+def SimAssertionControlActionNonvacuousOn
+    : I32EnumAttrCase<"NonvacuousOn", 10, "nonvacuous_on">;
+def SimAssertionControlActionVacuousOff
+    : I32EnumAttrCase<"VacuousOff", 11, "vacuous_off">;
+def SimAssertionControlAction
+    : I32EnumAttr<
+        "AssertionControlAction", "simulation assertion control action", [
+  SimAssertionControlActionLock, SimAssertionControlActionUnlock,
+  SimAssertionControlActionOn, SimAssertionControlActionOff,
+  SimAssertionControlActionKill, SimAssertionControlActionPassOn,
+  SimAssertionControlActionPassOff, SimAssertionControlActionFailOn,
+  SimAssertionControlActionFailOff, SimAssertionControlActionNonvacuousOn,
+  SimAssertionControlActionVacuousOff
+]> {
+  let cppNamespace = "::talos::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimCoveragePointKindLine : I32EnumAttrCase<"Line", 0, "line">;
+def SimCoveragePointKindAssertion
+    : I32EnumAttrCase<"Assertion", 1, "assertion">;
+def SimCoveragePointKind
+    : I32EnumAttr<"CoveragePointKind", "simulation coverage point kind", [
+  SimCoveragePointKindLine, SimCoveragePointKindAssertion
+]> {
+  let cppNamespace = "::talos::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimBlockEventKindBegin : I32EnumAttrCase<"Begin", 0, "begin">;
+def SimBlockEventKindEnd : I32EnumAttrCase<"End", 1, "end">;
+def SimBlockEventKind
+    : I32EnumAttr<"BlockEventKind", "simulation block event kind", [
+  SimBlockEventKindBegin, SimBlockEventKindEnd
+]> {
+  let cppNamespace = "::talos::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimRadixBinary : I32EnumAttrCase<"Binary", 2, "binary">;
+def SimRadixOctal : I32EnumAttrCase<"Octal", 8, "octal">;
+def SimRadixDecimal : I32EnumAttrCase<"Decimal", 10, "decimal">;
+def SimRadixHex : I32EnumAttrCase<"Hex", 16, "hex">;
+def SimRadix : I32EnumAttr<"Radix", "simulation radix", [
+  SimRadixBinary, SimRadixOctal, SimRadixDecimal, SimRadixHex
+]> {
+  let cppNamespace = "::talos::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimAssocTraversalDirectionForward
+    : I32EnumAttrCase<"Forward", 1, "forward">;
+def SimAssocTraversalDirectionBackward
+    : I32EnumAttrCase<"Backward", 4294967295, "backward">;
+def SimAssocTraversalDirection
+    : I32EnumAttr<
+        "AssocTraversalDirection", "simulation assoc traversal direction", [
+  SimAssocTraversalDirectionForward, SimAssocTraversalDirectionBackward
+]> {
+  let cppNamespace = "::talos::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimElementFlagsNone : I32BitEnumAttrCaseNone<"None", "none">;
+def SimElementFlagsFourState
+    : I32BitEnumAttrCaseBit<"FourState", 0, "four_state">;
+def SimElementFlagsSigned : I32BitEnumAttrCaseBit<"Signed", 1, "signed">;
+def SimElementFlags
+    : I32BitEnumAttr<"ElementFlags", "simulation element flags", [
+  SimElementFlagsNone, SimElementFlagsFourState, SimElementFlagsSigned
+]> {
+  let cppNamespace = "::talos::sim";
+  let genSpecializedAttr = 0;
+}
+
+def SimMemberVisibilityPublic : I32EnumAttrCase<"Public", 0, "public">;
+def SimMemberVisibilityProtected : I32EnumAttrCase<"Protected", 1, "protected">;
+def SimMemberVisibilityLocal : I32EnumAttrCase<"Local", 2, "local">;
+def SimMemberVisibility
+    : I32EnumAttr<"MemberVisibility", "class member visibility", [
+  SimMemberVisibilityPublic, SimMemberVisibilityProtected, SimMemberVisibilityLocal
+]> {
+  let cppNamespace = "::talos::sim";
+  let genSpecializedAttr = 0;
+}
+
+#endif // TALOS_DIALECT_SIMULATION_SIMULATIONENUMS_TD

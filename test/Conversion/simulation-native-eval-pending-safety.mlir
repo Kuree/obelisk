@@ -1,22 +1,22 @@
-// RUN: obelisk-opt %s --split-input-file --finalize-native-llvm | FileCheck %s
-// RUN: obelisk-opt %s --split-input-file --finalize-native-llvm --mlir-disable-threading | FileCheck %s
+// RUN: talos-opt %s --split-input-file --finalize-native-llvm | FileCheck %s
+// RUN: talos-opt %s --split-input-file --finalize-native-llvm --mlir-disable-threading | FileCheck %s
 
 // A generated private symbol must not collide with an existing LLVM symbol.
-// CHECK-LABEL: llvm.func @work.__obelisk_pending()
-// CHECK: llvm.func internal @[[CORE:work.__obelisk_pending_[0-9]+]](
+// CHECK-LABEL: llvm.func @work.__talos_pending()
+// CHECK: llvm.func internal @[[CORE:work.__talos_pending_[0-9]+]](
 // CHECK-LABEL: llvm.func @work(%{{.*}}: i64)
 // CHECK: llvm.call @[[CORE]]
-// CHECK: llvm.func internal @caller.__obelisk_pending(%{{.*}}: i64, %{{.*}}: !llvm.ptr {llvm.noalias, llvm.nocapture})
+// CHECK: llvm.func internal @caller.__talos_pending(%{{.*}}: i64, %{{.*}}: !llvm.ptr {llvm.noalias, llvm.nocapture})
 // CHECK: llvm.call @[[CORE]](%{{.*}}, %{{.*}}) {schedule.eval.direct_call} : (i64, !llvm.ptr) -> ()
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", schedule.eval.runtime_calendar, schedule.eval.transaction_roots = [{root = array<i64: 1, 0, 1, 0, 32, 4294967295, 2, 0>, accumulator = @acc, sites = array<i64: 1>}]} {
   llvm.mlir.global internal @acc(dense<0> : tensor<136xi8>) : !llvm.array<136 x i8>
-  llvm.mlir.global internal @__obelisk_aot_nba_dirty_roots_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
-  llvm.mlir.global internal @__obelisk_aot_nba_dirty_summary_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
-  llvm.mlir.global internal @__obelisk_current_context() : !llvm.ptr {
+  llvm.mlir.global internal @__talos_aot_nba_dirty_roots_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
+  llvm.mlir.global internal @__talos_aot_nba_dirty_summary_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
+  llvm.mlir.global internal @__talos_current_context() : !llvm.ptr {
     %null = llvm.mlir.zero : !llvm.ptr
     llvm.return %null : !llvm.ptr
   }
-  llvm.func @work.__obelisk_pending()
+  llvm.func @work.__talos_pending()
   llvm.func @work(%arg: i64) attributes {schedule.eval.call_closure_root} {
     %acc = llvm.mlir.addressof @acc : !llvm.ptr
     %valid = llvm.getelementptr %acc[96] : (!llvm.ptr) -> !llvm.ptr, i8
@@ -27,7 +27,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.store %bits, %acc : i64, !llvm.ptr
     llvm.store %bits, %mask : i64, !llvm.ptr
     llvm.store %one, %valid : i32, !llvm.ptr
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %marked = llvm.mlir.constant(1 : i64) : i64
     llvm.store %marked, %dirty {schedule.eval.pending_dirty_root = 0 : i32, schedule.eval.pending_stage_spec = array<i64: 0, 1, 32, 4294967295, 2, 1>} : i64, !llvm.ptr
     %present = llvm.load %valid {schedule.eval.pending_dirty_root = 0 : i32} : !llvm.ptr -> i32
@@ -45,15 +45,15 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
 // An escaped accumulator address can alias the capture through inttoptr.
 // LRM 4.9.4/10.4.2 requires one coherent captured payload. Keep it canonical.
 // CHECK-LABEL: module attributes
-// CHECK-NOT: .__obelisk_pending
+// CHECK-NOT: .__talos_pending
 // CHECK: llvm.func @work()
-// CHECK-NOT: .__obelisk_pending
+// CHECK-NOT: .__talos_pending
 // CHECK: llvm.return
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", schedule.eval.runtime_calendar, schedule.eval.transaction_roots = [{root = array<i64: 1, 0, 1, 0, 32, 4294967295, 2, 0>, accumulator = @acc, sites = array<i64: 1>}]} {
   llvm.mlir.global internal @acc(dense<0> : tensor<136xi8>) : !llvm.array<136 x i8>
-  llvm.mlir.global internal @__obelisk_aot_nba_dirty_roots_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
-  llvm.mlir.global internal @__obelisk_aot_nba_dirty_summary_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
-  llvm.mlir.global internal @__obelisk_current_context() : !llvm.ptr {
+  llvm.mlir.global internal @__talos_aot_nba_dirty_roots_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
+  llvm.mlir.global internal @__talos_aot_nba_dirty_summary_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
+  llvm.mlir.global internal @__talos_current_context() : !llvm.ptr {
     %null = llvm.mlir.zero : !llvm.ptr
     llvm.return %null : !llvm.ptr
   }
@@ -67,7 +67,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.store %bits, %acc : i64, !llvm.ptr
     llvm.store %bits, %mask : i64, !llvm.ptr
     llvm.store %one, %valid : i32, !llvm.ptr
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %marked = llvm.mlir.constant(1 : i64) : i64
     llvm.store %marked, %dirty {schedule.eval.pending_dirty_root = 0 : i32, schedule.eval.pending_stage_spec = array<i64: 0, 1, 32, 4294967295, 2, 1>} : i64, !llvm.ptr
     %escaped = llvm.ptrtoint %acc : !llvm.ptr to i64
@@ -84,17 +84,17 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
 // A tail-call contract cannot carry an appended caller-owned frame. The ABI
 // preflight must keep the whole transaction canonical before moving any body.
 // CHECK-LABEL: module attributes
-// CHECK-NOT: .__obelisk_pending
+// CHECK-NOT: .__talos_pending
 // CHECK: llvm.func @work(
-// CHECK-NOT: .__obelisk_pending
+// CHECK-NOT: .__talos_pending
 // CHECK: llvm.call tail @work(
-// CHECK-NOT: .__obelisk_pending
+// CHECK-NOT: .__talos_pending
 // CHECK: llvm.return
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", schedule.eval.runtime_calendar, schedule.eval.transaction_roots = [{root = array<i64: 1, 0, 1, 0, 32, 4294967295, 2, 0>, accumulator = @acc, sites = array<i64: 1>}]} {
   llvm.mlir.global internal @acc(dense<0> : tensor<136xi8>) : !llvm.array<136 x i8>
-  llvm.mlir.global internal @__obelisk_aot_nba_dirty_roots_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
-  llvm.mlir.global internal @__obelisk_aot_nba_dirty_summary_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
-  llvm.mlir.global internal @__obelisk_current_context() : !llvm.ptr {
+  llvm.mlir.global internal @__talos_aot_nba_dirty_roots_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
+  llvm.mlir.global internal @__talos_aot_nba_dirty_summary_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
+  llvm.mlir.global internal @__talos_current_context() : !llvm.ptr {
     %null = llvm.mlir.zero : !llvm.ptr
     llvm.return %null : !llvm.ptr
   }
@@ -108,7 +108,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.store %bits, %acc : i64, !llvm.ptr
     llvm.store %bits, %mask : i64, !llvm.ptr
     llvm.store %one, %valid : i32, !llvm.ptr
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %marked = llvm.mlir.constant(1 : i64) : i64
     llvm.store %marked, %dirty {schedule.eval.pending_dirty_root = 0 : i32, schedule.eval.pending_stage_spec = array<i64: 0, 1, 32, 4294967295, 2, 1>} : i64, !llvm.ptr
     %present = llvm.load %valid {schedule.eval.pending_dirty_root = 0 : i32} : !llvm.ptr -> i32
@@ -126,17 +126,17 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
 // A dynamically addressed index can observe any canonical leaf. Retain the
 // canonical ownership interface when the sparse projection is not exact.
 // CHECK-LABEL: module attributes
-// CHECK-NOT: .__obelisk_pending
+// CHECK-NOT: .__talos_pending
 // CHECK: llvm.func @work(
-// CHECK-NOT: .__obelisk_pending
+// CHECK-NOT: .__talos_pending
 // CHECK: llvm.getelementptr %{{.*}}[%{{.*}}]
-// CHECK-NOT: .__obelisk_pending
+// CHECK-NOT: .__talos_pending
 // CHECK: llvm.return
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", schedule.eval.runtime_calendar, schedule.eval.transaction_roots = [{root = array<i64: 1, 0, 1, 0, 32, 4294967295, 2, 0>, accumulator = @acc, sites = array<i64: 1>}]} {
   llvm.mlir.global internal @acc(dense<0> : tensor<136xi8>) : !llvm.array<136 x i8>
-  llvm.mlir.global internal @__obelisk_aot_nba_dirty_roots_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
-  llvm.mlir.global internal @__obelisk_aot_nba_dirty_summary_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
-  llvm.mlir.global internal @__obelisk_current_context() : !llvm.ptr {
+  llvm.mlir.global internal @__talos_aot_nba_dirty_roots_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
+  llvm.mlir.global internal @__talos_aot_nba_dirty_summary_v1(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
+  llvm.mlir.global internal @__talos_current_context() : !llvm.ptr {
     %null = llvm.mlir.zero : !llvm.ptr
     llvm.return %null : !llvm.ptr
   }
@@ -150,7 +150,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.store %bits, %acc : i64, !llvm.ptr
     llvm.store %bits, %mask : i64, !llvm.ptr
     llvm.store %one, %valid : i32, !llvm.ptr
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %marked = llvm.mlir.constant(1 : i64) : i64
     llvm.store %marked, %dirty {schedule.eval.pending_dirty_root = 0 : i32, schedule.eval.pending_stage_spec = array<i64: 0, 1, 32, 4294967295, 2, 1>} : i64, !llvm.ptr
     %alias = llvm.getelementptr %dirty[%offset] : (!llvm.ptr, i64) -> !llvm.ptr, i8

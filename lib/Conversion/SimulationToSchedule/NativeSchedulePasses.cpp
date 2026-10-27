@@ -1,5 +1,5 @@
 #include "NativePipeline.h"
-#include "obelisk/Analysis/NativeWordAnalysis.h"
+#include "talos/Analysis/NativeWordAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -7,25 +7,25 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
-#include "obelisk/Analysis/LocalStorageAnalysis.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/StaticSpecializationAnalysis.h"
-#include "obelisk/Analysis/StorageWriteAnalysis.h"
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/LocalStorageAnalysis.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/StaticSpecializationAnalysis.h"
+#include "talos/Analysis/StorageWriteAnalysis.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Runtime/RuntimeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Runtime/StableHandle.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringSet.h"
 
 using namespace mlir;
-namespace obelisk::detail {
+namespace talos::detail {
 LogicalResult NativePipelineAnalysis::planState() {
   if (bytecodeOnly)
     return success();
@@ -49,9 +49,9 @@ LogicalResult NativePipelineAnalysis::planState() {
     auto authorizeFixedHandles = [&](const auto &descriptors) {
       for (const auto &[descriptor, handle] : descriptors) {
         (void)descriptor;
-        obelisk_rt_stable_handle_v1 decoded{};
-        if (obelisk_rt_stable_handle_decode(handle, &decoded) &&
-            decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+        talos_rt_stable_handle_v1 decoded{};
+        if (talos_rt_stable_handle_decode(handle, &decoded) &&
+            decoded.kind == TALOS_RT_STABLE_HANDLE_STATIC &&
             decoded.offset == 0)
           (vpi.allowsWrite() ? stateLayout->guardedHandles
                              : stateLayout->directHandles)
@@ -85,9 +85,9 @@ LogicalResult NativePipelineAnalysis::planState() {
       if (handle == stateLayout->storage.end())
         return module.emitError(
             "static-specialization root references unknown storage");
-      obelisk_rt_stable_handle_v1 decoded{};
-      if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-          decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+      talos_rt_stable_handle_v1 decoded{};
+      if (!talos_rt_stable_handle_decode(handle->second, &decoded) ||
+          decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC ||
           decoded.offset != 0)
         return module.emitError(
             "static-specialization root has an invalid native handle");
@@ -110,7 +110,7 @@ LogicalResult NativePipelineAnalysis::planState() {
           "ordered inventory");
   }
   if (auto mode =
-          ::obelisk::schedule::get<::obelisk::schedule::Field::NativeScheduler>(
+          ::talos::schedule::get<::talos::schedule::Field::NativeScheduler>(
               module))
     nativeScheduler = mode.getValue();
   evalScheduler = nativeScheduler == schedule::NativeSchedulerMode::Eval;
@@ -338,7 +338,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
       stateLayout->transitionHandlesExact = true;
       for (uint32_t staticState : staticFanoutPlan.runtimeTransitionStates)
         stateLayout->transitionHandles.insert(staticState);
-      for (const obelisk_rt_static_fanout_entry &entry :
+      for (const talos_rt_static_fanout_entry &entry :
            staticFanoutPlan.entries)
         stateLayout->transitionHandles.insert(entry.static_state);
       // Toggle coverage observes every committed transition even when the
@@ -360,9 +360,9 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
         }
         if (!handle)
           return;
-        obelisk_rt_stable_handle_v1 decoded{};
-        if (obelisk_rt_stable_handle_decode(*handle, &decoded) &&
-            decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC)
+        talos_rt_stable_handle_v1 decoded{};
+        if (talos_rt_stable_handle_decode(*handle, &decoded) &&
+            decoded.kind == TALOS_RT_STABLE_HANDLE_STATIC)
           stateLayout->transitionHandles.insert(decoded.id);
       });
     }
@@ -430,7 +430,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
       if (!aotActorSlotFor(actor))
         return;
       auto body =
-          ::obelisk::schedule::get<::obelisk::schedule::Field::EvalBody>(actor);
+          ::talos::schedule::get<::talos::schedule::Field::EvalBody>(actor);
       sim::SimFuncOp function =
           body ? planningSymbols.lookupSymbolIn<sim::SimFuncOp>(metadataDesign,
                                                                 body)
@@ -462,10 +462,10 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                     sim::getPackedScalarType(element)))
               return false;
             auto handle = stateLayout->storage.find(target.descriptor);
-            obelisk_rt_stable_handle_v1 decoded{};
+            talos_rt_stable_handle_v1 decoded{};
             return handle != stateLayout->storage.end() &&
-                   obelisk_rt_stable_handle_decode(handle->second, &decoded) &&
-                   decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+                   talos_rt_stable_handle_decode(handle->second, &decoded) &&
+                   decoded.kind == TALOS_RT_STABLE_HANDLE_STATIC &&
                    stateLayout->directHandles.contains(decoded.id);
           };
           auto runtimeStore = [&](Value destination,
@@ -489,7 +489,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
               return runtimeObservedNets.contains(*found->second.descriptor);
             const auto &handles = stateLayout->storage;
             auto handle = handles.find(*found->second.descriptor);
-            obelisk_rt_stable_handle_v1 decoded{};
+            talos_rt_stable_handle_v1 decoded{};
             Type element =
                 cast<sim::RefType>(destination.getType()).getElementType();
             auto width = detail::nativeStateWidth(element);
@@ -502,8 +502,8 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
             bool ownedPublication = runtimeCalendar && current == function &&
                                     width && *width <= 64;
             return handle != handles.end() &&
-                   obelisk_rt_stable_handle_decode(handle->second, &decoded) &&
-                   decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+                   talos_rt_stable_handle_decode(handle->second, &decoded) &&
+                   decoded.kind == TALOS_RT_STABLE_HANDLE_STATIC &&
                    ((!requireStaticNBA && !ownedPublication &&
                      staticFanoutPlan.runtimeTransitionStates.contains(
                          decoded.id)) ||
@@ -581,11 +581,11 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
         });
       }
       if (runtimeLocal) {
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalCheckpointOnly>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::EvalCheckpointOnly>(
             function, UnitAttr::get(module.getContext()));
         if (detailedTiming) {
-          llvm::errs() << "obelisk eval checkpoint admission: actor="
+          llvm::errs() << "talos eval checkpoint admission: actor="
                        << *aotActorSlotFor(actor)
                        << " function=" << actor.getSymName()
                        << " body=" << function.getSymName()
@@ -601,7 +601,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
          analysis::collectInWalkOrder<sim::SimFuncOp>(metadataDesign))
       admitActor(actor);
     if (runtimeCalendar)
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+      ::talos::schedule::set<::talos::schedule::Field::EvalRuntimeCalendar>(
           module, UnitAttr::get(module.getContext()));
   }
   if (staticNBA) {
@@ -632,8 +632,8 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     };
     SmallVector<sim::SimFuncOp> admittedBodies;
     SmallVector<bool> clockedBodies;
-    if (::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalRuntimeCalendar>(module)) {
+    if (::talos::schedule::has<
+            ::talos::schedule::Field::EvalRuntimeCalendar>(module)) {
       auto clocks = buildNativePeriodicClockPlan(
           module, *stateLayout, aotEligibility.getActorSlots());
       if (failed(clocks))
@@ -648,9 +648,9 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     llvm::SmallPtrSet<Operation *, 8> mixedTierBodies;
     // Fanout entries by actor slot and layout bounds by handle, so each actor
     // visits only its own entries.
-    DenseMap<uint32_t, SmallVector<const obelisk_rt_static_fanout_entry *>>
+    DenseMap<uint32_t, SmallVector<const talos_rt_static_fanout_entry *>>
         entriesBySlot;
-    for (const obelisk_rt_static_fanout_entry &entry : staticFanoutPlan.entries)
+    for (const talos_rt_static_fanout_entry &entry : staticFanoutPlan.entries)
       entriesBySlot[entry.actor_slot].push_back(&entry);
     DenseMap<uint64_t, uint64_t> boundOffsets;
     for (const auto &bound : stateLayout->bounds)
@@ -661,7 +661,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
         if (!slot)
           return;
         auto body =
-            ::obelisk::schedule::get<::obelisk::schedule::Field::EvalBody>(
+            ::talos::schedule::get<::talos::schedule::Field::EvalBody>(
                 actor);
         if (body)
           if (sim::SimFuncOp function =
@@ -678,7 +678,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
             });
             bool periodicIngress = false;
             bool nonPeriodicIngress = false;
-            for (const obelisk_rt_static_fanout_entry *entry :
+            for (const talos_rt_static_fanout_entry *entry :
                  entriesBySlot.lookup(*slot)) {
               auto offset = boundOffsets.find(entry->static_state);
               bool periodic =
@@ -820,7 +820,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
         queuePayloadSupported[root->second] = 0;
     });
     SmallVector<uint8_t> orderedRootClosed(staticNBAPlan.roots.size(), 1);
-    for (const obelisk_rt_static_nba_site &site : staticNBAPlan.sites)
+    for (const talos_rt_static_nba_site &site : staticNBAPlan.sites)
       if (site.root < orderedRootClosed.size() &&
           !generatedOrigins[site.root].contains(semanticOrigin(site.site)))
         orderedRootClosed[site.root] = 0;
@@ -829,8 +829,8 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     // Include initializer writes rather than mistaking them for asynchronous
     // clock writers or requiring a checkpoint on every later clock edge.
     staticNBAPlan.runtimeQueueRoots.assign(staticNBAPlan.roots.size(), 0);
-    if (::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalRuntimeCalendar>(module))
+    if (::talos::schedule::has<
+            ::talos::schedule::Field::EvalRuntimeCalendar>(module))
       for (uint32_t root = 0; root != orderedRootClosed.size(); ++root)
         if (queuePayloadSupported[root]) {
           staticNBAPlan.runtimeQueueRoots[root] = 1;
@@ -848,7 +848,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
           return;
         // LRM 4.6(b), 10.4.2: name the physical origin whose writes would
         // otherwise interleave with the generated ordered batch.
-        llvm::errs() << "obelisk NBA missing generated origin: root="
+        llvm::errs() << "talos NBA missing generated origin: root="
                      << root->second << " site=" << site.getId()
                      << " origin=" << semanticOrigin(site.getId())
                      << " function="
@@ -908,9 +908,9 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
       if (processedRuntimeOwners.contains(index))
         continue;
       bool runtimeOwner =
-          ::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(function) ||
-          ::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalCheckpointOnly>(function) ||
+          ::talos::schedule::has<evalRuntimeNBARequiredAttr>(function) ||
+          ::talos::schedule::has<
+              ::talos::schedule::Field::EvalCheckpointOnly>(function) ||
           (bodyNeedsOrderedNBA[index] && !everySiteGenerated) ||
           llvm::any_of(bodyWideRoots[index], [&](uint32_t root) {
             return !orderedRootClosed[root] || !queuePayloadSupported[root];
@@ -918,8 +918,8 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
       if (!runtimeOwner)
         continue;
       if (detailedTiming &&
-          !::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(function)) {
-        llvm::errs() << "obelisk eval checkpoint admission: body="
+          !::talos::schedule::has<evalRuntimeNBARequiredAttr>(function)) {
+        llvm::errs() << "talos eval checkpoint admission: body="
                      << function.getSymName()
                      << " reason=runtime-nba-owner ordered="
                      << bodyNeedsOrderedNBA[index]
@@ -937,7 +937,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
                        << ",";
         llvm::errs() << '\n';
       }
-      ::obelisk::schedule::set<evalRuntimeNBARequiredAttr>(
+      ::talos::schedule::set<evalRuntimeNBARequiredAttr>(
           function, UnitAttr::get(module.getContext()));
       processedRuntimeOwners.insert(index);
       if (bodyNeedsOrderedNBA[index] && everySiteGenerated) {
@@ -956,9 +956,9 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     }
     for (auto [index, function] : llvm::enumerate(admittedBodies))
       if (bodyUsesOrderedQueue[index] &&
-          !::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(function))
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalOrderedNbaQueue>(
+          !::talos::schedule::has<evalRuntimeNBARequiredAttr>(function))
+        ::talos::schedule::set<
+            ::talos::schedule::Field::EvalOrderedNbaQueue>(
             function, UnitAttr::get(module.getContext()));
     materializeNBAAccumulators = true;
     directStaticState |=
@@ -1064,7 +1064,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
       });
       return loopCarried;
     };
-    for (const obelisk_rt_static_fanout_entry &entry :
+    for (const talos_rt_static_fanout_entry &entry :
          staticFanoutPlan.entries) {
       // The periodic loop forwards an alias entry itself (see
       // isNativePeriodicAliasEntry).
@@ -1126,7 +1126,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
   if (nativeScheduler == schedule::NativeSchedulerMode::Auto)
     evalScheduler = cleanSuperstep && staticFanoutPlan.exact;
   if (staticSpecialization && useAOT) {
-    FailureOr<SmallVector<obelisk_rt_static_actor_root>> dependencies =
+    FailureOr<SmallVector<talos_rt_static_actor_root>> dependencies =
         buildNativeStaticActorRootPlan(
             module, *stateLayout, aotEligibility.getActorSlots(),
             checkpointOnlyActors, vpi.allowsWrite(), writableVPIUnscopedActors);
@@ -1163,7 +1163,7 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
   DenseMap<uint32_t, uint32_t> fragmentFusionGroups;
   if (useAOT) {
     ArrayAttr fusions =
-        ::obelisk::schedule::get<schedule::metadata::staticFusion>(
+        ::talos::schedule::get<schedule::metadata::staticFusion>(
             metadataDesign);
     schedule::ComputeGraphAttr graph = metadataDesign.getComputeGraphAttr();
     if (fusions && graph) {
@@ -1345,7 +1345,7 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
               direct.wrapper);
       if (!wrapper)
         continue;
-      auto owner = ::obelisk::schedule::get<
+      auto owner = ::talos::schedule::get<
           schedule::metadata::evalUnsupportedCheckpointOwner>(wrapper);
       if (!owner)
         continue;
@@ -1558,13 +1558,13 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
         bool certifiedRuntimeNBAFallback = false;
         if (entry.actor_slot < actorsBySlot.size())
           if (sim::SimFuncOp actor = actorsBySlot[entry.actor_slot])
-            if (auto body = ::obelisk::schedule::get<
-                    ::obelisk::schedule::Field::EvalBody>(actor))
+            if (auto body = ::talos::schedule::get<
+                    ::talos::schedule::Field::EvalBody>(actor))
               if (sim::SimFuncOp evalBody =
                       evalSymbols.getSymbolTable(metadataDesign)
                           .lookup<sim::SimFuncOp>(body.getValue()))
                 certifiedRuntimeNBAFallback =
-                    ::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(
+                    ::talos::schedule::has<evalRuntimeNBARequiredAttr>(
                         evalBody);
         std::string detail;
         llvm::raw_string_ostream diagnostic(detail);
@@ -1604,7 +1604,7 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
                       : "auto eval exact owner miss: ")
               << detail << '\n';
         if (certifiedRuntimeNBAFallback)
-          ::obelisk::schedule::set<evalRuntimeNBAFallbackAttr>(
+          ::talos::schedule::set<evalRuntimeNBAFallbackAttr>(
               module, UnitAttr::get(context));
         evalScheduler = false;
         break;
@@ -1665,14 +1665,14 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
           sim::SimFuncOp callee = evalSymbols.getSymbolTable(metadataDesign)
                                       .lookup<sim::SimFuncOp>(call.getCallee());
           if (callee &&
-              ::obelisk::schedule::has<
-                  ::obelisk::schedule::Field::EvalInductiveTwoState>(callee))
+              ::talos::schedule::has<
+                  ::talos::schedule::Field::EvalInductiveTwoState>(callee))
             pending.push_back(callee);
         });
       }
       for (sim::SimFuncOp selected : closure)
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalSelectedTwoState>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::EvalSelectedTwoState>(
             selected, UnitAttr::get(context));
     }
     // Carry the selected-owner proof on the operation that consumes it.
@@ -1709,7 +1709,7 @@ LogicalResult NativePipelineAnalysis::planOwnership() {
       else
         ++tier1;
     }
-    llvm::errs() << "obelisk eval executor inventory: tier1=" << tier1
+    llvm::errs() << "talos eval executor inventory: tier1=" << tier1
                  << " tier2=" << tier2 << " runtime_checkpoints=" << checkpoints
                  << '\n';
   }
@@ -1840,16 +1840,16 @@ uint32_t NativePipelineAnalysis::fusionGroupFor(uint32_t slot,
   auto found = aotFusionGroups.find({slot, continuation});
   return found == aotFusionGroups.end() ? UINT32_MAX : found->second;
 }
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_PLANNATIVEEXECUTABLENODESPASS
 #define GEN_PASS_DEF_PLANNATIVESTATEPASS
 #define GEN_PASS_DEF_PLANNATIVEACTORSPASS
 #define GEN_PASS_DEF_PLANNATIVESCHEDULEPASS
 #define GEN_PASS_DEF_PLANNATIVEEVALOWNERSHIPPASS
 #define GEN_PASS_DEF_RESOLVENATIVEEVALSCHEDULEPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "talos/Conversion/Passes.h.inc"
 namespace {
 class PlanNativeExecutableNodesPass final
     : public impl::PlanNativeExecutableNodesPassBase<
@@ -1998,4 +1998,4 @@ class ResolveNativeEvalSchedulePass final
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

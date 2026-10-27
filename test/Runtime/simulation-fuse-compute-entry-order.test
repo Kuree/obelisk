@@ -3,8 +3,8 @@
 // Runtime semantics for ../Dialect/Simulation/Transforms/simulation-fuse-compute-entry-order.mlir.
 
 // RUN: %split-file %S/../Dialect/Simulation/Transforms/simulation-fuse-compute-entry-order.mlir %t
-// RUN: obelisk -O0 --native-scheduler=generic %t/entry-order.sv -o %t/entry-order.unfused
-// RUN: obelisk -O3 --native-scheduler=generic %t/entry-order.sv -o %t/entry-order.optimized
+// RUN: talos -O0 --native-scheduler=generic %t/entry-order.sv -o %t/entry-order.unfused
+// RUN: talos -O3 --native-scheduler=generic %t/entry-order.sv -o %t/entry-order.optimized
 // RUN: %t/entry-order.unfused > %t/entry-order.unfused.out
 // RUN: %t/entry-order.optimized > %t/entry-order.optimized.out
 // RUN: diff %t/entry-order.unfused.out %t/entry-order.optimized.out

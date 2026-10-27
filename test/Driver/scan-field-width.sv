@@ -1,10 +1,10 @@
-// RUN: obelisk -O0 --vpi=off %s -o %t.o0.native
+// RUN: talos -O0 --vpi=off %s -o %t.o0.native
 // RUN: %t.o0.native | FileCheck %s
-// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode
+// RUN: talos -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: %t.o0.bytecode | FileCheck %s
-// RUN: obelisk -O3 --vpi=off %s -o %t.o3.native
+// RUN: talos -O3 --vpi=off %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: talos -O3 --vpi=off --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode | FileCheck %s
 
 // IEEE 1800-2017 21.3.4: a decimal field width limits the characters consumed
@@ -39,10 +39,10 @@ module scan_field_width;
     status = $sscanf("P20=4cff0000", "P%h=%80123456789h", first, hex_value);
     $display("long=%0d:%0h:%0h", status, first, hex_value);
 
-    descriptor = $fopen("obelisk-scan-field-width.tmp", "w");
+    descriptor = $fopen("talos-scan-field-width.tmp", "w");
     $fwrite(descriptor, "12345 tail");
     $fclose(descriptor);
-    descriptor = $fopen("obelisk-scan-field-width.tmp", "r");
+    descriptor = $fopen("talos-scan-field-width.tmp", "r");
     first = 0;
     word = "";
     status = $fscanf(descriptor, "%3d%*2d %2s", first, word);

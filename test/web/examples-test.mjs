@@ -1,6 +1,6 @@
 // Compiles and runs every example design the page offers, through the real
 // browser artifacts. Run from the repo as:
-//   OBELISK_WEB_SITE=site node test/web/examples-test.mjs [-O0|-O3]
+//   TALOS_WEB_SITE=site node test/web/examples-test.mjs [-O0|-O3]
 //
 // The smoke test proves one small design works end to end; this proves the
 // designs a visitor can actually click do, which is a much wider slice of the
@@ -13,14 +13,14 @@ import { pathToFileURL } from 'node:url';
 
 // The site is the assembled Pages directory: web/ plus the wasm compiler and
 // its toolchain archives. Defaults to ./site, where the wasm CI job builds it.
-const directory = `${resolve(process.env.OBELISK_WEB_SITE ?? 'site')}/`;
+const directory = `${resolve(process.env.TALOS_WEB_SITE ?? 'site')}/`;
 const site = pathToFileURL(directory);
 const { runSimulation } = await import(new URL('wasi.js', site));
 const { EXAMPLES } = await import(new URL('examples.js', site));
 await import(new URL('toolchain.js', site));
 
 const require = createRequire(import.meta.url);
-const createObeliskModule = require(`${directory}obelisk.js`);
+const createTalosModule = require(`${directory}talos.js`);
 const optimization = process.argv[2] ?? '-O3';
 
 let failures = 0;
@@ -30,14 +30,14 @@ for (const example of EXAMPLES) {
   try {
     // LLVM's compiler stack keeps process-global state, so each design gets a
     // fresh module exactly as the UI gives each run a fresh worker.
-    const mod = await createObeliskModule({
+    const mod = await createTalosModule({
       noInitialRun: true,
-      thisProgram: '/bin/obelisk',
+      thisProgram: '/bin/talos',
       locateFile: (name) => `${directory}${name}`,
       print: (line) => logs.push(line),
       printErr: (line) => logs.push(line),
     });
-    await globalThis.installObeliskToolchain(mod, {
+    await globalThis.installTalosToolchain(mod, {
       load: (name) => readFile(`${directory}toolchain/${name}`),
     });
     mod.FS.mkdir('/work');

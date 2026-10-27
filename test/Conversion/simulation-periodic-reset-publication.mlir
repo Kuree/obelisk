@@ -1,19 +1,19 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
 // Reset changes in a finite startup process, outside the periodic clock's
 // dependency closure. Promoted two-state port bodies must still publish the
 // change through both inverters, including when invoked at a checkpoint.
-// PLAN: __obelisk_periodic_clock_plan_v1
-// PLAN-LABEL: llvm.func @first.__obelisk_eval_body_0.__obelisk_two_state_0(
-// PLAN: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// PLAN: __talos_periodic_clock_plan_v1
+// PLAN-LABEL: llvm.func @first.__talos_eval_body_0.__talos_two_state_0(
+// PLAN: llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // PLAN: llvm.store
 // PLAN: llvm.return
-// PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// PLAN-NOT: @__obelisk_eval_selected_variant_v1_
-// PLAN-NOT: @__obelisk_eval_route_promotion_pending_v1
-// PLAN: %[[STATUS:.*]] = llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// PLAN-NEXT: {{.*}}llvm.call @__obelisk_eval_route_promotion_boundary_v1(%[[STATUS]])
+// PLAN-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// PLAN-NOT: @__talos_eval_selected_variant_v1_
+// PLAN-NOT: @__talos_eval_route_promotion_pending_v1
+// PLAN: %[[STATUS:.*]] = llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
+// PLAN-NEXT: {{.*}}llvm.call @__talos_eval_route_promotion_boundary_v1(%[[STATUS]])
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

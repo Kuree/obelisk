@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: obelisk --std=1800-2023 -emit-obelisk %s -o /dev/null
+// RUN: talos --std=1800-2023 -emit-talos %s -o /dev/null
 
 // Slang currently rejects a virtual-interface member reached from a
 // concurrent assertion expansion as a dynamic non-procedural reference. Keep

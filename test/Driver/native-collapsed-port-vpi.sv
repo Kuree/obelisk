@@ -1,11 +1,11 @@
 // REQUIRES: native-elf
 // RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_collapsed_ports.c -I%resource_dir/include -o %t.probe.so
-// RUN: obelisk -O3 --vpi=full --mlir-timing %s %t.probe.so -o %t.o3 2> %t.timing
+// RUN: talos -O3 --vpi=full --mlir-timing %s %t.probe.so -o %t.o3 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
 // RUN: %t.o3 +WRITE | FileCheck %s
-// RUN: obelisk -O3 --vpi=full --execution-tier=bytecode %s %t.probe.so -o %t.bytecode
+// RUN: talos -O3 --vpi=full --execution-tier=bytecode %s %t.probe.so -o %t.bytecode
 // RUN: %t.bytecode +WRITE | FileCheck %s
-// RUN: obelisk -O3 --vpi=read %s %t.probe.so -o %t.read
+// RUN: talos -O3 --vpi=read %s %t.probe.so -o %t.read
 // RUN: %t.read | FileCheck %s
 // CHECK-NOT: FAIL:
 // ADMISSION: native eligibility: eligible=1 fully_eligible=0 cost_effective=1

@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --test-obelisk-replicate --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.mlir
+// RUN: talos-opt %s --test-talos-replicate --convert-talos-sim-processes-to-llvm-coroutines -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=VIRTUAL < %t.mlir
 // RUN: FileCheck %s --check-prefix=INTERFACE < %t.mlir
-// RUN: obelisk-translate %t.mlir --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
-// RUN: obelisk-opt %s --test-obelisk-replicate --encode-obelisk-sim-to-bytecode='vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-translate %t.mlir --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN: talos-opt %s --test-talos-replicate --encode-talos-sim-to-bytecode='vpi=off' --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BYTECODE
 
 // IEEE 8.20 and 8.26: class field offsets and virtual and interface dispatch
 // metadata are resolved once before parallel native conversion. Forty
@@ -11,26 +11,26 @@
 // than one 64-function conversion chunk, and every chunk's direct, virtual and
 // interface calls use the shared index.
 // CHECK-LABEL: llvm.func @use39(
-// CHECK: llvm.call @obelisk_rt_v1_object_read
+// CHECK: llvm.call @talos_rt_v1_object_read
 // CHECK: llvm.call @c39(
 // CHECK: llvm.mlir.constant(1000 : i64)
-// CHECK: llvm.call @obelisk_rt_v1_method_invoke(
-// CHECK: llvm.call @obelisk_rt_v1_object_cast
+// CHECK: llvm.call @talos_rt_v1_method_invoke(
+// CHECK: llvm.call @talos_rt_v1_object_cast
 // I39 has class ID 79 and the method is its interface ordinal 0.
 // CHECK: llvm.mlir.constant(79 : i64)
 // CHECK-NEXT: llvm.mlir.constant(0 : i64)
 // CHECK-NEXT: llvm.mlir.constant(1000 : i64)
-// CHECK: llvm.call @obelisk_rt_v1_interface_method_invoke(
-// VIRTUAL-COUNT-40: llvm.call @obelisk_rt_v1_method_invoke(
-// VIRTUAL-NOT: llvm.call @obelisk_rt_v1_method_invoke(
-// INTERFACE-COUNT-40: llvm.call @obelisk_rt_v1_interface_method_invoke(
-// INTERFACE-NOT: llvm.call @obelisk_rt_v1_interface_method_invoke(
+// CHECK: llvm.call @talos_rt_v1_interface_method_invoke(
+// VIRTUAL-COUNT-40: llvm.call @talos_rt_v1_method_invoke(
+// VIRTUAL-NOT: llvm.call @talos_rt_v1_method_invoke(
+// INTERFACE-COUNT-40: llvm.call @talos_rt_v1_interface_method_invoke(
+// INTERFACE-NOT: llvm.call @talos_rt_v1_interface_method_invoke(
 
 // Bytecode preparation resolves each implementation's owner through the same
 // class layout index.
-// BYTECODE-LABEL: @C39.__obelisk_methods()
+// BYTECODE-LABEL: @C39.__talos_methods()
 // BYTECODE: llvm.mlir.constant(1000 : i64)
-// BYTECODE: llvm.mlir.addressof @C39_method.__obelisk_native_thunk
+// BYTECODE: llvm.mlir.addressof @C39_method.__talos_native_thunk
 
 module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"} {
   simulation.design @lookups {

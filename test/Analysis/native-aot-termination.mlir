@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
+// RUN: talos-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=ANALYSIS
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=LOWERING
 
 // Stop/fatal share the native scheduler's finish transaction. Merely having a
@@ -12,9 +12,9 @@
 // ANALYSIS-NOT: reason
 // ANALYSIS: actor 5 @stop
 
-// LOWERING: __obelisk_aot_schedule_plan_v1
+// LOWERING: __talos_aot_schedule_plan_v1
 // LOWERING-LABEL: llvm.func @main
-// LOWERING: llvm.call @obelisk_rt_v1_scheduler_run_aot(
+// LOWERING: llvm.call @talos_rt_v1_scheduler_run_aot(
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -29,7 +29,7 @@ module attributes {
     simulation.code_unit.decl 5 in 0 initial hierarchy "termination.native3"
     simulation.code_unit.decl 6 in 0 initial hierarchy "termination.stop"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %native0 = simulation.spawn @native0(%ctx) :

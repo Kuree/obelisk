@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-print-ir-after=prepare-native-managed-roots -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines --mlir-print-ir-after=prepare-native-managed-roots -o /dev/null 2>&1 | FileCheck %s
 
 // A process needs no managed root scope when it holds only scalar state,
 // including fixed unpacked arrays of scalars, and its calls reach only such

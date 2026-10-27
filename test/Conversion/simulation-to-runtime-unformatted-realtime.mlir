@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --convert-obelisk-sim-to-runtime %s | FileCheck %s
+// RUN: talos-opt --convert-talos-sim-to-runtime %s | FileCheck %s
 
 // Keep the direct-$realtime classification through the typed runtime ABI.
 module {

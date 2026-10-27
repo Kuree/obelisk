@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -split-input-file -verify-diagnostics
+// RUN: talos-opt %s -split-input-file -verify-diagnostics
 
 module {
   func.func @wrong_put(%mailbox: !simulation.mailbox<i32>, %value: i64) {

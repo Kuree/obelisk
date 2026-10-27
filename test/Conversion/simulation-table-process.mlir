@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.mlir
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-disable-threading -o %t.serial
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines --mlir-disable-threading -o %t.serial
 // RUN: diff %t.mlir %t.serial
-// RUN: obelisk-translate --mlir-to-llvmir %t.mlir | opt -passes=verify -disable-output
+// RUN: talos-translate --mlir-to-llvmir %t.mlir | opt -passes=verify -disable-output
 
 // IEEE 1800-2023 9.4.2: the executed event control selects its wait and edge.
 module attributes {
@@ -45,17 +45,17 @@ module attributes {
 
   }
 }
-// CHECK: llvm.mlir.addressof @obelisk_rt_v1_table_process_execute
-// CHECK: llvm.mlir.addressof @table_process.__obelisk_table.plan
-// CHECK: llvm.mlir.global internal constant @table_process.__obelisk_table.plan
-// CHECK: llvm.mlir.addressof @table_process.__obelisk_table_body
-// CHECK: llvm.mlir.global internal constant @table_process.__obelisk_table.waits
+// CHECK: llvm.mlir.addressof @talos_rt_v1_table_process_execute
+// CHECK: llvm.mlir.addressof @table_process.__talos_table.plan
+// CHECK: llvm.mlir.global internal constant @table_process.__talos_table.plan
+// CHECK: llvm.mlir.addressof @table_process.__talos_table_body
+// CHECK: llvm.mlir.global internal constant @table_process.__talos_table.waits
 // CHECK-SAME: !llvm.array<3 x
 // CHECK: llvm.mlir.constant(3 : i32)
 // CHECK: llvm.mlir.constant(7 : i32)
 // CHECK: llvm.mlir.constant(13 : i32)
-// CHECK-LABEL: llvm.func @table_process.__obelisk_table_body
+// CHECK-LABEL: llvm.func @table_process.__talos_table_body
 // CHECK-SAME: -> i32
 // CHECK-NOT: llvm.intr.coro
 // CHECK: llvm.switch
-// CHECK-NOT: llvm.func @table_process.__obelisk_native_execute
+// CHECK-NOT: llvm.func @table_process.__talos_native_execute

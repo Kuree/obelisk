@@ -1,7 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional %s -o %t
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional %s -o %t
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
-// RUN: obelisk-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
 // LRM 9.7, 19.3 and 19.8.1: inputs preserve process identity, including after
 // termination. Constructor refs track variables; sample refs may update them.
 module top;

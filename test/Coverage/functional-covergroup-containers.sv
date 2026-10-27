@@ -1,7 +1,7 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt --convert-slang-to-obelisk --lower-obelisk-to-sim=opt-level=0 | FileCheck %s --check-prefix=LOWER
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: talos -emit-slang %s | talos-opt --convert-slang-to-talos --lower-talos-to-sim=opt-level=0 | FileCheck %s --check-prefix=LOWER
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=REPORT
 
 // IEEE 1800-2023 7.5, 7.6, 7.8, 7.10, 19.3, and 19.8: copying a
 // container copies its covergroup handles, not the coverage instances. Typed

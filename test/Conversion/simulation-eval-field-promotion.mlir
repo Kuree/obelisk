@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --schedule-promote-eval-storage | FileCheck %s
+// RUN: talos-opt %s --schedule-promote-eval-storage | FileCheck %s
 
 // Split independent static fields, while preserving whole aggregate copies,
 // escaped addresses and reference choices. SROA reuses the original initializer

@@ -1,0 +1,1828 @@
+//===- LowerUnitTiming.cpp - Lower timing and event controls -----------===//
+
+#include "LowerUnit.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Dominance.h"
+
+#include "llvm/ADT/SetVector.h"
+#include "llvm/Support/SaveAndRestore.h"
+
+#include <cmath>
+#include <functional>
+#include <limits>
+#include <optional>
+
+using namespace mlir;
+
+namespace talos::simlowering {
+
+/// IEEE 1800-2023 9.4.2.4, 14.10, 14.11: a clocking block event and a sequence
+/// end point occur in the Observed region, and a procedure waiting on either
+/// executes after it -- a module process in the next Active iteration, a
+/// program process in Reactive. The region is the running process's, so a
+/// task resumes in its caller's. An assertion monitor sharing this lowering
+/// keeps its Reactive resumption.
+static sim::EventRegionAttr getPostObservedResume(sim::SimFuncOp function) {
+  sim::EventRegion home = function.getHomeRegion();
+  bool procedure =
+      home == sim::EventRegion::Active || home == sim::EventRegion::Reactive;
+  return sim::EventRegionAttr::get(function.getContext(),
+                                   procedure ? sim::EventRegion::PostObserved
+                                             : sim::EventRegion::Reactive);
+}
+
+FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
+  Location location = getSemanticLocation(control);
+  SmallVector<Operation *> children = getChildren(control);
+  if (!isa<semantic::SVDelayControlOp>(control) || children.size() != 1) {
+    unsupported(control) << " (delay inventory)";
+    return failure();
+  }
+  auto scaleAttr = sim::get<sim::metadata::DelayScale>(function);
+  if (!scaleAttr) {
+    function.emitError("code unit has no frozen delay scale");
+    return failure();
+  }
+
+  Operation *realLiteral = children.front();
+  bool negateRealLiteral = false;
+  if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(realLiteral)) {
+    SmallVector<Operation *> unaryChildren = getChildren(unary);
+    if (unaryChildren.size() == 1 &&
+        (unary.getOperatorKind() == semantic::SVUnaryOperator::Plus ||
+         unary.getOperatorKind() == semantic::SVUnaryOperator::Minus) &&
+        isa<semantic::SVRealLiteralOp, semantic::SVTimeLiteralOp>(
+            unaryChildren.front())) {
+      negateRealLiteral =
+          unary.getOperatorKind() == semantic::SVUnaryOperator::Minus;
+      realLiteral = unaryChildren.front();
+    }
+  }
+  auto realConstantSpelling = [&]() -> std::optional<StringRef> {
+    if (auto spelling =
+            realLiteral->getAttrOfType<StringAttr>("constant_value");
+        isa<semantic::SVRealLiteralOp, semantic::SVTimeLiteralOp>(realLiteral))
+      return spelling ? std::optional<StringRef>(spelling.getValue())
+                      : std::nullopt;
+    auto type = children.front()->getAttrOfType<TypeAttr>("semantic_type");
+    if (!type || !isa<semantic::RealType, semantic::ShortRealType,
+                      semantic::RealtimeType>(type.getValue()))
+      return std::nullopt;
+    return getConstantSpelling(children.front());
+  }();
+  if (realConstantSpelling) {
+    auto quantumAttr = sim::get<sim::metadata::DelayQuantum>(function);
+    if (!quantumAttr) {
+      function.emitError("code unit has incomplete real-delay metadata");
+      return failure();
+    }
+    double amount = 0;
+    if (realConstantSpelling->getAsDouble(amount) || !std::isfinite(amount)) {
+      emitError(location) << "real delay literal is not finite";
+      return failure();
+    }
+    if (negateRealLiteral)
+      amount = -amount;
+    uint64_t scale = scaleAttr.getValue().getZExtValue();
+    uint64_t quantum = quantumAttr.getValue().getZExtValue();
+    if (scale == 0 || quantum == 0 || scale % quantum != 0) {
+      function.emitError("code unit has invalid real-delay scaling metadata");
+      return failure();
+    }
+    // Slang has already expressed a time literal in the lexical timeunit.
+    // Round the real value to the lexical timeprecision before converting to
+    // the design-wide precision, matching TimeScale::apply's std::round rule.
+    // IEEE 1800-2023 9.4.1: a negative delay is a two's-complement unsigned
+    // time, which lies beyond every reachable time, as does an overflow.
+    constexpr long double maximumTicks =
+        static_cast<long double>(std::numeric_limits<int64_t>::max());
+    double precisionSteps = amount * static_cast<double>(scale / quantum);
+    double roundedSteps = std::round(precisionSteps);
+    long double ticks = static_cast<long double>(roundedSteps) * quantum;
+    // On Windows long double is binary64, which rounds INT64_MAX to 2^63.
+    // Keep saturation in integer form instead of casting that rounded limit.
+    uint64_t delayTicks =
+        amount < 0 || !std::isfinite(roundedSteps) || ticks >= maximumTicks
+            ? static_cast<uint64_t>(std::numeric_limits<int64_t>::max())
+            : static_cast<uint64_t>(ticks);
+    return sim::SimTimeConstantOp::create(
+               builder, location, sim::TimeType::get(function.getContext()),
+               builder.getI64IntegerAttr(delayTicks))
+        .getResult();
+  }
+
+  if (getConstantSpelling(children.front())) {
+    FailureOr<ParsedConstant> parsed =
+        parseSVInteger(*getConstantSpelling(children.front()), 64, location);
+    if (failed(parsed))
+      return failure();
+    // IEEE 1800-2023 9.4.1: an X/Z delay is zero, and a negative one is the
+    // unsigned value of its 64-bit two's complement. A delay past the time
+    // range never matures, so it saturates. This happens before scaling so
+    // native and bytecode tiers see the same time value.
+    APInt amount(128, parsed->unknown.isZero()
+                          ? parsed->value.sextOrTrunc(64).getZExtValue()
+                          : 0);
+    APInt scaled = amount * APInt(128, scaleAttr.getValue().getZExtValue());
+    APInt maximum(128,
+                  static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+    if (scaled.ugt(maximum))
+      scaled = maximum;
+    return sim::SimTimeConstantOp::create(
+               builder, location, sim::TimeType::get(function.getContext()),
+               builder.getI64IntegerAttr(scaled.getZExtValue()))
+        .getResult();
+  }
+
+  FailureOr<Value> amount = lowerExpression(children.front());
+  if (failed(amount))
+    return failure();
+  if (isa<FloatType>((*amount).getType())) {
+    auto quantumAttr = sim::get<sim::metadata::DelayQuantum>(function);
+    if (!quantumAttr) {
+      function.emitError("code unit has no frozen delay quantum");
+      return failure();
+    }
+    FailureOr<Value> real =
+        convert(*amount, builder.getF64Type(), false, location);
+    if (failed(real))
+      return failure();
+    // A negative delay saturates like an unsigned two's-complement time.
+    Value zero = arith::ConstantOp::create(builder, location,
+                                           builder.getF64FloatAttr(0.0));
+    Value infinity = arith::ConstantOp::create(
+        builder, location,
+        builder.getF64FloatAttr(std::numeric_limits<double>::infinity()));
+    Value negative = arith::CmpFOp::create(
+        builder, location, arith::CmpFPredicate::OLT, *real, zero);
+    Value delay =
+        arith::SelectOp::create(builder, location, negative, infinity, *real);
+    return sim::SimTimeFromRealOp::create(
+               builder, location, sim::TimeType::get(function.getContext()),
+               delay, scaleAttr, quantumAttr)
+        .getResult();
+  }
+  FailureOr<Value> scalar = toPackedScalar(*amount, location);
+  if (failed(scalar))
+    return failure();
+  Value normalized = *scalar;
+  if (isa<sim::LogicType>(normalized.getType())) {
+    auto [bits, known] = splitKnownBits(normalized, location);
+    Type bitsType = bits.getType();
+    Value zero = arith::ConstantOp::create(builder, location, bitsType,
+                                           builder.getIntegerAttr(bitsType, 0));
+    normalized = arith::SelectOp::create(builder, location, known, bits, zero);
+  }
+  auto integer = dyn_cast<IntegerType>(normalized.getType());
+  if (!integer || !integer.isSignless()) {
+    emitError(location) << "dynamic delay is not an integral packed value";
+    return failure();
+  }
+  uint64_t scale = scaleAttr.getValue().getZExtValue();
+  uint64_t maximumInput =
+      static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / scale;
+  if (integer.getWidth() > 64) {
+    Value maximumWide = arith::ConstantOp::create(
+        builder, location, integer,
+        builder.getIntegerAttr(integer,
+                               APInt(integer.getWidth(), maximumInput)));
+    Value inRange = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ule, normalized, maximumWide);
+    normalized = arith::SelectOp::create(builder, location, inRange, normalized,
+                                         maximumWide);
+  }
+  // IEEE 1800-2023 9.4.1: a negative delay is the unsigned value of its
+  // 64-bit two's complement, so a signed delay sign-extends to a time.
+  FailureOr<Value> normalized64 =
+      convert(normalized, builder.getI64Type(), isSignedNode(children.front()),
+              location);
+  if (failed(normalized64))
+    return failure();
+
+  // Keep the multiplication in the supported nonnegative signed-time range
+  // on every backend; a later time never matures, so it saturates.
+  Value maximum =
+      arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                builder.getI64IntegerAttr(maximumInput));
+  Value inRange = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::ule, *normalized64, maximum);
+  Value checked = arith::SelectOp::create(builder, location, inRange,
+                                          *normalized64, maximum);
+  return sim::SimTimeScaleOp::create(builder, location,
+                                     sim::TimeType::get(function.getContext()),
+                                     checked, scaleAttr,
+                                     /*is_signed=*/builder.getBoolAttr(false))
+      .getResult();
+}
+
+bool UnitLowering::hasWatchableSignalHandle(Operation *expression) {
+  // Walk the addressable select chain down to the declaration it starts from,
+  // noting whether any step selects out of an unpacked aggregate.
+  bool unpackedStep = false;
+  Operation *node = expression;
+  while (isa<semantic::SVElementSelectExpressionOp,
+             semantic::SVRangeSelectExpressionOp,
+             semantic::SVMemberAccessExpressionOp>(node)) {
+    SmallVector<Operation *> children = getChildren(node);
+    if (children.empty())
+      return true;
+    FailureOr<Type> sourceType = getNormalizedSemanticType(children.front());
+    if (failed(sourceType))
+      return true;
+    // An element of a dynamically sized array, queue, or associative array
+    // has no stable storage handle; its observer watches the container.
+    if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+            *sourceType))
+      return false;
+    // A virtual-interface member selects another instance's storage when the
+    // interface handle changes (IEEE 1800-2023 25.9). Unless only one
+    // instance can be selected, its observer watches the handle and every
+    // storage the member can select.
+    if (isa<sim::VirtualInterfaceType>(*sourceType) &&
+        selectsAmongVirtualInterfaceTargets(node))
+      return false;
+    if (!sim::getPackedWidth(*sourceType))
+      unpackedStep = true;
+    node = children.front();
+  }
+  if (!unpackedStep)
+    return true;
+  // A net is viewed only through the packed windows of its storage, which is
+  // all a step out of a packed aggregate needs. A step out of an unpacked one
+  // has no such view, so its event has to be observed instead; storage
+  // references keep subelement and array-element views for every aggregate and
+  // stay directly watchable.
+  auto path = node->getAttrOfType<StringAttr>("referenced_path");
+  if (!path)
+    return true;
+  Value declaration = values.lookup(path.getValue());
+  if (!declaration)
+    declaration = lvalues.lookup(path.getValue());
+  return !declaration || !isa<sim::NetType>(declaration.getType());
+}
+
+LogicalResult UnitLowering::emitEventSuspend(Operation *control,
+                                             Block *continuation,
+                                             ValueRange continuationOperands) {
+  Location location = getSemanticLocation(control);
+  auto emitDirect = [&](Value watched, sim::EdgeKind edge, Block *successor,
+                        ValueRange operands, sim::EventRegionAttr resume = {}) {
+    if (isa<sim::EventType>(watched.getType()))
+      sim::SimSuspendEventOp::create(builder, location, watched, operands,
+                                     schedule::ContinuationSiteAttr{}, resume,
+                                     successor);
+    else if (edge == sim::EdgeKind::Change) {
+      auto suspend = sim::SimSuspendChangeOp::create(
+          builder, location, watched, operands,
+          schedule::ContinuationSiteAttr{}, resume, successor);
+      ::talos::schedule::set<schedule::metadata::proceduralEventWait>(
+          suspend, builder.getUnitAttr());
+    } else {
+      auto suspend = sim::SimSuspendEdgeOp::create(
+          builder, location, edge, watched, operands,
+          schedule::ContinuationSiteAttr{}, resume, successor);
+      ::talos::schedule::set<schedule::metadata::proceduralEventWait>(
+          suspend, builder.getUnitAttr());
+    }
+  };
+  auto bindEventPrimary = [&](Value event,
+                              Operation *source) -> FailureOr<Value> {
+    if (!isa<sim::EventType>(event.getType()))
+      return emitError(location)
+                 << "clocking event monitor did not select a named event",
+             failure();
+    auto nodeAttr = source->getAttrOfType<IntegerAttr>("node_id");
+    if (!nodeAttr)
+      return emitError(location)
+                 << "clocking event control is missing its node identity",
+             failure();
+    uint64_t node = nodeAttr.getValue().getZExtValue();
+    std::string identity =
+        (function.getSymName() + ".$clocking_event_primary." + Twine(node))
+            .str();
+    uint64_t codeUnitID = stableCodeUnitID(identity);
+    uint64_t scopeID = 0;
+    if (auto parentID = function.getCodeUnitId())
+      for (sim::SimCodeUnitDeclOp declaration :
+           function->getParentOfType<sim::SimDesignOp>()
+               .getBody()
+               .front()
+               .getOps<sim::SimCodeUnitDeclOp>())
+        if (declaration.getId() == *parentID) {
+          scopeID = declaration.getScopeId();
+          break;
+        }
+
+    OpBuilder outlineBuilder(function);
+    outlineBuilder.setInsertionPoint(function);
+    sim::SimCodeUnitDeclOp::create(
+        outlineBuilder, location, codeUnitID, scopeID, sim::EntryKind::Observer,
+        outlineBuilder.getStringAttr(identity),
+        outlineBuilder.getStringAttr("clocking event primary"),
+        outlineBuilder.getUnitAttr());
+    MLIRContext *context = function.getContext();
+    SmallVector<DictionaryAttr> argumentAttrs{
+        captureMetadata(outlineBuilder, sim::CaptureKind::Context),
+        captureMetadata(outlineBuilder, sim::CaptureKind::Formal)};
+    SmallVector<NamedAttribute> attributes{
+        outlineBuilder.getNamedAttr(
+            "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
+        outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+        outlineBuilder.getNamedAttr("home_region",
+                                    function.getHomeRegionAttr()),
+        outlineBuilder.getNamedAttr("domain", function.getDomainAttr()),
+        sim::named<sim::metadata::HierarchicalName>(
+            outlineBuilder.getStringAttr(identity)),
+        sim::named<sim::metadata::ObserverResult>(
+            outlineBuilder.getI32IntegerAttr(
+                static_cast<uint32_t>(ObserverResult::Event))),
+        ::talos::schedule::named<::talos::schedule::Field::ObserverWidth>(
+            outlineBuilder.getI32IntegerAttr(1)),
+        ::talos::schedule::named<
+            ::talos::schedule::Field::ObserverFourState>(
+            outlineBuilder.getBoolAttr(false))};
+    sim::SimFuncOp evaluator = sim::SimFuncOp::create(
+        outlineBuilder, location, identity,
+        FunctionType::get(context,
+                          TypeRange{sim::ContextType::get(context),
+                                    sim::EventType::get(context)},
+                          TypeRange{outlineBuilder.getI1Type()}),
+        sim::EntryKind::Observer, attributes, argumentAttrs);
+    SymbolTable::setSymbolVisibility(evaluator,
+                                     SymbolTable::Visibility::Private);
+    OpBuilder evaluatorBuilder =
+        OpBuilder::atBlockEnd(&evaluator.getBody().front());
+    Value triggered = sim::SimEventTriggeredOp::create(
+        evaluatorBuilder, location, evaluatorBuilder.getI1Type(),
+        evaluator.getBody().front().getArgument(1));
+    sim::SimReturnOp::create(evaluatorBuilder, location, ValueRange{triggered});
+    sim::mark<sim::metadata::Lowered>(evaluator);
+
+    auto binding = sim::SimObserverBindOp::create(
+        builder, location, sim::ObserverType::get(context, builder.getI1Type()),
+        evaluator.getSymName(), ValueRange{event, event}, uint32_t{1});
+    ::talos::schedule::set<observerEventPrimaryAttrName>(
+        binding, builder.getUnitAttr());
+    return binding.getResult();
+  };
+  auto evaluateInitial =
+      [&](Operation *expression,
+          SmallVectorImpl<Value> &dynamicDependencies) -> FailureOr<Value> {
+    // The event expression's reads belong to its own observer, never to an
+    // enclosing implicit sensitivity.
+    llvm::SetVector<Value> observed;
+    FailureOr<Value> value = [&] {
+      llvm::SaveAndRestore<llvm::SetVector<Value> *> dependencies(
+          observedDependencies, &observed);
+      return lowerExpression(expression);
+    }();
+    if (failed(value))
+      return failure();
+    if (isa<sim::EventType>((*value).getType())) {
+      dynamicDependencies.push_back(*value);
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false))
+          .getResult();
+    }
+    // IEEE 1800-2023 9.4.2: a change to an object member, an aggregate
+    // element, or the size of a dynamically sized array that the expression
+    // reads reevaluates it, not only a change of the declaration's handle.
+    for (Value dependency : observed) {
+      if (!dependency.getDefiningOp<sim::SimManagedWatchOp>())
+        continue;
+      FailureOr<Value> watch = rematerializeManagedWatch(dependency);
+      if (failed(watch))
+        return emitError(location)
+                   << "event expression dependency cannot be materialized at "
+                      "its wait",
+               failure();
+      dynamicDependencies.push_back(*watch);
+    }
+    return toPackedScalar(*value, getSemanticLocation(expression));
+  };
+  auto emitObserved =
+      [&](ArrayRef<semantic::SVSignalEventControlOp> events) -> LogicalResult {
+    SmallVector<Value> primaries;
+    SmallVector<Value> initials;
+    SmallVector<Value> conditions;
+    SmallVector<int32_t> edges;
+    SmallVector<int32_t> conditionIndices;
+    for (semantic::SVSignalEventControlOp event : events) {
+      SmallVector<Operation *> children = getChildren(event);
+      size_t expected = event.getHasIff() ? 2 : 1;
+      if (children.size() != expected) {
+        unsupported(event) << " (event expression inventory)";
+        return failure();
+      }
+      SmallVector<Value> dynamicDependencies;
+      FailureOr<Value> initial =
+          evaluateInitial(children.front(), dynamicDependencies);
+      // A sequence endpoint is a named event (IEEE 1800-2023 9.4.2.4).
+      FailureOr<Type> primaryType =
+          isa<semantic::SVAssertionInstanceExpressionOp>(children.front())
+              ? FailureOr<Type>(sim::EventType::get(function.getContext()))
+              : getNormalizedSemanticType(children.front());
+      FailureOr<Value> primary =
+          succeeded(primaryType) && isa<sim::EventType>(*primaryType) &&
+                  dynamicDependencies.size() == 1
+              ? bindEventPrimary(dynamicDependencies.front(), event)
+              : bindObserver(children.front(), dynamicDependencies);
+      if (failed(initial) || failed(primary))
+        return failure();
+      primaries.push_back(*primary);
+      initials.push_back(*initial);
+      auto edge = static_cast<int32_t>(event.getEdgeKind());
+      if (succeeded(primaryType) && isa<sim::EventType>(*primaryType))
+        edge = static_cast<int32_t>(sim::EdgeKind::Change);
+      edges.push_back(edge);
+      if (!event.getHasIff()) {
+        conditionIndices.push_back(-1);
+        continue;
+      }
+      FailureOr<Value> condition = bindObserver(children[1]);
+      if (failed(condition))
+        return failure();
+      conditionIndices.push_back(static_cast<int32_t>(conditions.size()));
+      conditions.push_back(*condition);
+    }
+    SmallVector<Value> values(primaries);
+    llvm::append_range(values, initials);
+    llvm::append_range(values, conditions);
+    llvm::append_range(values, continuationOperands);
+    sim::SimSuspendObserveOp::create(
+        builder, location, values, static_cast<uint32_t>(conditions.size()),
+        edges, conditionIndices, schedule::ContinuationSiteAttr{},
+        sim::EventRegionAttr{}, continuation);
+    return success();
+  };
+
+  if (auto event = dyn_cast<semantic::SVSignalEventControlOp>(control)) {
+    SmallVector<Operation *> children = getChildren(event);
+    size_t expected = event.getHasIff() ? 2 : 1;
+    if (children.size() != expected) {
+      unsupported(event) << " (event expression inventory)";
+      return failure();
+    }
+    {
+      FailureOr<Value> sequenceEndpoint =
+          lowerSequenceEndpoint(children.front());
+      if (failed(sequenceEndpoint))
+        return failure();
+      if (Value endpoint = *sequenceEndpoint) {
+        sim::EventRegionAttr resume = getPostObservedResume(function);
+        if (!event.getHasIff()) {
+          emitDirect(endpoint, sim::EdgeKind::Change, continuation,
+                     continuationOperands, resume);
+          return success();
+        }
+        // IEEE 1800-2023 9.4.2.3: the event occurs at an endpoint at which
+        // the iff condition is true; the condition adds no sensitivity.
+        auto addCarrier = [&] {
+          Block *block = addBlock();
+          for (Value operand : continuationOperands)
+            block->addArgument(operand.getType(), location);
+          return block;
+        };
+        Block *wait = addCarrier();
+        Block *check = addCarrier();
+        cf::BranchOp::create(builder, location, wait, continuationOperands);
+        setCurrent(wait);
+        emitDirect(endpoint, sim::EdgeKind::Change, check, wait->getArguments(),
+                   resume);
+        setCurrent(check);
+        FailureOr<Value> condition = [&]() -> FailureOr<Value> {
+          llvm::SaveAndRestore<llvm::SetVector<Value> *> dependencies(
+              observedDependencies, nullptr);
+          llvm::SaveAndRestore<bool> excluded(sensitivityExcluded, true);
+          FailureOr<Value> value = lowerExpression(children[1]);
+          if (failed(value))
+            return failure();
+          return truthValue(*value, location);
+        }();
+        if (failed(condition))
+          return failure();
+        cf::CondBranchOp::create(builder, location, *condition, continuation,
+                                 check->getArguments(), wait,
+                                 check->getArguments());
+        return success();
+      }
+    }
+    bool virtualClockingBlockEvent =
+        children.front()->hasAttr("virtual_interface_clocking_block_event");
+    bool staticClockingBlockEvent =
+        children.front()->hasAttr(clockingBlockEventAttrName);
+    bool clockingBlockEvent =
+        virtualClockingBlockEvent || staticClockingBlockEvent;
+    bool virtualClockingIff =
+        children.front()->hasAttr("virtual_interface_clock_event_has_iff");
+    bool staticClockingIff =
+        children.front()->hasAttr(clockingEventHasIffAttrName);
+    bool monitoredClockingEvent =
+        children.front()->hasAttr(clockingEventMonitorRequiredAttrName) ||
+        children.front()->hasAttr(clockingEventListAttrName) ||
+        children.front()->hasAttr("virtual_interface_clock_event_monitor") ||
+        children.front()->hasAttr("virtual_interface_clock_event_list");
+    if (clockingBlockEvent && monitoredClockingEvent && event.getHasIff()) {
+      FailureOr<Value> handle = failure();
+      Value virtualInterface;
+      auto virtualAccess =
+          dyn_cast<semantic::SVMemberAccessExpressionOp>(children.front());
+      if (virtualClockingBlockEvent) {
+        SmallVector<Operation *> clockingChildren =
+            virtualAccess ? getChildren(virtualAccess)
+                          : SmallVector<Operation *>{};
+        if (!virtualAccess || clockingChildren.size() != 1) {
+          emitError(location)
+              << "monitored virtual clocking event has no receiver";
+          return failure();
+        }
+        FailureOr<Value> receiver = lowerExpression(clockingChildren.front());
+        if (failed(receiver))
+          return failure();
+        virtualInterface = *receiver;
+        handle = lowerVirtualInterfaceClock(virtualAccess, virtualInterface);
+      } else {
+        handle = lowerExpression(children.front());
+      }
+      if (failed(handle) || !isa<sim::EventType>((*handle).getType())) {
+        if (succeeded(handle))
+          emitError(location)
+              << "monitored clocking event did not resolve to an event";
+        return failure();
+      }
+      FailureOr<Value> primary = bindEventPrimary(*handle, event);
+      FailureOr<Value> condition =
+          virtualClockingBlockEvent
+              ? bindVirtualClockingObserver(children[1], virtualAccess,
+                                            virtualInterface, *handle)
+              : bindObserver(children[1]);
+      if (failed(primary) || failed(condition))
+        return failure();
+      Value initial = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+      SmallVector<Value> observerValues{*primary, initial, *condition};
+      llvm::append_range(observerValues, continuationOperands);
+      sim::SimSuspendObserveOp::create(
+          builder, location, observerValues, 1,
+          ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Change)},
+          ArrayRef<int32_t>{0}, schedule::ContinuationSiteAttr{},
+          getPostObservedResume(function), continuation);
+      clockingEventContinuations[continuation] = {*handle, {}};
+      return success();
+    }
+    if (clockingBlockEvent && (virtualClockingIff || staticClockingIff) &&
+        event.getHasIff()) {
+      emitError(location)
+          << "legacy clocking-block events with a declared iff cannot be "
+             "combined with an additional event-control iff";
+      return failure();
+    }
+    FailureOr<Type> watchedType =
+        clockingBlockEvent
+            ? FailureOr<Type>(sim::LogicType::get(function.getContext(), 1))
+            : getNormalizedSemanticType(children.front());
+    if (failed(watchedType))
+      return failure();
+    // IEEE 1800-2017 9.4.2 lets an event expression select an aggregate
+    // element as long as the expression reduces to a singular value. One that
+    // has no watchable handle is re-evaluated by an observer instead, which
+    // reports a change in exactly that value.
+    bool sampledClockingVariable =
+        children.front()->hasAttr(clockingVariableAttrName) ||
+        children.front()->hasAttr("virtual_interface_clocking");
+    bool computed =
+        !clockingBlockEvent &&
+        (sampledClockingVariable ||
+         !isAddressableExpression(children.front()) ||
+         !hasWatchableSignalHandle(children.front()) ||
+         (event.getHasIff() && (!isAddressableExpression(children[1]) ||
+                                !hasWatchableSignalHandle(children[1]) ||
+                                isa<sim::EventType>(*watchedType))));
+    if (computed)
+      return emitObserved(ArrayRef<semantic::SVSignalEventControlOp>(event));
+    FailureOr<Value> handle = failure();
+    Value virtualInterface;
+    auto virtualClockingAccess =
+        dyn_cast<semantic::SVMemberAccessExpressionOp>(children.front());
+    if (virtualClockingBlockEvent && virtualClockingAccess) {
+      SmallVector<Operation *> clockingChildren =
+          getChildren(virtualClockingAccess);
+      size_t expectedClockingChildren = virtualClockingIff ? 3 : 1;
+      if (clockingChildren.size() != expectedClockingChildren) {
+        emitError(location)
+            << "virtual clocking-block event has no frozen receiver and event "
+               "expressions";
+        return failure();
+      }
+      FailureOr<Value> receiver = lowerExpression(clockingChildren.front());
+      if (failed(receiver))
+        return failure();
+      virtualInterface = *receiver;
+      handle =
+          lowerVirtualInterfaceClock(virtualClockingAccess, virtualInterface);
+    } else {
+      handle =
+          lowerExpression(children.front(), !isa<sim::EventType>(*watchedType));
+    }
+    if (failed(handle))
+      return failure();
+    // IEEE 1800-2017 9.4.2 detects an edge on the value of the expression the
+    // event control names, and 6.6 makes a net's value the resolution of every
+    // driver on it. A process that also drives this net -- through a clocking
+    // block output, a continuous assignment, or a force -- resolves the name to
+    // the driver handle it writes, which carries only its own contribution and
+    // no resolved value to compare. Take the net view of the same signal for
+    // the wait; the driver stays what the writes go through.
+    if (isa<sim::DriverType>((*handle).getType()))
+      if (auto path =
+              children.front()->getAttrOfType<StringAttr>("referenced_path"))
+        if (Value net = values.lookup(path.getValue());
+            net && isa<sim::NetType>(net.getType()))
+          handle = net;
+    auto edge = static_cast<sim::EdgeKind>(event.getEdgeKind());
+    if (auto clockingEdge =
+            children.front()->getAttrOfType<semantic::EdgeKindAttr>(
+                "virtual_interface_clock_event_edge"))
+      edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
+    else if (auto clockingEdge =
+                 children.front()->getAttrOfType<semantic::EdgeKindAttr>(
+                     clockingEventEdgeAttrName))
+      edge = static_cast<sim::EdgeKind>(clockingEdge.getValue());
+    if (virtualClockingBlockEvent && virtualClockingIff) {
+      SmallVector<Operation *> clockingChildren =
+          getChildren(virtualClockingAccess);
+      FailureOr<Value> initial = loadReference(*handle, location);
+      FailureOr<Value> primary = bindVirtualClockingObserver(
+          clockingChildren[1], virtualClockingAccess, virtualInterface,
+          *handle);
+      FailureOr<Value> condition = bindVirtualClockingObserver(
+          clockingChildren[2], virtualClockingAccess, virtualInterface,
+          *handle);
+      if (failed(initial) || failed(primary) || failed(condition))
+        return failure();
+      FailureOr<Value> scalar = toPackedScalar(*initial, location);
+      if (failed(scalar))
+        return failure();
+      SmallVector<Value> observerValues{*primary, *scalar, *condition};
+      llvm::append_range(observerValues, continuationOperands);
+      sim::SimSuspendObserveOp::create(
+          builder, location, observerValues, 1,
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
+          schedule::ContinuationSiteAttr{}, getPostObservedResume(function),
+          continuation);
+      clockingEventContinuations[continuation] = {*handle, {}};
+      return success();
+    }
+    if (staticClockingBlockEvent && staticClockingIff) {
+      SmallVector<Operation *> clockingChildren = getChildren(children.front());
+      if (clockingChildren.size() != 2) {
+        emitError(location)
+            << "clocking-block event with iff has no frozen clock and "
+               "condition expressions";
+        return failure();
+      }
+      SmallVector<Value> dynamicDependencies;
+      FailureOr<Value> initial =
+          evaluateInitial(clockingChildren[0], dynamicDependencies);
+      FailureOr<Value> primary =
+          bindObserver(clockingChildren[0], dynamicDependencies);
+      FailureOr<Value> condition = bindObserver(clockingChildren[1]);
+      if (failed(initial) || failed(primary) || failed(condition))
+        return failure();
+      SmallVector<Value> observerValues{*primary, *initial, *condition};
+      llvm::append_range(observerValues, continuationOperands);
+      sim::SimSuspendObserveOp::create(
+          builder, location, observerValues, 1,
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
+          schedule::ContinuationSiteAttr{}, getPostObservedResume(function),
+          continuation);
+      clockingEventContinuations[continuation] = {*handle, {}};
+      return success();
+    }
+    if (!event.getHasIff() && isa<sim::ManagedRefType>((*handle).getType())) {
+      // IEEE 1800-2017 9.4.2 permits event controls on object members. A
+      // managed reference cannot survive a suspension as an interior pointer,
+      // so bind the already outlined value observer to the field's stable
+      // mutation token. The observer compares the post-write value with this
+      // initial value and therefore ignores equal-value writes as required.
+      FailureOr<Value> initial = loadReference(*handle, location);
+      if (failed(initial))
+        return failure();
+      FailureOr<Value> scalar =
+          isa<sim::ClassHandleType>((*initial).getType())
+              ? FailureOr<Value>(sim::SimClassIdOp::create(builder, location,
+                                                           builder.getI64Type(),
+                                                           *initial)
+                                     .getResult())
+              : toPackedScalar(*initial, getSemanticLocation(children.front()));
+      if (failed(scalar))
+        return failure();
+      Value watch = sim::SimManagedWatchOp::create(
+          builder, location, sim::ManagedWatchType::get(function.getContext()),
+          *handle, sim::ManagedWatchKind::Field);
+      FailureOr<Value> observer = bindObserver(children.front(), watch);
+      if (failed(observer))
+        return failure();
+      SmallVector<Value> values{*observer, *scalar};
+      llvm::append_range(values, continuationOperands);
+      sim::SimSuspendObserveOp::create(
+          builder, location, values, 0,
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{-1},
+          schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+          continuation);
+      return success();
+    }
+    if (!event.getHasIff()) {
+      sim::EventRegionAttr resume = clockingBlockEvent
+                                        ? getPostObservedResume(function)
+                                        : sim::EventRegionAttr{};
+      emitDirect(*handle, edge, continuation, continuationOperands, resume);
+      if (clockingBlockEvent)
+        clockingEventContinuations[continuation] = {*handle, {}};
+      else
+        // IEEE 1800-2017 14.16 makes coincidence with the clocking event, not
+        // the syntax used to wait for it, what decides when a synchronous
+        // drive matures. Record the edge so a clocking block on this very
+        // signal and edge recognizes its own occurrence here.
+        clockingEventContinuations[continuation] = {*handle, {}, edge, false};
+      return success();
+    }
+
+    FailureOr<Value> condition = lowerExpression(children[1], true);
+    if (failed(condition))
+      return failure();
+    if (isa<sim::ManagedRefType>((*handle).getType()) ||
+        isa<sim::ManagedRefType>((*condition).getType())) {
+      // Object fields are addressed by activation-safe managed references,
+      // which cannot be retained as the interior pointers required by the
+      // direct edge-iff wait.  Observe each field through its stable mutation
+      // token instead.  The suspension still resumes only when the primary
+      // expression has the requested edge and the iff observer is true;
+      // changing the condition alone merely updates what the next edge sees.
+      FailureOr<Value> initial = loadReference(*handle, location);
+      if (failed(initial))
+        return failure();
+      FailureOr<Value> scalar =
+          toPackedScalar(*initial, getSemanticLocation(children.front()));
+      if (failed(scalar))
+        return failure();
+      auto bindManaged = [&](Operation *expression,
+                             Value reference) -> FailureOr<Value> {
+        if (!isa<sim::ManagedRefType>(reference.getType()))
+          return bindObserver(expression);
+        Value watch = sim::SimManagedWatchOp::create(
+            builder, getSemanticLocation(expression),
+            sim::ManagedWatchType::get(function.getContext()), reference,
+            sim::ManagedWatchKind::Field);
+        return bindObserver(expression, watch);
+      };
+      FailureOr<Value> primary = bindManaged(children.front(), *handle);
+      FailureOr<Value> guard = bindManaged(children[1], *condition);
+      if (failed(primary) || failed(guard))
+        return failure();
+      SmallVector<Value> observerValues{*primary, *scalar, *guard};
+      llvm::append_range(observerValues, continuationOperands);
+      sim::SimSuspendObserveOp::create(
+          builder, location, observerValues, 1,
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
+          schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+          continuation);
+      return success();
+    }
+    if (!isa<sim::RefType, sim::NetType>((*handle).getType()) ||
+        !isa<sim::RefType, sim::NetType>((*condition).getType())) {
+      unsupported(event) << " (iff requires signal handles)";
+      return failure();
+    }
+    auto suspend = sim::SimSuspendEdgeIffOp::create(
+        builder, location, edge, *handle, *condition, continuationOperands,
+        schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+    ::talos::schedule::set<schedule::metadata::proceduralEventWait>(
+        suspend, builder.getUnitAttr());
+    return success();
+  }
+
+  auto list = dyn_cast<semantic::SVEventListControlOp>(control);
+  if (!list) {
+    unsupported(control) << " (event timing control)";
+    return failure();
+  }
+  SmallVector<semantic::SVSignalEventControlOp> events;
+  FailureOr<bool> computed = classifyEventList(list, events);
+  if (failed(computed))
+    return failure();
+  if (*computed)
+    return emitObserved(events);
+
+  SmallVector<Value> watched;
+  SmallVector<int32_t> edges;
+  for (semantic::SVSignalEventControlOp event : events) {
+    Operation *expression = getChildren(event).front();
+    FailureOr<Value> handle = lowerExpression(expression, true);
+    if (failed(handle))
+      return failure();
+    watched.push_back(*handle);
+    edges.push_back(static_cast<int32_t>(event.getEdgeKind()));
+  }
+  if (watched.size() == 1) {
+    emitDirect(watched.front(), static_cast<sim::EdgeKind>(edges.front()),
+               continuation, continuationOperands);
+    return success();
+  }
+  SmallVector<Value> values(watched);
+  llvm::append_range(values, continuationOperands);
+  auto suspend = sim::SimSuspendAnyOp::create(
+      builder, location, values, builder.getDenseI32ArrayAttr(edges),
+      schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+  ::talos::schedule::set<schedule::metadata::proceduralEventWait>(
+      suspend, builder.getUnitAttr());
+  return success();
+}
+
+LogicalResult
+UnitLowering::lowerClockingEventMonitor(ArrayRef<Operation *> roots) {
+  auto path = sim::get<sim::metadata::ClockingEventMonitorPath>(function);
+  if (!path || roots.size() != 1 ||
+      !isa<semantic::SVSignalEventControlOp, semantic::SVEventListControlOp>(
+          roots.front()))
+    return function.emitError(
+        "clocking event monitor requires one frozen event control");
+  Value event = values.lookup(path.getValue());
+  if (!event || !isa<sim::EventType>(event.getType()))
+    return function.emitError(
+        "clocking event monitor has no bound event descriptor");
+
+  Location location = getSemanticLocation(roots.front());
+  Block *wait = addBlock();
+  cf::BranchOp::create(builder, location, wait);
+  setCurrent(wait);
+  Block *trigger = addBlock();
+  if (failed(emitEventSuspend(roots.front(), trigger)))
+    return failure();
+  setCurrent(trigger);
+  sim::SimEventTriggerOp::create(builder, location, event, Value{},
+                                 builder.getBoolAttr(false),
+                                 schedule::EventSiteAttr{}, UnitAttr{});
+  cf::BranchOp::create(builder, location, wait);
+  return success();
+}
+
+FailureOr<bool> UnitLowering::classifyEventList(
+    semantic::SVEventListControlOp list,
+    SmallVectorImpl<semantic::SVSignalEventControlOp> &events) {
+  bool computed = false;
+  for (Operation *eventOp : getChildren(list)) {
+    auto event = dyn_cast<semantic::SVSignalEventControlOp>(eventOp);
+    if (!event) {
+      unsupported(eventOp) << " (event-list member)";
+      return failure();
+    }
+    SmallVector<Operation *> eventChildren = getChildren(event);
+    size_t expected = event.getHasIff() ? 2 : 1;
+    if (eventChildren.size() != expected) {
+      unsupported(event) << " (event expression inventory)";
+      return failure();
+    }
+    computed |= event.getHasIff() ||
+                eventChildren.front()->hasAttr(clockingVariableAttrName) ||
+                eventChildren.front()->hasAttr("virtual_interface_clocking") ||
+                !isAddressableExpression(eventChildren.front()) ||
+                !hasWatchableSignalHandle(eventChildren.front());
+    FailureOr<Type> watchedType =
+        eventChildren.front()->hasAttr("virtual_interface_clocking_block_event")
+            ? FailureOr<Type>(sim::LogicType::get(function.getContext(), 1))
+        : isa<semantic::SVAssertionInstanceExpressionOp>(eventChildren.front())
+            ? FailureOr<Type>(sim::EventType::get(function.getContext()))
+            : getNormalizedSemanticType(eventChildren.front());
+    if (failed(watchedType))
+      return failure();
+    computed |= isa<sim::EventType>(*watchedType);
+    events.push_back(event);
+  }
+  if (events.empty()) {
+    unsupported(list) << " (empty event list)";
+    return failure();
+  }
+  return computed;
+}
+
+/// Whether `previous` -> `current` is an occurrence of `edge` (IEEE 1800-2023
+/// 9.4.2, Table 9-2): an edge looks at the least significant bit, a change at
+/// the whole packed value.
+static Value emitSampledOccurrence(OpBuilder &builder, Location location,
+                                   Value previous, Value current,
+                                   sim::EdgeKind edge) {
+  Type i1 = builder.getI1Type();
+  if (edge == sim::EdgeKind::Change) {
+    if (isa<sim::LogicType>(current.getType()))
+      return sim::SimLogicCompareOp::create(
+          builder, location, i1, sim::CompareKind::CaseNe, previous, current);
+    return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                 previous, current);
+  }
+  Value one = arith::ConstantOp::create(builder, location, i1,
+                                        builder.getBoolAttr(true));
+  auto invert = [&](Value value) -> Value {
+    return arith::XOrIOp::create(builder, location, value, one);
+  };
+  Value previousZero, previousOne, currentZero, currentOne;
+  if (auto logic = dyn_cast<sim::LogicType>(current.getType())) {
+    auto level = [&](Value bit, bool high) -> Value {
+      Value target = sim::SimLogicConstantOp::create(
+          builder, location, logic, builder.getIntegerAttr(i1, high),
+          builder.getIntegerAttr(i1, 0));
+      return sim::SimLogicCompareOp::create(
+          builder, location, i1, sim::CompareKind::CaseEq, bit, target);
+    };
+    previousZero = level(previous, false);
+    previousOne = level(previous, true);
+    currentZero = level(current, false);
+    currentOne = level(current, true);
+  } else {
+    previousOne = previous;
+    previousZero = invert(previous);
+    currentOne = current;
+    currentZero = invert(current);
+  }
+  // posedge: 0 -> {1, x, z} or {x, z} -> 1; negedge mirrors it.
+  auto rising = [&]() -> Value {
+    return arith::OrIOp::create(
+        builder, location,
+        arith::AndIOp::create(builder, location, previousZero,
+                              invert(currentZero)),
+        arith::AndIOp::create(builder, location, invert(previousOne),
+                              currentOne));
+  };
+  auto falling = [&]() -> Value {
+    return arith::OrIOp::create(
+        builder, location,
+        arith::AndIOp::create(builder, location, previousOne,
+                              invert(currentOne)),
+        arith::AndIOp::create(builder, location, invert(previousZero),
+                              currentZero));
+  };
+  if (edge == sim::EdgeKind::Posedge)
+    return rising();
+  if (edge == sim::EdgeKind::Negedge)
+    return falling();
+  return arith::OrIOp::create(builder, location, rising(), falling());
+}
+
+LogicalResult UnitLowering::emitCountedEventListSuspend(
+    ArrayRef<semantic::SVSignalEventControlOp> events, Value count,
+    Location location, Block *continuation, ValueRange continuationOperands) {
+  Type countType = builder.getI64Type();
+  Block *wait = addBlock();
+  wait->addArgument(countType, location);
+  for (Value operand : continuationOperands)
+    wait->addArgument(operand.getType(), location);
+  Value zero = arith::ConstantOp::create(builder, location, countType,
+                                         builder.getI64IntegerAttr(0));
+  Value positive = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::sgt, count, zero);
+  SmallVector<Value> initialWaitOperands{count};
+  llvm::append_range(initialWaitOperands, continuationOperands);
+  cf::CondBranchOp::create(builder, location, positive, wait,
+                           initialWaitOperands, continuation,
+                           continuationOperands);
+
+  // Sample what each event watches immediately before the wait. The sample
+  // travels through the suspension so the resumption can tell which events
+  // occurred, however many changed together.
+  setCurrent(wait);
+  SmallVector<Value> handles;
+  SmallVector<int32_t> edges;
+  auto sample = [&](Value handle, sim::EdgeKind edge) -> FailureOr<Value> {
+    Value value;
+    if (auto net = dyn_cast<sim::NetType>(handle.getType()))
+      value = sim::SimNetReadOp::create(builder, location, net.getElementType(),
+                                        handle);
+    else if (auto reference = dyn_cast<sim::RefType>(handle.getType()))
+      value = sim::SimRefLoadOp::create(builder, location,
+                                        reference.getElementType(), handle);
+    else if (FailureOr<Value> loaded = loadReference(handle, location);
+             succeeded(loaded))
+      value = *loaded;
+    Type scalarType =
+        value ? sim::getPackedScalarType(value.getType()) : Type{};
+    if (!scalarType)
+      return emitError(location)
+                 << "repeat event control cannot sample " << handle.getType(),
+             failure();
+    if (scalarType != value.getType())
+      value =
+          sim::SimPackedFlattenOp::create(builder, location, scalarType, value);
+    if (edge == sim::EdgeKind::Change)
+      return value;
+    if (auto logic = dyn_cast<sim::LogicType>(scalarType))
+      return logic.getWidth() == 1
+                 ? value
+                 : sim::SimLogicExtractOp::create(
+                       builder, location,
+                       sim::LogicType::get(function.getContext(), 1), value, 0)
+                       .getResult();
+    return scalarType.getIntOrFloatBitWidth() == 1
+               ? value
+               : arith::TruncIOp::create(builder, location, builder.getI1Type(),
+                                         value)
+                     .getResult();
+  };
+  SmallVector<Value> previous;
+  for (semantic::SVSignalEventControlOp event : events) {
+    FailureOr<Value> handle =
+        lowerExpression(getChildren(event).front(), /*lvalue=*/true);
+    if (failed(handle))
+      return failure();
+    auto edge = static_cast<sim::EdgeKind>(event.getEdgeKind());
+    FailureOr<Value> before = sample(*handle, edge);
+    if (failed(before))
+      return failure();
+    handles.push_back(*handle);
+    edges.push_back(static_cast<int32_t>(edge));
+    previous.push_back(*before);
+  }
+  Block *resume = addBlock();
+  resume->addArgument(countType, location);
+  for (Value value : previous)
+    resume->addArgument(value.getType(), location);
+  for (Value operand : continuationOperands)
+    resume->addArgument(operand.getType(), location);
+  SmallVector<Value> values(handles);
+  values.push_back(wait->getArgument(0));
+  llvm::append_range(values, previous);
+  llvm::append_range(values, wait->getArguments().drop_front());
+  auto suspend = sim::SimSuspendAnyOp::create(
+      builder, location, values, builder.getDenseI32ArrayAttr(edges),
+      schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, resume);
+  ::talos::schedule::set<schedule::metadata::proceduralEventWait>(
+      suspend, builder.getUnitAttr());
+
+  // A resumption is at least one occurrence, even when a glitch returned
+  // every sampled value to where it was.
+  setCurrent(resume);
+  Value occurrences = arith::ConstantOp::create(builder, location, countType,
+                                                builder.getI64IntegerAttr(0));
+  for (auto [index, handle] : llvm::enumerate(handles)) {
+    auto edge = static_cast<sim::EdgeKind>(edges[index]);
+    FailureOr<Value> after = sample(handle, edge);
+    if (failed(after))
+      return failure();
+    Value occurred = emitSampledOccurrence(
+        builder, location, resume->getArgument(1 + index), *after, edge);
+    occurrences = arith::AddIOp::create(
+        builder, location, occurrences,
+        arith::ExtUIOp::create(builder, location, countType, occurred));
+  }
+  Value one = arith::ConstantOp::create(builder, location, countType,
+                                        builder.getI64IntegerAttr(1));
+  occurrences = arith::MaxUIOp::create(builder, location, occurrences, one);
+  Value remaining = arith::SubIOp::create(builder, location,
+                                          resume->getArgument(0), occurrences);
+  Value resumeZero = arith::ConstantOp::create(builder, location, countType,
+                                               builder.getI64IntegerAttr(0));
+  Value more = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::sgt, remaining, resumeZero);
+  ValueRange carried = resume->getArguments().drop_front(1 + handles.size());
+  SmallVector<Value> nextWaitOperands{remaining};
+  llvm::append_range(nextWaitOperands, carried);
+  cf::CondBranchOp::create(builder, location, more, wait, nextWaitOperands,
+                           continuation, carried);
+  setCurrent(continuation);
+  return success();
+}
+
+LogicalResult
+UnitLowering::emitRepeatedEventSuspend(Operation *control, Block *continuation,
+                                       ValueRange continuationOperands) {
+  Location location = getSemanticLocation(control);
+  SmallVector<Operation *> children = getChildren(control);
+  if (!isa<semantic::SVRepeatedEventControlOp>(control) ||
+      children.size() != 2) {
+    unsupported(control) << " (repeated-event inventory)";
+    return failure();
+  }
+  FailureOr<Value> normalized = lowerRepeatedEventCount(control);
+  if (failed(normalized))
+    return failure();
+  // IEEE 1800-2023 9.4.5: OR'd events that occur at the same simulation time
+  // are each counted. Count them directly when every event is a packed signal
+  // the wait watches; otherwise each resumption counts once.
+  if (auto list = dyn_cast<semantic::SVEventListControlOp>(children[1])) {
+    SmallVector<semantic::SVSignalEventControlOp> events;
+    FailureOr<bool> computed = classifyEventList(list, events);
+    if (failed(computed))
+      return failure();
+    bool sampled = !*computed && events.size() > 1 &&
+                   llvm::all_of(events, [&](auto event) {
+                     FailureOr<Type> type =
+                         getNormalizedSemanticType(getChildren(event).front());
+                     return succeeded(type) && sim::getPackedScalarType(*type);
+                   });
+    if (sampled)
+      return emitCountedEventListSuspend(events, *normalized, location,
+                                         continuation, continuationOperands);
+  }
+  Type countType = builder.getI64Type();
+  Value zero = arith::ConstantOp::create(builder, location, countType,
+                                         builder.getI64IntegerAttr(0));
+  Value positive = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::sgt, *normalized, zero);
+  Block *wait = addBlock();
+  wait->addArgument(countType, location);
+  for (Value operand : continuationOperands)
+    wait->addArgument(operand.getType(), location);
+  Block *resume = addBlock();
+  resume->addArgument(countType, location);
+  for (Value operand : continuationOperands)
+    resume->addArgument(operand.getType(), location);
+  SmallVector<Value> initialWaitOperands{*normalized};
+  llvm::append_range(initialWaitOperands, continuationOperands);
+  cf::CondBranchOp::create(builder, location, positive, wait,
+                           initialWaitOperands, continuation,
+                           continuationOperands);
+  setCurrent(wait);
+  if (failed(emitEventSuspend(children[1], resume, wait->getArguments())))
+    return failure();
+  setCurrent(resume);
+  Value one = arith::ConstantOp::create(builder, location, countType,
+                                        builder.getI64IntegerAttr(1));
+  Value resumeZero = arith::ConstantOp::create(builder, location, countType,
+                                               builder.getI64IntegerAttr(0));
+  Value remaining =
+      arith::SubIOp::create(builder, location, resume->getArgument(0), one);
+  Value more = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::sgt, remaining, resumeZero);
+  SmallVector<Value> nextWaitOperands{remaining};
+  llvm::append_range(nextWaitOperands, resume->getArguments().drop_front());
+  cf::CondBranchOp::create(builder, location, more, wait, nextWaitOperands,
+                           continuation, resume->getArguments().drop_front());
+  setCurrent(continuation);
+  return success();
+}
+
+FailureOr<Value> UnitLowering::lowerRepeatedEventCount(Operation *control) {
+  SmallVector<Operation *> children = getChildren(control);
+  if (!isa<semantic::SVRepeatedEventControlOp>(control) ||
+      children.size() != 2) {
+    unsupported(control) << " (repeated-event inventory)";
+    return failure();
+  }
+  return lowerRepeatCount(children[0]);
+}
+
+FailureOr<Value> UnitLowering::lowerRepeatCount(Operation *count) {
+  // A negative count is also zero; every consumer only repeats while the
+  // count is positive.
+  Location location = getSemanticLocation(count);
+  FailureOr<Value> value = lowerExpression(count);
+  if (failed(value))
+    return failure();
+  Value bits = *value;
+  Value known;
+  if (sim::getPackedScalarType(bits.getType())) {
+    FailureOr<Value> scalar = toPackedScalar(bits, location);
+    if (failed(scalar))
+      return failure();
+    bits = *scalar;
+    if (isa<sim::LogicType>(bits.getType()))
+      std::tie(bits, known) = splitKnownBits(bits, location);
+  }
+  Type i64 = builder.getI64Type();
+  FailureOr<Value> normalized =
+      convert(bits, i64, isSignedNode(count), location);
+  if (failed(normalized) || !known)
+    return normalized;
+  Value zero = arith::ConstantOp::create(builder, location, i64,
+                                         builder.getI64IntegerAttr(0));
+  return arith::SelectOp::create(builder, location, known, *normalized, zero)
+      .getResult();
+}
+
+LogicalResult
+UnitLowering::emitCycleDelaySuspend(semantic::SVCycleDelayControlOp control,
+                                    Block *continuation,
+                                    ValueRange continuationOperands) {
+  Location location = getSemanticLocation(control);
+  SmallVector<Operation *> children = getChildren(control);
+  bool hasIff = control->hasAttr(clockingEventHasIffAttrName);
+  size_t expectedChildren = hasIff ? 3 : 1;
+  if (children.size() != expectedChildren) {
+    unsupported(control) << " (cycle-delay inventory)";
+    return failure();
+  }
+  auto clockPath =
+      control->getAttrOfType<StringAttr>(clockingEventPathAttrName);
+  auto eventEdge =
+      control->getAttrOfType<semantic::EdgeKindAttr>(clockingEventEdgeAttrName);
+  if (!clockPath || !eventEdge) {
+    emitError(location)
+        << "cycle delay has no supported default clocking event";
+    return failure();
+  }
+  FailureOr<Value> clock =
+      lowerReferencedValue(control, clockPath.getValue(), /*lvalue=*/true);
+  if (failed(clock))
+    return failure();
+  std::optional<Value> incomingOccurrence = getCurrentClockingOccurrence(
+      current, *clock, static_cast<sim::EdgeKind>(eventEdge.getValue()),
+      hasIff);
+
+  Value primaryObserver;
+  Value conditionObserver;
+
+  auto emitClockWait = [&](OpBuilder &waitBuilder, Block *successor,
+                           ValueRange operands) -> LogicalResult {
+    sim::EventRegionAttr resume = getPostObservedResume(function);
+    sim::EdgeKind edge = static_cast<sim::EdgeKind>(eventEdge.getValue());
+    if (hasIff) {
+      auto primaryType = cast<sim::ObserverType>(primaryObserver.getType());
+      Value initial;
+      if (auto reference = dyn_cast<sim::RefType>((*clock).getType()))
+        initial = sim::SimRefLoadOp::create(waitBuilder, location,
+                                            reference.getElementType(), *clock);
+      else if (auto net = dyn_cast<sim::NetType>((*clock).getType()))
+        initial = sim::SimNetReadOp::create(waitBuilder, location,
+                                            net.getElementType(), *clock);
+      if (!initial) {
+        emitError(location) << "cycle-delay clock is not directly readable";
+        return failure();
+      }
+      if (initial.getType() != primaryType.getResultType())
+        initial = sim::SimPackedFlattenOp::create(
+            waitBuilder, location, primaryType.getResultType(), initial);
+      SmallVector<Value> values{primaryObserver, initial, conditionObserver};
+      llvm::append_range(values, operands);
+      sim::SimSuspendObserveOp::create(
+          waitBuilder, location, values, 1,
+          ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
+          schedule::ContinuationSiteAttr{}, resume, successor);
+      return success();
+    }
+    if (isa<sim::EventType>((*clock).getType()))
+      sim::SimSuspendEventOp::create(waitBuilder, location, *clock, operands,
+                                     schedule::ContinuationSiteAttr{}, resume,
+                                     successor);
+    else if (edge == sim::EdgeKind::Change)
+      sim::SimSuspendChangeOp::create(waitBuilder, location, *clock, operands,
+                                      schedule::ContinuationSiteAttr{}, resume,
+                                      successor);
+    else
+      sim::SimSuspendEdgeOp::create(waitBuilder, location, edge, *clock,
+                                    operands, schedule::ContinuationSiteAttr{},
+                                    resume, successor);
+    return success();
+  };
+
+  FailureOr<Type> expressionType = getNormalizedSemanticType(children.front());
+  std::optional<unsigned> countWidth =
+      succeeded(expressionType) ? sim::getPackedWidth(*expressionType)
+                                : std::nullopt;
+  if (failed(expressionType) || !countWidth || *countWidth == 0)
+    return failure();
+
+  std::optional<APInt> constantCount;
+  if (std::optional<StringRef> spelling =
+          getConstantSpelling(children.front())) {
+    FailureOr<ParsedConstant> parsed =
+        parseSVInteger(*spelling, *countWidth, location);
+    if (failed(parsed))
+      return failure();
+    if (!parsed->unknown.isZero() ||
+        (isSignedNode(children.front()) && parsed->value.isNegative())) {
+      constantCount = APInt(*countWidth, 0);
+    } else {
+      constantCount = parsed->value;
+    }
+  }
+
+  bool zeroCount = constantCount && constantCount->isZero();
+  if (zeroCount && incomingOccurrence && !*incomingOccurrence) {
+    // IEEE 1800-2017 14.11: a ##0 whose clocking event has already occurred in
+    // this time step continues without suspension. Reaching here from that
+    // event unconditionally is what makes it already occurred, so preserve the
+    // occurrence rather than crossing a boundary.
+    timingBoundaryContinuations.erase(continuation);
+    cf::BranchOp::create(builder, location, continuation, continuationOperands);
+    return success();
+  }
+  if (hasIff) {
+    FailureOr<Value> primary = bindObserver(children[1]);
+    FailureOr<Value> condition = bindObserver(children[2]);
+    if (failed(primary) || failed(condition))
+      return failure();
+    primaryObserver = *primary;
+    conditionObserver = *condition;
+  }
+  if (zeroCount) {
+    // IEEE 1800-2017 14.11: otherwise the ##0 suspends until the clocking
+    // event occurs. A conditional occurrence takes the fall-through only on
+    // the paths that arrived through the event; either way the continuation
+    // then runs inside it.
+    Block *wait = current;
+    if (incomingOccurrence && *incomingOccurrence) {
+      wait = addBlock();
+      cf::CondBranchOp::create(builder, location, *incomingOccurrence,
+                               continuation, continuationOperands, wait,
+                               ValueRange{});
+    }
+    OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+    if (failed(emitClockWait(waitBuilder, continuation, continuationOperands)))
+      return failure();
+    clockingEventContinuations[continuation] = {*clock, {}};
+    return success();
+  }
+  if (constantCount && constantCount->isOne()) {
+    if (failed(emitClockWait(builder, continuation, continuationOperands)))
+      return failure();
+    clockingEventContinuations[continuation] = {*clock, {}};
+    return success();
+  }
+
+  Type countType = builder.getIntegerType(*countWidth);
+  Value count;
+  Value positive;
+  if (constantCount) {
+    count = arith::ConstantOp::create(
+        builder, location, countType,
+        builder.getIntegerAttr(countType, *constantCount));
+  } else {
+    FailureOr<Value> value = lowerExpression(children.front());
+    FailureOr<Value> scalar = succeeded(value)
+                                  ? toPackedScalar(*value, location)
+                                  : FailureOr<Value>(failure());
+    FailureOr<Value> normalized =
+        succeeded(scalar) ? convert(*scalar, countType,
+                                    isSignedNode(children.front()), location)
+                          : FailureOr<Value>(failure());
+    if (failed(normalized))
+      return failure();
+    count = *normalized;
+    Value zero = arith::ConstantOp::create(
+        builder, location, countType,
+        builder.getIntegerAttr(countType, APInt(*countWidth, 0)));
+    positive = arith::CmpIOp::create(builder, location,
+                                     isSignedNode(children.front())
+                                         ? arith::CmpIPredicate::sgt
+                                         : arith::CmpIPredicate::ne,
+                                     count, zero);
+    if (!incomingOccurrence || *incomingOccurrence)
+      continuation->addArgument(builder.getI1Type(), location);
+  }
+
+  Block *wait = addBlock();
+  wait->addArgument(countType, location);
+  for (Value operand : continuationOperands)
+    wait->addArgument(operand.getType(), location);
+  Block *resume = addBlock();
+  resume->addArgument(countType, location);
+  for (Value operand : continuationOperands)
+    resume->addArgument(operand.getType(), location);
+  SmallVector<Value> initialWaitOperands{count};
+  llvm::append_range(initialWaitOperands, continuationOperands);
+  if (constantCount) {
+    cf::BranchOp::create(builder, location, wait, initialWaitOperands);
+  } else {
+    if (continuation->getNumArguments() == continuationOperands.size()) {
+      cf::CondBranchOp::create(builder, location, positive, wait,
+                               initialWaitOperands, continuation,
+                               continuationOperands);
+    } else {
+      Value didNotWait = incomingOccurrence && *incomingOccurrence
+                             ? *incomingOccurrence
+                             : arith::ConstantOp::create(
+                                   builder, location, builder.getI1Type(),
+                                   builder.getBoolAttr(false));
+      SmallVector<Value> zeroOperands(continuationOperands);
+      zeroOperands.push_back(didNotWait);
+      cf::CondBranchOp::create(builder, location, positive, wait,
+                               initialWaitOperands, continuation, zeroOperands);
+    }
+  }
+
+  OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+  if (failed(emitClockWait(waitBuilder, resume, wait->getArguments())))
+    return failure();
+  OpBuilder resumeBuilder = OpBuilder::atBlockEnd(resume);
+  Value one = arith::ConstantOp::create(
+      resumeBuilder, location, countType,
+      resumeBuilder.getIntegerAttr(countType, APInt(*countWidth, 1)));
+  Value zero = arith::ConstantOp::create(
+      resumeBuilder, location, countType,
+      resumeBuilder.getIntegerAttr(countType, APInt(*countWidth, 0)));
+  Value remaining = arith::SubIOp::create(resumeBuilder, location,
+                                          resume->getArgument(0), one);
+  Value more = arith::CmpIOp::create(resumeBuilder, location,
+                                     arith::CmpIPredicate::ne, remaining, zero);
+  SmallVector<Value> nextWaitOperands{remaining};
+  llvm::append_range(nextWaitOperands, resume->getArguments().drop_front());
+  ValueRange finalOperands = resume->getArguments().drop_front();
+  if (constantCount) {
+    cf::CondBranchOp::create(resumeBuilder, location, more, wait,
+                             nextWaitOperands, continuation, finalOperands);
+    clockingEventContinuations[continuation] = {*clock, {}};
+  } else {
+    if (continuation->getNumArguments() == continuationOperands.size()) {
+      cf::CondBranchOp::create(resumeBuilder, location, more, wait,
+                               nextWaitOperands, continuation, finalOperands);
+      clockingEventContinuations[continuation] = {*clock, {}};
+    } else {
+      Value didWait = arith::ConstantOp::create(
+          resumeBuilder, location, builder.getI1Type(),
+          resumeBuilder.getBoolAttr(true));
+      SmallVector<Value> waitedOperands(finalOperands);
+      waitedOperands.push_back(didWait);
+      cf::CondBranchOp::create(resumeBuilder, location, more, wait,
+                               nextWaitOperands, continuation, waitedOperands);
+      clockingEventContinuations[continuation] = {
+          *clock, continuation->getArgument(continuationOperands.size())};
+    }
+  }
+  return success();
+}
+
+LogicalResult UnitLowering::lowerTiming(Operation *control,
+                                        Operation *statement) {
+  Location location = getSemanticLocation(control);
+  SmallVector<Operation *> children = getChildren(control);
+  if (initializeProceduralTimingPaths) {
+    auto initialize = std::move(initializeProceduralTimingPaths);
+    initializeProceduralTimingPaths = {};
+    if (failed(initialize()))
+      return failure();
+  }
+  auto lowerControlledStatement =
+      [&](Operation *sampledClock) -> LogicalResult {
+    Operation *savedClock = activeSampledClock;
+    activeSampledClock = sampledClock;
+    if (prepareProceduralTimingPaths) {
+      auto prepare = std::move(prepareProceduralTimingPaths);
+      prepareProceduralTimingPaths = {};
+      if (failed(prepare())) {
+        activeSampledClock = savedClock;
+        return failure();
+      }
+    }
+    LogicalResult result = lowerStatement(statement);
+    activeSampledClock = savedClock;
+    return result;
+  };
+
+  if (isa<semantic::SVImplicitEventControlOp>(control)) {
+    // The dependency set belongs to the controlled statement, including
+    // reads reached through direct zero-time calls. Build that continuation
+    // first, then terminate the pre-control block with the derived wait.
+    Block *waitBlock = current;
+    Block *continuation = addBlock();
+    setCurrent(continuation);
+    llvm::SetVector<Value> dependencies;
+    llvm::SetVector<Value> *saved = observedDependencies;
+    llvm::DenseSet<Value> activationLocals;
+    llvm::DenseSet<Value> *savedActivationLocals =
+        implicitEventActivationLocals;
+    llvm::SetVector<Value> *savedImplicitEventDependencies =
+        implicitEventDependencies;
+    observedDependencies = &dependencies;
+    implicitEventActivationLocals = &activationLocals;
+    implicitEventDependencies = &dependencies;
+    LogicalResult result = lowerControlledStatement(nullptr);
+    observedDependencies = saved;
+    implicitEventActivationLocals = savedActivationLocals;
+    implicitEventDependencies = savedImplicitEventDependencies;
+    if (failed(result))
+      return failure();
+    // IEEE 1800-2017 9.4.2.2 includes variables read by the controlled
+    // statement in an implicit event expression. An automatic variable
+    // declared inside that statement, however, has not been created when the
+    // pre-entry event control is reached and ceases to exist when its block
+    // exits (6.21). Do not make that wait capture an activation-local
+    // reference. Design-lifetime references and automatic variables declared
+    // by an enclosing activation still dominate the wait and remain in the
+    // dependency set.
+    auto referenceRoot = [](Value value) {
+      while (value) {
+        if (auto extract = value.getDefiningOp<sim::SimRefExtractOp>()) {
+          value = extract.getInput();
+          continue;
+        }
+        if (auto extract = value.getDefiningOp<sim::SimRefDynExtractOp>()) {
+          value = extract.getInput();
+          continue;
+        }
+        if (auto extract = value.getDefiningOp<sim::SimRefSubelementOp>()) {
+          value = extract.getInput();
+          continue;
+        }
+        if (auto extract = value.getDefiningOp<sim::SimRefArrayElementOp>()) {
+          value = extract.getInput();
+          continue;
+        }
+        break;
+      }
+      return value;
+    };
+    auto isLocallyConsumedReference = [](Value root) {
+      llvm::DenseSet<Value> visited;
+      SmallVector<Value> pending{root};
+      while (!pending.empty()) {
+        Value reference = pending.pop_back_val();
+        if (!visited.insert(reference).second)
+          continue;
+        for (OpOperand &use : reference.getUses()) {
+          Operation *user = use.getOwner();
+          if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimRefCopyOp,
+                  sim::SimRefReleaseOwnerOp>(user))
+            continue;
+          Value view;
+          if (auto extract = dyn_cast<sim::SimRefExtractOp>(user))
+            view = extract.getResult();
+          else if (auto extract = dyn_cast<sim::SimRefDynExtractOp>(user))
+            view = extract.getResult();
+          else if (auto extract = dyn_cast<sim::SimRefSubelementOp>(user))
+            view = extract.getResult();
+          else if (auto extract = dyn_cast<sim::SimRefArrayElementOp>(user))
+            view = extract.getResult();
+          if (!view)
+            return false;
+          pending.push_back(view);
+        }
+      }
+      return true;
+    };
+    SmallVector<Value> activationLocalDependencies;
+    for (Value dependency : dependencies) {
+      Value root = referenceRoot(dependency);
+      if (!activationLocals.contains(root))
+        continue;
+      // Reads and writes performed synchronously by this process finish before
+      // it returns to the outer event control, so they cannot trigger that
+      // wait. A reference captured by any other operation may outlive the
+      // statement (for example through a detached fork); rejecting that case
+      // preserves its required sensitivity instead of silently dropping it.
+      if (!isLocallyConsumedReference(root))
+        return emitError(location)
+                   << "implicit event dependency on an activation-local "
+                      "variable escapes its controlled statement",
+               failure();
+      activationLocalDependencies.push_back(dependency);
+    }
+    for (Value dependency : activationLocalDependencies)
+      dependencies.remove(dependency);
+    if (savedActivationLocals)
+      savedActivationLocals->insert(activationLocals.begin(),
+                                    activationLocals.end());
+    // IEEE 1800-2017 9.4.2.2: an enclosing implicit event list covers every
+    // read of the statement it controls, and this nested statement is part of
+    // it. Only the identifiers of a nested event *expression* are excluded,
+    // and an implicit list has none.
+    if (saved)
+      saved->insert_range(dependencies);
+    Block *statementEnd = current;
+    if (dependencies.empty()) {
+      // IEEE 1800-2017 9.4.2.2 derives the implicit event expression from
+      // readable operands in the controlled statement.  If there are none,
+      // the process has no event that can resume it.  Keep the continuation
+      // in the CFG for ordinary structured lowering, but permanently suspend
+      // instead of rejecting the legal (and intentionally inert) process.
+      setCurrent(waitBlock);
+      sim::SimSuspendForeverOp::create(builder, location, ValueRange{},
+                                       schedule::ContinuationSiteAttr{},
+                                       sim::EventRegionAttr{}, continuation);
+      setCurrent(statementEnd);
+      return success();
+    }
+    setCurrent(waitBlock);
+    SmallVector<int32_t> edges(dependencies.size(),
+                               static_cast<int32_t>(sim::EdgeKind::Change));
+    if (dependencies.size() == 1) {
+      auto suspend = sim::SimSuspendChangeOp::create(
+          builder, location, dependencies.front(), ValueRange{},
+          schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{},
+          continuation);
+      ::talos::schedule::set<schedule::metadata::proceduralEventWait>(
+          suspend, builder.getUnitAttr());
+      if (control == topLevelWildcardControl)
+        ::talos::schedule::set<schedule::metadata::topLevelWildcardWait>(
+            suspend, builder.getUnitAttr());
+    } else {
+      auto suspend = sim::SimSuspendAnyOp::create(
+          builder, location, dependencies.getArrayRef(),
+          builder.getDenseI32ArrayAttr(edges), schedule::ContinuationSiteAttr{},
+          sim::EventRegionAttr{}, continuation);
+      ::talos::schedule::set<schedule::metadata::proceduralEventWait>(
+          suspend, builder.getUnitAttr());
+      if (control == topLevelWildcardControl)
+        ::talos::schedule::set<schedule::metadata::topLevelWildcardWait>(
+            suspend, builder.getUnitAttr());
+    }
+    setCurrent(statementEnd);
+    return success();
+  }
+
+  if (isa<semantic::SVRepeatedEventControlOp>(control)) {
+    Block *continuation = addBlock();
+    if (failed(emitRepeatedEventSuspend(control, continuation)))
+      return failure();
+    return lowerControlledStatement(nullptr);
+  }
+
+  Block *continuation = addBlock();
+  // A new timing boundary ends any clocking occurrence inherited while this
+  // continuation block was allocated. emitEventSuspend reattaches it only for
+  // a virtual clocking-block event.
+  timingBoundaryContinuations.insert(continuation);
+  if (isa<semantic::SVDelayControlOp>(control)) {
+    FailureOr<Value> delay = lowerDelayValue(control);
+    if (failed(delay))
+      return failure();
+    sim::SimSuspendDelayOp::create(
+        builder, location, *delay, schedule::TimingSiteAttr{}, ValueRange{},
+        schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+  } else if (isa<semantic::SVOneStepDelayControlOp>(control)) {
+    if (!children.empty()) {
+      unsupported(control) << " (#1step inventory)";
+      return failure();
+    }
+    Value delay = sim::SimTimeConstantOp::create(
+        builder, location, sim::TimeType::get(function.getContext()),
+        builder.getI64IntegerAttr(1));
+    sim::SimSuspendDelayOp::create(
+        builder, location, delay, schedule::TimingSiteAttr{}, ValueRange{},
+        schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+  } else if (auto cycle = dyn_cast<semantic::SVCycleDelayControlOp>(control)) {
+    if (failed(emitCycleDelaySuspend(cycle, continuation)))
+      return failure();
+  } else if (isa<semantic::SVSignalEventControlOp,
+                 semantic::SVEventListControlOp>(control)) {
+    if (failed(emitEventSuspend(control, continuation)))
+      return failure();
+    if (control == topLevelAlwaysControl)
+      ::talos::schedule::set<schedule::metadata::repeatingAlwaysWait>(
+          current->getTerminator(), builder.getUnitAttr());
+  } else {
+    unsupported(control) << " (timing control)";
+    return failure();
+  }
+  setCurrent(continuation);
+  return lowerControlledStatement(
+      isa<semantic::SVSignalEventControlOp>(control) ? control : nullptr);
+}
+
+LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.size() != 2) {
+    unsupported(op) << " (wait inventory)";
+    return failure();
+  }
+
+  Block *conditionBlock = addBlock();
+  Block *suspendBlock = addBlock();
+  Block *bodyBlock = addBlock();
+  emitBranch(conditionBlock);
+  setCurrent(conditionBlock);
+  llvm::SetVector<Value> dependencies;
+  llvm::SetVector<Value> *saved = observedDependencies;
+  observedDependencies = &dependencies;
+  FailureOr<Value> conditionValue = lowerExpression(children[0]);
+  observedDependencies = saved;
+  if (failed(conditionValue))
+    return failure();
+  FailureOr<Value> condition = truthValue(*conditionValue, location);
+  if (failed(condition))
+    return failure();
+
+  // Short-circuit operators can place a managed read in a block which does
+  // not dominate the suspension block.  Materialize each managed dependency
+  // from the post-evaluation state at the condition merge.  Besides producing
+  // valid SSA, this is required for expressions whose evaluation changes a
+  // container-valued field: the waiter must observe the container which is
+  // current when it actually suspends.
+  SmallVector<Value> stableDependencies;
+  stableDependencies.reserve(dependencies.size());
+  for (Value dependency : dependencies) {
+    FailureOr<Value> stable = rematerializeManagedWatch(dependency);
+    if (failed(stable))
+      return emitError(location)
+                 << "managed wait dependency cannot be materialized at the "
+                    "stable condition point",
+             failure();
+    stableDependencies.push_back(*stable);
+  }
+  if (dependencies.empty()) {
+    std::optional<bool> truth = foldConstantTruth(*condition);
+    if (!truth) {
+      unsupported(op)
+          << " (computed wait condition has no readable dependency)";
+      return failure();
+    }
+    emitBranch(*truth ? bodyBlock : suspendBlock);
+    if (!*truth) {
+      setCurrent(suspendBlock);
+      sim::SimSuspendForeverOp::create(builder, location, ValueRange{},
+                                       schedule::ContinuationSiteAttr{},
+                                       sim::EventRegionAttr{}, bodyBlock);
+    } else
+      suspendBlock->erase();
+    setCurrent(bodyBlock);
+    return lowerStatement(children[1]);
+  }
+  // A virtual-interface member that can select several instances' storage
+  // depends on the interface handle as well (IEEE 1800-2023 25.9), so one
+  // storage cannot decide the condition.
+  if (selectsAmongVirtualInterfaceTargets(children[0]) ||
+      stableDependencies.size() != 1 ||
+      isa<sim::ManagedWatchType>(stableDependencies.front().getType()) ||
+      !isAddressableExpression(children[0]) ||
+      !storageDecidesTruth(children[0])) {
+    if (!sim::has<sim::metadata::Observer>(children[0])) {
+      unsupported(op) << " (computed wait condition requires an observer)";
+      return failure();
+    }
+    cf::CondBranchOp::create(builder, location, *condition, bodyBlock,
+                             ValueRange{}, suspendBlock, ValueRange{});
+    setCurrent(suspendBlock);
+    SmallVector<Value> managedDependencies;
+    for (Value dependency : stableDependencies)
+      if (isa<sim::ManagedWatchType>(dependency.getType()))
+        managedDependencies.push_back(dependency);
+    FailureOr<Value> observer = bindObserver(children[0], managedDependencies);
+    if (failed(observer))
+      return failure();
+    SmallVector<Value> values{*observer, *condition};
+    sim::SimSuspendObserveOp::create(
+        builder, location, values, 0, ArrayRef<int32_t>{0},
+        ArrayRef<int32_t>{-1}, schedule::ContinuationSiteAttr{},
+        sim::EventRegionAttr{}, bodyBlock);
+    setCurrent(bodyBlock);
+    return lowerStatement(children[1]);
+  }
+  FailureOr<Value> watched = lowerExpression(children[0], true);
+  if (failed(watched))
+    return failure();
+  if (!isa<sim::RefType, sim::NetType>((*watched).getType())) {
+    unsupported(op) << " (wait condition is not directly watchable)";
+    return failure();
+  }
+  cf::CondBranchOp::create(builder, location, *condition, bodyBlock,
+                           ValueRange{}, suspendBlock, ValueRange{});
+  setCurrent(suspendBlock);
+  sim::SimSuspendLevelOp::create(builder, location, *watched, ValueRange{},
+                                 schedule::ContinuationSiteAttr{},
+                                 sim::EventRegionAttr{}, bodyBlock);
+
+  setCurrent(bodyBlock);
+  return lowerStatement(children[1]);
+}
+
+LogicalResult
+UnitLowering::lowerEventTrigger(semantic::SVEventTriggerStatementOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  size_t expected = op.getHasTimingControl() ? 2 : 1;
+  if (children.size() != expected) {
+    unsupported(op) << " (event trigger inventory)";
+    return failure();
+  }
+  if (op.getHasTimingControl() && !op.getIsNonblocking()) {
+    emitError(location) << "a timed named-event trigger must be nonblocking";
+    return failure();
+  }
+  FailureOr<Value> event = lowerExpression(children.front());
+  if (failed(event))
+    return failure();
+  if (!isa<sim::EventType>((*event).getType())) {
+    emitError(location) << "event trigger operand is not an event handle";
+    return failure();
+  }
+  // IEEE 1800-2023 15.5.1: `->>` with an event control does not block; once
+  // the control occurs, the event is triggered in the NBA region.
+  if (op.getHasTimingControl() && !isa<semantic::SVDelayControlOp>(children[1]))
+    return emitDeferredEventAction(
+        op, children[1],
+        {{*event, sim::CaptureKind::Formal, /*retainReference=*/false}},
+        location, [&](UnitLowering &lowering, ValueRange arguments) {
+          sim::SimEventTriggerOp::create(lowering.builder, location,
+                                         arguments.front(), Value{},
+                                         lowering.builder.getBoolAttr(true),
+                                         schedule::EventSiteAttr{}, UnitAttr{});
+          return success();
+        });
+  Value delay;
+  if (op.getHasTimingControl()) {
+    FailureOr<Value> loweredDelay = lowerDelayValue(children[1]);
+    if (failed(loweredDelay))
+      return failure();
+    delay = *loweredDelay;
+  }
+  sim::SimEventTriggerOp::create(builder, location, *event, delay,
+                                 builder.getBoolAttr(op.getIsNonblocking()),
+                                 schedule::EventSiteAttr{}, UnitAttr{});
+  return success();
+}
+
+} // namespace talos::simlowering

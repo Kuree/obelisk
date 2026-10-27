@@ -1,4 +1,4 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
 
 // IEEE 19.3, 19.5, and 13.5.2: constructor refs are read-only aliases that

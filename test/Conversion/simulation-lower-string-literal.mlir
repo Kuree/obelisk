@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // A semantic conversion from a packed string literal to `string` preserves
 // the spelling directly. The empty literal has an 8-bit packed source type,
@@ -18,23 +18,23 @@ module {
     simulation.func @process(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
-      obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
-        obelisk.sv.expression.conversion attributes {
-            node_id = 2 : i64, semantic_type = !obelisk.string} {
-          obelisk.sv.expression.string_literal attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 1 : i64} {
+        talos.sv.expression.conversion attributes {
+            node_id = 2 : i64, semantic_type = !talos.string} {
+          talos.sv.expression.string_literal attributes {
               constant_value = "", node_id = 3 : i64,
-              semantic_type = !obelisk.ranged_packed_array<
-                  7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+              semantic_type = !talos.ranged_packed_array<
+                  7 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 4 : i64} {
-        obelisk.sv.expression.conversion attributes {
-            node_id = 5 : i64, semantic_type = !obelisk.string} {
-          obelisk.sv.expression.string_literal attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 4 : i64} {
+        talos.sv.expression.conversion attributes {
+            node_id = 5 : i64, semantic_type = !talos.string} {
+          talos.sv.expression.string_literal attributes {
               constant_value = "text", node_id = 6 : i64,
-              semantic_type = !obelisk.ranged_packed_array<
-                  31 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
+              semantic_type = !talos.ranged_packed_array<
+                  31 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
           }
         }
       }

@@ -1,10 +1,10 @@
-#include "obelisk/Solver/ConstraintSolver.h"
+#include "talos/Solver/ConstraintSolver.h"
 
 #include "Z3Support.h"
 
 #include <array>
 
-namespace obelisk::solver {
+namespace talos::solver {
 
 Satisfiability
 checkRandomDomainOverlap(llvm::ArrayRef<RandomDomainPattern> patterns,
@@ -58,7 +58,7 @@ checkRandomDomainOverlap(llvm::ArrayRef<RandomDomainPattern> patterns,
       return Satisfiability::Satisfiable;
   if (equalMasks)
     return Satisfiability::Unsatisfiable;
-#ifdef OBELISK_ENABLE_Z3
+#ifdef TALOS_ENABLE_Z3
   return detail::checkRandomDomainOverlapZ3(patterns, resourceLimit);
 #else
   (void)resourceLimit;
@@ -83,11 +83,11 @@ checkRandomDomainOverlap(llvm::ArrayRef<RandomDomainPattern> patterns,
 #endif
 }
 
-#ifndef OBELISK_ENABLE_Z3
+#ifndef TALOS_ENABLE_Z3
 RandomProgramAnalysis analyzeRandomProgram(const uint8_t *, size_t, uint64_t,
                                            bool) {
   return {};
 }
 #endif
 
-} // namespace obelisk::solver
+} // namespace talos::solver

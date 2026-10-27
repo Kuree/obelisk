@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -split-input-file -verify-diagnostics -o /dev/null
+// RUN: talos-opt %s -split-input-file -verify-diagnostics -o /dev/null
 #bits = #simulation.vpi_type<kind = bit, isSigned = false, isFourState = false, range = [3, 0], children = [], childNames = []>
 module {
  simulation.design @negative {

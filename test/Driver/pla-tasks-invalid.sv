@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim -O0 --vpi=off %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not talos -emit-sim -O0 --vpi=off %s -o /dev/null 2>&1 | FileCheck %s
 
 module pla_tasks_invalid;
   logic [1:4] memory [1:2];

@@ -1,0 +1,65 @@
+//===- RuntimeToLLVM.h - Typed runtime ABI to LLVM calls ------*- C++ -*-===//
+
+#ifndef TALOS_CONVERSION_RUNTIMETOLLVM_H
+#define TALOS_CONVERSION_RUNTIMETOLLVM_H
+
+#include "talos/Conversion/Passes.h"
+
+#include "mlir/Support/LogicalResult.h"
+
+#include "llvm/ADT/StringRef.h"
+
+namespace mlir {
+class LLVMTypeConverter;
+class OpPassManager;
+class MLIRContext;
+class Type;
+class ModuleOp;
+class RewritePatternSet;
+} // namespace mlir
+
+namespace llvm {
+class DataLayout;
+} // namespace llvm
+
+namespace talos {
+
+/// Compose independently runnable preparation and conversion passes.
+void buildRuntimeToLLVMPipeline(mlir::OpPassManager &manager);
+void registerRuntimeToLLVMPipeline();
+
+/// LLVM type shared by process descriptor declarations and definitions.
+mlir::Type getNativeProcessDescriptorType(mlir::MLIRContext *context);
+
+/// Materialize the always-present execution descriptor and any encoded
+/// simulation bytecode/design database attributes as immutable LLVM globals.
+/// The operation is idempotent so composing lowerings may call it safely.
+mlir::LogicalResult
+materializeEmbeddedSimulationDesign(mlir::ModuleOp module,
+                                    const llvm::DataLayout &dataLayout);
+
+/// Validate the exact runtime ABI target contract and linear ownership of
+/// runtime-owned buffers before composing runtime lowering patterns.
+mlir::LogicalResult
+validateRuntimeToLLVMPreconditions(mlir::ModuleOp module,
+                                   const llvm::DataLayout &dataLayout);
+
+/// Reserve deterministic, collision-free LLVM symbols for runtime byte
+/// materializers in one linear module walk before conversion.
+mlir::LogicalResult prepareRuntimeToLLVMByteGlobals(mlir::ModuleOp module);
+
+mlir::LogicalResult
+materializeDeferredRuntimeByteGlobals(mlir::ModuleOp module);
+
+/// Add the one-to-one runtime ABI type mappings to a composing LLVM
+/// conversion.
+void addRuntimeToLLVMTypeConversions(mlir::LLVMTypeConverter &converter);
+
+/// Add typed runtime materializer and C ABI call lowering patterns to a
+/// composing full LLVM conversion.
+void populateRuntimeToLLVMPatterns(const mlir::LLVMTypeConverter &converter,
+                                   mlir::RewritePatternSet &patterns);
+
+} // namespace talos
+
+#endif // TALOS_CONVERSION_RUNTIMETOLLVM_H

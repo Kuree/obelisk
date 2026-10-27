@@ -1,9 +1,9 @@
 // REQUIRES: native-elf
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
-// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_startup.c -I%resource_dir/include -Wl,-soname,libobelisk_vpi_test.so -o %t.dir/lib/libobelisk_vpi_test.so
-// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_startup_second.c -I%resource_dir/include -Wl,-soname,libobelisk_vpi_second.so -o %t.dir/lib/libobelisk_vpi_second.so
-// RUN: not obelisk --vpi=off %s %t.dir/lib/libobelisk_vpi_test.so -o %t.dir/off 2>&1 | FileCheck %s --check-prefix=OFF
-// RUN: cd %t.dir && obelisk --vpi=full %s lib/libobelisk_vpi_test.so lib/libobelisk_vpi_test.so lib/libobelisk_vpi_second.so -o bin/simulator
+// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_startup.c -I%resource_dir/include -Wl,-soname,libtalos_vpi_test.so -o %t.dir/lib/libtalos_vpi_test.so
+// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_startup_second.c -I%resource_dir/include -Wl,-soname,libtalos_vpi_second.so -o %t.dir/lib/libtalos_vpi_second.so
+// RUN: not talos --vpi=off %s %t.dir/lib/libtalos_vpi_test.so -o %t.dir/off 2>&1 | FileCheck %s --check-prefix=OFF
+// RUN: cd %t.dir && talos --vpi=full %s lib/libtalos_vpi_test.so lib/libtalos_vpi_test.so lib/libtalos_vpi_second.so -o bin/simulator
 // RUN: %t.dir/bin/simulator | FileCheck %s --check-prefix=OUTPUT
 // RUN: llvm-readelf -d %t.dir/bin/simulator | FileCheck %s --check-prefix=DYNAMIC
 // RUN: llvm-readelf --dyn-syms %t.dir/bin/simulator | FileCheck %s --check-prefix=EXPORTS
@@ -51,8 +51,8 @@ endmodule
 // OUTPUT-NEXT: final marker
 // OUTPUT-NEXT: end simulation
 // DYNAMIC: (RUNPATH)      Library runpath: [$ORIGIN/../lib]
-// DYNAMIC: (NEEDED)       Shared library: [libobelisk_vpi_test.so]
-// DYNAMIC: (NEEDED)       Shared library: [libobelisk_vpi_second.so]
+// DYNAMIC: (NEEDED)       Shared library: [libtalos_vpi_test.so]
+// DYNAMIC: (NEEDED)       Shared library: [libtalos_vpi_second.so]
 // EXPORTS-DAG: vpi_handle_by_name
 // EXPORTS-DAG: vpi_get_value
 // EXPORTS-DAG: vpi_put_value

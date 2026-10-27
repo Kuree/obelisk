@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk -emit-slang %s -o /dev/null
+// RUN: %talos -emit-slang %s -o /dev/null
 
 // IEEE 1800-2023 11.4.14.3: a streaming concatenation target unpacks into the
 // data members of an existing object. Slang v11 rejects a class handle as a

@@ -32,11 +32,11 @@ using namespace mlir;
 
 LLD_HAS_DRIVER(macho)
 
-namespace obelisk::driver {
+namespace talos::driver {
 namespace {
-constexpr StringLiteral kTargetTriple = OBELISK_NATIVE_TARGET_TRIPLE;
-constexpr StringLiteral kMinimumOS = OBELISK_MACOS_DEPLOYMENT_TARGET;
-constexpr StringLiteral kSDKVersion = OBELISK_MACOS_SDK_VERSION;
+constexpr StringLiteral kTargetTriple = TALOS_NATIVE_TARGET_TRIPLE;
+constexpr StringLiteral kMinimumOS = TALOS_MACOS_DEPLOYMENT_TARGET;
+constexpr StringLiteral kSDKVersion = TALOS_MACOS_SDK_VERSION;
 
 LogicalResult linkMachOExecutable(ArrayRef<std::string> modulePaths,
                                   StringRef outputPath, StringRef supportRoot,
@@ -45,12 +45,12 @@ LogicalResult linkMachOExecutable(ArrayRef<std::string> modulePaths,
   SmallString<256> runtime(supportRoot);
   bool fullLTO = options.optLevel != 0 && !options.noLTO && !thinLTO;
   sys::path::append(runtime,
-                    fullLTO ? "libobelisk_rt_lto.a" : "libobelisk_rt.a");
+                    fullLTO ? "libtalos_rt_lto.a" : "libtalos_rt.a");
   SmallString<256> sysroot(supportRoot);
   sys::path::append(sysroot, "sdk");
   for (StringRef path : {StringRef(runtime), StringRef(sysroot)}) {
     if (!sys::fs::exists(path)) {
-      errs() << "obelisk: error: native support is missing '" << path << "'\n";
+      errs() << "talos: error: native support is missing '" << path << "'\n";
       return failure();
     }
   }
@@ -59,7 +59,7 @@ LogicalResult linkMachOExecutable(ArrayRef<std::string> modulePaths,
   // image is reproducible and publishing it is still a rename.
   SmallString<256> stagingPrefix(outputPath);
   if (std::error_code error = sys::fs::make_absolute(stagingPrefix)) {
-    errs() << "obelisk: error: could not resolve output path '" << outputPath
+    errs() << "talos: error: could not resolve output path '" << outputPath
            << "': " << error.message() << '\n';
     return failure();
   }
@@ -67,7 +67,7 @@ LogicalResult linkMachOExecutable(ArrayRef<std::string> modulePaths,
   SmallString<256> staging;
   if (std::error_code error =
           sys::fs::createUniqueDirectory(stagingPrefix, staging)) {
-    errs() << "obelisk: error: could not create a link directory beside '"
+    errs() << "talos: error: could not create a link directory beside '"
            << outputPath << "': " << error.message() << '\n';
     return failure();
   }
@@ -96,7 +96,7 @@ LogicalResult linkMachOExecutable(ArrayRef<std::string> modulePaths,
   sys::path::append(weakImportsPath, "weak-imports.txt");
   auto weakImports = MemoryBuffer::getFile(weakImportsPath);
   if (!weakImports) {
-    errs() << "obelisk: error: could not read macOS weak-import manifest: "
+    errs() << "talos: error: could not read macOS weak-import manifest: "
            << weakImports.getError().message() << '\n';
     return failure();
   }
@@ -145,7 +145,7 @@ LogicalResult linkMachOExecutable(ArrayRef<std::string> modulePaths,
                             ? (outputPath + ".thinlto-cache").str()
                             : options.thinLTOCacheDir;
     if (std::error_code error = sys::fs::create_directories(cache)) {
-      errs() << "obelisk: error: could not create ThinLTO cache: "
+      errs() << "talos: error: could not create ThinLTO cache: "
              << error.message() << '\n';
       return failure();
     }
@@ -163,7 +163,7 @@ LogicalResult linkMachOExecutable(ArrayRef<std::string> modulePaths,
       continue;
     }
     if (input.sharedLibraryIndex >= options.sharedLibraryInputs.size()) {
-      errs() << "obelisk: error: invalid classified shared-library input\n";
+      errs() << "talos: error: invalid classified shared-library input\n";
       return failure();
     }
     const SharedLibraryInput &library =
@@ -196,7 +196,7 @@ LogicalResult linkMachOExecutable(ArrayRef<std::string> modulePaths,
   if (std::error_code error = sys::fs::setPermissions(
           temporary, sys::fs::perms::all_read | sys::fs::perms::all_exe |
                          sys::fs::perms::owner_write)) {
-    errs() << "obelisk: error: could not make '" << outputPath
+    errs() << "talos: error: could not make '" << outputPath
            << "' executable: " << error.message() << '\n';
     return failure();
   }
@@ -249,4 +249,4 @@ public:
 std::unique_ptr<TargetBackend> createNativeBackend() {
   return std::make_unique<MacOSBackend>();
 }
-} // namespace obelisk::driver
+} // namespace talos::driver

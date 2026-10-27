@@ -1,14 +1,14 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | obelisk-translate --mlir-to-llvmir \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off require-bytecode=true},convert-talos-sim-processes-to-llvm-coroutines)' \
+// RUN:   | talos-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
 // RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o0.o
 // RUN: %target_cxx %t.o0.o %runtime_link_flags -o %t.o0.exe
 // RUN: %t.o0.exe --execution-tier=native | FileCheck %s --implicit-check-not=FAIL
 // RUN: %t.o0.exe --execution-tier=bytecode | FileCheck %s --implicit-check-not=FAIL
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3},obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | obelisk-translate --mlir-to-llvmir \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=3},talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off require-bytecode=true},convert-talos-sim-processes-to-llvm-coroutines)' \
+// RUN:   | talos-translate --mlir-to-llvmir \
 // RUN:   | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup' \
 // RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o3.o
 // RUN: %target_cxx %t.o3.o %runtime_link_flags -o %t.o3.exe
@@ -32,7 +32,7 @@ module attributes {
     simulation.code_unit.decl 9970001 in 0 initial hierarchy "top.test"
     simulation.code_unit.decl 9970002 in 0 fork hierarchy "top.destination_tick"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9970000 : i64} {
       %test = simulation.spawn @test(%ctx) :

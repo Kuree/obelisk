@@ -1,7 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
-// RUN: obelisk-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
 
 // IEEE 1800-2023 19.4.1: a base-class view still names the derived covergroup instance.
 // The formal retains its static base type and accepts the dynamic derived type.

@@ -2,8 +2,8 @@
 
 #include "SimulationAOTPlanning.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -13,12 +13,12 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_MATERIALIZENATIVEGROUPPROMOTIONREADINESSPASS
-#include "obelisk/Conversion/Passes.h.inc"
-} // namespace obelisk
+#include "talos/Conversion/Passes.h.inc"
+} // namespace talos
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 LogicalResult materializeNativeRoutePromotionScan(
     ModuleOp module, LLVM::LLVMFuncOp scanner, uint64_t stateBits,
@@ -66,9 +66,9 @@ LogicalResult materializeNativeRoutePromotionScan(
                                ArrayRef<LLVM::GEPArg>{index});
   };
   constexpr StringLiteral ownerName =
-      "__obelisk_eval_route_promotion_owners_v1";
+      "__talos_eval_route_promotion_owners_v1";
   constexpr StringLiteral rangeName =
-      "__obelisk_eval_route_promotion_ranges_v1";
+      "__talos_eval_route_promotion_ranges_v1";
   auto ownerType =
       LLVM::LLVMStructType::getLiteral(module.getContext(), {i64, i64, ptr});
   auto ownerArray = LLVM::LLVMArrayType::get(ownerType, routes.size());
@@ -124,7 +124,7 @@ LogicalResult materializeNativeRoutePromotionScan(
   builder.setInsertionPointToStart(entry);
   Value pendingBase = address(pendingName), ownerBase = address(ownerName),
         rangeBase = address(rangeName),
-        state = address("__obelisk_state_unknown");
+        state = address("__talos_state_unknown");
   if (!dirtyName.empty())
     LLVM::StoreOp::create(builder, loc, llvmConstant(builder, loc, i8, 0),
                           address(dirtyName), 1);
@@ -254,12 +254,12 @@ static LogicalResult materializePromotionReadiness(ModuleOp module,
                                   isConstant, LLVM::Linkage::Internal, name,
                                   DenseIntElementsAttr::get(tensor, words), 8);
   };
-  StringRef ownerName = group ? "__obelisk_eval_group_promotion_domains_v1"
-                              : "__obelisk_eval_kernel_promotion_owners_v1";
-  StringRef rangeName = group ? "__obelisk_eval_group_promotion_ranges_v1"
-                              : "__obelisk_eval_kernel_promotion_ranges_v1";
-  StringRef hintName = group ? "__obelisk_eval_group_promotion_hints_v1"
-                             : "__obelisk_eval_kernel_promotion_hints_v1";
+  StringRef ownerName = group ? "__talos_eval_group_promotion_domains_v1"
+                              : "__talos_eval_kernel_promotion_owners_v1";
+  StringRef rangeName = group ? "__talos_eval_group_promotion_ranges_v1"
+                              : "__talos_eval_kernel_promotion_ranges_v1";
+  StringRef hintName = group ? "__talos_eval_group_promotion_hints_v1"
+                             : "__talos_eval_kernel_promotion_hints_v1";
   auto ownerTable = table(ownerName, owners);
   auto rangeTable = table(rangeName, scans);
   // A negative hint is not a cached result: every invocation rereads this
@@ -288,11 +288,11 @@ static LogicalResult materializePromotionReadiness(ModuleOp module,
     return LLVM::LoadOp::create(builder, loc, i64, gep(base, i64, offset), 8);
   };
   StringRef latchName = group ? groupPromotionLatchName
-                              : "__obelisk_eval_kernel_promotion_latched_v1";
+                              : "__talos_eval_kernel_promotion_latched_v1";
   constexpr StringLiteral pendingName =
-      "__obelisk_eval_promotion_pending_mask_v1";
-  StringRef scanName = group ? "__obelisk_eval_group_promotion_scan_v1"
-                             : "__obelisk_eval_kernel_promotion_scan_v1";
+      "__talos_eval_promotion_pending_mask_v1";
+  StringRef scanName = group ? "__talos_eval_group_promotion_scan_v1"
+                             : "__talos_eval_kernel_promotion_scan_v1";
   builder.setInsertionPointToEnd(module.getBody());
   auto scan = LLVM::LLVMFuncOp::create(
       builder, loc, scanName, LLVM::LLVMFunctionType::get(i1, {i64}, false));
@@ -315,7 +315,7 @@ static LogicalResult materializePromotionReadiness(ModuleOp module,
   Value owner = entry->getArgument(0);
   Value ownerBase = address(ownerTable.getSymName());
   Value rangeBase = address(rangeTable.getSymName());
-  Value state = address("__obelisk_state_unknown");
+  Value state = address("__talos_state_unknown");
   Value hintBase = address(hintTable.getSymName());
   Value hintIndex = arith::MulIOp::create(builder, loc, owner, constant(2));
   Value hintWordAddress = gep(hintBase, i64, hintIndex);
@@ -444,7 +444,7 @@ LogicalResult materializeNativeKernelPromotionReadiness(
     ModuleOp module, uint64_t stateBits,
     ArrayRef<SmallVector<NativePromotionRange>> ranges,
     ArrayRef<std::string> twoStateExecutors,
-    ArrayRef<obelisk_rt_native_merged_fragment> fragments) {
+    ArrayRef<talos_rt_native_merged_fragment> fragments) {
   if (llvm::all_of(twoStateExecutors,
                    [](const std::string &name) { return name.empty(); }))
     return success();
@@ -503,7 +503,7 @@ LogicalResult verifyNativeGroupProofDomains(ModuleOp module) {
   auto type = dyn_cast<LLVM::LLVMArrayType>(latches.getGlobalType());
   auto stateBits = runtime::get<runtime::StateBits>(module);
   auto kernels = module.lookupSymbol<LLVM::GlobalOp>(
-      "__obelisk_eval_kernel_promotion_latched_v1");
+      "__talos_eval_kernel_promotion_latched_v1");
   auto kernelType = kernels
                         ? dyn_cast<LLVM::LLVMArrayType>(kernels.getGlobalType())
                         : LLVM::LLVMArrayType{};
@@ -614,7 +614,7 @@ LogicalResult materializeNativeGroupPromotionReadiness(ModuleOp module) {
   if (failed(verifyNativeGroupProofDomains(module)))
     return failure();
   if (module.lookupSymbol(groupPromotionReadyName) ||
-      module.lookupSymbol("__obelisk_eval_group_promotion_scan_v1"))
+      module.lookupSymbol("__talos_eval_group_promotion_scan_v1"))
     return latches.emitError("group readiness was materialized twice");
   auto domains =
       schedule::get<schedule::Field::EvalGroupProofDependencies>(latches);
@@ -643,9 +643,9 @@ LogicalResult materializeNativeGroupPromotionReadiness(ModuleOp module) {
       runtime::get<runtime::StateBits>(module).getUInt());
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-namespace obelisk {
+namespace talos {
 namespace {
 class MaterializeNativeGroupPromotionReadinessPass final
     : public impl::MaterializeNativeGroupPromotionReadinessPassBase<
@@ -657,4 +657,4 @@ class MaterializeNativeGroupPromotionReadinessPass final
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

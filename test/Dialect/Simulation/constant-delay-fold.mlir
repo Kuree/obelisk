@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
 
 // IEEE 1800-2023 9.4.1 and 3.14.1: a constant delay such as `#(p / 2)` or
 // `#(p / 2.0)` is scaled and rounded once to the time precision. Folding

@@ -1,8 +1,8 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
+// RUN: talos -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O3 --vpi=off --native-scheduler=generic %s -o %t.generic
 // RUN: %t.generic | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval %s -o %t.eval
+// RUN: talos -O3 --vpi=off --native-scheduler=eval %s -o %t.eval
 // RUN: %t.eval | FileCheck %s
 // A conditional hold observes a cyclic request/response pair. All four known
 // modes assign it, while X/Z modes retain its previous value (12.5). Observer

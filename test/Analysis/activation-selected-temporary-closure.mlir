@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=reaching-values=true slice-root=5' -o %t.analyzed 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s '--test-talos-activation-regions=reaching-values=true slice-root=5' -o %t.analyzed 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
 
 // A and B are assigned before every read, but B is also selected together

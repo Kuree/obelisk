@@ -1,10 +1,10 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt --convert-slang-to-obelisk '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\"}"' -o %t.obelisk.mlir
-// RUN: obelisk-opt %t.obelisk.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   --encode-obelisk-sim-to-bytecode='vpi=off' \
+// RUN: talos -emit-slang %s | talos-opt --convert-slang-to-talos '--test-talos-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\"}"' -o %t.talos.mlir
+// RUN: talos-opt %t.talos.mlir '--lower-talos-to-sim=opt-level=0' \
+// RUN:   --encode-talos-sim-to-bytecode='vpi=off' \
 // RUN:   | FileCheck %s
-// RUN: obelisk-opt %t.obelisk.mlir '--lower-obelisk-to-sim=opt-level=0' \
+// RUN: talos-opt %t.talos.mlir '--lower-talos-to-sim=opt-level=0' \
 // RUN:   | FileCheck %s --check-prefix=LOWER \
-// RUN:     --implicit-check-not=obelisk.sv.
+// RUN:     --implicit-check-not=talos.sv.
 
 // A complete elaborated design serializes through the unified runtime
 // artifact version 1.

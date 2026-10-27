@@ -1,8 +1,8 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: not %t --coverage-output=%t.obcov --coverage-test=bin-iff 2>&1 | FileCheck %s --check-prefix=ERROR --implicit-check-not=ERROR:
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s
 // RUN: not %t --coverage-load=%t.obcov --coverage-output=%t.loaded.obcov --coverage-test=bin-iff-loaded 2>/dev/null
-// RUN: obelisk-cov report --format=json %t.loaded.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov report --format=json %t.loaded.obcov | FileCheck %s --check-prefix=JSON
 
 module top;
   bit [2:0] sampled;

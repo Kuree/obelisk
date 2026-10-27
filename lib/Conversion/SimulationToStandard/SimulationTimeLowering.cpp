@@ -1,9 +1,9 @@
 //===- SimulationTimeLowering.cpp - Normalize simulation time -----------===//
 
-#include "obelisk/Conversion/SimulationTimeLowering.h"
+#include "talos/Conversion/SimulationTimeLowering.h"
 
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -18,10 +18,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMLOWERREALCONVERSIONSPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMLOWERREALCONVERSIONSPASS
+#include "talos/Conversion/Passes.h.inc"
 
 namespace {
 
@@ -454,9 +454,9 @@ LogicalResult applyPatterns(RewritePatternSet &&patterns,
       operations, FrozenRewritePatternSet(std::move(patterns)), config);
 }
 
-class ObeliskSimLowerRealConversionsPass final
-    : public impl::ObeliskSimLowerRealConversionsPassBase<
-          ObeliskSimLowerRealConversionsPass> {
+class TalosSimLowerRealConversionsPass final
+    : public impl::TalosSimLowerRealConversionsPassBase<
+          TalosSimLowerRealConversionsPass> {
 public:
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
@@ -502,4 +502,4 @@ LogicalResult lowerSimulationTimeOperations(Operation *root) {
   return remaining.wasInterrupted() ? failure() : success();
 }
 
-} // namespace obelisk
+} // namespace talos

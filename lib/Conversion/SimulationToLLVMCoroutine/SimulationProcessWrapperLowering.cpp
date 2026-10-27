@@ -2,17 +2,17 @@
 
 #include "SimulationProcessWrapperLowering.h"
 #include "SimulationProcessRuntimeABI.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Runtime/RuntimeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
-#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/SimulationProcessFrameAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -22,7 +22,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 LogicalResult materializeEvalCheckpointHandoffGlobals(ModuleOp module) {
   OpBuilder builder(module.getContext());
@@ -176,7 +176,7 @@ LogicalResult materializeSharedNativeWrappers(ModuleOp module,
         Value runtimeContext = loadAt(builder, location, instance,
                                       kInstanceContextField, pointer, 0);
         Value currentContext = LLVM::AddressOfOp::create(
-            builder, location, pointer, "__obelisk_current_context");
+            builder, location, pointer, "__talos_current_context");
         LLVM::StoreOp::create(builder, location, runtimeContext, currentContext,
                               8);
         Value handle = loadAt(builder, location, instance,
@@ -216,7 +216,7 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
     // This ABI has no descriptor argument, so a coroutine still needs a small
     // per-process requirements callback. LLVM folds the ramp's size query.
     auto requirements = LLVM::LLVMFuncOp::create(
-        builder, location, (baseName + ".__obelisk_native_requirements").str(),
+        builder, location, (baseName + ".__talos_native_requirements").str(),
         LLVM::LLVMFunctionType::get(i32, {pointer, pointer}, false));
     copyNativePartition(ramp, requirements);
     Block *entry = requirements.addEntryBlock(builder);
@@ -231,7 +231,7 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
     builder.setInsertionPointAfter(requirements);
   }
   auto execute = LLVM::LLVMFuncOp::create(
-      builder, location, (baseName + ".__obelisk_native_execute").str(),
+      builder, location, (baseName + ".__talos_native_execute").str(),
       LLVM::LLVMFunctionType::get(i32, {pointer}, false));
   copyNativePartition(ramp, execute);
   Block *entry = execute.addEntryBlock(builder);
@@ -253,7 +253,7 @@ LogicalResult makeNativeWrappers(ModuleOp module, LLVM::LLVMFuncOp ramp,
   Value runtimeContext =
       loadAt(builder, location, instance, kInstanceContextField, pointer, 0);
   Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
+                                                   "__talos_current_context");
   LLVM::StoreOp::create(builder, location, runtimeContext, currentContext, 8);
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
   SmallVector<Value> arguments{
@@ -277,7 +277,7 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
   auto execute = LLVM::LLVMFuncOp::create(
-      builder, location, (baseName + ".__obelisk_native_execute").str(),
+      builder, location, (baseName + ".__talos_native_execute").str(),
       LLVM::LLVMFunctionType::get(i32, {pointer}, false));
   copyNativePartition(body, execute);
   Block *executeEntry = execute.addEntryBlock(builder);
@@ -286,7 +286,7 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
   Value runtimeContext =
       loadAt(builder, location, instance, kInstanceContextField, pointer, 0);
   Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
+                                                   "__talos_current_context");
   LLVM::StoreOp::create(builder, location, runtimeContext, currentContext, 8);
   Value frame =
       loadAt(builder, location, instance, kInstanceFrameField, pointer, 0);
@@ -317,8 +317,8 @@ makePlainNativeWrappers(ModuleOp module, func::FuncOp body, StringRef baseName,
                                    TypeRange{i32}, arguments);
   storeAt(builder, location, instance, kInstanceContinuationField,
           llvmConstant(builder, location, i32, 0), 4);
-  publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TERMINATE,
-                OBELISK_RT_SUSPEND_NONE, 0, OBELISK_RT_FRAGMENT_FLAGS_NONE,
+  publishAction(builder, location, instance, TALOS_RT_FRAGMENT_TERMINATE,
+                TALOS_RT_SUSPEND_NONE, 0, TALOS_RT_FRAGMENT_FLAGS_NONE,
                 llvmConstant(builder, location, i64, 0), 0);
   LLVM::ReturnOp::create(builder, location, call.getResult(0));
 
@@ -341,26 +341,26 @@ FailureOr<LLVM::LLVMFuncOp> makeDirectFragmentWrapper(
       builder, location, wrapperName,
       LLVM::LLVMFunctionType::get(i32, {pointer}, false));
   copyNativePartition(body, wrapper);
-  if (::obelisk::schedule::has<
-          ::obelisk::schedule::Field::EvalInductiveTwoState>(body) ||
-      ::obelisk::schedule::has<
-          ::obelisk::schedule::Field::EvalSelectedTwoState>(body) ||
-      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalFourStateSource>(
+  if (::talos::schedule::has<
+          ::talos::schedule::Field::EvalInductiveTwoState>(body) ||
+      ::talos::schedule::has<
+          ::talos::schedule::Field::EvalSelectedTwoState>(body) ||
+      ::talos::schedule::has<::talos::schedule::Field::EvalFourStateSource>(
           body))
-    ::obelisk::schedule::set<schedule::Field::EvalTwoStateWrapper>(
+    ::talos::schedule::set<schedule::Field::EvalTwoStateWrapper>(
         wrapper, builder.getUnitAttr());
-  if (::obelisk::schedule::has<schedule::metadata::evalPathGuardedTwoState>(
+  if (::talos::schedule::has<schedule::metadata::evalPathGuardedTwoState>(
           body))
-    ::obelisk::schedule::set<schedule::metadata::evalPathGuardedTwoState>(
+    ::talos::schedule::set<schedule::metadata::evalPathGuardedTwoState>(
         wrapper, builder.getUnitAttr());
-  if (::obelisk::schedule::has<
+  if (::talos::schedule::has<
           schedule::metadata::evalPathGuardedKnownPreserving>(body))
-    ::obelisk::schedule::set<
+    ::talos::schedule::set<
         schedule::metadata::evalPathGuardedKnownPreserving>(
         wrapper, builder.getUnitAttr());
-  if (auto unsupportedOwner = ::obelisk::schedule::get<
+  if (auto unsupportedOwner = ::talos::schedule::get<
           schedule::metadata::evalUnsupportedCheckpointOwner>(body))
-    ::obelisk::schedule::set<
+    ::talos::schedule::set<
         schedule::metadata::evalUnsupportedCheckpointOwner>(wrapper,
                                                             unsupportedOwner);
   auto design = body->getParentOfType<sim::SimDesignOp>();
@@ -374,7 +374,7 @@ FailureOr<LLVM::LLVMFuncOp> makeDirectFragmentWrapper(
       // crossed the typed runtime dialect boundary.  Treat any such operation
       // conservatively: a generated hot owner must have a closed, runtime-free
       // call graph before it can bypass coordinator status handling.
-      mayTerminate |= isa_and_nonnull<runtime::ObeliskRuntimeDialect>(
+      mayTerminate |= isa_and_nonnull<runtime::TalosRuntimeDialect>(
           operation->getDialect());
       mayTerminate |=
           isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
@@ -397,7 +397,7 @@ FailureOr<LLVM::LLVMFuncOp> makeDirectFragmentWrapper(
       if (auto call = dyn_cast<LLVM::CallOp>(operation))
         mayTerminate |=
             call.getCallee() &&
-            call.getCallee()->starts_with("obelisk_rt_v1_deferred_enqueue");
+            call.getCallee()->starts_with("talos_rt_v1_deferred_enqueue");
       if (auto call = dyn_cast<sim::SimCallOp>(operation))
         facts.callees.push_back(
             cache ? cache->designSymbols.lookup<sim::SimFuncOp>(
@@ -427,20 +427,20 @@ FailureOr<LLVM::LLVMFuncOp> makeDirectFragmentWrapper(
     llvm::append_range(pending, facts->callees);
   }
   if (mayTerminate) {
-    ::obelisk::schedule::set<schedule::metadata::evalMayTerminate>(
+    ::talos::schedule::set<schedule::metadata::evalMayTerminate>(
         wrapper, builder.getUnitAttr());
-    if (::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+    if (::talos::schedule::has<
+            ::talos::schedule::Field::EvalInheritedTwoStateCheckpoint>(
             body) ||
-        ::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(actor))
-      ::obelisk::schedule::set<schedule::metadata::evalCheckpointSafe>(
+        ::talos::schedule::has<
+            ::talos::schedule::Field::EvalInheritedTwoStateCheckpoint>(actor))
+      ::talos::schedule::set<schedule::metadata::evalCheckpointSafe>(
           wrapper, builder.getUnitAttr());
   }
-  if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+  if (::talos::schedule::has<::talos::schedule::Field::EvalRawCaptures>(
           body)) {
     if (!mayTerminate)
-      ::obelisk::schedule::set<schedule::metadata::evalInfallible>(
+      ::talos::schedule::set<schedule::metadata::evalInfallible>(
           wrapper, builder.getUnitAttr());
     wrapper->setAttr(
         "passthrough",
@@ -464,7 +464,7 @@ makeDirectFragmentBody(LLVM::LLVMFuncOp wrapper, sim::SimFuncOp body,
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = builder.getI32Type();
   Block *entry = wrapper.addEntryBlock(builder);
-  if (::obelisk::schedule::has<schedule::Field::EvalRawCaptures>(body)) {
+  if (::talos::schedule::has<schedule::Field::EvalRawCaptures>(body)) {
     builder.setInsertionPointToStart(entry);
     SmallVector<Value> arguments;
     for (Type input : body.getFunctionType().getInputs()) {
@@ -483,12 +483,12 @@ makeDirectFragmentBody(LLVM::LLVMFuncOp wrapper, sim::SimFuncOp body,
             body->getParentOfType<sim::SimDesignOp>().getSymNameAttr(),
             {FlatSymbolRefAttr::get(context, body.getSymName())}),
         arguments, returnsStatus ? builder.getUnitAttr() : UnitAttr{});
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalDirectCall>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalDirectCall>(
         call, builder.getUnitAttr());
     LLVM::ReturnOp::create(
         builder, location,
         returnsStatus ? call.getResult(0)
-                      : llvmConstant(builder, location, i32, OBELISK_RT_OK));
+                      : llvmConstant(builder, location, i32, TALOS_RT_OK));
     return success();
   }
   Block *invoke = new Block;
@@ -501,7 +501,7 @@ makeDirectFragmentBody(LLVM::LLVMFuncOp wrapper, sim::SimFuncOp body,
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
           SymbolRefAttr::get(context,
-                             "obelisk_rt_v1_scheduler_direct_fragment_enter"),
+                             "talos_rt_v1_scheduler_direct_fragment_enter"),
           ValueRange{entry->getArgument(0),
                      llvmConstant(builder, location, i32, actorSlot),
                      llvmConstant(builder, location, i32, continuation),
@@ -509,7 +509,7 @@ makeDirectFragmentBody(LLVM::LLVMFuncOp wrapper, sim::SimFuncOp body,
           .getResult();
   Value entered = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::eq, enterStatus,
-      llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      llvmConstant(builder, location, i32, TALOS_RT_OK));
   cf::CondBranchOp::create(builder, location, entered, invoke, ValueRange{},
                            failed, ValueRange{});
 
@@ -520,7 +520,7 @@ makeDirectFragmentBody(LLVM::LLVMFuncOp wrapper, sim::SimFuncOp body,
   Value instance =
       LLVM::LoadOp::create(builder, location, pointer, instanceAddress, 8);
   Value currentContext = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
+                                                   "__talos_current_context");
   LLVM::StoreOp::create(builder, location, entry->getArgument(0),
                         currentContext, 8);
   Value frame =
@@ -603,7 +603,7 @@ makeDirectFragmentBody(LLVM::LLVMFuncOp wrapper, sim::SimFuncOp body,
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
           SymbolRefAttr::get(context,
-                             "obelisk_rt_v1_scheduler_direct_fragment_leave"),
+                             "talos_rt_v1_scheduler_direct_fragment_leave"),
           ValueRange{entry->getArgument(0),
                      llvmConstant(builder, location, i32, actorSlot)})
           .getResult();
@@ -631,7 +631,7 @@ LogicalResult makeRuntimeCheckpointWrapper(ModuleOp module,
   // legacy AOT scheduler.  Declare its runtime dependency at the point where
   // the reference is created instead of relying on accepted-Eval plan
   // materialization to do so later.
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_execute_aot_actor",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_execute_aot_actor",
                            i32, {pointer, i32});
 
   std::string callbackName = (Twine(wrapperName) + ".checkpoint").str();
@@ -645,7 +645,7 @@ LogicalResult makeRuntimeCheckpointWrapper(ModuleOp module,
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
           SymbolRefAttr::get(context,
-                             "obelisk_rt_v1_scheduler_execute_aot_actor"),
+                             "talos_rt_v1_scheduler_execute_aot_actor"),
           ValueRange{callbackEntry->getArgument(0),
                      llvmConstant(builder, location, i32, actorSlot)})
           .getResult();
@@ -661,9 +661,9 @@ LogicalResult makeRuntimeCheckpointWrapper(ModuleOp module,
   // delayed commit before generated periodic execution can advance time.
   // Publish an exact cold checkpoint without placing process creation or
   // scheduler calls in the generated evaluator's hot closure.
-  ::obelisk::schedule::set<schedule::metadata::evalMayTerminate>(
+  ::talos::schedule::set<schedule::metadata::evalMayTerminate>(
       wrapper, builder.getUnitAttr());
-  ::obelisk::schedule::set<schedule::metadata::evalCheckpointSafe>(
+  ::talos::schedule::set<schedule::metadata::evalCheckpointSafe>(
       wrapper, builder.getUnitAttr());
   wrapper->setAttr("passthrough", builder.getArrayAttr(
                                       {builder.getStringAttr("alwaysinline")}));
@@ -687,8 +687,8 @@ LogicalResult makeRuntimeCheckpointWrapper(ModuleOp module,
       8);
   LLVM::ReturnOp::create(builder, location,
                          llvmConstant(builder, location, i32,
-                                      OBELISK_RT_AOT_GENERATED_CHECKPOINT));
+                                      TALOS_RT_AOT_GENERATED_CHECKPOINT));
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

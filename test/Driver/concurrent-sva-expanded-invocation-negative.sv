@@ -1,6 +1,6 @@
-// RUN: obelisk -emit-sim --std=1800-2023 -DLOCAL_INVOCATION %s | FileCheck %s --check-prefix=LOCAL
-// RUN: not obelisk --std=1800-2023 -O0 -DRECURSIVE_INVOCATION %s -o %t.recursive 2>&1 | FileCheck %s --check-prefix=RECURSIVE
-// RUN: obelisk --std=1800-2023 -O0 -DRANGED_INVOCATION %s -o %t.ranged
+// RUN: talos -emit-sim --std=1800-2023 -DLOCAL_INVOCATION %s | FileCheck %s --check-prefix=LOCAL
+// RUN: not talos --std=1800-2023 -O0 -DRECURSIVE_INVOCATION %s -o %t.recursive 2>&1 | FileCheck %s --check-prefix=RECURSIVE
+// RUN: talos --std=1800-2023 -O0 -DRANGED_INVOCATION %s -o %t.ranged
 
 module concurrent_sva_expanded_invocation_negative;
   logic clk, request, acknowledge;
@@ -33,5 +33,5 @@ endmodule
 
 // LOCAL: simulation.func private @{{.*}} attributes {{.*}}home_region = 8 : i32
 // LOCAL: simulation.suspend.edge posedge
-// LOCAL-NOT: obelisk.sv.
+// LOCAL-NOT: talos.sv.
 // RECURSIVE: error: nested SVA implication/followed-by is not executable yet

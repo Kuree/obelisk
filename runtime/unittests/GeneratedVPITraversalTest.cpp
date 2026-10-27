@@ -1,6 +1,6 @@
 //===- GeneratedVPITraversalTest.cpp - Compiler/runtime VPI traversal -----===//
 
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "../lib/RuntimeInternal.h"
 
@@ -15,8 +15,8 @@
 #include <string>
 #include <vector>
 
-extern "C" const obelisk_rt_process_descriptor_v1 dumpDescriptor asm(
-    OBELISK_TEST_SYMBOL("dump.__obelisk_process_descriptor"));
+extern "C" const talos_rt_process_descriptor_v1 dumpDescriptor asm(
+    TALOS_TEST_SYMBOL("dump.__talos_process_descriptor"));
 
 namespace {
 
@@ -73,7 +73,7 @@ size_t findDirectPortAlias(const std::vector<uint8_t> &database) {
   for (uint64_t objectIndex = 0; objectIndex != objectCount; ++objectIndex) {
     uint64_t object = objects + objectIndex * objectSize;
     if ((read32(database, object) & UINT32_C(0xffff)) !=
-        OBELISK_RT_DESIGN_RECORD_PORT)
+        TALOS_RT_DESIGN_RECORD_PORT)
       continue;
     bool indexed = false;
     for (uint64_t index = 0; index != indexCount; ++index)
@@ -95,19 +95,19 @@ PLI_INT32 integerValue(vpiHandle handle) {
 
 TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   ASSERT_NE(dumpDescriptor.execution, nullptr);
-  EXPECT_EQ(dumpDescriptor.execution->flags & (OBELISK_RT_EXECUTION_VPI_READ |
-                                               OBELISK_RT_EXECUTION_VPI_WRITE),
-            OBELISK_RT_EXECUTION_VPI_READ);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(dumpDescriptor.execution),
-            OBELISK_RT_OK);
+  EXPECT_EQ(dumpDescriptor.execution->flags & (TALOS_RT_EXECUTION_VPI_READ |
+                                               TALOS_RT_EXECUTION_VPI_WRITE),
+            TALOS_RT_EXECUTION_VPI_READ);
+  ASSERT_EQ(talos_rt_v1_design_validate(dumpDescriptor.execution),
+            TALOS_RT_OK);
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(dumpDescriptor.execution,
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(dumpDescriptor.execution,
                                                     &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char moduleName[] = "top.d";
   char inputName[] = "top.d.a";
@@ -203,21 +203,21 @@ TEST(GeneratedVPITraversal, PreservesPortIdentityAndCanonicalNameLookup) {
   EXPECT_EQ(vpi_get(vpiPortType, input), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
 
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
   ASSERT_NE(dumpDescriptor.execution, nullptr);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(dumpDescriptor.execution),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(dumpDescriptor.execution),
+            TALOS_RT_OK);
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(dumpDescriptor.execution,
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(dumpDescriptor.execution,
                                                     &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char moduleName[] = "top.d";
   char secondModuleName[] = "top.e";
@@ -522,33 +522,33 @@ TEST(GeneratedVPITraversal, TraversesDefinitionSharedIODeclarations) {
   EXPECT_EQ(vpi_release_handle(directInput), 1);
   EXPECT_EQ(vpi_release_handle(secondModule), 1);
   EXPECT_EQ(vpi_release_handle(module), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(GeneratedVPITraversal, RefObjectValuesUseActualSemanticKindsAndStorage) {
   ASSERT_NE(dumpDescriptor.execution, nullptr);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(dumpDescriptor.execution),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(dumpDescriptor.execution),
+            TALOS_RT_OK);
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(dumpDescriptor.execution,
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(dumpDescriptor.execution,
                                                     &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   auto store = [&](const char *name, uint64_t value, uint64_t unknown,
                    uint64_t width) {
-    obelisk_rt_design_cursor_v1 cursor{};
+    talos_rt_design_cursor_v1 cursor{};
     ASSERT_EQ(
-        obelisk_rt_v1_design_lookup(dumpDescriptor.execution,
+        talos_rt_v1_design_lookup(dumpDescriptor.execution,
                                     reinterpret_cast<const uint8_t *>(name),
                                     std::strlen(name), &cursor),
-        OBELISK_RT_OK);
+        TALOS_RT_OK);
     uint64_t stateOffset = 0;
-    ASSERT_EQ(obelisk_rt_design_state_offset(context, cursor, 0, &stateOffset),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_design_state_offset(context, cursor, 0, &stateOffset),
+              TALOS_RT_OK);
     ASSERT_LE(stateOffset + width,
               static_cast<uint64_t>(context->stateValue.size()) * 64);
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -573,17 +573,17 @@ TEST(GeneratedVPITraversal, RefObjectValuesUseActualSemanticKindsAndStorage) {
   std::memcpy(&realBits, &real, sizeof(realBits));
   store("top.values.real", realBits, 0, 64);
 
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(context, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
   constexpr char stringText[] = "heap-backed-ref-value";
-  obelisk_rt_string_v1 string = 0;
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, stringText,
+  talos_rt_string_v1 string = 0;
+  ASSERT_EQ(talos_rt_v1_string_create(lane, stringText,
                                         sizeof(stringText) - 1, &string),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_managed_root_v1 stringRoot{};
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_push(lane, &stringRoot, &string),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_gc_managed_root_v1 stringRoot{};
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_push(lane, &stringRoot, &string),
+            TALOS_RT_OK);
   store("top.values.string", string, 0, 64);
 
   char moduleName[] = "top.values";
@@ -680,21 +680,21 @@ TEST(GeneratedVPITraversal, RefObjectValuesUseActualSemanticKindsAndStorage) {
     EXPECT_EQ(vpi_release_handle(declaration), 1);
   }
   EXPECT_EQ(vpi_scan(emptyIterator), nullptr);
-  obelisk_rt_object_v1 *stringObject =
-      obelisk_rt_object_from_managed_word(string);
+  talos_rt_object_v1 *stringObject =
+      talos_rt_object_from_managed_word(string);
   ASSERT_NE(stringObject, nullptr);
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &stringRoot),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_validate_string(context, string),
-            OBELISK_RT_INVALID_HANDLE);
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_pop(lane, &stringRoot),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_validate_string(context, string),
+            TALOS_RT_INVALID_HANDLE);
   ASSERT_NE(detachedString, nullptr);
   EXPECT_STREQ(detachedString, stringText);
 
   EXPECT_EQ(vpi_release_handle(module), 1);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
@@ -729,11 +729,11 @@ TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
 
   auto rejects = [&](std::vector<uint8_t> database) {
     write64(database, 32, imageChecksum(database));
-    obelisk_rt_execution_descriptor_v1 mutated = *execution;
+    talos_rt_execution_descriptor_v1 mutated = *execution;
     mutated.design_database = database.data();
     mutated.design_database_size = database.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&mutated),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&mutated),
+              TALOS_RT_INVALID_DESIGN);
   };
 
   std::vector<uint8_t> malformed = original;
@@ -867,25 +867,25 @@ TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
   malformed = original;
   write32(malformed, ownPort + 4,
           read32(original, ownPort + 4) &
-              ~uint32_t{OBELISK_RT_DESIGN_CAP_PORT_REF});
+              ~uint32_t{TALOS_RT_DESIGN_CAP_PORT_REF});
   rejects(std::move(malformed));
 
   malformed = original;
   write32(malformed, ownPort + 4,
           read32(original, ownPort + 4) |
-              OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE);
+              TALOS_RT_DESIGN_CAP_PORT_WHOLE_SOURCE);
   rejects(std::move(malformed));
 
   malformed = original;
   write32(malformed, ownPort + 4,
           read32(original, ownPort + 4) &
-              ~uint32_t{OBELISK_RT_DESIGN_CAP_PORT_INPUT});
+              ~uint32_t{TALOS_RT_DESIGN_CAP_PORT_INPUT});
   rejects(std::move(malformed));
 
   malformed = original;
   write32(malformed, ownPort + 4,
           read32(original, ownPort + 4) &
-              ~uint32_t{OBELISK_RT_DESIGN_CAP_PORT_OUTPUT});
+              ~uint32_t{TALOS_RT_DESIGN_CAP_PORT_OUTPUT});
   rejects(std::move(malformed));
 
   uint32_t downstreamPortIndex =
@@ -895,22 +895,22 @@ TEST(GeneratedVPITraversal, RejectsMalformedDefinitionMemberImages) {
   malformed = original;
   write32(malformed, downstreamPort + 4,
           read32(original, downstreamPort + 4) |
-              OBELISK_RT_DESIGN_CAP_PORT_REF);
+              TALOS_RT_DESIGN_CAP_PORT_REF);
   rejects(std::move(malformed));
 }
 
 TEST(GeneratedVPITraversal, VirtualInterfaceTypedefKeepsRawCanonicalIdentity) {
   ASSERT_NE(dumpDescriptor.execution, nullptr);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(dumpDescriptor.execution),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(dumpDescriptor.execution),
+            TALOS_RT_OK);
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(dumpDescriptor.execution,
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(dumpDescriptor.execution,
                                                     &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char moduleName[] = "top.d";
   char aliasName[] = "top.d.iface_alias_t";
@@ -934,21 +934,21 @@ TEST(GeneratedVPITraversal, VirtualInterfaceTypedefKeepsRawCanonicalIdentity) {
   EXPECT_EQ(vpi_release_handle(alias), 1);
   EXPECT_EQ(vpi_release_handle(raw), 1);
   EXPECT_EQ(vpi_release_handle(module), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(GeneratedVPITraversal, TypedefAliasChainEndsAtUnnamedBuiltinType) {
   ASSERT_NE(dumpDescriptor.execution, nullptr);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(dumpDescriptor.execution),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(dumpDescriptor.execution),
+            TALOS_RT_OK);
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(dumpDescriptor.execution,
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(dumpDescriptor.execution,
                                                     &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char baseName[] = "top.d.base_t";
   char aliasName[] = "top.d.alias_t";
@@ -969,7 +969,7 @@ TEST(GeneratedVPITraversal, TypedefAliasChainEndsAtUnnamedBuiltinType) {
   EXPECT_EQ(vpi_release_handle(aliasTarget), 1);
   EXPECT_EQ(vpi_release_handle(alias), 1);
   EXPECT_EQ(vpi_release_handle(base), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(GeneratedVPITraversal, RejectsMalformedUnindexedPortAliases) {
@@ -983,11 +983,11 @@ TEST(GeneratedVPITraversal, RejectsMalformedUnindexedPortAliases) {
 
   auto rejects = [&](std::vector<uint8_t> database) {
     write64(database, 32, imageChecksum(database));
-    obelisk_rt_execution_descriptor_v1 mutated = *execution;
+    talos_rt_execution_descriptor_v1 mutated = *execution;
     mutated.design_database = database.data();
     mutated.design_database_size = database.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&mutated),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&mutated),
+              TALOS_RT_INVALID_DESIGN);
   };
 
   std::vector<uint8_t> wrongRange = original;
@@ -997,7 +997,7 @@ TEST(GeneratedVPITraversal, RejectsMalformedUnindexedPortAliases) {
   std::vector<uint8_t> wrongOrdinal = original;
   write32(wrongOrdinal, port + 4,
           read32(wrongOrdinal, port + 4) ^
-              (UINT32_C(1) << OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT));
+              (UINT32_C(1) << TALOS_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT));
   rejects(std::move(wrongOrdinal));
 
   constexpr size_t objectSize = 96;
@@ -1024,8 +1024,8 @@ TEST(GeneratedVPITraversal, RejectsMalformedUnindexedPortAliases) {
     size_t candidate = static_cast<size_t>(objects + index * objectSize);
     uint32_t kind = read32(original, candidate) & 0xffff;
     if (index != canonicalTarget &&
-        (kind == OBELISK_RT_DESIGN_RECORD_STORAGE ||
-         kind == OBELISK_RT_DESIGN_RECORD_NET) &&
+        (kind == TALOS_RT_DESIGN_RECORD_STORAGE ||
+         kind == TALOS_RT_DESIGN_RECORD_NET) &&
         read64(original, candidate + 16) ==
             read64(original, canonicalObject + 16) &&
         read64(original, candidate + 48) ==
@@ -1050,7 +1050,7 @@ TEST(GeneratedVPITraversal, RejectsMalformedUnindexedPortAliases) {
   std::vector<uint8_t> misplacedWholeSource = original;
   write32(misplacedWholeSource, canonicalObject + 4,
           read32(misplacedWholeSource, canonicalObject + 4) |
-              OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE);
+              TALOS_RT_DESIGN_CAP_PORT_WHOLE_SOURCE);
   rejects(std::move(misplacedWholeSource));
 
   // Truncate immediately before the last low-connection record. Missing
@@ -1068,12 +1068,12 @@ TEST(GeneratedVPITraversal, RejectsRelationFreeDirectPortAliases) {
   std::vector<uint8_t> database(execution->design_database,
                                 execution->design_database +
                                     execution->design_database_size);
-  ASSERT_GE(database.size(), OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+  ASSERT_GE(database.size(), TALOS_RT_DESIGN_DATABASE_HEADER_SIZE);
   write64(database, 168, 0);
   write64(database, 32, imageChecksum(database));
-  obelisk_rt_execution_descriptor_v1 relationFree = *execution;
+  talos_rt_execution_descriptor_v1 relationFree = *execution;
   relationFree.design_database = database.data();
   relationFree.design_database_size = database.size();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&relationFree),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&relationFree),
+            TALOS_RT_INVALID_DESIGN);
 }

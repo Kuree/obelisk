@@ -1,7 +1,7 @@
-// RUN: obelisk -emit-slang %s -o %t.slang.mlir
+// RUN: talos -emit-slang %s -o %t.slang.mlir
 // RUN: FileCheck %s --check-prefix=SLANG < %t.slang.mlir
-// RUN: obelisk -emit-obelisk %s -o %t.obelisk.mlir
-// RUN: FileCheck %s --check-prefix=OBELISK < %t.obelisk.mlir
+// RUN: talos -emit-talos %s -o %t.talos.mlir
+// RUN: FileCheck %s --check-prefix=TALOS < %t.talos.mlir
 
 `timescale 1ns / 1ps
 
@@ -62,4 +62,4 @@ endmodule
 // All four legal polarity/connection combinations enter the executable static
 // path subset. Polarity remains semantic metadata because Clause 30.4.7 says
 // it does not modify the modeled data propagation.
-// OBELISK-COUNT-4: obelisk.simple_timing_path
+// TALOS-COUNT-4: talos.simple_timing_path

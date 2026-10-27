@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --talos-sim-plan-native-partitions \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
 // Module-level symbol users such as global constructors need explicit

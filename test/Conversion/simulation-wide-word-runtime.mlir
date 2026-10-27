@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode,convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.native.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode,convert-talos-sim-processes-to-llvm-coroutines)' -o %t.native.mlir
 // RUN: FileCheck %s --check-prefix=PLAN --implicit-check-not=': !llvm.ptr -> i65536' < %t.native.mlir
 
 // Check full vector equality, two distinct low limbs, and the far end of both

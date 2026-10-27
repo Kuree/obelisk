@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s | FileCheck %s --check-prefix=SIM
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=INSTRUCTIONS
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BYTECODE-SHELL
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -passes=verify -disable-output
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' -o %t.first
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | diff %t.first -
+// RUN: talos-opt %s | FileCheck %s --check-prefix=SIM
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=INSTRUCTIONS
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off require-bytecode=true' --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BYTECODE-SHELL
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off require-bytecode=true' --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | opt -passes=verify -disable-output
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' -o %t.first
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | diff %t.first -
 
 !tagged = !simulation.unpacked_union<fields = [
   #simulation.field<name = "object", type = !simulation.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
@@ -18,7 +18,7 @@ module attributes {
 } {
   simulation.design @tagged_managed_union {
     simulation.scope.decl 0 hierarchy "top"
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
 
     simulation.class.decl @Node id 1 {
       is_abstract = false, is_final = false, is_interface = false
@@ -78,20 +78,20 @@ module attributes {
 // bit 128. The native lowering therefore shifts that arm while the managed
 // class field transfers the 130-bit value's 17-byte store representation.
 // NATIVE-LABEL: llvm.func @root(
-// NATIVE: llvm.call @obelisk_rt_v1_object_allocate
-// NATIVE: llvm.call @obelisk_rt_v1_object_allocate
-// NATIVE: llvm.call @obelisk_rt_v1_gc_safepoint
+// NATIVE: llvm.call @talos_rt_v1_object_allocate
+// NATIVE: llvm.call @talos_rt_v1_object_allocate
+// NATIVE: llvm.call @talos_rt_v1_gc_safepoint
 // NATIVE: %[[STORE_SIZE:.*]] = llvm.mlir.constant(17 : i64)
-// NATIVE-NEXT: %{{.*}} = llvm.call @obelisk_rt_v1_object_write({{.*}}, %[[STORE_SIZE]])
+// NATIVE-NEXT: %{{.*}} = llvm.call @talos_rt_v1_object_write({{.*}}, %[[STORE_SIZE]])
 // NATIVE: %[[LOAD_SIZE:.*]] = llvm.mlir.constant(17 : i64)
-// NATIVE-NEXT: %{{.*}} = llvm.call @obelisk_rt_v1_object_read({{.*}}, %[[LOAD_SIZE]])
+// NATIVE-NEXT: %{{.*}} = llvm.call @talos_rt_v1_object_read({{.*}}, %[[LOAD_SIZE]])
 // NATIVE: llvm.lshr
 // NATIVE: %[[ARM_OFFSET:.*]] = llvm.mlir.constant(64 : i130)
 // NATIVE-NEXT: %[[SHIFTED_BITS:.*]] = llvm.lshr %{{.*}}, %[[ARM_OFFSET]] : i130
 // NATIVE-NEXT: %{{.*}} = llvm.trunc %[[SHIFTED_BITS]] : i130 to i32
 // NATIVE: llvm.shl
 // NATIVE: %[[SECOND_STORE_SIZE:.*]] = llvm.mlir.constant(17 : i64)
-// NATIVE-NEXT: %{{.*}} = llvm.call @obelisk_rt_v1_object_write({{.*}}, %[[SECOND_STORE_SIZE]])
+// NATIVE-NEXT: %{{.*}} = llvm.call @talos_rt_v1_object_write({{.*}}, %[[SECOND_STORE_SIZE]])
 // NATIVE-NOT: simulation.union
 
 // The bytecode encoder accepts the same managed class field and materializes
@@ -112,7 +112,7 @@ module attributes {
 
 // A bytecode-only native shell derives the root and spawn symbols from the
 // RootInitializer entry kind, so the noncanonical @root name remains valid.
-// BYTECODE-SHELL: llvm.func @root.__obelisk_spawn
-// BYTECODE-SHELL: llvm.call @root.__obelisk_spawn
+// BYTECODE-SHELL: llvm.func @root.__talos_spawn
+// BYTECODE-SHELL: llvm.call @root.__talos_spawn
 // BYTECODE-SHELL-NOT: simulation.design
 // BYTECODE-SHELL-NOT: llvm.func @root(

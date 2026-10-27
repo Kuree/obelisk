@@ -1,6 +1,6 @@
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
+// RUN: talos -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
+// RUN: talos -O0 --native-scheduler=generic %s -o %t.reference
 // RUN: not %t.auto > %t.auto.out 2>&1
 // RUN: not %t.reference > %t.reference.out 2>&1
 // RUN: diff -u %t.reference.out %t.auto.out
@@ -37,6 +37,6 @@ endmodule
 
 // TIER-NOT: eval probe rejected
 // TIER-NOT: unguarded runtime leaf
-// TIER: obelisk eval executor inventory: {{.*}} runtime_checkpoints=1
+// TIER: talos eval executor inventory: {{.*}} runtime_checkpoints=1
 // CHECK: simulation time 35: a=3 at 35
 // CHECK: a=10 b=9 c=1 w=10

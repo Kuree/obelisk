@@ -1,4 +1,4 @@
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval %s -o %t
+// RUN: talos -O3 --vpi=off --native-scheduler=eval %s -o %t
 // RUN: not %t > %t.out 2> %t.err
 // RUN: FileCheck %s < %t.err
 // RUN: FileCheck %s --check-prefix=OUT < %t.out

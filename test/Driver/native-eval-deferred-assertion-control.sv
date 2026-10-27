@@ -1,6 +1,6 @@
-// RUN: obelisk -O3 --vpi=off --mlir-timing %s -o %t.eval 2> %t.timing
+// RUN: talos -O3 --vpi=off --mlir-timing %s -o %t.eval 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
+// RUN: talos -O0 --native-scheduler=generic %s -o %t.reference
 // RUN: not %t.reference > %t.reference.out 2>&1
 // RUN: not %t.eval > %t.eval.out 2>&1
 // RUN: diff -u %t.reference.out %t.eval.out

@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion))' -o %t
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion))' -o %t
 // RUN: FileCheck %s --implicit-check-not='simulation.spawn @observer' --implicit-check-not='simulation.func @observer' < %t
-// RUN: obelisk-opt %t --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o /dev/null
+// RUN: talos-opt %t --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' -o /dev/null
 // The repeated-output observer is itself a complete combinational activation.
 // Close the SCC over that observer, preserving all stores in the same kernel.
-// CHECK-COUNT-1: simulation.spawn @__obelisk_region_kernel_
-// CHECK: simulation.func private @__obelisk_region_kernel_
+// CHECK-COUNT-1: simulation.spawn @__talos_region_kernel_
+// CHECK: simulation.func private @__talos_region_kernel_
 // CHECK-COUNT-5: simulation.ref.store
 // CHECK: simulation.suspend.any %{{.*}} edges [0]
 module {

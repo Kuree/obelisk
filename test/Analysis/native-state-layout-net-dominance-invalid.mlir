@@ -1,6 +1,6 @@
 // RUN: %split-file %s %t
-// RUN: not obelisk-opt %t/ambiguous.mlir --test-obelisk-native-state-layout-analysis 2>&1 | FileCheck %s --check-prefix=AMBIGUOUS
-// RUN: not obelisk-opt %t/cycle.mlir --test-obelisk-native-state-layout-analysis 2>&1 | FileCheck %s --check-prefix=CYCLE
+// RUN: not talos-opt %t/ambiguous.mlir --test-talos-native-state-layout-analysis 2>&1 | FileCheck %s --check-prefix=AMBIGUOUS
+// RUN: not talos-opt %t/cycle.mlir --test-talos-native-state-layout-analysis 2>&1 | FileCheck %s --check-prefix=CYCLE
 
 //--- ambiguous.mlir
 module {

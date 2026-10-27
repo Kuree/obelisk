@@ -1,12 +1,12 @@
 //===- DesignBytecodeIntrinsics.cpp - Runtime service dispatch ----------===//
 
-#define OBELISK_RT_BYTECODE_DISPATCHER 1
+#define TALOS_RT_BYTECODE_DISPATCHER 1
 #include "DesignBytecodeExecution.h"
 #include "DesignBytecodeNets.h"
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
-#include "obelisk/Runtime/OutputItemFlags.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Runtime/OutputItemFlags.h"
+#include "talos/Runtime/StableHash.h"
 
 #include <algorithm>
 #include <array>
@@ -20,24 +20,24 @@
 #include <tuple>
 #include <vector>
 
-decltype(&obelisk_rt_v1_dpi_open_array_aggregate_pack)
+decltype(&talos_rt_v1_dpi_open_array_aggregate_pack)
     designBytecodeDpiOpenAggregatePack = nullptr;
-decltype(&obelisk_rt_v1_dpi_open_array_aggregate_unpack)
+decltype(&talos_rt_v1_dpi_open_array_aggregate_unpack)
     designBytecodeDpiOpenAggregateUnpack = nullptr;
-decltype(&obelisk_rt_v1_dpi_aggregate_pack) designBytecodeDpiAggregatePack =
+decltype(&talos_rt_v1_dpi_aggregate_pack) designBytecodeDpiAggregatePack =
     nullptr;
-decltype(&obelisk_rt_v1_dpi_aggregate_unpack) designBytecodeDpiAggregateUnpack =
+decltype(&talos_rt_v1_dpi_aggregate_unpack) designBytecodeDpiAggregateUnpack =
     nullptr;
-decltype(&obelisk_rt_v1_dpi_open_array_aggregate_roots_push)
+decltype(&talos_rt_v1_dpi_open_array_aggregate_roots_push)
     designBytecodeDpiOpenAggregateRootsPush = nullptr;
-decltype(&obelisk_rt_v1_dpi_aggregate_roots_pop)
+decltype(&talos_rt_v1_dpi_aggregate_roots_pop)
     designBytecodeDpiAggregateRootsPop = nullptr;
-decltype(&obelisk_rt_v1_dpi_open_array_prepare_recursive)
+decltype(&talos_rt_v1_dpi_open_array_prepare_recursive)
     designBytecodeDpiOpenPrepareRecursive = nullptr;
-decltype(&obelisk_rt_v1_dpi_open_array_finish_recursive)
+decltype(&talos_rt_v1_dpi_open_array_finish_recursive)
     designBytecodeDpiOpenFinishRecursive = nullptr;
 
-namespace obelisk::designbytecode {
+namespace talos::designbytecode {
 
 struct ByteSpan {
   const uint8_t *data = nullptr;
@@ -49,7 +49,7 @@ std::optional<ByteSpan> readByteSpan(const Image &image, const Frame &frame,
   if (!validRegister(frame.function, reg))
     return std::nullopt;
   Layout layout = layoutAt(image, frame.function, reg);
-  if (layout.kind != OBELISK_RT_DBREG_BYTES || layout.size != 16)
+  if (layout.kind != TALOS_RT_DBREG_BYTES || layout.size != 16)
     return std::nullopt;
   uint64_t offset = read64(frame.data + layout.offset);
   uint64_t size = read64(frame.data + layout.offset + 8);
@@ -63,14 +63,14 @@ std::optional<uint64_t> readScalar(const Image &image, const Frame &frame,
   if (!validRegister(frame.function, reg))
     return std::nullopt;
   Layout layout = layoutAt(image, frame.function, reg);
-  if ((layout.kind != OBELISK_RT_DBREG_BITS &&
-       layout.kind != OBELISK_RT_DBREG_LOGIC) ||
+  if ((layout.kind != TALOS_RT_DBREG_BITS &&
+       layout.kind != TALOS_RT_DBREG_LOGIC) ||
       layout.width > 64)
     return std::nullopt;
   uint64_t value = 0;
   std::memcpy(&value, frame.data + layout.offset,
               static_cast<size_t>(std::min<uint64_t>(layout.size, 8)));
-  if (layout.kind == OBELISK_RT_DBREG_LOGIC) {
+  if (layout.kind == TALOS_RT_DBREG_LOGIC) {
     uint64_t unknown = 0;
     std::memcpy(&unknown, frame.data + layout.offset + 8, sizeof(unknown));
     if (unknown != 0)
@@ -84,14 +84,14 @@ bool writeScalar(const Image &image, Frame &frame, uint32_t reg,
   if (!validRegister(frame.function, reg))
     return false;
   Layout layout = layoutAt(image, frame.function, reg);
-  if ((layout.kind != OBELISK_RT_DBREG_BITS &&
-       layout.kind != OBELISK_RT_DBREG_LOGIC) ||
+  if ((layout.kind != TALOS_RT_DBREG_BITS &&
+       layout.kind != TALOS_RT_DBREG_LOGIC) ||
       layout.width > 64)
     return false;
   value &= finalMask(layout.width);
   std::memcpy(frame.data + layout.offset, &value,
               static_cast<size_t>(std::min<uint64_t>(layout.size, 8)));
-  if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+  if (layout.kind == TALOS_RT_DBREG_LOGIC)
     std::memset(frame.data + layout.offset + 8, 0, 8);
   return true;
 }
@@ -111,12 +111,12 @@ bool packBytes(const Image &image, Frame &frame, uint32_t reg,
   if (!validRegister(frame.function, reg))
     return false;
   Layout layout = layoutAt(image, frame.function, reg);
-  if (layout.kind != OBELISK_RT_DBREG_BITS &&
-      layout.kind != OBELISK_RT_DBREG_LOGIC)
+  if (layout.kind != TALOS_RT_DBREG_BITS &&
+      layout.kind != TALOS_RT_DBREG_LOGIC)
     return false;
   uint64_t capacity = (uint64_t{layout.width} + 7) / 8;
   uint64_t count = std::min(size, capacity);
-  Logic result{layout.width, layout.kind == OBELISK_RT_DBREG_LOGIC,
+  Logic result{layout.width, layout.kind == TALOS_RT_DBREG_LOGIC,
                LimbVector(limbCount(layout.width)),
                LimbVector(limbCount(layout.width))};
   for (uint64_t index = 0; index != count; ++index) {
@@ -132,11 +132,11 @@ bool packBytes(const Image &image, Frame &frame, uint32_t reg,
   return true;
 }
 
-obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
-                                  obelisk_rt_context *context,
+talos_rt_status invokeIntrinsic(const Image &image, Frame &frame,
+                                  talos_rt_context *context,
                                   uint32_t siteIndex) {
   if (!validIntrinsic(image, frame.function, siteIndex))
-    return OBELISK_RT_INVALID_BYTECODE;
+    return TALOS_RT_INVALID_BYTECODE;
   IntrinsicSite site = siteAt(image, siteIndex);
   IntrinsicSignature signature = intrinsicAt(image, site.intrinsic);
   auto inputRegister = [&](uint32_t index) {
@@ -153,15 +153,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   };
   auto sentinel = [&](uint32_t index, uint64_t value) {
     return writeScalar(image, frame, outputRegister(index), value)
-               ? OBELISK_RT_OK
-               : OBELISK_RT_INVALID_BYTECODE;
+               ? TALOS_RT_OK
+               : TALOS_RT_INVALID_BYTECODE;
   };
   auto realInput = [&](uint32_t index) -> std::optional<double> {
     uint32_t reg = inputRegister(index);
     if (!validRegister(frame.function, reg))
       return std::nullopt;
     Layout layout = layoutAt(image, frame.function, reg);
-    if (layout.kind != OBELISK_RT_DBREG_REAL64 || layout.size != sizeof(double))
+    if (layout.kind != TALOS_RT_DBREG_REAL64 || layout.size != sizeof(double))
       return std::nullopt;
     double value = 0.0;
     std::memcpy(&value, frame.data + layout.offset, sizeof(value));
@@ -170,82 +170,82 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   auto writeReal = [&](uint32_t index, double value) {
     uint32_t reg = outputRegister(index);
     if (!validRegister(frame.function, reg))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout layout = layoutAt(image, frame.function, reg);
-    if (layout.kind != OBELISK_RT_DBREG_REAL64 || layout.size != sizeof(value))
-      return OBELISK_RT_INVALID_BYTECODE;
+    if (layout.kind != TALOS_RT_DBREG_REAL64 || layout.size != sizeof(value))
+      return TALOS_RT_INVALID_BYTECODE;
     std::memcpy(frame.data + layout.offset, &value, sizeof(value));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   };
-  auto writeStatus = [&](uint32_t index, obelisk_rt_status value) {
+  auto writeStatus = [&](uint32_t index, talos_rt_status value) {
     Layout output = layoutAt(image, frame.function, outputRegister(index));
-    if (output.kind != OBELISK_RT_DBREG_STATUS || output.size != 8)
+    if (output.kind != TALOS_RT_DBREG_STATUS || output.size != 8)
       return false;
     uint64_t encoded = static_cast<uint32_t>(value);
     std::memcpy(frame.data + output.offset, &encoded, sizeof(encoded));
     return true;
   };
-  auto finishVPI = [&](uint32_t statusIndex, obelisk_rt_status value) {
-    return writeStatus(statusIndex, value) ? OBELISK_RT_OK
-                                           : OBELISK_RT_INVALID_BYTECODE;
+  auto finishVPI = [&](uint32_t statusIndex, talos_rt_status value) {
+    return writeStatus(statusIndex, value) ? TALOS_RT_OK
+                                           : TALOS_RT_INVALID_BYTECODE;
   };
-  auto cursorInput = [&](uint32_t index, obelisk_rt_design_cursor_v1 &cursor) {
+  auto cursorInput = [&](uint32_t index, talos_rt_design_cursor_v1 &cursor) {
     auto encoded = scalar(index);
     if (!encoded)
       return false;
     cursor.offset = *encoded;
     return true;
   };
-  auto readManaged = [&](uint32_t reg) -> obelisk_rt_object_v1 * {
+  auto readManaged = [&](uint32_t reg) -> talos_rt_object_v1 * {
     Layout layout = layoutAt(image, frame.function, reg);
-    if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8)
+    if (layout.kind != TALOS_RT_DBREG_MANAGED || layout.size != 8)
       return nullptr;
-    obelisk_rt_managed_word_v1 word = 0;
+    talos_rt_managed_word_v1 word = 0;
     std::memcpy(&word, frame.data + layout.offset, sizeof(word));
-    return obelisk_rt_object_from_managed_word(word);
+    return talos_rt_object_from_managed_word(word);
   };
-  auto writeManaged = [&](uint32_t reg, obelisk_rt_object_v1 *object) {
+  auto writeManaged = [&](uint32_t reg, talos_rt_object_v1 *object) {
     Layout layout = layoutAt(image, frame.function, reg);
-    if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8)
+    if (layout.kind != TALOS_RT_DBREG_MANAGED || layout.size != 8)
       return false;
-    obelisk_rt_managed_word_v1 word =
-        obelisk_rt_managed_word_from_object(object);
+    talos_rt_managed_word_v1 word =
+        talos_rt_managed_word_from_object(object);
     std::memcpy(frame.data + layout.offset, &word, sizeof(word));
     return true;
   };
-  auto readString = [&](uint32_t reg, obelisk_rt_string_v1 &string) -> bool {
+  auto readString = [&](uint32_t reg, talos_rt_string_v1 &string) -> bool {
     Layout layout = layoutAt(image, frame.function, reg);
-    if (layout.kind != OBELISK_RT_DBREG_STRING || layout.size != 8)
+    if (layout.kind != TALOS_RT_DBREG_STRING || layout.size != 8)
       return false;
     std::memcpy(&string, frame.data + layout.offset, sizeof(string));
-    return obelisk_rt_validate_string(context, string) == OBELISK_RT_OK;
+    return talos_rt_validate_string(context, string) == TALOS_RT_OK;
   };
-  auto writeString = [&](uint32_t reg, obelisk_rt_string_v1 string) {
+  auto writeString = [&](uint32_t reg, talos_rt_string_v1 string) {
     Layout layout = layoutAt(image, frame.function, reg);
-    if (layout.kind != OBELISK_RT_DBREG_STRING || layout.size != 8)
+    if (layout.kind != TALOS_RT_DBREG_STRING || layout.size != 8)
       return false;
     std::memcpy(frame.data + layout.offset, &string, sizeof(string));
     return true;
   };
-  auto readManagedRef = [&](uint32_t reg, obelisk_rt_object_v1 *&object,
+  auto readManagedRef = [&](uint32_t reg, talos_rt_object_v1 *&object,
                             uint64_t &offset) {
     Layout layout = layoutAt(image, frame.function, reg);
-    if (layout.kind != OBELISK_RT_DBREG_MANAGED_REF || layout.size != 16)
+    if (layout.kind != TALOS_RT_DBREG_MANAGED_REF || layout.size != 16)
       return false;
-    obelisk_rt_managed_word_v1 word = 0;
+    talos_rt_managed_word_v1 word = 0;
     std::memcpy(&word, frame.data + layout.offset, sizeof(word));
-    object = obelisk_rt_object_from_managed_word(word);
+    object = talos_rt_object_from_managed_word(word);
     std::memcpy(&offset, frame.data + layout.offset + 8, sizeof(offset));
     return true;
   };
-  auto readArgumentRef = [&](uint32_t reg, obelisk_rt_object_v1 *&owner,
+  auto readArgumentRef = [&](uint32_t reg, talos_rt_object_v1 *&owner,
                              uint64_t &payload, uint32_t &managed) {
     Layout layout = layoutAt(image, frame.function, reg);
-    if (layout.kind != OBELISK_RT_DBREG_ARGUMENT_REF || layout.size != 24)
+    if (layout.kind != TALOS_RT_DBREG_ARGUMENT_REF || layout.size != 24)
       return false;
-    obelisk_rt_managed_word_v1 ownerWord = 0;
+    talos_rt_managed_word_v1 ownerWord = 0;
     std::memcpy(&ownerWord, frame.data + layout.offset, sizeof(ownerWord));
-    owner = obelisk_rt_object_from_managed_word(ownerWord);
+    owner = talos_rt_object_from_managed_word(ownerWord);
     std::memcpy(&payload, frame.data + layout.offset + 8, sizeof(payload));
     uint64_t tag = 0;
     std::memcpy(&tag, frame.data + layout.offset + 16, sizeof(tag));
@@ -255,41 +255,41 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return true;
   };
   auto readObserverCapture = [&](uint32_t reg,
-                                 const obelisk_rt_observer_capture_abi_v1 &abi,
-                                 obelisk_rt_computed_capture_v1 &capture) {
+                                 const talos_rt_observer_capture_abi_v1 &abi,
+                                 talos_rt_computed_capture_v1 &capture) {
     if (!validRegister(frame.function, reg))
       return false;
     Layout layout = layoutAt(image, frame.function, reg);
     capture = {};
-    if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF) {
-      if (layout.kind != OBELISK_RT_DBREG_ARGUMENT_REF || layout.size != 24)
+    if (abi.kind == TALOS_RT_OBSERVER_CAPTURE_ARGUMENT_REF) {
+      if (layout.kind != TALOS_RT_DBREG_ARGUMENT_REF || layout.size != 24)
         return false;
       std::memcpy(&capture, frame.data + layout.offset, 24);
       return true;
     }
-    if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED) {
-      if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8)
+    if (abi.kind == TALOS_RT_OBSERVER_CAPTURE_MANAGED) {
+      if (layout.kind != TALOS_RT_DBREG_MANAGED || layout.size != 8)
         return false;
       std::memcpy(&capture.stable_id, frame.data + layout.offset, 8);
       return true;
     }
-    if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP) {
+    if (abi.kind == TALOS_RT_OBSERVER_CAPTURE_COVERGROUP) {
       std::optional<uint64_t> value = readScalar(image, frame, reg);
-      if (!value || layout.kind != OBELISK_RT_DBREG_BITS || layout.width != 64)
+      if (!value || layout.kind != TALOS_RT_DBREG_BITS || layout.width != 64)
         return false;
       capture.stable_id = *value;
       return true;
     }
-    if (layout.kind != OBELISK_RT_DBREG_HANDLE || layout.size != 32 ||
-        (abi.kind != OBELISK_RT_OBSERVER_CAPTURE_STORAGE &&
-         abi.kind != OBELISK_RT_OBSERVER_CAPTURE_NET &&
-         abi.kind != OBELISK_RT_OBSERVER_CAPTURE_EVENT &&
-         abi.kind != OBELISK_RT_OBSERVER_CAPTURE_DRIVER))
+    if (layout.kind != TALOS_RT_DBREG_HANDLE || layout.size != 32 ||
+        (abi.kind != TALOS_RT_OBSERVER_CAPTURE_STORAGE &&
+         abi.kind != TALOS_RT_OBSERVER_CAPTURE_NET &&
+         abi.kind != TALOS_RT_OBSERVER_CAPTURE_EVENT &&
+         abi.kind != TALOS_RT_OBSERVER_CAPTURE_DRIVER))
       return false;
     return encodeCanonicalHandle(frame.data + layout.offset, capture.stable_id);
   };
   auto functionalValue = [&](uint32_t reg, uint64_t id,
-                             obelisk_rt_functional_value_v1 &result,
+                             talos_rt_functional_value_v1 &result,
                              uint64_t referenceWidth = 0) {
     if (!validRegister(frame.function, reg))
       return false;
@@ -297,116 +297,116 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     result = {};
     result.id = id;
     result.bit_width =
-        layout.kind == OBELISK_RT_DBREG_REAL64 ? 64 : layout.width;
-    result.value_size = layout.kind == OBELISK_RT_DBREG_REAL64
+        layout.kind == TALOS_RT_DBREG_REAL64 ? 64 : layout.width;
+    result.value_size = layout.kind == TALOS_RT_DBREG_REAL64
                             ? sizeof(double)
                             : (uint64_t{layout.width} + 7) / 8;
-    if (layout.kind == OBELISK_RT_DBREG_MANAGED && layout.size == 8) {
-      obelisk_rt_managed_word_v1 word = 0;
+    if (layout.kind == TALOS_RT_DBREG_MANAGED && layout.size == 8) {
+      talos_rt_managed_word_v1 word = 0;
       std::memcpy(&word, frame.data + layout.offset, sizeof(word));
-      result.owner = obelisk_rt_object_from_managed_word(word);
-      if (obelisk_rt_managed_word_from_object(result.owner) != word)
+      result.owner = talos_rt_object_from_managed_word(word);
+      if (talos_rt_managed_word_from_object(result.owner) != word)
         return false;
       result.kind =
-          layout.flags & OBELISK_RT_DBREG_MAILBOX
-              ? OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX
-          : layout.flags & OBELISK_RT_DBREG_SEMAPHORE
-              ? OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE
-          : layout.flags & OBELISK_RT_DBREG_CLASS_HANDLE
-              ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
-          : result.owner && obelisk_rt_managed_object_kind(result.owner) ==
-                                OBELISK_RT_MANAGED_REFERENCE_PATH
-              ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE
-              : OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
+          layout.flags & TALOS_RT_DBREG_MAILBOX
+              ? TALOS_RT_FUNCTIONAL_VALUE_MAILBOX
+          : layout.flags & TALOS_RT_DBREG_SEMAPHORE
+              ? TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE
+          : layout.flags & TALOS_RT_DBREG_CLASS_HANDLE
+              ? TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
+          : result.owner && talos_rt_managed_object_kind(result.owner) ==
+                                TALOS_RT_MANAGED_REFERENCE_PATH
+              ? TALOS_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE
+              : TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
       result.bit_width = 0;
       result.value_size = 0;
       return true;
     }
-    if (layout.kind == OBELISK_RT_DBREG_HANDLE &&
-        (layout.flags & OBELISK_RT_DBREG_EVENT)) {
+    if (layout.kind == TALOS_RT_DBREG_HANDLE &&
+        (layout.flags & TALOS_RT_DBREG_EVENT)) {
       if (layout.width != 256 || layout.size != 32 ||
-          read32(frame.data + layout.offset) != OBELISK_RT_DESCRIPTOR_EVENT ||
+          read32(frame.data + layout.offset) != TALOS_RT_DESCRIPTOR_EVENT ||
           !encodeCanonicalHandle(frame.data + layout.offset, result.payload))
         return false;
-      result.kind = OBELISK_RT_FUNCTIONAL_VALUE_EVENT;
+      result.kind = TALOS_RT_FUNCTIONAL_VALUE_EVENT;
       result.bit_width = 0;
       result.value_size = 0;
       return true;
     }
-    if (layout.kind == OBELISK_RT_DBREG_BITS) {
-      if (layout.flags & OBELISK_RT_DBREG_VIRTUAL_INTERFACE) {
+    if (layout.kind == TALOS_RT_DBREG_BITS) {
+      if (layout.flags & TALOS_RT_DBREG_VIRTUAL_INTERFACE) {
         auto word = readScalar(image, frame, reg);
         if (layout.width != 64 || layout.size != 8 || !word)
           return false;
-        result.kind = OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE;
+        result.kind = TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE;
         result.payload = *word;
         result.bit_width = 0;
         result.value_size = 0;
         return true;
       }
-      if (layout.flags & OBELISK_RT_DBREG_PROCESS) {
+      if (layout.flags & TALOS_RT_DBREG_PROCESS) {
         auto word = readScalar(image, frame, reg);
         if (layout.width != 64 || layout.size != 8 || !word)
           return false;
-        result.kind = OBELISK_RT_FUNCTIONAL_VALUE_PROCESS;
+        result.kind = TALOS_RT_FUNCTIONAL_VALUE_PROCESS;
         result.payload = *word;
         result.bit_width = 0;
         result.value_size = 0;
         return true;
       }
-      if (layout.flags & OBELISK_RT_DBREG_COVERGROUP) {
+      if (layout.flags & TALOS_RT_DBREG_COVERGROUP) {
         auto word = readScalar(image, frame, reg);
         if (layout.width != 64 || layout.size != 8 || !word)
           return false;
-        result.kind = OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP;
+        result.kind = TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP;
         result.payload = *word;
         result.bit_width = 0;
         result.value_size = 0;
         return true;
       }
-      if (layout.flags & OBELISK_RT_DBREG_CHANDLE) {
+      if (layout.flags & TALOS_RT_DBREG_CHANDLE) {
         auto word = readScalar(image, frame, reg);
         if (!word)
           return false;
-        result.kind = OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE;
+        result.kind = TALOS_RT_FUNCTIONAL_VALUE_CHANDLE;
         result.bit_width = 0;
         result.value_size = 0;
         result.payload = *word;
         return true;
       }
-      result.kind = OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
+      result.kind = TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL;
       result.value = frame.data + layout.offset;
       return layout.width != 0;
     }
-    if (layout.kind == OBELISK_RT_DBREG_LOGIC) {
-      result.kind = OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE;
+    if (layout.kind == TALOS_RT_DBREG_LOGIC) {
+      result.kind = TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE;
       result.value = frame.data + layout.offset;
       result.unknown = frame.data + layout.offset + layout.size / 2;
       return layout.width != 0 && layout.size % 2 == 0;
     }
-    if ((layout.kind == OBELISK_RT_DBREG_REAL32 &&
+    if ((layout.kind == TALOS_RT_DBREG_REAL32 &&
          layout.size == sizeof(float)) ||
-        (layout.kind == OBELISK_RT_DBREG_REAL64 &&
+        (layout.kind == TALOS_RT_DBREG_REAL64 &&
          layout.size == sizeof(double))) {
-      result.kind = layout.kind == OBELISK_RT_DBREG_REAL32
-                        ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
-                        : OBELISK_RT_FUNCTIONAL_VALUE_REAL;
+      result.kind = layout.kind == TALOS_RT_DBREG_REAL32
+                        ? TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL
+                        : TALOS_RT_FUNCTIONAL_VALUE_REAL;
       result.value = frame.data + layout.offset;
       return true;
     }
-    if (layout.kind == OBELISK_RT_DBREG_ARGUMENT_REF && layout.size == 24) {
-      result.kind = OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF;
+    if (layout.kind == TALOS_RT_DBREG_ARGUMENT_REF && layout.size == 24) {
+      result.kind = TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF;
       result.bit_width = referenceWidth;
       result.value_size = (referenceWidth + 7) / 8;
       return readArgumentRef(reg, result.owner, result.payload,
                              result.argument_ref_kind) &&
              referenceWidth != 0;
     }
-    if (layout.kind == OBELISK_RT_DBREG_STRING && layout.size == 8) {
-      obelisk_rt_string_v1 string = 0;
+    if (layout.kind == TALOS_RT_DBREG_STRING && layout.size == 8) {
+      talos_rt_string_v1 string = 0;
       if (!readString(reg, string))
         return false;
-      result.kind = OBELISK_RT_FUNCTIONAL_VALUE_STRING;
+      result.kind = TALOS_RT_FUNCTIONAL_VALUE_STRING;
       result.bit_width = 0;
       result.value_size = 0;
       result.payload = string;
@@ -416,119 +416,119 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   };
   std::vector<uint8_t> assocValueScratch;
   std::vector<uint8_t> assocUnknownScratch;
-  auto readAssocKey = [&](obelisk_rt_object_v1 *array, uint32_t reg,
-                          obelisk_rt_assoc_key_v1 &key) {
+  auto readAssocKey = [&](talos_rt_object_v1 *array, uint32_t reg,
+                          talos_rt_assoc_key_v1 &key) {
     Layout layout = layoutAt(image, frame.function, reg);
     key = {};
-    if (obelisk_rt_v1_assoc_key_info(array, &key.kind, &key.width) !=
-        OBELISK_RT_OK)
+    if (talos_rt_v1_assoc_key_info(array, &key.kind, &key.width) !=
+        TALOS_RT_OK)
       return false;
-    if (key.kind == OBELISK_RT_ASSOC_KEY_ELEMENT) {
+    if (key.kind == TALOS_RT_ASSOC_KEY_ELEMENT) {
       // An element key travels as its container-element planes. Copy them so
       // that traversal never writes through an input register.
       uint64_t keySize = key.width / 8;
       const uint8_t *value = frame.data + layout.offset;
       uint64_t planeSize = layout.size;
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         assocUnknownScratch.clear();
-        if (layout.kind == OBELISK_RT_DBREG_HANDLE) {
+        if (layout.kind == TALOS_RT_DBREG_HANDLE) {
           // An event element stores the event's start.
-          if (layout.flags != OBELISK_RT_DBREG_EVENT || layout.size != 32 ||
+          if (layout.flags != TALOS_RT_DBREG_EVENT || layout.size != 32 ||
               keySize != sizeof(int64_t))
             return false;
           assocValueScratch.assign(value + 16, value + 24);
-        } else if (layout.kind == OBELISK_RT_DBREG_MANAGED ||
-                   layout.kind == OBELISK_RT_DBREG_BITS ||
-                   layout.kind == OBELISK_RT_DBREG_LOGIC) {
-          if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+        } else if (layout.kind == TALOS_RT_DBREG_MANAGED ||
+                   layout.kind == TALOS_RT_DBREG_BITS ||
+                   layout.kind == TALOS_RT_DBREG_LOGIC) {
+          if (layout.kind == TALOS_RT_DBREG_LOGIC)
             planeSize /= 2;
           if (keySize == 0 || planeSize < keySize)
             return false;
           assocValueScratch.assign(value, value + keySize);
-          if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+          if (layout.kind == TALOS_RT_DBREG_LOGIC)
             assocUnknownScratch.assign(value + planeSize,
                                        value + planeSize + keySize);
         } else {
           return false;
         }
       }
-      OBELISK_RT_CATCH(const std::bad_alloc &) { return false; }
+      TALOS_RT_CATCH(const std::bad_alloc &) { return false; }
       key.value_data = assocValueScratch.data();
       if (!assocUnknownScratch.empty())
         key.unknown_data = assocUnknownScratch.data();
       return true;
     }
-    if (layout.kind == OBELISK_RT_DBREG_STRING) {
-      if (key.kind != OBELISK_RT_ASSOC_KEY_STRING || layout.size != 8)
+    if (layout.kind == TALOS_RT_DBREG_STRING) {
+      if (key.kind != TALOS_RT_ASSOC_KEY_STRING || layout.size != 8)
         return false;
       std::memcpy(&key.string, frame.data + layout.offset, sizeof(key.string));
       return true;
     }
-    if (layout.kind == OBELISK_RT_DBREG_MANAGED) {
-      if ((key.kind != OBELISK_RT_ASSOC_KEY_CLASS &&
-           key.kind != OBELISK_RT_ASSOC_KEY_WILDCARD) ||
+    if (layout.kind == TALOS_RT_DBREG_MANAGED) {
+      if ((key.kind != TALOS_RT_ASSOC_KEY_CLASS &&
+           key.kind != TALOS_RT_ASSOC_KEY_WILDCARD) ||
           layout.size != 8)
         return false;
-      obelisk_rt_managed_word_v1 word = 0;
+      talos_rt_managed_word_v1 word = 0;
       std::memcpy(&word, frame.data + layout.offset, sizeof(word));
-      key.object = obelisk_rt_object_from_managed_word(word);
+      key.object = talos_rt_object_from_managed_word(word);
       return true;
     }
-    if (key.kind == OBELISK_RT_ASSOC_KEY_PROCESS) {
-      if (layout.kind != OBELISK_RT_DBREG_BITS || layout.size != 8 ||
+    if (key.kind == TALOS_RT_ASSOC_KEY_PROCESS) {
+      if (layout.kind != TALOS_RT_DBREG_BITS || layout.size != 8 ||
           layout.width != 64)
         return false;
       std::memcpy(&key.value, frame.data + layout.offset, sizeof(key.value));
       return true;
     }
-    if ((layout.kind != OBELISK_RT_DBREG_BITS &&
-         layout.kind != OBELISK_RT_DBREG_LOGIC) ||
-        key.kind == OBELISK_RT_ASSOC_KEY_STRING ||
-        key.kind == OBELISK_RT_ASSOC_KEY_CLASS || layout.width != key.width ||
+    if ((layout.kind != TALOS_RT_DBREG_BITS &&
+         layout.kind != TALOS_RT_DBREG_LOGIC) ||
+        key.kind == TALOS_RT_ASSOC_KEY_STRING ||
+        key.kind == TALOS_RT_ASSOC_KEY_CLASS || layout.width != key.width ||
         layout.width == 0)
       return false;
     uint64_t planeSize =
-        layout.kind == OBELISK_RT_DBREG_LOGIC ? layout.size / 2 : layout.size;
+        layout.kind == TALOS_RT_DBREG_LOGIC ? layout.size / 2 : layout.size;
     if (planeSize == 0)
       return false;
     if (key.width <= 64) {
       std::memcpy(&key.value, frame.data + layout.offset,
                   static_cast<size_t>(planeSize));
-      if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+      if (layout.kind == TALOS_RT_DBREG_LOGIC)
         std::memcpy(&key.unknown, frame.data + layout.offset + planeSize,
                     static_cast<size_t>(planeSize));
     } else {
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         assocValueScratch.assign(frame.data + layout.offset,
                                  frame.data + layout.offset + planeSize);
         assocUnknownScratch.clear();
-        if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+        if (layout.kind == TALOS_RT_DBREG_LOGIC)
           assocUnknownScratch.assign(frame.data + layout.offset + planeSize,
                                      frame.data + layout.offset +
                                          2 * planeSize);
       }
-      OBELISK_RT_CATCH(const std::bad_alloc &) { return false; }
+      TALOS_RT_CATCH(const std::bad_alloc &) { return false; }
       key.value_data = assocValueScratch.data();
       if (!assocUnknownScratch.empty())
         key.unknown_data = assocUnknownScratch.data();
     }
     return true;
   };
-  auto writeAssocKey = [&](uint32_t reg, const obelisk_rt_assoc_key_v1 &key) {
+  auto writeAssocKey = [&](uint32_t reg, const talos_rt_assoc_key_v1 &key) {
     Layout layout = layoutAt(image, frame.function, reg);
     std::memset(frame.data + layout.offset, 0, layout.size);
-    if (key.kind == OBELISK_RT_ASSOC_KEY_ELEMENT) {
+    if (key.kind == TALOS_RT_ASSOC_KEY_ELEMENT) {
       size_t keySize = static_cast<size_t>(key.width / 8);
       uint8_t *value = frame.data + layout.offset;
       if (!key.value_data)
         return false;
-      if (layout.kind == OBELISK_RT_DBREG_HANDLE) {
-        if (layout.flags != OBELISK_RT_DBREG_EVENT || layout.size != 32 ||
+      if (layout.kind == TALOS_RT_DBREG_HANDLE) {
+        if (layout.flags != TALOS_RT_DBREG_EVENT || layout.size != 32 ||
             keySize != sizeof(int64_t))
           return false;
         int64_t start = kInvalidHandleStart;
         std::memcpy(&start, key.value_data, sizeof(start));
-        uint32_t kind = OBELISK_RT_DESCRIPTOR_EVENT;
+        uint32_t kind = TALOS_RT_DESCRIPTOR_EVENT;
         int64_t begin = start == kInvalidHandleStart ? 0 : start;
         int64_t end = start == kInvalidHandleStart
                           ? 0
@@ -539,99 +539,99 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         std::memcpy(value + 24, &end, sizeof(end));
         return true;
       }
-      if (layout.kind != OBELISK_RT_DBREG_MANAGED &&
-          layout.kind != OBELISK_RT_DBREG_BITS &&
-          layout.kind != OBELISK_RT_DBREG_LOGIC)
+      if (layout.kind != TALOS_RT_DBREG_MANAGED &&
+          layout.kind != TALOS_RT_DBREG_BITS &&
+          layout.kind != TALOS_RT_DBREG_LOGIC)
         return false;
       uint64_t planeSize =
-          layout.kind == OBELISK_RT_DBREG_LOGIC ? layout.size / 2 : layout.size;
+          layout.kind == TALOS_RT_DBREG_LOGIC ? layout.size / 2 : layout.size;
       if (keySize == 0 || planeSize < keySize)
         return false;
       std::memcpy(value, key.value_data, keySize);
-      if (layout.kind == OBELISK_RT_DBREG_LOGIC && key.unknown_data)
+      if (layout.kind == TALOS_RT_DBREG_LOGIC && key.unknown_data)
         std::memcpy(value + planeSize, key.unknown_data, keySize);
       return true;
     }
-    if (layout.kind == OBELISK_RT_DBREG_STRING) {
-      if (key.kind != OBELISK_RT_ASSOC_KEY_STRING || layout.size != 8)
+    if (layout.kind == TALOS_RT_DBREG_STRING) {
+      if (key.kind != TALOS_RT_ASSOC_KEY_STRING || layout.size != 8)
         return false;
       std::memcpy(frame.data + layout.offset, &key.string, sizeof(key.string));
       return true;
     }
-    if (layout.kind == OBELISK_RT_DBREG_MANAGED) {
-      if ((key.kind != OBELISK_RT_ASSOC_KEY_CLASS &&
-           key.kind != OBELISK_RT_ASSOC_KEY_WILDCARD) ||
+    if (layout.kind == TALOS_RT_DBREG_MANAGED) {
+      if ((key.kind != TALOS_RT_ASSOC_KEY_CLASS &&
+           key.kind != TALOS_RT_ASSOC_KEY_WILDCARD) ||
           layout.size != 8)
         return false;
-      obelisk_rt_managed_word_v1 word =
-          obelisk_rt_managed_word_from_object(key.object);
+      talos_rt_managed_word_v1 word =
+          talos_rt_managed_word_from_object(key.object);
       std::memcpy(frame.data + layout.offset, &word, sizeof(word));
       return true;
     }
-    if (key.kind == OBELISK_RT_ASSOC_KEY_PROCESS) {
-      if (layout.kind != OBELISK_RT_DBREG_BITS || layout.size != 8 ||
+    if (key.kind == TALOS_RT_ASSOC_KEY_PROCESS) {
+      if (layout.kind != TALOS_RT_DBREG_BITS || layout.size != 8 ||
           layout.width != 64)
         return false;
       std::memcpy(frame.data + layout.offset, &key.value, sizeof(key.value));
       return true;
     }
-    if ((layout.kind != OBELISK_RT_DBREG_BITS &&
-         layout.kind != OBELISK_RT_DBREG_LOGIC) ||
-        key.kind == OBELISK_RT_ASSOC_KEY_STRING ||
-        key.kind == OBELISK_RT_ASSOC_KEY_CLASS || layout.width != key.width)
+    if ((layout.kind != TALOS_RT_DBREG_BITS &&
+         layout.kind != TALOS_RT_DBREG_LOGIC) ||
+        key.kind == TALOS_RT_ASSOC_KEY_STRING ||
+        key.kind == TALOS_RT_ASSOC_KEY_CLASS || layout.width != key.width)
       return false;
     uint64_t planeSize =
-        layout.kind == OBELISK_RT_DBREG_LOGIC ? layout.size / 2 : layout.size;
+        layout.kind == TALOS_RT_DBREG_LOGIC ? layout.size / 2 : layout.size;
     if (planeSize == 0 || (key.width > 64 && !key.value_data))
       return false;
     if (key.width <= 64) {
       std::memcpy(frame.data + layout.offset, &key.value,
                   static_cast<size_t>(planeSize));
-      if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+      if (layout.kind == TALOS_RT_DBREG_LOGIC)
         std::memcpy(frame.data + layout.offset + planeSize, &key.unknown,
                     static_cast<size_t>(planeSize));
     } else {
       std::memcpy(frame.data + layout.offset, key.value_data,
                   static_cast<size_t>(planeSize));
-      if (layout.kind == OBELISK_RT_DBREG_LOGIC && key.unknown_data)
+      if (layout.kind == TALOS_RT_DBREG_LOGIC && key.unknown_data)
         std::memcpy(frame.data + layout.offset + planeSize, key.unknown_data,
                     static_cast<size_t>(planeSize));
     }
     return true;
   };
   switch (signature.id) {
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_SIZE:
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_SIZE:
     return sentinel(
-        0, obelisk_rt_v1_container_size(readManaged(inputRegister(0))));
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE_LIKE: {
+        0, talos_rt_v1_container_size(readManaged(inputRegister(0))));
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_CREATE_LIKE: {
     auto size = scalar(2);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!size)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_object_v1 *result = nullptr;
-    obelisk_rt_status status = obelisk_rt_v1_container_create_like(
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_object_v1 *result = nullptr;
+    talos_rt_status status = talos_rt_v1_container_create_like(
         lane, readManaged(inputRegister(0)), readManaged(inputRegister(1)),
         *size, &result);
-    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeManaged(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_READ: {
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_READ: {
     auto index = scalar(1);
     if (!index)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     std::memset(frame.data + output.offset, 0, output.size);
-    if (output.kind == OBELISK_RT_DBREG_HANDLE) {
+    if (output.kind == TALOS_RT_DBREG_HANDLE) {
       uint64_t event = UINT64_MAX;
-      obelisk_rt_status status = obelisk_rt_v1_container_read_checked(
+      talos_rt_status status = talos_rt_v1_container_read_checked(
           readManaged(inputRegister(0)), static_cast<int64_t>(*index), &event,
           sizeof(event), nullptr, 0);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
-      uint32_t kind = OBELISK_RT_DESCRIPTOR_EVENT;
+      uint32_t kind = TALOS_RT_DESCRIPTOR_EVENT;
       int64_t start = static_cast<int64_t>(event);
       int64_t begin = start == kInvalidHandleStart ? 0 : start;
       int64_t end = start == kInvalidHandleStart
@@ -641,50 +641,50 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::memcpy(frame.data + output.offset + 8, &begin, sizeof(begin));
       std::memcpy(frame.data + output.offset + 16, &start, sizeof(start));
       std::memcpy(frame.data + output.offset + 24, &end, sizeof(end));
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     uint64_t storagePlaneSize =
-        output.kind == OBELISK_RT_DBREG_LOGIC ? output.size / 2 : output.size;
-    if (output.kind == OBELISK_RT_DBREG_LOGIC)
+        output.kind == TALOS_RT_DBREG_LOGIC ? output.size / 2 : output.size;
+    if (output.kind == TALOS_RT_DBREG_LOGIC)
       std::memset(frame.data + output.offset + storagePlaneSize, 0xff,
                   storagePlaneSize);
-    void *unknown = output.kind == OBELISK_RT_DBREG_LOGIC
+    void *unknown = output.kind == TALOS_RT_DBREG_LOGIC
                         ? frame.data + output.offset + storagePlaneSize
                         : nullptr;
-    return obelisk_rt_v1_container_read_checked(
+    return talos_rt_v1_container_read_checked(
         readManaged(inputRegister(0)), static_cast<int64_t>(*index),
         frame.data + output.offset, storagePlaneSize, unknown,
         unknown ? storagePlaneSize : 0);
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_WRITE: {
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_WRITE: {
     auto index = scalar(1);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!index)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     Layout input = layoutAt(image, frame.function, inputRegister(2));
-    if (input.kind == OBELISK_RT_DBREG_HANDLE) {
+    if (input.kind == TALOS_RT_DBREG_HANDLE) {
       int64_t event = kInvalidHandleStart;
       std::memcpy(&event, frame.data + input.offset + 16, sizeof(event));
-      return obelisk_rt_v1_container_write_checked(
+      return talos_rt_v1_container_write_checked(
           lane, readManaged(inputRegister(0)), static_cast<int64_t>(*index),
           &event, sizeof(event), nullptr, 0);
     }
     uint64_t storagePlaneSize =
-        input.kind == OBELISK_RT_DBREG_LOGIC ? input.size / 2 : input.size;
-    const void *unknown = input.kind == OBELISK_RT_DBREG_LOGIC
+        input.kind == TALOS_RT_DBREG_LOGIC ? input.size / 2 : input.size;
+    const void *unknown = input.kind == TALOS_RT_DBREG_LOGIC
                               ? frame.data + input.offset + storagePlaneSize
                               : nullptr;
-    return obelisk_rt_v1_container_write_checked(
+    return talos_rt_v1_container_write_checked(
         lane, readManaged(inputRegister(0)), static_cast<int64_t>(*index),
         frame.data + input.offset, storagePlaneSize, unknown,
         unknown ? storagePlaneSize : 0);
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE: {
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_CREATE: {
     bool hasPattern = site.inputCount == 11;
     if (!hasPattern && site.inputCount != 10)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::array<std::optional<uint64_t>, 9> inputs;
     for (uint32_t index = 0; index != 7; ++index)
       inputs[index] = scalar(index);
@@ -692,238 +692,238 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     inputs[8] = scalar(hasPattern ? 10 : 9);
     if (std::any_of(inputs.begin(), inputs.end(),
                     [](const auto &value) { return !value; }))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::optional<ByteSpan> trace =
         readByteSpan(image, frame, inputRegister(7));
-    if (!trace || trace->size % sizeof(obelisk_rt_element_trace_slot_v1) != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
-    std::vector<obelisk_rt_element_trace_slot_v1> traceSlots(
-        trace->size / sizeof(obelisk_rt_element_trace_slot_v1));
+    if (!trace || trace->size % sizeof(talos_rt_element_trace_slot_v1) != 0)
+      return TALOS_RT_INVALID_BYTECODE;
+    std::vector<talos_rt_element_trace_slot_v1> traceSlots(
+        trace->size / sizeof(talos_rt_element_trace_slot_v1));
     if (!traceSlots.empty())
       std::memcpy(traceSlots.data(), trace->data, trace->size);
     std::optional<ByteSpan> pattern;
     if (hasPattern) {
       pattern = readByteSpan(image, frame, inputRegister(8));
       if (!pattern || pattern->size % sizeof(uint64_t) != 0)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
     }
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_object_v1 *result = nullptr;
-    obelisk_rt_status status =
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_object_v1 *result = nullptr;
+    talos_rt_status status =
         hasPattern
-            ? obelisk_rt_v1_container_create_typed_pattern(
+            ? talos_rt_v1_container_create_typed_pattern(
                   lane, static_cast<uint32_t>(*inputs[0]), *inputs[1],
                   static_cast<uint32_t>(*inputs[2]),
                   static_cast<uint32_t>(*inputs[3]), *inputs[4], *inputs[5],
                   *inputs[6], traceSlots.data(), traceSlots.size(),
                   pattern->size == 0 ? nullptr : pattern->data, pattern->size,
                   *inputs[7], *inputs[8], &result)
-            : obelisk_rt_v1_container_create_typed(
+            : talos_rt_v1_container_create_typed(
                   lane, static_cast<uint32_t>(*inputs[0]), *inputs[1],
                   static_cast<uint32_t>(*inputs[2]),
                   static_cast<uint32_t>(*inputs[3]), *inputs[4], *inputs[5],
                   *inputs[6], traceSlots.data(), traceSlots.size(), *inputs[7],
                   *inputs[8], &result);
-    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeManaged(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_CLONE: {
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_CLONE: {
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_object_v1 *result = nullptr;
-    obelisk_rt_status status = obelisk_rt_v1_container_clone(
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_object_v1 *result = nullptr;
+    talos_rt_status status = talos_rt_v1_container_clone(
         lane, readManaged(inputRegister(0)), &result);
-    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeManaged(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_IMPORT_FIXED: {
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_IMPORT_FIXED: {
     std::array<std::optional<uint64_t>, 5> inputs;
     for (uint32_t index = 2; index != 7; ++index)
       inputs[index - 2] = scalar(index);
     if (std::any_of(inputs.begin(), inputs.end(),
                     [](const auto &value) { return !value; }))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout input = layoutAt(image, frame.function, inputRegister(1));
-    bool fourState = input.kind == OBELISK_RT_DBREG_LOGIC;
+    bool fourState = input.kind == TALOS_RT_DBREG_LOGIC;
     uint64_t framePlaneSize = fourState ? input.size / 2 : input.size;
     if (*inputs[0] > framePlaneSize || *inputs[2] != fourState)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     const void *unknown =
         fourState ? frame.data + input.offset + framePlaneSize : nullptr;
-    return obelisk_rt_v1_container_import_fixed(
+    return talos_rt_v1_container_import_fixed(
         lane, readManaged(inputRegister(0)), frame.data + input.offset, unknown,
         *inputs[0], *inputs[1], fourState, *inputs[3], *inputs[4]);
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_FIXED: {
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_EXPORT_FIXED: {
     std::array<std::optional<uint64_t>, 5> inputs;
     for (uint32_t index = 1; index != 6; ++index)
       inputs[index - 1] = scalar(index);
     if (std::any_of(inputs.begin(), inputs.end(),
                     [](const auto &value) { return !value; }))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
-    bool fourState = output.kind == OBELISK_RT_DBREG_LOGIC;
+    bool fourState = output.kind == TALOS_RT_DBREG_LOGIC;
     uint64_t framePlaneSize = fourState ? output.size / 2 : output.size;
     if (*inputs[0] > framePlaneSize || *inputs[2] != fourState)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::memset(frame.data + output.offset, 0, output.size);
     void *unknown =
         fourState ? frame.data + output.offset + framePlaneSize : nullptr;
-    return obelisk_rt_v1_container_export_fixed(
+    return talos_rt_v1_container_export_fixed(
         readManaged(inputRegister(0)), frame.data + output.offset, unknown,
         *inputs[0], *inputs[1], fourState, *inputs[3], *inputs[4]);
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_SWAP: {
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_SWAP: {
     auto left = scalar(1);
     auto right = scalar(2);
     return left && right
-               ? obelisk_rt_v1_container_swap(readManaged(inputRegister(0)),
+               ? talos_rt_v1_container_swap(readManaged(inputRegister(0)),
                                               static_cast<int64_t>(*left),
                                               static_cast<int64_t>(*right))
-               : OBELISK_RT_INVALID_BYTECODE;
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE:
-    return obelisk_rt_v1_container_delete(readManaged(inputRegister(0)));
-  case OBELISK_RT_INTRINSIC_V1_QUEUE_DELETE: {
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_DELETE:
+    return talos_rt_v1_container_delete(readManaged(inputRegister(0)));
+  case TALOS_RT_INTRINSIC_V1_QUEUE_DELETE: {
     auto index = scalar(1);
     return index
-               ? obelisk_rt_v1_queue_delete_index(readManaged(inputRegister(0)),
+               ? talos_rt_v1_queue_delete_index(readManaged(inputRegister(0)),
                                                   static_cast<int64_t>(*index))
-               : OBELISK_RT_INVALID_BYTECODE;
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_QUEUE_INSERT: {
+  case TALOS_RT_INTRINSIC_V1_QUEUE_INSERT: {
     auto index = scalar(1);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!index)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     Layout input = layoutAt(image, frame.function, inputRegister(2));
-    if (input.kind == OBELISK_RT_DBREG_HANDLE) {
+    if (input.kind == TALOS_RT_DBREG_HANDLE) {
       int64_t event = kInvalidHandleStart;
       std::memcpy(&event, frame.data + input.offset + 16, sizeof(event));
-      return obelisk_rt_v1_queue_insert(lane, readManaged(inputRegister(0)),
+      return talos_rt_v1_queue_insert(lane, readManaged(inputRegister(0)),
                                         static_cast<int64_t>(*index), &event,
                                         nullptr);
     }
     uint64_t planeSize =
-        input.kind == OBELISK_RT_DBREG_LOGIC ? input.size / 2 : input.size;
-    const void *unknown = input.kind == OBELISK_RT_DBREG_LOGIC
+        input.kind == TALOS_RT_DBREG_LOGIC ? input.size / 2 : input.size;
+    const void *unknown = input.kind == TALOS_RT_DBREG_LOGIC
                               ? frame.data + input.offset + planeSize
                               : nullptr;
-    return obelisk_rt_v1_queue_insert(lane, readManaged(inputRegister(0)),
+    return talos_rt_v1_queue_insert(lane, readManaged(inputRegister(0)),
                                       static_cast<int64_t>(*index),
                                       frame.data + input.offset, unknown);
   }
-  case OBELISK_RT_INTRINSIC_V1_MAILBOX_CREATE: {
+  case TALOS_RT_INTRINSIC_V1_MAILBOX_CREATE: {
     std::array<std::optional<uint64_t>, 7> inputs;
     for (uint32_t index = 0; index != 6; ++index)
       inputs[index] = scalar(index);
     inputs[6] = scalar(7);
     if (std::any_of(inputs.begin(), inputs.end(),
                     [](const auto &value) { return !value; }))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::optional<ByteSpan> trace =
         readByteSpan(image, frame, inputRegister(6));
-    if (!trace || trace->size % sizeof(obelisk_rt_element_trace_slot_v1) != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
-    std::vector<obelisk_rt_element_trace_slot_v1> traceSlots(
-        trace->size / sizeof(obelisk_rt_element_trace_slot_v1));
+    if (!trace || trace->size % sizeof(talos_rt_element_trace_slot_v1) != 0)
+      return TALOS_RT_INVALID_BYTECODE;
+    std::vector<talos_rt_element_trace_slot_v1> traceSlots(
+        trace->size / sizeof(talos_rt_element_trace_slot_v1));
     if (!traceSlots.empty())
       std::memcpy(traceSlots.data(), trace->data, trace->size);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_object_v1 *result = nullptr;
-    obelisk_rt_status status = obelisk_rt_v1_mailbox_create_typed(
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_object_v1 *result = nullptr;
+    talos_rt_status status = talos_rt_v1_mailbox_create_typed(
         lane, *inputs[0], static_cast<uint32_t>(*inputs[1]),
         static_cast<uint32_t>(*inputs[2]), *inputs[3], *inputs[4], *inputs[5],
         traceSlots.data(), traceSlots.size(), static_cast<int64_t>(*inputs[6]),
         &result);
-    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeManaged(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_MAILBOX_NUM: {
+  case TALOS_RT_INTRINSIC_V1_MAILBOX_NUM: {
     uint32_t count = 0;
-    obelisk_rt_status status =
-        obelisk_rt_v1_mailbox_num(readManaged(inputRegister(0)), &count);
-    return status == OBELISK_RT_OK ? sentinel(0, count) : status;
+    talos_rt_status status =
+        talos_rt_v1_mailbox_num(readManaged(inputRegister(0)), &count);
+    return status == TALOS_RT_OK ? sentinel(0, count) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_BIND: {
+  case TALOS_RT_INTRINSIC_V1_VPI_FRAME_BIND: {
     auto id = scalar(0);
     Layout reference = layoutAt(image, frame.function, inputRegister(1));
     const uint8_t *address = frame.data + reference.offset;
     uint64_t stable = 0;
     if (!id ||
         read32(address) !=
-            (kAutomaticHandleKind | OBELISK_RT_DESCRIPTOR_STORAGE) ||
+            (kAutomaticHandleKind | TALOS_RT_DESCRIPTOR_STORAGE) ||
         !encodeCanonicalHandle(address, stable))
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_vpi_frame_bind(context, *id, stable);
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_vpi_frame_bind(context, *id, stable);
   }
-  case OBELISK_RT_INTRINSIC_V1_BOX_BIND_TYPE: {
+  case TALOS_RT_INTRINSIC_V1_BOX_BIND_TYPE: {
     auto id = scalar(1);
-    return id ? obelisk_rt_v1_box_bind_type(context,
+    return id ? talos_rt_v1_box_bind_type(context,
                                             readManaged(inputRegister(0)), *id)
-              : OBELISK_RT_INVALID_BYTECODE;
+              : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE: {
+  case TALOS_RT_INTRINSIC_V1_BOX_IS_TYPE: {
     auto typeID = scalar(1);
-    return typeID ? sentinel(0, obelisk_rt_v1_box_is_type(
+    return typeID ? sentinel(0, talos_rt_v1_box_is_type(
                                     readManaged(inputRegister(0)), *typeID))
-                  : OBELISK_RT_INVALID_BYTECODE;
+                  : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PUT: {
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+  case TALOS_RT_INTRINSIC_V1_MAILBOX_TRY_PUT: {
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     Layout input = layoutAt(image, frame.function, inputRegister(1));
     uint32_t success = 0;
-    obelisk_rt_status status;
-    if (input.kind == OBELISK_RT_DBREG_HANDLE) {
+    talos_rt_status status;
+    if (input.kind == TALOS_RT_DBREG_HANDLE) {
       int64_t event = kInvalidHandleStart;
       std::memcpy(&event, frame.data + input.offset + 16, sizeof(event));
-      status = obelisk_rt_v1_mailbox_try_put_checked(
+      status = talos_rt_v1_mailbox_try_put_checked(
           lane, readManaged(inputRegister(0)), &event, sizeof(event), nullptr,
           0, &success);
     } else {
       uint64_t planeSize =
-          input.kind == OBELISK_RT_DBREG_LOGIC ? input.size / 2 : input.size;
-      const void *unknown = input.kind == OBELISK_RT_DBREG_LOGIC
+          input.kind == TALOS_RT_DBREG_LOGIC ? input.size / 2 : input.size;
+      const void *unknown = input.kind == TALOS_RT_DBREG_LOGIC
                                 ? frame.data + input.offset + planeSize
                                 : nullptr;
-      status = obelisk_rt_v1_mailbox_try_put_checked(
+      status = talos_rt_v1_mailbox_try_put_checked(
           lane, readManaged(inputRegister(0)), frame.data + input.offset,
           planeSize, unknown, unknown ? planeSize : 0, &success);
     }
-    return status == OBELISK_RT_OK ? sentinel(0, success) : status;
+    return status == TALOS_RT_OK ? sentinel(0, success) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PEEK:
-  case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_GET: {
+  case TALOS_RT_INTRINSIC_V1_MAILBOX_TRY_PEEK:
+  case TALOS_RT_INTRINSIC_V1_MAILBOX_TRY_GET: {
     Layout output = layoutAt(image, frame.function, outputRegister(1));
     std::memset(frame.data + output.offset, 0, output.size);
     uint32_t present = 0;
-    bool remove = signature.id == OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_GET;
-    obelisk_rt_status status;
-    if (output.kind == OBELISK_RT_DBREG_HANDLE) {
+    bool remove = signature.id == TALOS_RT_INTRINSIC_V1_MAILBOX_TRY_GET;
+    talos_rt_status status;
+    if (output.kind == TALOS_RT_DBREG_HANDLE) {
       uint64_t event = UINT64_MAX;
-      status = remove ? obelisk_rt_v1_mailbox_try_get_checked(
+      status = remove ? talos_rt_v1_mailbox_try_get_checked(
                             readManaged(inputRegister(0)), &event,
                             sizeof(event), nullptr, 0, &present)
-                      : obelisk_rt_v1_mailbox_try_peek_checked(
+                      : talos_rt_v1_mailbox_try_peek_checked(
                             readManaged(inputRegister(0)), &event,
                             sizeof(event), nullptr, 0, &present);
-      if (status == OBELISK_RT_OK) {
-        uint32_t kind = OBELISK_RT_DESCRIPTOR_EVENT;
+      if (status == TALOS_RT_OK) {
+        uint32_t kind = TALOS_RT_DESCRIPTOR_EVENT;
         int64_t start = static_cast<int64_t>(event);
         int64_t begin = start == kInvalidHandleStart ? 0 : start;
         int64_t end = start == kInvalidHandleStart
@@ -936,60 +936,60 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       }
     } else {
       uint64_t planeSize =
-          output.kind == OBELISK_RT_DBREG_LOGIC ? output.size / 2 : output.size;
-      void *unknown = output.kind == OBELISK_RT_DBREG_LOGIC
+          output.kind == TALOS_RT_DBREG_LOGIC ? output.size / 2 : output.size;
+      void *unknown = output.kind == TALOS_RT_DBREG_LOGIC
                           ? frame.data + output.offset + planeSize
                           : nullptr;
       status =
           remove
-              ? obelisk_rt_v1_mailbox_try_get_checked(
+              ? talos_rt_v1_mailbox_try_get_checked(
                     readManaged(inputRegister(0)), frame.data + output.offset,
                     planeSize, unknown, unknown ? planeSize : 0, &present)
-              : obelisk_rt_v1_mailbox_try_peek_checked(
+              : talos_rt_v1_mailbox_try_peek_checked(
                     readManaged(inputRegister(0)), frame.data + output.offset,
                     planeSize, unknown, unknown ? planeSize : 0, &present);
     }
-    return status == OBELISK_RT_OK ? sentinel(0, present) : status;
+    return status == TALOS_RT_OK ? sentinel(0, present) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_SEMAPHORE_CREATE: {
+  case TALOS_RT_INTRINSIC_V1_SEMAPHORE_CREATE: {
     std::optional<uint64_t> keys = scalar(0);
     if (!keys)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_object_v1 *result = nullptr;
-    obelisk_rt_status status = obelisk_rt_v1_semaphore_create(
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_object_v1 *result = nullptr;
+    talos_rt_status status = talos_rt_v1_semaphore_create(
         lane, static_cast<int32_t>(*keys), &result);
-    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeManaged(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_SEMAPHORE_PUT: {
+  case TALOS_RT_INTRINSIC_V1_SEMAPHORE_PUT: {
     std::optional<uint64_t> keys = scalar(1);
-    return keys ? obelisk_rt_v1_semaphore_put(readManaged(inputRegister(0)),
+    return keys ? talos_rt_v1_semaphore_put(readManaged(inputRegister(0)),
                                               static_cast<int32_t>(*keys))
-                : OBELISK_RT_INVALID_BYTECODE;
+                : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_SEMAPHORE_TRY_GET: {
+  case TALOS_RT_INTRINSIC_V1_SEMAPHORE_TRY_GET: {
     std::optional<uint64_t> keys = scalar(1);
     if (!keys)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t success = 0;
-    obelisk_rt_status status = obelisk_rt_v1_semaphore_try_get(
+    talos_rt_status status = talos_rt_v1_semaphore_try_get(
         readManaged(inputRegister(0)), static_cast<int32_t>(*keys), &success);
-    return status == OBELISK_RT_OK ? sentinel(0, success) : status;
+    return status == TALOS_RT_OK ? sentinel(0, success) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_EVENT_CREATE: {
+  case TALOS_RT_INTRINSIC_V1_EVENT_CREATE: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     uint64_t stableID = UINT64_MAX;
-    obelisk_rt_status status =
-        obelisk_rt_v1_scheduler_event_create(context, &stableID);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status =
+        talos_rt_v1_scheduler_event_create(context, &stableID);
+    if (status != TALOS_RT_OK)
       return status;
-    uint32_t kind = OBELISK_RT_DESCRIPTOR_EVENT;
+    uint32_t kind = TALOS_RT_DESCRIPTOR_EVENT;
     int64_t start = static_cast<int64_t>(stableID);
     int64_t end = start == INT64_MAX ? start : start + 1;
     std::memset(frame.data + output.offset, 0, output.size);
@@ -997,12 +997,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(frame.data + output.offset + 8, &start, sizeof(start));
     std::memcpy(frame.data + output.offset + 16, &start, sizeof(start));
     std::memcpy(frame.data + output.offset + 24, &end, sizeof(end));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE: {
+  case TALOS_RT_INTRINSIC_V1_ASSOC_CREATE: {
     bool elementKey = site.inputCount == 17;
     if (!elementKey && site.inputCount != 9)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::array<std::optional<uint64_t>, 14> inputs;
     for (uint32_t index = 0; index != 6; ++index)
       inputs[index] = scalar(index);
@@ -1012,34 +1012,34 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       inputs[8 + index] = scalar(9 + index);
     if (std::any_of(inputs.begin(), inputs.begin() + (elementKey ? 14 : 8),
                     [](const auto &value) { return !value; }))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     auto readTrace = [&](uint32_t operand,
-                         std::vector<obelisk_rt_element_trace_slot_v1> &slots) {
+                         std::vector<talos_rt_element_trace_slot_v1> &slots) {
       std::optional<ByteSpan> trace =
           readByteSpan(image, frame, inputRegister(operand));
-      if (!trace || trace->size % sizeof(obelisk_rt_element_trace_slot_v1) != 0)
+      if (!trace || trace->size % sizeof(talos_rt_element_trace_slot_v1) != 0)
         return false;
-      slots.resize(trace->size / sizeof(obelisk_rt_element_trace_slot_v1));
+      slots.resize(trace->size / sizeof(talos_rt_element_trace_slot_v1));
       if (!slots.empty())
         std::memcpy(slots.data(), trace->data, trace->size);
       return true;
     };
-    std::vector<obelisk_rt_element_trace_slot_v1> slots;
+    std::vector<talos_rt_element_trace_slot_v1> slots;
     if (!readTrace(6, slots))
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_object_v1 *result = nullptr;
-    obelisk_rt_status status;
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_object_v1 *result = nullptr;
+    talos_rt_status status;
     if (elementKey) {
-      std::vector<obelisk_rt_element_trace_slot_v1> keySlots;
+      std::vector<talos_rt_element_trace_slot_v1> keySlots;
       std::optional<ByteSpan> plan =
           readByteSpan(image, frame, inputRegister(16));
-      if (*inputs[6] != OBELISK_RT_ASSOC_KEY_ELEMENT ||
+      if (*inputs[6] != TALOS_RT_ASSOC_KEY_ELEMENT ||
           !readTrace(15, keySlots) || !plan)
-        return OBELISK_RT_INVALID_BYTECODE;
-      status = obelisk_rt_v1_assoc_create_element_keyed(
+        return TALOS_RT_INVALID_BYTECODE;
+      status = talos_rt_v1_assoc_create_element_keyed(
           lane, *inputs[0], static_cast<uint32_t>(*inputs[1]),
           static_cast<uint32_t>(*inputs[2]), *inputs[3], *inputs[4], *inputs[5],
           slots.data(), slots.size(), *inputs[8],
@@ -1048,31 +1048,31 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           keySlots.size(), reinterpret_cast<const uint8_t *>(plan->data),
           plan->size, &result);
     } else {
-      status = obelisk_rt_v1_assoc_create_typed(
+      status = talos_rt_v1_assoc_create_typed(
           lane, *inputs[0], static_cast<uint32_t>(*inputs[1]),
           static_cast<uint32_t>(*inputs[2]), *inputs[3], *inputs[4], *inputs[5],
           slots.data(), slots.size(), static_cast<uint32_t>(*inputs[6]),
           *inputs[7], &result);
     }
-    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeManaged(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_READ: {
-    obelisk_rt_object_v1 *array = readManaged(inputRegister(0));
-    obelisk_rt_assoc_key_v1 key{};
+  case TALOS_RT_INTRINSIC_V1_ASSOC_READ: {
+    talos_rt_object_v1 *array = readManaged(inputRegister(0));
+    talos_rt_assoc_key_v1 key{};
     if (!readAssocKey(array, inputRegister(1), key))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     std::memset(frame.data + output.offset, 0, output.size);
     uint32_t present = 0;
-    if (output.kind == OBELISK_RT_DBREG_HANDLE) {
+    if (output.kind == TALOS_RT_DBREG_HANDLE) {
       uint64_t event = UINT64_MAX;
-      obelisk_rt_status status = obelisk_rt_v1_assoc_read_checked(
+      talos_rt_status status = talos_rt_v1_assoc_read_checked(
           array, &key, &event, sizeof(event), nullptr, 0, &present);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
-      uint32_t kind = OBELISK_RT_DESCRIPTOR_EVENT;
+      uint32_t kind = TALOS_RT_DESCRIPTOR_EVENT;
       int64_t start = static_cast<int64_t>(event);
       int64_t begin = start == kInvalidHandleStart ? 0 : start;
       int64_t end = start == kInvalidHandleStart
@@ -1082,121 +1082,121 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::memcpy(frame.data + output.offset + 8, &begin, sizeof(begin));
       std::memcpy(frame.data + output.offset + 16, &start, sizeof(start));
       std::memcpy(frame.data + output.offset + 24, &end, sizeof(end));
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     uint64_t planeSize =
-        output.kind == OBELISK_RT_DBREG_LOGIC ? output.size / 2 : output.size;
-    void *unknown = output.kind == OBELISK_RT_DBREG_LOGIC
+        output.kind == TALOS_RT_DBREG_LOGIC ? output.size / 2 : output.size;
+    void *unknown = output.kind == TALOS_RT_DBREG_LOGIC
                         ? frame.data + output.offset + planeSize
                         : nullptr;
-    return obelisk_rt_v1_assoc_read_checked(
+    return talos_rt_v1_assoc_read_checked(
         array, &key, frame.data + output.offset, planeSize, unknown,
         unknown ? planeSize : 0, &present);
   }
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_WRITE: {
-    obelisk_rt_object_v1 *array = readManaged(inputRegister(0));
-    obelisk_rt_assoc_key_v1 key{};
+  case TALOS_RT_INTRINSIC_V1_ASSOC_WRITE: {
+    talos_rt_object_v1 *array = readManaged(inputRegister(0));
+    talos_rt_assoc_key_v1 key{};
     if (!readAssocKey(array, inputRegister(1), key))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout input = layoutAt(image, frame.function, inputRegister(2));
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    if (input.kind == OBELISK_RT_DBREG_HANDLE) {
+      return TALOS_RT_INVALID_LIFECYCLE;
+    if (input.kind == TALOS_RT_DBREG_HANDLE) {
       int64_t event = kInvalidHandleStart;
       std::memcpy(&event, frame.data + input.offset + 16, sizeof(event));
-      return obelisk_rt_v1_assoc_write_checked(lane, array, &key, &event,
+      return talos_rt_v1_assoc_write_checked(lane, array, &key, &event,
                                                sizeof(event), nullptr, 0);
     }
     uint64_t planeSize =
-        input.kind == OBELISK_RT_DBREG_LOGIC ? input.size / 2 : input.size;
-    const void *unknown = input.kind == OBELISK_RT_DBREG_LOGIC
+        input.kind == TALOS_RT_DBREG_LOGIC ? input.size / 2 : input.size;
+    const void *unknown = input.kind == TALOS_RT_DBREG_LOGIC
                               ? frame.data + input.offset + planeSize
                               : nullptr;
-    return obelisk_rt_v1_assoc_write_checked(
+    return talos_rt_v1_assoc_write_checked(
         lane, array, &key, frame.data + input.offset, planeSize, unknown,
         unknown ? planeSize : 0);
   }
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_EXISTS: {
-    obelisk_rt_object_v1 *array = readManaged(inputRegister(0));
-    obelisk_rt_assoc_key_v1 key{};
+  case TALOS_RT_INTRINSIC_V1_ASSOC_EXISTS: {
+    talos_rt_object_v1 *array = readManaged(inputRegister(0));
+    talos_rt_assoc_key_v1 key{};
     if (!readAssocKey(array, inputRegister(1), key))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t exists = 0;
-    obelisk_rt_status status = obelisk_rt_v1_assoc_exists(array, &key, &exists);
-    return status == OBELISK_RT_OK ? sentinel(0, exists) : status;
+    talos_rt_status status = talos_rt_v1_assoc_exists(array, &key, &exists);
+    return status == TALOS_RT_OK ? sentinel(0, exists) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_DELETE: {
-    obelisk_rt_object_v1 *array = readManaged(inputRegister(0));
-    obelisk_rt_assoc_key_v1 key{};
+  case TALOS_RT_INTRINSIC_V1_ASSOC_DELETE: {
+    talos_rt_object_v1 *array = readManaged(inputRegister(0));
+    talos_rt_assoc_key_v1 key{};
     return readAssocKey(array, inputRegister(1), key)
-               ? obelisk_rt_v1_assoc_delete(array, &key)
-               : OBELISK_RT_INVALID_BYTECODE;
+               ? talos_rt_v1_assoc_delete(array, &key)
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_DEFAULT: {
-    obelisk_rt_object_v1 *array = readManaged(inputRegister(0));
+  case TALOS_RT_INTRINSIC_V1_ASSOC_DEFAULT: {
+    talos_rt_object_v1 *array = readManaged(inputRegister(0));
     Layout input = layoutAt(image, frame.function, inputRegister(1));
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    if (input.kind == OBELISK_RT_DBREG_HANDLE) {
+      return TALOS_RT_INVALID_LIFECYCLE;
+    if (input.kind == TALOS_RT_DBREG_HANDLE) {
       int64_t event = kInvalidHandleStart;
       std::memcpy(&event, frame.data + input.offset + 16, sizeof(event));
-      return obelisk_rt_v1_assoc_set_default_checked(lane, array, &event,
+      return talos_rt_v1_assoc_set_default_checked(lane, array, &event,
                                                      sizeof(event), nullptr, 0);
     }
     uint64_t planeSize =
-        input.kind == OBELISK_RT_DBREG_LOGIC ? input.size / 2 : input.size;
-    const void *unknown = input.kind == OBELISK_RT_DBREG_LOGIC
+        input.kind == TALOS_RT_DBREG_LOGIC ? input.size / 2 : input.size;
+    const void *unknown = input.kind == TALOS_RT_DBREG_LOGIC
                               ? frame.data + input.offset + planeSize
                               : nullptr;
-    return obelisk_rt_v1_assoc_set_default_checked(
+    return talos_rt_v1_assoc_set_default_checked(
         lane, array, frame.data + input.offset, planeSize, unknown,
         unknown ? planeSize : 0);
   }
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_TRAVERSE: {
+  case TALOS_RT_INTRINSIC_V1_ASSOC_TRAVERSE: {
     auto direction = scalar(2);
     auto endpoint = scalar(3);
-    obelisk_rt_object_v1 *array = readManaged(inputRegister(0));
-    obelisk_rt_assoc_key_v1 key{};
+    talos_rt_object_v1 *array = readManaged(inputRegister(0));
+    talos_rt_assoc_key_v1 key{};
     if (!direction || !endpoint || (*endpoint != 0 && *endpoint != 1) ||
         (static_cast<int64_t>(*direction) != -1 &&
          static_cast<int64_t>(*direction) != 1) ||
         !readAssocKey(array, inputRegister(1), key))
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     uint32_t succeeded = 0;
-    obelisk_rt_status status;
+    talos_rt_status status;
     if (*endpoint)
       status = static_cast<int64_t>(*direction) > 0
-                   ? obelisk_rt_v1_assoc_first(lane, array, &key, &succeeded)
-                   : obelisk_rt_v1_assoc_last(lane, array, &key, &succeeded);
+                   ? talos_rt_v1_assoc_first(lane, array, &key, &succeeded)
+                   : talos_rt_v1_assoc_last(lane, array, &key, &succeeded);
     else
       status = static_cast<int64_t>(*direction) > 0
-                   ? obelisk_rt_v1_assoc_next(lane, array, &key, &succeeded)
-                   : obelisk_rt_v1_assoc_prev(lane, array, &key, &succeeded);
-    if (status != OBELISK_RT_OK)
+                   ? talos_rt_v1_assoc_next(lane, array, &key, &succeeded)
+                   : talos_rt_v1_assoc_prev(lane, array, &key, &succeeded);
+    if (status != TALOS_RT_OK)
       return status;
     if (!writeAssocKey(outputRegister(0), key))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return sentinel(1, succeeded);
   }
-  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_ASSOC: {
-    obelisk_rt_object_v1 *array = readManaged(inputRegister(0));
-    obelisk_rt_assoc_key_v1 key{};
-    obelisk_rt_object_v1 *watchOwner = nullptr;
+  case TALOS_RT_INTRINSIC_V1_REFERENCE_PATH_ASSOC: {
+    talos_rt_object_v1 *array = readManaged(inputRegister(0));
+    talos_rt_assoc_key_v1 key{};
+    talos_rt_object_v1 *watchOwner = nullptr;
     uint64_t ownerPayload = 0;
     uint32_t ownerManaged = 0;
     if (!readAssocKey(array, inputRegister(1), key) ||
         !readArgumentRef(inputRegister(2), watchOwner, ownerPayload,
                          ownerManaged))
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_object_v1 *path = nullptr;
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_object_v1 *path = nullptr;
     uint8_t *stateValue =
         context->stateValue.empty()
             ? nullptr
@@ -1205,226 +1205,226 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         context->stateUnknown.empty()
             ? nullptr
             : reinterpret_cast<uint8_t *>(context->stateUnknown.data());
-    obelisk_rt_status status = obelisk_rt_v1_reference_path_assoc_create(
+    talos_rt_status status = talos_rt_v1_reference_path_assoc_create(
         lane, array, &key, watchOwner, ownerPayload, ownerManaged, stateValue,
         stateUnknown, image.stateBitCount, &path);
-    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), path)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeManaged(outputRegister(0), path)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_BOUNDED: {
     auto bound = scalar(0);
     uint64_t result = 0;
     if (!bound)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_status status =
-        obelisk_rt_v1_random_bounded(context, *bound, &result);
-    return status == OBELISK_RT_OK ? sentinel(0, result) : status;
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_status status =
+        talos_rt_v1_random_bounded(context, *bound, &result);
+    return status == TALOS_RT_OK ? sentinel(0, result) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION: {
     auto distribution = scalar(0), seed = scalar(1), first = scalar(2),
          second = scalar(3);
     if (!distribution || !seed || !first || !second ||
         *distribution > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     int32_t result = 0;
     int32_t nextSeed = 0;
-    obelisk_rt_status status = obelisk_rt_v1_random_distribution(
-        context, static_cast<obelisk_rt_distribution>(*distribution),
+    talos_rt_status status = talos_rt_v1_random_distribution(
+        context, static_cast<talos_rt_distribution>(*distribution),
         static_cast<int32_t>(*seed), static_cast<int32_t>(*first),
         static_cast<int32_t>(*second), &result, &nextSeed);
-    if (status != OBELISK_RT_OK ||
+    if (status != TALOS_RT_OK ||
         !writeScalar(image, frame, outputRegister(0),
                      static_cast<uint32_t>(result)) ||
         !writeScalar(image, frame, outputRegister(1),
                      static_cast<uint32_t>(nextSeed)))
-      return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_BYTECODE : status;
-    return OBELISK_RT_OK;
+      return status == TALOS_RT_OK ? TALOS_RT_INVALID_BYTECODE : status;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT: {
     auto key = scalar(0), position = scalar(1), width = scalar(2);
     if (!key || !position || !width || *width > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t nextPosition = 0;
     uint64_t value = 0;
-    obelisk_rt_status status = obelisk_rt_v1_random_cycle_next(
+    talos_rt_status status = talos_rt_v1_random_cycle_next(
         *key, *position, static_cast<uint32_t>(*width), &nextPosition, &value);
-    if (status != OBELISK_RT_OK ||
+    if (status != TALOS_RT_OK ||
         !writeScalar(image, frame, outputRegister(0), nextPosition) ||
         !writeScalar(image, frame, outputRegister(1), value))
-      return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_BYTECODE : status;
-    return OBELISK_RT_OK;
+      return status == TALOS_RT_OK ? TALOS_RT_INVALID_BYTECODE : status;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_NEXT: {
     uint64_t result = 0;
-    obelisk_rt_status status = obelisk_rt_v1_random_next(context, &result);
-    return status == OBELISK_RT_OK ? sentinel(0, result) : status;
+    talos_rt_status status = talos_rt_v1_random_next(context, &result);
+    return status == TALOS_RT_OK ? sentinel(0, result) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_LEGACY: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_LEGACY: {
     int32_t result = 0;
-    obelisk_rt_status status = obelisk_rt_v1_random_legacy(context, &result);
-    return status == OBELISK_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
+    talos_rt_status status = talos_rt_v1_random_legacy(context, &result);
+    return status == TALOS_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
                                    : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_SEED: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_SEED: {
     auto seed = scalar(0);
-    return seed ? obelisk_rt_v1_random_seed(context, *seed)
-                : OBELISK_RT_INVALID_BYTECODE;
+    return seed ? talos_rt_v1_random_seed(context, *seed)
+                : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_ENTER: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_ENTER: {
     auto scope = scalar(0);
     if (!scope)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t activation = 0;
     auto status =
-        obelisk_rt_v1_random_initialization_enter(context, *scope, &activation);
-    return status == OBELISK_RT_OK ? sentinel(0, activation) : status;
+        talos_rt_v1_random_initialization_enter(context, *scope, &activation);
+    return status == TALOS_RT_OK ? sentinel(0, activation) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_LEAVE: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_LEAVE: {
     auto activation = scalar(0);
     return activation
-               ? obelisk_rt_v1_random_initialization_leave(context, *activation)
-               : OBELISK_RT_INVALID_BYTECODE;
+               ? talos_rt_v1_random_initialization_leave(context, *activation)
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_GET_STATE: {
-    obelisk_rt_random_state_v1 state{};
-    obelisk_rt_status status = obelisk_rt_v1_random_get_state(context, &state);
-    if (status != OBELISK_RT_OK)
+  case TALOS_RT_INTRINSIC_V1_RANDOM_GET_STATE: {
+    talos_rt_random_state_v1 state{};
+    talos_rt_status status = talos_rt_v1_random_get_state(context, &state);
+    if (status != TALOS_RT_OK)
       return status;
     status = sentinel(0, state.state);
-    return status == OBELISK_RT_OK ? sentinel(1, state.increment) : status;
+    return status == TALOS_RT_OK ? sentinel(1, state.increment) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_SET_STATE: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_SET_STATE: {
     auto state = scalar(0);
     auto increment = scalar(1);
     if (!state || !increment)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_random_state_v1 snapshot{*state, *increment};
-    return obelisk_rt_v1_random_set_state(context, &snapshot);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_random_state_v1 snapshot{*state, *increment};
+    return talos_rt_v1_random_set_state(context, &snapshot);
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_SOLVE: {
     std::optional<ByteSpan> program = bytes(0);
     auto start = scalar(1), mutableMask = scalar(2), constraintMask = scalar(3),
          maxAttempts = scalar(4);
     if (!program || !start || !mutableMask || !constraintMask || !maxAttempts)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::vector<uint64_t> captures;
     captures.reserve(site.inputCount - 5);
     for (uint32_t index = 5; index != site.inputCount; ++index) {
       auto capture = scalar(index);
       if (!capture)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       captures.push_back(*capture);
     }
     uint64_t assignment = 0;
     uint32_t success = 0;
-    obelisk_rt_status status = obelisk_rt_v1_random_solve_modes(
+    talos_rt_status status = talos_rt_v1_random_solve_modes(
         context, program->data, program->size, *start, *mutableMask,
         *constraintMask, *maxAttempts, captures.data(), captures.size(),
         &assignment, &success);
-    if (status != OBELISK_RT_OK ||
+    if (status != TALOS_RT_OK ||
         !writeScalar(image, frame, outputRegister(0), assignment) ||
         !writeScalar(image, frame, outputRegister(1), success))
-      return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_BYTECODE : status;
-    return OBELISK_RT_OK;
+      return status == TALOS_RT_OK ? TALOS_RT_INVALID_BYTECODE : status;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE: {
     std::optional<ByteSpan> program = bytes(0);
     auto start = scalar(1), mutableMask = scalar(2), constraintMask = scalar(3),
          maxAttempts = scalar(4), rngState = scalar(5),
          rngIncrement = scalar(6);
     if (!program || !start || !mutableMask || !constraintMask || !maxAttempts ||
         !rngState || !rngIncrement)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::vector<uint64_t> captures;
     captures.reserve(site.inputCount - 7);
     for (uint32_t index = 7; index != site.inputCount; ++index) {
       auto capture = scalar(index);
       if (!capture)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       captures.push_back(*capture);
     }
     uint64_t assignment = 0;
     uint64_t nextRngState = 0;
     uint32_t success = 0;
-    obelisk_rt_status status = obelisk_rt_v1_random_solve_modes_state(
+    talos_rt_status status = talos_rt_v1_random_solve_modes_state(
         context, program->data, program->size, *start, *mutableMask,
         *constraintMask, *maxAttempts, *rngState, *rngIncrement,
         captures.data(), captures.size(), &assignment, &success, &nextRngState);
-    if (status != OBELISK_RT_OK ||
+    if (status != TALOS_RT_OK ||
         !writeScalar(image, frame, outputRegister(0), assignment) ||
         !writeScalar(image, frame, outputRegister(1), success) ||
         !writeScalar(image, frame, outputRegister(2), nextRngState))
-      return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_BYTECODE : status;
-    return OBELISK_RT_OK;
+      return status == TALOS_RT_OK ? TALOS_RT_INVALID_BYTECODE : status;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_WIDE_STATE: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_SOLVE_WIDE_STATE: {
     std::optional<ByteSpan> program = bytes(0);
     auto constraintMask = scalar(3), maxAttempts = scalar(4),
          rngState = scalar(5), rngIncrement = scalar(6);
     if (!program || !constraintMask || !maxAttempts || !rngState ||
         !rngIncrement)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout startLayout = layoutAt(image, frame.function, inputRegister(1));
     Layout mutableLayout = layoutAt(image, frame.function, inputRegister(2));
     Layout assignmentLayout =
         layoutAt(image, frame.function, outputRegister(0));
-    if (startLayout.kind != OBELISK_RT_DBREG_BITS ||
-        mutableLayout.kind != OBELISK_RT_DBREG_BITS ||
+    if (startLayout.kind != TALOS_RT_DBREG_BITS ||
+        mutableLayout.kind != TALOS_RT_DBREG_BITS ||
         mutableLayout.width != startLayout.width ||
-        assignmentLayout.kind != OBELISK_RT_DBREG_BITS ||
+        assignmentLayout.kind != TALOS_RT_DBREG_BITS ||
         assignmentLayout.width != startLayout.width)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Logic start = readLogic(frame.data, startLayout);
     Logic mutableMask = readLogic(frame.data, mutableLayout);
     std::vector<uint64_t> captures;
     std::vector<uint32_t> captureWidths;
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       for (uint32_t index = 7; index != site.inputCount; ++index) {
         Layout layout = layoutAt(image, frame.function, inputRegister(index));
-        if (layout.kind != OBELISK_RT_DBREG_BITS)
-          return OBELISK_RT_INVALID_BYTECODE;
+        if (layout.kind != TALOS_RT_DBREG_BITS)
+          return TALOS_RT_INVALID_BYTECODE;
         captureWidths.push_back(layout.width);
         Logic capture = readLogic(frame.data, layout);
         captures.insert(captures.end(), capture.value.begin(),
                         capture.value.end());
       }
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      return TALOS_RT_OUT_OF_MEMORY;
     }
-    OBELISK_RT_CATCH(const std::length_error &) {
-      return OBELISK_RT_OUT_OF_RESOURCES;
+    TALOS_RT_CATCH(const std::length_error &) {
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
     Logic assignment{start.width, false, LimbVector(limbCount(start.width)),
                      LimbVector(limbCount(start.width))};
     uint64_t nextRngState = 0;
     uint32_t success = 0;
-    obelisk_rt_status status = obelisk_rt_v1_random_solve_wide_modes_state(
+    talos_rt_status status = talos_rt_v1_random_solve_wide_modes_state(
         context, program->data, program->size, start.value.data(),
         mutableMask.value.data(), start.value.size(), *constraintMask,
         *maxAttempts, *rngState, *rngIncrement, captures.data(),
         captures.size(), captureWidths.data(), captureWidths.size(),
         assignment.value.data(), &success, &nextRngState);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     writeLogic(frame.data, assignmentLayout, assignment);
     if (!writeScalar(image, frame, outputRegister(1), success) ||
         !writeScalar(image, frame, outputRegister(2), nextRngState))
-      return OBELISK_RT_INVALID_BYTECODE;
-    return OBELISK_RT_OK;
+      return TALOS_RT_INVALID_BYTECODE;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_SAMPLE: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_CYCLE_SAMPLE: {
     auto program = bytes(0);
     auto constraintMask = scalar(3), rngState = scalar(4),
          rngIncrement = scalar(5), key = scalar(6), position = scalar(7),
          offset = scalar(9), width = scalar(10);
     // The cycle's domain identity is a managed string register.
-    obelisk_rt_string_v1 domain = 0;
+    talos_rt_string_v1 domain = 0;
     if (!program || !constraintMask || !rngState || !rngIncrement || !key ||
         !position || !readString(inputRegister(8), domain) || !offset ||
         !width || *offset > UINT32_MAX || *width > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout startLayout = layoutAt(image, frame.function, inputRegister(1));
     Layout mutableLayout = layoutAt(image, frame.function, inputRegister(2));
     Layout assignmentLayout =
@@ -1433,7 +1433,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     Logic mutableMask = readLogic(frame.data, mutableLayout);
     std::vector<uint64_t> captures;
     std::vector<uint32_t> captureWidths;
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       for (uint32_t index = 11; index != site.inputCount; ++index) {
         Layout layout = layoutAt(image, frame.function, inputRegister(index));
         captureWidths.push_back(layout.width);
@@ -1442,25 +1442,25 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                         capture.value.end());
       }
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      return TALOS_RT_OUT_OF_MEMORY;
     }
-    OBELISK_RT_CATCH(const std::length_error &) {
-      return OBELISK_RT_OUT_OF_RESOURCES;
+    TALOS_RT_CATCH(const std::length_error &) {
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
     Logic assignment{start.width, false, LimbVector(limbCount(start.width)),
                      LimbVector(limbCount(start.width))};
     uint64_t nextState = 0, nextKey = 0, nextPosition = 0;
-    obelisk_rt_string_v1 nextDomain = 0;
+    talos_rt_string_v1 nextDomain = 0;
     uint32_t success = 0;
-    obelisk_rt_status status = obelisk_rt_v1_random_cycle_sample(
+    talos_rt_status status = talos_rt_v1_random_cycle_sample(
         context, program->data, program->size, start.value.data(),
         mutableMask.value.data(), start.value.size(), *constraintMask,
         *rngState, *rngIncrement, *key, *position, domain, *offset, *width,
         captures.data(), captures.size(), captureWidths.data(),
         captureWidths.size(), assignment.value.data(), &success, &nextState,
         &nextKey, &nextPosition, &nextDomain);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     writeLogic(frame.data, assignmentLayout, assignment);
     if (!writeScalar(image, frame, outputRegister(1), success) ||
@@ -1468,146 +1468,146 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         !writeScalar(image, frame, outputRegister(3), nextKey) ||
         !writeScalar(image, frame, outputRegister(4), nextPosition) ||
         !writeString(outputRegister(5), nextDomain))
-      return OBELISK_RT_INVALID_BYTECODE;
-    return OBELISK_RT_OK;
+      return TALOS_RT_INVALID_BYTECODE;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_TO_RANK: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_REAL_TO_RANK: {
     Layout valueLayout = layoutAt(image, frame.function, inputRegister(0));
     Layout rankLayout = layoutAt(image, frame.function, outputRegister(0));
-    bool shortReal = valueLayout.kind == OBELISK_RT_DBREG_REAL32;
+    bool shortReal = valueLayout.kind == TALOS_RT_DBREG_REAL32;
     uint32_t width =
-        shortReal ? OBELISK_RT_REAL32_RANK_BITS : OBELISK_RT_REAL64_RANK_BITS;
-    if ((!shortReal && valueLayout.kind != OBELISK_RT_DBREG_REAL64) ||
+        shortReal ? TALOS_RT_REAL32_RANK_BITS : TALOS_RT_REAL64_RANK_BITS;
+    if ((!shortReal && valueLayout.kind != TALOS_RT_DBREG_REAL64) ||
         valueLayout.size != (shortReal ? sizeof(float) : sizeof(double)) ||
-        rankLayout.kind != OBELISK_RT_DBREG_BITS || rankLayout.width != width)
-      return OBELISK_RT_INVALID_BYTECODE;
-    OBELISK_RT_TRY {
+        rankLayout.kind != TALOS_RT_DBREG_BITS || rankLayout.width != width)
+      return TALOS_RT_INVALID_BYTECODE;
+    TALOS_RT_TRY {
       Logic rank{width, false, LimbVector(limbCount(width)),
                  LimbVector(limbCount(width))};
-      obelisk_rt_status status;
+      talos_rt_status status;
       if (shortReal) {
         float value;
         std::memcpy(&value, frame.data + valueLayout.offset, sizeof(value));
-        status = obelisk_rt_v1_random_real32_to_rank(value, rank.value.data(),
+        status = talos_rt_v1_random_real32_to_rank(value, rank.value.data(),
                                                      rank.value.size());
       } else {
         double value;
         std::memcpy(&value, frame.data + valueLayout.offset, sizeof(value));
-        status = obelisk_rt_v1_random_real64_to_rank(value, rank.value.data(),
+        status = talos_rt_v1_random_real64_to_rank(value, rank.value.data(),
                                                      rank.value.size());
       }
-      if (status != OBELISK_RT_OK && status != OBELISK_RT_INVALID_ARGUMENT)
+      if (status != TALOS_RT_OK && status != TALOS_RT_INVALID_ARGUMENT)
         return status;
       writeLogic(frame.data, rankLayout, rank);
       if (!writeScalar(image, frame, outputRegister(1),
-                       status == OBELISK_RT_OK))
-        return OBELISK_RT_INVALID_BYTECODE;
-      return OBELISK_RT_OK;
+                       status == TALOS_RT_OK))
+        return TALOS_RT_INVALID_BYTECODE;
+      return TALOS_RT_OK;
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      return TALOS_RT_OUT_OF_MEMORY;
     }
-    OBELISK_RT_CATCH(const std::length_error &) {
-      return OBELISK_RT_OUT_OF_RESOURCES;
+    TALOS_RT_CATCH(const std::length_error &) {
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
   }
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_FROM_RANK: {
+  case TALOS_RT_INTRINSIC_V1_RANDOM_REAL_FROM_RANK: {
     Layout rankLayout = layoutAt(image, frame.function, inputRegister(0));
     Layout valueLayout = layoutAt(image, frame.function, outputRegister(0));
-    bool shortReal = valueLayout.kind == OBELISK_RT_DBREG_REAL32;
+    bool shortReal = valueLayout.kind == TALOS_RT_DBREG_REAL32;
     uint32_t width =
-        shortReal ? OBELISK_RT_REAL32_RANK_BITS : OBELISK_RT_REAL64_RANK_BITS;
-    if ((!shortReal && valueLayout.kind != OBELISK_RT_DBREG_REAL64) ||
+        shortReal ? TALOS_RT_REAL32_RANK_BITS : TALOS_RT_REAL64_RANK_BITS;
+    if ((!shortReal && valueLayout.kind != TALOS_RT_DBREG_REAL64) ||
         valueLayout.size != (shortReal ? sizeof(float) : sizeof(double)) ||
-        rankLayout.kind != OBELISK_RT_DBREG_BITS || rankLayout.width != width)
-      return OBELISK_RT_INVALID_BYTECODE;
-    OBELISK_RT_TRY {
+        rankLayout.kind != TALOS_RT_DBREG_BITS || rankLayout.width != width)
+      return TALOS_RT_INVALID_BYTECODE;
+    TALOS_RT_TRY {
       Logic rank = readLogic(frame.data, rankLayout);
-      obelisk_rt_status status;
+      talos_rt_status status;
       if (shortReal) {
         float value;
-        status = obelisk_rt_v1_random_real32_from_rank(
+        status = talos_rt_v1_random_real32_from_rank(
             rank.value.data(), rank.value.size(), &value);
-        if (status == OBELISK_RT_OK)
+        if (status == TALOS_RT_OK)
           std::memcpy(frame.data + valueLayout.offset, &value, sizeof(value));
       } else {
         double value;
-        status = obelisk_rt_v1_random_real64_from_rank(
+        status = talos_rt_v1_random_real64_from_rank(
             rank.value.data(), rank.value.size(), &value);
-        if (status == OBELISK_RT_OK)
+        if (status == TALOS_RT_OK)
           std::memcpy(frame.data + valueLayout.offset, &value, sizeof(value));
       }
       return status;
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      return TALOS_RT_OUT_OF_MEMORY;
     }
-    OBELISK_RT_CATCH(const std::length_error &) {
-      return OBELISK_RT_OUT_OF_RESOURCES;
+    TALOS_RT_CATCH(const std::length_error &) {
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_POINT_HIT: {
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_POINT_HIT: {
     auto point = scalar(0);
     auto enabled = scalar(1);
-    return point && enabled ? obelisk_rt_v1_coverage_point_hit(context, *point,
+    return point && enabled ? talos_rt_v1_coverage_point_hit(context, *point,
                                                                *enabled != 0)
-                            : OBELISK_RT_INVALID_BYTECODE;
+                            : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_PREPARE: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_PREPARE: {
     auto type = scalar(0), count = scalar(1);
     if (!type || !count || *count > UINT32_MAX ||
         site.inputCount != 2 + 2 * *count)
-      return OBELISK_RT_INVALID_BYTECODE;
-    std::vector<obelisk_rt_functional_value_v1> expressions;
-    OBELISK_RT_TRY {
+      return TALOS_RT_INVALID_BYTECODE;
+    std::vector<talos_rt_functional_value_v1> expressions;
+    TALOS_RT_TRY {
       expressions.resize(static_cast<size_t>(*count));
       for (uint32_t index = 0; index != *count; ++index) {
         auto id = scalar(2 + index);
         if (!id || !functionalValue(
                        inputRegister(2 + static_cast<uint32_t>(*count) + index),
                        *id, expressions[index]))
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
       }
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      return TALOS_RT_OUT_OF_MEMORY;
     }
-    OBELISK_RT_CATCH(const std::length_error &) {
-      return OBELISK_RT_OUT_OF_RESOURCES;
+    TALOS_RT_CATCH(const std::length_error &) {
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
     uint64_t token = 0;
-    obelisk_rt_status status = obelisk_rt_v1_covergroup_prepare(
+    talos_rt_status status = talos_rt_v1_covergroup_prepare(
         context, *type, expressions.data(), expressions.size(), &token);
-    return status == OBELISK_RT_OK ? sentinel(0, token) : status;
+    return status == TALOS_RT_OK ? sentinel(0, token) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CANDIDATES: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_CANDIDATES: {
     auto token = scalar(0), selector = scalar(1), maximum = scalar(3);
     if (!token || !selector || !maximum || *maximum > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_covergroup_candidates(context, *token, *selector,
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_covergroup_candidates(context, *token, *selector,
                                                readManaged(inputRegister(2)),
                                                static_cast<uint32_t>(*maximum));
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIND_WITH: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_BIND_WITH: {
     auto token = scalar(0), selector = scalar(1);
     if (!token || !selector)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_covergroup_bind_with(context, *token, *selector,
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_covergroup_bind_with(context, *token, *selector,
                                               readManaged(inputRegister(2)));
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_RELEASE_PREPARATION: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_RELEASE_PREPARATION: {
     auto token = scalar(0);
-    return token ? obelisk_rt_v1_covergroup_release_preparation(context, *token)
-                 : OBELISK_RT_INVALID_BYTECODE;
+    return token ? talos_rt_v1_covergroup_release_preparation(context, *token)
+                 : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_CREATE: {
     auto type = scalar(0), formalCount = scalar(1), expressionCount = scalar(2);
     if (!type || !formalCount || !expressionCount ||
         *formalCount > UINT32_MAX || *expressionCount > UINT32_MAX ||
         site.inputCount != 3 + 3 * *formalCount + 2 * *expressionCount)
-      return OBELISK_RT_INVALID_BYTECODE;
-    std::vector<obelisk_rt_functional_value_v1> formals, expressions;
-    OBELISK_RT_TRY {
+      return TALOS_RT_INVALID_BYTECODE;
+    std::vector<talos_rt_functional_value_v1> formals, expressions;
+    TALOS_RT_TRY {
       formals.resize(static_cast<size_t>(*formalCount));
       expressions.resize(static_cast<size_t>(*expressionCount));
       uint32_t idBase = 3;
@@ -1620,7 +1620,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         if (!id || !referenceWidth ||
             !functionalValue(inputRegister(valueBase + index), *id,
                              formals[index], *referenceWidth))
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
       }
       for (uint32_t index = 0; index != *expressionCount; ++index) {
         auto id = scalar(idBase + static_cast<uint32_t>(*formalCount) + index);
@@ -1629,24 +1629,24 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                            static_cast<uint32_t>(*formalCount) +
                                            index),
                              *id, expressions[index]))
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
       }
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      return TALOS_RT_OUT_OF_MEMORY;
     }
-    OBELISK_RT_CATCH(const std::length_error &) {
-      return OBELISK_RT_OUT_OF_RESOURCES;
+    TALOS_RT_CATCH(const std::length_error &) {
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
-    obelisk_rt_covergroup_v1 handle = 0;
-    obelisk_rt_status status = obelisk_rt_v1_covergroup_create(
+    talos_rt_covergroup_v1 handle = 0;
+    talos_rt_status status = talos_rt_v1_covergroup_create(
         context, *type, formals.data(), formals.size(), expressions.data(),
         expressions.size(), &handle);
-    return status == OBELISK_RT_OK ? sentinel(0, handle) : status;
+    return status == TALOS_RT_OK ? sentinel(0, handle) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CLOCK_EVENT_REGISTER: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_CLOCK_EVENT_REGISTER: {
     if (site.inputCount < 5)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     auto clauseCountValue = scalar(0), conditionCountValue = scalar(1),
          strobeValue = scalar(2), observerCodeUnit = scalar(3),
          captureCountValue = scalar(4);
@@ -1654,7 +1654,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         !observerCodeUnit || !captureCountValue || *clauseCountValue == 0 ||
         *clauseCountValue > 64 || *conditionCountValue > *clauseCountValue ||
         *strobeValue > 1 || *captureCountValue > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t clauseCount = static_cast<uint32_t>(*clauseCountValue);
     uint32_t conditionCount = static_cast<uint32_t>(*conditionCountValue);
     uint32_t observerCount = clauseCount + conditionCount;
@@ -1665,13 +1665,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       uint32_t dependencies = 0;
       uint32_t width = 0;
       bool fourState = false;
-      const obelisk_rt_observer_descriptor_v1 *descriptor = nullptr;
+      const talos_rt_observer_descriptor_v1 *descriptor = nullptr;
     };
     std::vector<ObserverMeta> metadata;
     std::vector<uint32_t> edges;
     std::vector<int32_t> conditionIndices;
-    std::vector<obelisk_rt_computed_capture_v1> samplerCaptures;
-    static_assert(alignof(obelisk_rt_computed_wait_record_v1) <=
+    std::vector<talos_rt_computed_capture_v1> samplerCaptures;
+    static_assert(alignof(talos_rt_computed_wait_record_v1) <=
                   alignof(uint64_t));
     std::vector<uint64_t> record;
     uint64_t recordSize = 0;
@@ -1680,13 +1680,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return cursor <= site.inputCount &&
              count <= uint64_t{site.inputCount - cursor};
     };
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       metadata.resize(observerCount);
       uint64_t eventCaptureCount = 0;
       uint64_t dependencyCount = 0;
       uint64_t previousLimbs = 0;
       if (!hasInputs(uint64_t{observerCount} * 5))
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       for (uint32_t index = 0; index != observerCount; ++index) {
         auto codeUnit = scalar(cursor++), captures = scalar(cursor++),
              dependencies = scalar(cursor++), width = scalar(cursor++),
@@ -1695,17 +1695,17 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             *codeUnit == 0 || *captures > UINT32_MAX ||
             *dependencies > UINT32_MAX || *width == 0 || *width > UINT32_MAX ||
             *fourState > 1)
-          return OBELISK_RT_INVALID_BYTECODE;
-        const obelisk_rt_observer_descriptor_v1 *descriptor =
-            obelisk::process::findObserverDescriptor(context->execution,
+          return TALOS_RT_INVALID_BYTECODE;
+        const talos_rt_observer_descriptor_v1 *descriptor =
+            talos::process::findObserverDescriptor(context->execution,
                                                      *codeUnit);
         uint32_t expectedFlags =
-            *fourState != 0 ? OBELISK_RT_OBSERVER_FOUR_STATE : 0;
+            *fourState != 0 ? TALOS_RT_OBSERVER_FOUR_STATE : 0;
         if (!descriptor || descriptor->capture_count != *captures ||
             descriptor->result_width != *width ||
             descriptor->flags != expectedFlags ||
             (index >= clauseCount && *width != 1))
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         metadata[index] = {*codeUnit,
                            static_cast<uint32_t>(*captures),
                            static_cast<uint32_t>(*dependencies),
@@ -1714,60 +1714,60 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                            descriptor};
         if (eventCaptureCount > UINT32_MAX - *captures ||
             dependencyCount > UINT32_MAX - *dependencies)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         eventCaptureCount += *captures;
         dependencyCount += *dependencies;
         if (index < clauseCount) {
           uint64_t limbs = (*width + 63) / 64;
           if (previousLimbs > UINT32_MAX - limbs)
-            return OBELISK_RT_INVALID_BYTECODE;
+            return TALOS_RT_INVALID_BYTECODE;
           previousLimbs += limbs;
         }
       }
       if (!hasInputs(uint64_t{clauseCount} * 2))
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       edges.resize(clauseCount);
       conditionIndices.resize(clauseCount);
       for (uint32_t &edge : edges) {
         auto value = scalar(cursor++);
-        if (!value || *value > OBELISK_RT_WAIT_EDGE_BOTH)
-          return OBELISK_RT_INVALID_BYTECODE;
+        if (!value || *value > TALOS_RT_WAIT_EDGE_BOTH)
+          return TALOS_RT_INVALID_BYTECODE;
         edge = static_cast<uint32_t>(*value);
       }
       uint32_t nextCondition = 0;
       for (int32_t &condition : conditionIndices) {
         auto value = scalar(cursor++);
         if (!value || *value > UINT32_MAX)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         uint32_t parsed = static_cast<uint32_t>(*value);
         if (parsed == UINT32_MAX) {
           condition = -1;
           continue;
         }
         if (parsed != nextCondition || parsed >= conditionCount)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         condition = static_cast<int32_t>(parsed);
         ++nextCondition;
       }
       if (nextCondition != conditionCount)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
 
-      uint64_t observersOffset = sizeof(obelisk_rt_computed_wait_record_v1);
+      uint64_t observersOffset = sizeof(talos_rt_computed_wait_record_v1);
       uint64_t capturesOffset =
           observersOffset +
-          uint64_t{observerCount} * sizeof(obelisk_rt_computed_observer_v1);
+          uint64_t{observerCount} * sizeof(talos_rt_computed_observer_v1);
       uint64_t dependenciesOffset =
           capturesOffset +
-          eventCaptureCount * sizeof(obelisk_rt_computed_capture_v1);
+          eventCaptureCount * sizeof(talos_rt_computed_capture_v1);
       uint64_t clausesOffset =
           dependenciesOffset +
-          dependencyCount * sizeof(obelisk_rt_computed_dependency_v1);
+          dependencyCount * sizeof(talos_rt_computed_dependency_v1);
       uint64_t previousOffset =
           clausesOffset +
-          uint64_t{clauseCount} * sizeof(obelisk_rt_computed_clause_v1);
+          uint64_t{clauseCount} * sizeof(talos_rt_computed_clause_v1);
       uint64_t totalSize = previousOffset + previousLimbs * 16;
       if (totalSize > UINT32_MAX || totalSize > SIZE_MAX)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       recordSize = totalSize;
       uint64_t recordWords =
           totalSize / sizeof(uint64_t) + (totalSize % sizeof(uint64_t) != 0);
@@ -1776,10 +1776,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         auto *bytes = reinterpret_cast<uint8_t *>(record.data());
         std::memcpy(bytes + offset, data, static_cast<size_t>(size));
       };
-      obelisk_rt_computed_wait_record_v1 header{
-          OBELISK_RT_VERSION,
-          OBELISK_RT_SUSPEND_OBSERVER,
-          OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+      talos_rt_computed_wait_record_v1 header{
+          TALOS_RT_VERSION,
+          TALOS_RT_SUSPEND_OBSERVER,
+          TALOS_RT_COMPUTED_WAIT_INTERLEAVED,
           clauseCount,
           observerCount,
           static_cast<uint32_t>(eventCaptureCount),
@@ -1799,7 +1799,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       uint64_t previousCursor = 0;
       for (uint32_t index = 0; index != observerCount; ++index) {
         const ObserverMeta &meta = metadata[index];
-        obelisk_rt_computed_observer_v1 observer{
+        talos_rt_computed_observer_v1 observer{
             meta.codeUnit,
             captureCursor,
             meta.captures,
@@ -1810,7 +1810,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                 : UINT32_MAX,
             0};
         writeRecord(observersOffset +
-                        index * sizeof(obelisk_rt_computed_observer_v1),
+                        index * sizeof(talos_rt_computed_observer_v1),
                     &observer, sizeof(observer));
         captureCursor += meta.captures;
         dependencyCursor += meta.dependencies;
@@ -1818,14 +1818,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           previousCursor += (uint64_t{meta.width} + 63) / 64;
       }
       for (uint32_t index = 0; index != clauseCount; ++index) {
-        obelisk_rt_computed_clause_v1 clause{
+        talos_rt_computed_clause_v1 clause{
             index,
             conditionIndices[index] < 0
-                ? OBELISK_RT_OBSERVER_CONDITION_NONE
+                ? TALOS_RT_OBSERVER_CONDITION_NONE
                 : clauseCount + static_cast<uint32_t>(conditionIndices[index]),
             edges[index], 0};
         writeRecord(clausesOffset +
-                        uint64_t{index} * sizeof(obelisk_rt_computed_clause_v1),
+                        uint64_t{index} * sizeof(talos_rt_computed_clause_v1),
                     &clause, sizeof(clause));
       }
       uint32_t captureIndex = 0;
@@ -1833,46 +1833,46 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         for (uint32_t local = 0; local != meta.captures;
              ++local, ++captureIndex) {
           if (cursor >= site.inputCount)
-            return OBELISK_RT_INVALID_BYTECODE;
-          obelisk_rt_computed_capture_v1 capture{};
+            return TALOS_RT_INVALID_BYTECODE;
+          talos_rt_computed_capture_v1 capture{};
           if (!readObserverCapture(inputRegister(cursor++),
                                    meta.descriptor->capture_abi[local],
                                    capture))
-            return OBELISK_RT_INVALID_BYTECODE;
+            return TALOS_RT_INVALID_BYTECODE;
           writeRecord(capturesOffset +
                           uint64_t{captureIndex} *
-                              sizeof(obelisk_rt_computed_capture_v1),
+                              sizeof(talos_rt_computed_capture_v1),
                       &capture, sizeof(capture));
         }
       }
       if (!hasInputs(dependencyCount * 3))
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       for (uint32_t index = 0; index != dependencyCount; ++index) {
         auto stable = scalar(cursor++), kind = scalar(cursor++),
              width = scalar(cursor++);
         if (!stable || !kind || !width || *kind > UINT32_MAX ||
             *width > UINT32_MAX)
-          return OBELISK_RT_INVALID_BYTECODE;
-        obelisk_rt_computed_dependency_v1 dependency{
+          return TALOS_RT_INVALID_BYTECODE;
+        talos_rt_computed_dependency_v1 dependency{
             *stable, static_cast<uint32_t>(*kind),
             static_cast<uint32_t>(*width)};
         writeRecord(dependenciesOffset +
                         uint64_t{index} *
-                            sizeof(obelisk_rt_computed_dependency_v1),
+                            sizeof(talos_rt_computed_dependency_v1),
                     &dependency, sizeof(dependency));
       }
       previousCursor = 0;
       for (uint32_t index = 0; index != clauseCount; ++index) {
         if (cursor >= site.inputCount)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         Layout layout =
             layoutAt(image, frame.function, inputRegister(cursor++));
-        if ((layout.kind != OBELISK_RT_DBREG_BITS &&
-             layout.kind != OBELISK_RT_DBREG_LOGIC) ||
+        if ((layout.kind != TALOS_RT_DBREG_BITS &&
+             layout.kind != TALOS_RT_DBREG_LOGIC) ||
             layout.width != metadata[index].width ||
-            (layout.kind == OBELISK_RT_DBREG_LOGIC) !=
+            (layout.kind == TALOS_RT_DBREG_LOGIC) !=
                 metadata[index].fourState)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         Logic initial = readLogic(frame.data, layout);
         uint64_t limbs = (uint64_t{metadata[index].width} + 63) / 64;
         uint64_t offset = previousOffset + previousCursor * 16;
@@ -1881,76 +1881,76 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           writeRecord(offset + limbs * 8, initial.unknown.data(), limbs * 8);
         previousCursor += limbs;
       }
-      const obelisk_rt_observer_descriptor_v1 *samplerDescriptor =
-          obelisk::process::findObserverDescriptor(context->execution,
+      const talos_rt_observer_descriptor_v1 *samplerDescriptor =
+          talos::process::findObserverDescriptor(context->execution,
                                                    *observerCodeUnit);
       if (!samplerDescriptor ||
           samplerDescriptor->capture_count != captureCount)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       samplerCaptures.resize(captureCount);
       for (uint32_t index = 0; index != captureCount; ++index) {
         if (cursor >= site.inputCount ||
             !readObserverCapture(inputRegister(cursor++),
                                  samplerDescriptor->capture_abi[index],
                                  samplerCaptures[index]))
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
       }
       if (cursor != site.inputCount)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      return TALOS_RT_OUT_OF_MEMORY;
     }
-    OBELISK_RT_CATCH(const std::length_error &) {
-      return OBELISK_RT_OUT_OF_RESOURCES;
+    TALOS_RT_CATCH(const std::length_error &) {
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
     auto *eventPlan =
-        reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(record.data());
-    return obelisk_rt_v1_covergroup_clock_event_register(
+        reinterpret_cast<talos_rt_computed_wait_record_v1 *>(record.data());
+    return talos_rt_v1_covergroup_clock_event_register(
         context, eventPlan, recordSize, static_cast<uint32_t>(*strobeValue),
         *observerCodeUnit, samplerCaptures.data(), captureCount);
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_REGISTER: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_REGISTER: {
     if (site.inputCount < 5 || site.outputCount != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     auto handle = scalar(0), observerCodeUnit = scalar(2),
          captureCountValue = scalar(3), eventCountValue = scalar(4);
     if (!handle || !observerCodeUnit || !captureCountValue ||
         !eventCountValue || *handle == 0 || *observerCodeUnit == 0 ||
         *captureCountValue > UINT32_MAX || *eventCountValue == 0 ||
         *eventCountValue > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t captureCount = static_cast<uint32_t>(*captureCountValue);
     uint32_t eventCount = static_cast<uint32_t>(*eventCountValue);
     uint64_t expectedInputs =
         uint64_t{5} + uint64_t{eventCount} * 2 + captureCount;
     if (expectedInputs != site.inputCount)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
 
-    obelisk_rt_object_v1 *receiver = nullptr;
+    talos_rt_object_v1 *receiver = nullptr;
     Layout receiverLayout = layoutAt(image, frame.function, inputRegister(1));
-    if (receiverLayout.kind == OBELISK_RT_DBREG_MANAGED) {
+    if (receiverLayout.kind == TALOS_RT_DBREG_MANAGED) {
       if (receiverLayout.size != 8)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       receiver = readManaged(inputRegister(1));
     } else {
       auto nullReceiver = scalar(1);
       if (!nullReceiver || *nullReceiver != 0)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
     }
 
-    const obelisk_rt_observer_descriptor_v1 *samplerDescriptor =
-        obelisk::process::findObserverDescriptor(context->execution,
+    const talos_rt_observer_descriptor_v1 *samplerDescriptor =
+        talos::process::findObserverDescriptor(context->execution,
                                                  *observerCodeUnit);
     if (!samplerDescriptor ||
         samplerDescriptor->capture_count != captureCount ||
         samplerDescriptor->result_width != 1 || samplerDescriptor->flags != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
 
     std::vector<uint64_t> targetIDs;
     std::vector<uint32_t> eventKinds;
-    std::vector<obelisk_rt_computed_capture_v1> captures;
-    OBELISK_RT_TRY {
+    std::vector<talos_rt_computed_capture_v1> captures;
+    TALOS_RT_TRY {
       targetIDs.resize(eventCount);
       eventKinds.resize(eventCount);
       captures.resize(captureCount);
@@ -1958,815 +1958,815 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       for (uint64_t &targetID : targetIDs) {
         auto value = scalar(cursor++);
         if (!value || *value == 0)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         targetID = *value;
       }
       for (uint32_t &eventKind : eventKinds) {
         auto value = scalar(cursor++);
-        if (!value || *value > OBELISK_RT_COVERGROUP_BLOCK_EVENT_END)
-          return OBELISK_RT_INVALID_BYTECODE;
+        if (!value || *value > TALOS_RT_COVERGROUP_BLOCK_EVENT_END)
+          return TALOS_RT_INVALID_BYTECODE;
         eventKind = static_cast<uint32_t>(*value);
       }
       for (uint32_t index = 0; index != captureCount; ++index)
         if (!readObserverCapture(inputRegister(cursor++),
                                  samplerDescriptor->capture_abi[index],
                                  captures[index]))
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      return TALOS_RT_OUT_OF_MEMORY;
     }
-    OBELISK_RT_CATCH(const std::length_error &) {
-      return OBELISK_RT_OUT_OF_RESOURCES;
+    TALOS_RT_CATCH(const std::length_error &) {
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
-    return obelisk_rt_v1_covergroup_block_event_register(
+    return talos_rt_v1_covergroup_block_event_register(
         context, *handle, receiver, *observerCodeUnit, captures.data(),
         captureCount, targetIDs.data(), eventKinds.data(), eventCount);
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_FIRE: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_FIRE: {
     if (site.inputCount != 3 || site.outputCount != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     auto targetID = scalar(0), eventKind = scalar(1);
     if (!targetID || *targetID == 0 || !eventKind ||
-        *eventKind > OBELISK_RT_COVERGROUP_BLOCK_EVENT_END)
-      return OBELISK_RT_INVALID_BYTECODE;
+        *eventKind > TALOS_RT_COVERGROUP_BLOCK_EVENT_END)
+      return TALOS_RT_INVALID_BYTECODE;
 
-    obelisk_rt_object_v1 *receiver = nullptr;
+    talos_rt_object_v1 *receiver = nullptr;
     Layout receiverLayout = layoutAt(image, frame.function, inputRegister(2));
-    if (receiverLayout.kind == OBELISK_RT_DBREG_MANAGED) {
+    if (receiverLayout.kind == TALOS_RT_DBREG_MANAGED) {
       if (receiverLayout.size != 8)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       receiver = readManaged(inputRegister(2));
     } else {
       auto nullReceiver = scalar(2);
       if (!nullReceiver || *nullReceiver != 0)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
     }
-    return obelisk_rt_v1_covergroup_block_event_fire(
+    return talos_rt_v1_covergroup_block_event_fire(
         context, *targetID, static_cast<uint32_t>(*eventKind), receiver);
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED: {
     auto handle = scalar(0);
     auto item = scalar(1);
     auto enabled = scalar(2);
     return handle && item && enabled && *enabled <= 1
-               ? obelisk_rt_v1_covergroup_set_enabled(
+               ? talos_rt_v1_covergroup_set_enabled(
                      context, *handle, *item, static_cast<uint32_t>(*enabled))
-               : OBELISK_RT_INVALID_BYTECODE;
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_NAME: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SET_NAME: {
     auto handle = scalar(0);
-    obelisk_rt_string_v1 name = 0;
+    talos_rt_string_v1 name = 0;
     return handle && readString(inputRegister(1), name)
-               ? obelisk_rt_v1_covergroup_set_name(context, *handle, name)
-               : OBELISK_RT_INVALID_BYTECODE;
+               ? talos_rt_v1_covergroup_set_name(context, *handle, name)
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_INTEGER_OPTION: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SET_INTEGER_OPTION: {
     auto handle = scalar(0), item = scalar(1), option = scalar(2),
          value = scalar(3);
     return site.inputCount == 4 && site.outputCount == 0 && handle && item &&
                    option && value &&
-                   ((*option >= OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
-                     *option <= OBELISK_RT_COVERGROUP_OPTION_AT_LEAST &&
-                     *option != OBELISK_RT_COVERGROUP_OPTION_COMMENT) ||
+                   ((*option >= TALOS_RT_COVERGROUP_OPTION_WEIGHT &&
+                     *option <= TALOS_RT_COVERGROUP_OPTION_AT_LEAST &&
+                     *option != TALOS_RT_COVERGROUP_OPTION_COMMENT) ||
                     *option ==
-                        OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING)
-               ? obelisk_rt_v1_covergroup_set_integer_option(
+                        TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING)
+               ? talos_rt_v1_covergroup_set_integer_option(
                      context, *handle, *item, static_cast<uint32_t>(*option),
                      static_cast<int64_t>(*value))
-               : OBELISK_RT_INVALID_BYTECODE;
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_INTEGER_OPTION: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_GET_INTEGER_OPTION: {
     auto handle = scalar(0), item = scalar(1), option = scalar(2);
     if (site.inputCount != 3 || site.outputCount != 1 || !handle || !item ||
         !option ||
-        !((*option >= OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
-           *option <= OBELISK_RT_COVERGROUP_OPTION_AT_LEAST &&
-           *option != OBELISK_RT_COVERGROUP_OPTION_COMMENT) ||
-          *option == OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING ||
-          (*option >= OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX &&
-           *option <= OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS)))
-      return OBELISK_RT_INVALID_BYTECODE;
+        !((*option >= TALOS_RT_COVERGROUP_OPTION_WEIGHT &&
+           *option <= TALOS_RT_COVERGROUP_OPTION_AT_LEAST &&
+           *option != TALOS_RT_COVERGROUP_OPTION_COMMENT) ||
+          *option == TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING ||
+          (*option >= TALOS_RT_COVERGROUP_OPTION_AUTO_BIN_MAX &&
+           *option <= TALOS_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS)))
+      return TALOS_RT_INVALID_BYTECODE;
     int64_t value = 0;
-    obelisk_rt_status status = obelisk_rt_v1_covergroup_get_integer_option(
+    talos_rt_status status = talos_rt_v1_covergroup_get_integer_option(
         context, *handle, *item, static_cast<uint32_t>(*option), &value);
-    return status == OBELISK_RT_OK ? sentinel(0, static_cast<uint64_t>(value))
+    return status == TALOS_RT_OK ? sentinel(0, static_cast<uint64_t>(value))
                                    : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_STRING_OPTION: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_GET_STRING_OPTION: {
     auto handle = scalar(0), item = scalar(1), option = scalar(2);
     if (site.inputCount != 3 || site.outputCount != 1 || !handle || !item ||
         !option ||
-        (*option != OBELISK_RT_COVERGROUP_OPTION_COMMENT &&
-         (*option != OBELISK_RT_COVERGROUP_OPTION_NAME || *item)))
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+        (*option != TALOS_RT_COVERGROUP_OPTION_COMMENT &&
+         (*option != TALOS_RT_COVERGROUP_OPTION_NAME || *item)))
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 result = 0;
-    obelisk_rt_status status = obelisk_rt_v1_covergroup_get_string_option(
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 result = 0;
+    talos_rt_status status = talos_rt_v1_covergroup_get_string_option(
         lane, *handle, *item, static_cast<uint32_t>(*option), &result);
-    return status == OBELISK_RT_OK && !writeString(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeString(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_STRING_OPTION: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SET_STRING_OPTION: {
     auto handle = scalar(0), item = scalar(1), option = scalar(2);
-    obelisk_rt_string_v1 value = 0;
+    talos_rt_string_v1 value = 0;
     return site.inputCount == 4 && site.outputCount == 0 && handle && item &&
-                   option && *option == OBELISK_RT_COVERGROUP_OPTION_COMMENT &&
+                   option && *option == TALOS_RT_COVERGROUP_OPTION_COMMENT &&
                    readString(inputRegister(3), value)
-               ? obelisk_rt_v1_covergroup_set_string_option(
+               ? talos_rt_v1_covergroup_set_string_option(
                      context, *handle, *item, static_cast<uint32_t>(*option),
                      value)
-               : OBELISK_RT_INVALID_BYTECODE;
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_INTEGER_OPTION: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_INTEGER_OPTION: {
     auto type = scalar(0), item = scalar(1), option = scalar(2),
          value = scalar(3);
     return site.inputCount == 4 && site.outputCount == 0 && type && item &&
                    option && value &&
-                   (*option == OBELISK_RT_COVERGROUP_OPTION_WEIGHT ||
-                    *option == OBELISK_RT_COVERGROUP_OPTION_GOAL ||
-                    *option == OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES ||
-                    *option == OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST)
-               ? obelisk_rt_v1_covergroup_set_type_integer_option(
+                   (*option == TALOS_RT_COVERGROUP_OPTION_WEIGHT ||
+                    *option == TALOS_RT_COVERGROUP_OPTION_GOAL ||
+                    *option == TALOS_RT_COVERGROUP_OPTION_MERGE_INSTANCES ||
+                    *option == TALOS_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST)
+               ? talos_rt_v1_covergroup_set_type_integer_option(
                      context, *type, *item, static_cast<uint32_t>(*option),
                      static_cast<int64_t>(*value))
-               : OBELISK_RT_INVALID_BYTECODE;
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_STRING_OPTION: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_STRING_OPTION: {
     auto type = scalar(0), item = scalar(1), option = scalar(2);
-    obelisk_rt_string_v1 value = 0;
+    talos_rt_string_v1 value = 0;
     return site.inputCount == 4 && site.outputCount == 0 && type && item &&
-                   option && *option == OBELISK_RT_COVERGROUP_OPTION_COMMENT &&
+                   option && *option == TALOS_RT_COVERGROUP_OPTION_COMMENT &&
                    readString(inputRegister(3), value)
-               ? obelisk_rt_v1_covergroup_set_type_string_option(
+               ? talos_rt_v1_covergroup_set_type_string_option(
                      context, *type, *item, static_cast<uint32_t>(*option),
                      value)
-               : OBELISK_RT_INVALID_BYTECODE;
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED: {
     auto handle = scalar(0);
     uint32_t enabled = 0;
     if (!handle)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_status status =
-        obelisk_rt_v1_covergroup_sample_enabled(context, *handle, &enabled);
-    return status == OBELISK_RT_OK ? sentinel(0, enabled) : status;
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_status status =
+        talos_rt_v1_covergroup_sample_enabled(context, *handle, &enabled);
+    return status == TALOS_RT_OK ? sentinel(0, enabled) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_FORMAL_READ: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_FORMAL_READ: {
     auto handle = scalar(0), formal = scalar(1);
     if (!handle || !formal || site.inputCount != 2 || site.outputCount != 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
-    bool container = output.kind == OBELISK_RT_DBREG_MANAGED &&
+    bool container = output.kind == TALOS_RT_DBREG_MANAGED &&
                      output.width == 64 && output.size == 8;
-    bool event = output.kind == OBELISK_RT_DBREG_HANDLE &&
-                 (output.flags & OBELISK_RT_DBREG_EVENT) &&
+    bool event = output.kind == TALOS_RT_DBREG_HANDLE &&
+                 (output.flags & TALOS_RT_DBREG_EVENT) &&
                  output.width == 256 && output.size == 32;
     if (event) {
       uint64_t word = UINT64_MAX;
-      obelisk_rt_status status = obelisk_rt_v1_covergroup_formal_read(
-          context, *handle, *formal, OBELISK_RT_FUNCTIONAL_VALUE_EVENT, 64, 8,
+      talos_rt_status status = talos_rt_v1_covergroup_formal_read(
+          context, *handle, *formal, TALOS_RT_FUNCTIONAL_VALUE_EVENT, 64, 8,
           nullptr, nullptr, 0, &word, nullptr);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       return decodeCanonicalEventHandle(word, frame.data + output.offset)
-                 ? OBELISK_RT_OK
-                 : OBELISK_RT_INVALID_HANDLE;
+                 ? TALOS_RT_OK
+                 : TALOS_RT_INVALID_HANDLE;
     }
-    bool reference = output.kind == OBELISK_RT_DBREG_ARGUMENT_REF;
+    bool reference = output.kind == TALOS_RT_DBREG_ARGUMENT_REF;
     if (reference && (output.width != 192 || output.size != 24))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t kind =
-        container && (output.flags & OBELISK_RT_DBREG_MAILBOX)
-            ? OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX
-        : output.flags & OBELISK_RT_DBREG_SEMAPHORE
-            ? OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE
-        : output.flags & OBELISK_RT_DBREG_VIRTUAL_INTERFACE
-            ? OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
-        : output.flags & OBELISK_RT_DBREG_PROCESS
-            ? OBELISK_RT_FUNCTIONAL_VALUE_PROCESS
-        : output.flags & OBELISK_RT_DBREG_COVERGROUP
-            ? OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP
-        : output.flags & OBELISK_RT_DBREG_CHANDLE
-            ? OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE
-        : container && (output.flags & OBELISK_RT_DBREG_CLASS_HANDLE)
-            ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
-        : container ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
-        : reference ? OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
-        : output.kind == OBELISK_RT_DBREG_REAL64
-            ? OBELISK_RT_FUNCTIONAL_VALUE_REAL
-        : output.kind == OBELISK_RT_DBREG_REAL32
-            ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
-        : output.kind == OBELISK_RT_DBREG_STRING
-            ? OBELISK_RT_FUNCTIONAL_VALUE_STRING
-        : output.kind == OBELISK_RT_DBREG_LOGIC
-            ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
-            : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
-    if (output.kind != OBELISK_RT_DBREG_BITS &&
-        output.kind != OBELISK_RT_DBREG_LOGIC &&
-        output.kind != OBELISK_RT_DBREG_REAL64 &&
-        output.kind != OBELISK_RT_DBREG_REAL32 &&
-        output.kind != OBELISK_RT_DBREG_STRING && !reference && !container)
-      return OBELISK_RT_INVALID_BYTECODE;
-    uint64_t size = output.kind == OBELISK_RT_DBREG_REAL64
+        container && (output.flags & TALOS_RT_DBREG_MAILBOX)
+            ? TALOS_RT_FUNCTIONAL_VALUE_MAILBOX
+        : output.flags & TALOS_RT_DBREG_SEMAPHORE
+            ? TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE
+        : output.flags & TALOS_RT_DBREG_VIRTUAL_INTERFACE
+            ? TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
+        : output.flags & TALOS_RT_DBREG_PROCESS
+            ? TALOS_RT_FUNCTIONAL_VALUE_PROCESS
+        : output.flags & TALOS_RT_DBREG_COVERGROUP
+            ? TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP
+        : output.flags & TALOS_RT_DBREG_CHANDLE
+            ? TALOS_RT_FUNCTIONAL_VALUE_CHANDLE
+        : container && (output.flags & TALOS_RT_DBREG_CLASS_HANDLE)
+            ? TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
+        : container ? TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
+        : reference ? TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
+        : output.kind == TALOS_RT_DBREG_REAL64
+            ? TALOS_RT_FUNCTIONAL_VALUE_REAL
+        : output.kind == TALOS_RT_DBREG_REAL32
+            ? TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL
+        : output.kind == TALOS_RT_DBREG_STRING
+            ? TALOS_RT_FUNCTIONAL_VALUE_STRING
+        : output.kind == TALOS_RT_DBREG_LOGIC
+            ? TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE
+            : TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL;
+    if (output.kind != TALOS_RT_DBREG_BITS &&
+        output.kind != TALOS_RT_DBREG_LOGIC &&
+        output.kind != TALOS_RT_DBREG_REAL64 &&
+        output.kind != TALOS_RT_DBREG_REAL32 &&
+        output.kind != TALOS_RT_DBREG_STRING && !reference && !container)
+      return TALOS_RT_INVALID_BYTECODE;
+    uint64_t size = output.kind == TALOS_RT_DBREG_REAL64
                         ? sizeof(double)
                         : (uint64_t{output.width} + 7) / 8;
     void *value = frame.data + output.offset;
-    void *unknown = output.kind == OBELISK_RT_DBREG_LOGIC
+    void *unknown = output.kind == TALOS_RT_DBREG_LOGIC
                         ? frame.data + output.offset + output.size / 2
                         : nullptr;
     std::memset(value, 0,
-                static_cast<size_t>(output.kind == OBELISK_RT_DBREG_LOGIC
+                static_cast<size_t>(output.kind == TALOS_RT_DBREG_LOGIC
                                         ? output.size / 2
                                         : output.size));
     if (unknown)
       std::memset(unknown, 0, static_cast<size_t>(output.size / 2));
-    return obelisk_rt_v1_covergroup_formal_read(
+    return talos_rt_v1_covergroup_formal_read(
         context, *handle, *formal, kind,
-        output.kind == OBELISK_RT_DBREG_REAL64 ? 64 : output.width, size,
+        output.kind == TALOS_RT_DBREG_REAL64 ? 64 : output.width, size,
         nullptr, nullptr, 0, value, unknown);
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SAMPLE: {
     auto handle = scalar(0), count = scalar(1);
     if (!handle || !count || *count > UINT32_MAX ||
         site.inputCount != 2 + 2 * *count)
-      return OBELISK_RT_INVALID_BYTECODE;
-    std::vector<obelisk_rt_functional_value_v1> expressions;
-    OBELISK_RT_TRY {
+      return TALOS_RT_INVALID_BYTECODE;
+    std::vector<talos_rt_functional_value_v1> expressions;
+    TALOS_RT_TRY {
       expressions.resize(static_cast<size_t>(*count));
       for (uint32_t index = 0; index != *count; ++index) {
         auto id = scalar(2 + index);
         if (!id || !functionalValue(
                        inputRegister(2 + static_cast<uint32_t>(*count) + index),
                        *id, expressions[index]))
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
       }
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      return TALOS_RT_OUT_OF_MEMORY;
     }
-    OBELISK_RT_CATCH(const std::length_error &) {
-      return OBELISK_RT_OUT_OF_RESOURCES;
+    TALOS_RT_CATCH(const std::length_error &) {
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
-    return obelisk_rt_v1_covergroup_sample(context, *handle, expressions.data(),
+    return talos_rt_v1_covergroup_sample(context, *handle, expressions.data(),
                                            expressions.size());
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY: {
     auto handle = scalar(0), item = scalar(1);
     if (!handle || !item || site.inputCount != 2)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     double percentage = 0.0;
     int32_t covered = 0;
     int32_t total = 0;
-    obelisk_rt_status status = obelisk_rt_v1_covergroup_instance_query(
+    talos_rt_status status = talos_rt_v1_covergroup_instance_query(
         context, *handle, *item, &percentage, &covered, &total);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     status = writeReal(0, percentage);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     status = sentinel(1, static_cast<uint32_t>(covered));
-    return status == OBELISK_RT_OK ? sentinel(2, static_cast<uint32_t>(total))
+    return status == TALOS_RT_OK ? sentinel(2, static_cast<uint32_t>(total))
                                    : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY: {
     auto type = scalar(0), item = scalar(1);
     if (!type || !item || site.inputCount != 2)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     double percentage = 0.0;
     int32_t covered = 0;
     int32_t total = 0;
-    obelisk_rt_status status = obelisk_rt_v1_covergroup_type_query(
+    talos_rt_status status = talos_rt_v1_covergroup_type_query(
         context, *type, *item, &percentage, &covered, &total);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     status = writeReal(0, percentage);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     status = sentinel(1, static_cast<uint32_t>(covered));
-    return status == OBELISK_RT_OK ? sentinel(2, static_cast<uint32_t>(total))
+    return status == TALOS_RT_OK ? sentinel(2, static_cast<uint32_t>(total))
                                    : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_CONTROL_DEFINITION: {
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_CONTROL_DEFINITION: {
     auto control = scalar(0);
     auto coverageType = scalar(1);
     auto scopeDefinition = scalar(2);
-    obelisk_rt_string_v1 definition = 0;
+    talos_rt_string_v1 definition = 0;
     if (!control || !coverageType || !scopeDefinition ||
         !readString(inputRegister(3), definition))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     int32_t result = -1;
-    obelisk_rt_status status = obelisk_rt_v1_coverage_control_definition(
+    talos_rt_status status = talos_rt_v1_coverage_control_definition(
         context, static_cast<int32_t>(*control),
         static_cast<int32_t>(*coverageType),
         static_cast<int32_t>(*scopeDefinition), definition, &result);
-    return status == OBELISK_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
+    return status == TALOS_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
                                    : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_CONTROL_INSTANCE: {
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_CONTROL_INSTANCE: {
     auto control = scalar(0);
     auto coverageType = scalar(1);
     auto scopeDefinition = scalar(2);
     auto coverageScope = scalar(3);
     if (!control || !coverageType || !scopeDefinition || !coverageScope)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     int32_t result = -1;
-    obelisk_rt_status status = obelisk_rt_v1_coverage_control_instance(
+    talos_rt_status status = talos_rt_v1_coverage_control_instance(
         context, static_cast<int32_t>(*control),
         static_cast<int32_t>(*coverageType),
         static_cast<int32_t>(*scopeDefinition), *coverageScope, &result);
-    return status == OBELISK_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
+    return status == TALOS_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
                                    : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_QUERY_DEFINITION: {
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_QUERY_DEFINITION: {
     auto coverageType = scalar(0);
     auto scopeDefinition = scalar(1);
-    obelisk_rt_string_v1 definition = 0;
+    talos_rt_string_v1 definition = 0;
     auto maximum = scalar(3);
     if (!coverageType || !scopeDefinition ||
         !readString(inputRegister(2), definition) || !maximum || *maximum > 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     int32_t result = -1;
-    obelisk_rt_status status = obelisk_rt_v1_coverage_query_definition(
+    talos_rt_status status = talos_rt_v1_coverage_query_definition(
         context, static_cast<int32_t>(*coverageType),
         static_cast<int32_t>(*scopeDefinition), definition,
         static_cast<uint32_t>(*maximum), &result);
-    return status == OBELISK_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
+    return status == TALOS_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
                                    : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_QUERY_INSTANCE: {
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_QUERY_INSTANCE: {
     auto coverageType = scalar(0);
     auto scopeDefinition = scalar(1);
     auto coverageScope = scalar(2);
     auto maximum = scalar(3);
     if (!coverageType || !scopeDefinition || !coverageScope || !maximum ||
         *maximum > 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     int32_t result = -1;
-    obelisk_rt_status status = obelisk_rt_v1_coverage_query_instance(
+    talos_rt_status status = talos_rt_v1_coverage_query_instance(
         context, static_cast<int32_t>(*coverageType),
         static_cast<int32_t>(*scopeDefinition), *coverageScope,
         static_cast<uint32_t>(*maximum), &result);
-    return status == OBELISK_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
+    return status == TALOS_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
                                    : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_DATABASE_SAVE:
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_DATABASE_MERGE: {
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_DATABASE_SAVE:
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_DATABASE_MERGE: {
     auto coverageType = scalar(0);
-    obelisk_rt_string_v1 name = 0;
+    talos_rt_string_v1 name = 0;
     if (!coverageType || !readString(inputRegister(1), name))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     int32_t result = -1;
-    obelisk_rt_status status =
-        signature.id == OBELISK_RT_INTRINSIC_V1_COVERAGE_DATABASE_SAVE
-            ? obelisk_rt_v1_coverage_database_save(
+    talos_rt_status status =
+        signature.id == TALOS_RT_INTRINSIC_V1_COVERAGE_DATABASE_SAVE
+            ? talos_rt_v1_coverage_database_save(
                   context, static_cast<int32_t>(*coverageType), name, &result)
-            : obelisk_rt_v1_coverage_database_merge(
+            : talos_rt_v1_coverage_database_merge(
                   context, static_cast<int32_t>(*coverageType), name, &result);
-    return status == OBELISK_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
+    return status == TALOS_RT_OK ? sentinel(0, static_cast<uint32_t>(result))
                                    : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_GET: {
+  case TALOS_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_GET: {
     double percentage = 0.0;
-    obelisk_rt_status status =
-        obelisk_rt_v1_functional_coverage_get(context, &percentage);
-    return status == OBELISK_RT_OK ? writeReal(0, percentage) : status;
+    talos_rt_status status =
+        talos_rt_v1_functional_coverage_get(context, &percentage);
+    return status == TALOS_RT_OK ? writeReal(0, percentage) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_SET_DB_NAME:
-  case OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_LOAD_DB: {
-    obelisk_rt_string_v1 name = 0;
+  case TALOS_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_SET_DB_NAME:
+  case TALOS_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_LOAD_DB: {
+    talos_rt_string_v1 name = 0;
     if (!readString(inputRegister(0), name))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return signature.id ==
-                   OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_SET_DB_NAME
-               ? obelisk_rt_v1_functional_coverage_set_db_name(context, name)
-               : obelisk_rt_v1_functional_coverage_load_db(context, name);
+                   TALOS_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_SET_DB_NAME
+               ? talos_rt_v1_functional_coverage_set_db_name(context, name)
+               : talos_rt_v1_functional_coverage_load_db(context, name);
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_LITERAL: {
+  case TALOS_RT_INTRINSIC_V1_STRING_LITERAL: {
     auto literal = bytes(0);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!literal || !lane)
-      return literal ? OBELISK_RT_INVALID_LIFECYCLE
-                     : OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_string_v1 result = 0;
-    obelisk_rt_status status = obelisk_rt_v1_string_create(
+      return literal ? TALOS_RT_INVALID_LIFECYCLE
+                     : TALOS_RT_INVALID_BYTECODE;
+    talos_rt_string_v1 result = 0;
+    talos_rt_status status = talos_rt_v1_string_create(
         lane, reinterpret_cast<const char *>(literal->data), literal->size,
         &result);
-    return status == OBELISK_RT_OK && !writeString(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeString(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_FROM_PACKED: {
+  case TALOS_RT_INTRINSIC_V1_STRING_FROM_PACKED: {
     Layout input = layoutAt(image, frame.function, inputRegister(0));
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     uint64_t planeSize = ((uint64_t{input.width} + 63) / 64) * 8;
-    const void *unknown = input.kind == OBELISK_RT_DBREG_LOGIC
+    const void *unknown = input.kind == TALOS_RT_DBREG_LOGIC
                               ? frame.data + input.offset + planeSize
                               : nullptr;
-    obelisk_rt_string_v1 result = 0;
-    obelisk_rt_status status = obelisk_rt_v1_string_from_packed(
+    talos_rt_string_v1 result = 0;
+    talos_rt_status status = talos_rt_v1_string_from_packed(
         lane, frame.data + input.offset, unknown, input.width, &result);
-    return status == OBELISK_RT_OK && !writeString(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeString(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_TO_PACKED: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_TO_PACKED: {
+    talos_rt_string_v1 input = 0;
     if (!readString(inputRegister(0), input))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     uint64_t planeSize = ((uint64_t{output.width} + 63) / 64) * 8;
-    void *unknown = output.kind == OBELISK_RT_DBREG_LOGIC
+    void *unknown = output.kind == TALOS_RT_DBREG_LOGIC
                         ? frame.data + output.offset + planeSize
                         : nullptr;
-    obelisk_rt_status status = obelisk_rt_v1_string_to_packed(
+    talos_rt_status status = talos_rt_v1_string_to_packed(
         input, frame.data + output.offset, unknown, output.width);
-    if (status != OBELISK_RT_OK || signature.flags == 0)
+    if (status != TALOS_RT_OK || signature.flags == 0)
       return status;
-    return sentinel(1, obelisk_rt_v1_string_length(input) == output.width / 8);
+    return sentinel(1, talos_rt_v1_string_length(input) == output.width / 8);
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_CONCAT: {
-    std::vector<obelisk_rt_string_span_v1> spans(site.inputCount);
+  case TALOS_RT_INTRINSIC_V1_STRING_CONCAT: {
+    std::vector<talos_rt_string_span_v1> spans(site.inputCount);
     for (uint32_t index = 0; index != site.inputCount; ++index)
       if (!readString(inputRegister(index), spans[index].string))
-        return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+        return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 result = 0;
-    obelisk_rt_status status = obelisk_rt_v1_string_concat_many(
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 result = 0;
+    talos_rt_status status = talos_rt_v1_string_concat_many(
         lane, spans.data(), spans.size(), &result);
-    return status == OBELISK_RT_OK && !writeString(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeString(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_REPEAT: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_REPEAT: {
+    talos_rt_string_v1 input = 0;
     auto count = scalar(1);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!readString(inputRegister(0), input) || !count)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 result = 0;
-    obelisk_rt_status status =
-        obelisk_rt_v1_string_repeat(lane, input, *count, &result);
-    return status == OBELISK_RT_OK && !writeString(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 result = 0;
+    talos_rt_status status =
+        talos_rt_v1_string_repeat(lane, input, *count, &result);
+    return status == TALOS_RT_OK && !writeString(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_LENGTH: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_LENGTH: {
+    talos_rt_string_v1 input = 0;
     return readString(inputRegister(0), input)
-               ? sentinel(0, obelisk_rt_v1_string_length(input))
-               : OBELISK_RT_INVALID_BYTECODE;
+               ? sentinel(0, talos_rt_v1_string_length(input))
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_GETC: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_GETC: {
+    talos_rt_string_v1 input = 0;
     auto index = scalar(1);
     return readString(inputRegister(0), input) && index
-               ? sentinel(0, obelisk_rt_v1_string_getc(
+               ? sentinel(0, talos_rt_v1_string_getc(
                                  input, static_cast<int64_t>(*index)))
-               : OBELISK_RT_INVALID_BYTECODE;
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_PUTC: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_PUTC: {
+    talos_rt_string_v1 input = 0;
     auto index = scalar(1);
     auto character = scalar(2);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!readString(inputRegister(0), input) || !index || !character)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 result = 0;
-    obelisk_rt_status status =
-        obelisk_rt_v1_string_putc(lane, input, static_cast<int64_t>(*index),
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 result = 0;
+    talos_rt_status status =
+        talos_rt_v1_string_putc(lane, input, static_cast<int64_t>(*index),
                                   static_cast<uint32_t>(*character), &result);
-    return status == OBELISK_RT_OK && !writeString(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeString(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_SUBSTR: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_SUBSTR: {
+    talos_rt_string_v1 input = 0;
     auto left = scalar(1);
     auto right = scalar(2);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!readString(inputRegister(0), input) || !left || !right)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 result = 0;
-    obelisk_rt_status status =
-        obelisk_rt_v1_string_substr(lane, input, static_cast<int64_t>(*left),
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 result = 0;
+    talos_rt_status status =
+        talos_rt_v1_string_substr(lane, input, static_cast<int64_t>(*left),
                                     static_cast<int64_t>(*right), &result);
-    return status == OBELISK_RT_OK && !writeString(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeString(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_COMPARE: {
-    obelisk_rt_string_v1 left = 0;
-    obelisk_rt_string_v1 right = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_COMPARE: {
+    talos_rt_string_v1 left = 0;
+    talos_rt_string_v1 right = 0;
     auto insensitive = scalar(2);
     if (!readString(inputRegister(0), left) ||
         !readString(inputRegister(1), right) || !insensitive ||
         *insensitive > 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     int32_t result = *insensitive
-                         ? obelisk_rt_v1_string_compare_insensitive(left, right)
-                         : obelisk_rt_v1_string_compare(left, right);
+                         ? talos_rt_v1_string_compare_insensitive(left, right)
+                         : talos_rt_v1_string_compare(left, right);
     return sentinel(0, static_cast<uint32_t>(result));
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_CASE_CONVERT: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_CASE_CONVERT: {
+    talos_rt_string_v1 input = 0;
     auto upper = scalar(1);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!readString(inputRegister(0), input) || !upper || *upper > 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 result = 0;
-    obelisk_rt_status status = obelisk_rt_v1_string_case_convert(
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 result = 0;
+    talos_rt_status status = talos_rt_v1_string_case_convert(
         lane, input, static_cast<uint32_t>(*upper), &result);
-    return status == OBELISK_RT_OK && !writeString(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeString(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_FIELD: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_SCAN_FIELD: {
+    talos_rt_string_v1 input = 0;
     auto cursor = scalar(1), specifier = scalar(3), width = scalar(4);
     auto prefix = bytes(2);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!readString(inputRegister(0), input) || !cursor || !specifier ||
         !width || !prefix || *cursor > UINT32_MAX || *specifier > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 field = 0;
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 field = 0;
     uint32_t nextCursor = 0;
     uint32_t ok = 0;
-    obelisk_rt_status status = obelisk_rt_v1_string_scan_field(
+    talos_rt_status status = talos_rt_v1_string_scan_field(
         lane, input, static_cast<uint32_t>(*cursor),
         reinterpret_cast<const char *>(prefix->data), prefix->size,
         static_cast<uint32_t>(*specifier), *width, &field, &nextCursor, &ok);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     if (!writeString(outputRegister(0), field))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     status = sentinel(1, nextCursor);
-    return status == OBELISK_RT_OK ? sentinel(2, ok) : status;
+    return status == TALOS_RT_OK ? sentinel(2, ok) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_FIELD: {
+  case TALOS_RT_INTRINSIC_V1_FILE_SCAN_FIELD: {
     auto descriptor = scalar(0), enabled = scalar(1), specifier = scalar(3),
          width = scalar(4);
     auto prefix = bytes(2);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!descriptor || !enabled || !specifier || !width || !prefix ||
         *descriptor > UINT32_MAX || *enabled > 1 || *specifier > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 field = 0;
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 field = 0;
     uint32_t ok = 0;
     uint32_t eof = 0;
-    obelisk_rt_status status = obelisk_rt_v1_file_scan_field(
+    talos_rt_status status = talos_rt_v1_file_scan_field(
         context, lane, static_cast<uint32_t>(*descriptor),
         static_cast<uint32_t>(*enabled),
         reinterpret_cast<const char *>(prefix->data), prefix->size,
         static_cast<uint32_t>(*specifier), *width, &field, &ok, &eof);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     if (!writeString(outputRegister(0), field))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     status = sentinel(1, ok);
-    return status == OBELISK_RT_OK ? sentinel(2, eof) : status;
+    return status == TALOS_RT_OK ? sentinel(2, eof) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_RAW: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_SCAN_RAW: {
+    talos_rt_string_v1 input = 0;
     auto cursor = scalar(1), rawSize = scalar(3), bitWidth = scalar(4),
          fourState = scalar(5), maxWidth = scalar(6);
     auto prefix = bytes(2);
     if (!readString(inputRegister(0), input) || !cursor || !rawSize ||
         !bitWidth || !fourState || !maxWidth || !prefix ||
         *cursor > UINT32_MAX || *fourState > 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     bool assigned = site.outputCount == 3;
     void *value = nullptr;
     void *unknown = nullptr;
     uint64_t planeSize = 0;
     if (assigned) {
       Layout output = layoutAt(image, frame.function, outputRegister(0));
-      if (output.kind != OBELISK_RT_DBREG_LOGIC || output.width == 0 ||
+      if (output.kind != TALOS_RT_DBREG_LOGIC || output.width == 0 ||
           output.width != *bitWidth || output.size % 2 != 0)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       planeSize = output.size / 2;
       value = frame.data + output.offset;
       unknown = frame.data + output.offset + planeSize;
     } else if (*bitWidth != 0 || *fourState != 0 || *maxWidth != *rawSize) {
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     }
     uint32_t nextCursor = 0;
     uint32_t ok = 0;
-    obelisk_rt_status status = obelisk_rt_v1_string_scan_raw(
+    talos_rt_status status = talos_rt_v1_string_scan_raw(
         input, static_cast<uint32_t>(*cursor),
         reinterpret_cast<const char *>(prefix->data), prefix->size, *rawSize,
         *bitWidth, static_cast<uint32_t>(*fourState), *maxWidth, value,
         planeSize, unknown, planeSize, &nextCursor, &ok);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     uint32_t cursorOutput = assigned ? 1 : 0;
     status = sentinel(cursorOutput, nextCursor);
-    return status == OBELISK_RT_OK ? sentinel(cursorOutput + 1, ok) : status;
+    return status == TALOS_RT_OK ? sentinel(cursorOutput + 1, ok) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_RAW: {
+  case TALOS_RT_INTRINSIC_V1_FILE_SCAN_RAW: {
     auto descriptor = scalar(0), enabled = scalar(1), rawSize = scalar(3),
          bitWidth = scalar(4), fourState = scalar(5), maxWidth = scalar(6);
     auto prefix = bytes(2);
     if (!descriptor || !enabled || !rawSize || !bitWidth || !fourState ||
         !maxWidth || !prefix || *descriptor > UINT32_MAX || *enabled > 1 ||
         *fourState > 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     bool assigned = site.outputCount == 3;
     void *value = nullptr;
     void *unknown = nullptr;
     uint64_t planeSize = 0;
     if (assigned) {
       Layout output = layoutAt(image, frame.function, outputRegister(0));
-      if (output.kind != OBELISK_RT_DBREG_LOGIC || output.width == 0 ||
+      if (output.kind != TALOS_RT_DBREG_LOGIC || output.width == 0 ||
           output.width != *bitWidth || output.size % 2 != 0)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       planeSize = output.size / 2;
       value = frame.data + output.offset;
       unknown = frame.data + output.offset + planeSize;
     } else if (*bitWidth != 0 || *fourState != 0 || *maxWidth != *rawSize) {
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     }
     uint32_t ok = 0;
     uint32_t eof = 0;
-    obelisk_rt_status status = obelisk_rt_v1_file_scan_raw(
+    talos_rt_status status = talos_rt_v1_file_scan_raw(
         context, static_cast<uint32_t>(*descriptor),
         static_cast<uint32_t>(*enabled),
         reinterpret_cast<const char *>(prefix->data), prefix->size, *rawSize,
         *bitWidth, static_cast<uint32_t>(*fourState), *maxWidth, value,
         planeSize, unknown, planeSize, &ok, &eof);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     uint32_t okOutput = assigned ? 1 : 0;
     status = sentinel(okOutput, ok);
-    return status == OBELISK_RT_OK ? sentinel(okOutput + 1, eof) : status;
+    return status == TALOS_RT_OK ? sentinel(okOutput + 1, eof) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_INTEGER: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_PARSE_INTEGER: {
+    talos_rt_string_v1 input = 0;
     auto radix = scalar(1);
     if (!readString(inputRegister(0), input) || !radix)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t result = 0;
-    obelisk_rt_status status = obelisk_rt_v1_string_parse_integer(
+    talos_rt_status status = talos_rt_v1_string_parse_integer(
         input, static_cast<uint32_t>(*radix), &result);
-    return status == OBELISK_RT_OK ? sentinel(0, result) : status;
+    return status == TALOS_RT_OK ? sentinel(0, result) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_LOGIC: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_PARSE_LOGIC: {
+    talos_rt_string_v1 input = 0;
     auto radix = scalar(1);
     if (!readString(inputRegister(0), input) || !radix)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
-    if (output.kind != OBELISK_RT_DBREG_LOGIC || output.width != 64)
-      return OBELISK_RT_INVALID_BYTECODE;
+    if (output.kind != TALOS_RT_DBREG_LOGIC || output.width != 64)
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t planeSize = ((uint64_t{output.width} + 63) / 64) * 8;
-    return obelisk_rt_v1_string_parse_logic(
+    return talos_rt_v1_string_parse_logic(
         input, static_cast<uint32_t>(*radix),
         reinterpret_cast<uint64_t *>(frame.data + output.offset),
         reinterpret_cast<uint64_t *>(frame.data + output.offset + planeSize));
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL:
-  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL_CONSTANT: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_STRING_PARSE_REAL:
+  case TALOS_RT_INTRINSIC_V1_STRING_PARSE_REAL_CONSTANT: {
+    talos_rt_string_v1 input = 0;
     if (!readString(inputRegister(0), input))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     double result = 0.0;
-    obelisk_rt_status status =
-        signature.id == OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL
-            ? obelisk_rt_v1_string_parse_real(input, &result)
-            : obelisk_rt_v1_string_parse_real_constant(input, &result);
-    return status == OBELISK_RT_OK ? writeReal(0, result) : status;
+    talos_rt_status status =
+        signature.id == TALOS_RT_INTRINSIC_V1_STRING_PARSE_REAL
+            ? talos_rt_v1_string_parse_real(input, &result)
+            : talos_rt_v1_string_parse_real_constant(input, &result);
+    return status == TALOS_RT_OK ? writeReal(0, result) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_FORMAT_INTEGER: {
+  case TALOS_RT_INTRINSIC_V1_STRING_FORMAT_INTEGER: {
     auto value = scalar(0);
     auto radix = scalar(1);
     auto signedMode = scalar(2);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!value || !radix || !signedMode)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 result = 0;
-    obelisk_rt_status status = obelisk_rt_v1_string_format_integer(
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 result = 0;
+    talos_rt_status status = talos_rt_v1_string_format_integer(
         lane, *value, static_cast<uint32_t>(*radix),
         static_cast<uint32_t>(*signedMode), &result);
-    return status == OBELISK_RT_OK && !writeString(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeString(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_FORMAT_REAL: {
+  case TALOS_RT_INTRINSIC_V1_STRING_FORMAT_REAL: {
     auto value = realInput(0);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!value)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 result = 0;
-    obelisk_rt_status status =
-        obelisk_rt_v1_string_format_real(lane, *value, &result);
-    return status == OBELISK_RT_OK && !writeString(outputRegister(0), result)
-               ? OBELISK_RT_INVALID_BYTECODE
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 result = 0;
+    talos_rt_status status =
+        talos_rt_v1_string_format_real(lane, *value, &result);
+    return status == TALOS_RT_OK && !writeString(outputRegister(0), result)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC: {
+  case TALOS_RT_INTRINSIC_V1_CLASS_ALLOC: {
     auto id = scalar(0);
-    const obelisk_rt_class_descriptor_v1 *descriptor =
-        id ? obelisk_rt_managed_class_lookup(context, *id) : nullptr;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    const talos_rt_class_descriptor_v1 *descriptor =
+        id ? talos_rt_managed_class_lookup(context, *id) : nullptr;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!descriptor || !lane)
-      return OBELISK_RT_INVALID_DESIGN;
-    obelisk_rt_object_v1 *object = nullptr;
-    obelisk_rt_status status =
-        obelisk_rt_v1_object_allocate(lane, descriptor, &object);
-    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), object)
-               ? OBELISK_RT_INVALID_BYTECODE
+      return TALOS_RT_INVALID_DESIGN;
+    talos_rt_object_v1 *object = nullptr;
+    talos_rt_status status =
+        talos_rt_v1_object_allocate(lane, descriptor, &object);
+    return status == TALOS_RT_OK && !writeManaged(outputRegister(0), object)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_CLASS_COPY: {
+  case TALOS_RT_INTRINSIC_V1_CLASS_COPY: {
     auto id = scalar(1);
-    const obelisk_rt_class_descriptor_v1 *descriptor =
-        id ? obelisk_rt_managed_class_lookup(context, *id) : nullptr;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    const talos_rt_class_descriptor_v1 *descriptor =
+        id ? talos_rt_managed_class_lookup(context, *id) : nullptr;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!descriptor || !lane)
-      return OBELISK_RT_INVALID_DESIGN;
-    obelisk_rt_object_v1 *object = nullptr;
-    obelisk_rt_status status = obelisk_rt_v1_object_shallow_copy(
+      return TALOS_RT_INVALID_DESIGN;
+    talos_rt_object_v1 *object = nullptr;
+    talos_rt_status status = talos_rt_v1_object_shallow_copy(
         lane, descriptor, readManaged(inputRegister(0)), &object);
-    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), object)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeManaged(outputRegister(0), object)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_CLASS_IS_INSTANCE: {
+  case TALOS_RT_INTRINSIC_V1_CLASS_IS_INSTANCE: {
     auto id = scalar(1);
-    const obelisk_rt_class_descriptor_v1 *descriptor =
-        id ? obelisk_rt_managed_class_lookup(context, *id) : nullptr;
+    const talos_rt_class_descriptor_v1 *descriptor =
+        id ? talos_rt_managed_class_lookup(context, *id) : nullptr;
     if (!descriptor)
-      return OBELISK_RT_INVALID_DESIGN;
-    return sentinel(0, obelisk_rt_v1_object_is_instance(
+      return TALOS_RT_INVALID_DESIGN;
+    return sentinel(0, talos_rt_v1_object_is_instance(
                            readManaged(inputRegister(0)), descriptor));
   }
-  case OBELISK_RT_INTRINSIC_V1_CLASS_ID:
-    return sentinel(0, obelisk_rt_v1_object_id(readManaged(inputRegister(0))));
-  case OBELISK_RT_INTRINSIC_V1_CLASS_CAST: {
+  case TALOS_RT_INTRINSIC_V1_CLASS_ID:
+    return sentinel(0, talos_rt_v1_object_id(readManaged(inputRegister(0))));
+  case TALOS_RT_INTRINSIC_V1_CLASS_CAST: {
     auto id = scalar(1);
-    const obelisk_rt_class_descriptor_v1 *descriptor =
-        id ? obelisk_rt_managed_class_lookup(context, *id) : nullptr;
+    const talos_rt_class_descriptor_v1 *descriptor =
+        id ? talos_rt_managed_class_lookup(context, *id) : nullptr;
     if (!descriptor)
-      return OBELISK_RT_INVALID_DESIGN;
-    obelisk_rt_object_v1 *object = nullptr;
-    obelisk_rt_status status = obelisk_rt_v1_object_cast(
+      return TALOS_RT_INVALID_DESIGN;
+    talos_rt_object_v1 *object = nullptr;
+    talos_rt_status status = talos_rt_v1_object_cast(
         readManaged(inputRegister(0)), descriptor, &object);
-    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), object)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeManaged(outputRegister(0), object)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_CLASS_FIELD_REF: {
+  case TALOS_RT_INTRINSIC_V1_CLASS_FIELD_REF: {
     auto offset = scalar(1);
     if (!offset)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
-    obelisk_rt_object_v1 *object = readManaged(inputRegister(0));
-    obelisk_rt_managed_word_v1 word =
-        obelisk_rt_managed_word_from_object(object);
+    talos_rt_object_v1 *object = readManaged(inputRegister(0));
+    talos_rt_managed_word_v1 word =
+        talos_rt_managed_word_from_object(object);
     std::memcpy(frame.data + output.offset, &word, sizeof(word));
     std::memcpy(frame.data + output.offset + 8, &*offset, sizeof(*offset));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX: {
+  case TALOS_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX: {
     auto index = scalar(1);
     if (!index)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     bool watching = site.inputCount == 3;
     if (!watching && site.inputCount != 2)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t ownerPayload = 0;
     uint32_t ownerManaged = 0;
-    obelisk_rt_object_v1 *watchOwner = nullptr;
+    talos_rt_object_v1 *watchOwner = nullptr;
     if (watching && !readArgumentRef(inputRegister(2), watchOwner, ownerPayload,
                                      ownerManaged))
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_object_v1 *path = nullptr;
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_object_v1 *path = nullptr;
     uint8_t *stateValue =
         context->stateValue.empty()
             ? nullptr
@@ -2775,20 +2775,20 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         context->stateUnknown.empty()
             ? nullptr
             : reinterpret_cast<uint8_t *>(context->stateUnknown.data());
-    obelisk_rt_status status = obelisk_rt_v1_reference_path_index_create(
+    talos_rt_status status = talos_rt_v1_reference_path_index_create(
         lane, readManaged(inputRegister(0)), static_cast<int64_t>(*index),
         watchOwner, ownerPayload, ownerManaged, watching ? stateValue : nullptr,
         watching ? stateUnknown : nullptr, watching ? image.stateBitCount : 0,
         &path);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
-    return writeManaged(outputRegister(0), path) ? OBELISK_RT_OK
-                                                 : OBELISK_RT_INVALID_BYTECODE;
+    return writeManaged(outputRegister(0), path) ? TALOS_RT_OK
+                                                 : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_OPTION_REFERENCE:
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_OPTION_REFERENCE: {
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_OPTION_REFERENCE:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_TYPE_OPTION_REFERENCE: {
     bool typeOption = signature.id ==
-                      OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_OPTION_REFERENCE;
+                      TALOS_RT_INTRINSIC_V1_COVERGROUP_TYPE_OPTION_REFERENCE;
     uint32_t first = typeOption ? 1 : 0;
     std::array<std::optional<uint64_t>, 6> inputs;
     for (uint32_t index = 0; index != inputs.size(); ++index)
@@ -2796,16 +2796,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (std::any_of(inputs.begin(), inputs.end(),
                     [](const auto &value) { return !value; }) ||
         *inputs[2] > UINT32_MAX || *inputs[5] > 1)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_object_v1 *watchOwner = nullptr;
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_object_v1 *watchOwner = nullptr;
     uint64_t ownerPayload = 0;
     uint32_t ownerManaged = 0;
     if (typeOption && !readArgumentRef(inputRegister(0), watchOwner,
                                        ownerPayload, ownerManaged))
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     uint8_t *stateValue =
         typeOption && !context->stateValue.empty()
             ? reinterpret_cast<uint8_t *>(context->stateValue.data())
@@ -2814,34 +2814,34 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         typeOption && !context->stateUnknown.empty()
             ? reinterpret_cast<uint8_t *>(context->stateUnknown.data())
             : nullptr;
-    obelisk_rt_object_v1 *path = nullptr;
-    obelisk_rt_status status =
-        obelisk_rt_v1_reference_path_covergroup_option_create(
+    talos_rt_object_v1 *path = nullptr;
+    talos_rt_status status =
+        talos_rt_v1_reference_path_covergroup_option_create(
             lane, typeOption ? 0 : *inputs[0], typeOption ? *inputs[0] : 0,
             *inputs[1], static_cast<uint32_t>(*inputs[2]), *inputs[3],
             static_cast<int64_t>(*inputs[4]), static_cast<uint32_t>(*inputs[5]),
             watchOwner, ownerPayload, ownerManaged, stateValue, stateUnknown,
             typeOption ? image.stateBitCount : 0, &path);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
-    return writeManaged(outputRegister(0), path) ? OBELISK_RT_OK
-                                                 : OBELISK_RT_INVALID_BYTECODE;
+    return writeManaged(outputRegister(0), path) ? TALOS_RT_OK
+                                                 : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_STRING_CHARACTER: {
+  case TALOS_RT_INTRINSIC_V1_REFERENCE_PATH_STRING_CHARACTER: {
     auto index = scalar(1);
-    obelisk_rt_object_v1 *watchOwner = nullptr;
+    talos_rt_object_v1 *watchOwner = nullptr;
     uint64_t ownerPayload = 0;
     uint32_t ownerManaged = 0;
     if (!index || !readArgumentRef(inputRegister(2), watchOwner, ownerPayload,
                                    ownerManaged))
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_object_v1 *path = nullptr;
-    obelisk_rt_string_v1 string = 0;
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_object_v1 *path = nullptr;
+    talos_rt_string_v1 string = 0;
     if (!readString(inputRegister(0), string))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint8_t *stateValue =
         context->stateValue.empty()
             ? nullptr
@@ -2850,41 +2850,41 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         context->stateUnknown.empty()
             ? nullptr
             : reinterpret_cast<uint8_t *>(context->stateUnknown.data());
-    obelisk_rt_status status =
-        obelisk_rt_v1_reference_path_string_character_create(
+    talos_rt_status status =
+        talos_rt_v1_reference_path_string_character_create(
             lane, string, static_cast<int64_t>(*index), watchOwner,
             ownerPayload, ownerManaged, stateValue, stateUnknown,
             image.stateBitCount, &path);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
-    return writeManaged(outputRegister(0), path) ? OBELISK_RT_OK
-                                                 : OBELISK_RT_INVALID_BYTECODE;
+    return writeManaged(outputRegister(0), path) ? TALOS_RT_OK
+                                                 : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_AGGREGATE_ELEMENT: {
+  case TALOS_RT_INTRINSIC_V1_REFERENCE_PATH_AGGREGATE_ELEMENT: {
     std::array<std::optional<uint64_t>, 13> inputs;
     inputs[0] = scalar(1);
     for (uint32_t index = 2; index != 14; ++index)
       inputs[index - 1] = scalar(index);
     if (std::any_of(inputs.begin(), inputs.end(),
                     [](const auto &value) { return !value; }))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::optional<ByteSpan> trace =
         readByteSpan(image, frame, inputRegister(14));
-    if (!trace || trace->size % sizeof(obelisk_rt_element_trace_slot_v1) != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
-    std::vector<obelisk_rt_element_trace_slot_v1> traceSlots(
-        trace->size / sizeof(obelisk_rt_element_trace_slot_v1));
+    if (!trace || trace->size % sizeof(talos_rt_element_trace_slot_v1) != 0)
+      return TALOS_RT_INVALID_BYTECODE;
+    std::vector<talos_rt_element_trace_slot_v1> traceSlots(
+        trace->size / sizeof(talos_rt_element_trace_slot_v1));
     if (!traceSlots.empty())
       std::memcpy(traceSlots.data(), trace->data, trace->size);
-    obelisk_rt_object_v1 *watchOwner = nullptr;
+    talos_rt_object_v1 *watchOwner = nullptr;
     uint64_t ownerPayload = 0;
     uint32_t ownerManaged = 0;
     if (!readArgumentRef(inputRegister(0), watchOwner, ownerPayload,
                          ownerManaged))
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     uint8_t *stateValue =
         context->stateValue.empty()
             ? nullptr
@@ -2893,9 +2893,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         context->stateUnknown.empty()
             ? nullptr
             : reinterpret_cast<uint8_t *>(context->stateUnknown.data());
-    obelisk_rt_object_v1 *path = nullptr;
-    obelisk_rt_status status =
-        obelisk_rt_v1_reference_path_aggregate_element_create(
+    talos_rt_object_v1 *path = nullptr;
+    talos_rt_status status =
+        talos_rt_v1_reference_path_aggregate_element_create(
             lane, watchOwner, ownerPayload, ownerManaged, stateValue,
             stateUnknown, image.stateBitCount, static_cast<int64_t>(*inputs[0]),
             static_cast<int64_t>(*inputs[1]), static_cast<int64_t>(*inputs[2]),
@@ -2904,45 +2904,45 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             static_cast<uint32_t>(*inputs[8]),
             static_cast<uint32_t>(*inputs[9]), *inputs[10], *inputs[11],
             *inputs[12], traceSlots.data(), traceSlots.size(), &path);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
-    return writeManaged(outputRegister(0), path) ? OBELISK_RT_OK
-                                                 : OBELISK_RT_INVALID_BYTECODE;
+    return writeManaged(outputRegister(0), path) ? TALOS_RT_OK
+                                                 : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH: {
+  case TALOS_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH: {
     Layout output = layoutAt(image, frame.function, outputRegister(0));
-    if (output.kind != OBELISK_RT_DBREG_ARGUMENT_REF || output.size != 24)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_object_v1 *path = readManaged(inputRegister(0));
+    if (output.kind != TALOS_RT_DBREG_ARGUMENT_REF || output.size != 24)
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_object_v1 *path = readManaged(inputRegister(0));
     std::memset(frame.data + output.offset, 0, output.size);
-    obelisk_rt_managed_word_v1 pathWord =
-        obelisk_rt_managed_word_from_object(path);
+    talos_rt_managed_word_v1 pathWord =
+        talos_rt_managed_word_from_object(path);
     std::memcpy(frame.data + output.offset, &pathWord, sizeof(pathWord));
     uint64_t managed = 2;
     std::memcpy(frame.data + output.offset + 16, &managed, sizeof(managed));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_REF: {
+  case TALOS_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_REF: {
     Layout input = layoutAt(image, frame.function, inputRegister(0));
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     uint64_t stable = UINT64_MAX;
     if (!encodeCanonicalHandle(frame.data + input.offset, stable))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     std::memset(frame.data + output.offset, 0, output.size);
     std::memcpy(frame.data + output.offset + 8, &stable, sizeof(stable));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_MANAGED: {
+  case TALOS_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_MANAGED: {
     Layout input = layoutAt(image, frame.function, inputRegister(0));
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     std::memset(frame.data + output.offset, 0, output.size);
     std::memcpy(frame.data + output.offset, frame.data + input.offset, 16);
     uint64_t managed = 1;
     std::memcpy(frame.data + output.offset + 16, &managed, sizeof(managed));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_LOAD: {
-    obelisk_rt_object_v1 *owner = nullptr;
+  case TALOS_RT_INTRINSIC_V1_ARGUMENT_REF_LOAD: {
+    talos_rt_object_v1 *owner = nullptr;
     uint64_t payload = 0;
     uint32_t managed = 0;
     auto planeSize = scalar(1);
@@ -2951,26 +2951,26 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!readArgumentRef(inputRegister(0), owner, payload, managed) ||
         !planeSize || !bitWidth || !flags || *planeSize == 0 ||
         *bitWidth == 0 || (*flags & ~uint64_t{7}) != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     bool fourState = (*flags & 1) != 0;
     uint32_t valueKind = static_cast<uint32_t>(*flags >> 1);
-    bool event = output.kind == OBELISK_RT_DBREG_HANDLE &&
-                 (output.flags & OBELISK_RT_DBREG_EVENT);
+    bool event = output.kind == TALOS_RT_DBREG_HANDLE &&
+                 (output.flags & TALOS_RT_DBREG_EVENT);
     uint64_t canonicalWidth = event ? 64 : output.width;
-    uint64_t scratchPlaneSize = output.kind == OBELISK_RT_DBREG_REAL32
+    uint64_t scratchPlaneSize = output.kind == TALOS_RT_DBREG_REAL32
                                     ? sizeof(float)
                                     : ((canonicalWidth + 63) / 64) * 8;
     if (*bitWidth != canonicalWidth || *planeSize > scratchPlaneSize ||
         (event ? output.width != 256 || output.size != 32
                : output.size != scratchPlaneSize * (fourState ? 2 : 1)) ||
-        fourState != (output.kind == OBELISK_RT_DBREG_LOGIC) ||
-        (valueKind == OBELISK_RT_ARGUMENT_VALUE_CLASS) !=
-            (output.kind == OBELISK_RT_DBREG_MANAGED) ||
-        (valueKind == OBELISK_RT_ARGUMENT_VALUE_STRING) !=
-            (output.kind == OBELISK_RT_DBREG_STRING) ||
-        valueKind > OBELISK_RT_ARGUMENT_VALUE_STRING)
-      return OBELISK_RT_INVALID_BYTECODE;
+        fourState != (output.kind == TALOS_RT_DBREG_LOGIC) ||
+        (valueKind == TALOS_RT_ARGUMENT_VALUE_CLASS) !=
+            (output.kind == TALOS_RT_DBREG_MANAGED) ||
+        (valueKind == TALOS_RT_ARGUMENT_VALUE_STRING) !=
+            (output.kind == TALOS_RT_DBREG_STRING) ||
+        valueKind > TALOS_RT_ARGUMENT_VALUE_STRING)
+      return TALOS_RT_INVALID_BYTECODE;
     uint8_t dummy = 0;
     const uint8_t *stateValue =
         context->stateValue.empty()
@@ -2981,19 +2981,19 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             ? &dummy
             : reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
     uint64_t word = UINT64_MAX;
-    obelisk_rt_status status = obelisk_rt_v1_argument_ref_load(
+    talos_rt_status status = talos_rt_v1_argument_ref_load(
         context, stateValue, stateUnknown, image.stateBitCount, owner, payload,
         managed, *bitWidth, *planeSize, fourState, valueKind,
         event ? static_cast<void *>(&word) : frame.data + output.offset,
         fourState ? frame.data + output.offset + scratchPlaneSize : nullptr);
-    if (status != OBELISK_RT_OK || !event)
+    if (status != TALOS_RT_OK || !event)
       return status;
     return decodeCanonicalEventHandle(word, frame.data + output.offset)
-               ? OBELISK_RT_OK
-               : OBELISK_RT_INVALID_HANDLE;
+               ? TALOS_RT_OK
+               : TALOS_RT_INVALID_HANDLE;
   }
-  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_STORE: {
-    obelisk_rt_object_v1 *owner = nullptr;
+  case TALOS_RT_INTRINSIC_V1_ARGUMENT_REF_STORE: {
+    talos_rt_object_v1 *owner = nullptr;
     uint64_t payload = 0;
     uint32_t managed = 0;
     auto planeSize = scalar(2);
@@ -3002,31 +3002,31 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!readArgumentRef(inputRegister(0), owner, payload, managed) ||
         !planeSize || !bitWidth || !flags || *planeSize == 0 ||
         *bitWidth == 0 || (*flags & ~uint64_t{7}) != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout input = layoutAt(image, frame.function, inputRegister(1));
     bool fourState = (*flags & 1) != 0;
     uint32_t valueKind = static_cast<uint32_t>(*flags >> 1);
-    bool event = input.kind == OBELISK_RT_DBREG_HANDLE &&
-                 (input.flags & OBELISK_RT_DBREG_EVENT);
+    bool event = input.kind == TALOS_RT_DBREG_HANDLE &&
+                 (input.flags & TALOS_RT_DBREG_EVENT);
     uint64_t canonicalWidth = event ? 64 : input.width;
-    uint64_t scratchPlaneSize = input.kind == OBELISK_RT_DBREG_REAL32
+    uint64_t scratchPlaneSize = input.kind == TALOS_RT_DBREG_REAL32
                                     ? sizeof(float)
                                     : ((canonicalWidth + 63) / 64) * 8;
     if (*bitWidth != canonicalWidth || *planeSize > scratchPlaneSize ||
         (event ? input.width != 256 || input.size != 32
                : input.size != scratchPlaneSize * (fourState ? 2 : 1)) ||
-        fourState != (input.kind == OBELISK_RT_DBREG_LOGIC) ||
-        (valueKind == OBELISK_RT_ARGUMENT_VALUE_CLASS) !=
-            (input.kind == OBELISK_RT_DBREG_MANAGED) ||
-        (valueKind == OBELISK_RT_ARGUMENT_VALUE_STRING) !=
-            (input.kind == OBELISK_RT_DBREG_STRING) ||
-        valueKind > OBELISK_RT_ARGUMENT_VALUE_STRING)
-      return OBELISK_RT_INVALID_BYTECODE;
+        fourState != (input.kind == TALOS_RT_DBREG_LOGIC) ||
+        (valueKind == TALOS_RT_ARGUMENT_VALUE_CLASS) !=
+            (input.kind == TALOS_RT_DBREG_MANAGED) ||
+        (valueKind == TALOS_RT_ARGUMENT_VALUE_STRING) !=
+            (input.kind == TALOS_RT_DBREG_STRING) ||
+        valueKind > TALOS_RT_ARGUMENT_VALUE_STRING)
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t word = UINT64_MAX;
     if (event &&
-        (read32(frame.data + input.offset) != OBELISK_RT_DESCRIPTOR_EVENT ||
+        (read32(frame.data + input.offset) != TALOS_RT_DESCRIPTOR_EVENT ||
          !encodeCanonicalHandle(frame.data + input.offset, word)))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint8_t dummy = 0;
     uint8_t *stateValue =
         context->stateValue.empty()
@@ -3036,104 +3036,104 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         context->stateUnknown.empty()
             ? &dummy
             : reinterpret_cast<uint8_t *>(context->stateUnknown.data());
-    return obelisk_rt_v1_argument_ref_store(
+    return talos_rt_v1_argument_ref_store(
         context, stateValue, stateUnknown, image.stateBitCount, owner, payload,
         managed, *bitWidth, *planeSize, fourState, valueKind,
         event ? static_cast<const void *>(&word) : frame.data + input.offset,
         fourState ? frame.data + input.offset + scratchPlaneSize : nullptr);
   }
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT: {
+  case TALOS_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT: {
     Layout input = layoutAt(image, frame.function, inputRegister(0));
     std::optional<uint64_t> bitOffset = scalar(1);
     if (!bitOffset || (*bitOffset & 63) != 0 || *bitOffset > input.width ||
         64 > input.width - *bitOffset)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_managed_word_v1 word = 0;
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_managed_word_v1 word = 0;
     std::memcpy(&word, frame.data + input.offset + *bitOffset / 8,
                 sizeof(word));
-    obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word);
+    talos_rt_object_v1 *object = talos_rt_object_from_managed_word(word);
     return writeManaged(outputRegister(0), object)
-               ? OBELISK_RT_OK
-               : OBELISK_RT_INVALID_BYTECODE;
+               ? TALOS_RT_OK
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_CANDIDATE_ROOT: {
+  case TALOS_RT_INTRINSIC_V1_MANAGED_CANDIDATE_ROOT: {
     Layout input = layoutAt(image, frame.function, inputRegister(0));
     std::optional<uint64_t> bitOffset = scalar(1);
     std::optional<uint64_t> kindMask = scalar(2);
     if (!bitOffset || !kindMask || (*bitOffset & 63) != 0 ||
         *bitOffset > input.width || 64 > input.width - *bitOffset ||
         *kindMask == 0 ||
-        (*kindMask & ~uint64_t{OBELISK_RT_MANAGED_ROOT_KIND_ALL}) != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_managed_word_v1 word = 0;
+        (*kindMask & ~uint64_t{TALOS_RT_MANAGED_ROOT_KIND_ALL}) != 0)
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_managed_word_v1 word = 0;
     std::memcpy(&word, frame.data + input.offset + *bitOffset / 8,
                 sizeof(word));
-    word = obelisk_rt_v1_gc_candidate_root(context, word,
+    word = talos_rt_v1_gc_candidate_root(context, word,
                                            static_cast<uint32_t>(*kindMask));
-    obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word);
+    talos_rt_object_v1 *object = talos_rt_object_from_managed_word(word);
     return writeManaged(outputRegister(0), object)
-               ? OBELISK_RT_OK
-               : OBELISK_RT_INVALID_BYTECODE;
+               ? TALOS_RT_OK
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_WATCH: {
+  case TALOS_RT_INTRINSIC_V1_MANAGED_WATCH: {
     std::optional<uint64_t> encodedKind = scalar(1);
     if (!encodedKind)
-      return OBELISK_RT_INVALID_BYTECODE;
-    auto kind = static_cast<obelisk_rt_managed_watch_kind>(*encodedKind);
-    obelisk_rt_object_v1 *object = nullptr;
+      return TALOS_RT_INVALID_BYTECODE;
+    auto kind = static_cast<talos_rt_managed_watch_kind>(*encodedKind);
+    talos_rt_object_v1 *object = nullptr;
     uint64_t selector = 0;
     switch (kind) {
-    case OBELISK_RT_MANAGED_WATCH_FIELD:
+    case TALOS_RT_MANAGED_WATCH_FIELD:
       if (!readManagedRef(inputRegister(0), object, selector))
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       break;
-    case OBELISK_RT_MANAGED_WATCH_CONTAINER_SIZE: {
+    case TALOS_RT_MANAGED_WATCH_CONTAINER_SIZE: {
       Layout input = layoutAt(image, frame.function, inputRegister(0));
-      if (input.kind != OBELISK_RT_DBREG_MANAGED || input.size != 8)
-        return OBELISK_RT_INVALID_BYTECODE;
+      if (input.kind != TALOS_RT_DBREG_MANAGED || input.size != 8)
+        return TALOS_RT_INVALID_BYTECODE;
       object = readManaged(inputRegister(0));
       break;
     }
     default:
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     }
-    uint64_t token = obelisk_rt_v1_managed_watch(object, kind, selector);
+    uint64_t token = talos_rt_v1_managed_watch(object, kind, selector);
     return writeScalar(image, frame, outputRegister(0), token)
-               ? OBELISK_RT_OK
-               : OBELISK_RT_INVALID_BYTECODE;
+               ? TALOS_RT_OK
+               : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_LOAD: {
-    obelisk_rt_object_v1 *object = nullptr;
+  case TALOS_RT_INTRINSIC_V1_MANAGED_LOAD: {
+    talos_rt_object_v1 *object = nullptr;
     uint64_t offset = 0;
     auto planeSize = scalar(1);
     if (!readManagedRef(inputRegister(0), object, offset) || !planeSize ||
         *planeSize == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
-    if (output.kind == OBELISK_RT_DBREG_MANAGED) {
-      if (*planeSize != sizeof(obelisk_rt_managed_word_v1))
-        return OBELISK_RT_INVALID_BYTECODE;
-      obelisk_rt_managed_word_v1 value = 0;
-      obelisk_rt_status status =
-          obelisk_rt_v1_object_read(object, offset, &value, sizeof(value));
-      if (status != OBELISK_RT_OK)
+    if (output.kind == TALOS_RT_DBREG_MANAGED) {
+      if (*planeSize != sizeof(talos_rt_managed_word_v1))
+        return TALOS_RT_INVALID_BYTECODE;
+      talos_rt_managed_word_v1 value = 0;
+      talos_rt_status status =
+          talos_rt_v1_object_read(object, offset, &value, sizeof(value));
+      if (status != TALOS_RT_OK)
         return status;
-      obelisk_rt_object_v1 *decoded =
-          obelisk_rt_object_from_managed_word(value);
-      return value != obelisk_rt_managed_word_from_object(decoded) ||
+      talos_rt_object_v1 *decoded =
+          talos_rt_object_from_managed_word(value);
+      return value != talos_rt_managed_word_from_object(decoded) ||
                      !writeManaged(outputRegister(0), decoded)
-                 ? OBELISK_RT_INVALID_HANDLE
-                 : OBELISK_RT_OK;
+                 ? TALOS_RT_INVALID_HANDLE
+                 : TALOS_RT_OK;
     }
-    if (output.kind == OBELISK_RT_DBREG_HANDLE) {
+    if (output.kind == TALOS_RT_DBREG_HANDLE) {
       if (*planeSize != sizeof(uint64_t) || output.size < 32)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       uint64_t stableID = UINT64_MAX;
-      obelisk_rt_status status = obelisk_rt_v1_object_read(
+      talos_rt_status status = talos_rt_v1_object_read(
           object, offset, &stableID, sizeof(stableID));
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
-      uint32_t kind = OBELISK_RT_DESCRIPTOR_EVENT;
+      uint32_t kind = TALOS_RT_DESCRIPTOR_EVENT;
       int64_t start = static_cast<int64_t>(stableID);
       int64_t begin = start == kInvalidHandleStart ? 0 : start;
       int64_t end = start == kInvalidHandleStart
@@ -3144,238 +3144,238 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::memcpy(frame.data + output.offset + 8, &begin, sizeof(begin));
       std::memcpy(frame.data + output.offset + 16, &start, sizeof(start));
       std::memcpy(frame.data + output.offset + 24, &end, sizeof(end));
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     uint64_t scratchPlaneSize = ((uint64_t{output.width} + 63) / 64) * 8;
-    bool fourState = output.kind == OBELISK_RT_DBREG_LOGIC;
+    bool fourState = output.kind == TALOS_RT_DBREG_LOGIC;
     if (*planeSize > scratchPlaneSize ||
         output.size != scratchPlaneSize * (fourState ? 2 : 1))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::memset(frame.data + output.offset, 0,
                 static_cast<size_t>(output.size));
     if (fourState)
-      return obelisk_rt_v1_object_read_planes(
+      return talos_rt_v1_object_read_planes(
           object, offset, frame.data + output.offset,
           frame.data + output.offset + scratchPlaneSize, *planeSize);
-    return obelisk_rt_v1_object_read(object, offset, frame.data + output.offset,
+    return talos_rt_v1_object_read(object, offset, frame.data + output.offset,
                                      *planeSize);
   }
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_STORE: {
-    obelisk_rt_object_v1 *object = nullptr;
+  case TALOS_RT_INTRINSIC_V1_MANAGED_STORE: {
+    talos_rt_object_v1 *object = nullptr;
     uint64_t offset = 0;
     auto planeSize = scalar(2);
     if (!readManagedRef(inputRegister(0), object, offset) || !planeSize ||
         *planeSize == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout input = layoutAt(image, frame.function, inputRegister(1));
-    if (input.kind == OBELISK_RT_DBREG_MANAGED) {
-      if (*planeSize != sizeof(obelisk_rt_managed_word_v1))
-        return OBELISK_RT_INVALID_BYTECODE;
-      obelisk_rt_managed_word_v1 value =
-          obelisk_rt_managed_word_from_object(readManaged(inputRegister(1)));
-      return obelisk_rt_v1_object_write(object, offset, &value, sizeof(value));
+    if (input.kind == TALOS_RT_DBREG_MANAGED) {
+      if (*planeSize != sizeof(talos_rt_managed_word_v1))
+        return TALOS_RT_INVALID_BYTECODE;
+      talos_rt_managed_word_v1 value =
+          talos_rt_managed_word_from_object(readManaged(inputRegister(1)));
+      return talos_rt_v1_object_write(object, offset, &value, sizeof(value));
     }
-    if (input.kind == OBELISK_RT_DBREG_HANDLE) {
+    if (input.kind == TALOS_RT_DBREG_HANDLE) {
       if (*planeSize != sizeof(uint64_t) || input.size < 32)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       uint32_t kind = 0;
       uint64_t stableID = UINT64_MAX;
       std::memcpy(&kind, frame.data + input.offset, sizeof(kind));
       std::memcpy(&stableID, frame.data + input.offset + 16, sizeof(stableID));
-      if (kind != OBELISK_RT_DESCRIPTOR_EVENT)
-        return OBELISK_RT_INVALID_BYTECODE;
-      return obelisk_rt_v1_object_write(object, offset, &stableID,
+      if (kind != TALOS_RT_DESCRIPTOR_EVENT)
+        return TALOS_RT_INVALID_BYTECODE;
+      return talos_rt_v1_object_write(object, offset, &stableID,
                                         sizeof(stableID));
     }
     uint64_t scratchPlaneSize = ((uint64_t{input.width} + 63) / 64) * 8;
-    bool fourState = input.kind == OBELISK_RT_DBREG_LOGIC;
+    bool fourState = input.kind == TALOS_RT_DBREG_LOGIC;
     if (*planeSize > scratchPlaneSize ||
         input.size != scratchPlaneSize * (fourState ? 2 : 1))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (fourState)
-      return obelisk_rt_v1_object_write_planes(
+      return talos_rt_v1_object_write_planes(
           object, offset, frame.data + input.offset,
           frame.data + input.offset + scratchPlaneSize, *planeSize);
-    return obelisk_rt_v1_object_write(object, offset, frame.data + input.offset,
+    return talos_rt_v1_object_write(object, offset, frame.data + input.offset,
                                       *planeSize);
   }
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_OVERRIDE: {
-    obelisk_rt_object_v1 *object = nullptr;
+  case TALOS_RT_INTRINSIC_V1_MANAGED_OVERRIDE: {
+    talos_rt_object_v1 *object = nullptr;
     uint64_t offset = 0;
     auto planeSize = scalar(2);
     auto flags = scalar(3);
     auto owner = scalar(4);
     if (!readManagedRef(inputRegister(0), object, offset) || !planeSize ||
         !flags || !owner || *planeSize == 0 || (*flags & ~uint64_t{15}) != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout input = layoutAt(image, frame.function, inputRegister(1));
     bool fourState = (*flags & 8) != 0;
-    if (fourState != (input.kind == OBELISK_RT_DBREG_LOGIC))
-      return OBELISK_RT_INVALID_BYTECODE;
+    if (fourState != (input.kind == TALOS_RT_DBREG_LOGIC))
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t scratchPlaneSize = ((uint64_t{input.width} + 63) / 64) * 8;
     if (fourState &&
         (*planeSize > scratchPlaneSize || input.size != scratchPlaneSize * 2))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!fourState && *planeSize > input.size)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     const uint8_t *value = frame.data + input.offset;
     const uint8_t *unknown = fourState ? value + scratchPlaneSize : nullptr;
-    return obelisk_rt_v1_object_override(
+    return talos_rt_v1_object_override(
         object, offset, *planeSize, fourState ? 1 : 0,
         (*flags & 1) != 0 ? 1 : 0, (*flags & 2) != 0 ? 1 : 0, *owner,
         (*flags & 4) != 0 ? 1 : 0, value, unknown);
   }
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_RELEASE_OVERRIDE: {
-    obelisk_rt_object_v1 *object = nullptr;
+  case TALOS_RT_INTRINSIC_V1_MANAGED_RELEASE_OVERRIDE: {
+    talos_rt_object_v1 *object = nullptr;
     uint64_t offset = 0;
     auto planeSize = scalar(1);
     auto flags = scalar(2);
     if (!readManagedRef(inputRegister(0), object, offset) || !planeSize ||
         !flags || *planeSize == 0 || (*flags & ~uint64_t{9}) != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_object_release_override(object, offset, *planeSize,
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_object_release_override(object, offset, *planeSize,
                                                  (*flags & 8) != 0 ? 1 : 0,
                                                  (*flags & 1) != 0 ? 1 : 0);
   }
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_NBA: {
-    obelisk_rt_object_v1 *object = nullptr;
+  case TALOS_RT_INTRINSIC_V1_MANAGED_NBA: {
+    talos_rt_object_v1 *object = nullptr;
     uint64_t offset = 0;
     auto planeSize = scalar(2);
     Layout destination = layoutAt(image, frame.function, inputRegister(0));
-    bool path = destination.kind == OBELISK_RT_DBREG_MANAGED;
+    bool path = destination.kind == TALOS_RT_DBREG_MANAGED;
     if (path)
       object = readManaged(inputRegister(0));
     else if (!readManagedRef(inputRegister(0), object, offset))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!planeSize || *planeSize == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (path)
       offset = UINT64_MAX;
     uint64_t delay = 0;
     if (site.inputCount == 4) {
       auto encodedDelay = scalar(3);
       if (!encodedDelay)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       delay = *encodedDelay;
     }
     Layout input = layoutAt(image, frame.function, inputRegister(1));
     const void *value = frame.data + input.offset;
     const void *unknown = nullptr;
-    if (input.kind == OBELISK_RT_DBREG_MANAGED) {
-      if (*planeSize != sizeof(obelisk_rt_managed_word_v1))
-        return OBELISK_RT_INVALID_BYTECODE;
+    if (input.kind == TALOS_RT_DBREG_MANAGED) {
+      if (*planeSize != sizeof(talos_rt_managed_word_v1))
+        return TALOS_RT_INVALID_BYTECODE;
     } else {
       uint64_t scratchPlaneSize = ((uint64_t{input.width} + 63) / 64) * 8;
-      bool fourState = input.kind == OBELISK_RT_DBREG_LOGIC;
+      bool fourState = input.kind == TALOS_RT_DBREG_LOGIC;
       if (*planeSize > scratchPlaneSize ||
           input.size != scratchPlaneSize * (fourState ? 2 : 1))
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       if (fourState)
         unknown = frame.data + input.offset + scratchPlaneSize;
     }
-    return obelisk_rt_v1_scheduler_managed_nba(context, object, offset, value,
+    return talos_rt_v1_scheduler_managed_nba(context, object, offset, value,
                                                unknown, *planeSize, delay);
   }
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_NBA_MASKED: {
-    obelisk_rt_object_v1 *object = nullptr;
+  case TALOS_RT_INTRINSIC_V1_MANAGED_NBA_MASKED: {
+    talos_rt_object_v1 *object = nullptr;
     uint64_t offset = 0;
     auto planeSize = scalar(2);
     auto delay = scalar(4);
     // A reference-path destination names its element without a field offset.
     if (layoutAt(image, frame.function, inputRegister(0)).kind ==
-        OBELISK_RT_DBREG_MANAGED) {
+        TALOS_RT_DBREG_MANAGED) {
       object = readManaged(inputRegister(0));
       offset = UINT64_MAX;
     } else if (!readManagedRef(inputRegister(0), object, offset)) {
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     }
     if (!planeSize || *planeSize == 0 || !delay)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout input = layoutAt(image, frame.function, inputRegister(1));
     Layout mask = layoutAt(image, frame.function, inputRegister(3));
     uint64_t scratchPlaneSize = ((uint64_t{input.width} + 63) / 64) * 8;
-    bool fourState = input.kind == OBELISK_RT_DBREG_LOGIC;
+    bool fourState = input.kind == TALOS_RT_DBREG_LOGIC;
     if (*planeSize > scratchPlaneSize ||
         input.size != scratchPlaneSize * (fourState ? 2 : 1) ||
         mask.width != input.width)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_scheduler_managed_nba_masked(
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_scheduler_managed_nba_masked(
         context, object, offset, frame.data + input.offset,
         fourState ? frame.data + input.offset + scratchPlaneSize : nullptr,
         frame.data + mask.offset, *planeSize, *delay);
   }
-  case OBELISK_RT_INTRINSIC_V1_WEAK_CREATE: {
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+  case TALOS_RT_INTRINSIC_V1_WEAK_CREATE: {
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     std::optional<uint64_t> classID = scalar(1);
     if (!classID)
-      return OBELISK_RT_INVALID_BYTECODE;
-    const obelisk_rt_class_descriptor_v1 *descriptor =
-        obelisk_rt_managed_class_lookup(context, *classID);
+      return TALOS_RT_INVALID_BYTECODE;
+    const talos_rt_class_descriptor_v1 *descriptor =
+        talos_rt_managed_class_lookup(context, *classID);
     if (!descriptor)
-      return OBELISK_RT_INVALID_DESIGN;
-    obelisk_rt_object_v1 *weak = nullptr;
-    obelisk_rt_status status = obelisk_rt_v1_weak_create(
+      return TALOS_RT_INVALID_DESIGN;
+    talos_rt_object_v1 *weak = nullptr;
+    talos_rt_status status = talos_rt_v1_weak_create(
         lane, descriptor, readManaged(inputRegister(0)), &weak);
-    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), weak)
-               ? OBELISK_RT_INVALID_BYTECODE
+    return status == TALOS_RT_OK && !writeManaged(outputRegister(0), weak)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_WEAK_GET: {
-    obelisk_rt_object_v1 *referent = nullptr;
-    obelisk_rt_status status =
-        obelisk_rt_v1_weak_get(readManaged(inputRegister(0)), &referent);
-    return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), referent)
-               ? OBELISK_RT_INVALID_BYTECODE
+  case TALOS_RT_INTRINSIC_V1_WEAK_GET: {
+    talos_rt_object_v1 *referent = nullptr;
+    talos_rt_status status =
+        talos_rt_v1_weak_get(readManaged(inputRegister(0)), &referent);
+    return status == TALOS_RT_OK && !writeManaged(outputRegister(0), referent)
+               ? TALOS_RT_INVALID_BYTECODE
                : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_WEAK_CLEAR:
-    return obelisk_rt_v1_weak_clear(readManaged(inputRegister(0)));
-  case OBELISK_RT_INTRINSIC_V1_GC_SAFEPOINT: {
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
-    return lane ? obelisk_rt_v1_gc_safepoint(lane)
-                : OBELISK_RT_INVALID_LIFECYCLE;
+  case TALOS_RT_INTRINSIC_V1_WEAK_CLEAR:
+    return talos_rt_v1_weak_clear(readManaged(inputRegister(0)));
+  case TALOS_RT_INTRINSIC_V1_GC_SAFEPOINT: {
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
+    return lane ? talos_rt_v1_gc_safepoint(lane)
+                : TALOS_RT_INVALID_LIFECYCLE;
   }
-  case OBELISK_RT_INTRINSIC_V1_SPAWN: {
+  case TALOS_RT_INTRINSIC_V1_SPAWN: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     uint32_t function =
-        signature.flags & OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK;
+        signature.flags & TALOS_RT_INTRINSIC_SPAWN_FUNCTION_MASK;
     Function callee = functionAt(image, function);
     uint64_t canonicalSize =
-        (callee.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
+        (callee.flags & TALOS_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
     if (callee.scratchAlignment == 0 ||
         canonicalSize > UINT64_MAX - (callee.scratchAlignment - 1))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t scratchOffset = (canonicalSize + callee.scratchAlignment - 1) &
                              ~(callee.scratchAlignment - 1);
     if (scratchOffset > UINT64_MAX - callee.scratchSize ||
         scratchOffset + callee.scratchSize > std::numeric_limits<size_t>::max())
-      return OBELISK_RT_OUT_OF_MEMORY;
+      return TALOS_RT_OUT_OF_MEMORY;
     ScheduledDesignTask task;
     task.parent =
-        (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) == 0
+        (signature.flags & TALOS_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) == 0
             ? context->activeLogicalProcessToken
             : 0;
     if (task.parent != 0)
       context->logicalProcessParentsWithChildren.insert(task.parent);
     task.programOwner = context->activeProgramOwner;
     if (!task.programOwner &&
-        (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_PROGRAM) != 0) {
+        (signature.flags & TALOS_RT_INTRINSIC_SPAWN_PROGRAM) != 0) {
       auto owner = scalar(callee.argumentCount);
       if (!owner || !*owner)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       task.programOwner = *owner;
     }
     task.initializationRandomScope =
-        obelisk_rt_random_initialization_scope_unlocked(context);
-    obelisk_rt_random_split_unlocked(context, task.random);
+        talos_rt_random_initialization_scope_unlocked(context);
+    talos_rt_random_split_unlocked(context, task.random);
     task.function = function;
     task.startupProcess =
-        (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_STARTUP) != 0;
+        (signature.flags & TALOS_RT_INTRINSIC_SPAWN_STARTUP) != 0;
     task.prioritySignal =
-        (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL) != 0;
+        (signature.flags & TALOS_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL) != 0;
     task.urgent = task.startupProcess;
     task.scheduleRank = static_cast<uint32_t>(callee.initialScheduleRank);
     task.scratchOffset = scratchOffset;
@@ -3393,16 +3393,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         continue;
       uint32_t sourceRegister = inputRegister(capture.argument);
       Layout source = layoutAt(image, frame.function, sourceRegister);
-      if (source.kind == OBELISK_RT_DBREG_HANDLE) {
+      if (source.kind == TALOS_RT_DBREG_HANDLE) {
         uint64_t stable = UINT64_MAX;
         if (!encodeCanonicalHandle(frame.data + source.offset, stable))
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
         std::memcpy(task.frame.data() + capture.valueOffset, &stable, 8);
         uint32_t automaticID = 0;
         int64_t automaticOffset = 0;
         if (decodeAutomaticHandle(stable, automaticID, automaticOffset) &&
             ++retainedAutomaticStates[automaticID] == 0)
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         continue;
       }
       std::memcpy(task.frame.data() + capture.valueOffset,
@@ -3410,7 +3410,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       if (capture.unknownOffset != UINT64_MAX) {
         // Four-state registers use whole-limb planes, while the canonical
         // activation frame may use a smaller target-ABI plane.
-        uint64_t sourcePlane = source.kind == OBELISK_RT_DBREG_LOGIC
+        uint64_t sourcePlane = source.kind == TALOS_RT_DBREG_LOGIC
                                    ? limbCount(source.width) * sizeof(uint64_t)
                                    : capture.planeSize;
         std::memcpy(task.frame.data() + capture.unknownOffset,
@@ -3419,7 +3419,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       }
     }
     if (copied != callee.argumentCount)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t id = 0;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -3427,21 +3427,21 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           context->nextDesignTaskID > uint64_t{INT64_MAX} ||
           context->nextProcessInsertionSequence == 0 ||
           context->nextProcessInsertionSequence == UINT64_MAX)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       for (const auto &[automaticID, count] : retainedAutomaticStates) {
         auto found = context->nativeAutomaticStates.find(automaticID);
         if (found == context->nativeAutomaticStates.end())
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
         if (count > UINT64_MAX - found->second.referenceCount)
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
       }
       id = context->nextDesignTaskID++;
       // Process creation is the structural boundary that may make a rejected
       // slow-dominant scheduler shape profitable.
-      obelisk_rt_invalidate_design_ready_cohort(context);
+      talos_rt_invalidate_design_ready_cohort(context);
       task.id = id;
       task.phase =
-          (callee.flags & OBELISK_RT_DESIGN_FUNCTION_FINAL) != 0 ? 1 : 0;
+          (callee.flags & TALOS_RT_DESIGN_FUNCTION_FINAL) != 0 ? 1 : 0;
       task.homeRegion = functionHomeRegion(callee);
       task.queuedRegion = task.homeRegion;
       if (task.phase == 0 && context->activeDesignTaskID != 0)
@@ -3452,80 +3452,80 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             task.phase = process.phase;
             break;
           }
-      if ((signature.flags & OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) == 0)
+      if ((signature.flags & TALOS_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) == 0)
         task.controls = context->activeControls;
       task.insertionSequence = context->nextProcessInsertionSequence++;
       task.observedEpoch = context->schedulerEpoch;
       for (const auto &[automaticID, count] : retainedAutomaticStates)
         context->nativeAutomaticStates.find(automaticID)
             ->second.referenceCount += count;
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         context->scheduledDesignTasks.push_back(std::move(task));
         uint64_t scheduledID = context->scheduledDesignTasks.back().id;
-        OBELISK_RT_TRY {
+        TALOS_RT_TRY {
           context->scheduledDesignTaskIndices[scheduledID] =
               context->scheduledDesignTasks.size() - 1;
           context->designPollCandidates.insert(scheduledID);
           if ((signature.flags &
-               OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) == 0)
-            obelisk_rt_register_unstarted_actor(
+               TALOS_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS) == 0)
+            talos_rt_register_unstarted_actor(
                 context, context->scheduledDesignTasks.back().phase,
                 scheduledID);
           if (context->scheduledDesignTasks.back().programOwner)
-            obelisk_rt_program_register_unlocked(
+            talos_rt_program_register_unlocked(
                 context, scheduledID,
                 context->scheduledDesignTasks.back().programOwner);
         }
-        OBELISK_RT_CATCH_ALL {
+        TALOS_RT_CATCH_ALL {
           if (context->scheduledDesignTasks.back().programOwner)
-            obelisk_rt_program_complete_unlocked(
+            talos_rt_program_complete_unlocked(
                 context, scheduledID,
                 context->scheduledDesignTasks.back().programOwner);
           context->scheduledDesignTaskIndices.erase(scheduledID);
           context->designPollCandidates.erase(scheduledID);
-          obelisk_rt_unregister_unstarted_actor(
+          talos_rt_unregister_unstarted_actor(
               context, context->scheduledDesignTasks.back().phase, scheduledID);
           context->scheduledDesignTasks.pop_back();
-          OBELISK_RT_RETHROW;
+          TALOS_RT_RETHROW;
         }
-        obelisk_rt_retain_controls_unlocked(
+        talos_rt_retain_controls_unlocked(
             context, context->scheduledDesignTasks.back().controls);
       }
-      OBELISK_RT_CATCH_ALL {
+      TALOS_RT_CATCH_ALL {
         for (const auto &[automaticID, count] : retainedAutomaticStates)
           context->nativeAutomaticStates.find(automaticID)
               ->second.referenceCount -= count;
-        OBELISK_RT_RETHROW;
+        TALOS_RT_RETHROW;
       }
     }
-    if ((signature.flags & OBELISK_RT_INTRINSIC_SPAWN_PRIME) != 0) {
-      obelisk_rt_status status = obelisk_rt_prime_design_task(context, id);
-      if (status != OBELISK_RT_OK)
+    if ((signature.flags & TALOS_RT_INTRINSIC_SPAWN_PRIME) != 0) {
+      talos_rt_status status = talos_rt_prime_design_task(context, id);
+      if (status != TALOS_RT_OK)
         return status;
     }
     uint32_t destinationRegister = outputRegister(0);
     Layout destination = layoutAt(image, frame.function, destinationRegister);
     uint8_t *address = frame.data + destination.offset;
     std::memset(address, 0, destination.size);
-    if (destination.kind == OBELISK_RT_DBREG_BITS && destination.width == 64 &&
+    if (destination.kind == TALOS_RT_DBREG_BITS && destination.width == 64 &&
         destination.size == sizeof(id)) {
       std::memcpy(address, &id, sizeof(id));
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
-    if (destination.kind != OBELISK_RT_DBREG_HANDLE || destination.size < 32)
-      return OBELISK_RT_INVALID_BYTECODE;
-    uint32_t kind = OBELISK_RT_DESCRIPTOR_PROCESS;
+    if (destination.kind != TALOS_RT_DBREG_HANDLE || destination.size < 32)
+      return TALOS_RT_INVALID_BYTECODE;
+    uint32_t kind = TALOS_RT_DESCRIPTOR_PROCESS;
     int64_t begin = static_cast<int64_t>(id);
     int64_t end = id == uint64_t{INT64_MAX} ? begin : begin + 1;
     std::memcpy(address, &kind, 4);
     std::memcpy(address + 8, &begin, 8);
     std::memcpy(address + 16, &begin, 8);
     std::memcpy(address + 24, &end, 8);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER: {
+  case TALOS_RT_INTRINSIC_V1_INERTIAL_DRIVER: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     auto rise = scalar(2);
     auto fall = scalar(3);
     auto turnoff = scalar(4);
@@ -3534,11 +3534,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto flags = scalar(7);
     if (!rise || !fall || !turnoff || !codeUnit || !component || !flags ||
         *component > UINT32_MAX || *flags > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout valueLayout = layoutAt(image, frame.function, inputRegister(0));
     Logic value = readLogic(frame.data, valueLayout);
     auto suppress = [&] {
-      return obelisk_rt_v1_scheduler_inertial_driver(
+      return talos_rt_v1_scheduler_inertial_driver(
           context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
           reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
           context->execution->state_bit_count, UINT64_MAX, value.width,
@@ -3556,9 +3556,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(&start, address + 16, 8);
     std::memcpy(&end, address + 24, 8);
     uint32_t staticID = 0;
-    if (kind != OBELISK_RT_DESCRIPTOR_DRIVER ||
+    if (kind != TALOS_RT_DESCRIPTOR_DRIVER ||
         !decodeStaticHandle(objectBase, staticID, begin) || begin > end)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (start == kInvalidHandleStart)
       return suppress();
     int64_t first = start < begin ? begin - start : 0;
@@ -3570,7 +3570,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     int64_t selectedStart = start + first;
     uint64_t stable = encodeStaticHandle(staticID, selectedStart);
     if (stable == UINT64_MAX)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t width = static_cast<uint64_t>(last - first);
     uint64_t bytes = (width + 7) / 8;
     std::vector<uint8_t> selectedValue(static_cast<size_t>(bytes), 0);
@@ -3583,16 +3583,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       if (value.fourState && bit(value.unknown, source))
         selectedUnknown[bitIndex / 8] |= mask;
     }
-    return obelisk_rt_v1_scheduler_inertial_driver(
+    return talos_rt_v1_scheduler_inertial_driver(
         context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
         reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
         context->execution->state_bit_count, stable, width, *codeUnit,
         static_cast<uint32_t>(*component), static_cast<uint32_t>(*flags), *rise,
         *fall, *turnoff, selectedValue.data(), selectedUnknown.data());
   }
-  case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_DRIVER: {
+  case TALOS_RT_INTRINSIC_V1_INERTIAL_PATH_DRIVER: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     auto rise = scalar(6);
     auto fall = scalar(7);
     auto turnoff = scalar(8);
@@ -3604,7 +3604,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!rise || !fall || !turnoff || !codeUnit || !component || !group ||
         !groupCount || !flags || *component > UINT32_MAX ||
         *group > UINT32_MAX || *groupCount > UINT32_MAX || *flags > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout valueLayout = layoutAt(image, frame.function, inputRegister(0));
     Logic value = readLogic(frame.data, valueLayout);
     Layout destination = layoutAt(image, frame.function, inputRegister(1));
@@ -3617,14 +3617,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(&start, address + 16, 8);
     std::memcpy(&end, address + 24, 8);
     uint32_t staticID = 0;
-    if (kind != OBELISK_RT_DESCRIPTOR_DRIVER ||
+    if (kind != TALOS_RT_DESCRIPTOR_DRIVER ||
         !decodeStaticHandle(objectBase, staticID, begin) || begin > end ||
         start == kInvalidHandleStart || start < begin || start > end ||
         end - start < static_cast<int64_t>(value.width))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t stable = encodeStaticHandle(staticID, start);
     if (stable == UINT64_MAX)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     size_t bytes = static_cast<size_t>((value.width + 7) / 8);
     auto pack = [&](const Logic &logic) {
       std::vector<uint8_t> packed(bytes, 0);
@@ -3647,7 +3647,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           pack(readLogic(frame.data, layoutAt(image, frame.function,
                                               inputRegister(index + 2))));
     if (site.inputCount == 14)
-      return obelisk_rt_v1_scheduler_inertial_path_driver(
+      return talos_rt_v1_scheduler_inertial_path_driver(
           context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
           reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
           context->execution->state_bit_count, stable, value.width, *codeUnit,
@@ -3658,13 +3658,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto pulseReject = scalar(14);
     auto pulseError = scalar(15);
     if (!pulseReject || !pulseError)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Logic pulseTransitions = readLogic(
         frame.data, layoutAt(image, frame.function, inputRegister(16)));
     bool exactTransitions =
-        (*flags & OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS) != 0;
+        (*flags & TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS) != 0;
     if (!exactTransitions || pulseTransitions.width != value.width * 12)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::vector<uint8_t> packedPulseTransitions;
     if (exactTransitions) {
       packedPulseTransitions.assign(
@@ -3675,7 +3675,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           packedPulseTransitions[static_cast<size_t>(bitIndex / 8)] |=
               static_cast<uint8_t>(1u << (bitIndex % 8));
     }
-    return obelisk_rt_v1_scheduler_inertial_path_driver_pulse(
+    return talos_rt_v1_scheduler_inertial_path_driver_pulse(
         context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
         reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
         context->execution->state_bit_count, stable, value.width, *codeUnit,
@@ -3686,9 +3686,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         masks[3].data(),
         exactTransitions ? packedPulseTransitions.data() : nullptr);
   }
-  case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STORAGE: {
+  case TALOS_RT_INTRINSIC_V1_INERTIAL_PATH_STORAGE: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     auto rise = scalar(7);
     auto fall = scalar(8);
     auto turnoff = scalar(9);
@@ -3700,7 +3700,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!rise || !fall || !turnoff || !siteID || !component || !group ||
         !groupCount || !nonblocking || *component > UINT32_MAX ||
         *group > UINT32_MAX || *groupCount > UINT32_MAX || *nonblocking > 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout valueLayout = layoutAt(image, frame.function, inputRegister(0));
     Logic value = readLogic(frame.data, valueLayout);
     Layout destination = layoutAt(image, frame.function, inputRegister(1));
@@ -3713,14 +3713,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(&start, address + 16, 8);
     std::memcpy(&end, address + 24, 8);
     uint32_t staticID = 0;
-    if (kind != OBELISK_RT_DESCRIPTOR_STORAGE ||
+    if (kind != TALOS_RT_DESCRIPTOR_STORAGE ||
         !decodeStaticHandle(objectBase, staticID, begin) || begin > end ||
         start == kInvalidHandleStart || start < begin || start > end ||
         end - start < static_cast<int64_t>(value.width))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t stable = encodeStaticHandle(staticID, start);
     if (stable == UINT64_MAX)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     size_t bytes = static_cast<size_t>((value.width + 7) / 8);
     auto pack = [&](const Logic &logic) {
       std::vector<uint8_t> packed(bytes, 0);
@@ -3743,7 +3743,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           pack(readLogic(frame.data, layoutAt(image, frame.function,
                                               inputRegister(index + 2))));
     if (site.inputCount == 15)
-      return obelisk_rt_v1_scheduler_inertial_path_storage(
+      return talos_rt_v1_scheduler_inertial_path_storage(
           context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
           reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
           context->execution->state_bit_count, stable, value.width, *siteID,
@@ -3756,13 +3756,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto pulseReject = scalar(16);
     auto pulseError = scalar(17);
     if (!pulseFlags || !pulseReject || !pulseError || *pulseFlags > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Logic pulseTransitions = readLogic(
         frame.data, layoutAt(image, frame.function, inputRegister(18)));
     bool exactTransitions =
-        (*pulseFlags & OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS) != 0;
+        (*pulseFlags & TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS) != 0;
     if (!exactTransitions || pulseTransitions.width != value.width * 12)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::vector<uint8_t> packedPulseTransitions;
     if (exactTransitions) {
       packedPulseTransitions.assign(
@@ -3773,7 +3773,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           packedPulseTransitions[static_cast<size_t>(bitIndex / 8)] |=
               static_cast<uint8_t>(1u << (bitIndex % 8));
     }
-    return obelisk_rt_v1_scheduler_inertial_path_storage_pulse(
+    return talos_rt_v1_scheduler_inertial_path_storage_pulse(
         context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
         reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
         context->execution->state_bit_count, stable, value.width, *siteID,
@@ -3785,9 +3785,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         masks[4].data(),
         exactTransitions ? packedPulseTransitions.data() : nullptr);
   }
-  case OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR: {
+  case TALOS_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     auto rise = scalar(5);
     auto fall = scalar(6);
     auto turnoff = scalar(7);
@@ -3795,7 +3795,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto component = scalar(9);
     if (!rise || !fall || !turnoff || !codeUnit || !component ||
         *component > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Logic low = readLogic(frame.data,
                           layoutAt(image, frame.function, inputRegister(0)));
     Logic high = readLogic(frame.data,
@@ -3820,7 +3820,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::memcpy(&start, address + 16, 8);
       std::memcpy(&end, address + 24, 8);
       uint32_t staticID = 0;
-      if (kind != OBELISK_RT_DESCRIPTOR_DRIVER ||
+      if (kind != TALOS_RT_DESCRIPTOR_DRIVER ||
           !decodeStaticHandle(objectBase, staticID, begin) || begin > end)
         return std::nullopt;
       if (start == kInvalidHandleStart)
@@ -3839,9 +3839,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::optional<Selection> lowSelection = select(1);
     std::optional<Selection> highSelection = select(3);
     if (!lowSelection || !highSelection)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto suppress = [&] {
-      return obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
+      return talos_rt_v1_scheduler_inertial_driver_strength_pair(
           context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
           reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
           context->execution->state_bit_count, UINT64_MAX, UINT64_MAX,
@@ -3852,12 +3852,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       if (lowSelection->suppressed != highSelection->suppressed ||
           lowSelection->first != highSelection->first ||
           lowSelection->last != highSelection->last)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       return suppress();
     }
     if (lowSelection->first != highSelection->first ||
         lowSelection->last != highSelection->last)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t width =
         static_cast<uint64_t>(lowSelection->last - lowSelection->first);
     uint64_t bytes = (width + 7) / 8;
@@ -3882,7 +3882,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     Planes lowPlanes = extract(low);
     Planes highPlanes = extract(high);
     Planes transitionPlanes = extract(transition);
-    return obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
+    return talos_rt_v1_scheduler_inertial_driver_strength_pair(
         context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
         reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
         context->execution->state_bit_count, lowSelection->stable,
@@ -3892,9 +3892,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         highPlanes.value.data(), highPlanes.unknown.data(),
         transitionPlanes.value.data(), transitionPlanes.unknown.data());
   }
-  case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STRENGTH_PAIR: {
+  case TALOS_RT_INTRINSIC_V1_INERTIAL_PATH_STRENGTH_PAIR: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     auto rise = scalar(9);
     auto fall = scalar(10);
     auto turnoff = scalar(11);
@@ -3905,7 +3905,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!rise || !fall || !turnoff || !codeUnit || !component || !group ||
         !groupCount || *component > UINT32_MAX || *group > UINT32_MAX ||
         *groupCount > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Logic low = readLogic(frame.data,
                           layoutAt(image, frame.function, inputRegister(0)));
     Logic high = readLogic(frame.data,
@@ -3929,7 +3929,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::memcpy(&start, address + 16, 8);
       std::memcpy(&end, address + 24, 8);
       uint32_t staticID = 0;
-      if (kind != OBELISK_RT_DESCRIPTOR_DRIVER ||
+      if (kind != TALOS_RT_DESCRIPTOR_DRIVER ||
           !decodeStaticHandle(objectBase, staticID, begin) || begin > end ||
           start == kInvalidHandleStart)
         return std::nullopt;
@@ -3949,7 +3949,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!lowSelection || !highSelection ||
         lowSelection->first != highSelection->first ||
         lowSelection->last != highSelection->last)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t width =
         static_cast<uint64_t>(lowSelection->last - lowSelection->first);
     uint64_t bytes = (width + 7) / 8;
@@ -3988,7 +3988,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       auto pulseError = scalar(18);
       if (!pulseFlags || !pulseReject || !pulseError ||
           *pulseFlags > UINT32_MAX)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       Logic sourceTransitions = readLogic(
           frame.data, layoutAt(image, frame.function, inputRegister(19)));
       uint64_t packedWidth = width * 12;
@@ -4008,7 +4008,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                 static_cast<uint8_t>(
                     1u << ((transitionIndex * width + bitIndex) % 8));
         }
-      return obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse(
+      return talos_rt_v1_scheduler_inertial_path_strength_pair_pulse(
           context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
           reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
           context->execution->state_bit_count, lowSelection->stable,
@@ -4022,7 +4022,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           transitionPlanes.unknown.data(), masks[0].data(), masks[1].data(),
           masks[2].data(), masks[3].data(), pulseTransitions.data());
     }
-    return obelisk_rt_v1_scheduler_inertial_path_strength_pair(
+    return talos_rt_v1_scheduler_inertial_path_strength_pair(
         context, reinterpret_cast<uint8_t *>(context->stateValue.data()),
         reinterpret_cast<uint8_t *>(context->stateUnknown.data()),
         context->execution->state_bit_count, lowSelection->stable,
@@ -4034,11 +4034,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         transitionPlanes.value.data(), transitionPlanes.unknown.data(),
         masks[0].data(), masks[1].data(), masks[2].data(), masks[3].data());
   }
-  case OBELISK_RT_INTRINSIC_V1_NBA:
-  case OBELISK_RT_INTRINSIC_V1_STATIC_NBA:
-  case OBELISK_RT_INTRINSIC_V1_CLOCKING_NBA: {
+  case TALOS_RT_INTRINSIC_V1_NBA:
+  case TALOS_RT_INTRINSIC_V1_STATIC_NBA:
+  case TALOS_RT_INTRINSIC_V1_CLOCKING_NBA: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     Layout destination = layoutAt(image, frame.function, inputRegister(1));
     uint32_t kind = 0;
     int64_t begin = 0, start = kInvalidHandleStart, end = 0;
@@ -4055,30 +4055,30 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         !automatic && decodeStaticHandle(objectBase, objectID, begin);
     if (automatic) {
       if (!decodeAutomaticHandle(objectBase, objectID, begin))
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
     } else if (!boundedStatic) {
       begin = static_cast<int64_t>(objectBase);
     }
-    bool driver = descriptorKind == OBELISK_RT_DESCRIPTOR_DRIVER;
-    if ((descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE && !driver) ||
+    bool driver = descriptorKind == TALOS_RT_DESCRIPTOR_DRIVER;
+    if ((descriptorKind != TALOS_RT_DESCRIPTOR_STORAGE && !driver) ||
         begin > end)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     // An invalid dynamic selection is an ignored assignment, matching direct
     // state stores and the native scheduler ABI.
     if (start == kInvalidHandleStart)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     Layout valueLayout = layoutAt(image, frame.function, inputRegister(0));
-    bool stringValue = valueLayout.kind == OBELISK_RT_DBREG_STRING;
-    bool managedValue = valueLayout.kind == OBELISK_RT_DBREG_MANAGED;
-    obelisk_rt_string_v1 rootedString = 0;
+    bool stringValue = valueLayout.kind == TALOS_RT_DBREG_STRING;
+    bool managedValue = valueLayout.kind == TALOS_RT_DBREG_MANAGED;
+    talos_rt_string_v1 rootedString = 0;
     if (stringValue && !readString(inputRegister(0), rootedString))
-      return OBELISK_RT_INVALID_HANDLE;
-    obelisk_rt_object_v1 *rootedManaged =
+      return TALOS_RT_INVALID_HANDLE;
+    talos_rt_object_v1 *rootedManaged =
         managedValue ? readManaged(inputRegister(0)) : nullptr;
     Logic value = readLogic(frame.data, valueLayout);
     uint64_t delay = 0;
-    bool staticSite = signature.id == OBELISK_RT_INTRINSIC_V1_STATIC_NBA;
-    bool clocking = signature.id == OBELISK_RT_INTRINSIC_V1_CLOCKING_NBA;
+    bool staticSite = signature.id == TALOS_RT_INTRINSIC_V1_STATIC_NBA;
+    bool clocking = signature.id == TALOS_RT_INTRINSIC_V1_CLOCKING_NBA;
     uint64_t staticSiteID = UINT64_MAX;
     uint64_t clockingOutput = UINT64_MAX;
     uint32_t delayInputCount = staticSite ? 2
@@ -4087,39 +4087,39 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (delayInputCount == 3) {
       auto encodedDelay = scalar(2);
       if (!encodedDelay)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       delay = *encodedDelay;
     }
     if (staticSite) {
       auto encodedSite = scalar(2);
       if (!encodedSite || *encodedSite == UINT64_MAX)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       staticSiteID = *encodedSite;
     }
     if (clocking) {
       auto encodedOutput = scalar(site.inputCount - 1);
       if (!encodedOutput || *encodedOutput == UINT64_MAX)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       clockingOutput = *encodedOutput;
     }
     if (managedValue || automatic || boundedStatic) {
       if (driver && (managedValue || automatic || !boundedStatic))
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       int64_t first = start < begin ? begin - start : 0;
       int64_t last = static_cast<int64_t>(value.width);
       if (start > end || end - start < last)
         last = end - start;
       if (first >= last)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       if ((stringValue || managedValue) && (first != 0 || last != 64))
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       int64_t selectedStart = start + first;
       uint64_t stable =
           automatic       ? encodeAutomaticHandle(objectID, selectedStart)
           : boundedStatic ? encodeStaticHandle(objectID, selectedStart)
                           : static_cast<uint64_t>(selectedStart);
       if (stable == UINT64_MAX)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       uint64_t selectedWidth = static_cast<uint64_t>(last - first);
       if (!driver && staticSiteID != UINT64_MAX && !stringValue &&
           !managedValue && boundedStatic && selectedWidth <= 64 &&
@@ -4137,7 +4137,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             value.fourState
                 ? reinterpret_cast<uint8_t *>(context->stateUnknown.data())
                 : nullptr;
-        return obelisk_rt_v1_scheduler_static_nba(
+        return talos_rt_v1_scheduler_static_nba(
             context, staticSiteID, valuePlane, unknownPlane,
             context->execution->state_bit_count, stable, selectedWidth,
             reinterpret_cast<const uint8_t *>(&packedValue),
@@ -4178,7 +4178,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             value.fourState
                 ? reinterpret_cast<uint8_t *>(context->stateUnknown.data())
                 : nullptr;
-        return obelisk_rt_v1_scheduler_static_nba(
+        return talos_rt_v1_scheduler_static_nba(
             context, staticSiteID, valuePlane, unknownPlane,
             context->execution->state_bit_count, stable, update.bitWidth,
             update.value.data(),
@@ -4186,19 +4186,19 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       }
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (context->nextSchedulerSequence == 0)
-        return OBELISK_RT_OUT_OF_RESOURCES;
-      update.execRegion = obelisk_rt_commit_region(
+        return TALOS_RT_OUT_OF_RESOURCES;
+      update.execRegion = talos_rt_commit_region(
           context->activeHomeRegion == UINT32_MAX
-              ? static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE)
+              ? static_cast<uint32_t>(TALOS_RT_REGION_ACTIVE)
               : context->activeHomeRegion);
       if (update.execRegion == UINT32_MAX)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
       if (automatic) {
         auto found = context->nativeAutomaticStates.find(objectID);
         if (found == context->nativeAutomaticStates.end())
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
         if (found->second.referenceCount == UINT64_MAX)
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         update.retainedAutomaticID = objectID;
       }
       update.sequence = context->nextSchedulerSequence++;
@@ -4208,13 +4208,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       context->scheduledNBAs.push_back(std::move(update));
       if (automatic)
         ++context->nativeAutomaticStates.find(objectID)->second.referenceCount;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (clocking)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (stringValue && (value.width != 64 || start < begin || start < 0 ||
                         end < start || end - start < 64))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     ScheduledDesignNBA update;
     update.handleKind = kind;
     update.begin = begin;
@@ -4228,45 +4228,45 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (context->nextSchedulerSequence == 0)
-        return OBELISK_RT_OUT_OF_RESOURCES;
-      update.execRegion = obelisk_rt_commit_region(
+        return TALOS_RT_OUT_OF_RESOURCES;
+      update.execRegion = talos_rt_commit_region(
           context->activeHomeRegion == UINT32_MAX
-              ? static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE)
+              ? static_cast<uint32_t>(TALOS_RT_REGION_ACTIVE)
               : context->activeHomeRegion);
       if (update.execRegion == UINT32_MAX)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
       update.sequence = context->nextSchedulerSequence++;
       update.dueTime = delay > UINT64_MAX - context->schedulerTime
                            ? UINT64_MAX
                            : context->schedulerTime + delay;
       context->scheduledDesignNBAs.push_back(std::move(update));
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER: {
+  case TALOS_RT_INTRINSIC_V1_EVENT_TRIGGER: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     Layout event = layoutAt(image, frame.function, inputRegister(0));
     uint32_t kind = 0;
     int64_t start = -1;
     const uint8_t *address = frame.data + event.offset;
     std::memcpy(&kind, address, 4);
     std::memcpy(&start, address + 16, 8);
-    if (kind != OBELISK_RT_DESCRIPTOR_EVENT)
-      return OBELISK_RT_INVALID_HANDLE;
+    if (kind != TALOS_RT_DESCRIPTOR_EVENT)
+      return TALOS_RT_INVALID_HANDLE;
     // The canonical event-null bytecode handle carries an all-ones start.
     // IEEE 1800-2017 15.5.5.2 makes every trigger of it a no-op, including
     // delayed and nonblocking triggers.
     if (start == -1)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     if (start < 0)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t stableID = static_cast<uint64_t>(start);
     uint64_t delay = 0;
     if (site.inputCount == 2) {
       std::optional<uint64_t> encodedDelay = scalar(1);
       if (!encodedDelay)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       delay = *encodedDelay;
     }
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -4275,22 +4275,22 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (decodeAutomaticHandle(stableID, retainedAutomaticID, automaticOffset)) {
       auto found = context->nativeAutomaticStates.find(retainedAutomaticID);
       if (found == context->nativeAutomaticStates.end())
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       if (signature.flags != 0 && found->second.referenceCount == UINT64_MAX)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
     }
     if (signature.flags != 0) {
       if (context->nextSchedulerSequence == 0)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       uint64_t dueTime = delay > UINT64_MAX - context->schedulerTime
                              ? UINT64_MAX
                              : context->schedulerTime + delay;
-      uint32_t execRegion = obelisk_rt_commit_region(
+      uint32_t execRegion = talos_rt_commit_region(
           context->activeHomeRegion == UINT32_MAX
-              ? static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE)
+              ? static_cast<uint32_t>(TALOS_RT_REGION_ACTIVE)
               : context->activeHomeRegion);
       if (execRegion == UINT32_MAX)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
       context->scheduledDesignEvents.push_back({context->nextSchedulerSequence,
                                                 dueTime, execRegion, stableID,
                                                 retainedAutomaticID});
@@ -4298,127 +4298,127 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         ++context->nativeAutomaticStates.find(retainedAutomaticID)
               ->second.referenceCount;
       ++context->nextSchedulerSequence;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     EventState &eventState = context->events[stableID];
     if (++eventState.generation == 0)
       eventState.generation = 1;
     eventState.lastTriggeredTime = context->schedulerTime;
-    if (!obelisk_rt_notify_event_order_waiters_unlocked(context, stableID))
-      return context->schedulerStatus == OBELISK_RT_OK
-                 ? OBELISK_RT_INVALID_DESIGN
+    if (!talos_rt_notify_event_order_waiters_unlocked(context, stableID))
+      return context->schedulerStatus == TALOS_RT_OK
+                 ? TALOS_RT_INVALID_DESIGN
                  : context->schedulerStatus;
-    if (!obelisk_rt_notify_observer_event_unlocked(context, stableID))
-      return context->schedulerStatus == OBELISK_RT_OK
-                 ? OBELISK_RT_INVALID_DESIGN
+    if (!talos_rt_notify_observer_event_unlocked(context, stableID))
+      return context->schedulerStatus == TALOS_RT_OK
+                 ? TALOS_RT_INVALID_DESIGN
                  : context->schedulerStatus;
     if (++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_EVENT_REPLACE_AFTER: {
+  case TALOS_RT_INTRINSIC_V1_EVENT_REPLACE_AFTER: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     Layout event = layoutAt(image, frame.function, inputRegister(0));
     uint32_t kind = 0;
     int64_t start = -1;
     const uint8_t *address = frame.data + event.offset;
     std::memcpy(&kind, address, 4);
     std::memcpy(&start, address + 16, 8);
-    if (kind != OBELISK_RT_DESCRIPTOR_EVENT)
-      return OBELISK_RT_INVALID_HANDLE;
+    if (kind != TALOS_RT_DESCRIPTOR_EVENT)
+      return TALOS_RT_INVALID_HANDLE;
     // IEEE 1800-2017 15.5.5.2 makes a null named event inert for both
     // scheduling and cancellation.
     if (start == -1)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     if (start < 0)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t delay = 0;
     if (site.inputCount == 2) {
       std::optional<uint64_t> encodedDelay = scalar(1);
       if (!encodedDelay)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       delay = *encodedDelay;
     }
-    obelisk_rt_v1_scheduler_event_replace_after(
+    talos_rt_v1_scheduler_event_replace_after(
         context, static_cast<uint64_t>(start), site.inputCount == 2 ? 1u : 0u,
         delay);
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     return context->schedulerStatus;
   }
-  case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED: {
+  case TALOS_RT_INTRINSIC_V1_EVENT_TRIGGERED: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     Layout event = layoutAt(image, frame.function, inputRegister(0));
     uint32_t kind = 0;
     int64_t start = -1;
     const uint8_t *address = frame.data + event.offset;
     std::memcpy(&kind, address, 4);
     std::memcpy(&start, address + 16, 8);
-    if (kind != OBELISK_RT_DESCRIPTOR_EVENT)
-      return OBELISK_RT_INVALID_HANDLE;
+    if (kind != TALOS_RT_DESCRIPTOR_EVENT)
+      return TALOS_RT_INVALID_HANDLE;
     // IEEE 15.5.3: a null named event has no persistent triggered state.
     if (start == -1)
       return sentinel(0, 0);
     if (start < 0)
-      return OBELISK_RT_INVALID_HANDLE;
-    uint32_t triggered = obelisk_rt_v1_scheduler_event_triggered(
+      return TALOS_RT_INVALID_HANDLE;
+    uint32_t triggered = talos_rt_v1_scheduler_event_triggered(
         context, static_cast<uint64_t>(start));
     return sentinel(0, triggered);
   }
-  case OBELISK_RT_INTRINSIC_V1_WAIT_ORDER_FAILED:
-    return sentinel(0, obelisk_rt_v1_scheduler_wait_order_failed(context));
-  case OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME:
+  case TALOS_RT_INTRINSIC_V1_WAIT_ORDER_FAILED:
+    return sentinel(0, talos_rt_v1_scheduler_wait_order_failed(context));
+  case TALOS_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME:
     return sentinel(
-        0, obelisk_rt_v1_clock_occurrence_consume(context, signature.flags));
-  case OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK:
-  case OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT: {
+        0, talos_rt_v1_clock_occurrence_consume(context, signature.flags));
+  case TALOS_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK:
+  case TALOS_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT: {
     Layout clock = layoutAt(image, frame.function, inputRegister(0));
     auto width = scalar(1);
-    if (clock.kind != OBELISK_RT_DBREG_HANDLE || !width || *width == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+    if (clock.kind != TALOS_RT_DBREG_HANDLE || !width || *width == 0)
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t stable = UINT64_MAX;
     if (!encodeCanonicalHandle(frame.data + clock.offset, stable))
-      return OBELISK_RT_INVALID_HANDLE;
-    if (signature.id == OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK)
-      return obelisk_rt_v1_clocking_output_track(context, stable, *width,
+      return TALOS_RT_INVALID_HANDLE;
+    if (signature.id == TALOS_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK)
+      return talos_rt_v1_clocking_output_track(context, stable, *width,
                                                  signature.flags);
-    return sentinel(0, obelisk_rt_v1_clocking_output_current(
+    return sentinel(0, talos_rt_v1_clocking_output_current(
                            context, stable, *width, signature.flags));
   }
-  case OBELISK_RT_INTRINSIC_V1_NOCHANGE_UPDATE: {
+  case TALOS_RT_INTRINSIC_V1_NOCHANGE_UPDATE: {
     std::optional<uint64_t> mask = readScalar(image, frame, inputRegister(0));
     std::optional<uint64_t> start = readScalar(image, frame, inputRegister(1));
     std::optional<uint64_t> end = readScalar(image, frame, inputRegister(2));
     if (!mask || !start || !end)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     return sentinel(
-        0, obelisk_rt_v1_nochange_update(context, signature.flags, *mask,
+        0, talos_rt_v1_nochange_update(context, signature.flags, *mask,
                                          static_cast<int64_t>(*start),
                                          static_cast<int64_t>(*end)));
   }
-  case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
-  case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED: {
+  case TALOS_RT_INTRINSIC_V1_STATE_ALLOC:
+  case TALOS_RT_INTRINSIC_V1_STATE_ALLOC_TYPED: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     Layout initialLayout = layoutAt(image, frame.function, inputRegister(0));
     uint64_t stable = UINT64_MAX;
     uint64_t initialWidth = initialLayout.width;
-    obelisk_rt_status status = OBELISK_RT_OK;
-    if (initialLayout.kind == OBELISK_RT_DBREG_MANAGED) {
-      obelisk_rt_object_v1 *initial = readManaged(inputRegister(0));
-      status = obelisk_rt_native_state_alloc_managed(context, initial, &stable);
-    } else if (initialLayout.kind == OBELISK_RT_DBREG_HANDLE &&
-               (initialLayout.flags & OBELISK_RT_DBREG_EVENT)) {
+    talos_rt_status status = TALOS_RT_OK;
+    if (initialLayout.kind == TALOS_RT_DBREG_MANAGED) {
+      talos_rt_object_v1 *initial = readManaged(inputRegister(0));
+      status = talos_rt_native_state_alloc_managed(context, initial, &stable);
+    } else if (initialLayout.kind == TALOS_RT_DBREG_HANDLE &&
+               (initialLayout.flags & TALOS_RT_DBREG_EVENT)) {
       uint64_t identity = UINT64_MAX;
-      if (signature.id != OBELISK_RT_INTRINSIC_V1_STATE_ALLOC ||
+      if (signature.id != TALOS_RT_INTRINSIC_V1_STATE_ALLOC ||
           site.inputCount != 1 ||
           read32(frame.data + initialLayout.offset) !=
-              OBELISK_RT_DESCRIPTOR_EVENT ||
+              TALOS_RT_DESCRIPTOR_EVENT ||
           !encodeCanonicalHandle(frame.data + initialLayout.offset, identity))
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       initialWidth = 64;
-      status = obelisk_rt_v1_native_state_alloc(
+      status = talos_rt_v1_native_state_alloc(
           context, initialWidth, reinterpret_cast<const uint8_t *>(&identity),
           nullptr, &stable);
     } else {
@@ -4430,10 +4430,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           initial.fourState
               ? reinterpret_cast<const uint8_t *>(initial.unknown.data())
               : nullptr;
-      if (signature.id == OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED) {
+      if (signature.id == TALOS_RT_INTRINSIC_V1_STATE_ALLOC_TYPED) {
         if (site.inputCount < 4 || ((site.inputCount - 1) % 3) != 0)
-          return OBELISK_RT_INVALID_BYTECODE;
-        std::vector<obelisk_rt_managed_root_slot_v1> slots;
+          return TALOS_RT_INVALID_BYTECODE;
+        std::vector<talos_rt_managed_root_slot_v1> slots;
         slots.reserve((site.inputCount - 1) / 3);
         for (uint32_t index = 1; index != site.inputCount; index += 3) {
           std::optional<uint64_t> bitOffset = scalar(index);
@@ -4441,11 +4441,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           std::optional<uint64_t> flags = scalar(index + 2);
           if (!bitOffset || !kindMask || !flags || *kindMask > UINT32_MAX ||
               *flags > UINT32_MAX)
-            return OBELISK_RT_INVALID_BYTECODE;
+            return TALOS_RT_INVALID_BYTECODE;
           slots.push_back({*bitOffset, static_cast<uint32_t>(*kindMask),
                            static_cast<uint32_t>(*flags)});
         }
-        status = obelisk_rt_v1_native_state_alloc_with_typed_roots(
+        status = talos_rt_v1_native_state_alloc_with_typed_roots(
             context, initial.width, value, unknown, slots.data(), slots.size(),
             &stable);
       } else if (site.inputCount > 1) {
@@ -4454,26 +4454,26 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         for (uint32_t index = 1; index != site.inputCount; ++index) {
           std::optional<uint64_t> rootOffset = scalar(index);
           if (!rootOffset)
-            return OBELISK_RT_INVALID_BYTECODE;
+            return TALOS_RT_INVALID_BYTECODE;
           rootOffsets.push_back(*rootOffset);
         }
-        status = obelisk_rt_native_state_alloc_with_root_offsets(
+        status = talos_rt_native_state_alloc_with_root_offsets(
             context, initial.width, value, unknown, std::move(rootOffsets),
             &stable);
       } else
-        status = obelisk_rt_v1_native_state_alloc(context, initial.width, value,
+        status = talos_rt_v1_native_state_alloc(context, initial.width, value,
                                                   unknown, &stable);
     }
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     uint32_t id = 0;
     int64_t offset = 0;
     if (!decodeAutomaticHandle(stable, id, offset) || offset != 0)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     Layout destination = layoutAt(image, frame.function, outputRegister(0));
     uint8_t *address = frame.data + destination.offset;
     std::memset(address, 0, destination.size);
-    uint32_t kind = kAutomaticHandleKind | OBELISK_RT_DESCRIPTOR_STORAGE;
+    uint32_t kind = kAutomaticHandleKind | TALOS_RT_DESCRIPTOR_STORAGE;
     uint64_t base = stable;
     int64_t begin = 0;
     int64_t start = 0;
@@ -4483,155 +4483,155 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(address + 16, &start, sizeof(start));
     std::memcpy(address + 24, &end, sizeof(end));
     (void)begin;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_DISABLE_CHILDREN:
+  case TALOS_RT_INTRINSIC_V1_DISABLE_CHILDREN:
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    return obelisk_rt_v1_scheduler_disable_children(context);
-  case OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER: {
+      return TALOS_RT_INVALID_ARGUMENT;
+    return talos_rt_v1_scheduler_disable_children(context);
+  case TALOS_RT_INTRINSIC_V1_CONTROL_ENTER: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     uint64_t activation = 0;
-    obelisk_rt_status status =
-        obelisk_rt_v1_control_enter(context, signature.flags, &activation);
-    return status == OBELISK_RT_OK ? sentinel(0, activation) : status;
+    talos_rt_status status =
+        talos_rt_v1_control_enter(context, signature.flags, &activation);
+    return status == TALOS_RT_OK ? sentinel(0, activation) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTROL_BOUNDARY: {
+  case TALOS_RT_INTRINSIC_V1_CONTROL_BOUNDARY: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     std::optional<uint64_t> activation = scalar(0);
     if (!activation || signature.flags == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_control_boundary(context, *activation,
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_control_boundary(context, *activation,
                                           signature.flags);
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTROL_LEAVE: {
+  case TALOS_RT_INTRINSIC_V1_CONTROL_LEAVE: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     std::optional<uint64_t> activation = scalar(0);
     if (!activation)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_control_leave(context, *activation);
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_control_leave(context, *activation);
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE: {
+  case TALOS_RT_INTRINSIC_V1_CONTROL_DISABLE: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     uint64_t activation = 0;
     if (site.inputCount != 0) {
       std::optional<uint64_t> value = scalar(0);
       if (!value)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       activation = *value;
     }
-    return obelisk_rt_v1_control_disable(context,
+    return talos_rt_v1_control_disable(context,
                                          signature.flags & ~(UINT32_C(1) << 31),
                                          activation, signature.flags >> 31);
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED: {
+  case TALOS_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED: {
     auto target = scalar(0), activation = scalar(1), all = scalar(2);
     if (!target || !activation || !all || *all > 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t selected = 0;
-    auto status = obelisk_rt_v1_control_disable_selected(
+    auto status = talos_rt_v1_control_disable_selected(
         context, *target, *activation, static_cast<uint32_t>(*all), &selected);
-    return status == OBELISK_RT_OK ? sentinel(0, selected) : status;
+    return status == TALOS_RT_OK ? sentinel(0, selected) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING:
+  case TALOS_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING:
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    return sentinel(0, obelisk_rt_v1_control_escape_pending(context));
-  case OBELISK_RT_INTRINSIC_V1_STATIC_ONCE:
+      return TALOS_RT_INVALID_ARGUMENT;
+    return sentinel(0, talos_rt_v1_control_escape_pending(context));
+  case TALOS_RT_INTRINSIC_V1_STATIC_ONCE:
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    return sentinel(0, obelisk_rt_v1_static_once(context, signature.flags));
-  case OBELISK_RT_INTRINSIC_V1_DEFERRED_ONCE: {
+      return TALOS_RT_INVALID_ARGUMENT;
+    return sentinel(0, talos_rt_v1_static_once(context, signature.flags));
+  case TALOS_RT_INTRINSIC_V1_DEFERRED_ONCE: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     std::optional<uint64_t> siteID = scalar(0);
     if (!siteID || *siteID == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return sentinel(0, obelisk_rt_v1_deferred_once(context, *siteID));
+      return TALOS_RT_INVALID_BYTECODE;
+    return sentinel(0, talos_rt_v1_deferred_once(context, *siteID));
   }
-  case OBELISK_RT_INTRINSIC_V1_DEFERRED_ENQUEUE: {
+  case TALOS_RT_INTRINSIC_V1_DEFERRED_ENQUEUE: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     std::optional<uint64_t> siteID = scalar(0);
     if (!siteID || *siteID == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (site.inputCount == 2) {
       std::optional<uint64_t> assertionID = scalar(1);
       if (!assertionID || *assertionID == 0)
-        return OBELISK_RT_INVALID_BYTECODE;
-      return sentinel(0, obelisk_rt_v1_deferred_enqueue_for_assertion(
+        return TALOS_RT_INVALID_BYTECODE;
+      return sentinel(0, talos_rt_v1_deferred_enqueue_for_assertion(
                              context, *siteID, *assertionID));
     }
-    return sentinel(0, obelisk_rt_v1_deferred_enqueue(context, *siteID));
+    return sentinel(0, talos_rt_v1_deferred_enqueue(context, *siteID));
   }
-  case OBELISK_RT_INTRINSIC_V1_DEFERRED_MATURE: {
+  case TALOS_RT_INTRINSIC_V1_DEFERRED_MATURE: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     std::optional<uint64_t> ticket = scalar(0);
     if (!ticket || *ticket == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return sentinel(0, obelisk_rt_v1_deferred_mature(context, *ticket));
+      return TALOS_RT_INVALID_BYTECODE;
+    return sentinel(0, talos_rt_v1_deferred_mature(context, *ticket));
   }
-  case OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL: {
+  case TALOS_RT_INTRINSIC_V1_ASSERTION_CONTROL: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     uint32_t action = signature.flags;
     size_t assertionIDIndex = 0;
     if (action == 0) {
       std::optional<uint64_t> dynamicAction = scalar(0);
       if (!dynamicAction || *dynamicAction > UINT32_MAX)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       action = static_cast<uint32_t>(*dynamicAction);
       assertionIDIndex = 1;
     }
     std::optional<uint64_t> assertionID = scalar(assertionIDIndex);
     if (!assertionID || *assertionID == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_assertion_control(context, action, *assertionID);
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_assertion_control(context, action, *assertionID);
   }
-  case OBELISK_RT_INTRINSIC_V1_ASSERTION_ENABLED: {
+  case TALOS_RT_INTRINSIC_V1_ASSERTION_ENABLED: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     std::optional<uint64_t> assertionID = scalar(0);
     if (!assertionID || *assertionID == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return sentinel(0, obelisk_rt_v1_assertion_enabled(context, *assertionID));
+      return TALOS_RT_INVALID_BYTECODE;
+    return sentinel(0, talos_rt_v1_assertion_enabled(context, *assertionID));
   }
-  case OBELISK_RT_INTRINSIC_V1_ASSERTION_ACTION_STATE: {
+  case TALOS_RT_INTRINSIC_V1_ASSERTION_ACTION_STATE: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     std::optional<uint64_t> assertionID = scalar(0);
     if (!assertionID || *assertionID == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return sentinel(
-        0, obelisk_rt_v1_assertion_action_state(context, *assertionID));
+        0, talos_rt_v1_assertion_action_state(context, *assertionID));
   }
-  case OBELISK_RT_INTRINSIC_V1_ASSERTION_KILL_EPOCH: {
+  case TALOS_RT_INTRINSIC_V1_ASSERTION_KILL_EPOCH: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     std::optional<uint64_t> assertionID = scalar(0);
     if (!assertionID || *assertionID == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return sentinel(0,
-                    obelisk_rt_v1_assertion_kill_epoch(context, *assertionID));
+                    talos_rt_v1_assertion_kill_epoch(context, *assertionID));
   }
-  case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER: {
+  case TALOS_RT_INTRINSIC_V1_MONITOR_REGISTER: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     Layout process = layoutAt(image, frame.function, inputRegister(0));
-    if (process.kind == OBELISK_RT_DBREG_BITS && process.width == 64 &&
+    if (process.kind == TALOS_RT_DBREG_BITS && process.width == 64 &&
         process.size == sizeof(uint64_t)) {
       uint64_t logicalProcess = 0;
       std::memcpy(&logicalProcess, frame.data + process.offset,
                   sizeof(logicalProcess));
-      return obelisk_rt_v1_monitor_register_logical(context, logicalProcess);
+      return talos_rt_v1_monitor_register_logical(context, logicalProcess);
     }
-    if (process.kind != OBELISK_RT_DBREG_HANDLE || process.size < 32)
-      return OBELISK_RT_INVALID_BYTECODE;
+    if (process.kind != TALOS_RT_DBREG_HANDLE || process.size < 32)
+      return TALOS_RT_INVALID_BYTECODE;
     const uint8_t *address = frame.data + process.offset;
     uint32_t kind = 0;
     int64_t begin = 0, start = kInvalidHandleStart, end = 0;
@@ -4639,111 +4639,111 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(&begin, address + 8, 8);
     std::memcpy(&start, address + 16, 8);
     std::memcpy(&end, address + 24, 8);
-    if (kind != OBELISK_RT_DESCRIPTOR_PROCESS || begin <= 0 || begin != start ||
+    if (kind != TALOS_RT_DESCRIPTOR_PROCESS || begin <= 0 || begin != start ||
         end != begin + 1)
-      return OBELISK_RT_INVALID_HANDLE;
-    return obelisk_rt_v1_monitor_register(context, static_cast<uint64_t>(begin),
+      return TALOS_RT_INVALID_HANDLE;
+    return talos_rt_v1_monitor_register(context, static_cast<uint64_t>(begin),
                                           1);
   }
-  case OBELISK_RT_INTRINSIC_V1_PROCESS_CURRENT:
-    return sentinel(0, obelisk_rt_v1_process_current(context));
-  case OBELISK_RT_INTRINSIC_V1_PROCESS_STATUS: {
+  case TALOS_RT_INTRINSIC_V1_PROCESS_CURRENT:
+    return sentinel(0, talos_rt_v1_process_current(context));
+  case TALOS_RT_INTRINSIC_V1_PROCESS_STATUS: {
     auto logicalProcess = scalar(0);
-    obelisk_rt_process_state state = OBELISK_RT_PROCESS_FINISHED;
+    talos_rt_process_state state = TALOS_RT_PROCESS_FINISHED;
     if (!logicalProcess)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_status status =
-        obelisk_rt_v1_process_status(context, *logicalProcess, &state);
-    return status == OBELISK_RT_OK ? sentinel(0, state) : status;
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_status status =
+        talos_rt_v1_process_status(context, *logicalProcess, &state);
+    return status == TALOS_RT_OK ? sentinel(0, state) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_PROCESS_RANDOM_GET: {
+  case TALOS_RT_INTRINSIC_V1_PROCESS_RANDOM_GET: {
     auto logicalProcess = scalar(0);
-    obelisk_rt_random_state_v1 state{};
+    talos_rt_random_state_v1 state{};
     if (!logicalProcess)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_status status =
-        obelisk_rt_v1_process_random_get(context, *logicalProcess, &state);
-    if (status != OBELISK_RT_OK)
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_status status =
+        talos_rt_v1_process_random_get(context, *logicalProcess, &state);
+    if (status != TALOS_RT_OK)
       return status;
     status = sentinel(0, state.state);
-    return status == OBELISK_RT_OK ? sentinel(1, state.increment) : status;
+    return status == TALOS_RT_OK ? sentinel(1, state.increment) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_PROCESS_RANDOM_SET: {
+  case TALOS_RT_INTRINSIC_V1_PROCESS_RANDOM_SET: {
     auto logicalProcess = scalar(0);
     auto state = scalar(1);
     auto increment = scalar(2);
     if (!logicalProcess || !state || !increment)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_random_state_v1 snapshot{*state, *increment};
-    return obelisk_rt_v1_process_random_set(context, *logicalProcess,
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_random_state_v1 snapshot{*state, *increment};
+    return talos_rt_v1_process_random_set(context, *logicalProcess,
                                             &snapshot);
   }
-  case OBELISK_RT_INTRINSIC_V1_DUMP_OPEN: {
+  case TALOS_RT_INTRINSIC_V1_DUMP_OPEN: {
     auto path = bytes(0);
     if (!path)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_dump_open(context, path->data, path->size);
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_dump_open(context, path->data, path->size);
   }
-  case OBELISK_RT_INTRINSIC_V1_DUMP_OPEN_STRING: {
-    obelisk_rt_string_v1 path = 0;
+  case TALOS_RT_INTRINSIC_V1_DUMP_OPEN_STRING: {
+    talos_rt_string_v1 path = 0;
     if (!readString(inputRegister(0), path))
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_dump_open_string(context, path);
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_dump_open_string(context, path);
   }
-  case OBELISK_RT_INTRINSIC_V1_DUMP_TIMESCALE: {
+  case TALOS_RT_INTRINSIC_V1_DUMP_TIMESCALE: {
     auto exponent = scalar(0);
     if (!exponent)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_dump_timescale(
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_dump_timescale(
         context, static_cast<int32_t>(static_cast<uint32_t>(*exponent)));
   }
-  case OBELISK_RT_INTRINSIC_V1_DUMP_VARS: {
+  case TALOS_RT_INTRINSIC_V1_DUMP_VARS: {
     auto levels = scalar(0);
     auto scope = bytes(1);
     if (!levels || !scope)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_dump_vars(context, *levels, scope->data, scope->size);
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_dump_vars(context, *levels, scope->data, scope->size);
   }
-  case OBELISK_RT_INTRINSIC_V1_DUMP_ALL:
-    return obelisk_rt_v1_dump_all(context);
-  case OBELISK_RT_INTRINSIC_V1_DUMP_LIMIT: {
+  case TALOS_RT_INTRINSIC_V1_DUMP_ALL:
+    return talos_rt_v1_dump_all(context);
+  case TALOS_RT_INTRINSIC_V1_DUMP_LIMIT: {
     auto limit = scalar(0);
     if (!limit)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_dump_limit(context, *limit);
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_dump_limit(context, *limit);
   }
-  case OBELISK_RT_INTRINSIC_V1_DUMP_FLUSH:
-    return obelisk_rt_v1_dump_flush(context);
-  case OBELISK_RT_INTRINSIC_V1_DUMP_CONTROL:
-    return obelisk_rt_v1_dump_control(context, signature.flags);
-  case OBELISK_RT_INTRINSIC_V1_DUMP_PORTS: {
-    obelisk_rt_string_v1 path = 0;
-    obelisk_rt_string_v1 scope = 0;
+  case TALOS_RT_INTRINSIC_V1_DUMP_FLUSH:
+    return talos_rt_v1_dump_flush(context);
+  case TALOS_RT_INTRINSIC_V1_DUMP_CONTROL:
+    return talos_rt_v1_dump_control(context, signature.flags);
+  case TALOS_RT_INTRINSIC_V1_DUMP_PORTS: {
+    talos_rt_string_v1 path = 0;
+    talos_rt_string_v1 scope = 0;
     auto exponent = scalar(2);
     if (!readString(inputRegister(0), path) ||
         !readString(inputRegister(1), scope) || !exponent)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_dump_ports(
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_dump_ports(
         context, path, scope,
         static_cast<int32_t>(static_cast<uint32_t>(*exponent)));
   }
-  case OBELISK_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL: {
-    obelisk_rt_string_v1 path = 0;
+  case TALOS_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL: {
+    talos_rt_string_v1 path = 0;
     auto value = scalar(1);
     if (!readString(inputRegister(0), path) || !value)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_dump_ports_control(context, path, signature.flags,
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_dump_ports_control(context, path, signature.flags,
                                             *value);
   }
-  case OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL:
-    return obelisk_rt_v1_monitor_control(context, signature.flags);
-  case OBELISK_RT_INTRINSIC_V1_MONITOR_CURRENT:
-    return sentinel(0, obelisk_rt_v1_monitor_current(context));
-  case OBELISK_RT_INTRINSIC_V1_IMPORT:
-  case OBELISK_RT_INTRINSIC_V1_DPI_IMPORT: {
+  case TALOS_RT_INTRINSIC_V1_MONITOR_CONTROL:
+    return talos_rt_v1_monitor_control(context, signature.flags);
+  case TALOS_RT_INTRINSIC_V1_MONITOR_CURRENT:
+    return sentinel(0, talos_rt_v1_monitor_current(context));
+  case TALOS_RT_INTRINSIC_V1_IMPORT:
+  case TALOS_RT_INTRINSIC_V1_DPI_IMPORT: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT &&
+      return TALOS_RT_INVALID_ARGUMENT;
+    if (signature.id == TALOS_RT_INTRINSIC_V1_DPI_IMPORT &&
         (!designBytecodeDpiOpenAggregatePack ||
          !designBytecodeDpiOpenAggregateUnpack ||
          !designBytecodeDpiOpenPrepareRecursive ||
@@ -4751,10 +4751,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
          !designBytecodeDpiAggregatePack || !designBytecodeDpiAggregateUnpack ||
          !designBytecodeDpiOpenAggregateRootsPush ||
          !designBytecodeDpiAggregateRootsPop))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t firstInput = 0;
-    obelisk_rt_import_site_v1 importSite{
-        OBELISK_RT_VERSION,
+    talos_rt_import_site_v1 importSite{
+        TALOS_RT_VERSION,
         0,
         signature.flags,
         0,
@@ -4796,11 +4796,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::vector<uint8_t> data;
       std::vector<uint8_t> flatValue;
       std::vector<uint8_t> flatUnknown;
-      std::vector<obelisk_rt_dpi_dimension_v1> dimensions;
-      obelisk_rt_dpi_open_array_v1 descriptor{};
+      std::vector<talos_rt_dpi_dimension_v1> dimensions;
+      talos_rt_dpi_open_array_v1 descriptor{};
       std::unique_ptr<void, decltype(&std::free)> recursiveAllocation{
           nullptr, &std::free};
-      obelisk_rt_object_v1 *container = nullptr;
+      talos_rt_object_v1 *container = nullptr;
       uint64_t elementCount = 0;
       uint64_t elementSize = 0;
       uint64_t dataSize = 0;
@@ -4819,10 +4819,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     };
     std::vector<std::optional<DPIOpenLayout>> dpiOpenLayouts;
     std::vector<std::optional<DPIAggregateLayout>> dpiAggregateLayouts;
-    if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT) {
+    if (signature.id == TALOS_RT_INTRINSIC_V1_DPI_IMPORT) {
       auto metadata = bytes(0);
       if (!metadata || metadata->size < 56 || site.outputCount == 0)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       importSite.version = read32(metadata->data);
       importSite.flags = read32(metadata->data + 4);
       importSite.import_id = read32(metadata->data + 8);
@@ -4836,21 +4836,21 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       uint32_t logicalOutputs = read32(metadata->data + 52);
       uint64_t entryCount = uint64_t{logicalInputs} + uint64_t{logicalOutputs};
       if (entryCount > (UINT64_MAX - 56) / 16)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       uint64_t layoutOffset = 56 + entryCount * 16;
       if (layoutOffset > metadata->size)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       dpiOpenLayouts.resize(static_cast<size_t>(entryCount));
       for (uint64_t index = 0; index != entryCount; ++index) {
         if (layoutOffset > metadata->size - 4)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         uint32_t recordSize = read32(metadata->data + layoutOffset);
         if (recordSize == 0) {
           layoutOffset += 4;
           continue;
         }
         if (recordSize < 80 || recordSize > metadata->size - layoutOffset)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         const uint8_t *record = metadata->data + layoutOffset;
         DPIOpenLayout layout;
         layout.storage = read32(record + 4);
@@ -4883,7 +4883,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             layout.elementCAlignment == 0 ||
             (layout.elementCAlignment & (layout.elementCAlignment - 1)) != 0 ||
             layout.elementStringCount > (UINT64_MAX - layout.elementCSize) / 8)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         layout.elementPlan.reserve(static_cast<size_t>(planWords));
         for (uint64_t word = 0; word != planWords; ++word)
           layout.elementPlan.push_back(static_cast<int64_t>(
@@ -4915,14 +4915,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       dpiAggregateLayouts.resize(static_cast<size_t>(entryCount));
       for (uint64_t index = 0; index != entryCount; ++index) {
         if (layoutOffset > metadata->size - 4)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         uint32_t recordSize = read32(metadata->data + layoutOffset);
         if (recordSize == 0) {
           layoutOffset += 4;
           continue;
         }
         if (recordSize < 32 || recordSize > metadata->size - layoutOffset)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         const uint8_t *record = metadata->data + layoutOffset;
         DPIAggregateLayout layout;
         layout.cAlignment = read32(record + 4);
@@ -4935,7 +4935,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             planWords > (UINT32_MAX - 32) / 8 ||
             recordSize != 32 + planWords * 8 ||
             layout.stringCount > (UINT64_MAX - layout.cSize) / 8)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         layout.plan.reserve(static_cast<size_t>(planWords));
         for (uint64_t word = 0; word != planWords; ++word)
           layout.plan.push_back(static_cast<int64_t>(
@@ -4948,7 +4948,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           importSite.source_file_size != metadata->size - sourceOffset ||
           uint64_t{site.inputCount} != uint64_t{logicalInputs} + 1 ||
           uint64_t{site.outputCount} != uint64_t{logicalOutputs} + 1)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       importSite.source_file =
           importSite.source_file_size
               ? reinterpret_cast<const char *>(metadata->data + sourceOffset)
@@ -5007,29 +5007,29 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           if (layout.width != open.transportWidth)
             return false;
           if (open.storage == 1)
-            return layout.kind == OBELISK_RT_DBREG_MANAGED;
+            return layout.kind == TALOS_RT_DBREG_MANAGED;
           if (open.transportFourState != 0)
-            return layout.kind == OBELISK_RT_DBREG_LOGIC;
+            return layout.kind == TALOS_RT_DBREG_LOGIC;
           // Recursive provenance can be rooted in a managed dynamic/queue
           // handle or in a fixed two-state aggregate of managed handles.
-          return layout.kind == OBELISK_RT_DBREG_BITS ||
-                 (open.storage == 2 && layout.kind == OBELISK_RT_DBREG_MANAGED);
+          return layout.kind == TALOS_RT_DBREG_BITS ||
+                 (open.storage == 2 && layout.kind == TALOS_RT_DBREG_MANAGED);
         }
         if (abi.kind == 8)
-          return layout.kind == OBELISK_RT_DBREG_STRING && layout.width == 64;
+          return layout.kind == TALOS_RT_DBREG_STRING && layout.width == 64;
         if (abi.kind == 9)
-          return layout.kind == OBELISK_RT_DBREG_BITS && layout.width == 64;
+          return layout.kind == TALOS_RT_DBREG_BITS && layout.width == 64;
         if (abi.kind == 10)
-          return layout.kind == OBELISK_RT_DBREG_REAL32 && layout.width == 32;
+          return layout.kind == TALOS_RT_DBREG_REAL32 && layout.width == 32;
         if (abi.kind == 11)
-          return layout.kind == OBELISK_RT_DBREG_REAL64 && layout.width == 64;
-        uint8_t expectedKind = (abi.flags & 1) != 0 ? OBELISK_RT_DBREG_LOGIC
-                                                    : OBELISK_RT_DBREG_BITS;
+          return layout.kind == TALOS_RT_DBREG_REAL64 && layout.width == 64;
+        uint8_t expectedKind = (abi.flags & 1) != 0 ? TALOS_RT_DBREG_LOGIC
+                                                    : TALOS_RT_DBREG_BITS;
         return layout.kind == expectedKind && layout.width == abi.width;
       };
-      uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
+      uint64_t hash = TALOS_STABLE_HASH_OFFSET_BASIS;
       auto appendHash = [&](uint64_t value, unsigned bytes) {
-        hash = obelisk_stable_hash_append_uint_le(hash, value, bytes);
+        hash = talos_stable_hash_append_uint_le(hash, value, bytes);
       };
       appendHash(logicalInputs, 8);
       appendHash(logicalOutputs, 8);
@@ -5039,7 +5039,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         if (!validEntry(abi) ||
             ((abi.kind == 12) != dpiOpenLayouts[index].has_value()) ||
             ((abi.kind == 13) != dpiAggregateLayouts[index].has_value()))
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         dpiEntries.push_back(abi);
         appendHash(abi.kind, 4);
         appendHash(abi.direction, 4);
@@ -5050,15 +5050,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       if (hash == 0)
         hash = 1;
       if (importSite.abi_signature != 0 && hash != importSite.abi_signature)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       for (uint32_t index = 0; index != logicalInputs; ++index) {
         DPIABIEntry abi = entry(index);
         if (abi.direction == 3 ||
             !matchesLayout(
                 abi, layoutAt(image, frame.function, inputRegister(index + 1)),
                 index))
-          return OBELISK_RT_INVALID_BYTECODE;
-        dpiInputFlags.push_back((abi.flags & 2) != 0 ? OBELISK_RT_DBREG_SIGNED
+          return TALOS_RT_INVALID_BYTECODE;
+        dpiInputFlags.push_back((abi.flags & 2) != 0 ? TALOS_RT_DBREG_SIGNED
                                                      : 0);
       }
       for (uint32_t index = 0; index != logicalOutputs; ++index) {
@@ -5066,17 +5066,17 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         if (!matchesLayout(
                 abi, layoutAt(image, frame.function, outputRegister(index)),
                 uint64_t{logicalInputs} + index))
-          return OBELISK_RT_INVALID_BYTECODE;
-        dpiOutputFlags.push_back((abi.flags & 2) != 0 ? OBELISK_RT_DBREG_SIGNED
+          return TALOS_RT_INVALID_BYTECODE;
+        dpiOutputFlags.push_back((abi.flags & 2) != 0 ? TALOS_RT_DBREG_SIGNED
                                                       : 0);
       }
       Layout statusLayout =
           layoutAt(image, frame.function, outputRegister(logicalOutputs));
-      if (statusLayout.kind != OBELISK_RT_DBREG_STATUS)
-        return OBELISK_RT_INVALID_BYTECODE;
+      if (statusLayout.kind != TALOS_RT_DBREG_STATUS)
+        return TALOS_RT_INVALID_BYTECODE;
 
       uint64_t outputCursor = logicalInputs;
-      bool task = (importSite.flags & OBELISK_RT_IMPORT_TASK) != 0;
+      bool task = (importSite.flags & TALOS_RT_IMPORT_TASK) != 0;
       if (!task && outputCursor < entryCount &&
           entry(outputCursor).direction == 3)
         ++outputCursor;
@@ -5085,20 +5085,20 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         if (input.direction == 0)
           continue;
         if (outputCursor >= entryCount)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         DPIABIEntry output = entry(outputCursor++);
         if (output.direction != 1 || !sameValue(input, output))
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
       }
       if (outputCursor != entryCount)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
 
       firstInput = 1;
       dataOutputCount = logicalOutputs;
     }
     uint32_t inputCount = site.inputCount - firstInput;
-    std::vector<obelisk_rt_import_input_v1> inputs;
-    std::vector<obelisk_rt_import_output_v1> outputs;
+    std::vector<talos_rt_import_input_v1> inputs;
+    std::vector<talos_rt_import_output_v1> outputs;
     std::vector<std::optional<DPIOpenStorage>> dpiOpenInputs(inputCount);
     std::vector<int64_t> dpiOpenOutputSources(dataOutputCount, -1);
     std::vector<std::optional<DPIAggregateStorage>> dpiAggregateInputs(
@@ -5107,30 +5107,30 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     inputs.reserve(inputCount);
     outputs.reserve(dataOutputCount);
     auto describe = [&](Layout layout, uint8_t *address) {
-      uint64_t limbs = layout.kind == OBELISK_RT_DBREG_STATUS ? 1
-                       : layout.kind == OBELISK_RT_DBREG_HANDLE
+      uint64_t limbs = layout.kind == TALOS_RT_DBREG_STATUS ? 1
+                       : layout.kind == TALOS_RT_DBREG_HANDLE
                            ? 4
                            : limbCount(layout.width);
       uint32_t width =
-          layout.kind == OBELISK_RT_DBREG_STATUS ? 32 : layout.width;
+          layout.kind == TALOS_RT_DBREG_STATUS ? 32 : layout.width;
       return std::tuple<uint32_t, uint64_t, uint64_t *, uint64_t *>{
           width, limbs, reinterpret_cast<uint64_t *>(address),
-          layout.kind == OBELISK_RT_DBREG_LOGIC
+          layout.kind == TALOS_RT_DBREG_LOGIC
               ? reinterpret_cast<uint64_t *>(address + limbs * 8)
               : nullptr};
     };
     auto prepareOpenInput = [&](uint32_t index,
-                                Layout registerLayout) -> obelisk_rt_status {
+                                Layout registerLayout) -> talos_rt_status {
       const DPIOpenLayout &layout = *dpiOpenLayouts[index];
       dpiOpenInputs[index].emplace();
       DPIOpenStorage &storage = *dpiOpenInputs[index];
       if (layout.storage == 2) {
         if (dpiEntries[index].direction == 1 || layout.shapePlan.empty())
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         uint64_t rootPlaneSize = limbCount(registerLayout.width) * uint64_t{8};
         uint8_t *address = frame.data + registerLayout.offset;
-        obelisk_rt_dpi_open_array_storage_v1 prepared{};
-        obelisk_rt_status recursiveStatus =
+        talos_rt_dpi_open_array_storage_v1 prepared{};
+        talos_rt_status recursiveStatus =
             designBytecodeDpiOpenPrepareRecursive(
                 address,
                 layout.transportFourState ? address + rootPlaneSize : nullptr,
@@ -5143,26 +5143,26 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                 layout.elementPlan.data(), layout.elementPlan.size(),
                 layout.shapePlan.data(),
                 static_cast<uint32_t>(layout.ranges.size() / 2), &prepared);
-        if (recursiveStatus != OBELISK_RT_OK)
+        if (recursiveStatus != TALOS_RT_OK)
           return recursiveStatus;
         storage.descriptor = prepared.descriptor;
         storage.recursiveAllocation.reset(prepared.allocation);
         storage.elementSize = layout.elementCSize;
         storage.dataSize = storage.descriptor.data_size;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       storage.dynamic = layout.storage == 1;
       storage.elementSize = layout.elementCSize;
       if (storage.elementSize == 0)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
 
       if (storage.dynamic) {
         storage.container = readManaged(inputRegister(index + firstInput));
-        storage.elementCount = obelisk_rt_v1_container_size(storage.container);
+        storage.elementCount = talos_rt_v1_container_size(storage.container);
         storage.totalWidth = storage.elementCount * layout.elementWidth;
         if (layout.elementWidth != 0 &&
             storage.totalWidth / layout.elementWidth != storage.elementCount)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         storage.planeSize = (storage.totalWidth + 7) / 8;
       } else {
         storage.elementCount = 1;
@@ -5173,27 +5173,27 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                                   std::min(left, right)) +
                             1;
           if (extent == 0 || storage.elementCount > UINT64_MAX / extent)
-            return OBELISK_RT_INVALID_BYTECODE;
+            return TALOS_RT_INVALID_BYTECODE;
           storage.elementCount *= extent;
         }
         storage.totalWidth = layout.transportWidth;
         storage.planeSize = uint64_t{limbCount(registerLayout.width)} * 8;
         if (storage.elementCount > UINT64_MAX / layout.elementWidth ||
             storage.elementCount * layout.elementWidth != storage.totalWidth)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
       }
       if (storage.elementCount > UINT64_MAX / storage.elementSize ||
           storage.elementCount * storage.elementSize > SIZE_MAX ||
           storage.planeSize > SIZE_MAX)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       storage.dataSize = storage.elementCount * storage.elementSize;
       if (layout.elementStringCount != 0 &&
           storage.elementCount > UINT64_MAX / layout.elementStringCount)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       uint64_t strings = storage.elementCount * layout.elementStringCount;
       if (strings > (UINT64_MAX - storage.dataSize) / 8 ||
           storage.dataSize + strings * 8 > SIZE_MAX)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       uint64_t capacity = storage.dataSize + strings * 8;
       storage.data.resize(static_cast<size_t>(capacity));
 
@@ -5203,15 +5203,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           if (layout.fourState)
             storage.flatUnknown.resize(static_cast<size_t>(storage.planeSize));
           if (dpiEntries[index].direction != 1) {
-            obelisk_rt_status status = obelisk_rt_v1_container_export_fixed(
+            talos_rt_status status = talos_rt_v1_container_export_fixed(
                 storage.container, storage.flatValue.data(),
                 layout.fourState ? storage.flatUnknown.data() : nullptr,
                 storage.planeSize, storage.totalWidth, layout.fourState,
                 layout.elementWidth, storage.elementCount);
-            if (status != OBELISK_RT_OK)
+            if (status != TALOS_RT_OK)
               return status;
           }
-          obelisk_rt_status status = designBytecodeDpiOpenAggregatePack(
+          talos_rt_status status = designBytecodeDpiOpenAggregatePack(
               storage.flatValue.data(),
               layout.fourState ? storage.flatUnknown.data() : nullptr,
               storage.planeSize, storage.totalWidth, layout.fourState,
@@ -5219,7 +5219,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
               storage.data.data(), storage.dataSize, capacity,
               layout.elementCSize, layout.elementStringCount,
               layout.elementPlan.data(), layout.elementPlan.size());
-          if (status != OBELISK_RT_OK)
+          if (status != TALOS_RT_OK)
             return status;
         }
       } else if (dpiEntries[index].direction != 1) {
@@ -5228,7 +5228,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             layout.fourState
                 ? reinterpret_cast<uint64_t *>(address + storage.planeSize)
                 : nullptr;
-        obelisk_rt_status status = designBytecodeDpiOpenAggregatePack(
+        talos_rt_status status = designBytecodeDpiOpenAggregatePack(
             address, unknown, storage.planeSize, storage.totalWidth,
             layout.fourState, layout.elementWidth, storage.elementCount, 0,
             layout.sourceRanges.data(),
@@ -5236,7 +5236,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             storage.data.data(), storage.dataSize, capacity,
             layout.elementCSize, layout.elementStringCount,
             layout.elementPlan.data(), layout.elementPlan.size());
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       }
 
@@ -5255,12 +5255,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                 : layout.ranges[dimension * 2 + 1];
         if (left < INT32_MIN || left > INT32_MAX || right < INT32_MIN ||
             right > INT32_MAX)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         storage.dimensions[dimension] = {
             static_cast<int32_t>(left), static_cast<int32_t>(right), stride,
-            storage.dynamic ? OBELISK_RT_DPI_DIMENSION_RUNTIME |
+            storage.dynamic ? TALOS_RT_DPI_DIMENSION_RUNTIME |
                                   (storage.elementCount == 0
-                                       ? OBELISK_RT_DPI_DIMENSION_EMPTY
+                                       ? TALOS_RT_DPI_DIMENSION_EMPTY
                                        : 0)
                             : 0,
             0};
@@ -5270,24 +5270,24 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                                       std::min(left, right)) +
                                     1;
         if (dimension != 0 && extent != 0 && stride > UINT64_MAX / extent)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         stride *= extent;
       }
       bool packed = layout.elementKind <= 7;
       bool cLayout = true;
       uint32_t flags =
-          (dpiEntries[index].direction != 0 ? OBELISK_RT_DPI_OPEN_ARRAY_WRITABLE
+          (dpiEntries[index].direction != 0 ? TALOS_RT_DPI_OPEN_ARRAY_WRITABLE
                                             : 0) |
-          (cLayout ? OBELISK_RT_DPI_OPEN_ARRAY_C_LAYOUT : 0) |
-          (packed ? OBELISK_RT_DPI_OPEN_ARRAY_PACKED : 0) |
+          (cLayout ? TALOS_RT_DPI_OPEN_ARRAY_C_LAYOUT : 0) |
+          (packed ? TALOS_RT_DPI_OPEN_ARRAY_PACKED : 0) |
           (layout.elementKind == 1 || layout.elementKind == 7
-               ? OBELISK_RT_DPI_OPEN_ARRAY_FOUR_STATE
+               ? TALOS_RT_DPI_OPEN_ARRAY_FOUR_STATE
                : 0) |
           (storage.dynamic && storage.elementCount == 0
-               ? OBELISK_RT_DPI_OPEN_ARRAY_EMPTY
+               ? TALOS_RT_DPI_OPEN_ARRAY_EMPTY
                : 0);
       storage.descriptor = {
-          OBELISK_RT_DPI_OPEN_ARRAY_MAGIC,
+          TALOS_RT_DPI_OPEN_ARRAY_MAGIC,
           flags,
           static_cast<uint32_t>(dimensionCount),
           layout.elementWidth,
@@ -5298,19 +5298,19 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           storage.dataSize,
           storage.dimensions.empty() ? nullptr : storage.dimensions.data(),
           0};
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     };
     auto prepareAggregateInput =
-        [&](uint32_t index, Layout registerLayout) -> obelisk_rt_status {
+        [&](uint32_t index, Layout registerLayout) -> talos_rt_status {
       const DPIAggregateLayout &layout = *dpiAggregateLayouts[index];
       uint64_t capacity = layout.cSize + layout.stringCount * uint64_t{8};
       if (capacity > SIZE_MAX)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       dpiAggregateInputs[index].emplace();
       DPIAggregateStorage &storage = *dpiAggregateInputs[index];
       storage.data.resize(static_cast<size_t>(capacity));
       if (dpiEntries[index].direction == 1)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       uint64_t planeSize = limbCount(registerLayout.width) * uint64_t{8};
       uint8_t *address = frame.data + registerLayout.offset;
       const void *unknown =
@@ -5323,23 +5323,23 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     for (uint32_t index = 0; index != inputCount; ++index) {
       Layout layout =
           layoutAt(image, frame.function, inputRegister(index + firstInput));
-      if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT &&
+      if (signature.id == TALOS_RT_INTRINSIC_V1_DPI_IMPORT &&
           dpiEntries[index].kind == 12) {
-        obelisk_rt_status status = prepareOpenInput(index, layout);
-        if (status != OBELISK_RT_OK)
+        talos_rt_status status = prepareOpenInput(index, layout);
+        if (status != TALOS_RT_OK)
           return status;
         auto *descriptor = &dpiOpenInputs[index]->descriptor;
-        inputs.push_back({OBELISK_RT_DBREG_OPEN_ARRAY, 0, 0, 64,
+        inputs.push_back({TALOS_RT_DBREG_OPEN_ARRAY, 0, 0, 64,
                           reinterpret_cast<uint64_t *>(descriptor), nullptr,
                           1});
         continue;
       }
-      if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT &&
+      if (signature.id == TALOS_RT_INTRINSIC_V1_DPI_IMPORT &&
           dpiEntries[index].kind == 13) {
-        obelisk_rt_status status = prepareAggregateInput(index, layout);
-        if (status != OBELISK_RT_OK)
+        talos_rt_status status = prepareAggregateInput(index, layout);
+        if (status != TALOS_RT_OK)
           return status;
-        inputs.push_back({OBELISK_RT_DBREG_AGGREGATE, 0, 0, 64,
+        inputs.push_back({TALOS_RT_DBREG_AGGREGATE, 0, 0, 64,
                           reinterpret_cast<uint64_t *>(
                               dpiAggregateInputs[index]->data.data()),
                           nullptr, 1});
@@ -5347,14 +5347,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       }
       auto [width, limbs, value, unknown] =
           describe(layout, frame.data + layout.offset);
-      uint8_t flags = signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT
+      uint8_t flags = signature.id == TALOS_RT_INTRINSIC_V1_DPI_IMPORT
                           ? dpiInputFlags[index]
                           : layout.flags;
       inputs.push_back({layout.kind, flags, 0, width, value, unknown, limbs});
     }
-    if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT) {
+    if (signature.id == TALOS_RT_INTRINSIC_V1_DPI_IMPORT) {
       uint64_t outputCursor = 0;
-      bool task = (importSite.flags & OBELISK_RT_IMPORT_TASK) != 0;
+      bool task = (importSite.flags & TALOS_RT_IMPORT_TASK) != 0;
       if (!task && dataOutputCount != 0 &&
           dpiEntries[inputCount].direction == 3)
         outputCursor = 1;
@@ -5362,7 +5362,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         if (dpiEntries[input].direction == 0)
           continue;
         if (outputCursor >= dataOutputCount)
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         if (dpiEntries[input].kind == 12)
           dpiOpenOutputSources[outputCursor] = input;
         if (dpiEntries[input].kind == 13)
@@ -5372,25 +5372,25 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     }
     for (uint32_t index = 0; index != dataOutputCount; ++index) {
       Layout layout = layoutAt(image, frame.function, outputRegister(index));
-      if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT &&
+      if (signature.id == TALOS_RT_INTRINSIC_V1_DPI_IMPORT &&
           dpiEntries[inputCount + index].kind == 12) {
         int64_t source = dpiOpenOutputSources[index];
         if (source < 0 || !dpiOpenInputs[static_cast<size_t>(source)])
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         auto *descriptor =
             &dpiOpenInputs[static_cast<size_t>(source)]->descriptor;
-        outputs.push_back({OBELISK_RT_DBREG_OPEN_ARRAY, 0, 0, 64,
+        outputs.push_back({TALOS_RT_DBREG_OPEN_ARRAY, 0, 0, 64,
                            reinterpret_cast<uint64_t *>(descriptor), nullptr,
                            1});
         continue;
       }
-      if (signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT &&
+      if (signature.id == TALOS_RT_INTRINSIC_V1_DPI_IMPORT &&
           dpiEntries[inputCount + index].kind == 13) {
         int64_t source = dpiAggregateOutputSources[index];
         if (source < 0 || !dpiAggregateInputs[static_cast<size_t>(source)])
-          return OBELISK_RT_INVALID_BYTECODE;
+          return TALOS_RT_INVALID_BYTECODE;
         outputs.push_back(
-            {OBELISK_RT_DBREG_AGGREGATE, 0, 0, 64,
+            {TALOS_RT_DBREG_AGGREGATE, 0, 0, 64,
              reinterpret_cast<uint64_t *>(
                  dpiAggregateInputs[static_cast<size_t>(source)]->data.data()),
              nullptr, 1});
@@ -5398,22 +5398,22 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       }
       uint8_t *address = frame.data + layout.offset;
       auto [width, limbs, value, unknown] = describe(layout, address);
-      uint8_t flags = signature.id == OBELISK_RT_INTRINSIC_V1_DPI_IMPORT
+      uint8_t flags = signature.id == TALOS_RT_INTRINSIC_V1_DPI_IMPORT
                           ? dpiOutputFlags[index]
                           : layout.flags;
       outputs.push_back({layout.kind, flags, 0, width, value, unknown, limbs});
     }
-    obelisk_rt_status importStatus =
-        (importSite.flags & OBELISK_RT_IMPORT_CONTEXT) != 0
-            ? obelisk_rt_v1_import_call(context, &importSite, inputs.data(),
+    talos_rt_status importStatus =
+        (importSite.flags & TALOS_RT_IMPORT_CONTEXT) != 0
+            ? talos_rt_v1_import_call(context, &importSite, inputs.data(),
                                         inputCount, outputs.data(),
                                         dataOutputCount)
-            : obelisk_rt_v1_import_call_noncontext(
+            : talos_rt_v1_import_call_noncontext(
                   context, &importSite, inputs.data(), inputCount,
                   outputs.data(), dataOutputCount);
-    if (signature.id != OBELISK_RT_INTRINSIC_V1_DPI_IMPORT)
+    if (signature.id != TALOS_RT_INTRINSIC_V1_DPI_IMPORT)
       return importStatus;
-    if (importStatus == OBELISK_RT_OK) {
+    if (importStatus == TALOS_RT_OK) {
       for (uint32_t index = 0; index != dataOutputCount; ++index) {
         int64_t aggregateSource = dpiAggregateOutputSources[index];
         if (aggregateSource >= 0) {
@@ -5428,12 +5428,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           void *unknown = (dpiEntries[inputCount + index].flags & 1) != 0
                               ? address + planeSize
                               : nullptr;
-          obelisk_rt_status status = designBytecodeDpiAggregateUnpack(
+          talos_rt_status status = designBytecodeDpiAggregateUnpack(
               context, storage.data.data(), aggregate.cSize,
               aggregate.plan.data(), aggregate.plan.size(), address, unknown,
               planeSize, dpiEntries[inputCount + index].width,
               dpiEntries[inputCount + index].flags & 1);
-          if (status != OBELISK_RT_OK)
+          if (status != TALOS_RT_OK)
             return status;
           continue;
         }
@@ -5450,35 +5450,35 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
               inputRegister(static_cast<uint32_t>(source) + firstInput));
           uint64_t rootPlaneSize = limbCount(input.width) * uint64_t{8};
           uint8_t *inputAddress = frame.data + input.offset;
-          obelisk_rt_dpi_open_array_storage_v1 recursive{
+          talos_rt_dpi_open_array_storage_v1 recursive{
               storage.descriptor, storage.recursiveAllocation.get()};
-          obelisk_rt_status status = designBytecodeDpiOpenFinishRecursive(
-              OBELISK_RT_OK, context, &recursive, inputAddress,
+          talos_rt_status status = designBytecodeDpiOpenFinishRecursive(
+              TALOS_RT_OK, context, &recursive, inputAddress,
               open.transportFourState ? inputAddress + rootPlaneSize : nullptr,
               rootPlaneSize, open.transportWidth, open.transportFourState,
               open.elementWidth, open.fourState, open.elementCSize,
               open.elementPlan.data(), open.elementPlan.size(),
               open.shapePlan.data(),
               static_cast<uint32_t>(open.ranges.size() / 2));
-          if (status != OBELISK_RT_OK || input.size != output.size)
-            return status != OBELISK_RT_OK ? status
-                                           : OBELISK_RT_INVALID_BYTECODE;
+          if (status != TALOS_RT_OK || input.size != output.size)
+            return status != TALOS_RT_OK ? status
+                                           : TALOS_RT_INVALID_BYTECODE;
           std::memcpy(frame.data + output.offset, inputAddress, input.size);
           continue;
         }
         if (storage.dynamic) {
           if (!writeManaged(outputRegister(index), storage.container))
-            return OBELISK_RT_INVALID_BYTECODE;
+            return TALOS_RT_INVALID_BYTECODE;
           if (storage.elementCount == 0)
             continue;
-          obelisk_rt_status status = designBytecodeDpiOpenAggregateUnpack(
+          talos_rt_status status = designBytecodeDpiOpenAggregateUnpack(
               context, storage.data.data(), storage.dataSize, open.elementCSize,
               open.elementPlan.data(), open.elementPlan.size(),
               storage.elementCount, 0, nullptr, 0, storage.flatValue.data(),
               open.fourState ? storage.flatUnknown.data() : nullptr,
               storage.planeSize, storage.totalWidth, open.fourState,
               open.elementWidth);
-          if (status != OBELISK_RT_OK)
+          if (status != TALOS_RT_OK)
             return status;
           void *aggregateRoots = nullptr;
           if (open.elementStringCount != 0) {
@@ -5487,30 +5487,30 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                 storage.totalWidth, open.elementWidth, storage.elementCount, 0,
                 nullptr, 0, open.elementCSize, open.elementPlan.data(),
                 open.elementPlan.size(), &aggregateRoots);
-            if (status != OBELISK_RT_OK)
+            if (status != TALOS_RT_OK)
               return status;
           }
-          obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+          talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
           if (!lane) {
             if (aggregateRoots)
               (void)designBytecodeDpiAggregateRootsPop(context, aggregateRoots);
-            return OBELISK_RT_INVALID_LIFECYCLE;
+            return TALOS_RT_INVALID_LIFECYCLE;
           }
-          status = obelisk_rt_v1_container_import_fixed(
+          status = talos_rt_v1_container_import_fixed(
               lane, storage.container, storage.flatValue.data(),
               open.fourState ? storage.flatUnknown.data() : nullptr,
               storage.planeSize, storage.totalWidth, open.fourState,
               open.elementWidth, storage.elementCount);
-          obelisk_rt_status popStatus =
+          talos_rt_status popStatus =
               designBytecodeDpiAggregateRootsPop(context, aggregateRoots);
-          if (status != OBELISK_RT_OK)
+          if (status != TALOS_RT_OK)
             return status;
-          if (popStatus != OBELISK_RT_OK)
+          if (popStatus != TALOS_RT_OK)
             return popStatus;
           continue;
         }
         uint8_t *address = frame.data + output.offset;
-        obelisk_rt_status status = designBytecodeDpiOpenAggregateUnpack(
+        talos_rt_status status = designBytecodeDpiOpenAggregateUnpack(
             context, storage.data.data(), storage.dataSize, open.elementCSize,
             open.elementPlan.data(), open.elementPlan.size(),
             storage.elementCount, 0, open.sourceRanges.data(),
@@ -5518,7 +5518,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             open.fourState ? address + storage.planeSize : nullptr,
             storage.planeSize, storage.totalWidth, open.fourState,
             open.elementWidth);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       }
     }
@@ -5528,16 +5528,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memset(statusAddress, 0, statusLayout.size);
     uint64_t statusBits = static_cast<uint32_t>(importStatus);
     std::memcpy(statusAddress, &statusBits, sizeof(statusBits));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_FORMAT:
-  case OBELISK_RT_INTRINSIC_V1_DISPLAY: {
-    bool stringOutput = signature.id == OBELISK_RT_INTRINSIC_V1_FORMAT;
+  case TALOS_RT_INTRINSIC_V1_FORMAT:
+  case TALOS_RT_INTRINSIC_V1_DISPLAY: {
+    bool stringOutput = signature.id == TALOS_RT_INTRINSIC_V1_FORMAT;
     auto metadata = bytes(0);
     auto descriptor = stringOutput ? std::optional<uint64_t>(0) : scalar(1);
     if (!metadata || !descriptor || *descriptor > UINT32_MAX ||
         metadata->size < 44 || read32(metadata->data) != 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t newline = read32(metadata->data + 4);
     uint32_t radix = read32(metadata->data + 8);
     uint32_t itemCount = read32(metadata->data + 12);
@@ -5547,12 +5547,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     int32_t precision = static_cast<int32_t>(read32(metadata->data + 40));
     uint64_t flagsSize = uint64_t{itemCount} * 4;
     if (newline > 1 ||
-        (radix != OBELISK_RT_RADIX_BINARY && radix != OBELISK_RT_RADIX_OCTAL &&
-         radix != OBELISK_RT_RADIX_DECIMAL && radix != OBELISK_RT_RADIX_HEX) ||
+        (radix != TALOS_RT_RADIX_BINARY && radix != TALOS_RT_RADIX_OCTAL &&
+         radix != TALOS_RT_RADIX_DECIMAL && radix != TALOS_RT_RADIX_HEX) ||
         multiplier == 0 || flagsSize > metadata->size - 44 ||
         scopeSize > metadata->size - 44 - flagsSize ||
         librarySize > metadata->size - 44 - flagsSize - scopeSize)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     const uint8_t *flags = metadata->data + 44;
     const char *scope = reinterpret_cast<const char *>(flags + flagsSize);
     const char *library = scope + scopeSize;
@@ -5561,180 +5561,180 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     values.reserve(site.inputCount - physical);
     std::vector<double> realValues;
     realValues.reserve(itemCount);
-    std::vector<obelisk_rt_arg_v1> arguments;
+    std::vector<talos_rt_arg_v1> arguments;
     arguments.reserve(itemCount);
-    std::vector<obelisk_rt_enum_arg_v1> enumArguments;
+    std::vector<talos_rt_enum_arg_v1> enumArguments;
     enumArguments.reserve(itemCount);
-    std::vector<obelisk_rt_net_arg_v1> netArguments;
+    std::vector<talos_rt_net_arg_v1> netArguments;
     netArguments.reserve(itemCount);
-    std::vector<obelisk_rt_raw_aggregate_arg_v1> rawAggregateArguments;
+    std::vector<talos_rt_raw_aggregate_arg_v1> rawAggregateArguments;
     rawAggregateArguments.reserve(itemCount);
     for (uint32_t index = 0; index != itemCount; ++index) {
       uint32_t itemFlags = read32(flags + uint64_t{index} * 4);
-      if ((itemFlags & ~uint32_t{OBELISK_RT_OUTPUT_ITEM_ALL}) != 0 ||
-          ((itemFlags & OBELISK_RT_OUTPUT_ITEM_REAL) != 0 &&
-           (itemFlags & (OBELISK_RT_OUTPUT_ITEM_SIGNED |
-                         OBELISK_RT_OUTPUT_ITEM_OMITTED)) != 0))
-        return OBELISK_RT_INVALID_BYTECODE;
-      if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_OMITTED) != 0) {
-        arguments.push_back({OBELISK_RT_ARG_EMPTY, 0, 0, nullptr, nullptr});
+      if ((itemFlags & ~uint32_t{TALOS_RT_OUTPUT_ITEM_ALL}) != 0 ||
+          ((itemFlags & TALOS_RT_OUTPUT_ITEM_REAL) != 0 &&
+           (itemFlags & (TALOS_RT_OUTPUT_ITEM_SIGNED |
+                         TALOS_RT_OUTPUT_ITEM_OMITTED)) != 0))
+        return TALOS_RT_INVALID_BYTECODE;
+      if ((itemFlags & TALOS_RT_OUTPUT_ITEM_OMITTED) != 0) {
+        arguments.push_back({TALOS_RT_ARG_EMPTY, 0, 0, nullptr, nullptr});
         continue;
       }
       if (physical >= site.inputCount)
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
       uint32_t reg = inputRegister(physical++);
       Layout layout = layoutAt(image, frame.function, reg);
-      if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_ENUM) != 0) {
-        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_ENUM &&
+      if ((itemFlags & TALOS_RT_OUTPUT_ITEM_ENUM) != 0) {
+        if (itemFlags != TALOS_RT_OUTPUT_ITEM_ENUM &&
             itemFlags !=
-                (OBELISK_RT_OUTPUT_ITEM_ENUM | OBELISK_RT_OUTPUT_ITEM_SIGNED))
-          return OBELISK_RT_INVALID_BYTECODE;
+                (TALOS_RT_OUTPUT_ITEM_ENUM | TALOS_RT_OUTPUT_ITEM_SIGNED))
+          return TALOS_RT_INVALID_BYTECODE;
         if (physical >= site.inputCount ||
-            (layout.kind != OBELISK_RT_DBREG_BITS &&
-             layout.kind != OBELISK_RT_DBREG_LOGIC))
-          return OBELISK_RT_INVALID_BYTECODE;
+            (layout.kind != TALOS_RT_DBREG_BITS &&
+             layout.kind != TALOS_RT_DBREG_LOGIC))
+          return TALOS_RT_INVALID_BYTECODE;
         uint32_t nameReg = inputRegister(physical++);
         Layout nameLayout = layoutAt(image, frame.function, nameReg);
-        if (nameLayout.kind != OBELISK_RT_DBREG_STRING || nameLayout.size != 8)
-          return OBELISK_RT_INVALID_BYTECODE;
+        if (nameLayout.kind != TALOS_RT_DBREG_STRING || nameLayout.size != 8)
+          return TALOS_RT_INVALID_BYTECODE;
         values.push_back(readLogic(frame.data, layout));
         Logic &value = values.back();
-        obelisk_rt_string_v1 name = 0;
+        talos_rt_string_v1 name = 0;
         std::memcpy(&name, frame.data + nameLayout.offset, sizeof(name));
         enumArguments.push_back(
             {value.width,
-             static_cast<uint32_t>((itemFlags & OBELISK_RT_OUTPUT_ITEM_SIGNED)
-                                       ? OBELISK_RT_ARG_SIGNED
+             static_cast<uint32_t>((itemFlags & TALOS_RT_OUTPUT_ITEM_SIGNED)
+                                       ? TALOS_RT_ARG_SIGNED
                                        : 0),
              0, value.value.data(),
              value.fourState ? value.unknown.data() : nullptr, name});
-        arguments.push_back({OBELISK_RT_ARG_ENUM,
-                             static_cast<obelisk_rt_arg_flags>(
-                                 (itemFlags & OBELISK_RT_OUTPUT_ITEM_SIGNED)
-                                     ? OBELISK_RT_ARG_SIGNED
+        arguments.push_back({TALOS_RT_ARG_ENUM,
+                             static_cast<talos_rt_arg_flags>(
+                                 (itemFlags & TALOS_RT_OUTPUT_ITEM_SIGNED)
+                                     ? TALOS_RT_ARG_SIGNED
                                      : 0),
                              0, &enumArguments.back(), nullptr});
-      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_NET) != 0) {
-        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_NET &&
+      } else if ((itemFlags & TALOS_RT_OUTPUT_ITEM_NET) != 0) {
+        if (itemFlags != TALOS_RT_OUTPUT_ITEM_NET &&
             itemFlags !=
-                (OBELISK_RT_OUTPUT_ITEM_NET | OBELISK_RT_OUTPUT_ITEM_SIGNED))
-          return OBELISK_RT_INVALID_BYTECODE;
+                (TALOS_RT_OUTPUT_ITEM_NET | TALOS_RT_OUTPUT_ITEM_SIGNED))
+          return TALOS_RT_INVALID_BYTECODE;
         if (physical >= site.inputCount ||
-            (layout.kind != OBELISK_RT_DBREG_BITS &&
-             layout.kind != OBELISK_RT_DBREG_LOGIC))
-          return OBELISK_RT_INVALID_BYTECODE;
+            (layout.kind != TALOS_RT_DBREG_BITS &&
+             layout.kind != TALOS_RT_DBREG_LOGIC))
+          return TALOS_RT_INVALID_BYTECODE;
         uint32_t handleReg = inputRegister(physical++);
         Layout handleLayout = layoutAt(image, frame.function, handleReg);
-        if (handleLayout.kind != OBELISK_RT_DBREG_HANDLE)
-          return OBELISK_RT_INVALID_BYTECODE;
+        if (handleLayout.kind != TALOS_RT_DBREG_HANDLE)
+          return TALOS_RT_INVALID_BYTECODE;
         uint64_t stable = UINT64_MAX;
         if (!encodeCanonicalHandle(frame.data + handleLayout.offset, stable))
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
         values.push_back(readLogic(frame.data, layout));
         Logic &value = values.back();
         netArguments.push_back(
             {value.width,
-             static_cast<uint32_t>((itemFlags & OBELISK_RT_OUTPUT_ITEM_SIGNED)
-                                       ? OBELISK_RT_ARG_SIGNED
+             static_cast<uint32_t>((itemFlags & TALOS_RT_OUTPUT_ITEM_SIGNED)
+                                       ? TALOS_RT_ARG_SIGNED
                                        : 0),
              context->nativeSchedulePlan && !context->nativeScheduleDeoptimized
                  ? 1u
                  : 0u,
              value.value.data(),
              value.fourState ? value.unknown.data() : nullptr, stable});
-        arguments.push_back({OBELISK_RT_ARG_NET,
-                             static_cast<obelisk_rt_arg_flags>(
-                                 (itemFlags & OBELISK_RT_OUTPUT_ITEM_SIGNED)
-                                     ? OBELISK_RT_ARG_SIGNED
+        arguments.push_back({TALOS_RT_ARG_NET,
+                             static_cast<talos_rt_arg_flags>(
+                                 (itemFlags & TALOS_RT_OUTPUT_ITEM_SIGNED)
+                                     ? TALOS_RT_ARG_SIGNED
                                      : 0),
                              0, &netArguments.back(), nullptr});
-      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE) != 0) {
-        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE ||
+      } else if ((itemFlags & TALOS_RT_OUTPUT_ITEM_RAW_AGGREGATE) != 0) {
+        if (itemFlags != TALOS_RT_OUTPUT_ITEM_RAW_AGGREGATE ||
             physical + 1 >= site.inputCount)
-          return OBELISK_RT_INVALID_BYTECODE;
-        obelisk_rt_string_v1 strings[3] = {};
+          return TALOS_RT_INVALID_BYTECODE;
+        talos_rt_string_v1 strings[3] = {};
         Layout stringLayouts[3] = {
             layout, layoutAt(image, frame.function, inputRegister(physical++)),
             layoutAt(image, frame.function, inputRegister(physical++))};
         for (unsigned ordinal = 0; ordinal != 3; ++ordinal) {
-          if (stringLayouts[ordinal].kind != OBELISK_RT_DBREG_STRING ||
-              stringLayouts[ordinal].size != sizeof(obelisk_rt_string_v1))
-            return OBELISK_RT_INVALID_BYTECODE;
+          if (stringLayouts[ordinal].kind != TALOS_RT_DBREG_STRING ||
+              stringLayouts[ordinal].size != sizeof(talos_rt_string_v1))
+            return TALOS_RT_INVALID_BYTECODE;
           std::memcpy(&strings[ordinal],
                       frame.data + stringLayouts[ordinal].offset,
                       sizeof(strings[ordinal]));
         }
         rawAggregateArguments.push_back({strings[0], strings[1], strings[2]});
-        arguments.push_back({OBELISK_RT_ARG_RAW_AGGREGATE, 0, 0,
+        arguments.push_back({TALOS_RT_ARG_RAW_AGGREGATE, 0, 0,
                              &rawAggregateArguments.back(), nullptr});
-      } else if (layout.kind == OBELISK_RT_DBREG_BYTES) {
+      } else if (layout.kind == TALOS_RT_DBREG_BYTES) {
         auto value = readByteSpan(image, frame, reg);
         if (!value || (itemFlags != 0 &&
-                       itemFlags != OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT))
-          return OBELISK_RT_INVALID_BYTECODE;
+                       itemFlags != TALOS_RT_OUTPUT_ITEM_DESIGNATED_FORMAT))
+          return TALOS_RT_INVALID_BYTECODE;
         arguments.push_back(
-            {OBELISK_RT_ARG_STRING,
-             static_cast<obelisk_rt_arg_flags>(
-                 OBELISK_RT_ARG_FORMAT_STRING |
-                 ((itemFlags & OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT)
-                      ? OBELISK_RT_ARG_DESIGNATED_FORMAT
+            {TALOS_RT_ARG_STRING,
+             static_cast<talos_rt_arg_flags>(
+                 TALOS_RT_ARG_FORMAT_STRING |
+                 ((itemFlags & TALOS_RT_OUTPUT_ITEM_DESIGNATED_FORMAT)
+                      ? TALOS_RT_ARG_DESIGNATED_FORMAT
                       : 0)),
              value->size, value->data, nullptr});
-      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_STRING) != 0) {
-        if (layout.kind != OBELISK_RT_DBREG_STRING || layout.size != 8 ||
-            (itemFlags != OBELISK_RT_OUTPUT_ITEM_STRING &&
-             itemFlags != (OBELISK_RT_OUTPUT_ITEM_STRING |
-                           OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) &&
-             itemFlags != (OBELISK_RT_OUTPUT_ITEM_STRING |
-                           OBELISK_RT_OUTPUT_ITEM_FORMAT)))
-          return OBELISK_RT_INVALID_BYTECODE;
+      } else if ((itemFlags & TALOS_RT_OUTPUT_ITEM_STRING) != 0) {
+        if (layout.kind != TALOS_RT_DBREG_STRING || layout.size != 8 ||
+            (itemFlags != TALOS_RT_OUTPUT_ITEM_STRING &&
+             itemFlags != (TALOS_RT_OUTPUT_ITEM_STRING |
+                           TALOS_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) &&
+             itemFlags != (TALOS_RT_OUTPUT_ITEM_STRING |
+                           TALOS_RT_OUTPUT_ITEM_FORMAT)))
+          return TALOS_RT_INVALID_BYTECODE;
         arguments.push_back(
-            {OBELISK_RT_ARG_MANAGED_STRING,
-             static_cast<obelisk_rt_arg_flags>(
-                 ((itemFlags & (OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT |
-                                OBELISK_RT_OUTPUT_ITEM_FORMAT))
-                      ? obelisk_rt_arg_flags{OBELISK_RT_ARG_FORMAT_STRING}
-                      : obelisk_rt_arg_flags{0}) |
-                 ((itemFlags & OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT)
-                      ? obelisk_rt_arg_flags{OBELISK_RT_ARG_DESIGNATED_FORMAT}
-                      : obelisk_rt_arg_flags{0})),
+            {TALOS_RT_ARG_MANAGED_STRING,
+             static_cast<talos_rt_arg_flags>(
+                 ((itemFlags & (TALOS_RT_OUTPUT_ITEM_DESIGNATED_FORMAT |
+                                TALOS_RT_OUTPUT_ITEM_FORMAT))
+                      ? talos_rt_arg_flags{TALOS_RT_ARG_FORMAT_STRING}
+                      : talos_rt_arg_flags{0}) |
+                 ((itemFlags & TALOS_RT_OUTPUT_ITEM_DESIGNATED_FORMAT)
+                      ? talos_rt_arg_flags{TALOS_RT_ARG_DESIGNATED_FORMAT}
+                      : talos_rt_arg_flags{0})),
              0, frame.data + layout.offset, nullptr});
-      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_CONTAINER) != 0) {
-        if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8 ||
-            itemFlags != OBELISK_RT_OUTPUT_ITEM_CONTAINER)
-          return OBELISK_RT_INVALID_BYTECODE;
-        arguments.push_back({OBELISK_RT_ARG_MANAGED_CONTAINER, 0, 0,
+      } else if ((itemFlags & TALOS_RT_OUTPUT_ITEM_CONTAINER) != 0) {
+        if (layout.kind != TALOS_RT_DBREG_MANAGED || layout.size != 8 ||
+            itemFlags != TALOS_RT_OUTPUT_ITEM_CONTAINER)
+          return TALOS_RT_INVALID_BYTECODE;
+        arguments.push_back({TALOS_RT_ARG_MANAGED_CONTAINER, 0, 0,
                              frame.data + layout.offset, nullptr});
-      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_CLASS) != 0) {
-        if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != 8 ||
-            itemFlags != OBELISK_RT_OUTPUT_ITEM_CLASS)
-          return OBELISK_RT_INVALID_BYTECODE;
-        arguments.push_back({OBELISK_RT_ARG_MANAGED_OBJECT, 0, 0,
+      } else if ((itemFlags & TALOS_RT_OUTPUT_ITEM_CLASS) != 0) {
+        if (layout.kind != TALOS_RT_DBREG_MANAGED || layout.size != 8 ||
+            itemFlags != TALOS_RT_OUTPUT_ITEM_CLASS)
+          return TALOS_RT_INVALID_BYTECODE;
+        arguments.push_back({TALOS_RT_ARG_MANAGED_OBJECT, 0, 0,
                              frame.data + layout.offset, nullptr});
-      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE) != 0) {
-        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE ||
-            layout.kind != OBELISK_RT_DBREG_BITS || layout.width != 64 ||
+      } else if ((itemFlags & TALOS_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE) != 0) {
+        if (itemFlags != TALOS_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE ||
+            layout.kind != TALOS_RT_DBREG_BITS || layout.width != 64 ||
             layout.size != 8)
-          return OBELISK_RT_INVALID_BYTECODE;
-        arguments.push_back({OBELISK_RT_ARG_VIRTUAL_INTERFACE, 0, 0,
+          return TALOS_RT_INVALID_BYTECODE;
+        arguments.push_back({TALOS_RT_ARG_VIRTUAL_INTERFACE, 0, 0,
                              frame.data + layout.offset, nullptr});
-      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_PROCESS) != 0) {
-        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_PROCESS ||
-            layout.kind != OBELISK_RT_DBREG_BITS || layout.width != 64 ||
+      } else if ((itemFlags & TALOS_RT_OUTPUT_ITEM_PROCESS) != 0) {
+        if (itemFlags != TALOS_RT_OUTPUT_ITEM_PROCESS ||
+            layout.kind != TALOS_RT_DBREG_BITS || layout.width != 64 ||
             layout.size != 8)
-          return OBELISK_RT_INVALID_BYTECODE;
-        arguments.push_back({OBELISK_RT_ARG_PROCESS, 0, 0,
+          return TALOS_RT_INVALID_BYTECODE;
+        arguments.push_back({TALOS_RT_ARG_PROCESS, 0, 0,
                              frame.data + layout.offset, nullptr});
-      } else if ((itemFlags & OBELISK_RT_OUTPUT_ITEM_REAL) != 0) {
-        if (itemFlags != OBELISK_RT_OUTPUT_ITEM_REAL &&
-            itemFlags != (OBELISK_RT_OUTPUT_ITEM_REAL |
-                          OBELISK_RT_OUTPUT_ITEM_REAL_TIME))
-          return OBELISK_RT_INVALID_BYTECODE;
-        if (layout.kind != OBELISK_RT_DBREG_REAL32 &&
-            layout.kind != OBELISK_RT_DBREG_REAL64)
-          return OBELISK_RT_INVALID_BYTECODE;
+      } else if ((itemFlags & TALOS_RT_OUTPUT_ITEM_REAL) != 0) {
+        if (itemFlags != TALOS_RT_OUTPUT_ITEM_REAL &&
+            itemFlags != (TALOS_RT_OUTPUT_ITEM_REAL |
+                          TALOS_RT_OUTPUT_ITEM_REAL_TIME))
+          return TALOS_RT_INVALID_BYTECODE;
+        if (layout.kind != TALOS_RT_DBREG_REAL32 &&
+            layout.kind != TALOS_RT_DBREG_REAL64)
+          return TALOS_RT_INVALID_BYTECODE;
         double real = 0.0;
-        if (layout.kind == OBELISK_RT_DBREG_REAL32) {
+        if (layout.kind == TALOS_RT_DBREG_REAL32) {
           float value = 0.0f;
           std::memcpy(&value, frame.data + layout.offset, sizeof(value));
           real = value;
@@ -5742,102 +5742,102 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
           std::memcpy(&real, frame.data + layout.offset, sizeof(real));
         }
         realValues.push_back(real);
-        arguments.push_back({OBELISK_RT_ARG_REAL,
-                             static_cast<obelisk_rt_arg_flags>(
-                                 (itemFlags & OBELISK_RT_OUTPUT_ITEM_REAL_TIME)
-                                     ? OBELISK_RT_ARG_REAL_TIME
+        arguments.push_back({TALOS_RT_ARG_REAL,
+                             static_cast<talos_rt_arg_flags>(
+                                 (itemFlags & TALOS_RT_OUTPUT_ITEM_REAL_TIME)
+                                     ? TALOS_RT_ARG_REAL_TIME
                                      : 0),
                              0, &realValues.back(), nullptr});
       } else {
-        if (itemFlags != 0 && itemFlags != OBELISK_RT_OUTPUT_ITEM_SIGNED)
-          return OBELISK_RT_INVALID_BYTECODE;
+        if (itemFlags != 0 && itemFlags != TALOS_RT_OUTPUT_ITEM_SIGNED)
+          return TALOS_RT_INVALID_BYTECODE;
         values.push_back(readLogic(frame.data, layout));
         Logic &value = values.back();
-        arguments.push_back({OBELISK_RT_ARG_LOGIC,
-                             static_cast<obelisk_rt_arg_flags>(
-                                 (itemFlags & OBELISK_RT_OUTPUT_ITEM_SIGNED)
-                                     ? OBELISK_RT_ARG_SIGNED
+        arguments.push_back({TALOS_RT_ARG_LOGIC,
+                             static_cast<talos_rt_arg_flags>(
+                                 (itemFlags & TALOS_RT_OUTPUT_ITEM_SIGNED)
+                                     ? TALOS_RT_ARG_SIGNED
                                      : 0),
                              value.width, value.value.data(),
                              value.fourState ? value.unknown.data() : nullptr});
       }
     }
     if (physical != site.inputCount)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_format_env_v1 environment{scope,       scopeSize, library,
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_format_env_v1 environment{scope,       scopeSize, library,
                                          librarySize, 0,         precision,
                                          nullptr,     0,         multiplier};
     if (!stringOutput)
-      return obelisk_rt_v1_display(
+      return talos_rt_v1_display(
           context, static_cast<uint32_t>(*descriptor), newline,
-          static_cast<obelisk_rt_radix>(radix), arguments.data(),
+          static_cast<talos_rt_radix>(radix), arguments.data(),
           arguments.size(), &environment);
-    obelisk_rt_string_v1 result = 0;
-    obelisk_rt_status status = obelisk_rt_v1_string_output_format(
-        context, static_cast<obelisk_rt_radix>(radix), arguments.data(),
+    talos_rt_string_v1 result = 0;
+    talos_rt_status status = talos_rt_v1_string_output_format(
+        context, static_cast<talos_rt_radix>(radix), arguments.data(),
         arguments.size(), &environment, &result);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
-    return writeString(outputRegister(0), result) ? OBELISK_RT_OK
-                                                  : OBELISK_RT_INVALID_BYTECODE;
+    return writeString(outputRegister(0), result) ? TALOS_RT_OK
+                                                  : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_FINISH:
-  case OBELISK_RT_INTRINSIC_V1_STOP:
-  case OBELISK_RT_INTRINSIC_V1_FATAL: {
+  case TALOS_RT_INTRINSIC_V1_FINISH:
+  case TALOS_RT_INTRINSIC_V1_STOP:
+  case TALOS_RT_INTRINSIC_V1_FATAL: {
     auto verbosity = scalar(0);
     if (!verbosity || *verbosity > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
-    if (signature.id == OBELISK_RT_INTRINSIC_V1_FINISH)
-      return obelisk_rt_v1_scheduler_finish(context,
+      return TALOS_RT_INVALID_BYTECODE;
+    if (signature.id == TALOS_RT_INTRINSIC_V1_FINISH)
+      return talos_rt_v1_scheduler_finish(context,
                                             static_cast<uint32_t>(*verbosity));
-    if (signature.id == OBELISK_RT_INTRINSIC_V1_STOP)
-      return obelisk_rt_v1_scheduler_stop(context,
+    if (signature.id == TALOS_RT_INTRINSIC_V1_STOP)
+      return talos_rt_v1_scheduler_stop(context,
                                           static_cast<uint32_t>(*verbosity));
-    return obelisk_rt_v1_scheduler_fatal(context,
+    return talos_rt_v1_scheduler_fatal(context,
                                          static_cast<uint32_t>(*verbosity));
   }
-  case OBELISK_RT_INTRINSIC_V1_ERROR:
-    return obelisk_rt_v1_scheduler_error(context);
-  case OBELISK_RT_INTRINSIC_V1_PROGRAM_EXIT:
-    return obelisk_rt_v1_scheduler_program_exit(context);
-  case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
-    return sentinel(0, obelisk_rt_v1_scheduler_termination_requested(context));
-  case OBELISK_RT_INTRINSIC_V1_PROGRAM_OWNED:
-    return sentinel(0, obelisk_rt_v1_scheduler_program_owned(context));
-  case OBELISK_RT_INTRINSIC_V1_NET_COUNT_DRIVERS: {
+  case TALOS_RT_INTRINSIC_V1_ERROR:
+    return talos_rt_v1_scheduler_error(context);
+  case TALOS_RT_INTRINSIC_V1_PROGRAM_EXIT:
+    return talos_rt_v1_scheduler_program_exit(context);
+  case TALOS_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
+    return sentinel(0, talos_rt_v1_scheduler_termination_requested(context));
+  case TALOS_RT_INTRINSIC_V1_PROGRAM_OWNED:
+    return sentinel(0, talos_rt_v1_scheduler_program_owned(context));
+  case TALOS_RT_INTRINSIC_V1_NET_COUNT_DRIVERS: {
     Layout net = layoutAt(image, frame.function, inputRegister(0));
-    if (net.kind != OBELISK_RT_DBREG_HANDLE)
-      return OBELISK_RT_INVALID_BYTECODE;
+    if (net.kind != TALOS_RT_DBREG_HANDLE)
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t stable = UINT64_MAX;
     if (!encodeCanonicalHandle(frame.data + net.offset, stable))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint32_t forced = 0, total = 0, zero = 0, one = 0, unknown = 0;
-    obelisk_rt_status query = obelisk_rt_count_design_drivers(
+    talos_rt_status query = talos_rt_count_design_drivers(
         context, stable, &forced, &total, &zero, &one, &unknown, false);
-    if (query != OBELISK_RT_OK)
+    if (query != TALOS_RT_OK)
       return query;
     const uint32_t values[] = {forced, total, zero, one, unknown};
     for (uint32_t index = 0; index != 5; ++index) {
       uint32_t value = values[index];
-      obelisk_rt_status written = sentinel(index, value);
-      if (written != OBELISK_RT_OK)
+      talos_rt_status written = sentinel(index, value);
+      if (written != TALOS_RT_OK)
         return written;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL: {
+  case TALOS_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL: {
     Layout input = layoutAt(image, frame.function, inputRegister(0));
     Logic control = readLogic(frame.data, input);
     if (control.width != 1 || control.value.empty())
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t value = static_cast<uint32_t>(control.value[0] & 1);
     uint32_t unknown = control.fourState && !control.unknown.empty()
                            ? static_cast<uint32_t>(control.unknown[0] & 1)
                            : 0;
-    return obelisk_rt_v1_pass_switch_control(context, signature.flags, value,
+    return talos_rt_v1_pass_switch_control(context, signature.flags, value,
                                              unknown);
   }
-  case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED: {
+  case TALOS_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED: {
     Layout input = layoutAt(image, frame.function, inputRegister(0));
     Logic control = readLogic(frame.data, input);
     auto turnOn = scalar(1);
@@ -5845,16 +5845,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto unknownDelay = scalar(3);
     if (control.width != 1 || control.value.empty() || !turnOn || !turnOff ||
         !unknownDelay)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t value = static_cast<uint32_t>(control.value[0] & 1);
     uint32_t unknown = control.fourState && !control.unknown.empty()
                            ? static_cast<uint32_t>(control.unknown[0] & 1)
                            : 0;
-    return obelisk_rt_v1_pass_switch_control_delayed(context, signature.flags,
+    return talos_rt_v1_pass_switch_control_delayed(context, signature.flags,
                                                      value, unknown, *turnOn,
                                                      *turnOff, *unknownDelay);
   }
-  case OBELISK_RT_INTRINSIC_V1_MOS_DRIVE_DELAYED: {
+  case TALOS_RT_INTRINSIC_V1_MOS_DRIVE_DELAYED: {
     Layout input = layoutAt(image, frame.function, inputRegister(0));
     Logic control = readLogic(frame.data, input);
     auto rise = scalar(1);
@@ -5862,24 +5862,24 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto turnoff = scalar(3);
     if (control.width != 1 || control.value.empty() || !rise || !fall ||
         !turnoff)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t value = static_cast<uint32_t>(control.value[0] & 1);
     uint32_t unknown = control.fourState && !control.unknown.empty()
                            ? static_cast<uint32_t>(control.unknown[0] & 1)
                            : 0;
-    return obelisk_rt_v1_mos_drive_delayed(context, signature.flags, value,
+    return talos_rt_v1_mos_drive_delayed(context, signature.flags, value,
                                            unknown, *rise, *fall, *turnoff);
   }
-  case OBELISK_RT_INTRINSIC_V1_TIME_NOW:
-    return sentinel(0, obelisk_rt_v1_scheduler_time(context));
-  case OBELISK_RT_INTRINSIC_V1_SAMPLED_READ: {
+  case TALOS_RT_INTRINSIC_V1_TIME_NOW:
+    return sentinel(0, talos_rt_v1_scheduler_time(context));
+  case TALOS_RT_INTRINSIC_V1_SAMPLED_READ: {
     Layout source = layoutAt(image, frame.function, inputRegister(0));
     Layout output = layoutAt(image, frame.function, outputRegister(0));
-    if (source.kind != OBELISK_RT_DBREG_HANDLE)
-      return OBELISK_RT_INVALID_BYTECODE;
+    if (source.kind != TALOS_RT_DBREG_HANDLE)
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t stable = UINT64_MAX;
     if (!encodeCanonicalHandle(frame.data + source.offset, stable))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     // Array offsets encode an invalid lane at the end of the array and clip
     // its bytecode view to an empty interval. Canonical handles do not carry
     // that interval: preserve the invalid selection before crossing the ABI,
@@ -5891,41 +5891,41 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       stable = UINT64_MAX;
     // IEEE 1800-2023 16.5.1 samples a real variable as its stored IEEE 754
     // bit pattern.
-    if (output.kind == OBELISK_RT_DBREG_REAL32 ||
-        output.kind == OBELISK_RT_DBREG_REAL64) {
+    if (output.kind == TALOS_RT_DBREG_REAL32 ||
+        output.kind == TALOS_RT_DBREG_REAL64) {
       uint64_t value = 0, unknown = 0;
-      uint64_t width = output.kind == OBELISK_RT_DBREG_REAL64 ? 64 : 32;
+      uint64_t width = output.kind == TALOS_RT_DBREG_REAL64 ? 64 : 32;
       if (output.size * 8 != width)
-        return OBELISK_RT_INVALID_BYTECODE;
-      obelisk_rt_status status = obelisk_rt_v1_sampled_read(
+        return TALOS_RT_INVALID_BYTECODE;
+      talos_rt_status status = talos_rt_v1_sampled_read(
           context, stable, width, reinterpret_cast<uint8_t *>(&value),
           reinterpret_cast<uint8_t *>(&unknown));
-      if (status == OBELISK_RT_OK)
+      if (status == TALOS_RT_OK)
         std::memcpy(frame.data + output.offset, &value, output.size);
       return status;
     }
-    Logic sampled{output.width, output.kind == OBELISK_RT_DBREG_LOGIC,
+    Logic sampled{output.width, output.kind == TALOS_RT_DBREG_LOGIC,
                   LimbVector(limbCount(output.width)),
                   LimbVector(limbCount(output.width))};
-    obelisk_rt_status status = obelisk_rt_v1_sampled_read(
+    talos_rt_status status = talos_rt_v1_sampled_read(
         context, stable, output.width,
         reinterpret_cast<uint8_t *>(sampled.value.data()),
         reinterpret_cast<uint8_t *>(sampled.unknown.data()));
-    if (status == OBELISK_RT_OK)
+    if (status == TALOS_RT_OK)
       writeLogic(frame.data, output, sampled);
     return status;
   }
-  case OBELISK_RT_INTRINSIC_V1_SAMPLED_HISTORY: {
+  case TALOS_RT_INTRINSIC_V1_SAMPLED_HISTORY: {
     auto siteID = scalar(0), depth = scalar(1), gate = scalar(2);
     if (!siteID || !depth || !gate || *gate > 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout input = layoutAt(image, frame.function, inputRegister(3));
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     Logic current = readLogic(frame.data, input);
-    Logic previous{output.width, output.kind == OBELISK_RT_DBREG_LOGIC,
+    Logic previous{output.width, output.kind == TALOS_RT_DBREG_LOGIC,
                    LimbVector(limbCount(output.width)),
                    LimbVector(limbCount(output.width))};
-    obelisk_rt_status status = obelisk_rt_v1_sampled_history(
+    talos_rt_status status = talos_rt_v1_sampled_history(
         context, *siteID, current.width, *depth, current.fourState, *gate,
         reinterpret_cast<const uint8_t *>(current.value.data()),
         current.fourState
@@ -5933,54 +5933,54 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             : nullptr,
         reinterpret_cast<uint8_t *>(previous.value.data()),
         reinterpret_cast<uint8_t *>(previous.unknown.data()));
-    if (status == OBELISK_RT_OK)
+    if (status == TALOS_RT_OK)
       writeLogic(frame.data, output, previous);
     return status;
   }
-  case OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_UPDATE: {
+  case TALOS_RT_INTRINSIC_V1_CLOCKED_SAMPLE_UPDATE: {
     auto siteID = scalar(0), depth = scalar(1), gate = scalar(2);
     if (!siteID || !depth || !gate || *gate > 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout input = layoutAt(image, frame.function, inputRegister(3));
     Logic current = readLogic(frame.data, input);
-    return obelisk_rt_v1_clocked_sample_update(
+    return talos_rt_v1_clocked_sample_update(
         context, *siteID, current.width, *depth, current.fourState, *gate,
         reinterpret_cast<const uint8_t *>(current.value.data()),
         current.fourState
             ? reinterpret_cast<const uint8_t *>(current.unknown.data())
             : nullptr);
   }
-  case OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_READ: {
+  case TALOS_RT_INTRINSIC_V1_CLOCKED_SAMPLE_READ: {
     auto siteID = scalar(0), depth = scalar(1), age = scalar(2);
     if (!siteID || !depth || !age)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
-    Logic sampled{output.width, output.kind == OBELISK_RT_DBREG_LOGIC,
+    Logic sampled{output.width, output.kind == TALOS_RT_DBREG_LOGIC,
                   LimbVector(limbCount(output.width)),
                   LimbVector(limbCount(output.width))};
-    obelisk_rt_status status = obelisk_rt_v1_clocked_sample_read(
+    talos_rt_status status = talos_rt_v1_clocked_sample_read(
         context, *siteID, sampled.width, *depth, *age, sampled.fourState,
         reinterpret_cast<uint8_t *>(sampled.value.data()),
         reinterpret_cast<uint8_t *>(sampled.unknown.data()));
-    if (status == OBELISK_RT_OK)
+    if (status == TALOS_RT_OK)
       writeLogic(frame.data, output, sampled);
     return status;
   }
-  case OBELISK_RT_INTRINSIC_V1_TIME_TO_REAL: {
+  case TALOS_RT_INTRINSIC_V1_TIME_TO_REAL: {
     auto ticks = scalar(0);
     auto scale = scalar(1);
     if (!ticks || !scale || *scale == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return writeReal(0,
                      static_cast<double>(*ticks) / static_cast<double>(*scale));
   }
-  case OBELISK_RT_INTRINSIC_V1_TIME_FROM_REAL: {
+  case TALOS_RT_INTRINSIC_V1_TIME_FROM_REAL: {
     auto value = realInput(0);
     auto scale = scalar(1);
     auto quantum = scalar(2);
     if (!value || !scale || !quantum || *scale == 0 || *quantum == 0 ||
         *scale % *quantum != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     double nonnegative = *value >= 0.0 ? *value : 0.0;
     double steps = nonnegative * (static_cast<double>(*scale) /
                                   static_cast<double>(*quantum));
@@ -5992,32 +5992,32 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             : std::min(static_cast<uint64_t>(rounded), maximumSteps);
     return sentinel(0, tickSteps * *quantum);
   }
-  case OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER: {
+  case TALOS_RT_INTRINSIC_V1_REAL_FROM_INTEGER: {
     Layout input = layoutAt(image, frame.function, inputRegister(0));
     Logic integer = readLogic(frame.data, input);
     Layout output = layoutAt(image, frame.function, outputRegister(0));
-    if (output.kind == OBELISK_RT_DBREG_REAL32) {
+    if (output.kind == TALOS_RT_DBREG_REAL32) {
       float value = integerToFloat(std::move(integer), signature.flags != 0);
       std::memcpy(frame.data + output.offset, &value, sizeof(value));
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     return writeReal(0,
                      integerToDouble(std::move(integer), signature.flags != 0));
   }
-  case OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER: {
+  case TALOS_RT_INTRINSIC_V1_REAL_TO_INTEGER: {
     auto value = realInput(0);
     if (!value)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     Logic integer = doubleToInteger(*value, output.width);
     writeLogic(frame.data, output, integer);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_REAL_COMPARE: {
+  case TALOS_RT_INTRINSIC_V1_REAL_COMPARE: {
     auto lhs = realInput(0);
     auto rhs = realInput(1);
     if (!lhs || !rhs)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     bool result;
     switch (signature.flags) {
     case 0:
@@ -6039,11 +6039,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       result = *lhs >= *rhs;
       break;
     default:
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     }
     return sentinel(0, result ? 1 : 0);
   }
-  case OBELISK_RT_INTRINSIC_V1_COUNT_BITS: {
+  case TALOS_RT_INTRINSIC_V1_COUNT_BITS: {
     Logic input = readLogic(frame.data,
                             layoutAt(image, frame.function, inputRegister(0)));
     bool selected[4] = {};
@@ -6077,13 +6077,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     }
     return sentinel(0, count);
   }
-  case OBELISK_RT_INTRINSIC_V1_LOGIC_CASE_DIFFERENCE_MASK: {
+  case TALOS_RT_INTRINSIC_V1_LOGIC_CASE_DIFFERENCE_MASK: {
     Logic lhs = readLogic(frame.data,
                           layoutAt(image, frame.function, inputRegister(0)));
     Logic rhs = readLogic(frame.data,
                           layoutAt(image, frame.function, inputRegister(1)));
     if (lhs.width != rhs.width)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Logic result{lhs.width, false, LimbVector(limbCount(lhs.width)), {}};
     for (size_t index = 0; index != result.value.size(); ++index)
       result.value[index] = (lhs.value[index] ^ rhs.value[index]) |
@@ -6092,9 +6092,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       result.value.back() &= finalMask(lhs.width);
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     writeLogic(frame.data, output, result);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_CLOG2: {
+  case TALOS_RT_INTRINSIC_V1_CLOG2: {
     Logic input = readLogic(frame.data,
                             layoutAt(image, frame.function, inputRegister(0)));
     std::vector<uint64_t> value(input.value.size());
@@ -6126,259 +6126,259 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     }
     return sentinel(0, result);
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD:
-  case OBELISK_RT_INTRINSIC_V1_FILE_OPEN: {
+  case TALOS_RT_INTRINSIC_V1_FILE_OPEN_MCD:
+  case TALOS_RT_INTRINSIC_V1_FILE_OPEN: {
     auto path = bytes(0);
-    auto mode = signature.id == OBELISK_RT_INTRINSIC_V1_FILE_OPEN
+    auto mode = signature.id == TALOS_RT_INTRINSIC_V1_FILE_OPEN
                     ? bytes(1)
                     : std::optional<ByteSpan>{};
-    if (!path || (signature.id == OBELISK_RT_INTRINSIC_V1_FILE_OPEN && !mode))
-      return OBELISK_RT_INVALID_BYTECODE;
+    if (!path || (signature.id == TALOS_RT_INTRINSIC_V1_FILE_OPEN && !mode))
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t descriptor = 0;
-    obelisk_rt_status status =
-        signature.id == OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD
-            ? obelisk_rt_v1_file_open_mcd(
+    talos_rt_status status =
+        signature.id == TALOS_RT_INTRINSIC_V1_FILE_OPEN_MCD
+            ? talos_rt_v1_file_open_mcd(
                   context, reinterpret_cast<const char *>(path->data),
                   path->size, &descriptor)
-            : obelisk_rt_v1_file_open(
+            : talos_rt_v1_file_open(
                   context, reinterpret_cast<const char *>(path->data),
                   path->size, reinterpret_cast<const char *>(mode->data),
                   mode->size, &descriptor);
-    return sentinel(0, status == OBELISK_RT_OK ? descriptor : 0);
+    return sentinel(0, status == TALOS_RT_OK ? descriptor : 0);
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING_MCD:
-  case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING: {
-    obelisk_rt_string_v1 path = 0;
-    obelisk_rt_string_v1 mode = 0;
-    bool withMode = signature.id == OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING;
+  case TALOS_RT_INTRINSIC_V1_FILE_OPEN_STRING_MCD:
+  case TALOS_RT_INTRINSIC_V1_FILE_OPEN_STRING: {
+    talos_rt_string_v1 path = 0;
+    talos_rt_string_v1 mode = 0;
+    bool withMode = signature.id == TALOS_RT_INTRINSIC_V1_FILE_OPEN_STRING;
     if (!readString(inputRegister(0), path) ||
         (withMode && !readString(inputRegister(1), mode)))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t descriptor = 0;
-    obelisk_rt_status status =
+    talos_rt_status status =
         withMode
-            ? obelisk_rt_v1_file_open_string(context, path, mode, &descriptor)
-            : obelisk_rt_v1_file_open_string_mcd(context, path, &descriptor);
-    return sentinel(0, status == OBELISK_RT_OK ? descriptor : 0);
+            ? talos_rt_v1_file_open_string(context, path, mode, &descriptor)
+            : talos_rt_v1_file_open_string_mcd(context, path, &descriptor);
+    return sentinel(0, status == TALOS_RT_OK ? descriptor : 0);
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_GETLINE_STRING: {
+  case TALOS_RT_INTRINSIC_V1_FILE_GETLINE_STRING: {
     auto descriptor = scalar(0);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!descriptor || *descriptor > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 string = 0;
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 string = 0;
     uint32_t count = 0;
-    obelisk_rt_status status = obelisk_rt_v1_file_getline_string(
+    talos_rt_status status = talos_rt_v1_file_getline_string(
         context, lane, static_cast<uint32_t>(*descriptor), &string, &count);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     if (!writeString(outputRegister(0), string))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return sentinel(1, count);
   }
-  case OBELISK_RT_INTRINSIC_V1_TIME_FORMAT: {
+  case TALOS_RT_INTRINSIC_V1_TIME_FORMAT: {
     auto units = scalar(0), digits = scalar(1), width = scalar(3);
     auto suffix = bytes(2);
     if (!units || !digits || !width || !suffix)
-      return OBELISK_RT_INVALID_BYTECODE;
-    return obelisk_rt_v1_time_format(
+      return TALOS_RT_INVALID_BYTECODE;
+    return talos_rt_v1_time_format(
         context, static_cast<int32_t>(*units), static_cast<uint32_t>(*digits),
         reinterpret_cast<const char *>(suffix->data), suffix->size,
         static_cast<uint32_t>(*width));
   }
-  case OBELISK_RT_INTRINSIC_V1_TIME_SCAN_SCALE: {
+  case TALOS_RT_INTRINSIC_V1_TIME_SCAN_SCALE: {
     auto input = realInput(0);
     auto multiplier = scalar(1), precision = scalar(2);
     if (!input || !multiplier || !precision || *multiplier == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return writeReal(
-        0, obelisk_rt_v1_time_scan_scale(context, *input, *multiplier,
+        0, talos_rt_v1_time_scan_scale(context, *input, *multiplier,
                                          static_cast<int32_t>(*precision)));
   }
-  case OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST: {
-    obelisk_rt_string_v1 name = 0;
+  case TALOS_RT_INTRINSIC_V1_PLUSARG_TEST: {
+    talos_rt_string_v1 name = 0;
     if (!readString(inputRegister(0), name))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t found = 0;
-    obelisk_rt_status status =
-        obelisk_rt_v1_plusarg_test(context, name, &found);
-    return sentinel(0, status == OBELISK_RT_OK ? found : 0);
+    talos_rt_status status =
+        talos_rt_v1_plusarg_test(context, name, &found);
+    return sentinel(0, status == TALOS_RT_OK ? found : 0);
   }
-  case OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE: {
-    obelisk_rt_string_v1 prefix = 0;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+  case TALOS_RT_INTRINSIC_V1_PLUSARG_VALUE: {
+    talos_rt_string_v1 prefix = 0;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!readString(inputRegister(0), prefix))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 tail = 0;
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 tail = 0;
     uint32_t found = 0;
-    obelisk_rt_status status =
-        obelisk_rt_v1_plusarg_value(context, lane, prefix, &tail, &found);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status =
+        talos_rt_v1_plusarg_value(context, lane, prefix, &tail, &found);
+    if (status != TALOS_RT_OK)
       return status;
     if (!writeString(outputRegister(0), tail))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return sentinel(1, found);
   }
-  case OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN: {
-    obelisk_rt_string_v1 format = 0;
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+  case TALOS_RT_INTRINSIC_V1_PLUSARG_SCAN: {
+    talos_rt_string_v1 format = 0;
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!readString(inputRegister(0), format))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 tail = 0;
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 tail = 0;
     uint32_t conversion = 0;
     uint32_t found = 0;
-    obelisk_rt_status status = obelisk_rt_v1_plusarg_scan(
+    talos_rt_status status = talos_rt_v1_plusarg_scan(
         context, lane, format, &tail, &conversion, &found);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     if (!writeString(outputRegister(0), tail))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     status = sentinel(1, conversion);
-    return status == OBELISK_RT_OK ? sentinel(2, found) : status;
+    return status == TALOS_RT_OK ? sentinel(2, found) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_LOGIC: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_PLUSARG_PARSE_LOGIC: {
+    talos_rt_string_v1 input = 0;
     auto radix = scalar(1);
     if (!readString(inputRegister(0), input) || !radix)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
-    if (output.kind != OBELISK_RT_DBREG_LOGIC || output.width == 0 ||
+    if (output.kind != TALOS_RT_DBREG_LOGIC || output.width == 0 ||
         output.size % 2 != 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t planeSize = output.size / 2;
     // The bytecode register layout rounds each plane up for alignment. Keep
     // those non-value padding bytes deterministic as other logic intrinsics
     // do; the strict parser itself writes exactly ceil(width / 8) bytes.
     std::memset(frame.data + output.offset, 0, output.size);
-    return obelisk_rt_v1_plusarg_parse_logic(
+    return talos_rt_v1_plusarg_parse_logic(
         input, static_cast<uint32_t>(*radix), output.width,
         frame.data + output.offset, planeSize,
         frame.data + output.offset + planeSize, planeSize);
   }
-  case OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_REAL: {
-    obelisk_rt_string_v1 input = 0;
+  case TALOS_RT_INTRINSIC_V1_PLUSARG_PARSE_REAL: {
+    talos_rt_string_v1 input = 0;
     if (!readString(inputRegister(0), input))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     double result = 0.0;
-    obelisk_rt_status status = obelisk_rt_v1_plusarg_parse_real(input, &result);
-    return status == OBELISK_RT_OK ? writeReal(0, result) : status;
+    talos_rt_status status = talos_rt_v1_plusarg_parse_real(input, &result);
+    return status == TALOS_RT_OK ? writeReal(0, result) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_SYSTEM: {
-    obelisk_rt_string_v1 command = 0;
+  case TALOS_RT_INTRINSIC_V1_SYSTEM: {
+    talos_rt_string_v1 command = 0;
     if (!readString(inputRegister(0), command))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     int32_t result = -1;
-    obelisk_rt_status status = obelisk_rt_v1_system(context, command, &result);
-    return sentinel(0, status == OBELISK_RT_OK ? static_cast<uint32_t>(result)
+    talos_rt_status status = talos_rt_v1_system(context, command, &result);
+    return sentinel(0, status == TALOS_RT_OK ? static_cast<uint32_t>(result)
                                                : UINT32_MAX);
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_ERROR_STRING: {
+  case TALOS_RT_INTRINSIC_V1_FILE_ERROR_STRING: {
     auto descriptor = scalar(0);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!descriptor || *descriptor > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_string_v1 message = 0;
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_string_v1 message = 0;
     int32_t code = 0;
-    obelisk_rt_status status = obelisk_rt_v1_file_error_string(
+    talos_rt_status status = talos_rt_v1_file_error_string(
         context, lane, static_cast<uint32_t>(*descriptor), &message, &code);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     if (!writeString(outputRegister(0), message))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return sentinel(1, static_cast<uint32_t>(code));
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_CLOSE:
-  case OBELISK_RT_INTRINSIC_V1_FILE_FLUSH: {
+  case TALOS_RT_INTRINSIC_V1_FILE_CLOSE:
+  case TALOS_RT_INTRINSIC_V1_FILE_FLUSH: {
     auto descriptor = scalar(0);
     if (!descriptor || *descriptor > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     // IEEE exposes these as void system tasks. A bad descriptor may update
     // the runtime's last-error record, but it must not terminate the calling
     // procedural process.
-    if (signature.id == OBELISK_RT_INTRINSIC_V1_FILE_CLOSE)
-      (void)obelisk_rt_v1_file_close(context,
+    if (signature.id == TALOS_RT_INTRINSIC_V1_FILE_CLOSE)
+      (void)talos_rt_v1_file_close(context,
                                      static_cast<uint32_t>(*descriptor));
     else
-      (void)obelisk_rt_v1_file_flush(context,
+      (void)talos_rt_v1_file_flush(context,
                                      static_cast<uint32_t>(*descriptor));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_GETC: {
+  case TALOS_RT_INTRINSIC_V1_FILE_GETC: {
     auto descriptor = scalar(0);
     if (!descriptor || *descriptor > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint8_t byte = 0;
-    obelisk_rt_status status = obelisk_rt_v1_file_getc(
+    talos_rt_status status = talos_rt_v1_file_getc(
         context, static_cast<uint32_t>(*descriptor), &byte);
-    return sentinel(0, status == OBELISK_RT_OK ? byte : UINT32_MAX);
+    return sentinel(0, status == TALOS_RT_OK ? byte : UINT32_MAX);
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_UNGETC: {
+  case TALOS_RT_INTRINSIC_V1_FILE_UNGETC: {
     auto byte = scalar(0), descriptor = scalar(1);
     if (!byte || !descriptor || *descriptor > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_status status =
-        obelisk_rt_v1_file_ungetc(context, static_cast<uint32_t>(*descriptor),
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_status status =
+        talos_rt_v1_file_ungetc(context, static_cast<uint32_t>(*descriptor),
                                   static_cast<uint8_t>(*byte));
-    return sentinel(0, status == OBELISK_RT_OK ? 0 : UINT32_MAX);
+    return sentinel(0, status == TALOS_RT_OK ? 0 : UINT32_MAX);
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_GETLINE: {
+  case TALOS_RT_INTRINSIC_V1_FILE_GETLINE: {
     auto descriptor = scalar(0);
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     if (!descriptor || *descriptor > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_buffer_v1 line{};
-    obelisk_rt_status status = obelisk_rt_v1_file_getline(
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_buffer_v1 line{};
+    talos_rt_status status = talos_rt_v1_file_getline(
         context, static_cast<uint32_t>(*descriptor), output.width / 8, &line);
     bool packed =
         packBytes(image, frame, outputRegister(0), line.data, line.size, false);
-    uint64_t count = status == OBELISK_RT_OK ? line.size : 0;
-    obelisk_rt_v1_buffer_release(&line);
+    uint64_t count = status == TALOS_RT_OK ? line.size : 0;
+    talos_rt_v1_buffer_release(&line);
     if (!packed)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return sentinel(1, count);
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_READ_PACKED: {
+  case TALOS_RT_INTRINSIC_V1_FILE_READ_PACKED: {
     auto descriptor = scalar(0);
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     if (!descriptor || *descriptor > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t capacity = (uint64_t{output.width} + 7) / 8;
     std::vector<uint8_t> data(static_cast<size_t>(capacity));
     uint64_t count = 0;
-    obelisk_rt_status status =
-        obelisk_rt_v1_file_read(context, static_cast<uint32_t>(*descriptor),
+    talos_rt_status status =
+        talos_rt_v1_file_read(context, static_cast<uint32_t>(*descriptor),
                                 data.data(), capacity, &count);
     if (!packBytes(image, frame, outputRegister(0), data.data(), count, true))
-      return OBELISK_RT_INVALID_BYTECODE;
-    return sentinel(1, status == OBELISK_RT_OK ? count : 0);
+      return TALOS_RT_INVALID_BYTECODE;
+    return sentinel(1, status == TALOS_RT_OK ? count : 0);
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_READMEM_TOKEN: {
+  case TALOS_RT_INTRINSIC_V1_FILE_READMEM_TOKEN: {
     auto descriptor = scalar(0), radix = scalar(1);
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     if (!descriptor || !radix || *descriptor > UINT32_MAX ||
         (*radix != 2 && *radix != 16) ||
-        output.kind != OBELISK_RT_DBREG_LOGIC || output.width == 0)
-      return OBELISK_RT_INVALID_BYTECODE;
+        output.kind != TALOS_RT_DBREG_LOGIC || output.width == 0)
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t byteSize = (uint64_t{output.width} + 7) / 8;
     std::vector<uint8_t> value(static_cast<size_t>(byteSize));
     std::vector<uint8_t> unknown(static_cast<size_t>(byteSize));
-    uint32_t kind = OBELISK_RT_READMEM_EOF;
+    uint32_t kind = TALOS_RT_READMEM_EOF;
     uint64_t address = 0;
-    obelisk_rt_status status = obelisk_rt_v1_file_readmem_token(
+    talos_rt_status status = talos_rt_v1_file_readmem_token(
         context, static_cast<uint32_t>(*descriptor),
         static_cast<uint32_t>(*radix), output.width, value.data(), byteSize,
         unknown.data(), byteSize, &kind, &address);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     Logic data{output.width, true, LimbVector(limbCount(output.width)),
                LimbVector(limbCount(output.width))};
@@ -6387,38 +6387,38 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                 static_cast<size_t>(byteSize));
     writeLogic(frame.data, output, data);
     status = sentinel(1, kind);
-    return status == OBELISK_RT_OK ? sentinel(2, address) : status;
+    return status == TALOS_RT_OK ? sentinel(2, address) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_STOCHASTIC_QUEUE: {
+  case TALOS_RT_INTRINSIC_V1_STOCHASTIC_QUEUE: {
     auto action = scalar(0), unitScale = scalar(4);
     Layout idLayout = layoutAt(image, frame.function, inputRegister(1));
     Layout firstLayout = layoutAt(image, frame.function, inputRegister(2));
     Layout secondLayout = layoutAt(image, frame.function, inputRegister(3));
     Layout primaryLayout = layoutAt(image, frame.function, outputRegister(0));
     Layout secondaryLayout = layoutAt(image, frame.function, outputRegister(1));
-    if (!action || !unitScale || *action > OBELISK_RT_STOCHASTIC_QUEUE_EXAM ||
+    if (!action || !unitScale || *action > TALOS_RT_STOCHASTIC_QUEUE_EXAM ||
         *unitScale == 0 ||
-        (idLayout.kind != OBELISK_RT_DBREG_BITS &&
-         idLayout.kind != OBELISK_RT_DBREG_LOGIC) ||
+        (idLayout.kind != TALOS_RT_DBREG_BITS &&
+         idLayout.kind != TALOS_RT_DBREG_LOGIC) ||
         idLayout.width != 32 ||
-        (firstLayout.kind != OBELISK_RT_DBREG_BITS &&
-         firstLayout.kind != OBELISK_RT_DBREG_LOGIC) ||
+        (firstLayout.kind != TALOS_RT_DBREG_BITS &&
+         firstLayout.kind != TALOS_RT_DBREG_LOGIC) ||
         firstLayout.width != 32 ||
-        (secondLayout.kind != OBELISK_RT_DBREG_BITS &&
-         secondLayout.kind != OBELISK_RT_DBREG_LOGIC) ||
+        (secondLayout.kind != TALOS_RT_DBREG_BITS &&
+         secondLayout.kind != TALOS_RT_DBREG_LOGIC) ||
         secondLayout.width != 32 ||
-        primaryLayout.kind != OBELISK_RT_DBREG_LOGIC ||
+        primaryLayout.kind != TALOS_RT_DBREG_LOGIC ||
         primaryLayout.width != 64 ||
-        secondaryLayout.kind != OBELISK_RT_DBREG_LOGIC ||
+        secondaryLayout.kind != TALOS_RT_DBREG_LOGIC ||
         secondaryLayout.width != 64)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Logic id = readLogic(frame.data, idLayout);
     Logic first = readLogic(frame.data, firstLayout);
     Logic second = readLogic(frame.data, secondLayout);
     uint64_t primaryValue = 0, primaryUnknown = 0;
     uint64_t secondaryValue = 0, secondaryUnknown = 0;
-    obelisk_rt_stochastic_queue_status_v1 queueStatus = 0;
-    obelisk_rt_status status = obelisk_rt_v1_stochastic_queue(
+    talos_rt_stochastic_queue_status_v1 queueStatus = 0;
+    talos_rt_status status = talos_rt_v1_stochastic_queue(
         context, static_cast<uint32_t>(*action),
         static_cast<uint32_t>(id.value[0]),
         static_cast<uint32_t>(id.unknown[0]),
@@ -6427,7 +6427,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         static_cast<uint32_t>(second.value[0]),
         static_cast<uint32_t>(second.unknown[0]), *unitScale, &primaryValue,
         &primaryUnknown, &secondaryValue, &secondaryUnknown, &queueStatus);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     Logic primary{64, true, LimbVector(1), LimbVector(1)};
     primary.value[0] = primaryValue;
@@ -6439,157 +6439,157 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     writeLogic(frame.data, secondaryLayout, secondary);
     return sentinel(2, queueStatus);
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_EOF: {
+  case TALOS_RT_INTRINSIC_V1_FILE_EOF: {
     auto descriptor = scalar(0);
     if (!descriptor || *descriptor > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint32_t eof = 0;
-    obelisk_rt_status status = obelisk_rt_v1_file_eof(
+    talos_rt_status status = talos_rt_v1_file_eof(
         context, static_cast<uint32_t>(*descriptor), &eof);
-    return sentinel(0, status == OBELISK_RT_OK ? eof : 0);
+    return sentinel(0, status == TALOS_RT_OK ? eof : 0);
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_SEEK: {
+  case TALOS_RT_INTRINSIC_V1_FILE_SEEK: {
     auto descriptor = scalar(0), offset = scalar(1), origin = scalar(2);
     if (!descriptor || !offset || !origin || *descriptor > UINT32_MAX ||
-        *origin > OBELISK_RT_SEEK_END)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_status status =
-        obelisk_rt_v1_file_seek(context, static_cast<uint32_t>(*descriptor),
+        *origin > TALOS_RT_SEEK_END)
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_status status =
+        talos_rt_v1_file_seek(context, static_cast<uint32_t>(*descriptor),
                                 static_cast<int64_t>(*offset),
-                                static_cast<obelisk_rt_seek_origin>(*origin));
-    return sentinel(0, status == OBELISK_RT_OK ? 0 : UINT32_MAX);
+                                static_cast<talos_rt_seek_origin>(*origin));
+    return sentinel(0, status == TALOS_RT_OK ? 0 : UINT32_MAX);
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_TELL: {
+  case TALOS_RT_INTRINSIC_V1_FILE_TELL: {
     auto descriptor = scalar(0);
     if (!descriptor || *descriptor > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     int64_t offset = 0;
-    obelisk_rt_status status = obelisk_rt_v1_file_tell(
+    talos_rt_status status = talos_rt_v1_file_tell(
         context, static_cast<uint32_t>(*descriptor), &offset);
-    return sentinel(0, status == OBELISK_RT_OK ? static_cast<uint64_t>(offset)
+    return sentinel(0, status == TALOS_RT_OK ? static_cast<uint64_t>(offset)
                                                : UINT64_MAX);
   }
-  case OBELISK_RT_INTRINSIC_V1_FILE_REWIND: {
+  case TALOS_RT_INTRINSIC_V1_FILE_REWIND: {
     auto descriptor = scalar(0);
     if (!descriptor || *descriptor > UINT32_MAX)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_status status =
-        obelisk_rt_v1_file_rewind(context, static_cast<uint32_t>(*descriptor));
-    return sentinel(0, status == OBELISK_RT_OK ? 0 : UINT32_MAX);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_status status =
+        talos_rt_v1_file_rewind(context, static_cast<uint32_t>(*descriptor));
+    return sentinel(0, status == TALOS_RT_OK ? 0 : UINT32_MAX);
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE: {
+  case TALOS_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE: {
     auto net = scalar(0);
     if (!net)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t ticket = 0;
-    auto status = obelisk_rt_v1_vpi_resolution_prepare(context, *net, &ticket);
-    return status == OBELISK_RT_OK ? sentinel(0, ticket) : status;
+    auto status = talos_rt_v1_vpi_resolution_prepare(context, *net, &ticket);
+    return status == TALOS_RT_OK ? sentinel(0, ticket) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE: {
+  case TALOS_RT_INTRINSIC_V1_VPI_CALL_PREPARE: {
     auto call = scalar(0);
     if (!call)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t ticket = 0;
-    auto status = obelisk_rt_v1_vpi_call_prepare(context, *call, &ticket);
-    return status == OBELISK_RT_OK ? sentinel(0, ticket) : status;
+    auto status = talos_rt_v1_vpi_call_prepare(context, *call, &ticket);
+    return status == TALOS_RT_OK ? sentinel(0, ticket) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED: {
+  case TALOS_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED: {
     auto unit = scalar(0), task = scalar(1);
     if (!unit || !task || *task > 1)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t activation = 0;
-    auto status = obelisk_rt_v1_vpi_frame_enter_prepared(
+    auto status = talos_rt_v1_vpi_frame_enter_prepared(
         context, *unit, static_cast<uint32_t>(*task), &activation);
-    return status == OBELISK_RT_OK ? sentinel(0, activation) : status;
+    return status == TALOS_RT_OK ? sentinel(0, activation) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER: {
+  case TALOS_RT_INTRINSIC_V1_VPI_FRAME_ENTER: {
     auto unit = scalar(0), kind = scalar(1), origin = scalar(2);
     if (!unit || !kind || !origin || (*kind != 0 && *kind != 2))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t activation = 0;
-    auto status = obelisk_rt_v1_vpi_frame_enter(
+    auto status = talos_rt_v1_vpi_frame_enter(
         context, *unit, static_cast<uint32_t>(*kind), *origin, &activation);
-    return status == OBELISK_RT_OK ? sentinel(0, activation) : status;
+    return status == TALOS_RT_OK ? sentinel(0, activation) : status;
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT: {
+  case TALOS_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT: {
     auto statement = scalar(0);
-    return statement ? obelisk_rt_v1_vpi_frame_checkpoint(context, *statement)
-                     : OBELISK_RT_INVALID_BYTECODE;
+    return statement ? talos_rt_v1_vpi_frame_checkpoint(context, *statement)
+                     : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_LEAVE: {
+  case TALOS_RT_INTRINSIC_V1_VPI_FRAME_LEAVE: {
     auto activation = scalar(0);
-    return activation ? obelisk_rt_v1_vpi_frame_leave(context, *activation)
-                      : OBELISK_RT_INVALID_BYTECODE;
+    return activation ? talos_rt_v1_vpi_frame_leave(context, *activation)
+                      : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_CALL_FINISH: {
+  case TALOS_RT_INTRINSIC_V1_VPI_CALL_FINISH: {
     auto ticket = scalar(0);
-    return ticket ? obelisk_rt_v1_vpi_call_finish(context, *ticket)
-                  : OBELISK_RT_INVALID_BYTECODE;
+    return ticket ? talos_rt_v1_vpi_call_finish(context, *ticket)
+                  : TALOS_RT_INVALID_BYTECODE;
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_ROOT: {
+  case TALOS_RT_INTRINSIC_V1_VPI_ROOT: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_design_cursor_v1 cursor{};
-    obelisk_rt_status status = obelisk_rt_cached_design_root(context, &cursor);
+      return TALOS_RT_INVALID_ARGUMENT;
+    talos_rt_design_cursor_v1 cursor{};
+    talos_rt_status status = talos_rt_cached_design_root(context, &cursor);
     if (!writeScalar(image, frame, outputRegister(0), cursor.offset))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return finishVPI(1, status);
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_CHILD:
-  case OBELISK_RT_INTRINSIC_V1_VPI_SIBLING: {
+  case TALOS_RT_INTRINSIC_V1_VPI_CHILD:
+  case TALOS_RT_INTRINSIC_V1_VPI_SIBLING: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_design_cursor_v1 cursor{}, result{};
+      return TALOS_RT_INVALID_ARGUMENT;
+    talos_rt_design_cursor_v1 cursor{}, result{};
     if (!cursorInput(0, cursor))
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_status status =
-        signature.id == OBELISK_RT_INTRINSIC_V1_VPI_CHILD
-            ? obelisk_rt_cached_design_child(context, cursor, &result)
-            : obelisk_rt_cached_design_sibling(context, cursor, &result);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_status status =
+        signature.id == TALOS_RT_INTRINSIC_V1_VPI_CHILD
+            ? talos_rt_cached_design_child(context, cursor, &result)
+            : talos_rt_cached_design_sibling(context, cursor, &result);
     if (!writeScalar(image, frame, outputRegister(0), result.offset))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return finishVPI(1, status);
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_CHILD_AT:
-  case OBELISK_RT_INTRINSIC_V1_VPI_TYPE_CHILD: {
+  case TALOS_RT_INTRINSIC_V1_VPI_CHILD_AT:
+  case TALOS_RT_INTRINSIC_V1_VPI_TYPE_CHILD: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_design_cursor_v1 cursor{}, result{};
+      return TALOS_RT_INVALID_ARGUMENT;
+    talos_rt_design_cursor_v1 cursor{}, result{};
     auto index = scalar(1);
     if (!cursorInput(0, cursor) || !index)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_status status =
-        signature.id == OBELISK_RT_INTRINSIC_V1_VPI_CHILD_AT
-            ? obelisk_rt_cached_design_child_at(context, cursor, *index,
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_status status =
+        signature.id == TALOS_RT_INTRINSIC_V1_VPI_CHILD_AT
+            ? talos_rt_cached_design_child_at(context, cursor, *index,
                                                 &result)
-            : obelisk_rt_cached_design_type_child(context, cursor, *index,
+            : talos_rt_cached_design_type_child(context, cursor, *index,
                                                   &result);
     if (!writeScalar(image, frame, outputRegister(0), result.offset))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return finishVPI(1, status);
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_LOOKUP: {
+  case TALOS_RT_INTRINSIC_V1_VPI_LOOKUP: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     auto name = bytes(0);
     if (!name)
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_design_cursor_v1 cursor{};
-    obelisk_rt_status status = obelisk_rt_cached_design_lookup(
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_design_cursor_v1 cursor{};
+    talos_rt_status status = talos_rt_cached_design_lookup(
         context, name->data, name->size, &cursor);
     if (!writeScalar(image, frame, outputRegister(0), cursor.offset))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return finishVPI(1, status);
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_INFO: {
+  case TALOS_RT_INTRINSIC_V1_VPI_INFO: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_design_cursor_v1 cursor{};
+      return TALOS_RT_INVALID_ARGUMENT;
+    talos_rt_design_cursor_v1 cursor{};
     if (!cursorInput(0, cursor))
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_design_info_v1 info{};
-    obelisk_rt_status status =
-        obelisk_rt_cached_design_info(context, cursor, &info);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_design_info_v1 info{};
+    talos_rt_status status =
+        talos_rt_cached_design_info(context, cursor, &info);
     std::array<uint64_t, 7> outputs{info.kind,
                                     info.capabilities,
                                     info.handle.id,
@@ -6599,20 +6599,20 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                     info.bit_width};
     for (uint32_t index = 0; index != outputs.size(); ++index)
       if (!writeScalar(image, frame, outputRegister(index), outputs[index]))
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
     return finishVPI(7, status);
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_NAME: {
+  case TALOS_RT_INTRINSIC_V1_VPI_NAME: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_design_cursor_v1 cursor{};
+      return TALOS_RT_INVALID_ARGUMENT;
+    talos_rt_design_cursor_v1 cursor{};
     if (!cursorInput(0, cursor))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     const uint8_t *data = nullptr;
     uint64_t size = 0, offset = 0;
-    obelisk_rt_status status =
-        obelisk_rt_cached_design_name(context, cursor, &data, &size);
-    if (status == OBELISK_RT_OK) {
+    talos_rt_status status =
+        talos_rt_cached_design_name(context, cursor, &data, &size);
+    if (status == TALOS_RT_OK) {
       const uint8_t *begin = context->execution->design_database;
       uint64_t databaseSize = context->execution->design_database_size;
       uintptr_t dataAddress = reinterpret_cast<uintptr_t>(data);
@@ -6620,24 +6620,24 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       if (dataAddress < beginAddress ||
           dataAddress - beginAddress > databaseSize ||
           size > databaseSize - (dataAddress - beginAddress))
-        status = OBELISK_RT_INVALID_DESIGN;
+        status = TALOS_RT_INVALID_DESIGN;
       else
         offset = dataAddress - beginAddress;
     }
     if (!writeScalar(image, frame, outputRegister(0), offset) ||
         !writeScalar(image, frame, outputRegister(1), size))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return finishVPI(2, status);
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_TYPE_INFO: {
+  case TALOS_RT_INTRINSIC_V1_VPI_TYPE_INFO: {
     if (!context || !context->execution)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_design_cursor_v1 cursor{};
+      return TALOS_RT_INVALID_ARGUMENT;
+    talos_rt_design_cursor_v1 cursor{};
     if (!cursorInput(0, cursor))
-      return OBELISK_RT_INVALID_BYTECODE;
-    obelisk_rt_design_type_info_v1 info{};
-    obelisk_rt_status status =
-        obelisk_rt_cached_design_type_info(context, cursor, &info);
+      return TALOS_RT_INVALID_BYTECODE;
+    talos_rt_design_type_info_v1 info{};
+    talos_rt_status status =
+        talos_rt_cached_design_type_info(context, cursor, &info);
     std::array<uint64_t, 11> outputs{info.kind,
                                      info.flags,
                                      info.bit_width,
@@ -6651,54 +6651,54 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                      info.packed_offset};
     for (uint32_t index = 0; index != outputs.size(); ++index)
       if (!writeScalar(image, frame, outputRegister(index), outputs[index]))
-        return OBELISK_RT_INVALID_BYTECODE;
+        return TALOS_RT_INVALID_BYTECODE;
     return finishVPI(11, status);
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_READ: {
+  case TALOS_RT_INTRINSIC_V1_VPI_READ: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_design_cursor_v1 cursor{};
+      return TALOS_RT_INVALID_ARGUMENT;
+    talos_rt_design_cursor_v1 cursor{};
     if (!cursorInput(0, cursor))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
-    Logic value{output.width, output.kind == OBELISK_RT_DBREG_LOGIC,
+    Logic value{output.width, output.kind == TALOS_RT_DBREG_LOGIC,
                 LimbVector(limbCount(output.width)),
                 LimbVector(limbCount(output.width))};
-    obelisk_rt_status status = obelisk_rt_v1_design_read(
+    talos_rt_status status = talos_rt_v1_design_read(
         context, cursor, value.value.data(), value.unknown.data(), value.width);
     writeLogic(frame.data, output, value);
     return finishVPI(1, status);
   }
-  case OBELISK_RT_INTRINSIC_V1_VPI_WRITE: {
+  case TALOS_RT_INTRINSIC_V1_VPI_WRITE: {
     if (!context)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_design_cursor_v1 cursor{};
+      return TALOS_RT_INVALID_ARGUMENT;
+    talos_rt_design_cursor_v1 cursor{};
     if (!cursorInput(0, cursor))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Logic value = readLogic(frame.data,
                             layoutAt(image, frame.function, inputRegister(1)));
-    obelisk_rt_status status = obelisk_rt_v1_design_write(
+    talos_rt_status status = talos_rt_v1_design_write(
         context, cursor, value.value.data(),
         value.fourState ? value.unknown.data() : nullptr, value.width);
     return finishVPI(0, status);
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC:
-  case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC:
-  case OBELISK_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE:
+  case TALOS_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC:
+  case TALOS_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC:
+  case TALOS_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE:
     if (!invokeDynamicScanIntrinsic)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return invokeDynamicScanIntrinsic(image, frame, context, site,
                                       signature.id);
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:
-  case OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM:
-  case OBELISK_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM:
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:
+  case TALOS_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM:
+  case TALOS_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM:
     if (!invokeContainerBitstreamIntrinsic)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return invokeContainerBitstreamIntrinsic(image, frame, context, site,
                                              siteIndex, signature.id);
   default:
-    return OBELISK_RT_INVALID_BYTECODE;
+    return TALOS_RT_INVALID_BYTECODE;
   }
 }
 
-} // namespace obelisk::designbytecode
+} // namespace talos::designbytecode

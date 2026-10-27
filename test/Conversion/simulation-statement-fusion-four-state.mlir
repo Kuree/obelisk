@@ -1,15 +1,15 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // Statement scheduling fuses the four-state producer, transform and consumer
 // into one kernel in source order. Only the external input remains in its
 // wait; the clocked observer stays a separate activation.
 // CHECK-LABEL: simulation.func @root(
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0(
+// CHECK: simulation.spawn @__talos_region_kernel_0_0(
 // CHECK: simulation.spawn @sample(
 // CHECK-NOT: simulation.func @producer
 // CHECK-NOT: simulation.func @transform
 // CHECK-NOT: simulation.func @consumer
-// CHECK-LABEL: simulation.func private @__obelisk_region_kernel_0_0(
+// CHECK-LABEL: simulation.func private @__talos_region_kernel_0_0(
 // CHECK: %[[ONE:.*]] = simulation.logic.constant 1 : i8, 0 : i8
 // CHECK: %[[INPUT:.*]] = simulation.context.storage %arg0[0]
 // CHECK: %[[VALUE:.*]] = simulation.ref.load %[[INPUT]] {{.*}}codeUnit = 1

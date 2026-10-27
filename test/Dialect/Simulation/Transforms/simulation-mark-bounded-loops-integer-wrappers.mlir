@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-mark-bounded-loops)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-mark-bounded-loops)))' | FileCheck %s
 
 // IEEE 1800-2023 11.6.1, 12.7: comparison promotion does not widen the
 // induction variable's storage. Recognize the two-state packed recurrence,

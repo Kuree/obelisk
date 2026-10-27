@@ -2,11 +2,11 @@
 // RUN: %split-file %s %t
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
 // RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -Wl,-soname,libcustom_edge_external.so -o %t.dir/lib/libcustom_edge_external.so
-// RUN: cd %t.dir && obelisk -O0 --vpi=full --native-scheduler=generic %t/design.sv lib/libcustom_edge_external.so -o bin/native
-// RUN: cd %t.dir && obelisk -O3 --vpi=full --native-scheduler=auto --mlir-timing %t/design.sv lib/libcustom_edge_external.so -o bin/aot 2> %t.auto.timing
+// RUN: cd %t.dir && talos -O0 --vpi=full --native-scheduler=generic %t/design.sv lib/libcustom_edge_external.so -o bin/native
+// RUN: cd %t.dir && talos -O3 --vpi=full --native-scheduler=auto --mlir-timing %t/design.sv lib/libcustom_edge_external.so -o bin/aot 2> %t.auto.timing
 // RUN: FileCheck %s --check-prefix=ELIGIBILITY < %t.auto.timing
 // RUN: %t.dir/bin/native | FileCheck %s
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.dir/bin/aot 2>&1 | FileCheck %s --check-prefix=CHECK --check-prefix=AOT
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.dir/bin/aot 2>&1 | FileCheck %s --check-prefix=CHECK --check-prefix=AOT
 
 //--- design.sv
 `timescale 1ns / 1ps
@@ -70,11 +70,11 @@ endmodule
 // CHECK: external-deposit 1 value=1
 // CHECK: external-force 1 value=1
 // CHECK: external-release 0 value=0
-// AOT: obelisk-signal-diagnostics
+// AOT: talos-signal-diagnostics
 // AOT-SAME: aot_node_executions=0
 // AOT-SAME: aot_fallbacks=0
-// ELIGIBILITY: obelisk native eligibility: eligible=1 fully_eligible=0 cost_effective=0
-// ELIGIBILITY: obelisk native boundary: DPI reentrancy is present
+// ELIGIBILITY: talos native eligibility: eligible=1 fully_eligible=0 cost_effective=0
+// ELIGIBILITY: talos native boundary: DPI reentrancy is present
 
 //--- plugin.c
 #include "vpi_user.h"

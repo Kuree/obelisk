@@ -1,9 +1,9 @@
-// RUN: obelisk -O3 %s -o %t.native
+// RUN: talos -O3 %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
-// RUN: obelisk --std=1800-2017 -O3 %s -o %t.2017
+// RUN: talos --std=1800-2017 -O3 %s -o %t.2017
 // RUN: %t.2017 | diff -u %t.native.out -
 
 module native_associative_array_core;
@@ -93,9 +93,9 @@ module native_associative_array_core;
   // SLANG-SAME: index_setter_count = 2
   // SLANG-SAME: member_setter_count = 0
   // SLANG-SAME: type_setter_count = 0
-  // OBELISK: obelisk.sv.expression.structured_assignment_pattern
-  // OBELISK-SAME: has_default_setter = true
-  // OBELISK-SAME: index_setter_count = 2
-  // OBELISK-SAME: member_setter_count = 0
-  // OBELISK-SAME: type_setter_count = 0
+  // TALOS: talos.sv.expression.structured_assignment_pattern
+  // TALOS-SAME: has_default_setter = true
+  // TALOS-SAME: index_setter_count = 2
+  // TALOS-SAME: member_setter_count = 0
+  // TALOS-SAME: type_setter_count = 0
 endmodule

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
 
 !record = !simulation.unpacked_struct<[
   #simulation.field<name = "byte", type = i8, ordinal = 0, packedOffset = 0>,

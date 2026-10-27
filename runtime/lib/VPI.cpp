@@ -11,24 +11,24 @@
 #include "VPIExpressionValue.h"
 #include "VPIHandleToken.h"
 #include "VPIInternal.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Reflection/VPIObjectModel.h"
+#include "talos/Runtime/StableHandle.h"
 
 // Native VPI startup finds tables in libraries already linked into the image.
 // ELF provides a symbol size; Mach-O/PE use readable mapped memory bounds.
 // WebAssembly links its design statically and has no dynamic startup modules.
 #if defined(__linux__) && !defined(__EMSCRIPTEN__)
-#define OBELISK_RT_VPI_DYNAMIC_STARTUP 1
+#define TALOS_RT_VPI_DYNAMIC_STARTUP 1
 #include <dlfcn.h>
 #include <elf.h>
 #elif defined(__APPLE__)
-#define OBELISK_RT_VPI_DYNAMIC_STARTUP 1
+#define TALOS_RT_VPI_DYNAMIC_STARTUP 1
 #include <dlfcn.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #elif defined(_WIN32)
-#define OBELISK_RT_VPI_DYNAMIC_STARTUP 1
+#define TALOS_RT_VPI_DYNAMIC_STARTUP 1
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <filesystem>
@@ -56,11 +56,11 @@
 #include <vector>
 
 #if defined(_WIN32)
-#define OBELISK_VPI_EXPORT
+#define TALOS_VPI_EXPORT
 #elif defined(__GNUC__) || defined(__clang__)
-#define OBELISK_VPI_EXPORT __attribute__((visibility("default")))
+#define TALOS_VPI_EXPORT __attribute__((visibility("default")))
 #else
-#define OBELISK_VPI_EXPORT
+#define TALOS_VPI_EXPORT
 #endif
 
 namespace {
@@ -111,7 +111,7 @@ enum class VPISemanticIteratorKind : uint8_t {
 // managed execution scope ends. Neither the iterator nor its values root SV
 // objects (37.3.7/8 and 37.33 detail 4).
 struct VPISnapshotValue {
-  obelisk_rt_design_cursor_v1 semantic{};
+  talos_rt_design_cursor_v1 semantic{};
   uint32_t exactType = vpiConstant;
   PLI_INT32 constType = vpiIntConst;
   PLI_INT32 opType = 0;
@@ -141,7 +141,7 @@ struct VPISnapshotValue {
   std::string string;
   bool isString = false;
   bool integral = false;
-  obelisk_rt_object_v1 *object = nullptr;
+  talos_rt_object_v1 *object = nullptr;
   uint64_t identity = 0;
   uint64_t logicalProcess = 0;
 };
@@ -161,14 +161,14 @@ bool sameAssociativeSelection(
 }
 
 struct VPISelectionStep {
-  obelisk_rt_design_cursor_v1 physicalType{};
-  obelisk_rt_design_cursor_v1 semanticType{};
+  talos_rt_design_cursor_v1 physicalType{};
+  talos_rt_design_cursor_v1 semanticType{};
   uint64_t bitOffset = 0;
   uint64_t bitWidth = 0;
   int64_t index = 0;
   uint32_t selectionOrdinal = 0;
   uint32_t exactVpiType = 0;
-  obelisk_rt_design_cursor_v1 memberSemanticParent{};
+  talos_rt_design_cursor_v1 memberSemanticParent{};
   bool packed = false;
   bool arrayDimension = false;
   bool memberSelection = false;
@@ -183,7 +183,7 @@ struct VPISelectionStep {
 };
 
 struct VPIConnectionTarget {
-  obelisk_rt_design_cursor_v1 cursor{};
+  talos_rt_design_cursor_v1 cursor{};
   uint32_t kind = 0;
   bool statement = false;
   uint64_t assignmentOffset = UINT64_MAX;
@@ -191,11 +191,11 @@ struct VPIConnectionTarget {
 
 struct VPIInterModPathEndpoint {
   VPIObjectForm form = VPIObjectForm::Design;
-  obelisk_rt_design_cursor_v1 cursor{};
+  talos_rt_design_cursor_v1 cursor{};
   uint32_t exactVpiType = 0;
   uint32_t selectionRootType = 0;
-  obelisk::reflection::VPIIndexedAccessKind selectionAccessKind =
-      obelisk::reflection::VPIIndexedAccessKind::VariableElement;
+  talos::reflection::VPIIndexedAccessKind selectionAccessKind =
+      talos::reflection::VPIIndexedAccessKind::VariableElement;
   uint64_t selectionBitOffset = 0;
   PLI_INT32 allocationScheme = vpiOtherScheme;
   std::vector<VPISelectionStep> selectionSteps;
@@ -208,8 +208,8 @@ struct __vpiHandle {
   uintptr_t token = 0;
   VPIHandleKind kind = VPIHandleKind::Object;
   VPIObjectForm form = VPIObjectForm::Design;
-  obelisk_rt_design_cursor_v1 cursor{};
-  obelisk_rt_design_cursor_v1 semanticCursor{};
+  talos_rt_design_cursor_v1 cursor{};
+  talos_rt_design_cursor_v1 semanticCursor{};
   uint32_t semanticEdge = 0;
   int64_t integralValue = 0;
   uint32_t exactVpiType = 0;
@@ -227,7 +227,7 @@ struct __vpiHandle {
   bool classDefinitionOrigin = false;
   // Weak receiver identity. IEEE 37.2.2 releases these handles when GC
   // reclaims the object; a VPI reference must not extend its lifetime.
-  obelisk_rt_object_v1 *dynamicObject = nullptr;
+  talos_rt_object_v1 *dynamicObject = nullptr;
   uint64_t dynamicIdentity = 0;
   // A process class reference is a scheduler token, never a managed pointer.
   // Finished and killed process objects retain their identity in tombstones.
@@ -239,16 +239,16 @@ struct __vpiHandle {
   uint64_t expressionFrameActivation = 0;
 
   uint32_t selectionRootType = 0;
-  obelisk::reflection::VPIIndexedAccessKind selectionAccessKind =
-      obelisk::reflection::VPIIndexedAccessKind::VariableElement;
+  talos::reflection::VPIIndexedAccessKind selectionAccessKind =
+      talos::reflection::VPIIndexedAccessKind::VariableElement;
   uint64_t selectionBitOffset = 0;
   std::vector<VPISelectionStep> selectionSteps;
   bool hasInfo = false;
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   // Callback iteration snapshots registrations because callbacks may remove
   // peers during dispatch. Immutable design iterators use cursors or relation
   // indices directly and never populate this vector.
-  std::vector<obelisk_rt_design_cursor_v1> items;
+  std::vector<talos_rt_design_cursor_v1> items;
   std::vector<VPIInterModPathEndpoint> interModPathEndpoints;
   std::vector<VPIConnectionTarget> connectionItems;
   bool connectionIterator = false;
@@ -285,23 +285,23 @@ struct __vpiHandle {
   bool useClassDefinitionOrigin = false;
   bool useProtectedObject = false;
   uint32_t useType = 0;
-  obelisk_rt_design_cursor_v1 useCursor{};
+  talos_rt_design_cursor_v1 useCursor{};
   VPIObjectForm useForm = VPIObjectForm::Design;
-  obelisk_rt_design_cursor_v1 useSemanticCursor{};
+  talos_rt_design_cursor_v1 useSemanticCursor{};
   uint32_t useSemanticEdge = 0;
   int64_t useIntegralValue = 0;
   uint32_t useSelectionRootType = 0;
-  obelisk::reflection::VPIIndexedAccessKind useSelectionAccessKind =
-      obelisk::reflection::VPIIndexedAccessKind::VariableElement;
+  talos::reflection::VPIIndexedAccessKind useSelectionAccessKind =
+      talos::reflection::VPIIndexedAccessKind::VariableElement;
   uint64_t useSelectionBitOffset = 0;
   PLI_INT32 useAllocationScheme = vpiOtherScheme;
   std::vector<VPISelectionStep> useSelectionSteps;
-  obelisk::reflection::VPIObjectSetID requestedTargets{};
+  talos::reflection::VPIObjectSetID requestedTargets{};
   VPIRelationRange relationRange{};
   std::vector<VPIRelationRange> classMemberRanges;
   size_t classMemberRange = 0;
   std::set<std::string> seenClassMethods;
-  obelisk_rt_design_cursor_v1 flatMemberCursor{};
+  talos_rt_design_cursor_v1 flatMemberCursor{};
   uint32_t flatMemberType = 0;
   uint64_t flatMemberNext = 0;
   uint64_t flatMemberCount = 0;
@@ -353,7 +353,7 @@ struct VPIFrameReference {
   // state/class/path discriminator plus one. Managed owners remain weak.
   uint32_t kind = 0;
   uint64_t payload = 0;
-  obelisk_rt_object_v1 *owner = nullptr;
+  talos_rt_object_v1 *owner = nullptr;
   uint64_t identity = 0;
   bool operator==(const VPIFrameReference &other) const {
     return kind == other.kind && payload == other.payload &&
@@ -367,10 +367,10 @@ struct VPIFrameActivation {
   uint64_t logicalProcess = 0;
   uint64_t codeUnit = 0;
   uint64_t lexicalCodeUnit = 0;
-  obelisk_rt_design_cursor_v1 origin{};
-  obelisk_rt_design_cursor_v1 statement{};
+  talos_rt_design_cursor_v1 origin{};
+  talos_rt_design_cursor_v1 statement{};
   bool originIsStatement = false;
-  obelisk_rt_design_cursor_v1 lexicalScope{};
+  talos_rt_design_cursor_v1 lexicalScope{};
   std::unordered_map<uint64_t, VPIFrameReference> localReferences;
   bool statementUnavailable = false;
 };
@@ -378,7 +378,7 @@ struct VPIFrameActivation {
 enum class VPIFrameCallPhase { Prepared, Entered, Completed, Cancelled };
 struct VPIFrameCall {
   uint64_t ticket, originID, parent;
-  uint32_t originKind = OBELISK_RT_VPI_FRAME_CALL;
+  uint32_t originKind = TALOS_RT_VPI_FRAME_CALL;
   uint64_t callee = 0;
   VPIFrameCallPhase phase = VPIFrameCallPhase::Prepared;
 };
@@ -395,7 +395,7 @@ struct VPIExportExecutor {
 };
 
 struct VPIState {
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   // Keep the simulation thread's binding slot alive even if that thread exits
   // before another thread destroys the context.
   std::shared_ptr<VPIActiveSlot> ownerSlot;
@@ -426,7 +426,7 @@ struct VPIState {
   uint64_t lastPrunedFrameGeneration = 0;
   // Code-unit metadata is immutable. Resolve each distinct executable owner
   // once, rather than scanning the design inventory on every activation.
-  std::unordered_map<uint64_t, std::pair<uint64_t, obelisk_rt_design_cursor_v1>>
+  std::unordered_map<uint64_t, std::pair<uint64_t, talos_rt_design_cursor_v1>>
       frameLexicalOwners;
   std::unordered_map<uint64_t, VPIFrameActivation> frames;
   std::unordered_map<uint64_t, std::vector<uint64_t>> frameStacks;
@@ -496,7 +496,7 @@ private:
   VPIState *state;
 };
 
-#if defined(OBELISK_RT_VPI_DYNAMIC_STARTUP)
+#if defined(TALOS_RT_VPI_DYNAMIC_STARTUP)
 struct DynamicModuleCloser {
   void operator()(void *module) const noexcept {
 #if defined(_WIN32)
@@ -509,24 +509,24 @@ struct DynamicModuleCloser {
 #endif
 
 void setError(VPIState *state, const char *message, int level = vpiError,
-              const char *code = "OBELISK_VPI") {
+              const char *code = "TALOS_VPI") {
   if (!state)
     return;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     state->errorMessage = message ? message : "VPI error";
     state->errorCode = code;
     state->errorLevel = level;
   }
-  OBELISK_RT_CATCH_ALL {}
+  TALOS_RT_CATCH_ALL {}
 }
 
 bool dynamicHandleIsLive(const __vpiHandle &handle,
-                         obelisk_rt_gc_lane_v1 *lane) {
+                         talos_rt_gc_lane_v1 *lane) {
   ManagedObjectLease lease;
-  return obelisk_rt_managed_object_acquire(
-             lane, handle.dynamicObject, OBELISK_RT_MANAGED_INVALID, &lease) ==
-             OBELISK_RT_OK &&
-         obelisk_rt_v1_object_id(handle.dynamicObject) == handle.dynamicIdentity;
+  return talos_rt_managed_object_acquire(
+             lane, handle.dynamicObject, TALOS_RT_MANAGED_INVALID, &lease) ==
+             TALOS_RT_OK &&
+         talos_rt_v1_object_id(handle.dynamicObject) == handle.dynamicIdentity;
 }
 
 // Only the VPI owner thread mutates its handle registry. Collection may run
@@ -536,16 +536,16 @@ bool dynamicHandleIsLive(const __vpiHandle &handle,
 void pruneDynamicHandles(VPIState *state) {
   if (!state->hasDynamicHandles || state->callDepth || state->callbackDepth)
     return;
-  obelisk_rt_gc_statistics_v1 statistics{};
-  if (obelisk_rt_v1_gc_statistics(state->context, &statistics) != OBELISK_RT_OK ||
+  talos_rt_gc_statistics_v1 statistics{};
+  if (talos_rt_v1_gc_statistics(state->context, &statistics) != TALOS_RT_OK ||
       statistics.collection_count == state->lastClassCollection)
     return;
   ManagedExecutionScope managed(state->context);
-  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
+  if (managed.getStatus() != TALOS_RT_OK || !managed.getLane())
     return;
   // Entering the lane may have waited for another collection. Snapshot only
   // after entry, so a later collection always causes another pruning pass.
-  if (obelisk_rt_v1_gc_statistics(state->context, &statistics) != OBELISK_RT_OK)
+  if (talos_rt_v1_gc_statistics(state->context, &statistics) != TALOS_RT_OK)
     return;
   state->hasDynamicHandles = false;
   for (auto entry = state->handles.begin(); entry != state->handles.end();) {
@@ -573,11 +573,11 @@ uint64_t sourceThread(VPIState *state, uint64_t executor) {
 
 bool threadIsLive(VPIState *state, uint64_t logicalProcess) {
   logicalProcess = sourceThread(state, logicalProcess);
-  obelisk_rt_process_state status{};
-  return obelisk_rt_v1_process_status(state->context, logicalProcess,
-                                      &status) == OBELISK_RT_OK &&
-         status != OBELISK_RT_PROCESS_FINISHED &&
-         status != OBELISK_RT_PROCESS_KILLED;
+  talos_rt_process_state status{};
+  return talos_rt_v1_process_status(state->context, logicalProcess,
+                                      &status) == TALOS_RT_OK &&
+         status != TALOS_RT_PROCESS_FINISHED &&
+         status != TALOS_RT_PROCESS_KILLED;
 }
 
 bool hasThreadLifetime(const __vpiHandle &handle) {
@@ -697,7 +697,7 @@ __vpiHandle *findHandle(vpiHandle opaque) {
   }
   if (handle->dynamicObject) {
     ManagedExecutionScope managed(state->context);
-    if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane() ||
+    if (managed.getStatus() != TALOS_RT_OK || !managed.getLane() ||
         !dynamicHandleIsLive(*handle, managed.getLane())) {
       setError(state, "invalid or reclaimed VPI class object handle");
       return nullptr;
@@ -718,7 +718,7 @@ __vpiHandle *validate(vpiHandle opaque,
 
 vpiHandle keepHandle(VPIState *state, std::unique_ptr<__vpiHandle> handle) {
   uintptr_t token = 0;
-  if (!obelisk::runtime::allocateVPIHandleToken(nextHandleToken, token)) {
+  if (!talos::runtime::allocateVPIHandleToken(nextHandleToken, token)) {
     setError(state, "VPI handle identifier space is exhausted", vpiSystem);
     return nullptr;
   }
@@ -735,7 +735,7 @@ vpiHandle makeThreadHandle(VPIState *state, uint64_t logicalProcess) {
   logicalProcess = sourceThread(state, logicalProcess);
   if (!threadIsLive(state, logicalProcess))
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->form = VPIObjectForm::Thread;
@@ -745,7 +745,7 @@ vpiHandle makeThreadHandle(VPIState *state, uint64_t logicalProcess) {
     state->hasThreadHandles = true;
     return keepHandle(state, std::move(handle));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not allocate VPI thread handle", vpiSystem);
     return nullptr;
   }
@@ -754,7 +754,7 @@ vpiHandle makeThreadHandle(VPIState *state, uint64_t logicalProcess) {
 vpiHandle makeFrameHandle(VPIState *state, uint64_t activation) {
   if (!activation || !frameIsLive(state, activation))
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->form = VPIObjectForm::Frame;
@@ -764,7 +764,7 @@ vpiHandle makeFrameHandle(VPIState *state, uint64_t activation) {
     state->hasFrameHandles = true;
     return keepHandle(state, std::move(handle));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not allocate VPI frame handle", vpiSystem);
     return nullptr;
   }
@@ -780,8 +780,8 @@ vpiHandle threadParent(__vpiHandle *source) {
     const uint64_t token = source->logicalProcess;
     if (context->activeLogicalProcessToken == token) {
       parent = context->activeLogicalProcessParent;
-    } else if (token & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) {
-      const uint64_t native = token & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+    } else if (token & TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG) {
+      const uint64_t native = token & ~TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG;
       auto found = context->scheduledProcessIndices.find(native);
       if (found != context->scheduledProcessIndices.end() &&
           found->second < context->scheduledProcesses.size()) {
@@ -803,32 +803,32 @@ vpiHandle threadParent(__vpiHandle *source) {
 }
 
 bool lookup(VPIState *state, const std::string &name,
-            obelisk_rt_design_cursor_v1 &cursor);
+            talos_rt_design_cursor_v1 &cursor);
 
-bool fixedProtectionFor(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
+bool fixedProtectionFor(VPIState *state, talos_rt_design_cursor_v1 cursor,
                         bool &isProtected) {
   isProtected = false;
   VPIFixedPropertyValue property{};
   if (!state)
     return false;
-  obelisk_rt_status status = obelisk_rt_cached_vpi_fixed_property(
+  talos_rt_status status = talos_rt_cached_vpi_fixed_property(
       state->context, cursor, vpiIsProtected, &property);
-  if (status == OBELISK_RT_EOF) {
+  if (status == TALOS_RT_EOF) {
     bool protectedStatement = false;
-    obelisk_rt_status statementStatus =
-        obelisk_rt_cached_vpi_statement_is_protected(state->context, cursor,
+    talos_rt_status statementStatus =
+        talos_rt_cached_vpi_statement_is_protected(state->context, cursor,
                                                      &protectedStatement);
-    if (statementStatus == OBELISK_RT_OK) {
+    if (statementStatus == TALOS_RT_OK) {
       isProtected = protectedStatement;
       return true;
     }
-    if (statementStatus != OBELISK_RT_INVALID_HANDLE) {
+    if (statementStatus != TALOS_RT_INVALID_HANDLE) {
       setError(state, "VPI statement protection lookup failed", vpiInternal);
       return false;
     }
     return true;
   }
-  if (status != OBELISK_RT_OK) {
+  if (status != TALOS_RT_OK) {
     setError(state, "VPI protection image lookup failed", vpiInternal);
     return false;
   }
@@ -840,7 +840,7 @@ bool protectedNameIntermediate(VPIState *state, const std::string &name) {
   auto protectedPrefix = [&](size_t prefixSize) {
     if (prefixSize == 0 || prefixSize == name.size())
       return false;
-    obelisk_rt_design_cursor_v1 intermediate{};
+    talos_rt_design_cursor_v1 intermediate{};
     if (!lookup(state, name.substr(0, prefixSize), intermediate))
       return false;
     bool isProtected = false;
@@ -867,14 +867,14 @@ bool protectedNameIntermediate(VPIState *state, const std::string &name) {
   return false;
 }
 
-vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
+vpiHandle makeHandle(VPIState *state, talos_rt_design_cursor_v1 cursor,
                      uint32_t exactVpiType = 0, bool statement = false,
                      bool classDefinitionOrigin = false,
                      bool inheritedProtection = false) {
   bool isProtected = false;
   if (!fixedProtectionFor(state, cursor, isProtected))
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->kind = VPIHandleKind::Object;
@@ -885,11 +885,11 @@ vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
     handle->classDefinitionOrigin = classDefinitionOrigin;
     return keepHandle(state, std::move(handle));
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setError(state, "VPI handle arena is out of memory", vpiSystem);
     return nullptr;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not allocate VPI handle", vpiInternal);
     return nullptr;
   }
@@ -900,25 +900,25 @@ void inheritExpressionContext(__vpiHandle &target, const __vpiHandle &source);
 // Bind an immutable member declaration to a receiver only when the member
 // needs an instance. Static members retain their independent lifetime.
 vpiHandle makeRelatedHandle(__vpiHandle *source,
-                            obelisk_rt_design_cursor_v1 target,
+                            talos_rt_design_cursor_v1 target,
                             uint32_t targetType, bool statement = false) {
   uint32_t sourceType = source->exactVpiType;
   if (!sourceType)
-    (void)obelisk_rt_cached_vpi_type(source->owner->context, source->cursor,
+    (void)talos_rt_cached_vpi_type(source->owner->context, source->cursor,
                                      &sourceType);
   vpiHandle result =
       makeHandle(source->owner, target, targetType, statement,
-                 obelisk::runtime::hasClassDefinitionValueOrigin(
+                 talos::runtime::hasClassDefinitionValueOrigin(
                      sourceType, source->classDefinitionOrigin, targetType));
   if (auto *handle = findHandle(result))
     inheritExpressionContext(*handle, *source);
   if (!result || !source->dynamicObject)
     return result;
   VPIClassMemberBinding member{};
-  obelisk_rt_status status = obelisk_rt_cached_vpi_class_member(
+  talos_rt_status status = talos_rt_cached_vpi_class_member(
       source->owner->context, target, &member);
-  bool instanceMember = status == OBELISK_RT_OK && !member.isStatic;
-  if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF) {
+  bool instanceMember = status == TALOS_RT_OK && !member.isStatic;
+  if (status != TALOS_RT_OK && status != TALOS_RT_EOF) {
     source->owner->handles.erase(reinterpret_cast<uintptr_t>(result));
     setError(source->owner, "VPI class member binding is invalid", vpiInternal);
     return nullptr;
@@ -937,10 +937,10 @@ vpiHandle makeRelatedHandle(__vpiHandle *source,
 }
 
 uint32_t semanticTypespecKind(VPIState *state,
-                              obelisk_rt_design_cursor_v1 semanticCursor) {
-  obelisk_rt_design_semantic_type_info_v1 info{};
-  if (!state || obelisk_rt_cached_design_semantic_type_info(
-                    state->context, semanticCursor, &info) != OBELISK_RT_OK)
+                              talos_rt_design_cursor_v1 semanticCursor) {
+  talos_rt_design_semantic_type_info_v1 info{};
+  if (!state || talos_rt_cached_design_semantic_type_info(
+                    state->context, semanticCursor, &info) != TALOS_RT_OK)
     return 0;
   return info.public_vpi_kind;
 }
@@ -949,25 +949,25 @@ uint32_t semanticTypespecKind(VPIState *state,
 // have an unsigned one-bit type. This is a view of the immutable type graph;
 // the enclosing integer, enum, aggregate, and typedef identities do not become
 // identities of the selected bit.
-void projectScalarBitTypespec(obelisk_rt_design_semantic_type_info_v1 &info) {
+void projectScalarBitTypespec(talos_rt_design_semantic_type_info_v1 &info) {
   const bool fourState =
-      (info.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
+      (info.flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
   info = {};
-  info.kind = fourState ? OBELISK_RT_DESIGN_SEMANTIC_LOGIC
-                        : OBELISK_RT_DESIGN_SEMANTIC_BIT;
-  info.flags = fourState ? OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE : 0;
+  info.kind = fourState ? TALOS_RT_DESIGN_SEMANTIC_LOGIC
+                        : TALOS_RT_DESIGN_SEMANTIC_BIT;
+  info.flags = fourState ? TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE : 0;
   info.public_vpi_kind = fourState ? vpiLogicTypespec : vpiBitTypespec;
   info.bit_width = 1;
 }
 
-vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
-                             obelisk_rt_design_cursor_v1 semanticCursor,
+vpiHandle makeTypespecHandle(VPIState *state, talos_rt_design_cursor_v1 base,
+                             talos_rt_design_cursor_v1 semanticCursor,
                              bool honorAlias = true,
                              bool suppressDimension = false,
                              bool originalDefault = false) {
-  obelisk_rt_design_semantic_type_info_v1 info{};
-  if (!state || obelisk_rt_cached_design_semantic_type_info(
-                    state->context, semanticCursor, &info) != OBELISK_RT_OK)
+  talos_rt_design_semantic_type_info_v1 info{};
+  if (!state || talos_rt_cached_design_semantic_type_info(
+                    state->context, semanticCursor, &info) != TALOS_RT_OK)
     return nullptr;
   if (suppressDimension) {
     projectScalarBitTypespec(info);
@@ -975,30 +975,30 @@ vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
   }
   if (honorAlias && info.alias_object.offset != 0) {
     uint32_t exactType = 0;
-    if (obelisk_rt_cached_vpi_type(state->context, info.alias_object,
-                                   &exactType) != OBELISK_RT_OK)
+    if (talos_rt_cached_vpi_type(state->context, info.alias_object,
+                                   &exactType) != TALOS_RT_OK)
       return nullptr;
     return makeHandle(state, info.alias_object, exactType);
   }
-  if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE &&
+  if (info.kind == TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE &&
       info.identity_target.offset != 0) {
     uint32_t exactType = 0;
-    if (obelisk_rt_cached_vpi_type(state->context, info.identity_target,
-                                   &exactType) != OBELISK_RT_OK ||
+    if (talos_rt_cached_vpi_type(state->context, info.identity_target,
+                                   &exactType) != TALOS_RT_OK ||
         exactType != vpiInterfaceTypespec)
       return nullptr;
     return makeHandle(state, info.identity_target, exactType);
   }
-  if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS ||
-      info.kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX ||
-      info.kind == OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE ||
-      info.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS) {
-    obelisk_rt_design_cursor_v1 canonical{};
-    auto status = obelisk_rt_cached_vpi_semantic_class_typespec(
+  if (info.kind == TALOS_RT_DESIGN_SEMANTIC_CLASS ||
+      info.kind == TALOS_RT_DESIGN_SEMANTIC_MAILBOX ||
+      info.kind == TALOS_RT_DESIGN_SEMANTIC_SEMAPHORE ||
+      info.kind == TALOS_RT_DESIGN_SEMANTIC_PROCESS) {
+    talos_rt_design_cursor_v1 canonical{};
+    auto status = talos_rt_cached_vpi_semantic_class_typespec(
         state->context, semanticCursor, &canonical);
-    if (status == OBELISK_RT_OK)
+    if (status == TALOS_RT_OK)
       return makeHandle(state, canonical, vpiClassTypespec);
-    if (status != OBELISK_RT_EOF)
+    if (status != TALOS_RT_EOF)
       return nullptr;
   }
   uint32_t exactType = info.public_vpi_kind;
@@ -1007,7 +1007,7 @@ vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
   bool isProtected = false;
   if (!fixedProtectionFor(state, base, isProtected))
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->kind = VPIHandleKind::Object;
@@ -1021,21 +1021,21 @@ vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
     handle->originalTypeDefault = originalDefault;
     return keepHandle(state, std::move(handle));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not allocate VPI typespec handle", vpiSystem);
     return nullptr;
   }
 }
 
 vpiHandle makeSemanticObjectHandle(VPIState *state, VPIObjectForm form,
-                                   obelisk_rt_design_cursor_v1 base,
-                                   obelisk_rt_design_cursor_v1 semanticCursor,
+                                   talos_rt_design_cursor_v1 base,
+                                   talos_rt_design_cursor_v1 semanticCursor,
                                    uint32_t semanticEdge, uint32_t exactType,
                                    int64_t integralValue = 0) {
   bool isProtected = false;
   if (!fixedProtectionFor(state, base, isProtected))
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->kind = VPIHandleKind::Object;
@@ -1048,44 +1048,44 @@ vpiHandle makeSemanticObjectHandle(VPIState *state, VPIObjectForm form,
     handle->protectedObject = isProtected;
     return keepHandle(state, std::move(handle));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not allocate derived VPI handle", vpiSystem);
     return nullptr;
   }
 }
 
 vpiHandle makeCallbackHandle(VPIState *state, uint64_t callbackId) {
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->kind = VPIHandleKind::Callback;
     handle->cursor.offset = callbackId;
     return keepHandle(state, std::move(handle));
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setError(state, "VPI callback handle arena is out of memory", vpiSystem);
     return nullptr;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not allocate VPI callback handle", vpiInternal);
     return nullptr;
   }
 }
 
 vpiHandle makeSystemTfHandle(VPIState *state, uint64_t systemTfId) {
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->kind = VPIHandleKind::SystemTf;
     handle->cursor.offset = systemTfId;
     return keepHandle(state, std::move(handle));
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setError(state, "VPI system task/function handle arena is out of memory",
              vpiSystem);
     return nullptr;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not allocate VPI system task/function handle",
              vpiInternal);
     return nullptr;
@@ -1095,19 +1095,19 @@ vpiHandle makeSystemTfHandle(VPIState *state, uint64_t systemTfId) {
 vpiHandle
 makeInterModPathHandle(VPIState *state,
                        const std::vector<VPIInterModPathEndpoint> &endpoints) {
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->kind = VPIHandleKind::InterModPath;
     handle->interModPathEndpoints = endpoints;
     return keepHandle(state, std::move(handle));
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setError(state, "VPI intermodule-path handle arena is out of memory",
              vpiSystem);
     return nullptr;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not allocate VPI intermodule-path handle",
              vpiInternal);
     return nullptr;
@@ -1115,18 +1115,18 @@ makeInterModPathHandle(VPIState *state,
 }
 
 vpiHandle makeTimeQueueHandle(VPIState *state, uint64_t scheduledTime) {
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->kind = VPIHandleKind::TimeQueue;
     handle->cursor.offset = scheduledTime;
     return keepHandle(state, std::move(handle));
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setError(state, "VPI time-queue handle arena is out of memory", vpiSystem);
     return nullptr;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not allocate VPI time-queue handle", vpiInternal);
     return nullptr;
   }
@@ -1188,9 +1188,9 @@ std::optional<uint32_t> syncCallbackStage(PLI_INT32 reason) {
   switch (reason) {
   case cbNBASynch:
   case cbReadWriteSynch:
-    return OBELISK_RT_VPI_SYNC_PRE_NBA;
+    return TALOS_RT_VPI_SYNC_PRE_NBA;
   case cbReadOnlySynch:
-    return OBELISK_RT_VPI_SYNC_READ_ONLY;
+    return TALOS_RT_VPI_SYNC_READ_ONLY;
   default:
     return std::nullopt;
   }
@@ -1209,7 +1209,7 @@ void acquireObservationDemand(VPIState *state, PLI_INT32 reason) {
   if (++state->runtimeObserverCallbacks != 1)
     return;
   ContextMutexLock lock(state->context);
-  obelisk_rt_aot_observation_demand_changed_unlocked(state->context, true);
+  talos_rt_aot_observation_demand_changed_unlocked(state->context, true);
 }
 
 void releaseObservationDemand(VPIState *state, PLI_INT32 reason) {
@@ -1219,20 +1219,20 @@ void releaseObservationDemand(VPIState *state, PLI_INT32 reason) {
   if (--state->runtimeObserverCallbacks != 0)
     return;
   ContextMutexLock lock(state->context);
-  obelisk_rt_aot_observation_demand_changed_unlocked(state->context, false);
+  talos_rt_aot_observation_demand_changed_unlocked(state->context, false);
 }
 
-obelisk_rt_status dispatchLifecycle(VPIState *state, PLI_INT32 reason) {
+talos_rt_status dispatchLifecycle(VPIState *state, PLI_INT32 reason) {
   // A fixed frontier makes registration from a callback eligible only for a
   // later event. Each record is looked up again immediately before invocation
   // so removing a callback that has not run yet suppresses it safely.
   std::vector<uint64_t> scheduled;
-  OBELISK_RT_TRY { scheduled = state->callbackOrder; }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_TRY { scheduled = state->callbackOrder; }
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not snapshot VPI callbacks", vpiSystem);
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  obelisk_rt_status status = OBELISK_RT_OK;
+  talos_rt_status status = TALOS_RT_OK;
   ++state->callbackDepth;
   for (uint64_t id : scheduled) {
     auto found = state->callbacks.find(id);
@@ -1244,10 +1244,10 @@ obelisk_rt_status dispatchLifecycle(VPIState *state, PLI_INT32 reason) {
     invocation.reason = reason;
     invocation.cb_rtn = routine;
     invocation.user_data = userData;
-    OBELISK_RT_TRY { (void)routine(&invocation); }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_TRY { (void)routine(&invocation); }
+    TALOS_RT_CATCH_ALL {
       setError(state, "VPI callback raised an exception", vpiInternal);
-      status = OBELISK_RT_FATAL;
+      status = TALOS_RT_FATAL;
     }
   }
   --state->callbackDepth;
@@ -1296,11 +1296,11 @@ PLI_INT32 removeCallbackHandle(VPIState *state, __vpiHandle *handle) {
   return 1;
 }
 
-bool infoFor(__vpiHandle *handle, obelisk_rt_design_info_v1 &info) {
+bool infoFor(__vpiHandle *handle, talos_rt_design_info_v1 &info) {
   if (!handle->hasInfo) {
-    obelisk_rt_status status = obelisk_rt_cached_design_info(
+    talos_rt_status status = talos_rt_cached_design_info(
         handle->owner->context, handle->cursor, &handle->info);
-    if (status != OBELISK_RT_OK) {
+    if (status != TALOS_RT_OK) {
       setError(handle->owner, "design metadata lookup failed");
       return false;
     }
@@ -1310,39 +1310,39 @@ bool infoFor(__vpiHandle *handle, obelisk_rt_design_info_v1 &info) {
   return true;
 }
 
-bool frameLocalInfo(__vpiHandle *handle, obelisk_rt_design_info_v1 &info) {
+bool frameLocalInfo(__vpiHandle *handle, talos_rt_design_info_v1 &info) {
   return (handle->form == VPIObjectForm::Design ||
           handle->form == VPIObjectForm::Indexed) &&
          infoFor(handle, info) &&
-         (info.capabilities & OBELISK_RT_DESIGN_CAP_FRAME_LOCAL) != 0;
+         (info.capabilities & TALOS_RT_DESIGN_CAP_FRAME_LOCAL) != 0;
 }
 
 enum class VPIValueShape { Neither, Scalar, Vector };
 
 PLI_INT32 vpiTypeForHandle(__vpiHandle *handle);
 bool semanticCursorFor(__vpiHandle *handle,
-                       obelisk_rt_design_cursor_v1 &cursor);
-bool semanticTypeInfo(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
-                      obelisk_rt_design_semantic_type_info_v1 &info);
-bool semanticEdge(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
+                       talos_rt_design_cursor_v1 &cursor);
+bool semanticTypeInfo(__vpiHandle *handle, talos_rt_design_cursor_v1 cursor,
+                      talos_rt_design_semantic_type_info_v1 &info);
+bool semanticEdge(__vpiHandle *handle, talos_rt_design_cursor_v1 cursor,
                   uint32_t ordinal,
-                  obelisk_rt_design_semantic_type_edge_v1 &edge);
+                  talos_rt_design_semantic_type_edge_v1 &edge);
 
 bool valueShapeFor(__vpiHandle *handle,
-                   const obelisk_rt_design_info_v1 &objectInfo,
+                   const talos_rt_design_info_v1 &objectInfo,
                    VPIValueShape &shape) {
   if (handle->form == VPIObjectForm::SnapshotValue) {
     if (handle->snapshot->bitSelection) {
       shape = VPIValueShape::Scalar;
       return true;
     }
-    obelisk_rt_design_semantic_type_info_v1 semantic{};
+    talos_rt_design_semantic_type_info_v1 semantic{};
     if (handle->snapshot->integral &&
         semanticTypeInfo(handle, handle->snapshot->semantic, semantic) &&
-        ((semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0 ||
-         semantic.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
-         semantic.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
-         semantic.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION)) {
+        ((semantic.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0 ||
+         semantic.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+         semantic.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+         semantic.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION)) {
       shape = VPIValueShape::Vector;
       return true;
     }
@@ -1351,23 +1351,23 @@ bool valueShapeFor(__vpiHandle *handle,
                                         : VPIValueShape::Vector;
     return true;
   }
-  obelisk_rt_design_cursor_v1 cursor{objectInfo.type_offset};
+  talos_rt_design_cursor_v1 cursor{objectInfo.type_offset};
   for (;;) {
-    obelisk_rt_design_type_info_v1 type{};
+    talos_rt_design_type_info_v1 type{};
     if (cursor.offset == 0 ||
-        obelisk_rt_cached_design_type_info(handle->owner->context, cursor,
-                                           &type) != OBELISK_RT_OK) {
+        talos_rt_cached_design_type_info(handle->owner->context, cursor,
+                                           &type) != TALOS_RT_OK) {
       setError(handle->owner, "design type metadata lookup failed",
                vpiInternal);
       return false;
     }
 
-    const bool packed = (type.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0;
-    if (type.kind == OBELISK_RT_DESIGN_TYPE_ARRAY && !packed) {
+    const bool packed = (type.flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0;
+    if (type.kind == TALOS_RT_DESIGN_TYPE_ARRAY && !packed) {
       cursor = type.element_type;
       continue;
     }
-    if (type.kind == OBELISK_RT_DESIGN_TYPE_SCALAR) {
+    if (type.kind == TALOS_RT_DESIGN_TYPE_SCALAR) {
       // Non-packed scalar metadata represents real-valued objects. They are
       // neither scalar nor vector in the VPI net/variable diagrams.
       shape = !packed               ? VPIValueShape::Neither
@@ -1375,9 +1375,9 @@ bool valueShapeFor(__vpiHandle *handle,
                                     : VPIValueShape::Vector;
       return true;
     }
-    if (packed && (type.kind == OBELISK_RT_DESIGN_TYPE_ARRAY ||
-                   type.kind == OBELISK_RT_DESIGN_TYPE_STRUCT ||
-                   type.kind == OBELISK_RT_DESIGN_TYPE_UNION)) {
+    if (packed && (type.kind == TALOS_RT_DESIGN_TYPE_ARRAY ||
+                   type.kind == TALOS_RT_DESIGN_TYPE_STRUCT ||
+                   type.kind == TALOS_RT_DESIGN_TYPE_UNION)) {
       // Packed aggregates are vectors even when their flattened width is one.
       shape = VPIValueShape::Vector;
       return true;
@@ -1388,17 +1388,17 @@ bool valueShapeFor(__vpiHandle *handle,
 }
 
 bool hasValueRequirement(
-    const obelisk::reflection::VPIValuePolicyDescriptor &policy,
-    obelisk::reflection::VPIValueRequirement requirement) {
+    const talos::reflection::VPIValuePolicyDescriptor &policy,
+    talos::reflection::VPIValueRequirement requirement) {
   return (policy.requirements & static_cast<uint8_t>(requirement)) != 0;
 }
 
-const obelisk::reflection::VPIValuePolicyDescriptor *
+const talos::reflection::VPIValuePolicyDescriptor *
 valuePolicyFor(__vpiHandle *handle) {
   PLI_INT32 type = vpiTypeForHandle(handle);
   const auto *policy = type == vpiUndefined
                            ? nullptr
-                           : obelisk::reflection::findVPIValuePolicy(
+                           : talos::reflection::findVPIValuePolicy(
                                  static_cast<uint32_t>(type));
   if (!policy)
     setError(handle->owner, "vpi_get_value is not defined for this VPI object",
@@ -1407,9 +1407,9 @@ valuePolicyFor(__vpiHandle *handle) {
 }
 
 struct VPIRefActualValueSource {
-  obelisk_rt_design_cursor_v1 cursor{};
+  talos_rt_design_cursor_v1 cursor{};
   uint32_t exactType = 0;
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
 };
 
 bool refActualValueSource(__vpiHandle *handle,
@@ -1421,16 +1421,16 @@ bool refActualValueSource(__vpiHandle *handle,
   }
   VPIRelationRange range{};
   bool statement = false;
-  if (obelisk_rt_cached_vpi_relation_range(handle->owner->context,
+  if (talos_rt_cached_vpi_relation_range(handle->owner->context,
                                            handle->cursor, vpiActual, false,
-                                           &range) != OBELISK_RT_OK ||
+                                           &range) != TALOS_RT_OK ||
       range.count != 1 ||
-      obelisk_rt_cached_vpi_relation_target(handle->owner->context, range.first,
+      talos_rt_cached_vpi_relation_target(handle->owner->context, range.first,
                                             &source.cursor, &source.exactType,
-                                            &statement) != OBELISK_RT_OK ||
+                                            &statement) != TALOS_RT_OK ||
       statement ||
-      obelisk_rt_cached_design_info(handle->owner->context, source.cursor,
-                                    &source.info) != OBELISK_RT_OK) {
+      talos_rt_cached_design_info(handle->owner->context, source.cursor,
+                                    &source.info) != TALOS_RT_OK) {
     setError(handle->owner, "VPI RefObj actual cannot be resolved",
              vpiInternal);
     return false;
@@ -1441,21 +1441,21 @@ bool refActualValueSource(__vpiHandle *handle,
 // An unresolved lexical declaration has an original default graph, but no
 // elaborated value or type. Do not turn absent metadata into a zero value.
 bool unresolvedValueParameter(uint32_t type,
-                              const obelisk_rt_design_info_v1 &info) {
+                              const talos_rt_design_info_v1 &info) {
   return type == vpiParameter &&
          (info.capabilities &
-          OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0;
+          TALOS_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0;
 }
 
-bool isSourceClassProperty(const obelisk_rt_design_info_v1 &info) {
-  return info.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
-         (info.capabilities & OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY) != 0;
+bool isSourceClassProperty(const talos_rt_design_info_v1 &info) {
+  return info.kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
+         (info.capabilities & TALOS_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY) != 0;
 }
 
 bool rejectSourceClassPropertyValue(__vpiHandle *handle) {
   if (handle->form != VPIObjectForm::Design)
     return false;
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   if (!infoFor(handle, info) || !isSourceClassProperty(info))
     return false;
   setError(handle->owner,
@@ -1466,17 +1466,17 @@ bool rejectSourceClassPropertyValue(__vpiHandle *handle) {
 bool isUnresolvedTypeAlias(__vpiHandle *handle) {
   if (handle->form != VPIObjectForm::Design)
     return false;
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   return infoFor(handle, info) &&
-         (info.capabilities & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS) != 0;
+         (info.capabilities & TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS) != 0;
 }
 
 uint32_t sourceInheritanceCapabilities(__vpiHandle *handle) {
   if (handle->form != VPIObjectForm::Design || handle->statement)
     return 0;
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   return infoFor(handle, info) &&
-                 info.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT
+                 info.kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT
              ? info.capabilities
              : 0;
 }
@@ -1486,58 +1486,58 @@ bool rejectUnavailableInheritanceRelation(__vpiHandle *handle,
   uint32_t caps = sourceInheritanceCapabilities(handle);
   const char *message = nullptr;
   if (!iterate && selector == vpiClassTypespec &&
-      (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE))
+      (caps & TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE))
     message = "lexical base type requires an unsupported source form";
   else if (iterate && selector == vpiArgument &&
-           (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS))
+           (caps & TALOS_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS))
     message = "constructor argument source expressions are unavailable";
   else if (iterate && selector == vpiParamAssign &&
-           (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS))
+           (caps & TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS))
     message = "explicit class parameter source assignments are unavailable";
   else if (!iterate && selector == vpiRhs &&
-           (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS))
+           (caps & TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS))
     message = "explicit parameter source expression or type is unavailable";
-  else if (iterate && (caps & OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC) &&
+  else if (iterate && (caps & TALOS_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC) &&
            (selector == vpiVariables || selector == vpiMethods ||
             selector == vpiConstraint || selector == vpiNamedEvent ||
             selector == vpiNamedEventArray || selector == vpiTypedef ||
             selector == vpiInternalScope))
     message =
         "lexical class type does not provide this specialization inventory";
-  auto targetFor = [&](obelisk_rt_design_cursor_v1 source, uint32_t relation,
-                       obelisk_rt_design_cursor_v1 &target) {
+  auto targetFor = [&](talos_rt_design_cursor_v1 source, uint32_t relation,
+                       talos_rt_design_cursor_v1 &target) {
     VPIRelationRange range{};
     uint32_t kind = 0;
     bool statement = false;
-    return obelisk_rt_cached_vpi_relation_range(handle->owner->context, source,
+    return talos_rt_cached_vpi_relation_range(handle->owner->context, source,
                                                 relation, false,
-                                                &range) == OBELISK_RT_OK &&
+                                                &range) == TALOS_RT_OK &&
            range.count == 1 &&
-           obelisk_rt_cached_vpi_relation_target(handle->owner->context,
+           talos_rt_cached_vpi_relation_target(handle->owner->context,
                                                  range.first, &target, &kind,
-                                                 &statement) == OBELISK_RT_OK &&
+                                                 &statement) == TALOS_RT_OK &&
            !statement;
   };
   if (!iterate && selector == vpiRhs &&
-      (caps & OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT)) {
-    obelisk_rt_design_cursor_v1 parameter{};
-    obelisk_rt_design_info_v1 info{};
+      (caps & TALOS_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT)) {
+    talos_rt_design_cursor_v1 parameter{};
+    talos_rt_design_info_v1 info{};
     if (targetFor(handle->cursor, vpiLhs, parameter) &&
-        obelisk_rt_cached_design_info(handle->owner->context, parameter,
-                                      &info) == OBELISK_RT_OK &&
+        talos_rt_cached_design_info(handle->owner->context, parameter,
+                                      &info) == TALOS_RT_OK &&
         (info.capabilities &
-         OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT))
+         TALOS_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT))
       message = "original parameter default form is unavailable";
   }
   if (!iterate && selector == vpiExtends &&
-      (caps & OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC)) {
-    obelisk_rt_design_cursor_v1 definition{}, clause{};
-    obelisk_rt_design_info_v1 info{};
+      (caps & TALOS_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC)) {
+    talos_rt_design_cursor_v1 definition{}, clause{};
+    talos_rt_design_info_v1 info{};
     if (targetFor(handle->cursor, vpiClassDefn, definition) &&
         targetFor(definition, vpiExtends, clause) &&
-        obelisk_rt_cached_design_info(handle->owner->context, clause, &info) ==
-            OBELISK_RT_OK &&
-        (info.capabilities & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE))
+        talos_rt_cached_design_info(handle->owner->context, clause, &info) ==
+            TALOS_RT_OK &&
+        (info.capabilities & TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE))
       message = "lexical base type requires an unsupported source form";
   }
   if (!message)
@@ -1550,7 +1550,7 @@ bool rejectUnresolvedParameterQuery(__vpiHandle *handle) {
   if (handle->form != VPIObjectForm::Design)
     return false;
   const uint32_t type = static_cast<uint32_t>(vpiTypeForHandle(handle));
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   bool unresolved = false;
   if (type == vpiParameter && infoFor(handle, info))
     unresolved = unresolvedValueParameter(type, info);
@@ -1563,22 +1563,22 @@ bool rejectUnresolvedParameterQuery(__vpiHandle *handle) {
 
 struct VPIValueSource {
   VPIObjectForm form = VPIObjectForm::Design;
-  obelisk_rt_design_cursor_v1 cursor{};
-  obelisk_rt_design_cursor_v1 semanticCursor{};
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_cursor_v1 cursor{};
+  talos_rt_design_cursor_v1 semanticCursor{};
+  talos_rt_design_info_v1 info{};
   uint64_t selectionBitOffset = 0;
   uint32_t exactType = 0;
   bool hasSemanticCursor = false;
   bool primitiveValue = false;
   uint16_t primitiveStrength = 0;
-  const obelisk::reflection::VPIValuePolicyDescriptor *policy = nullptr;
+  const talos::reflection::VPIValuePolicyDescriptor *policy = nullptr;
 };
 
 bool preparePrimitiveValue(__vpiHandle *handle, VPIValueSource &source);
 
 bool valueSourceFor(
     __vpiHandle *handle,
-    const obelisk::reflection::VPIValuePolicyDescriptor &queryPolicy,
+    const talos::reflection::VPIValuePolicyDescriptor &queryPolicy,
     VPIValueSource &source) {
   if (handle->form == VPIObjectForm::ContAssignBit) {
     setError(handle->owner, "assignment bit has no retained contribution value",
@@ -1592,7 +1592,7 @@ bool valueSourceFor(
   source.exactType = static_cast<uint32_t>(vpiTypeForHandle(handle));
   source.policy = &queryPolicy;
   if (handle->form == VPIObjectForm::IntegralConstant) {
-    source.info.kind = OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
+    source.info.kind = TALOS_RT_DESIGN_RECORD_STATIC_OBJECT;
     source.info.bit_width = 64;
   } else if (!infoFor(handle, source.info)) {
     return false;
@@ -1603,7 +1603,7 @@ bool valueSourceFor(
     return preparePrimitiveValue(handle, source);
 
   if (queryPolicy.readSemantics ==
-      obelisk::reflection::VPIValueReadSemantics::EvaluateActual) {
+      talos::reflection::VPIValueReadSemantics::EvaluateActual) {
     VPIRefActualValueSource actual{};
     if (!refActualValueSource(handle, actual))
       return false;
@@ -1612,16 +1612,16 @@ bool valueSourceFor(
     source.info = actual.info;
     source.exactType = actual.exactType;
     source.selectionBitOffset = 0;
-    source.policy = obelisk::reflection::findVPIValuePolicy(source.exactType);
+    source.policy = talos::reflection::findVPIValuePolicy(source.exactType);
     if (!source.policy) {
       setError(handle->owner,
                "vpi_get_value is not defined for the VPI RefObj actual",
                vpiNotice);
       return false;
     }
-    source.hasSemanticCursor = obelisk_rt_cached_design_semantic_root(
+    source.hasSemanticCursor = talos_rt_cached_design_semantic_root(
                                    handle->owner->context, source.cursor,
-                                   &source.semanticCursor) == OBELISK_RT_OK;
+                                   &source.semanticCursor) == TALOS_RT_OK;
   } else {
     source.hasSemanticCursor = semanticCursorFor(handle, source.semanticCursor);
   }
@@ -1652,17 +1652,17 @@ bool valueSourceFor(
 
 bool valueRequirementsSatisfied(
     __vpiHandle *handle, const VPIValueSource &source,
-    const obelisk::reflection::VPIValuePolicyDescriptor &policy) {
+    const talos::reflection::VPIValuePolicyDescriptor &policy) {
   const auto &objectInfo = source.info;
   if (source.primitiveValue)
     return true;
-  using Requirement = obelisk::reflection::VPIValueRequirement;
+  using Requirement = talos::reflection::VPIValueRequirement;
   if (handle->form == VPIObjectForm::IntegralConstant ||
       handle->form == VPIObjectForm::SnapshotValue)
     return true;
   VPIClassMemberBinding member{};
-  if (obelisk_rt_cached_vpi_class_member(handle->owner->context, handle->cursor,
-                                         &member) == OBELISK_RT_OK &&
+  if (talos_rt_cached_vpi_class_member(handle->owner->context, handle->cursor,
+                                         &member) == TALOS_RT_OK &&
       !member.isStatic && !handle->dynamicObject) {
     setError(handle->owner,
              "a non-static class member requires a live class object",
@@ -1671,19 +1671,19 @@ bool valueRequirementsSatisfied(
   }
   VPIFrozenValue frozen{};
   if (handle->form == VPIObjectForm::Design &&
-      obelisk_rt_cached_vpi_frozen_value(handle->owner->context, handle->cursor,
-                                         &frozen) == OBELISK_RT_OK)
+      talos_rt_cached_vpi_frozen_value(handle->owner->context, handle->cursor,
+                                         &frozen) == TALOS_RT_OK)
     return true;
   VPIExpressionInfo expression{};
   if (handle->form == VPIObjectForm::Design &&
-      obelisk_rt_cached_vpi_expression(handle->owner->context, handle->cursor,
-                                       &expression) == OBELISK_RT_OK)
+      talos_rt_cached_vpi_expression(handle->owner->context, handle->cursor,
+                                       &expression) == TALOS_RT_OK)
     return true;
-  obelisk_rt_design_type_info_v1 type{};
+  talos_rt_design_type_info_v1 type{};
   if (objectInfo.type_offset == 0 ||
-      obelisk_rt_cached_design_type_info(handle->owner->context,
+      talos_rt_cached_design_type_info(handle->owner->context,
                                          {objectInfo.type_offset},
-                                         &type) != OBELISK_RT_OK) {
+                                         &type) != TALOS_RT_OK) {
     setError(handle->owner, "design type metadata lookup failed", vpiInternal);
     return false;
   }
@@ -1691,10 +1691,10 @@ bool valueRequirementsSatisfied(
   // Compiler-emitted databases predating semantic-kind preservation label
   // storage/net records generically as vpiReg/vpiNet; they must not thereby
   // make a whole unpacked aggregate readable.
-  if ((type.flags & OBELISK_RT_DESIGN_TYPE_PACKED) == 0 &&
-      (type.kind == OBELISK_RT_DESIGN_TYPE_ARRAY ||
-       type.kind == OBELISK_RT_DESIGN_TYPE_STRUCT ||
-       type.kind == OBELISK_RT_DESIGN_TYPE_UNION)) {
+  if ((type.flags & TALOS_RT_DESIGN_TYPE_PACKED) == 0 &&
+      (type.kind == TALOS_RT_DESIGN_TYPE_ARRAY ||
+       type.kind == TALOS_RT_DESIGN_TYPE_STRUCT ||
+       type.kind == TALOS_RT_DESIGN_TYPE_UNION)) {
     setError(handle->owner,
              "vpi_get_value is not defined for a whole unpacked aggregate",
              vpiNotice);
@@ -1719,7 +1719,7 @@ bool resolveObjectTypeValueFormat(__vpiHandle *handle,
     format = vpiScalarVal;
     return true;
   }
-  using Default = obelisk::reflection::VPIValueDefaultFormat;
+  using Default = talos::reflection::VPIValueDefaultFormat;
   switch (source.policy->defaultFormat) {
   case Default::Integer:
     format = vpiIntVal;
@@ -1764,26 +1764,26 @@ bool resolveObjectTypeValueFormat(__vpiHandle *handle,
                vpiInternal);
       return false;
     }
-    obelisk_rt_design_semantic_type_info_v1 semantic{};
+    talos_rt_design_semantic_type_info_v1 semantic{};
     if (!semanticTypeInfo(handle, source.semanticCursor, semantic))
       return false;
     switch (semantic.kind) {
-    case OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL:
-    case OBELISK_RT_DESIGN_SEMANTIC_REAL:
-    case OBELISK_RT_DESIGN_SEMANTIC_REALTIME:
+    case TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL:
+    case TALOS_RT_DESIGN_SEMANTIC_REAL:
+    case TALOS_RT_DESIGN_SEMANTIC_REALTIME:
       format = vpiRealVal;
       return true;
-    case OBELISK_RT_DESIGN_SEMANTIC_STRING:
+    case TALOS_RT_DESIGN_SEMANTIC_STRING:
       format = vpiStringVal;
       return true;
-    case OBELISK_RT_DESIGN_SEMANTIC_TIME:
+    case TALOS_RT_DESIGN_SEMANTIC_TIME:
       format = vpiTimeVal;
       return true;
-    case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
-    case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
+    case TALOS_RT_DESIGN_SEMANTIC_BYTE:
+    case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
       format = vpiIntVal;
       return true;
     default:
@@ -1811,15 +1811,15 @@ bool resolveObjectTypeValueFormat(__vpiHandle *handle,
 
 int vpiTypeFor(uint32_t kind) {
   switch (kind) {
-  case OBELISK_RT_DESIGN_RECORD_SCOPE:
+  case TALOS_RT_DESIGN_RECORD_SCOPE:
     return vpiModule;
-  case OBELISK_RT_DESIGN_RECORD_STORAGE:
+  case TALOS_RT_DESIGN_RECORD_STORAGE:
     return vpiReg;
-  case OBELISK_RT_DESIGN_RECORD_NET:
+  case TALOS_RT_DESIGN_RECORD_NET:
     return vpiNet;
-  case OBELISK_RT_DESIGN_RECORD_FUNCTION:
+  case TALOS_RT_DESIGN_RECORD_FUNCTION:
     return vpiFunction;
-  case OBELISK_RT_DESIGN_RECORD_PORT:
+  case TALOS_RT_DESIGN_RECORD_PORT:
     return vpiPort;
   default:
     return vpiUndefined;
@@ -1854,22 +1854,22 @@ PLI_INT32 vpiTypeForHandle(__vpiHandle *handle) {
   if (handle->exactVpiType != 0)
     return static_cast<PLI_INT32>(handle->exactVpiType);
   uint32_t exact = 0;
-  if (obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
-                                 &exact) == OBELISK_RT_OK &&
+  if (talos_rt_cached_vpi_type(handle->owner->context, handle->cursor,
+                                 &exact) == TALOS_RT_OK &&
       exact != 0) {
     handle->exactVpiType = exact;
     return static_cast<PLI_INT32>(exact);
   }
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   return infoFor(handle, info) ? vpiTypeFor(info.kind) : vpiUndefined;
 }
 
-const obelisk::reflection::VPIPropertyDescriptor *
+const talos::reflection::VPIPropertyDescriptor *
 propertyFor(__vpiHandle *handle, PLI_INT32 property) {
   PLI_INT32 type = vpiTypeForHandle(handle);
   if (type == vpiUndefined)
     return nullptr;
-  const auto *descriptor = obelisk::reflection::findVPIProperty(
+  const auto *descriptor = talos::reflection::findVPIProperty(
       static_cast<uint32_t>(type), static_cast<uint32_t>(property));
   if (!descriptor) {
     setError(handle->owner,
@@ -1879,7 +1879,7 @@ propertyFor(__vpiHandle *handle, PLI_INT32 property) {
              handle->protectedObject ? vpiError : vpiNotice);
   } else if (handle->protectedObject &&
              descriptor->protectedAccess ==
-                 obelisk::reflection::VPIPropertyProtectedAccess::Denied) {
+                 talos::reflection::VPIPropertyProtectedAccess::Denied) {
     setError(handle->owner,
              "property access is denied for a protected VPI object", vpiError);
     return nullptr;
@@ -1889,28 +1889,28 @@ propertyFor(__vpiHandle *handle, PLI_INT32 property) {
 
 // Optional immutable facts are sparse overrides, not default values. Legacy
 // images and live views without a row retain the generated derived behavior.
-obelisk_rt_status optionalPropertyFor(
+talos_rt_status optionalPropertyFor(
     __vpiHandle *handle,
-    const obelisk::reflection::VPIPropertyDescriptor *descriptor,
+    const talos::reflection::VPIPropertyDescriptor *descriptor,
     VPIFixedPropertyValue &value) {
   if (!descriptor || handle->form != VPIObjectForm::Design ||
       descriptor->realization !=
-          obelisk::reflection::VPIPropertyRealization::OptionalImage)
-    return OBELISK_RT_EOF;
-  auto status = obelisk_rt_cached_vpi_fixed_property(
+          talos::reflection::VPIPropertyRealization::OptionalImage)
+    return TALOS_RT_EOF;
+  auto status = talos_rt_cached_vpi_fixed_property(
       handle->owner->context, handle->cursor, descriptor->property, &value);
-  if (status == OBELISK_RT_OK &&
+  if (status == TALOS_RT_OK &&
       value.kind != static_cast<uint8_t>(descriptor->valueKind))
-    status = OBELISK_RT_INVALID_DESIGN;
-  if (status == OBELISK_RT_EOF) {
-    obelisk_rt_design_info_v1 info{};
+    status = TALOS_RT_INVALID_DESIGN;
+  if (status == TALOS_RT_EOF) {
+    talos_rt_design_info_v1 info{};
     if (infoFor(handle, info) && isSourceClassProperty(info)) {
       setError(handle->owner, "lexical class property modifier is unavailable",
                vpiNotice);
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     }
   }
-  if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+  if (status != TALOS_RT_OK && status != TALOS_RT_EOF)
     setError(handle->owner, "optional VPI property image lookup failed",
              vpiInternal);
   return status;
@@ -1918,11 +1918,11 @@ obelisk_rt_status optionalPropertyFor(
 
 bool fixedPropertyFor(
     __vpiHandle *handle,
-    const obelisk::reflection::VPIPropertyDescriptor &descriptor,
+    const talos::reflection::VPIPropertyDescriptor &descriptor,
     VPIFixedPropertyValue &value) {
-  obelisk_rt_status status = obelisk_rt_cached_vpi_fixed_property(
+  talos_rt_status status = talos_rt_cached_vpi_fixed_property(
       handle->owner->context, handle->cursor, descriptor.property, &value);
-  if (status == OBELISK_RT_OK) {
+  if (status == TALOS_RT_OK) {
     // IEEE 1800-2023 37.16: the declaration is vpiNettypeNet, while every
     // selected part of that declaration is vpiNettypeNetSelect. The immutable
     // image stores the declaration fact once; selection provenance belongs to
@@ -1933,9 +1933,9 @@ bool fixedPropertyFor(
       value.payload = static_cast<uint64_t>(vpiNettypeNetSelect);
     return true;
   }
-  if (status == OBELISK_RT_EOF &&
+  if (status == TALOS_RT_EOF &&
       (descriptor.valueKind ==
-           obelisk::reflection::VPIPropertyValueKind::Boolean ||
+           talos::reflection::VPIPropertyValueKind::Boolean ||
        descriptor.property == vpiDefFile ||
        descriptor.property == vpiDefLineNo)) {
     value = {};
@@ -1945,36 +1945,36 @@ bool fixedPropertyFor(
     return true;
   }
   setError(handle->owner,
-           status == OBELISK_RT_EOF ? "fixed VPI property value is unavailable"
+           status == TALOS_RT_EOF ? "fixed VPI property value is unavailable"
                                     : "fixed VPI property image lookup failed",
-           status == OBELISK_RT_EOF ? vpiNotice : vpiInternal);
+           status == TALOS_RT_EOF ? vpiNotice : vpiInternal);
   return false;
 }
 
 bool indexedImagePropertyFor(
     __vpiHandle *handle,
-    const obelisk::reflection::VPIPropertyDescriptor &descriptor,
+    const talos::reflection::VPIPropertyDescriptor &descriptor,
     uint32_t &value) {
   if (descriptor.property != vpiResolvedNetType) {
     setError(handle->owner, "unsupported indexed-image VPI property",
              vpiInternal);
     return false;
   }
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   if (!infoFor(handle, info))
     return false;
   uint64_t bitOffset =
       handle->form == VPIObjectForm::Indexed ? handle->selectionBitOffset : 0;
-  obelisk_rt_status status = obelisk_rt_cached_vpi_resolved_net_type(
+  talos_rt_status status = talos_rt_cached_vpi_resolved_net_type(
       handle->owner->context, handle->cursor, bitOffset, info.bit_width,
       &value);
-  if (status == OBELISK_RT_OK)
+  if (status == TALOS_RT_OK)
     return true;
   setError(handle->owner,
-           status == OBELISK_RT_EOF
+           status == TALOS_RT_EOF
                ? "indexed VPI property value is unavailable"
                : "indexed VPI property image lookup failed",
-           status == OBELISK_RT_EOF ? vpiNotice : vpiInternal);
+           status == TALOS_RT_EOF ? vpiNotice : vpiInternal);
   return false;
 }
 
@@ -1987,11 +1987,11 @@ bool allowProtectedSource(__vpiHandle *handle, const char *operation) {
   return false;
 }
 
-int exactTypeFor(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
+int exactTypeFor(VPIState *state, talos_rt_design_cursor_v1 cursor,
                  uint32_t fallbackKind) {
   uint32_t exact = 0;
-  if (obelisk_rt_cached_vpi_type(state->context, cursor, &exact) ==
-      OBELISK_RT_OK)
+  if (talos_rt_cached_vpi_type(state->context, cursor, &exact) ==
+      TALOS_RT_OK)
     return static_cast<int>(exact);
   return vpiTypeFor(fallbackKind);
 }
@@ -1999,22 +1999,22 @@ int exactTypeFor(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
 bool nameFor(__vpiHandle *handle, std::string &name, bool localMember = false) {
   const uint8_t *data = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status = obelisk_rt_cached_design_name(
+  talos_rt_status status = talos_rt_cached_design_name(
       handle->owner->context, handle->cursor, &data, &size);
   if (localMember) {
     VPIClassMemberBinding member{};
-    if (obelisk_rt_cached_vpi_class_member(
-            handle->owner->context, handle->cursor, &member) == OBELISK_RT_OK) {
+    if (talos_rt_cached_vpi_class_member(
+            handle->owner->context, handle->cursor, &member) == TALOS_RT_OK) {
       data = member.name;
       size = member.nameSize;
-      status = OBELISK_RT_OK;
+      status = TALOS_RT_OK;
     }
   }
-  if (status != OBELISK_RT_OK) {
+  if (status != TALOS_RT_OK) {
     setError(handle->owner, "design name lookup failed");
     return false;
   }
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     if (size == 0)
       name.clear();
     else
@@ -2023,10 +2023,10 @@ bool nameFor(__vpiHandle *handle, std::string &name, bool localMember = false) {
     if (handle->form == VPIObjectForm::Indexed)
       for (const VPISelectionStep &step : handle->selectionSteps) {
         if (step.memberSelection) {
-          obelisk_rt_design_semantic_type_edge_v1 edge{};
+          talos_rt_design_semantic_type_edge_v1 edge{};
           if (!semanticEdge(handle, step.memberSemanticParent,
                             step.selectionOrdinal, edge) ||
-              edge.role != OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER ||
+              edge.role != TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER ||
               edge.name_size == 0)
             return false;
           name.push_back('.');
@@ -2048,7 +2048,7 @@ bool nameFor(__vpiHandle *handle, std::string &name, bool localMember = false) {
       }
     return true;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(handle->owner, "could not materialize design name", vpiSystem);
     return false;
   }
@@ -2057,28 +2057,28 @@ bool nameFor(__vpiHandle *handle, std::string &name, bool localMember = false) {
 DpiScopeHandle *timeScopeFor(__vpiHandle *handle) {
   if (!handle || handle->kind != VPIHandleKind::Object)
     return nullptr;
-  obelisk_rt_design_cursor_v1 cursor = handle->cursor;
+  talos_rt_design_cursor_v1 cursor = handle->cursor;
   bool statement = handle->statement;
   for (;;) {
-    obelisk_rt_design_cursor_v1 parent{};
+    talos_rt_design_cursor_v1 parent{};
     bool parentIsStatement = false;
-    obelisk_rt_status status = OBELISK_RT_OK;
+    talos_rt_status status = TALOS_RT_OK;
     if (statement) {
-      status = obelisk_rt_cached_vpi_statement_enclosing_scope(
+      status = talos_rt_cached_vpi_statement_enclosing_scope(
           handle->owner->context, cursor, &parent, &parentIsStatement);
     } else {
-      obelisk_rt_design_info_v1 info{};
+      talos_rt_design_info_v1 info{};
       status =
-          obelisk_rt_cached_design_info(handle->owner->context, cursor, &info);
-      if (status == OBELISK_RT_OK &&
-          info.kind == OBELISK_RT_DESIGN_RECORD_SCOPE)
-        return obelisk_rt_find_dpi_scope(handle->owner->context,
+          talos_rt_cached_design_info(handle->owner->context, cursor, &info);
+      if (status == TALOS_RT_OK &&
+          info.kind == TALOS_RT_DESIGN_RECORD_SCOPE)
+        return talos_rt_find_dpi_scope(handle->owner->context,
                                          info.handle.id);
-      if (status == OBELISK_RT_OK)
-        status = obelisk_rt_cached_design_parent(handle->owner->context, cursor,
+      if (status == TALOS_RT_OK)
+        status = talos_rt_cached_design_parent(handle->owner->context, cursor,
                                                  &parent);
     }
-    if (status != OBELISK_RT_OK || parent.offset == cursor.offset)
+    if (status != TALOS_RT_OK || parent.offset == cursor.offset)
       return nullptr;
     cursor = parent;
     statement = parentIsStatement;
@@ -2095,60 +2095,60 @@ bool globalTimeExponent(VPIState *state, int32_t &exponent) {
 }
 
 bool fullNameForStatement(__vpiHandle *handle, std::string &name) {
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<std::string> components;
-    obelisk_rt_design_cursor_v1 cursor = handle->cursor;
+    talos_rt_design_cursor_v1 cursor = handle->cursor;
     while (true) {
       const uint8_t *data = nullptr;
       uint64_t size = 0;
-      if (obelisk_rt_cached_design_name(handle->owner->context, cursor, &data,
-                                        &size) != OBELISK_RT_OK)
+      if (talos_rt_cached_design_name(handle->owner->context, cursor, &data,
+                                        &size) != TALOS_RT_OK)
         return false;
       if (size != 0)
         components.emplace_back(reinterpret_cast<const char *>(data),
                                 static_cast<size_t>(size));
-      obelisk_rt_design_cursor_v1 parent{};
-      obelisk_rt_status status = obelisk_rt_cached_vpi_statement_parent(
+      talos_rt_design_cursor_v1 parent{};
+      talos_rt_status status = talos_rt_cached_vpi_statement_parent(
           handle->owner->context, cursor, &parent);
-      if (status == OBELISK_RT_EOF)
+      if (status == TALOS_RT_EOF)
         break;
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return false;
       cursor = parent;
     }
-    obelisk_rt_design_cursor_v1 base{};
+    talos_rt_design_cursor_v1 base{};
     uint32_t baseType = 0;
     bool useCodeUnit = false;
-    obelisk_rt_design_cursor_v1 owner{};
-    obelisk_rt_status ownerStatus = obelisk_rt_cached_vpi_statement_owner(
+    talos_rt_design_cursor_v1 owner{};
+    talos_rt_status ownerStatus = talos_rt_cached_vpi_statement_owner(
         handle->owner->context, handle->cursor, &owner);
-    if (ownerStatus == OBELISK_RT_OK &&
-        obelisk_rt_cached_vpi_type(handle->owner->context, owner, &baseType) ==
-            OBELISK_RT_OK) {
-      using VPIKind = obelisk::reflection::VPIObjectKind;
+    if (ownerStatus == TALOS_RT_OK &&
+        talos_rt_cached_vpi_type(handle->owner->context, owner, &baseType) ==
+            TALOS_RT_OK) {
+      using VPIKind = talos::reflection::VPIObjectKind;
       useCodeUnit = baseType == static_cast<uint16_t>(VPIKind::Task) ||
                     baseType == static_cast<uint16_t>(VPIKind::Function);
       if (useCodeUnit)
         base = owner;
-    } else if (ownerStatus != OBELISK_RT_EOF) {
+    } else if (ownerStatus != TALOS_RT_EOF) {
       return false;
     }
     if (!useCodeUnit) {
-      if (obelisk_rt_cached_vpi_statement_scope(
-              handle->owner->context, handle->cursor, &base) != OBELISK_RT_OK ||
-          obelisk_rt_cached_vpi_type(handle->owner->context, base, &baseType) !=
-              OBELISK_RT_OK)
+      if (talos_rt_cached_vpi_statement_scope(
+              handle->owner->context, handle->cursor, &base) != TALOS_RT_OK ||
+          talos_rt_cached_vpi_type(handle->owner->context, base, &baseType) !=
+              TALOS_RT_OK)
         return false;
     }
     const uint8_t *baseName = nullptr;
     uint64_t baseNameSize = 0;
-    if (obelisk_rt_cached_design_name(handle->owner->context, base, &baseName,
-                                      &baseNameSize) != OBELISK_RT_OK ||
+    if (talos_rt_cached_design_name(handle->owner->context, base, &baseName,
+                                      &baseNameSize) != TALOS_RT_OK ||
         baseNameSize == 0)
       return false;
     name.assign(reinterpret_cast<const char *>(baseName),
                 static_cast<size_t>(baseNameSize));
-    using VPIKind = obelisk::reflection::VPIObjectKind;
+    using VPIKind = talos::reflection::VPIObjectKind;
     bool namespaceBase =
         !useCodeUnit && (baseType == static_cast<uint16_t>(VPIKind::Package) ||
                          baseType == static_cast<uint16_t>(VPIKind::ClassDefn));
@@ -2161,22 +2161,22 @@ bool fullNameForStatement(__vpiHandle *handle, std::string &name) {
     }
     return true;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(handle->owner, "could not materialize statement full name",
              vpiSystem);
     return false;
   }
 }
 
-obelisk_rt_status
-findMatchingDesignObject(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
-                         obelisk::reflection::VPIObjectSetID targets,
-                         obelisk_rt_design_cursor_v1 *outCursor) {
+talos_rt_status
+findMatchingDesignObject(VPIState *state, talos_rt_design_cursor_v1 cursor,
+                         talos::reflection::VPIObjectSetID targets,
+                         talos_rt_design_cursor_v1 *outCursor) {
   while (cursor.offset != 0) {
-    obelisk_rt_design_info_v1 info{};
-    obelisk_rt_status status =
-        obelisk_rt_cached_design_info(state->context, cursor, &info);
-    if (status != OBELISK_RT_OK)
+    talos_rt_design_info_v1 info{};
+    talos_rt_status status =
+        talos_rt_cached_design_info(state->context, cursor, &info);
+    if (status != TALOS_RT_OK)
       return status;
     uint32_t exact =
         static_cast<uint32_t>(exactTypeFor(state, cursor, info.kind));
@@ -2184,40 +2184,40 @@ findMatchingDesignObject(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
     // physical scope owner only so the pointer-free database can validate and
     // reach every record. Their VPI ownership is carried exclusively by
     // generated relation records.
-    if (info.kind != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
-        (info.capabilities & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) == 0 &&
-        obelisk::reflection::vpiObjectSetContains(targets, exact)) {
+    if (info.kind != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        (info.capabilities & TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR) == 0 &&
+        talos::reflection::vpiObjectSetContains(targets, exact)) {
       *outCursor = cursor;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
-    status = obelisk_rt_cached_design_sibling(state->context, cursor, &cursor);
-    if (status != OBELISK_RT_OK)
+    status = talos_rt_cached_design_sibling(state->context, cursor, &cursor);
+    if (status != TALOS_RT_OK)
       return status;
   }
-  return OBELISK_RT_EOF;
+  return TALOS_RT_EOF;
 }
 
 bool lookup(VPIState *state, const std::string &name,
-            obelisk_rt_design_cursor_v1 &cursor) {
-  return obelisk_rt_cached_design_lookup(
+            talos_rt_design_cursor_v1 &cursor) {
+  return talos_rt_cached_design_lookup(
              state->context, reinterpret_cast<const uint8_t *>(name.data()),
-             name.size(), &cursor) == OBELISK_RT_OK;
+             name.size(), &cursor) == TALOS_RT_OK;
 }
 
 bool isTypespecVPIKind(uint32_t type) {
-  const auto *descriptor = obelisk::reflection::findVPIObjectKind(type);
+  const auto *descriptor = talos::reflection::findVPIObjectKind(type);
   return descriptor &&
          (descriptor->families &
-          obelisk::reflection::vpiFamilyMask(
-              obelisk::reflection::VPIObjectFamily::Typespec)) != 0;
+          talos::reflection::vpiFamilyMask(
+              talos::reflection::VPIObjectFamily::Typespec)) != 0;
 }
 
 bool isVariableVPIKind(uint32_t type) {
-  const auto *descriptor = obelisk::reflection::findVPIObjectKind(type);
+  const auto *descriptor = talos::reflection::findVPIObjectKind(type);
   return descriptor &&
          (descriptor->families &
-          obelisk::reflection::vpiFamilyMask(
-              obelisk::reflection::VPIObjectFamily::Variable)) != 0;
+          talos::reflection::vpiFamilyMask(
+              talos::reflection::VPIObjectFamily::Variable)) != 0;
 }
 
 bool isSemanticObjectForm(VPIObjectForm form) {
@@ -2228,19 +2228,19 @@ bool isSemanticObjectForm(VPIObjectForm form) {
 }
 
 bool semanticCursorFor(__vpiHandle *handle,
-                       obelisk_rt_design_cursor_v1 &cursor) {
+                       talos_rt_design_cursor_v1 &cursor) {
   if (handle->form != VPIObjectForm::Design) {
     cursor = handle->semanticCursor;
     return cursor.offset != 0;
   }
-  return obelisk_rt_cached_design_semantic_root(
-             handle->owner->context, handle->cursor, &cursor) == OBELISK_RT_OK;
+  return talos_rt_cached_design_semantic_root(
+             handle->owner->context, handle->cursor, &cursor) == TALOS_RT_OK;
 }
 
-bool semanticTypeInfo(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
-                      obelisk_rt_design_semantic_type_info_v1 &info) {
-  if (obelisk_rt_cached_design_semantic_type_info(
-          handle->owner->context, cursor, &info) == OBELISK_RT_OK) {
+bool semanticTypeInfo(__vpiHandle *handle, talos_rt_design_cursor_v1 cursor,
+                      talos_rt_design_semantic_type_info_v1 &info) {
+  if (talos_rt_cached_design_semantic_type_info(
+          handle->owner->context, cursor, &info) == TALOS_RT_OK) {
     if (handle->suppressSemanticDimension &&
         cursor.offset == handle->semanticCursor.offset)
       projectScalarBitTypespec(info);
@@ -2251,26 +2251,26 @@ bool semanticTypeInfo(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
   return false;
 }
 
-bool semanticEdge(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
+bool semanticEdge(__vpiHandle *handle, talos_rt_design_cursor_v1 cursor,
                   uint32_t ordinal,
-                  obelisk_rt_design_semantic_type_edge_v1 &edge) {
-  if (obelisk_rt_cached_design_semantic_type_edge(
-          handle->owner->context, cursor, ordinal, &edge) == OBELISK_RT_OK)
+                  talos_rt_design_semantic_type_edge_v1 &edge) {
+  if (talos_rt_cached_design_semantic_type_edge(
+          handle->owner->context, cursor, ordinal, &edge) == TALOS_RT_OK)
     return true;
   setError(handle->owner, "VPI semantic type edge lookup failed", vpiInternal);
   return false;
 }
 
-bool semanticElement(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
-                     obelisk_rt_design_cursor_v1 &element) {
-  obelisk_rt_design_semantic_type_info_v1 info{};
+bool semanticElement(__vpiHandle *handle, talos_rt_design_cursor_v1 cursor,
+                     talos_rt_design_cursor_v1 &element) {
+  talos_rt_design_semantic_type_info_v1 info{};
   if (!semanticTypeInfo(handle, cursor, info))
     return false;
   for (uint32_t ordinal = 0; ordinal != info.edge_count; ++ordinal) {
-    obelisk_rt_design_semantic_type_edge_v1 edge{};
+    talos_rt_design_semantic_type_edge_v1 edge{};
     if (!semanticEdge(handle, cursor, ordinal, edge))
       return false;
-    if (edge.role == OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT) {
+    if (edge.role == TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT) {
       element = edge.child;
       return true;
     }
@@ -2295,17 +2295,17 @@ bool sourceIndexOrdinal(int64_t left, int64_t right, int64_t index,
 }
 
 bool unpackedArrayElementCount(__vpiHandle *handle,
-                               obelisk_rt_design_cursor_v1 cursor,
+                               talos_rt_design_cursor_v1 cursor,
                                uint64_t &count) {
   count = 1;
   for (;;) {
-    obelisk_rt_design_type_info_v1 type{};
+    talos_rt_design_type_info_v1 type{};
     if (cursor.offset == 0 ||
-        obelisk_rt_cached_design_type_info(handle->owner->context, cursor,
-                                           &type) != OBELISK_RT_OK)
+        talos_rt_cached_design_type_info(handle->owner->context, cursor,
+                                           &type) != TALOS_RT_OK)
       return false;
-    if (type.kind != OBELISK_RT_DESIGN_TYPE_ARRAY ||
-        (type.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0)
+    if (type.kind != TALOS_RT_DESIGN_TYPE_ARRAY ||
+        (type.flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0)
       return true;
     uint64_t ordinal = 0, extent = 0;
     if (!sourceIndexOrdinal(type.range_left, type.range_right, type.range_left,
@@ -2318,13 +2318,13 @@ bool unpackedArrayElementCount(__vpiHandle *handle,
 }
 
 bool physicalTypeInfo(__vpiHandle *handle,
-                      obelisk_rt_design_type_info_v1 &type) {
-  obelisk_rt_design_info_v1 info{};
+                      talos_rt_design_type_info_v1 &type) {
+  talos_rt_design_info_v1 info{};
   if (!infoFor(handle, info))
     return false;
   if (info.type_offset == 0 ||
-      obelisk_rt_cached_design_type_info(
-          handle->owner->context, {info.type_offset}, &type) != OBELISK_RT_OK) {
+      talos_rt_cached_design_type_info(
+          handle->owner->context, {info.type_offset}, &type) != TALOS_RT_OK) {
     setError(handle->owner, "design type metadata lookup failed", vpiInternal);
     return false;
   }
@@ -2333,22 +2333,22 @@ bool physicalTypeInfo(__vpiHandle *handle,
 
 bool physicalUnpackedArrayDimensions(__vpiHandle *handle,
                                      uint32_t &dimensions) {
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   if (!infoFor(handle, info))
     return false;
   dimensions = 0;
-  obelisk_rt_design_cursor_v1 cursor{info.type_offset};
+  talos_rt_design_cursor_v1 cursor{info.type_offset};
   for (;;) {
-    obelisk_rt_design_type_info_v1 type{};
+    talos_rt_design_type_info_v1 type{};
     if (cursor.offset == 0 ||
-        obelisk_rt_cached_design_type_info(handle->owner->context, cursor,
-                                           &type) != OBELISK_RT_OK) {
+        talos_rt_cached_design_type_info(handle->owner->context, cursor,
+                                           &type) != TALOS_RT_OK) {
       setError(handle->owner, "design type metadata lookup failed",
                vpiInternal);
       return false;
     }
-    if (type.kind != OBELISK_RT_DESIGN_TYPE_ARRAY ||
-        (type.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0)
+    if (type.kind != TALOS_RT_DESIGN_TYPE_ARRAY ||
+        (type.flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0)
       return true;
     if (dimensions == UINT32_MAX) {
       setError(handle->owner, "physical array dimension count exceeds ABI",
@@ -2361,7 +2361,7 @@ bool physicalUnpackedArrayDimensions(__vpiHandle *handle,
 }
 
 bool supportsPackedBitSelect(__vpiHandle *handle,
-                             obelisk_rt_design_cursor_v1 semantic,
+                             talos_rt_design_cursor_v1 semantic,
                              uint32_t exactType) {
   if (semantic.offset == 0) {
     switch (exactType) {
@@ -2396,25 +2396,25 @@ bool supportsPackedBitSelect(__vpiHandle *handle,
       return false;
     }
   }
-  obelisk_rt_design_semantic_type_info_v1 info{};
+  talos_rt_design_semantic_type_info_v1 info{};
   if (!semanticTypeInfo(handle, semantic, info))
     return false;
   switch (info.kind) {
-  case OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
-  case OBELISK_RT_DESIGN_SEMANTIC_BIT:
-  case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
-  case OBELISK_RT_DESIGN_SEMANTIC_REG:
-  case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
-  case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
-  case OBELISK_RT_DESIGN_SEMANTIC_INT:
-  case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
-  case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
-  case OBELISK_RT_DESIGN_SEMANTIC_ENUM:
-  case OBELISK_RT_DESIGN_SEMANTIC_TIME:
-  case OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
-  case OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
-  case OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION:
-  case OBELISK_RT_DESIGN_SEMANTIC_PACKED_OPEN_ARRAY:
+  case TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
+  case TALOS_RT_DESIGN_SEMANTIC_BIT:
+  case TALOS_RT_DESIGN_SEMANTIC_LOGIC:
+  case TALOS_RT_DESIGN_SEMANTIC_REG:
+  case TALOS_RT_DESIGN_SEMANTIC_BYTE:
+  case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
+  case TALOS_RT_DESIGN_SEMANTIC_INT:
+  case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
+  case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
+  case TALOS_RT_DESIGN_SEMANTIC_ENUM:
+  case TALOS_RT_DESIGN_SEMANTIC_TIME:
+  case TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
+  case TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
+  case TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION:
+  case TALOS_RT_DESIGN_SEMANTIC_PACKED_OPEN_ARRAY:
     return true;
   default:
     return false;
@@ -2433,8 +2433,8 @@ bool isIndexedArrayMember(const __vpiHandle *handle) {
   if (handle->form != VPIObjectForm::Design)
     return false;
   VPIArrayMemberInfo member{};
-  return obelisk_rt_cached_vpi_array_member(
-             handle->owner->context, handle->cursor, &member) == OBELISK_RT_OK;
+  return talos_rt_cached_vpi_array_member(
+             handle->owner->context, handle->cursor, &member) == TALOS_RT_OK;
 }
 
 bool isIndexedPackedArrayMember(const __vpiHandle *handle,
@@ -2471,26 +2471,26 @@ bool staticArrayMemberIndexSteps(__vpiHandle *handle,
                                  std::vector<VPISelectionStep> &steps) {
   if (!handle || handle->form != VPIObjectForm::Design)
     return false;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     steps.clear();
-    obelisk_rt_design_cursor_v1 cursor = handle->cursor;
+    talos_rt_design_cursor_v1 cursor = handle->cursor;
     bool foundMember = false;
     while (true) {
       VPIArrayMemberInfo member{};
-      obelisk_rt_status status = obelisk_rt_cached_vpi_array_member(
+      talos_rt_status status = talos_rt_cached_vpi_array_member(
           handle->owner->context, cursor, &member);
-      if (status == OBELISK_RT_EOF)
+      if (status == TALOS_RT_EOF)
         return foundMember;
-      if (status != OBELISK_RT_OK || member.array.offset == cursor.offset)
+      if (status != TALOS_RT_OK || member.array.offset == cursor.offset)
         return false;
       foundMember = true;
       std::vector<VPISelectionStep> dimensions(member.index.dimensionCount);
       if (member.index.sparse) {
         int64_t index = 0;
         if (dimensions.size() != 1 ||
-            obelisk_rt_cached_vpi_relation_index_ordinal_key(
+            talos_rt_cached_vpi_relation_index_ordinal_key(
                 handle->owner->context, member.index, member.ordinal, &index) !=
-                OBELISK_RT_OK)
+                TALOS_RT_OK)
           return false;
         dimensions[0].index = index;
         dimensions[0].selectionOrdinal = 0;
@@ -2500,10 +2500,10 @@ bool staticArrayMemberIndexSteps(__vpiHandle *handle,
         for (size_t dimension = member.index.dimensionCount; dimension != 0;) {
           --dimension;
           int64_t left = 0, right = 0;
-          if (obelisk_rt_cached_vpi_relation_index_dimension(
+          if (talos_rt_cached_vpi_relation_index_dimension(
                   handle->owner->context, member.index,
                   static_cast<uint32_t>(dimension), &left,
-                  &right) != OBELISK_RT_OK)
+                  &right) != TALOS_RT_OK)
             return false;
           uint64_t ordinal = 0, extent = 0;
           if (!sourceIndexOrdinal(left, right, left, ordinal, extent) ||
@@ -2525,7 +2525,7 @@ bool staticArrayMemberIndexSteps(__vpiHandle *handle,
       cursor = member.array;
     }
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(handle->owner, "could not allocate VPI member indices", vpiSystem);
     return false;
   }
@@ -2533,8 +2533,8 @@ bool staticArrayMemberIndexSteps(__vpiHandle *handle,
 
 uint32_t
 indexedResultType(__vpiHandle *source,
-                  const obelisk::reflection::VPIIndexedAccessDescriptor &access,
-                  obelisk_rt_design_cursor_v1 semanticType,
+                  const talos::reflection::VPIIndexedAccessDescriptor &access,
+                  talos_rt_design_cursor_v1 semanticType,
                   bool selectedPhysicalUnpackedArray, bool terminalBit) {
   if (terminalBit)
     return access.terminalResult;
@@ -2542,7 +2542,7 @@ indexedResultType(__vpiHandle *source,
     return access.unpackedFallback;
   if (access.mapSemanticType && semanticType.offset != 0) {
     uint32_t publicTypespec = semanticTypespecKind(source->owner, semanticType);
-    if (const auto *mapping = obelisk::reflection::findVPIIndexedTypeResult(
+    if (const auto *mapping = talos::reflection::findVPIIndexedTypeResult(
             access.accessKind, publicTypespec))
       return mapping->resultType;
   }
@@ -2559,24 +2559,24 @@ bool isStoredClassEventArray(__vpiHandle *source) {
   if (rootType != vpiNamedEventArray)
     return false;
   VPIClassMemberBinding member{};
-  return obelisk_rt_cached_vpi_class_member(source->owner->context,
+  return talos_rt_cached_vpi_class_member(source->owner->context,
                                             source->cursor,
-                                            &member) == OBELISK_RT_OK &&
+                                            &member) == TALOS_RT_OK &&
          !member.isMethod;
 }
 
 bool indexedInfoForSteps(__vpiHandle *source,
                          const std::vector<VPISelectionStep> &steps,
-                         obelisk_rt_design_info_v1 &info) {
+                         talos_rt_design_info_v1 &info) {
   if (steps.empty() ||
-      obelisk_rt_cached_design_info(source->owner->context, source->cursor,
-                                    &info) != OBELISK_RT_OK)
+      talos_rt_cached_design_info(source->owner->context, source->cursor,
+                                    &info) != TALOS_RT_OK)
     return false;
   const VPISelectionStep &last = steps.back();
-  obelisk_rt_design_type_info_v1 type{};
+  talos_rt_design_type_info_v1 type{};
   if (last.physicalType.offset == 0 ||
-      obelisk_rt_cached_design_type_info(
-          source->owner->context, last.physicalType, &type) != OBELISK_RT_OK)
+      talos_rt_cached_design_type_info(
+          source->owner->context, last.physicalType, &type) != TALOS_RT_OK)
     return false;
   info.type_offset = last.physicalType.offset;
   info.bit_width = last.bitWidth;
@@ -2592,16 +2592,16 @@ bool indexedInfoForSteps(__vpiHandle *source,
 
 vpiHandle
 makeIndexedHandle(__vpiHandle *source, uint32_t rootType,
-                  obelisk::reflection::VPIIndexedAccessKind accessKind,
+                  talos::reflection::VPIIndexedAccessKind accessKind,
                   std::vector<VPISelectionStep> steps) {
   if (!source || steps.empty())
     return nullptr;
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   if (!indexedInfoForSteps(source, steps, info)) {
     setError(source->owner, "indexed VPI metadata lookup failed", vpiInternal);
     return nullptr;
   }
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = source->owner;
     handle->kind = VPIHandleKind::Object;
@@ -2626,7 +2626,7 @@ makeIndexedHandle(__vpiHandle *source, uint32_t rootType,
     handle->info = info;
     return keepHandle(source->owner, std::move(handle));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate indexed VPI handle", vpiSystem);
     return nullptr;
   }
@@ -2637,12 +2637,12 @@ makeInterfaceSelectionHandle(__vpiHandle *source, uint32_t rootType,
                              const std::vector<VPISelectionStep> &steps) {
   if (!source)
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     return makeIndexedHandle(
         source, rootType,
-        obelisk::reflection::VPIIndexedAccessKind::VariableElement, steps);
+        talos::reflection::VPIIndexedAccessKind::VariableElement, steps);
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate virtual-interface selection",
              vpiSystem);
     return nullptr;
@@ -2700,7 +2700,7 @@ makeInterModPathEndpointHandle(VPIState *state,
   if (endpoint.form != VPIObjectForm::Indexed ||
       endpoint.selectionSteps.empty())
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     __vpiHandle source;
     source.owner = state;
     source.cursor = endpoint.cursor;
@@ -2714,7 +2714,7 @@ makeInterModPathEndpointHandle(VPIState *state,
                              endpoint.selectionAccessKind,
                              endpoint.selectionSteps);
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not copy VPI intermodule-path endpoint", vpiSystem);
     return nullptr;
   }
@@ -2742,16 +2742,16 @@ vpiHandle makeIndexedPrefix(__vpiHandle *source, size_t count) {
     }
     return result;
   }
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<VPISelectionStep> prefix(
         source->selectionSteps.begin(), source->selectionSteps.begin() + count);
     if (source->selectionAccessKind ==
-            obelisk::reflection::VPIIndexedAccessKind::RelationElement &&
+            talos::reflection::VPIIndexedAccessKind::RelationElement &&
         !isStoredClassEventArray(source)) {
       VPIRelationIndexInfo index{};
-      if (obelisk_rt_cached_vpi_relation_index(source->owner->context,
+      if (talos_rt_cached_vpi_relation_index(source->owner->context,
                                                source->cursor,
-                                               &index) != OBELISK_RT_OK ||
+                                               &index) != TALOS_RT_OK ||
           index.sparse || count >= index.dimensionCount)
         return nullptr;
       uint64_t remaining = 1;
@@ -2759,9 +2759,9 @@ vpiHandle makeIndexedPrefix(__vpiHandle *source, size_t count) {
       for (uint32_t dimension = static_cast<uint32_t>(count);
            dimension != index.dimensionCount; ++dimension) {
         int64_t left = 0, right = 0;
-        if (obelisk_rt_cached_vpi_relation_index_dimension(
+        if (talos_rt_cached_vpi_relation_index_dimension(
                 source->owner->context, index, dimension, &left, &right) !=
-            OBELISK_RT_OK)
+            TALOS_RT_OK)
           return nullptr;
         uint64_t ordinal = 0, extent = 0;
         if (!sourceIndexOrdinal(left, right, left, ordinal, extent) ||
@@ -2780,24 +2780,24 @@ vpiHandle makeIndexedPrefix(__vpiHandle *source, size_t count) {
     return makeIndexedHandle(source, source->selectionRootType,
                              source->selectionAccessKind, std::move(prefix));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate indexed VPI prefix", vpiSystem);
     return nullptr;
   }
 }
 
 bool isVirtualInterfaceSequence(__vpiHandle *source,
-                                obelisk_rt_design_cursor_v1 semantic) {
+                                talos_rt_design_cursor_v1 semantic) {
   for (;;) {
-    obelisk_rt_design_semantic_type_info_v1 info{};
+    talos_rt_design_semantic_type_info_v1 info{};
     if (!semanticTypeInfo(source, semantic, info))
       return false;
-    if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE)
+    if (info.kind == TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE)
       return true;
-    if (info.kind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY &&
-        info.kind != OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY &&
-        info.kind != OBELISK_RT_DESIGN_SEMANTIC_QUEUE &&
-        info.kind != OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY)
+    if (info.kind != TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY &&
+        info.kind != TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY &&
+        info.kind != TALOS_RT_DESIGN_SEMANTIC_QUEUE &&
+        info.kind != TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY)
       return false;
     if (!semanticElement(source, semantic, semantic))
       return false;
@@ -2809,54 +2809,54 @@ bool readManagedSelectionWord(__vpiHandle *source,
                               uint64_t &word);
 
 bool sequentialInterfaceElement(__vpiHandle *source,
-                                obelisk_rt_design_cursor_v1 semantic,
+                                talos_rt_design_cursor_v1 semantic,
                                 uint64_t word, std::optional<uint64_t> index,
                                 VPIContainerElementSnapshot &snapshot) {
   snapshot = {};
-  obelisk_rt_design_semantic_type_info_v1 parent{};
-  obelisk_rt_design_cursor_v1 childSemantic{};
+  talos_rt_design_semantic_type_info_v1 parent{};
+  talos_rt_design_cursor_v1 childSemantic{};
   if (!semanticTypeInfo(source, semantic, parent) ||
       !semanticElement(source, semantic, childSemantic))
     return false;
-  if (parent.kind != OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY &&
-      parent.kind != OBELISK_RT_DESIGN_SEMANTIC_QUEUE)
+  if (parent.kind != TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY &&
+      parent.kind != TALOS_RT_DESIGN_SEMANTIC_QUEUE)
     return false;
   if (!word)
     return !index;
   auto *object =
-      reinterpret_cast<obelisk_rt_object_v1 *>(static_cast<uintptr_t>(word));
+      reinterpret_cast<talos_rt_object_v1 *>(static_cast<uintptr_t>(word));
   if (static_cast<uint64_t>(reinterpret_cast<uintptr_t>(object)) != word ||
-      !obelisk_rt_managed_object_belongs_to(source->owner->context, object)) {
+      !talos_rt_managed_object_belongs_to(source->owner->context, object)) {
     setError(source->owner, "invalid virtual-interface array reference",
              vpiNotice);
     return false;
   }
   const auto status =
-      obelisk_rt_container_element_snapshot(object, index, &snapshot);
-  if (status != OBELISK_RT_OK) {
-    if (status != OBELISK_RT_EOF)
+      talos_rt_container_element_snapshot(object, index, &snapshot);
+  if (status != TALOS_RT_OK) {
+    if (status != TALOS_RT_EOF)
       setError(source->owner, "could not inspect virtual-interface array",
-               status == OBELISK_RT_OUT_OF_MEMORY ||
-                       status == OBELISK_RT_OUT_OF_RESOURCES
+               status == TALOS_RT_OUT_OF_MEMORY ||
+                       status == TALOS_RT_OUT_OF_RESOURCES
                    ? vpiSystem
                    : vpiNotice);
     return false;
   }
   const uint32_t expectedContainer =
-      parent.kind == OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY
-          ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
-          : OBELISK_RT_CONTAINER_QUEUE;
+      parent.kind == TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY
+          ? TALOS_RT_CONTAINER_DYNAMIC_ARRAY
+          : TALOS_RT_CONTAINER_QUEUE;
   VPIValueLayoutOwner layout;
-  auto match = obelisk_rt_cached_vpi_value_layout_owner(
+  auto match = talos_rt_cached_vpi_value_layout_owner(
       source->owner->context, source->cursor, &layout);
-  if (match == OBELISK_RT_OK)
-    match = obelisk_rt_vpi_element_matches(source->owner->context, layout,
+  if (match == TALOS_RT_OK)
+    match = talos_rt_vpi_element_matches(source->owner->context, layout,
                                            childSemantic, snapshot.element);
-  if (snapshot.kind != expectedContainer || match != OBELISK_RT_OK) {
+  if (snapshot.kind != expectedContainer || match != TALOS_RT_OK) {
     setError(source->owner,
              "virtual-interface array does not match its declared layout",
-             match == OBELISK_RT_OUT_OF_MEMORY ||
-                     match == OBELISK_RT_OUT_OF_RESOURCES
+             match == TALOS_RT_OUT_OF_MEMORY ||
+                     match == TALOS_RT_OUT_OF_RESOURCES
                  ? vpiSystem
                  : vpiNotice);
     return false;
@@ -2867,31 +2867,31 @@ bool sequentialInterfaceElement(__vpiHandle *source,
 bool snapshotIndexEquals(const VPISnapshotValue &key, PLI_INT32 index);
 bool messageElementDescriptor(__vpiHandle *source,
                               std::optional<VPIValueLayoutOwner> layoutOwner,
-                              obelisk_rt_design_cursor_v1 semantic,
-                              obelisk_rt_element_type_v1 &element);
+                              talos_rt_design_cursor_v1 semantic,
+                              talos_rt_element_type_v1 &element);
 std::shared_ptr<const VPISnapshotValue>
-snapshotMessageValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
+snapshotMessageValue(__vpiHandle *source, talos_rt_gc_lane_v1 *lane,
                      std::optional<VPIValueLayoutOwner> layoutOwner,
-                     obelisk_rt_design_cursor_v1 semantic,
-                     const obelisk_rt_element_type_v1 &element,
+                     talos_rt_design_cursor_v1 semantic,
+                     const talos_rt_element_type_v1 &element,
                      const uint8_t *bytes);
 
 bool interfaceAssociativeSnapshot(__vpiHandle *source,
-                                  obelisk_rt_design_cursor_v1 semantic,
+                                  talos_rt_design_cursor_v1 semantic,
                                   uint64_t word, VPIAssocSnapshot &snapshot,
                                   VPIValueLayoutOwner &layout,
-                                  obelisk_rt_design_cursor_v1 &keySemantic,
-                                  obelisk_rt_element_type_v1 &keyElement) {
+                                  talos_rt_design_cursor_v1 &keySemantic,
+                                  talos_rt_element_type_v1 &keyElement) {
   snapshot = {};
-  obelisk_rt_design_semantic_type_edge_v1 keyEdge{};
-  obelisk_rt_design_semantic_type_info_v1 keyInfo{};
-  obelisk_rt_design_cursor_v1 element{};
+  talos_rt_design_semantic_type_edge_v1 keyEdge{};
+  talos_rt_design_semantic_type_info_v1 keyInfo{};
+  talos_rt_design_cursor_v1 element{};
   if (!semanticEdge(source, semantic, 0, keyEdge) ||
-      keyEdge.role != OBELISK_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX ||
+      keyEdge.role != TALOS_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX ||
       !semanticTypeInfo(source, keyEdge.child, keyInfo) ||
       !semanticElement(source, semantic, element) ||
-      obelisk_rt_cached_vpi_value_layout_owner(
-          source->owner->context, source->cursor, &layout) != OBELISK_RT_OK) {
+      talos_rt_cached_vpi_value_layout_owner(
+          source->owner->context, source->cursor, &layout) != TALOS_RT_OK) {
     setError(source->owner,
              "associative virtual-interface layout is unavailable", vpiNotice);
     return false;
@@ -2899,60 +2899,60 @@ bool interfaceAssociativeSnapshot(__vpiHandle *source,
   keySemantic = keyEdge.child;
   if (!word)
     return true;
-  auto *object = obelisk_rt_object_from_managed_word(word);
-  if (word != obelisk_rt_managed_word_from_object(object) ||
-      !obelisk_rt_managed_object_belongs_to(source->owner->context, object)) {
+  auto *object = talos_rt_object_from_managed_word(word);
+  if (word != talos_rt_managed_word_from_object(object) ||
+      !talos_rt_managed_object_belongs_to(source->owner->context, object)) {
     setError(source->owner, "invalid associative virtual-interface reference",
              vpiNotice);
     return false;
   }
-  auto status = obelisk_rt_assoc_snapshot(object, &snapshot);
-  if (status == OBELISK_RT_OK)
-    status = obelisk_rt_vpi_element_matches(source->owner->context, layout,
+  auto status = talos_rt_assoc_snapshot(object, &snapshot);
+  if (status == TALOS_RT_OK)
+    status = talos_rt_vpi_element_matches(source->owner->context, layout,
                                             element, snapshot.element);
-  if (status != OBELISK_RT_OK) {
+  if (status != TALOS_RT_OK) {
     setError(source->owner, "associative virtual-interface storage mismatch",
-             status == OBELISK_RT_OUT_OF_MEMORY ||
-                     status == OBELISK_RT_OUT_OF_RESOURCES
+             status == TALOS_RT_OUT_OF_MEMORY ||
+                     status == TALOS_RT_OUT_OF_RESOURCES
                  ? vpiSystem
                  : vpiNotice);
     return false;
   }
-  if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
-    if (keyInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_UNTYPED)
+  if (snapshot.keyKind == TALOS_RT_ASSOC_KEY_WILDCARD) {
+    if (keyInfo.kind == TALOS_RT_DESIGN_SEMANTIC_UNTYPED)
       return true;
   } else if (messageElementDescriptor(source, layout, keySemantic,
                                       keyElement)) {
     switch (snapshot.keyKind) {
-    case OBELISK_RT_ASSOC_KEY_SIGNED:
-    case OBELISK_RT_ASSOC_KEY_UNSIGNED:
-      if ((keyElement.kind == OBELISK_RT_ELEMENT_BITS ||
-           keyElement.kind == OBELISK_RT_ELEMENT_LOGIC) &&
+    case TALOS_RT_ASSOC_KEY_SIGNED:
+    case TALOS_RT_ASSOC_KEY_UNSIGNED:
+      if ((keyElement.kind == TALOS_RT_ELEMENT_BITS ||
+           keyElement.kind == TALOS_RT_ELEMENT_LOGIC) &&
           keyElement.bit_width == snapshot.keyWidth &&
-          ((keyInfo.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0) ==
-              (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED))
+          ((keyInfo.flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) != 0) ==
+              (snapshot.keyKind == TALOS_RT_ASSOC_KEY_SIGNED))
         return true;
       break;
-    case OBELISK_RT_ASSOC_KEY_STRING:
-      if (keyInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_STRING)
+    case TALOS_RT_ASSOC_KEY_STRING:
+      if (keyInfo.kind == TALOS_RT_DESIGN_SEMANTIC_STRING)
         return true;
       break;
-    case OBELISK_RT_ASSOC_KEY_CLASS:
-      if (keyInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS)
+    case TALOS_RT_ASSOC_KEY_CLASS:
+      if (keyInfo.kind == TALOS_RT_DESIGN_SEMANTIC_CLASS)
         return true;
       break;
-    case OBELISK_RT_ASSOC_KEY_PROCESS:
-      if (keyInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS)
+    case TALOS_RT_ASSOC_KEY_PROCESS:
+      if (keyInfo.kind == TALOS_RT_DESIGN_SEMANTIC_PROCESS)
         return true;
       break;
-    case OBELISK_RT_ASSOC_KEY_ELEMENT:
+    case TALOS_RT_ASSOC_KEY_ELEMENT:
       if (snapshot.keyElement) {
-        const auto match = obelisk_rt_vpi_element_matches(
+        const auto match = talos_rt_vpi_element_matches(
             source->owner->context, layout, keySemantic, snapshot.keyElement);
-        if (match == OBELISK_RT_OK)
+        if (match == TALOS_RT_OK)
           return true;
-        if (match == OBELISK_RT_OUT_OF_MEMORY ||
-            match == OBELISK_RT_OUT_OF_RESOURCES) {
+        if (match == TALOS_RT_OUT_OF_MEMORY ||
+            match == TALOS_RT_OUT_OF_RESOURCES) {
           setError(source->owner, "could not validate associative index layout",
                    vpiSystem);
           return false;
@@ -2969,17 +2969,17 @@ bool interfaceAssociativeSnapshot(__vpiHandle *source,
 
 bool interfaceAssociativeKeys(
     __vpiHandle *source, const std::vector<VPISelectionStep> &steps,
-    obelisk_rt_design_cursor_v1 semantic,
+    talos_rt_design_cursor_v1 semantic,
     std::vector<std::shared_ptr<const VPIAssociativeSelection>> &keys) {
   ManagedExecutionScope managed(source->owner->context);
-  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
+  if (managed.getStatus() != TALOS_RT_OK || !managed.getLane())
     return false;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     uint64_t word = 0;
     VPIAssocSnapshot snapshot;
     VPIValueLayoutOwner layout;
-    obelisk_rt_design_cursor_v1 keySemantic{};
-    obelisk_rt_element_type_v1 keyElement{};
+    talos_rt_design_cursor_v1 keySemantic{};
+    talos_rt_element_type_v1 keyElement{};
     if (!readManagedSelectionWord(source, steps, word) ||
         !interfaceAssociativeSnapshot(source, semantic, word, snapshot, layout,
                                       keySemantic, keyElement))
@@ -2989,7 +2989,7 @@ bool interfaceAssociativeKeys(
       key->kind = snapshot.keyKind;
       key->width = entry.keyWidth;
       key->identity = std::move(entry.identity);
-      if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
+      if (snapshot.keyKind == TALOS_RT_ASSOC_KEY_WILDCARD) {
         if (!entry.keyWidth || entry.keyWidth > SIZE_MAX - 63 ||
             entry.key.size() != (entry.keyWidth + 7) / 8)
           return false;
@@ -3006,9 +3006,9 @@ bool interfaceAssociativeKeys(
         key->expression = std::move(expression);
       } else {
         const uint64_t planes =
-            (keyElement.flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
-        const bool integral = snapshot.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED ||
-                              snapshot.keyKind == OBELISK_RT_ASSOC_KEY_UNSIGNED;
+            (keyElement.flags & TALOS_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
+        const bool integral = snapshot.keyKind == TALOS_RT_ASSOC_KEY_SIGNED ||
+                              snapshot.keyKind == TALOS_RT_ASSOC_KEY_UNSIGNED;
         if (!keyElement.value_size ||
             keyElement.value_size > SIZE_MAX / planes ||
             entry.key.size() != keyElement.value_size * (integral ? 1 : planes))
@@ -3024,7 +3024,7 @@ bool interfaceAssociativeKeys(
     }
     return true;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner,
              "could not copy associative virtual-interface indices", vpiSystem);
     return false;
@@ -3032,13 +3032,13 @@ bool interfaceAssociativeKeys(
 }
 
 bool readInterfaceAssociativeElement(
-    __vpiHandle *source, obelisk_rt_design_cursor_v1 semantic, uint64_t word,
+    __vpiHandle *source, talos_rt_design_cursor_v1 semantic, uint64_t word,
     const VPIAssociativeSelection &key, std::vector<uint8_t> &value,
-    const obelisk_rt_element_type_v1 **element = nullptr) {
+    const talos_rt_element_type_v1 **element = nullptr) {
   VPIAssocSnapshot snapshot;
   VPIValueLayoutOwner layout;
-  obelisk_rt_design_cursor_v1 keySemantic{};
-  obelisk_rt_element_type_v1 keyElement{};
+  talos_rt_design_cursor_v1 keySemantic{};
+  talos_rt_element_type_v1 keyElement{};
   if (!interfaceAssociativeSnapshot(source, semantic, word, snapshot, layout,
                                     keySemantic, keyElement))
     return false;
@@ -3055,25 +3055,25 @@ bool readInterfaceAssociativeElement(
 }
 
 bool appendInterfaceAssociativeSelection(
-    __vpiHandle *source, obelisk_rt_design_cursor_v1 semantic,
+    __vpiHandle *source, talos_rt_design_cursor_v1 semantic,
     std::shared_ptr<const VPIAssociativeSelection> key,
     std::vector<VPISelectionStep> &steps) {
-  obelisk_rt_design_cursor_v1 childSemantic{}, childPhysical{};
+  talos_rt_design_cursor_v1 childSemantic{}, childPhysical{};
   if (!semanticElement(source, semantic, childSemantic) ||
-      obelisk_rt_cached_vpi_value_element_type(source->owner->context,
+      talos_rt_cached_vpi_value_element_type(source->owner->context,
                                                source->cursor, childSemantic,
-                                               &childPhysical) != OBELISK_RT_OK)
+                                               &childPhysical) != TALOS_RT_OK)
     return false;
-  obelisk_rt_design_type_info_v1 childType{};
+  talos_rt_design_type_info_v1 childType{};
   uint32_t currentType = steps.empty()
                              ? static_cast<uint32_t>(vpiTypeForHandle(source))
                              : steps.back().exactVpiType;
-  const auto *access = obelisk::reflection::findVPIIndexedAccess(currentType);
+  const auto *access = talos::reflection::findVPIIndexedAccess(currentType);
   if (!access ||
       access->accessKind !=
-          obelisk::reflection::VPIIndexedAccessKind::VariableElement ||
-      obelisk_rt_cached_design_type_info(source->owner->context, childPhysical,
-                                         &childType) != OBELISK_RT_OK ||
+          talos::reflection::VPIIndexedAccessKind::VariableElement ||
+      talos_rt_cached_design_type_info(source->owner->context, childPhysical,
+                                         &childType) != TALOS_RT_OK ||
       steps.size() > UINT32_MAX)
     return false;
   VPISelectionStep step;
@@ -3083,8 +3083,8 @@ bool appendInterfaceAssociativeSelection(
   step.selectionOrdinal = static_cast<uint32_t>(steps.size());
   step.exactVpiType =
       indexedResultType(source, *access, childSemantic,
-                        childType.kind == OBELISK_RT_DESIGN_TYPE_ARRAY &&
-                            !(childType.flags & OBELISK_RT_DESIGN_TYPE_PACKED),
+                        childType.kind == TALOS_RT_DESIGN_TYPE_ARRAY &&
+                            !(childType.flags & TALOS_RT_DESIGN_TYPE_PACKED),
                         false);
   if (!step.exactVpiType)
     return false;
@@ -3095,23 +3095,23 @@ bool appendInterfaceAssociativeSelection(
 }
 
 bool appendIndexedSelection(
-    __vpiHandle *source, obelisk::reflection::VPIIndexedAccessKind accessKind,
+    __vpiHandle *source, talos::reflection::VPIIndexedAccessKind accessKind,
     int64_t index, std::vector<VPISelectionStep> &steps) {
-  obelisk_rt_design_info_v1 object{};
-  if (obelisk_rt_cached_design_info(source->owner->context, source->cursor,
-                                    &object) != OBELISK_RT_OK ||
+  talos_rt_design_info_v1 object{};
+  if (talos_rt_cached_design_info(source->owner->context, source->cursor,
+                                    &object) != TALOS_RT_OK ||
       object.type_offset == 0) {
     setError(source->owner, "indexed VPI object has no physical type",
              vpiNotice);
     return false;
   }
-  obelisk_rt_design_cursor_v1 physical{
+  talos_rt_design_cursor_v1 physical{
       steps.empty() ? object.type_offset : steps.back().physicalType.offset};
-  obelisk_rt_design_cursor_v1 semantic{};
+  talos_rt_design_cursor_v1 semantic{};
   if (!steps.empty())
     semantic = steps.back().semanticType;
   else
-    (void)obelisk_rt_cached_design_semantic_root(source->owner->context,
+    (void)talos_rt_cached_design_semantic_root(source->owner->context,
                                                  source->cursor, &semantic);
   if (!steps.empty() && steps.back().suppressSemanticDimension)
     return false;
@@ -3119,23 +3119,23 @@ bool appendIndexedSelection(
   uint32_t currentType = steps.empty()
                              ? static_cast<uint32_t>(vpiTypeForHandle(source))
                              : steps.back().exactVpiType;
-  const auto *access = obelisk::reflection::findVPIIndexedAccess(currentType);
+  const auto *access = talos::reflection::findVPIIndexedAccess(currentType);
   if (!access || access->accessKind != accessKind)
     return false;
 
-  obelisk_rt_design_type_info_v1 type{};
-  if (obelisk_rt_cached_design_type_info(source->owner->context, physical,
-                                         &type) != OBELISK_RT_OK) {
+  talos_rt_design_type_info_v1 type{};
+  if (talos_rt_cached_design_type_info(source->owner->context, physical,
+                                         &type) != TALOS_RT_OK) {
     setError(source->owner, "indexed VPI type metadata lookup failed",
              vpiInternal);
     return false;
   }
-  obelisk_rt_design_semantic_type_info_v1 semanticInfo{};
+  talos_rt_design_semantic_type_info_v1 semanticInfo{};
   if (semantic.offset && semanticTypeInfo(source, semantic, semanticInfo) &&
-      semanticInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY &&
+      semanticInfo.kind == TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY &&
       isVirtualInterfaceSequence(source, semantic)) {
     if (index < INT32_MIN || index > INT32_MAX ||
-        type.kind != OBELISK_RT_DESIGN_TYPE_SCALAR || type.bit_width != 64 ||
+        type.kind != TALOS_RT_DESIGN_TYPE_SCALAR || type.bit_width != 64 ||
         type.flags != 0)
       return false;
     std::vector<std::shared_ptr<const VPIAssociativeSelection>> keys;
@@ -3148,27 +3148,27 @@ bool appendIndexedSelection(
     return false;
   }
   if (semantic.offset && semanticTypeInfo(source, semantic, semanticInfo) &&
-      (semanticInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY ||
-       semanticInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_QUEUE) &&
+      (semanticInfo.kind == TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY ||
+       semanticInfo.kind == TALOS_RT_DESIGN_SEMANTIC_QUEUE) &&
       isVirtualInterfaceSequence(source, semantic)) {
-    if (index < 0 || type.kind != OBELISK_RT_DESIGN_TYPE_SCALAR ||
+    if (index < 0 || type.kind != TALOS_RT_DESIGN_TYPE_SCALAR ||
         type.bit_width != 64 || type.flags != 0)
       return false;
-    obelisk_rt_design_cursor_v1 childSemantic{}, childPhysical{};
+    talos_rt_design_cursor_v1 childSemantic{}, childPhysical{};
     if (!semanticElement(source, semantic, childSemantic) ||
-        obelisk_rt_cached_vpi_value_element_type(
+        talos_rt_cached_vpi_value_element_type(
             source->owner->context, source->cursor, childSemantic,
-            &childPhysical) != OBELISK_RT_OK) {
+            &childPhysical) != TALOS_RT_OK) {
       setError(source->owner, "virtual-interface array layout is unavailable",
                vpiNotice);
       return false;
     }
-    obelisk_rt_design_type_info_v1 childType{};
-    if (obelisk_rt_cached_design_type_info(
-            source->owner->context, childPhysical, &childType) != OBELISK_RT_OK)
+    talos_rt_design_type_info_v1 childType{};
+    if (talos_rt_cached_design_type_info(
+            source->owner->context, childPhysical, &childType) != TALOS_RT_OK)
       return false;
     ManagedExecutionScope managed(source->owner->context);
-    if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
+    if (managed.getStatus() != TALOS_RT_OK || !managed.getLane())
       return false;
     uint64_t word = 0;
     VPIContainerElementSnapshot selected;
@@ -3178,8 +3178,8 @@ bool appendIndexedSelection(
       return false;
     const uint32_t resultType = indexedResultType(
         source, *access, childSemantic,
-        childType.kind == OBELISK_RT_DESIGN_TYPE_ARRAY &&
-            !(childType.flags & OBELISK_RT_DESIGN_TYPE_PACKED),
+        childType.kind == TALOS_RT_DESIGN_TYPE_ARRAY &&
+            !(childType.flags & TALOS_RT_DESIGN_TYPE_PACKED),
         false);
     if (!resultType || steps.size() > UINT32_MAX)
       return false;
@@ -3194,8 +3194,8 @@ bool appendIndexedSelection(
     steps.push_back(step);
     return true;
   }
-  const bool isArray = type.kind == OBELISK_RT_DESIGN_TYPE_ARRAY;
-  const bool packed = (type.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0;
+  const bool isArray = type.kind == TALOS_RT_DESIGN_TYPE_ARRAY;
+  const bool packed = (type.flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0;
   if ((!isArray && (!packed || type.bit_width <= 1)) ||
       (isArray && type.element_type.offset == 0))
     return false;
@@ -3207,14 +3207,14 @@ bool appendIndexedSelection(
                           extent))
     return false;
 
-  obelisk_rt_design_cursor_v1 selectedPhysical = physical;
-  obelisk_rt_design_type_info_v1 selectedType = type;
+  talos_rt_design_cursor_v1 selectedPhysical = physical;
+  talos_rt_design_type_info_v1 selectedType = type;
   uint64_t selectedWidth = 1;
   if (isArray) {
     selectedPhysical = type.element_type;
-    if (obelisk_rt_cached_design_type_info(source->owner->context,
+    if (talos_rt_cached_design_type_info(source->owner->context,
                                            selectedPhysical,
-                                           &selectedType) != OBELISK_RT_OK) {
+                                           &selectedType) != TALOS_RT_OK) {
       setError(source->owner, "indexed VPI element type lookup failed",
                vpiInternal);
       return false;
@@ -3236,16 +3236,16 @@ bool appendIndexedSelection(
     return false;
   }
 
-  obelisk_rt_design_cursor_v1 selectedSemantic = semantic;
+  talos_rt_design_cursor_v1 selectedSemantic = semantic;
   if (isArray && semantic.offset != 0) {
-    obelisk_rt_design_cursor_v1 element{};
+    talos_rt_design_cursor_v1 element{};
     if (!semanticElement(source, semantic, element))
       return false;
     selectedSemantic = element;
   }
   bool terminalBit = !isArray;
   if (isArray && packed && selectedWidth == 1 &&
-      selectedType.kind == OBELISK_RT_DESIGN_TYPE_SCALAR) {
+      selectedType.kind == TALOS_RT_DESIGN_TYPE_SCALAR) {
     uint32_t publicTypespec =
         selectedSemantic.offset == 0
             ? 0
@@ -3254,16 +3254,16 @@ bool appendIndexedSelection(
                   publicTypespec == vpiLogicTypespec;
   }
   bool selectedPhysicalUnpackedArray =
-      selectedType.kind == OBELISK_RT_DESIGN_TYPE_ARRAY &&
-      (selectedType.flags & OBELISK_RT_DESIGN_TYPE_PACKED) == 0;
+      selectedType.kind == TALOS_RT_DESIGN_TYPE_ARRAY &&
+      (selectedType.flags & TALOS_RT_DESIGN_TYPE_PACKED) == 0;
   uint32_t resultType =
       indexedResultType(source, *access, selectedSemantic,
                         selectedPhysicalUnpackedArray, terminalBit);
   if (resultType == 0)
     return false;
   bool aggregateBoundary =
-      !isArray && (type.kind == OBELISK_RT_DESIGN_TYPE_STRUCT ||
-                   type.kind == OBELISK_RT_DESIGN_TYPE_UNION);
+      !isArray && (type.kind == TALOS_RT_DESIGN_TYPE_STRUCT ||
+                   type.kind == TALOS_RT_DESIGN_TYPE_UNION);
   if (steps.size() > UINT32_MAX) {
     setError(source->owner, "indexed VPI selection depth exceeds ABI",
              vpiInternal);
@@ -3286,65 +3286,65 @@ bool appendIndexedSelection(
 }
 
 bool appendAggregateMemberSelection(
-    __vpiHandle *source, obelisk::reflection::VPIIndexedAccessKind accessKind,
+    __vpiHandle *source, talos::reflection::VPIIndexedAccessKind accessKind,
     uint32_t edgeIndex, std::vector<VPISelectionStep> &steps) {
-  obelisk_rt_design_info_v1 object{};
-  if (obelisk_rt_cached_design_info(source->owner->context, source->cursor,
-                                    &object) != OBELISK_RT_OK ||
+  talos_rt_design_info_v1 object{};
+  if (talos_rt_cached_design_info(source->owner->context, source->cursor,
+                                    &object) != TALOS_RT_OK ||
       object.type_offset == 0)
     return false;
-  obelisk_rt_design_cursor_v1 physical{
+  talos_rt_design_cursor_v1 physical{
       steps.empty() ? object.type_offset : steps.back().physicalType.offset};
-  obelisk_rt_design_cursor_v1 semantic{};
+  talos_rt_design_cursor_v1 semantic{};
   if (!steps.empty())
     semantic = steps.back().semanticType;
-  else if (obelisk_rt_cached_design_semantic_root(source->owner->context,
+  else if (talos_rt_cached_design_semantic_root(source->owner->context,
                                                   source->cursor,
-                                                  &semantic) != OBELISK_RT_OK)
+                                                  &semantic) != TALOS_RT_OK)
     return false;
 
   uint32_t currentType = steps.empty()
                              ? static_cast<uint32_t>(vpiTypeForHandle(source))
                              : steps.back().exactVpiType;
-  const auto *access = obelisk::reflection::findVPIIndexedAccess(currentType);
+  const auto *access = talos::reflection::findVPIIndexedAccess(currentType);
   if (!access || access->accessKind != accessKind)
     return false;
 
-  obelisk_rt_design_type_info_v1 aggregate{};
-  obelisk_rt_design_semantic_type_info_v1 semanticInfo{};
-  if (obelisk_rt_cached_design_type_info(source->owner->context, physical,
-                                         &aggregate) != OBELISK_RT_OK ||
-      (aggregate.kind != OBELISK_RT_DESIGN_TYPE_STRUCT &&
-       aggregate.kind != OBELISK_RT_DESIGN_TYPE_UNION) ||
+  talos_rt_design_type_info_v1 aggregate{};
+  talos_rt_design_semantic_type_info_v1 semanticInfo{};
+  if (talos_rt_cached_design_type_info(source->owner->context, physical,
+                                         &aggregate) != TALOS_RT_OK ||
+      (aggregate.kind != TALOS_RT_DESIGN_TYPE_STRUCT &&
+       aggregate.kind != TALOS_RT_DESIGN_TYPE_UNION) ||
       !semanticTypeInfo(source, semantic, semanticInfo) ||
-      (semanticInfo.kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT &&
-       semanticInfo.kind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT &&
-       semanticInfo.kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION &&
-       semanticInfo.kind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION))
+      (semanticInfo.kind != TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT &&
+       semanticInfo.kind != TALOS_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT &&
+       semanticInfo.kind != TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION &&
+       semanticInfo.kind != TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION))
     return false;
 
-  obelisk_rt_design_semantic_type_edge_v1 edge{};
+  talos_rt_design_semantic_type_edge_v1 edge{};
   if (!semanticEdge(source, semantic, edgeIndex, edge) ||
-      edge.role != OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER)
+      edge.role != TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER)
     return false;
-  obelisk_rt_design_cursor_v1 field{};
-  obelisk_rt_design_type_info_v1 fieldInfo{};
-  obelisk_rt_design_type_info_v1 selectedType{};
-  if (obelisk_rt_cached_design_type_child(source->owner->context, physical,
+  talos_rt_design_cursor_v1 field{};
+  talos_rt_design_type_info_v1 fieldInfo{};
+  talos_rt_design_type_info_v1 selectedType{};
+  if (talos_rt_cached_design_type_child(source->owner->context, physical,
                                           edge.ordinal,
-                                          &field) != OBELISK_RT_OK ||
-      obelisk_rt_cached_design_type_info(source->owner->context, field,
-                                         &fieldInfo) != OBELISK_RT_OK ||
-      fieldInfo.kind != OBELISK_RT_DESIGN_TYPE_FIELD ||
+                                          &field) != TALOS_RT_OK ||
+      talos_rt_cached_design_type_info(source->owner->context, field,
+                                         &fieldInfo) != TALOS_RT_OK ||
+      fieldInfo.kind != TALOS_RT_DESIGN_TYPE_FIELD ||
       fieldInfo.element_type.offset == 0 ||
-      obelisk_rt_cached_design_type_info(source->owner->context,
+      talos_rt_cached_design_type_info(source->owner->context,
                                          fieldInfo.element_type,
-                                         &selectedType) != OBELISK_RT_OK)
+                                         &selectedType) != TALOS_RT_OK)
     return false;
 
   const bool unpackedArray =
-      selectedType.kind == OBELISK_RT_DESIGN_TYPE_ARRAY &&
-      (selectedType.flags & OBELISK_RT_DESIGN_TYPE_PACKED) == 0;
+      selectedType.kind == TALOS_RT_DESIGN_TYPE_ARRAY &&
+      (selectedType.flags & TALOS_RT_DESIGN_TYPE_PACKED) == 0;
   uint32_t resultType =
       indexedResultType(source, *access, edge.child, unpackedArray, false);
   if (resultType == 0 || steps.size() > UINT32_MAX)
@@ -3356,7 +3356,7 @@ bool appendAggregateMemberSelection(
                    previousOffset + fieldInfo.packed_offset,
                    fieldInfo.bit_width, static_cast<int64_t>(edge.ordinal),
                    edgeIndex, resultType, semantic,
-                   (aggregate.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0,
+                   (aggregate.flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0,
                    false, true, false, false});
   return true;
 }
@@ -3366,11 +3366,11 @@ vpiHandle handleByAggregateMember(__vpiHandle *source, uint32_t edgeIndex) {
                   source->form != VPIObjectForm::Indexed))
     return nullptr;
   const uint32_t sourceType = static_cast<uint32_t>(vpiTypeForHandle(source));
-  const auto *access = obelisk::reflection::findVPIIndexedAccess(sourceType);
+  const auto *access = talos::reflection::findVPIIndexedAccess(sourceType);
   if (!access || access->accessKind ==
-                     obelisk::reflection::VPIIndexedAccessKind::RelationElement)
+                     talos::reflection::VPIIndexedAccessKind::RelationElement)
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<VPISelectionStep> steps;
     uint32_t rootType = sourceType;
     auto accessKind = access->accessKind;
@@ -3382,14 +3382,14 @@ vpiHandle handleByAggregateMember(__vpiHandle *source, uint32_t edgeIndex) {
     if (!appendAggregateMemberSelection(source, accessKind, edgeIndex, steps))
       return nullptr;
     const auto *rootAccess =
-        obelisk::reflection::findVPIIndexedAccess(rootType);
+        talos::reflection::findVPIIndexedAccess(rootType);
     if (!rootAccess || rootAccess->accessKind != accessKind ||
-        !obelisk::reflection::indexedVPIResultAllowed(
+        !talos::reflection::indexedVPIResultAllowed(
             *rootAccess, steps.back().exactVpiType))
       return nullptr;
     return makeIndexedHandle(source, rootType, accessKind, std::move(steps));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate aggregate-member VPI handle",
              vpiSystem);
     return nullptr;
@@ -3402,14 +3402,14 @@ vpiHandle makeRelationIndexedHandle(__vpiHandle *source, uint32_t rootType,
                                     int64_t nextLeft, int64_t nextRight) {
   if (!source || steps.empty())
     return nullptr;
-  obelisk_rt_design_info_v1 info{};
-  if (obelisk_rt_cached_design_info(source->owner->context, source->cursor,
-                                    &info) != OBELISK_RT_OK) {
+  talos_rt_design_info_v1 info{};
+  if (talos_rt_cached_design_info(source->owner->context, source->cursor,
+                                    &info) != TALOS_RT_OK) {
     setError(source->owner, "relation-indexed VPI metadata lookup failed",
              vpiInternal);
     return nullptr;
   }
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = source->owner;
     handle->kind = VPIHandleKind::Object;
@@ -3427,7 +3427,7 @@ vpiHandle makeRelationIndexedHandle(__vpiHandle *source, uint32_t rootType,
     handle->localDeclarationID = source->localDeclarationID;
     handle->selectionRootType = rootType;
     handle->selectionAccessKind =
-        obelisk::reflection::VPIIndexedAccessKind::RelationElement;
+        talos::reflection::VPIIndexedAccessKind::RelationElement;
     handle->selectionBitOffset = steps.back().bitOffset;
     handle->selectionSteps = std::move(steps);
     handle->hasInfo = true;
@@ -3438,7 +3438,7 @@ vpiHandle makeRelationIndexedHandle(__vpiHandle *source, uint32_t rootType,
     handle->info.range_right = nextRight;
     return keepHandle(source->owner, std::move(handle));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate relation-indexed VPI handle",
              vpiSystem);
     return nullptr;
@@ -3447,11 +3447,11 @@ vpiHandle makeRelationIndexedHandle(__vpiHandle *source, uint32_t rootType,
 
 vpiHandle handleRelationByIndices(
     __vpiHandle *source,
-    const obelisk::reflection::VPIIndexedAccessDescriptor &access,
+    const talos::reflection::VPIIndexedAccessDescriptor &access,
     PLI_INT32 count, const PLI_INT32 *indices) {
   VPIRelationIndexInfo indexInfo{};
-  if (obelisk_rt_cached_vpi_relation_index(
-          source->owner->context, source->cursor, &indexInfo) != OBELISK_RT_OK)
+  if (talos_rt_cached_vpi_relation_index(
+          source->owner->context, source->cursor, &indexInfo) != TALOS_RT_OK)
     return nullptr;
   size_t priorCount = source->form == VPIObjectForm::Indexed
                           ? source->selectionSteps.size()
@@ -3460,7 +3460,7 @@ vpiHandle handleRelationByIndices(
       static_cast<uint64_t>(count) > indexInfo.dimensionCount - priorCount)
     return nullptr;
 
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<int64_t> requested;
     requested.reserve(priorCount + static_cast<size_t>(count));
     if (source->form == VPIObjectForm::Indexed)
@@ -3472,8 +3472,8 @@ vpiHandle handleRelationByIndices(
     std::vector<VPISelectionStep> steps;
     steps.reserve(requested.size());
     uint64_t flattened = 0;
-    obelisk_rt_design_cursor_v1 semantic{};
-    (void)obelisk_rt_cached_design_semantic_root(source->owner->context,
+    talos_rt_design_cursor_v1 semantic{};
+    (void)talos_rt_cached_design_semantic_root(source->owner->context,
                                                  source->cursor, &semantic);
     for (size_t dimension = 0; dimension != requested.size(); ++dimension) {
       uint64_t ordinal = 0;
@@ -3481,18 +3481,18 @@ vpiHandle handleRelationByIndices(
       if (indexInfo.sparse) {
         uint32_t sparseOrdinal = 0;
         if (dimension != 0 ||
-            obelisk_rt_cached_vpi_relation_index_key(
+            talos_rt_cached_vpi_relation_index_key(
                 source->owner->context, indexInfo, requested[dimension],
-                &sparseOrdinal) != OBELISK_RT_OK)
+                &sparseOrdinal) != TALOS_RT_OK)
           return nullptr;
         ordinal = sparseOrdinal;
         extent = indexInfo.elementCount;
       } else {
         int64_t left = 0, right = 0;
-        if (obelisk_rt_cached_vpi_relation_index_dimension(
+        if (talos_rt_cached_vpi_relation_index_dimension(
                 source->owner->context, indexInfo,
                 static_cast<uint32_t>(dimension), &left,
-                &right) != OBELISK_RT_OK ||
+                &right) != TALOS_RT_OK ||
             !sourceIndexOrdinal(left, right, requested[dimension], ordinal,
                                 extent))
           return nullptr;
@@ -3503,11 +3503,11 @@ vpiHandle handleRelationByIndices(
       flattened = flattened * extent + ordinal;
       bool packed = false;
       if (semantic.offset != 0) {
-        obelisk_rt_design_semantic_type_info_v1 semanticInfo{};
+        talos_rt_design_semantic_type_info_v1 semanticInfo{};
         if (!semanticTypeInfo(source, semantic, semanticInfo))
           return nullptr;
-        packed = semanticInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY;
-        obelisk_rt_design_cursor_v1 element{};
+        packed = semanticInfo.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY;
+        talos_rt_design_cursor_v1 element{};
         if (!semanticElement(source, semantic, element))
           return nullptr;
         semantic = element;
@@ -3529,22 +3529,22 @@ vpiHandle handleRelationByIndices(
 
     if (requested.size() == indexInfo.dimensionCount) {
       VPIRelationRange range{};
-      if (obelisk_rt_cached_vpi_relation_range(
+      if (talos_rt_cached_vpi_relation_range(
               source->owner->context, source->cursor, access.relationSelector,
-              true, &range) != OBELISK_RT_OK ||
+              true, &range) != TALOS_RT_OK ||
           range.count != indexInfo.elementCount || flattened >= range.count)
         return nullptr;
-      obelisk_rt_design_cursor_v1 target{};
+      talos_rt_design_cursor_v1 target{};
       uint32_t targetType = 0;
       bool targetIsStatement = false;
-      if (obelisk_rt_cached_vpi_relation_target(
+      if (talos_rt_cached_vpi_relation_target(
               source->owner->context, range.first + flattened, &target,
-              &targetType, &targetIsStatement) != OBELISK_RT_OK ||
+              &targetType, &targetIsStatement) != TALOS_RT_OK ||
           targetIsStatement ||
-          !obelisk::reflection::indexedVPIResultAllowed(access, targetType))
+          !talos::reflection::indexedVPIResultAllowed(access, targetType))
         return nullptr;
       return makeHandle(source->owner, target, targetType, false,
-                        obelisk::runtime::hasClassDefinitionValueOrigin(
+                        talos::runtime::hasClassDefinitionValueOrigin(
                             static_cast<uint32_t>(vpiTypeForHandle(source)),
                             source->classDefinitionOrigin, targetType),
                         source->protectedObject);
@@ -3555,9 +3555,9 @@ vpiHandle handleRelationByIndices(
     for (uint32_t dimension = static_cast<uint32_t>(requested.size());
          dimension != indexInfo.dimensionCount; ++dimension) {
       int64_t left = 0, right = 0;
-      if (indexInfo.sparse || obelisk_rt_cached_vpi_relation_index_dimension(
+      if (indexInfo.sparse || talos_rt_cached_vpi_relation_index_dimension(
                                   source->owner->context, indexInfo, dimension,
-                                  &left, &right) != OBELISK_RT_OK)
+                                  &left, &right) != TALOS_RT_OK)
         return nullptr;
       uint64_t ordinal = 0, extent = 0;
       if (!sourceIndexOrdinal(left, right, left, ordinal, extent) ||
@@ -3573,7 +3573,7 @@ vpiHandle handleRelationByIndices(
                                      std::move(steps), remaining, nextLeft,
                                      nextRight);
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not perform relation-indexed VPI access",
              vpiSystem);
     return nullptr;
@@ -3581,7 +3581,7 @@ vpiHandle handleRelationByIndices(
 }
 
 vpiHandle makeSnapshotHandle(VPIState *state,
-                             obelisk_rt_design_cursor_v1 source,
+                             talos_rt_design_cursor_v1 source,
                              std::shared_ptr<const VPISnapshotValue> value);
 
 // A selected bit owns only itself and an alias of its copied parent arena.
@@ -3592,13 +3592,13 @@ snapshotBitSelection(__vpiHandle *source,
                      int64_t index) {
   if (!parent->variableView || !parent->integral || parent->array ||
       parent->bitWidth == 0 ||
-      !obelisk::reflection::findVPIIndexedAccess(parent->exactType))
+      !talos::reflection::findVPIIndexedAccess(parent->exactType))
     return {};
-  obelisk_rt_design_semantic_type_info_v1 semantic{};
+  talos_rt_design_semantic_type_info_v1 semantic{};
   if (!semanticTypeInfo(source, parent->semantic, semantic))
     return {};
   int64_t left = parent->bitWidth - 1, right = 0;
-  if (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) {
+  if (semantic.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) {
     left = semantic.range_left;
     right = semantic.range_right;
   }
@@ -3606,7 +3606,7 @@ snapshotBitSelection(__vpiHandle *source,
   if (!sourceIndexOrdinal(left, right, index, ordinal, extent) ||
       extent != parent->bitWidth)
     return {};
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     using Owner =
         std::pair<std::shared_ptr<const VPISnapshotValue>, VPISnapshotValue>;
     auto owner = std::make_shared<Owner>();
@@ -3616,7 +3616,7 @@ snapshotBitSelection(__vpiHandle *source,
     bit.semantic = original.semantic;
     bit.parent = &original;
     bit.exactType =
-        obelisk::reflection::findVPIIndexedAccess(original.exactType)
+        talos::reflection::findVPIIndexedAccess(original.exactType)
             ->terminalResult;
     bit.bitWidth = 1;
     bit.variableView = bit.integral = bit.bitSelection = true;
@@ -3632,7 +3632,7 @@ snapshotBitSelection(__vpiHandle *source,
                         : 0);
     return std::shared_ptr<const VPISnapshotValue>(owner, &bit);
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate copied bit selection",
              vpiSystem);
     return {};
@@ -3682,7 +3682,7 @@ vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
     auto selected = source->snapshot;
     for (PLI_INT32 position = 0; position != count; ++position) {
       if (!selected->variableView ||
-          !obelisk::reflection::findVPIIndexedAccess(selected->exactType))
+          !talos::reflection::findVPIIndexedAccess(selected->exactType))
         return nullptr;
       if (!selected->array) {
         selected = snapshotBitSelection(source, selected, indices[position]);
@@ -3718,12 +3718,12 @@ vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
     return nullptr;
 
   const uint32_t sourceType = static_cast<uint32_t>(vpiTypeForHandle(source));
-  const auto *access = obelisk::reflection::findVPIIndexedAccess(sourceType);
+  const auto *access = talos::reflection::findVPIIndexedAccess(sourceType);
   if (!access)
     return nullptr;
 
   if (access->accessKind ==
-          obelisk::reflection::VPIIndexedAccessKind::RelationElement &&
+          talos::reflection::VPIIndexedAccessKind::RelationElement &&
       !isStoredClassEventArray(source)) {
     __vpiHandle *current = source;
     vpiHandle result = nullptr;
@@ -3732,17 +3732,17 @@ vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
     while (position != count) {
       uint32_t currentType = static_cast<uint32_t>(vpiTypeForHandle(current));
       const auto *currentAccess =
-          obelisk::reflection::findVPIIndexedAccess(currentType);
+          talos::reflection::findVPIIndexedAccess(currentType);
       VPIRelationIndexInfo indexInfo{};
       size_t priorCount = current->form == VPIObjectForm::Indexed
                               ? current->selectionSteps.size()
                               : 0;
       if (!currentAccess ||
           currentAccess->accessKind !=
-              obelisk::reflection::VPIIndexedAccessKind::RelationElement ||
-          obelisk_rt_cached_vpi_relation_index(current->owner->context,
+              talos::reflection::VPIIndexedAccessKind::RelationElement ||
+          talos_rt_cached_vpi_relation_index(current->owner->context,
                                                current->cursor,
-                                               &indexInfo) != OBELISK_RT_OK ||
+                                               &indexInfo) != TALOS_RT_OK ||
           priorCount >= indexInfo.dimensionCount) {
         if (ownsCurrent)
           current->owner->handles.erase(current->token);
@@ -3771,7 +3771,7 @@ vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
   uint32_t rootType = sourceType;
   auto accessKind = access->accessKind;
   std::vector<VPISelectionStep> steps;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     if (source->form == VPIObjectForm::Indexed) {
       rootType = source->selectionRootType;
       accessKind = source->selectionAccessKind;
@@ -3784,14 +3784,14 @@ vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
         return nullptr;
 
     const auto *rootAccess =
-        obelisk::reflection::findVPIIndexedAccess(rootType);
+        talos::reflection::findVPIIndexedAccess(rootType);
     if (!rootAccess || rootAccess->accessKind != accessKind || steps.empty() ||
-        !obelisk::reflection::indexedVPIResultAllowed(
+        !talos::reflection::indexedVPIResultAllowed(
             *rootAccess, steps.back().exactVpiType))
       return nullptr;
     return makeIndexedHandle(source, rootType, accessKind, std::move(steps));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate indexed VPI selection",
              vpiSystem);
     return nullptr;
@@ -3829,8 +3829,8 @@ vpiHandle handleSyntheticSelectionByName(VPIState *state,
   if (!state || name.empty())
     return nullptr;
   vpiHandle current = nullptr;
-  OBELISK_RT_TRY {
-    obelisk_rt_design_cursor_v1 cursor{};
+  TALOS_RT_TRY {
+    talos_rt_design_cursor_v1 cursor{};
     size_t baseEnd = name.size();
     for (; baseEnd != 0; --baseEnd) {
       if (baseEnd != name.size() && name[baseEnd] != '[' &&
@@ -3841,14 +3841,14 @@ vpiHandle handleSyntheticSelectionByName(VPIState *state,
     }
     if (baseEnd == 0 || baseEnd == name.size())
       return nullptr;
-    obelisk_rt_design_info_v1 info{};
+    talos_rt_design_info_v1 info{};
     uint32_t exactType = 0;
-    if (obelisk_rt_cached_design_info(state->context, cursor, &info) !=
-            OBELISK_RT_OK ||
-        obelisk_rt_cached_vpi_type(state->context, cursor, &exactType) !=
-            OBELISK_RT_OK ||
+    if (talos_rt_cached_design_info(state->context, cursor, &info) !=
+            TALOS_RT_OK ||
+        talos_rt_cached_vpi_type(state->context, cursor, &exactType) !=
+            TALOS_RT_OK ||
         exactType == 0 ||
-        (info.capabilities & OBELISK_RT_DESIGN_CAP_INTERNAL) != 0)
+        (info.capabilities & TALOS_RT_DESIGN_CAP_INTERNAL) != 0)
       return nullptr;
     current =
         makeHandle(state, cursor, exactType, false, classDefinitionOrigin);
@@ -3880,14 +3880,14 @@ vpiHandle handleSyntheticSelectionByName(VPIState *state,
           return nullptr;
         }
         uint32_t sourceType = static_cast<uint32_t>(vpiTypeForHandle(source));
-        if (!obelisk::reflection::findVPITraversal(
+        if (!talos::reflection::findVPITraversal(
                 sourceType, vpiMember,
-                obelisk::reflection::VPITraversalMode::Iterate)) {
+                talos::reflection::VPITraversalMode::Iterate)) {
           state->handles.erase(source->token);
           return nullptr;
         }
-        obelisk_rt_design_cursor_v1 semantic{};
-        obelisk_rt_design_semantic_type_info_v1 semanticInfo{};
+        talos_rt_design_cursor_v1 semantic{};
+        talos_rt_design_semantic_type_info_v1 semanticInfo{};
         if (!semanticCursorFor(source, semantic) ||
             !semanticTypeInfo(source, semantic, semanticInfo)) {
           state->handles.erase(source->token);
@@ -3895,10 +3895,10 @@ vpiHandle handleSyntheticSelectionByName(VPIState *state,
         }
         for (uint32_t edgeIndex = 0; edgeIndex != semanticInfo.edge_count;
              ++edgeIndex) {
-          obelisk_rt_design_semantic_type_edge_v1 edge{};
+          talos_rt_design_semantic_type_edge_v1 edge{};
           if (!semanticEdge(source, semantic, edgeIndex, edge))
             break;
-          if (edge.role == OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER &&
+          if (edge.role == TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER &&
               edge.name_size == end - position - 1 &&
               std::memcmp(edge.name, name.data() + position + 1,
                           static_cast<size_t>(edge.name_size)) == 0) {
@@ -3918,7 +3918,7 @@ vpiHandle handleSyntheticSelectionByName(VPIState *state,
     }
     return current;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     state->handles.erase(reinterpret_cast<uintptr_t>(current));
     setError(state, "could not resolve synthetic hierarchical VPI name",
              vpiSystem);
@@ -3944,33 +3944,33 @@ size_t indexedParentPrefixCount(const __vpiHandle *handle) {
 }
 
 bool isUnpackedDimension(uint32_t kind) {
-  return kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
-         kind == OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY ||
-         kind == OBELISK_RT_DESIGN_SEMANTIC_QUEUE ||
-         kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY ||
-         kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_OPEN_ARRAY;
+  return kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+         kind == TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY ||
+         kind == TALOS_RT_DESIGN_SEMANTIC_QUEUE ||
+         kind == TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY ||
+         kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_OPEN_ARRAY;
 }
 
 bool isEmptyDimension(uint32_t kind) {
-  return kind == OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY ||
-         kind == OBELISK_RT_DESIGN_SEMANTIC_QUEUE ||
-         kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY ||
-         kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_OPEN_ARRAY;
+  return kind == TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY ||
+         kind == TALOS_RT_DESIGN_SEMANTIC_QUEUE ||
+         kind == TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY ||
+         kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_OPEN_ARRAY;
 }
 
 // A function's return relation names the existing variable declaration; it
 // never denotes an invocation result or causes the function to execute.
 bool functionReturnVariable(__vpiHandle *function, __vpiHandle &variable) {
   VPIRelationRange range{};
-  obelisk_rt_design_cursor_v1 cursor{};
+  talos_rt_design_cursor_v1 cursor{};
   uint32_t kind = 0;
   bool statement = false;
-  if (obelisk_rt_cached_vpi_relation_range(function->owner->context,
+  if (talos_rt_cached_vpi_relation_range(function->owner->context,
                                            function->cursor, vpiReturn, false,
-                                           &range) != OBELISK_RT_OK ||
-      obelisk_rt_cached_vpi_relation_target(function->owner->context,
+                                           &range) != TALOS_RT_OK ||
+      talos_rt_cached_vpi_relation_target(function->owner->context,
                                             range.first, &cursor, &kind,
-                                            &statement) != OBELISK_RT_OK ||
+                                            &statement) != TALOS_RT_OK ||
       statement)
     return false;
   variable.owner = function->owner;
@@ -3982,8 +3982,8 @@ bool functionReturnVariable(__vpiHandle *function, __vpiHandle &variable) {
 
 PLI_INT32 functionReturnProperty(__vpiHandle *function, PLI_INT32 property) {
   __vpiHandle variable;
-  obelisk_rt_design_cursor_v1 semantic{};
-  obelisk_rt_design_semantic_type_info_v1 type{};
+  talos_rt_design_cursor_v1 semantic{};
+  talos_rt_design_semantic_type_info_v1 type{};
   auto unavailable = [&]() {
     setError(function->owner,
              "function return property requires retained static type facts",
@@ -3995,24 +3995,24 @@ PLI_INT32 functionReturnProperty(__vpiHandle *function, PLI_INT32 property) {
       !semanticTypeInfo(&variable, semantic, type))
     return unavailable();
   if (property == vpiSigned)
-    return (type.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
+    return (type.flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) != 0;
   uint64_t width = 0;
-  bool packed = (type.kind >= OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL &&
-                 type.kind <= OBELISK_RT_DESIGN_SEMANTIC_TIME) ||
-                type.kind == OBELISK_RT_DESIGN_SEMANTIC_ENUM ||
-                type.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
-                type.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
-                type.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
+  bool packed = (type.kind >= TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL &&
+                 type.kind <= TALOS_RT_DESIGN_SEMANTIC_TIME) ||
+                type.kind == TALOS_RT_DESIGN_SEMANTIC_ENUM ||
+                type.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+                type.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+                type.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION;
   if (packed &&
-      obelisk_rt_cached_design_semantic_bit_width(
-          function->owner->context, semantic, &width) == OBELISK_RT_OK)
+      talos_rt_cached_design_semantic_bit_width(
+          function->owner->context, semantic, &width) == TALOS_RT_OK)
     return static_cast<PLI_INT32>(std::min<uint64_t>(width, INT32_MAX));
-  if (type.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
-      type.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION)
+  if (type.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
+      type.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION)
     return static_cast<PLI_INT32>(
         std::min<uint32_t>(type.edge_count, INT32_MAX));
-  if (type.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY) {
-    obelisk_rt_design_info_v1 info{};
+  if (type.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY) {
+    talos_rt_design_info_v1 info{};
     uint64_t count = 0;
     if (infoFor(&variable, info) && info.type_offset &&
         unpackedArrayElementCount(&variable, {info.type_offset}, count))
@@ -4031,12 +4031,12 @@ bool isDimensionForTypespec(uint32_t publicType, uint32_t semanticKind,
     return isUnpackedDimension(semanticKind);
   if (publicType == vpiBitTypespec || publicType == vpiLogicTypespec ||
       publicType == vpiPackedArrayTypespec) {
-    if (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY)
+    if (semanticKind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY)
       return true;
-    return (semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0 &&
-           (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
-            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
-            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_REG);
+    return (semanticFlags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0 &&
+           (semanticKind == TALOS_RT_DESIGN_SEMANTIC_BIT ||
+            semanticKind == TALOS_RT_DESIGN_SEMANTIC_LOGIC ||
+            semanticKind == TALOS_RT_DESIGN_SEMANTIC_REG);
   }
   return false;
 }
@@ -4047,23 +4047,23 @@ bool isDimensionForVPIObject(uint32_t publicType, uint32_t semanticKind,
   if (publicType == vpiIODecl) {
     if (suppressDimension)
       return false;
-    if (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+    if (semanticKind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
         isUnpackedDimension(semanticKind))
       return true;
-    return (semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0 &&
-           (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
-            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
-            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_REG);
+    return (semanticFlags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0 &&
+           (semanticKind == TALOS_RT_DESIGN_SEMANTIC_BIT ||
+            semanticKind == TALOS_RT_DESIGN_SEMANTIC_LOGIC ||
+            semanticKind == TALOS_RT_DESIGN_SEMANTIC_REG);
   }
   if (isDimensionForTypespec(publicType, semanticKind, semanticFlags,
                              suppressDimension))
     return true;
   if (suppressDimension)
     return false;
-  const auto *access = obelisk::reflection::findVPIIndexedAccess(publicType);
+  const auto *access = talos::reflection::findVPIIndexedAccess(publicType);
   if (!access)
     return false;
-  using AccessKind = obelisk::reflection::VPIIndexedAccessKind;
+  using AccessKind = talos::reflection::VPIIndexedAccessKind;
   if (access->accessKind == AccessKind::VariableElement ||
       access->accessKind == AccessKind::NetElement) {
     // Unpacked array ranges end before their element's packed dimensions.
@@ -4074,25 +4074,25 @@ bool isDimensionForVPIObject(uint32_t publicType, uint32_t semanticKind,
                                   semanticFlags);
   }
   return access->accessKind == AccessKind::RelationElement &&
-         (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
-          semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY);
+         (semanticKind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+          semanticKind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY);
 }
 
 bool relationElementSelectorForIteration(uint32_t sourceType,
                                          uint32_t requestedSelector,
                                          uint32_t &storageSelector) {
-  const auto *access = obelisk::reflection::findVPIIndexedAccess(sourceType);
+  const auto *access = talos::reflection::findVPIIndexedAccess(sourceType);
   if (!access || access->accessKind !=
-                     obelisk::reflection::VPIIndexedAccessKind::RelationElement)
+                     talos::reflection::VPIIndexedAccessKind::RelationElement)
     return false;
   if (requestedSelector != access->relationSelector) {
-    const auto *edge = obelisk::reflection::findVPITraversal(
+    const auto *edge = talos::reflection::findVPITraversal(
         sourceType, requestedSelector,
-        obelisk::reflection::VPITraversalMode::Iterate);
-    if (!edge || edge->order != obelisk::reflection::VPITraversalOrder::Index ||
-        obelisk::reflection::vpiObjectSets[static_cast<uint16_t>(edge->targets)]
+        talos::reflection::VPITraversalMode::Iterate);
+    if (!edge || edge->order != talos::reflection::VPITraversalOrder::Index ||
+        talos::reflection::vpiObjectSets[static_cast<uint16_t>(edge->targets)]
                 .kindCount != 1 ||
-        !obelisk::reflection::vpiObjectSetContains(edge->targets,
+        !talos::reflection::vpiObjectSetContains(edge->targets,
                                                    access->terminalResult))
       return false;
   }
@@ -4101,10 +4101,10 @@ bool relationElementSelectorForIteration(uint32_t sourceType,
 }
 
 vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
-  obelisk_rt_design_cursor_v1 semantic{};
+  talos_rt_design_cursor_v1 semantic{};
   if (!semanticCursorFor(handle, semantic))
     return nullptr;
-  obelisk_rt_design_semantic_type_info_v1 info{};
+  talos_rt_design_semantic_type_info_v1 info{};
   if (!semanticTypeInfo(handle, semantic, info))
     return nullptr;
   uint32_t sourceType = static_cast<uint32_t>(vpiTypeForHandle(handle));
@@ -4116,22 +4116,22 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
       (!isTypespecVPIKind(sourceType) || sourceType == vpiTypeParameter)) {
     if (sourceType == vpiRefObj) {
       VPIRelationRange range{};
-      obelisk_rt_design_cursor_v1 actual{};
+      talos_rt_design_cursor_v1 actual{};
       uint32_t actualType = 0;
       bool actualStatement = false;
-      if (obelisk_rt_cached_vpi_relation_range(handle->owner->context,
+      if (talos_rt_cached_vpi_relation_range(handle->owner->context,
                                                handle->cursor, vpiActual, false,
-                                               &range) != OBELISK_RT_OK ||
-          obelisk_rt_cached_vpi_relation_target(
+                                               &range) != TALOS_RT_OK ||
+          talos_rt_cached_vpi_relation_target(
               handle->owner->context, range.first, &actual, &actualType,
-              &actualStatement) != OBELISK_RT_OK ||
+              &actualStatement) != TALOS_RT_OK ||
           actualStatement ||
-          !obelisk::runtime::hasRefObjectTypespecActual(actualType))
+          !talos::runtime::hasRefObjectTypespecActual(actualType))
         return nullptr;
     }
-    const auto *relation = obelisk::reflection::findVPITraversal(
+    const auto *relation = talos::reflection::findVPITraversal(
         sourceType, static_cast<uint32_t>(selector),
-        obelisk::reflection::VPITraversalMode::Handle);
+        talos::reflection::VPITraversalMode::Handle);
     if (!relation)
       return nullptr;
     // 37.32 detail 1: a class variable outside a lexical class definition
@@ -4141,16 +4141,16 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
         (sourceType != vpiClassVar || handle->classDefinitionOrigin);
     uint32_t targetType = info.public_vpi_kind;
     if ((honorAlias && info.alias_object.offset != 0) ||
-        (info.kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE &&
+        (info.kind == TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE &&
          info.identity_target.offset != 0)) {
-      obelisk_rt_design_cursor_v1 target = honorAlias && info.alias_object.offset != 0
+      talos_rt_design_cursor_v1 target = honorAlias && info.alias_object.offset != 0
                                                ? info.alias_object
                                                : info.identity_target;
-      if (obelisk_rt_cached_vpi_type(handle->owner->context, target,
-                                     &targetType) != OBELISK_RT_OK)
+      if (talos_rt_cached_vpi_type(handle->owner->context, target,
+                                     &targetType) != TALOS_RT_OK)
         return nullptr;
     }
-    if (!obelisk::reflection::vpiObjectSetContains(relation->targets,
+    if (!talos::reflection::vpiObjectSetContains(relation->targets,
                                                    targetType))
       return nullptr;
     return makeTypespecHandle(handle->owner, handle->cursor, semantic, honorAlias,
@@ -4160,39 +4160,39 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
   if (handle->form == VPIObjectForm::Typespec ||
       (handle->form == VPIObjectForm::Design &&
        isTypespecVPIKind(sourceType))) {
-    if (!obelisk::reflection::findVPITraversal(
+    if (!talos::reflection::findVPITraversal(
             sourceType, static_cast<uint32_t>(selector),
-            obelisk::reflection::VPITraversalMode::Handle))
+            talos::reflection::VPITraversalMode::Handle))
       return nullptr;
     if (selector == vpiInstance) {
-      obelisk_rt_design_cursor_v1 instance{};
+      talos_rt_design_cursor_v1 instance{};
       uint32_t instanceType = 0;
-      if (obelisk_rt_cached_design_parent(handle->owner->context,
+      if (talos_rt_cached_design_parent(handle->owner->context,
                                           handle->cursor,
-                                          &instance) != OBELISK_RT_OK ||
-          obelisk_rt_cached_vpi_type(handle->owner->context, instance,
-                                     &instanceType) != OBELISK_RT_OK)
+                                          &instance) != TALOS_RT_OK ||
+          talos_rt_cached_vpi_type(handle->owner->context, instance,
+                                     &instanceType) != TALOS_RT_OK)
         return nullptr;
-      const auto *relation = obelisk::reflection::findVPITraversal(
+      const auto *relation = talos::reflection::findVPITraversal(
           sourceType, vpiInstance,
-          obelisk::reflection::VPITraversalMode::Handle);
-      if (!relation || !obelisk::reflection::vpiObjectSetContains(
+          talos::reflection::VPITraversalMode::Handle);
+      if (!relation || !talos::reflection::vpiObjectSetContains(
                            relation->targets, instanceType))
         return nullptr;
       return makeHandle(handle->owner, instance, instanceType);
     }
     if (selector == vpiClassDefn &&
-        info.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS &&
+        info.kind == TALOS_RT_DESIGN_SEMANTIC_CLASS &&
         info.identity_target.offset != 0) {
       uint32_t targetType = 0;
-      if (obelisk_rt_cached_vpi_type(handle->owner->context,
+      if (talos_rt_cached_vpi_type(handle->owner->context,
                                      info.identity_target,
-                                     &targetType) != OBELISK_RT_OK)
+                                     &targetType) != TALOS_RT_OK)
         return nullptr;
-      const auto *relation = obelisk::reflection::findVPITraversal(
+      const auto *relation = talos::reflection::findVPITraversal(
           sourceType, vpiClassDefn,
-          obelisk::reflection::VPITraversalMode::Handle);
-      if (!relation || !obelisk::reflection::vpiObjectSetContains(
+          talos::reflection::VPITraversalMode::Handle);
+      if (!relation || !talos::reflection::vpiObjectSetContains(
                            relation->targets, targetType))
         return nullptr;
       return makeHandle(handle->owner, info.identity_target, targetType);
@@ -4200,14 +4200,14 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
     if (selector == vpiTypedefAlias && !handle->suppressSemanticAlias &&
         info.alias_object.offset != 0) {
       uint32_t targetType = 0;
-      if (obelisk_rt_cached_vpi_type(handle->owner->context, info.alias_object,
-                                     &targetType) != OBELISK_RT_OK)
+      if (talos_rt_cached_vpi_type(handle->owner->context, info.alias_object,
+                                     &targetType) != TALOS_RT_OK)
         return nullptr;
       return makeHandle(handle->owner, info.alias_object, targetType);
     }
     if (selector == vpiTypedefAlias && !handle->suppressSemanticAlias &&
         handle->form == VPIObjectForm::Design &&
-        info.kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE &&
+        info.kind == TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE &&
         info.identity_target.offset != 0 &&
         info.identity_target.offset != handle->cursor.offset)
       return makeHandle(handle->owner, info.identity_target,
@@ -4217,24 +4217,24 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
       return makeTypespecHandle(handle->owner, handle->cursor, semantic, false);
     uint32_t wantedRole = 0;
     if (selector == vpiElemTypespec &&
-        (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
-         info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
-         info.kind == OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY ||
-         info.kind == OBELISK_RT_DESIGN_SEMANTIC_QUEUE ||
-         info.kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY ||
-         info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_OPEN_ARRAY ||
-         info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_OPEN_ARRAY))
-      wantedRole = OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT;
+        (info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+         info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+         info.kind == TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY ||
+         info.kind == TALOS_RT_DESIGN_SEMANTIC_QUEUE ||
+         info.kind == TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY ||
+         info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_OPEN_ARRAY ||
+         info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_OPEN_ARRAY))
+      wantedRole = TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT;
     else if (selector == vpiBaseTypespec &&
-             info.kind == OBELISK_RT_DESIGN_SEMANTIC_ENUM)
-      wantedRole = OBELISK_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE;
+             info.kind == TALOS_RT_DESIGN_SEMANTIC_ENUM)
+      wantedRole = TALOS_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE;
     else if (selector == vpiIndexTypespec &&
-             info.kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY &&
-             (info.flags & OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX) == 0)
-      wantedRole = OBELISK_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX;
+             info.kind == TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY &&
+             (info.flags & TALOS_RT_DESIGN_SEMANTIC_WILDCARD_INDEX) == 0)
+      wantedRole = TALOS_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX;
     if (wantedRole != 0) {
       for (uint32_t ordinal = 0; ordinal != info.edge_count; ++ordinal) {
-        obelisk_rt_design_semantic_type_edge_v1 edge{};
+        talos_rt_design_semantic_type_edge_v1 edge{};
         if (!semanticEdge(handle, semantic, ordinal, edge))
           return nullptr;
         if (edge.role == wantedRole)
@@ -4245,9 +4245,9 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
     if (selector == vpiElemTypespec &&
         isDimensionForTypespec(sourceType, info.kind, info.flags,
                                handle->suppressSemanticDimension) &&
-        (info.kind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
-         info.kind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
-         info.kind == OBELISK_RT_DESIGN_SEMANTIC_REG))
+        (info.kind == TALOS_RT_DESIGN_SEMANTIC_BIT ||
+         info.kind == TALOS_RT_DESIGN_SEMANTIC_LOGIC ||
+         info.kind == TALOS_RT_DESIGN_SEMANTIC_REG))
       return makeTypespecHandle(handle->owner, handle->cursor, semantic, false,
                                 true);
     if ((selector == vpiLeftRange || selector == vpiRightRange) &&
@@ -4274,9 +4274,9 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
 
   if (handle->form == VPIObjectForm::TypespecMember &&
       selector == vpiTypespec) {
-    obelisk_rt_design_semantic_type_edge_v1 edge{};
+    talos_rt_design_semantic_type_edge_v1 edge{};
     if (!semanticEdge(handle, semantic, handle->semanticEdge, edge) ||
-        edge.role != OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER)
+        edge.role != TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER)
       return nullptr;
     return makeTypespecHandle(handle->owner, handle->cursor, edge.child);
   }
@@ -4316,7 +4316,7 @@ vpiHandle makeThreadIterator(__vpiHandle *source, PLI_INT32 selector,
                              std::vector<uint64_t> processes) {
   if (processes.empty())
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto iterator = std::make_unique<__vpiHandle>();
     iterator->owner = source->owner;
     iterator->kind = VPIHandleKind::Iterator;
@@ -4334,7 +4334,7 @@ vpiHandle makeThreadIterator(__vpiHandle *source, PLI_INT32 selector,
     copyUseRecipe(*iterator, *source);
     return keepHandle(source->owner, std::move(iterator));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate VPI thread iterator",
              vpiSystem);
     return nullptr;
@@ -4342,7 +4342,7 @@ vpiHandle makeThreadIterator(__vpiHandle *source, PLI_INT32 selector,
 }
 
 vpiHandle threadChildren(__vpiHandle *source) {
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<uint64_t> children;
     auto *context = source->owner->context;
     {
@@ -4352,7 +4352,7 @@ vpiHandle threadChildren(__vpiHandle *source) {
         if (process.instance &&
             sourceThread(source->owner, process.parent) == parent) {
           const uint64_t token =
-              OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token;
+              TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token;
           if (sourceThread(source->owner, token) != parent &&
               threadIsLive(source->owner, token))
             children.push_back(token);
@@ -4376,7 +4376,7 @@ vpiHandle threadChildren(__vpiHandle *source) {
                    children.end());
     return makeThreadIterator(source, vpiThread, std::move(children));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not snapshot VPI child threads", vpiSystem);
     return nullptr;
   }
@@ -4388,15 +4388,15 @@ void inheritExpressionContext(__vpiHandle &target, const __vpiHandle &source) {
                                   : source.frameActivation;
   if (!activation)
     return;
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   const bool local =
-      obelisk_rt_cached_design_info(target.owner->context, target.cursor,
-                                    &info) == OBELISK_RT_OK &&
-      (info.capabilities & OBELISK_RT_DESIGN_CAP_FRAME_LOCAL);
+      talos_rt_cached_design_info(target.owner->context, target.cursor,
+                                    &info) == TALOS_RT_OK &&
+      (info.capabilities & TALOS_RT_DESIGN_CAP_FRAME_LOCAL);
   VPIExpressionInfo expression{};
   if (!local && !target.statement &&
-      obelisk_rt_cached_vpi_expression(target.owner->context, target.cursor,
-                                       &expression) != OBELISK_RT_OK)
+      talos_rt_cached_vpi_expression(target.owner->context, target.cursor,
+                                       &expression) != TALOS_RT_OK)
     return;
   target.expressionFrameActivation = activation;
   if (!local)
@@ -4406,9 +4406,9 @@ void inheritExpressionContext(__vpiHandle &target, const __vpiHandle &source) {
   std::vector<VPIFrameLocalBinding> locals;
   while (frame != state->frames.end()) {
     const auto &scope = frame->second;
-    auto status = obelisk_rt_cached_vpi_frame_locals(
+    auto status = talos_rt_cached_vpi_frame_locals(
         state->context, scope.lexicalCodeUnit, scope.lexicalScope, locals);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return;
     for (const auto &binding : locals) {
       if (binding.declaration.offset != target.cursor.offset)
@@ -4446,19 +4446,19 @@ vpiHandle frameLocalByName(__vpiHandle *source, std::string_view name) {
   if (frame == source->owner->frames.end())
     return nullptr;
   std::vector<VPIFrameLocalBinding> locals;
-  auto status = obelisk_rt_cached_vpi_frame_locals(
+  auto status = talos_rt_cached_vpi_frame_locals(
       source->owner->context, frame->second.lexicalCodeUnit,
       frame->second.lexicalScope, locals);
-  if (status != OBELISK_RT_OK) {
+  if (status != TALOS_RT_OK) {
     setError(source->owner, "frame automatic declaration lookup failed",
-             status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+             status == TALOS_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
     return nullptr;
   }
   for (const auto &local : locals) {
     VPIFixedPropertyValue declared{};
-    if (obelisk_rt_cached_vpi_fixed_property(source->owner->context,
+    if (talos_rt_cached_vpi_fixed_property(source->owner->context,
                                              local.declaration, vpiName,
-                                             &declared) != OBELISK_RT_OK)
+                                             &declared) != TALOS_RT_OK)
       continue;
     if (std::string_view(reinterpret_cast<const char *>(declared.stringData),
                          declared.stringSize) == name)
@@ -4473,17 +4473,17 @@ vpiHandle frameAutomatics(__vpiHandle *source) {
   if (frame == source->owner->frames.end())
     return nullptr;
   std::vector<VPIFrameLocalBinding> locals;
-  auto status = obelisk_rt_cached_vpi_frame_locals(
+  auto status = talos_rt_cached_vpi_frame_locals(
       source->owner->context, frame->second.lexicalCodeUnit,
       frame->second.lexicalScope, locals);
-  if (status != OBELISK_RT_OK) {
+  if (status != TALOS_RT_OK) {
     setError(source->owner, "frame automatic declaration lookup failed",
-             status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+             status == TALOS_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
     return nullptr;
   }
   if (locals.empty())
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto iterator = std::make_unique<__vpiHandle>();
     iterator->owner = source->owner;
     iterator->kind = VPIHandleKind::Iterator;
@@ -4494,7 +4494,7 @@ vpiHandle frameAutomatics(__vpiHandle *source) {
     iterator->allocationScheme = vpiAutomaticScheme;
     return keepHandle(source->owner, std::move(iterator));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate frame automatic iterator",
              vpiSystem);
     return nullptr;
@@ -4505,32 +4505,32 @@ vpiHandle classWaitingProcesses(__vpiHandle *source) {
   if (!source->dynamicObject)
     return nullptr;
   ManagedExecutionScope managed(source->owner->context);
-  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+  if (managed.getStatus() != TALOS_RT_OK || !managed.getLane()) {
     setError(source->owner, "VPI waiting-process query cannot enter GC scope",
              vpiInternal);
     return nullptr;
   }
   {
     ManagedObjectLease lease;
-    if (obelisk_rt_managed_object_acquire(
+    if (talos_rt_managed_object_acquire(
             managed.getLane(), source->dynamicObject,
-            OBELISK_RT_MANAGED_INVALID, &lease) != OBELISK_RT_OK ||
-        obelisk_rt_v1_object_id(source->dynamicObject) !=
+            TALOS_RT_MANAGED_INVALID, &lease) != TALOS_RT_OK ||
+        talos_rt_v1_object_id(source->dynamicObject) !=
             source->dynamicIdentity) {
       setError(source->owner, "invalid or reclaimed VPI class object handle");
       return nullptr;
     }
-    if (obelisk_rt_builtin_class_kind(lease) == BuiltinClassKind::None)
+    if (talos_rt_builtin_class_kind(lease) == BuiltinClassKind::None)
       return nullptr;
   }
   // The helper acquires its own lease before taking the scheduler lock.
   // Do not carry a managed heap lease into that lock ordering.
   std::vector<uint64_t> processes;
-  const auto status = obelisk_rt_builtin_class_waiters(
+  const auto status = talos_rt_builtin_class_waiters(
       managed.getLane(), source->dynamicObject, processes);
-  if (status != OBELISK_RT_OK) {
+  if (status != TALOS_RT_OK) {
     setError(source->owner, "could not snapshot VPI waiting processes",
-             status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+             status == TALOS_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
     return nullptr;
   }
   return makeThreadIterator(source, vpiWaitingProcesses, std::move(processes));
@@ -4567,7 +4567,7 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
     // A live class object can exist without a serialized specialization.
     // Recreate its saved receiver recipe; its cursor need not name an image
     // record, and querying image protection would lose that valid identity.
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       auto handle = std::make_unique<__vpiHandle>();
       handle->owner = iterator->owner;
       handle->form = VPIObjectForm::ClassObject;
@@ -4581,7 +4581,7 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
       handle->allocationScheme = iterator->useAllocationScheme;
       return keepHandle(iterator->owner, std::move(handle));
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(iterator->owner, "could not copy VPI class object iterator use",
                vpiSystem);
       return nullptr;
@@ -4598,7 +4598,7 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
     return finish(result);
   }
   if (iterator->useForm == VPIObjectForm::Indexed) {
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       __vpiHandle source;
       source.owner = iterator->owner;
       source.cursor = iterator->useCursor;
@@ -4616,13 +4616,13 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
       source.exactVpiType = iterator->useType;
       source.selectionSteps = iterator->useSelectionSteps;
       if (source.selectionAccessKind ==
-          obelisk::reflection::VPIIndexedAccessKind::RelationElement)
+          talos::reflection::VPIIndexedAccessKind::RelationElement)
         return makeIndexedPrefix(&source, source.selectionSteps.size());
       return makeIndexedHandle(&source, iterator->useSelectionRootType,
                                iterator->useSelectionAccessKind,
                                iterator->useSelectionSteps);
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(iterator->owner, "could not copy indexed iterator use",
                vpiSystem);
       return nullptr;
@@ -4647,28 +4647,28 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
 
 bool interfaceArrayExtent(__vpiHandle *source,
                           const std::vector<VPISelectionStep> &steps,
-                          obelisk_rt_design_cursor_v1 semantic, int64_t &left,
+                          talos_rt_design_cursor_v1 semantic, int64_t &left,
                           int64_t &right, uint64_t &count) {
-  obelisk_rt_design_semantic_type_info_v1 info{};
+  talos_rt_design_semantic_type_info_v1 info{};
   if (!semanticTypeInfo(source, semantic, info))
     return false;
-  if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY) {
+  if (info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY) {
     uint64_t ordinal = 0;
     left = info.range_left;
     right = info.range_right;
     return sourceIndexOrdinal(left, right, left, ordinal, count);
   }
-  if (info.kind != OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY &&
-      info.kind != OBELISK_RT_DESIGN_SEMANTIC_QUEUE)
+  if (info.kind != TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY &&
+      info.kind != TALOS_RT_DESIGN_SEMANTIC_QUEUE)
     return false;
   ManagedExecutionScope managed(source->owner->context);
-  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
+  if (managed.getStatus() != TALOS_RT_OK || !managed.getLane())
     return false;
-  obelisk_rt_design_cursor_v1 childSemantic{}, childPhysical{};
+  talos_rt_design_cursor_v1 childSemantic{}, childPhysical{};
   if (!semanticElement(source, semantic, childSemantic) ||
-      obelisk_rt_cached_vpi_value_element_type(
+      talos_rt_cached_vpi_value_element_type(
           source->owner->context, source->cursor, childSemantic,
-          &childPhysical) != OBELISK_RT_OK) {
+          &childPhysical) != TALOS_RT_OK) {
     setError(source->owner, "virtual-interface array layout is unavailable",
              vpiNotice);
     return false;
@@ -4702,8 +4702,8 @@ bool liveInterfaceRangeBounds(__vpiHandle *range, int64_t &left, int64_t &right,
 }
 
 vpiHandle makeLiveInterfaceRange(__vpiHandle *source,
-                                 obelisk_rt_design_cursor_v1 semantic) {
-  OBELISK_RT_TRY {
+                                 talos_rt_design_cursor_v1 semantic) {
+  TALOS_RT_TRY {
     auto range = std::make_unique<__vpiHandle>();
     range->owner = source->owner;
     range->kind = VPIHandleKind::Object;
@@ -4719,7 +4719,7 @@ vpiHandle makeLiveInterfaceRange(__vpiHandle *source,
     copyUseRecipe(*range, *source);
     return keepHandle(source->owner, std::move(range));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate virtual-interface array range",
              vpiSystem);
     return nullptr;
@@ -4729,13 +4729,13 @@ vpiHandle makeLiveInterfaceRange(__vpiHandle *source,
 bool collectInterfaceArraySelections(
     __vpiHandle *source,
     std::vector<std::vector<VPISelectionStep>> &selections) {
-  obelisk_rt_design_cursor_v1 semantic{};
+  talos_rt_design_cursor_v1 semantic{};
   if (!semanticCursorFor(source, semantic) ||
       !isVirtualInterfaceSequence(source, semantic))
     return false;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     struct Pending {
-      obelisk_rt_design_cursor_v1 semantic;
+      talos_rt_design_cursor_v1 semantic;
       std::vector<VPISelectionStep> steps;
     };
     std::vector<Pending> pending;
@@ -4743,16 +4743,16 @@ bool collectInterfaceArraySelections(
     while (!pending.empty()) {
       Pending current = std::move(pending.back());
       pending.pop_back();
-      obelisk_rt_design_semantic_type_info_v1 info{};
+      talos_rt_design_semantic_type_info_v1 info{};
       if (!semanticTypeInfo(source, current.semantic, info))
         return false;
-      if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
+      if (info.kind == TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
         selections.push_back(std::move(current.steps));
         continue;
       }
-      if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY) {
+      if (info.kind == TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY) {
         std::vector<std::shared_ptr<const VPIAssociativeSelection>> keys;
-        obelisk_rt_design_cursor_v1 child{};
+        talos_rt_design_cursor_v1 child{};
         if (!semanticElement(source, current.semantic, child) ||
             !interfaceAssociativeKeys(source, current.steps, current.semantic,
                                       keys))
@@ -4771,7 +4771,7 @@ bool collectInterfaceArraySelections(
       if (!interfaceArrayExtent(source, current.steps, current.semantic, left,
                                 right, count))
         return false;
-      obelisk_rt_design_cursor_v1 child{};
+      talos_rt_design_cursor_v1 child{};
       if (!semanticElement(source, current.semantic, child))
         return false;
       for (uint64_t ordinal = count; ordinal != 0;) {
@@ -4783,7 +4783,7 @@ bool collectInterfaceArraySelections(
         auto selected = current.steps;
         if (!appendIndexedSelection(
                 source,
-                obelisk::reflection::VPIIndexedAccessKind::VariableElement,
+                talos::reflection::VPIIndexedAccessKind::VariableElement,
                 static_cast<int64_t>(index), selected))
           return false;
         pending.push_back({child, std::move(selected)});
@@ -4791,7 +4791,7 @@ bool collectInterfaceArraySelections(
     }
     return true;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner,
              "could not snapshot virtual-interface array indices", vpiSystem);
     return false;
@@ -4805,15 +4805,15 @@ struct VPIFixedArrayShape {
 };
 
 bool fixedArrayShape(__vpiHandle *source, VPIFixedArrayShape &shape) {
-  obelisk_rt_design_cursor_v1 semantic{};
+  talos_rt_design_cursor_v1 semantic{};
   if (!semanticCursorFor(source, semantic))
     return false;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     for (;;) {
-      obelisk_rt_design_semantic_type_info_v1 info{};
+      talos_rt_design_semantic_type_info_v1 info{};
       if (!semanticTypeInfo(source, semantic, info))
         return false;
-      if (info.kind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY) {
+      if (info.kind != TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY) {
         shape.elementTypespec = semanticTypespecKind(source->owner, semantic);
         return shape.elementTypespec != 0;
       }
@@ -4824,13 +4824,13 @@ bool fixedArrayShape(__vpiHandle *source, VPIFixedArrayShape &shape) {
         return false;
       shape.count *= extent;
       shape.dimensions.emplace_back(info.range_left, info.range_right);
-      obelisk_rt_design_cursor_v1 element{};
+      talos_rt_design_cursor_v1 element{};
       if (!semanticElement(source, semantic, element))
         return false;
       semantic = element;
     }
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not inspect VPI array dimensions",
              vpiSystem);
     return false;
@@ -4842,7 +4842,7 @@ vpiHandle makeFlatArrayElement(__vpiHandle *source, uint64_t ordinal,
   if (shape.dimensions.empty() || ordinal >= shape.count ||
       shape.dimensions.size() > INT32_MAX)
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<PLI_INT32> indices;
     indices.reserve(shape.dimensions.size());
     uint64_t remaining = shape.count;
@@ -4863,7 +4863,7 @@ vpiHandle makeFlatArrayElement(__vpiHandle *source, uint64_t ordinal,
                            static_cast<PLI_INT32>(indices.size()),
                            indices.data());
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not select flattened VPI array element",
              vpiSystem);
     return nullptr;
@@ -4871,21 +4871,21 @@ vpiHandle makeFlatArrayElement(__vpiHandle *source, uint64_t ordinal,
 }
 
 vpiHandle makeSemanticIterator(__vpiHandle *source, PLI_INT32 selector) {
-  obelisk_rt_design_cursor_v1 semantic{};
+  talos_rt_design_cursor_v1 semantic{};
   if (!semanticCursorFor(source, semantic))
     return nullptr;
-  obelisk_rt_design_semantic_type_info_v1 info{};
+  talos_rt_design_semantic_type_info_v1 info{};
   if (!semanticTypeInfo(source, semantic, info))
     return nullptr;
   VPISemanticIteratorKind kind = VPISemanticIteratorKind::None;
   uint32_t sourceType = static_cast<uint32_t>(vpiTypeForHandle(source));
-  if (!obelisk::reflection::findVPITraversal(
+  if (!talos::reflection::findVPITraversal(
           sourceType, static_cast<uint32_t>(selector),
-          obelisk::reflection::VPITraversalMode::Iterate))
+          talos::reflection::VPITraversalMode::Iterate))
     return nullptr;
   if (selector == vpiReg && sourceType == vpiRegArray &&
       isVirtualInterfaceSequence(source, semantic)) {
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       auto iterator = std::make_unique<__vpiHandle>();
       iterator->owner = source->owner;
       iterator->kind = VPIHandleKind::Iterator;
@@ -4899,7 +4899,7 @@ vpiHandle makeSemanticIterator(__vpiHandle *source, PLI_INT32 selector) {
       copyUseRecipe(*iterator, *source);
       return keepHandle(source->owner, std::move(iterator));
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(source->owner,
                "could not allocate virtual-interface array iterator",
                vpiSystem);
@@ -4918,28 +4918,28 @@ vpiHandle makeSemanticIterator(__vpiHandle *source, PLI_INT32 selector) {
                                    source->suppressSemanticDimension))
     kind = VPISemanticIteratorKind::Ranges;
   else if (selector == vpiTypespecMember &&
-           (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
-            info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
-            info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION ||
-            info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION))
+           (info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+            info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
+            info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION ||
+            info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION))
     kind = VPISemanticIteratorKind::TypespecMembers;
   else if ((selector == vpiElement || selector == vpiBit) &&
-           (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
-            info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
-            ((info.kind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
-              info.kind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
-              info.kind == OBELISK_RT_DESIGN_SEMANTIC_REG) &&
-             (info.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0)))
+           (info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+            info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+            ((info.kind == TALOS_RT_DESIGN_SEMANTIC_BIT ||
+              info.kind == TALOS_RT_DESIGN_SEMANTIC_LOGIC ||
+              info.kind == TALOS_RT_DESIGN_SEMANTIC_REG) &&
+             (info.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0)))
     kind = VPISemanticIteratorKind::Elements;
   else if (selector == vpiMember &&
-           (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
-            info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
-            info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION ||
-            info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION))
+           (info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+            info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
+            info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION ||
+            info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION))
     kind = VPISemanticIteratorKind::ObjectMembers;
   if (kind == VPISemanticIteratorKind::None)
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto iterator = std::make_unique<__vpiHandle>();
     iterator->owner = source->owner;
     iterator->kind = VPIHandleKind::Iterator;
@@ -4954,7 +4954,7 @@ vpiHandle makeSemanticIterator(__vpiHandle *source, PLI_INT32 selector) {
     copyUseRecipe(*iterator, *source);
     return keepHandle(source->owner, std::move(iterator));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate semantic VPI iterator",
              vpiSystem);
     return nullptr;
@@ -4980,14 +4980,14 @@ bool decodeRealBits(__vpiHandle *handle, PLI_INT32 type, uint64_t width,
   bool shortReal = isShortRealVPIType(type);
   bool real = type == vpiRealVar || type == vpiRealNet;
   if (!shortReal && !real) {
-    obelisk_rt_design_cursor_v1 cursor{};
-    obelisk_rt_design_semantic_type_info_v1 semantic{};
+    talos_rt_design_cursor_v1 cursor{};
+    talos_rt_design_semantic_type_info_v1 semantic{};
     if (semanticCursorFor(handle, cursor) &&
-        obelisk_rt_cached_design_semantic_type_info(
-            handle->owner->context, cursor, &semantic) == OBELISK_RT_OK) {
-      shortReal = semantic.kind == OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL;
-      real = semantic.kind == OBELISK_RT_DESIGN_SEMANTIC_REAL ||
-             semantic.kind == OBELISK_RT_DESIGN_SEMANTIC_REALTIME;
+        talos_rt_cached_design_semantic_type_info(
+            handle->owner->context, cursor, &semantic) == TALOS_RT_OK) {
+      shortReal = semantic.kind == TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL;
+      real = semantic.kind == TALOS_RT_DESIGN_SEMANTIC_REAL ||
+             semantic.kind == TALOS_RT_DESIGN_SEMANTIC_REALTIME;
     }
   }
   if (shortReal) {
@@ -5046,97 +5046,97 @@ bool encodeRealBits(__vpiHandle *handle, PLI_INT32 type, uint64_t width,
   return false;
 }
 
-obelisk_rt_status readFrameReference(VPIState *state,
+talos_rt_status readFrameReference(VPIState *state,
                                      const VPIFrameReference &reference,
-                                     obelisk_rt_design_cursor_v1 declaration,
-                                     const obelisk_rt_design_info_v1 &info,
+                                     talos_rt_design_cursor_v1 declaration,
+                                     const talos_rt_design_info_v1 &info,
                                      uint64_t firstBit, uint64_t bitWidth,
                                      uint64_t *value, uint64_t *unknown) {
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     if (!info.bit_width || info.bit_width > UINT64_MAX - 7 ||
         firstBit > info.bit_width || bitWidth > info.bit_width - firstBit)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     auto *context = state->context;
     if (reference.kind <= 1) {
       auto status = reference.kind == 0
-                        ? obelisk_rt_vpi_automatic_validate(
+                        ? talos_rt_vpi_automatic_validate(
                               context, reference.payload, info.bit_width)
-                        : obelisk_rt_vpi_state_validate(
+                        : talos_rt_vpi_state_validate(
                               context, reference.payload, info.bit_width);
-      if (status != OBELISK_RT_OK || !value)
+      if (status != TALOS_RT_OK || !value)
         return status;
       return reference.kind == 0
-                 ? obelisk_rt_vpi_automatic_read(
+                 ? talos_rt_vpi_automatic_read(
                        context, reference.payload, firstBit, bitWidth,
                        reinterpret_cast<uint8_t *>(value),
                        reinterpret_cast<uint8_t *>(unknown))
-                 : obelisk_rt_vpi_state_read(
+                 : talos_rt_vpi_state_read(
                        context, reference.payload, firstBit, bitWidth,
                        reinterpret_cast<uint8_t *>(value),
                        reinterpret_cast<uint8_t *>(unknown));
     }
     ManagedExecutionScope managed(context);
-    if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
-      return OBELISK_RT_INVALID_LIFECYCLE;
+    if (managed.getStatus() != TALOS_RT_OK || !managed.getLane())
+      return TALOS_RT_INVALID_LIFECYCLE;
     ManagedObjectLease lease;
-    auto status = obelisk_rt_managed_object_acquire(
+    auto status = talos_rt_managed_object_acquire(
         managed.getLane(), reference.owner,
-        reference.kind == 2 ? OBELISK_RT_MANAGED_CLASS
-                            : OBELISK_RT_MANAGED_REFERENCE_PATH,
+        reference.kind == 2 ? TALOS_RT_MANAGED_CLASS
+                            : TALOS_RT_MANAGED_REFERENCE_PATH,
         &lease);
-    if (status != OBELISK_RT_OK ||
-        obelisk_rt_v1_object_id(reference.owner) != reference.identity)
-      return OBELISK_RT_INVALID_HANDLE;
-    obelisk_rt_design_type_info_v1 type{};
-    if (obelisk_rt_cached_design_type_info(context, {info.type_offset},
-                                           &type) != OBELISK_RT_OK)
-      return OBELISK_RT_INVALID_DESIGN;
-    bool fourState = (type.flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+    if (status != TALOS_RT_OK ||
+        talos_rt_v1_object_id(reference.owner) != reference.identity)
+      return TALOS_RT_INVALID_HANDLE;
+    talos_rt_design_type_info_v1 type{};
+    if (talos_rt_cached_design_type_info(context, {info.type_offset},
+                                           &type) != TALOS_RT_OK)
+      return TALOS_RT_INVALID_DESIGN;
+    bool fourState = (type.flags & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0;
     uint64_t planeSize = (info.bit_width + 7) / 8;
     const uint8_t *sourceValue = nullptr, *sourceUnknown = nullptr;
     std::vector<uint8_t> copiedValue, copiedUnknown;
     if (reference.kind == 2) {
       if (reference.payload > lease.extent ||
           planeSize > (lease.extent - reference.payload) / (fourState ? 2 : 1))
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       if (!value)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       sourceValue = lease.object + reference.payload;
       sourceUnknown = fourState ? sourceValue + planeSize : nullptr;
     } else {
       // Path access takes its own lease. The active lane and validated weak
       // identity protect this query without retaining the path afterward.
       lease = ManagedObjectLease{};
-      const obelisk_rt_element_type_v1 *element = nullptr;
-      status = obelisk_rt_reference_path_element(reference.owner, &element);
-      obelisk_rt_design_cursor_v1 semantic{};
+      const talos_rt_element_type_v1 *element = nullptr;
+      status = talos_rt_reference_path_element(reference.owner, &element);
+      talos_rt_design_cursor_v1 semantic{};
       VPIValueLayoutOwner layout;
-      if (status == OBELISK_RT_OK)
-        status = obelisk_rt_cached_design_semantic_root(context, declaration,
+      if (status == TALOS_RT_OK)
+        status = talos_rt_cached_design_semantic_root(context, declaration,
                                                         &semantic);
-      if (status == OBELISK_RT_OK)
-        status = obelisk_rt_cached_vpi_value_layout_owner(context, declaration,
+      if (status == TALOS_RT_OK)
+        status = talos_rt_cached_vpi_value_layout_owner(context, declaration,
                                                           &layout);
-      if (status == OBELISK_RT_OK)
+      if (status == TALOS_RT_OK)
         status =
-            obelisk_rt_vpi_element_matches(context, layout, semantic, element);
-      if (status != OBELISK_RT_OK)
+            talos_rt_vpi_element_matches(context, layout, semantic, element);
+      if (status != TALOS_RT_OK)
         return status;
       if (element->value_size < planeSize || element->value_size > SIZE_MAX)
-        return OBELISK_RT_LAYOUT_MISMATCH;
+        return TALOS_RT_LAYOUT_MISMATCH;
       planeSize = element->value_size;
-      fourState = (element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+      fourState = (element->flags & TALOS_RT_ELEMENT_FOUR_STATE) != 0;
       copiedValue.resize(planeSize);
       if (fourState)
         copiedUnknown.resize(planeSize);
       uint32_t present = 0;
-      status = obelisk_rt_v1_reference_path_load(
+      status = talos_rt_v1_reference_path_load(
           reference.owner, copiedValue.data(),
           fourState ? copiedUnknown.data() : nullptr, &present);
-      if (status != OBELISK_RT_OK || !present)
-        return status != OBELISK_RT_OK ? status : OBELISK_RT_INVALID_HANDLE;
+      if (status != TALOS_RT_OK || !present)
+        return status != TALOS_RT_OK ? status : TALOS_RT_INVALID_HANDLE;
       if (!value)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       sourceValue = copiedValue.data();
       sourceUnknown = fourState ? copiedUnknown.data() : nullptr;
     }
@@ -5148,96 +5148,96 @@ obelisk_rt_status readFrameReference(VPIState *state,
           ((sourceUnknown[source / 8] >> (source % 8)) & 1))
         unknown[bit / 64] |= mask;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_OUT_OF_RESOURCES; }
 }
 
-obelisk_rt_status readFrameLocalBits(__vpiHandle *handle,
-                                     obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status readFrameLocalBits(__vpiHandle *handle,
+                                     talos_rt_design_cursor_v1 cursor,
                                      uint64_t firstBit, uint64_t bitWidth,
                                      uint64_t *value, uint64_t *unknown) {
-  obelisk_rt_design_info_v1 info{};
-  if (obelisk_rt_cached_design_info(handle->owner->context, cursor, &info) !=
-          OBELISK_RT_OK ||
-      !(info.capabilities & OBELISK_RT_DESIGN_CAP_FRAME_LOCAL))
-    return OBELISK_RT_EOF;
+  talos_rt_design_info_v1 info{};
+  if (talos_rt_cached_design_info(handle->owner->context, cursor, &info) !=
+          TALOS_RT_OK ||
+      !(info.capabilities & TALOS_RT_DESIGN_CAP_FRAME_LOCAL))
+    return TALOS_RT_EOF;
   auto frame = handle->owner->frames.find(handle->frameActivation);
   if (!handle->localDeclarationID || frame == handle->owner->frames.end()) {
     setError(handle->owner, "automatic declaration requires a live frame",
              vpiNotice);
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   }
   auto bound = frame->second.localReferences.find(handle->localDeclarationID);
   if (bound == frame->second.localReferences.end()) {
     setError(handle->owner,
              "automatic variable has not been bound in this activation",
              vpiNotice);
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   }
   auto status = readFrameReference(handle->owner, bound->second, cursor, info,
                                    firstBit, bitWidth, value, unknown);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     setError(handle->owner, "automatic variable storage is no longer available",
              vpiNotice);
   return status;
 }
 
-obelisk_rt_status readClassMemberBits(__vpiHandle *handle,
-                                      obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status readClassMemberBits(__vpiHandle *handle,
+                                      talos_rt_design_cursor_v1 cursor,
                                       uint64_t firstBit, uint64_t bitWidth,
                                       uint64_t *value, uint64_t *unknown) {
   auto localStatus =
       readFrameLocalBits(handle, cursor, firstBit, bitWidth, value, unknown);
-  if (localStatus != OBELISK_RT_EOF)
+  if (localStatus != TALOS_RT_EOF)
     return localStatus;
   VPIClassMemberBinding member{};
-  obelisk_rt_status status = obelisk_rt_cached_vpi_class_member(
+  talos_rt_status status = talos_rt_cached_vpi_class_member(
       handle->owner->context, cursor, &member);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   if (member.isMethod || handle->classDefinitionOrigin ||
       (!member.isStatic && !handle->dynamicObject)) {
     setError(handle->owner, "class member has no readable actual", vpiNotice);
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   }
   if (member.isStatic)
     return member.backingStorage.offset
-               ? obelisk_rt_read_design_slice(handle->owner->context,
+               ? talos_rt_read_design_slice(handle->owner->context,
                                               member.backingStorage, firstBit,
                                               bitWidth, value, unknown)
-               : OBELISK_RT_INVALID_HANDLE;
+               : TALOS_RT_INVALID_HANDLE;
 
   ManagedExecutionScope managed(handle->owner->context);
-  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
-    return OBELISK_RT_INVALID_LIFECYCLE;
+  if (managed.getStatus() != TALOS_RT_OK || !managed.getLane())
+    return TALOS_RT_INVALID_LIFECYCLE;
   ManagedObjectLease lease;
-  if (obelisk_rt_managed_object_acquire(
-          managed.getLane(), handle->dynamicObject, OBELISK_RT_MANAGED_CLASS,
-          &lease) != OBELISK_RT_OK ||
-      obelisk_rt_v1_object_id(handle->dynamicObject) != handle->dynamicIdentity)
-    return OBELISK_RT_INVALID_HANDLE;
+  if (talos_rt_managed_object_acquire(
+          managed.getLane(), handle->dynamicObject, TALOS_RT_MANAGED_CLASS,
+          &lease) != TALOS_RT_OK ||
+      talos_rt_v1_object_id(handle->dynamicObject) != handle->dynamicIdentity)
+    return TALOS_RT_INVALID_HANDLE;
   const auto *descriptor =
-      obelisk_rt_managed_object_class_descriptor(handle->dynamicObject);
+      talos_rt_managed_object_class_descriptor(handle->dynamicObject);
   while (descriptor && descriptor->class_id != member.classID)
     descriptor = descriptor->base;
   if (!descriptor)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
 
-  obelisk_rt_design_info_v1 root{};
-  obelisk_rt_design_type_info_v1 type{};
-  if (obelisk_rt_cached_design_info(handle->owner->context, cursor, &root) !=
-          OBELISK_RT_OK ||
-      obelisk_rt_cached_design_type_info(
-          handle->owner->context, {root.type_offset}, &type) != OBELISK_RT_OK ||
+  talos_rt_design_info_v1 root{};
+  talos_rt_design_type_info_v1 type{};
+  if (talos_rt_cached_design_info(handle->owner->context, cursor, &root) !=
+          TALOS_RT_OK ||
+      talos_rt_cached_design_type_info(
+          handle->owner->context, {root.type_offset}, &type) != TALOS_RT_OK ||
       firstBit > root.bit_width || bitWidth > root.bit_width - firstBit)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   const uint64_t planeSize = root.bit_width / 8 + (root.bit_width % 8 != 0);
-  const bool fourState = (type.flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+  const bool fourState = (type.flags & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0;
   if (member.byteOffset > lease.extent ||
       planeSize > (lease.extent - member.byteOffset) / (fourState ? 2 : 1))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   const uint8_t *bytes = lease.object + member.byteOffset;
   for (uint64_t bit = 0; bit != bitWidth; ++bit) {
     uint64_t sourceBit = firstBit + bit;
@@ -5248,18 +5248,18 @@ obelisk_rt_status readClassMemberBits(__vpiHandle *handle,
         ((bytes[planeSize + sourceBit / 8] >> (sourceBit % 8)) & 1))
       unknown[bit / 64] |= mask;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 // Every tag and selected value comes from one coherent copy of the storage
 // segment. A managed-array hop starts a new segment, copied by the existing
 // container snapshot helper; later offsets are relative to that copy.
-obelisk_rt_status readTaggedSelection(
+talos_rt_status readTaggedSelection(
     __vpiHandle *source, const std::vector<VPISelectionStep> &steps,
     uint64_t firstBit, uint64_t bitWidth, uint64_t *value, uint64_t *unknown) {
   if (steps.empty())
-    return OBELISK_RT_EOF;
-  OBELISK_RT_TRY {
+    return TALOS_RT_EOF;
+  TALOS_RT_TRY {
     struct Tag {
       uint64_t offset, width, expected;
     };
@@ -5267,35 +5267,35 @@ obelisk_rt_status readTaggedSelection(
       std::vector<Tag> tags;
       uint64_t offset = 0, width = 0;
       const VPISelectionStep *transition = nullptr;
-      obelisk_rt_design_cursor_v1 semantic{};
+      talos_rt_design_cursor_v1 semantic{};
     };
-    obelisk_rt_design_info_v1 root{};
-    obelisk_rt_design_cursor_v1 semantic{};
-    if (obelisk_rt_cached_design_info(source->owner->context, source->cursor,
-                                      &root) != OBELISK_RT_OK)
-      return OBELISK_RT_INVALID_DESIGN;
-    const auto semanticStatus = obelisk_rt_cached_design_semantic_root(
+    talos_rt_design_info_v1 root{};
+    talos_rt_design_cursor_v1 semantic{};
+    if (talos_rt_cached_design_info(source->owner->context, source->cursor,
+                                      &root) != TALOS_RT_OK)
+      return TALOS_RT_INVALID_DESIGN;
+    const auto semanticStatus = talos_rt_cached_design_semantic_root(
         source->owner->context, source->cursor, &semantic);
-    if (semanticStatus != OBELISK_RT_OK && semanticStatus != OBELISK_RT_EOF)
-      return OBELISK_RT_INVALID_DESIGN;
-    obelisk_rt_design_cursor_v1 physical{root.type_offset};
+    if (semanticStatus != TALOS_RT_OK && semanticStatus != TALOS_RT_EOF)
+      return TALOS_RT_INVALID_DESIGN;
+    talos_rt_design_cursor_v1 physical{root.type_offset};
     uint64_t offset = 0;
     bool hasTag = false;
     std::vector<Segment> segments(1);
     for (const auto &step : steps) {
       if (step.memberSelection) {
-        obelisk_rt_design_type_info_v1 parent{};
-        if (obelisk_rt_cached_design_type_info(source->owner->context, physical,
-                                               &parent) != OBELISK_RT_OK)
-          return OBELISK_RT_INVALID_DESIGN;
-        if (parent.kind == OBELISK_RT_DESIGN_TYPE_UNION &&
-            (parent.flags & OBELISK_RT_DESIGN_TYPE_TAGGED)) {
+        talos_rt_design_type_info_v1 parent{};
+        if (talos_rt_cached_design_type_info(source->owner->context, physical,
+                                               &parent) != TALOS_RT_OK)
+          return TALOS_RT_INVALID_DESIGN;
+        if (parent.kind == TALOS_RT_DESIGN_TYPE_UNION &&
+            (parent.flags & TALOS_RT_DESIGN_TYPE_TAGGED)) {
           if (!parent.tag_bits || parent.tag_bits > 64 ||
               parent.tag_bits > parent.bit_width ||
               parent.bit_width > UINT64_MAX - offset || step.index < 0)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           hasTag = true;
-          const bool packed = parent.flags & OBELISK_RT_DESIGN_TYPE_PACKED;
+          const bool packed = parent.flags & TALOS_RT_DESIGN_TYPE_PACKED;
           segments.back().tags.push_back(
               {offset + parent.bit_width - parent.tag_bits, parent.tag_bits,
                static_cast<uint64_t>(step.index) + (packed ? 0 : 1)});
@@ -5313,19 +5313,19 @@ obelisk_rt_status readTaggedSelection(
       semantic = step.semanticType;
     }
     if (!hasTag)
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     segments.back().offset = firstBit;
     segments.back().width = bitWidth;
     ManagedExecutionScope managed(source->owner->context);
-    if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
-      return OBELISK_RT_INVALID_LIFECYCLE;
+    if (managed.getStatus() != TALOS_RT_OK || !managed.getLane())
+      return TALOS_RT_INVALID_LIFECYCLE;
     std::vector<uint64_t> rootValue, rootUnknown;
     std::vector<uint8_t> payload;
-    const obelisk_rt_element_type_v1 *element = nullptr;
+    const talos_rt_element_type_v1 *element = nullptr;
     for (size_t index = 0; index != segments.size(); ++index) {
       const auto &segment = segments[index];
       if (!segment.width || segment.width > UINT64_MAX - segment.offset)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       uint64_t start = segment.offset, end = start + segment.width;
       for (const auto &tag : segment.tags) {
         start = std::min(start, tag.offset);
@@ -5334,26 +5334,26 @@ obelisk_rt_status readTaggedSelection(
       if (!index) {
         size_t count = 0;
         if (!checkedWordCount(end - start, 64, count))
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         rootValue.assign(count, 0);
         rootUnknown.assign(count, 0);
         auto status =
             readClassMemberBits(source, source->cursor, start, end - start,
                                 rootValue.data(), rootUnknown.data());
-        if (status == OBELISK_RT_EOF)
-          status = obelisk_rt_read_design_slice(
+        if (status == TALOS_RT_EOF)
+          status = talos_rt_read_design_slice(
               source->owner->context, source->cursor, start, end - start,
               rootValue.data(), rootUnknown.data());
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       } else if (!element || !element->value_size ||
                  end / 8 + (end % 8 != 0) > element->value_size ||
                  element->value_size >
                      payload.size() /
-                         ((element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
+                         ((element->flags & TALOS_RT_ELEMENT_FOUR_STATE)
                               ? 2
                               : 1)) {
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       }
       auto bit = [&](uint64_t at, bool unknownPlane) {
         if (!index) {
@@ -5361,7 +5361,7 @@ obelisk_rt_status readTaggedSelection(
           at -= start;
           return (plane[at / 64] >> (at % 64)) & 1;
         }
-        if (unknownPlane && !(element->flags & OBELISK_RT_ELEMENT_FOUR_STATE))
+        if (unknownPlane && !(element->flags & TALOS_RT_ELEMENT_FOUR_STATE))
           return uint64_t{0};
         uint64_t byte = at / 8 + (unknownPlane ? element->value_size : 0);
         return uint64_t{(payload[byte] >> (at % 8)) & 1u};
@@ -5375,7 +5375,7 @@ obelisk_rt_status readTaggedSelection(
         if (unknownTag || actual != tag.expected) {
           setError(source->owner, "tagged union member is not currently active",
                    vpiNotice);
-          return OBELISK_RT_INVALID_ARGUMENT;
+          return TALOS_RT_INVALID_ARGUMENT;
         }
       }
       if (!segment.transition) {
@@ -5384,7 +5384,7 @@ obelisk_rt_status readTaggedSelection(
           if (unknown)
             unknown[i / 64] |= bit(firstBit + i, true) << (i % 64);
         }
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       uint64_t word = 0, unknownWord = 0;
       for (uint64_t i = 0; i != 64; ++i) {
@@ -5407,17 +5407,17 @@ obelisk_rt_status readTaggedSelection(
         if (!source->owner->errorLevel)
           setError(source->owner,
                    "selected managed array element is unavailable", vpiNotice);
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       }
       payload = std::move(selected.value);
       element = selected.element;
     }
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not inspect tagged union selection",
              vpiSystem);
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
   }
 }
 
@@ -5429,12 +5429,12 @@ bool readManagedSelectionWord(__vpiHandle *source,
   const auto guarded = readTaggedSelection(
       source, steps, steps.empty() ? 0 : steps.back().bitOffset, 64, &word,
       &guardedUnknown);
-  if (guarded != OBELISK_RT_EOF)
-    return guarded == OBELISK_RT_OK && guardedUnknown == 0;
+  if (guarded != TALOS_RT_EOF)
+    return guarded == TALOS_RT_OK && guardedUnknown == 0;
   ManagedExecutionScope managed(source->owner->context);
-  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
+  if (managed.getStatus() != TALOS_RT_OK || !managed.getLane())
     return false;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<uint8_t> payload;
     bool enteredContainer = false;
     auto readAt = [&](uint64_t bitOffset, uint64_t &result) {
@@ -5453,15 +5453,15 @@ bool readManagedSelectionWord(__vpiHandle *source,
       uint64_t unknown = 0;
       auto status = readClassMemberBits(source, source->cursor, bitOffset, 64,
                                         &result, &unknown);
-      if (status == OBELISK_RT_EOF)
+      if (status == TALOS_RT_EOF)
         status =
-            obelisk_rt_read_design_slice(source->owner->context, source->cursor,
+            talos_rt_read_design_slice(source->owner->context, source->cursor,
                                          bitOffset, 64, &result, &unknown);
-      return status == OBELISK_RT_OK && unknown == 0;
+      return status == TALOS_RT_OK && unknown == 0;
     };
-    obelisk_rt_design_cursor_v1 semantic{};
-    if (obelisk_rt_cached_design_semantic_root(
-            source->owner->context, source->cursor, &semantic) != OBELISK_RT_OK)
+    talos_rt_design_cursor_v1 semantic{};
+    if (talos_rt_cached_design_semantic_root(
+            source->owner->context, source->cursor, &semantic) != TALOS_RT_OK)
       return false;
     uint64_t offset = 0;
     for (const auto &step : steps) {
@@ -5498,7 +5498,7 @@ bool readManagedSelectionWord(__vpiHandle *source,
     }
     return true;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not inspect virtual-interface array",
              vpiSystem);
     return false;
@@ -5509,7 +5509,7 @@ bool readValue(__vpiHandle *, const VPIValueSource &, std::vector<uint64_t> &,
                std::vector<uint64_t> &);
 
 bool knownExpressionInteger(__vpiHandle *handle,
-                            obelisk_rt_design_cursor_v1 semanticCursor,
+                            talos_rt_design_cursor_v1 semanticCursor,
                             uint64_t width, const std::vector<uint64_t> &value,
                             const std::vector<uint64_t> &unknown,
                             int64_t &out) {
@@ -5518,11 +5518,11 @@ bool knownExpressionInteger(__vpiHandle *handle,
   for (uint64_t word : unknown)
     if (word)
       return false;
-  obelisk_rt_design_semantic_type_info_v1 semantic{};
-  if (obelisk_rt_cached_design_semantic_type_info(
-          handle->owner->context, semanticCursor, &semantic) != OBELISK_RT_OK)
+  talos_rt_design_semantic_type_info_v1 semantic{};
+  if (talos_rt_cached_design_semantic_type_info(
+          handle->owner->context, semanticCursor, &semantic) != TALOS_RT_OK)
     return false;
-  bool signedValue = (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
+  bool signedValue = (semantic.flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) != 0;
   bool negative =
       signedValue && ((value[(width - 1) / 64] >> ((width - 1) % 64)) & 1);
   for (uint64_t bit = 64; bit < width; ++bit)
@@ -5547,35 +5547,35 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
   }
   struct Evaluated {
     VPIExpressionInfo info{};
-    obelisk_rt_design_cursor_v1 semantic{};
+    talos_rt_design_cursor_v1 semantic{};
     uint64_t width = 0;
-    obelisk::reflection::VPIIntegralExpressionShape shape;
+    talos::reflection::VPIIntegralExpressionShape shape;
     std::vector<uint64_t> value, unknown;
   };
   struct Pending {
-    obelisk_rt_design_cursor_v1 cursor;
+    talos_rt_design_cursor_v1 cursor;
     VPIExpressionInfo info;
     uint32_t next = 0;
-    std::vector<obelisk_rt_design_cursor_v1> children;
+    std::vector<talos_rt_design_cursor_v1> children;
   };
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::unordered_map<uint64_t, Evaluated> results;
     std::vector<Pending> pending;
     pending.push_back({handle->cursor, rootInfo, 0, {}});
     auto setShape = [&](Evaluated &result) {
-      obelisk_rt_design_semantic_type_info_v1 semantic{};
-      if (obelisk_rt_cached_design_semantic_type_info(
+      talos_rt_design_semantic_type_info_v1 semantic{};
+      if (talos_rt_cached_design_semantic_type_info(
               handle->owner->context, result.semantic, &semantic) !=
-          OBELISK_RT_OK)
+          TALOS_RT_OK)
         return false;
       result.shape = {
           result.width,
-          bool(semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED),
-          bool(semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE),
+          bool(semantic.flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED),
+          bool(semantic.flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE),
           result.info.kind == vpiOperation ? result.info.code : 0};
       return true;
     };
-    auto readLeaf = [&](obelisk_rt_design_cursor_v1 cursor, uint32_t kind) {
+    auto readLeaf = [&](talos_rt_design_cursor_v1 cursor, uint32_t kind) {
       __vpiHandle leaf;
       leaf.owner = handle->owner;
       leaf.cursor = cursor;
@@ -5605,18 +5605,18 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
     while (!pending.empty()) {
       Pending &current = pending.back();
       if (current.next != current.info.operandCount) {
-        obelisk_rt_design_cursor_v1 child{};
+        talos_rt_design_cursor_v1 child{};
         uint32_t kind = 0;
-        if (obelisk_rt_cached_vpi_expression_operand(
+        if (talos_rt_cached_vpi_expression_operand(
                 handle->owner->context, current.cursor, current.next++, &child,
-                &kind) != OBELISK_RT_OK)
+                &kind) != TALOS_RT_OK)
           return false;
         current.children.push_back(child);
         if (results.count(child.offset))
           continue;
         VPIExpressionInfo expression{};
-        if (obelisk_rt_cached_vpi_expression(handle->owner->context, child,
-                                             &expression) == OBELISK_RT_OK)
+        if (talos_rt_cached_vpi_expression(handle->owner->context, child,
+                                             &expression) == TALOS_RT_OK)
           pending.push_back({child, expression, 0, {}});
         else if (!readLeaf(child, kind))
           return false;
@@ -5644,9 +5644,9 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
       };
       if (current.info.kind == vpiConstant) {
         VPIFrozenValue frozen{};
-        if (obelisk_rt_cached_vpi_frozen_value(handle->owner->context,
+        if (talos_rt_cached_vpi_frozen_value(handle->owner->context,
                                                current.cursor,
-                                               &frozen) != OBELISK_RT_OK)
+                                               &frozen) != TALOS_RT_OK)
           return false;
         uint64_t bytes = (result.width + 7) / 8;
         for (uint64_t byte = 0; byte != bytes; ++byte) {
@@ -5658,9 +5658,9 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
       } else if (current.info.kind == vpiOperation) {
         if (current.info.code != vpiConcatOp &&
             current.info.code != vpiMultiConcatOp) {
-          using obelisk::designbytecode::Logic;
+          using talos::designbytecode::Logic;
           std::array<Logic, 3> values{};
-          std::array<obelisk::reflection::VPIIntegralExpressionShape, 3>
+          std::array<talos::reflection::VPIIntegralExpressionShape, 3>
               shapes{};
           if (current.children.size() > values.size())
             return false;
@@ -5677,7 +5677,7 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
             std::copy(input.unknown.begin(), input.unknown.end(),
                       logic.unknown.begin());
           }
-          Logic evaluated = obelisk::vpiexpression::evaluate(
+          Logic evaluated = talos::vpiexpression::evaluate(
               current.info.code, result.shape, values, shapes);
           result.value = std::move(evaluated.value).takeVector();
           result.unknown = std::move(evaluated.unknown).takeVector();
@@ -5699,17 +5699,17 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
         }
       } else {
         const auto &parent = child(0);
-        obelisk_rt_design_semantic_type_info_v1 semantic{};
-        if (obelisk_rt_cached_design_semantic_type_info(
+        talos_rt_design_semantic_type_info_v1 semantic{};
+        if (talos_rt_cached_design_semantic_type_info(
                 handle->owner->context, parent.semantic, &semantic) !=
-            OBELISK_RT_OK)
+            TALOS_RT_OK)
           return false;
         bool hasRange =
-            (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
+            (semantic.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
         bool ascending = hasRange && semantic.range_left < semantic.range_right;
         int64_t right = hasRange ? semantic.range_right : 0;
         bool bitSelect =
-            obelisk::reflection::isVPIBitSelection(current.info.kind);
+            talos::reflection::isVPIBitSelection(current.info.kind);
         int64_t base = 0, rightBound = 0;
         bool available = integer(child(1), base) &&
                          (bitSelect || integer(child(2), rightBound));
@@ -5722,7 +5722,7 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
         if (indexed && current.info.code == 2 && !ascending)
           first -= result.width - 1;
         bool fourState =
-            (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
+            (semantic.flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
         for (uint64_t bit = 0; bit != result.width; ++bit) {
           __int128 sourceIndex = ascending ? first - bit : first + bit;
           __int128 offset = ascending
@@ -5746,7 +5746,7 @@ bool readExpressionValue(__vpiHandle *handle, const VPIExpressionInfo &rootInfo,
     unknown = std::move(result->second.unknown);
     return true;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(handle->owner, "expression value evaluation is unavailable",
              vpiNotice);
     return false;
@@ -5765,12 +5765,12 @@ bool readValue(__vpiHandle *handle, const VPIValueSource &source,
     bool hasPositive = source.primitiveStrength & positive;
     bool z = hasZero && !hasNegative && !hasPositive;
     bool u = z || (hasNegative + hasZero + hasPositive) != 1;
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       value.assign(1, z || (!u && hasPositive));
       unknown.assign(1, u);
       return true;
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner, "VPI primitive value buffer is out of memory",
                vpiSystem);
       return false;
@@ -5778,8 +5778,8 @@ bool readValue(__vpiHandle *handle, const VPIValueSource &source,
   }
   VPIExpressionInfo expression{};
   if (source.form == VPIObjectForm::Design &&
-      obelisk_rt_cached_vpi_expression(handle->owner->context, source.cursor,
-                                       &expression) == OBELISK_RT_OK)
+      talos_rt_cached_vpi_expression(handle->owner->context, source.cursor,
+                                       &expression) == TALOS_RT_OK)
     return readExpressionValue(handle, expression, value, unknown);
   if (source.form == VPIObjectForm::SnapshotValue) {
     if (!handle->snapshot->readable) {
@@ -5787,19 +5787,19 @@ bool readValue(__vpiHandle *handle, const VPIValueSource &source,
                vpiNotice);
       return false;
     }
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       value = handle->snapshot->value;
       unknown = handle->snapshot->unknown;
       return true;
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner, "VPI snapshot value buffer is out of memory",
                vpiSystem);
       return false;
     }
   }
   const auto &info = source.info;
-  if (info.bit_width == 0 || info.kind == OBELISK_RT_DESIGN_RECORD_DRIVER) {
+  if (info.bit_width == 0 || info.kind == TALOS_RT_DESIGN_RECORD_DRIVER) {
     setError(handle->owner,
              "VPI value access requires readable storage or net");
     return false;
@@ -5809,11 +5809,11 @@ bool readValue(__vpiHandle *handle, const VPIValueSource &source,
     setError(handle->owner, "VPI value width exceeds host capacity", vpiSystem);
     return false;
   }
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     value.assign(limbs, 0);
     unknown.assign(limbs, 0);
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(handle->owner, "VPI value buffer is out of memory", vpiSystem);
     return false;
   }
@@ -5826,20 +5826,20 @@ bool readValue(__vpiHandle *handle, const VPIValueSource &source,
     const auto guarded = readTaggedSelection(
         handle, handle->selectionSteps, source.selectionBitOffset,
         info.bit_width, value.data(), unknown.data());
-    if (guarded != OBELISK_RT_EOF) {
-      if (guarded != OBELISK_RT_OK && !handle->owner->errorLevel)
+    if (guarded != TALOS_RT_EOF) {
+      if (guarded != TALOS_RT_OK && !handle->owner->errorLevel)
         setError(handle->owner, "tagged union value read failed", vpiNotice);
-      return guarded == OBELISK_RT_OK;
+      return guarded == TALOS_RT_OK;
     }
   }
   if (source.form == VPIObjectForm::Design) {
     VPIFrozenValue frozen{};
-    obelisk_rt_status frozenStatus = obelisk_rt_cached_vpi_frozen_value(
+    talos_rt_status frozenStatus = talos_rt_cached_vpi_frozen_value(
         handle->owner->context, source.cursor, &frozen);
-    if (frozenStatus == OBELISK_RT_OK) {
-      if ((frozen.kindAndFlags & obelisk::reflection::frozenValueKindMask) !=
+    if (frozenStatus == TALOS_RT_OK) {
+      if ((frozen.kindAndFlags & talos::reflection::frozenValueKindMask) !=
               static_cast<uint32_t>(
-                  obelisk::reflection::FrozenValueKind::Packed) ||
+                  talos::reflection::FrozenValueKind::Packed) ||
           frozen.bitWidth != info.bit_width ||
           frozen.payloadSize != ((info.bit_width + 7) / 8) * 2) {
         setError(handle->owner, "invalid immutable VPI value metadata",
@@ -5856,27 +5856,27 @@ bool readValue(__vpiHandle *handle, const VPIValueSource &source,
       return true;
     }
   }
-  obelisk_rt_status memberStatus =
+  talos_rt_status memberStatus =
       readClassMemberBits(handle, source.cursor, source.selectionBitOffset,
                           info.bit_width, value.data(), unknown.data());
-  if (memberStatus != OBELISK_RT_EOF) {
-    if (memberStatus != OBELISK_RT_OK && !handle->owner->errorLevel)
+  if (memberStatus != TALOS_RT_EOF) {
+    if (memberStatus != TALOS_RT_OK && !handle->owner->errorLevel)
       setError(handle->owner, "VPI class member read failed", vpiInternal);
-    return memberStatus == OBELISK_RT_OK;
+    return memberStatus == TALOS_RT_OK;
   }
   if (source.form == VPIObjectForm::Indexed) {
-    if (obelisk_rt_read_design_slice(
+    if (talos_rt_read_design_slice(
             handle->owner->context, source.cursor, source.selectionBitOffset,
-            info.bit_width, value.data(), unknown.data()) != OBELISK_RT_OK) {
+            info.bit_width, value.data(), unknown.data()) != TALOS_RT_OK) {
       setError(handle->owner, "VPI indexed design read failed");
       return false;
     }
     return true;
   }
-  obelisk_rt_status status =
-      obelisk_rt_v1_design_read(handle->owner->context, source.cursor,
+  talos_rt_status status =
+      talos_rt_v1_design_read(handle->owner->context, source.cursor,
                                 value.data(), unknown.data(), info.bit_width);
-  if (status != OBELISK_RT_OK) {
+  if (status != TALOS_RT_OK) {
     setError(handle->owner, "VPI design read failed");
     return false;
   }
@@ -5884,9 +5884,9 @@ bool readValue(__vpiHandle *handle, const VPIValueSource &source,
 }
 
 bool readManagedStateWord(__vpiHandle *handle,
-                          const obelisk_rt_design_info_v1 &info,
+                          const talos_rt_design_info_v1 &info,
                           VPIObjectForm form,
-                          obelisk_rt_design_cursor_v1 cursor,
+                          talos_rt_design_cursor_v1 cursor,
                           uint64_t selectionBitOffset, uint64_t &word) {
   if (form == VPIObjectForm::SnapshotValue &&
       handle->snapshot->exactType == vpiClassVar &&
@@ -5898,16 +5898,16 @@ bool readManagedStateWord(__vpiHandle *handle,
     }
     if (handle->snapshot->object) {
       ManagedExecutionScope managed(handle->owner->context);
-      if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+      if (managed.getStatus() != TALOS_RT_OK || !managed.getLane()) {
         setError(handle->owner, "snapshot query cannot enter GC scope",
                  vpiInternal);
         return false;
       }
       ManagedObjectLease lease;
-      if (obelisk_rt_managed_object_acquire(
+      if (talos_rt_managed_object_acquire(
               managed.getLane(), handle->snapshot->object,
-              OBELISK_RT_MANAGED_INVALID, &lease) != OBELISK_RT_OK ||
-          obelisk_rt_v1_object_id(handle->snapshot->object) !=
+              TALOS_RT_MANAGED_INVALID, &lease) != TALOS_RT_OK ||
+          talos_rt_v1_object_id(handle->snapshot->object) !=
               handle->snapshot->identity) {
         setError(handle->owner, "snapshot references a reclaimed class object",
                  vpiNotice);
@@ -5917,11 +5917,11 @@ bool readManagedStateWord(__vpiHandle *handle,
     word = handle->snapshot->value[0];
     return true;
   }
-  obelisk_rt_design_type_info_v1 type{};
+  talos_rt_design_type_info_v1 type{};
   if (info.type_offset == 0 ||
-      obelisk_rt_cached_design_type_info(
-          handle->owner->context, {info.type_offset}, &type) != OBELISK_RT_OK ||
-      type.kind != OBELISK_RT_DESIGN_TYPE_SCALAR || type.bit_width != 64 ||
+      talos_rt_cached_design_type_info(
+          handle->owner->context, {info.type_offset}, &type) != TALOS_RT_OK ||
+      type.kind != TALOS_RT_DESIGN_TYPE_SCALAR || type.bit_width != 64 ||
       info.bit_width != 64 ||
       (form != VPIObjectForm::Design && form != VPIObjectForm::Indexed)) {
     setError(handle->owner, "invalid managed VPI storage representation",
@@ -5940,25 +5940,25 @@ bool readManagedStateWord(__vpiHandle *handle,
     const auto guarded =
         readTaggedSelection(handle, handle->selectionSteps, selectionBitOffset,
                             64, &word, &unknown);
-    if (guarded != OBELISK_RT_EOF) {
-      if ((guarded != OBELISK_RT_OK || unknown) && !handle->owner->errorLevel)
+    if (guarded != TALOS_RT_EOF) {
+      if ((guarded != TALOS_RT_OK || unknown) && !handle->owner->errorLevel)
         setError(handle->owner, "tagged union reference read failed",
                  vpiNotice);
-      return guarded == OBELISK_RT_OK && !unknown;
+      return guarded == TALOS_RT_OK && !unknown;
     }
   }
-  obelisk_rt_status status = readClassMemberBits(
+  talos_rt_status status = readClassMemberBits(
       handle, cursor, selectionBitOffset, 64, &word, &unknown);
-  if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+  if (status != TALOS_RT_OK && status != TALOS_RT_EOF)
     return false;
-  if (status == OBELISK_RT_EOF)
+  if (status == TALOS_RT_EOF)
     status = form == VPIObjectForm::Indexed
-                 ? obelisk_rt_read_design_slice(handle->owner->context, cursor,
+                 ? talos_rt_read_design_slice(handle->owner->context, cursor,
                                                 selectionBitOffset, 64, &word,
                                                 &unknown)
-                 : obelisk_rt_v1_design_read(handle->owner->context, cursor,
+                 : talos_rt_v1_design_read(handle->owner->context, cursor,
                                              &word, &unknown, 64);
-  if (status != OBELISK_RT_OK) {
+  if (status != TALOS_RT_OK) {
     if (!handle->owner->errorLevel)
       setError(handle->owner, "managed VPI state read failed", vpiInternal);
     return false;
@@ -5977,7 +5977,7 @@ bool readManagedStateWord(__vpiHandle *handle,
 }
 
 bool readManagedStateWord(__vpiHandle *handle, uint64_t &word) {
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   if (!infoFor(handle, info))
     return false;
   return readManagedStateWord(handle, info, handle->form, handle->cursor,
@@ -5992,31 +5992,31 @@ bool readManagedStateWord(__vpiHandle *handle, const VPIValueSource &source,
 
 class ScopedManagedWordRoot {
 public:
-  ScopedManagedWordRoot(obelisk_rt_gc_lane_v1 *lane,
-                        obelisk_rt_managed_word_v1 *word)
+  ScopedManagedWordRoot(talos_rt_gc_lane_v1 *lane,
+                        talos_rt_managed_word_v1 *word)
       : lane(lane),
-        status(obelisk_rt_v1_gc_managed_root_push(lane, &root, word)) {}
+        status(talos_rt_v1_gc_managed_root_push(lane, &root, word)) {}
   ScopedManagedWordRoot(const ScopedManagedWordRoot &) = delete;
   ScopedManagedWordRoot &operator=(const ScopedManagedWordRoot &) = delete;
   ~ScopedManagedWordRoot() {
-    if (status == OBELISK_RT_OK)
-      (void)obelisk_rt_v1_gc_managed_root_pop(lane, &root);
+    if (status == TALOS_RT_OK)
+      (void)talos_rt_v1_gc_managed_root_pop(lane, &root);
   }
-  obelisk_rt_status getStatus() const { return status; }
+  talos_rt_status getStatus() const { return status; }
 
 private:
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  obelisk_rt_gc_managed_root_v1 root{};
-  obelisk_rt_status status = OBELISK_RT_INVALID_HANDLE;
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_managed_root_v1 root{};
+  talos_rt_status status = TALOS_RT_INVALID_HANDLE;
 };
 
 bool managedStringLength(__vpiHandle *handle,
-                         const obelisk_rt_design_info_v1 &info,
-                         VPIObjectForm form, obelisk_rt_design_cursor_v1 cursor,
+                         const talos_rt_design_info_v1 &info,
+                         VPIObjectForm form, talos_rt_design_cursor_v1 cursor,
                          uint64_t selectionBitOffset, PLI_INT32 &length) {
   ContextTransaction transaction(handle->owner->context);
   ManagedExecutionScope managed(handle->owner->context);
-  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+  if (managed.getStatus() != TALOS_RT_OK || !managed.getLane()) {
     setError(handle->owner, "managed string VPI query cannot enter GC scope",
              vpiInternal);
     return false;
@@ -6025,23 +6025,23 @@ bool managedStringLength(__vpiHandle *handle,
   if (!readManagedStateWord(handle, info, form, cursor, selectionBitOffset,
                             string))
     return false;
-  if (obelisk_rt_v1_gc_candidate_root(handle->owner->context, string,
-                                      OBELISK_RT_MANAGED_ROOT_KIND_STRING) !=
+  if (talos_rt_v1_gc_candidate_root(handle->owner->context, string,
+                                      TALOS_RT_MANAGED_ROOT_KIND_STRING) !=
       string) {
     setError(handle->owner, "invalid managed string in VPI design state",
              vpiInternal);
     return false;
   }
   ScopedManagedWordRoot root(managed.getLane(), &string);
-  if (root.getStatus() != OBELISK_RT_OK ||
-      obelisk_rt_validate_string(handle->owner->context, string) !=
-          OBELISK_RT_OK) {
+  if (root.getStatus() != TALOS_RT_OK ||
+      talos_rt_validate_string(handle->owner->context, string) !=
+          TALOS_RT_OK) {
     setError(handle->owner, "invalid managed string in VPI design state",
              vpiInternal);
     return false;
   }
   length = static_cast<PLI_INT32>(std::min<uint64_t>(
-      obelisk_rt_v1_string_length(static_cast<obelisk_rt_string_v1>(string)),
+      talos_rt_v1_string_length(static_cast<talos_rt_string_v1>(string)),
       INT32_MAX));
   return true;
 }
@@ -6056,24 +6056,24 @@ void setLogicBit(std::vector<uint64_t> &plane, uint64_t bit) {
 }
 
 bool valueSigned(__vpiHandle *handle,
-                 const obelisk_rt_design_info_v1 &objectInfo, PLI_INT32 type,
+                 const talos_rt_design_info_v1 &objectInfo, PLI_INT32 type,
                  bool hasSemanticCursor,
-                 obelisk_rt_design_cursor_v1 semanticCursor) {
+                 talos_rt_design_cursor_v1 semanticCursor) {
   if (type == vpiNetBit || type == vpiRegBit || type == vpiBitSelect ||
       type == vpiPartSelect || type == vpiIndexedPartSelect)
     return false;
   if (hasSemanticCursor) {
-    obelisk_rt_design_semantic_type_info_v1 info{};
-    if (obelisk_rt_cached_design_semantic_type_info(
-            handle->owner->context, semanticCursor, &info) == OBELISK_RT_OK)
-      return (info.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
+    talos_rt_design_semantic_type_info_v1 info{};
+    if (talos_rt_cached_design_semantic_type_info(
+            handle->owner->context, semanticCursor, &info) == TALOS_RT_OK)
+      return (info.flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) != 0;
   }
   if (objectInfo.type_offset != 0) {
-    obelisk_rt_design_type_info_v1 typeInfo{};
-    if (obelisk_rt_cached_design_type_info(handle->owner->context,
+    talos_rt_design_type_info_v1 typeInfo{};
+    if (talos_rt_cached_design_type_info(handle->owner->context,
                                            {objectInfo.type_offset},
-                                           &typeInfo) == OBELISK_RT_OK)
-      return (typeInfo.flags & OBELISK_RT_DESIGN_TYPE_SIGNED) != 0;
+                                           &typeInfo) == TALOS_RT_OK)
+      return (typeInfo.flags & TALOS_RT_DESIGN_TYPE_SIGNED) != 0;
   }
   // Legacy immutable records may lack both semantic and physical type
   // metadata. The predefined integer kinds are signed unless explicitly
@@ -6097,8 +6097,8 @@ bool valueSigned(__vpiHandle *handle,
 }
 
 bool valueSigned(__vpiHandle *handle,
-                 const obelisk_rt_design_info_v1 &objectInfo) {
-  obelisk_rt_design_cursor_v1 semanticCursor{};
+                 const talos_rt_design_info_v1 &objectInfo) {
+  talos_rt_design_cursor_v1 semanticCursor{};
   const bool hasSemanticCursor = semanticCursorFor(handle, semanticCursor);
   return valueSigned(handle, objectInfo, vpiTypeForHandle(handle),
                      hasSemanticCursor, semanticCursor);
@@ -6283,35 +6283,35 @@ void decodeStrengthRange(uint16_t range, PLI_INT32 &strength0,
   strength1 = strengthCode(high <= 7 ? 7 - high : high - 7);
 }
 
-bool useDirectStateForValue(const obelisk_rt_context *context) {
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+bool useDirectStateForValue(const talos_rt_context *context) {
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   return plan && !context->vpiObservationDemand &&
-         (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
+         (plan->flags & TALOS_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
          !context->nativeScheduleDeoptimized && context->execution &&
          plan->state_bit_count == context->execution->state_bit_count &&
          plan->state_value && plan->state_unknown;
 }
 
-bool readNetStrength(__vpiHandle *handle, obelisk_rt_design_cursor_v1 cursor,
+bool readNetStrength(__vpiHandle *handle, talos_rt_design_cursor_v1 cursor,
                      uint64_t bitOffset, uint16_t &range) {
   uint64_t stateOffset = 0;
-  if (obelisk_rt_design_state_offset(handle->owner->context, cursor, bitOffset,
-                                     &stateOffset) != OBELISK_RT_OK) {
+  if (talos_rt_design_state_offset(handle->owner->context, cursor, bitOffset,
+                                     &stateOffset) != TALOS_RT_OK) {
     setError(handle->owner, "VPI net strength offset is unavailable",
              vpiInternal);
     return false;
   }
   const bool useDirectState = useDirectStateForValue(handle->owner->context);
-  if (obelisk_rt_design_net_strength(handle->owner->context, stateOffset,
-                                     &range, useDirectState) == OBELISK_RT_OK)
+  if (talos_rt_design_net_strength(handle->owner->context, stateOffset,
+                                     &range, useDirectState) == TALOS_RT_OK)
     return true;
   setError(handle->owner, "could not retrieve VPI net strength", vpiInternal);
   return false;
 }
 
 struct VPISelectedSpan {
-  obelisk_rt_design_cursor_v1 cursor{};
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_cursor_v1 cursor{};
+  talos_rt_design_info_v1 info{};
   uint32_t exactType = 0;
   uint64_t offset = 0;
   uint64_t width = 0;
@@ -6320,7 +6320,7 @@ struct VPISelectedSpan {
 // Resolve source selections to their current underlying declaration and span.
 // Strength forwarding alone may look through scalar concat/replication. Those
 // Operation occurrences never become aliases for object comparison (38.3).
-obelisk_rt_status selectedObjectSpan(__vpiHandle *handle,
+talos_rt_status selectedObjectSpan(__vpiHandle *handle,
                                      const VPIValueSource &initial,
                                      uint64_t width, bool forwardScalarConcat,
                                      VPISelectedSpan &span) {
@@ -6340,9 +6340,9 @@ obelisk_rt_status selectedObjectSpan(__vpiHandle *handle,
     child.expressionFrameActivation = handle->expressionFrameActivation;
     child.dynamicObject = handle->dynamicObject;
     child.dynamicIdentity = handle->dynamicIdentity;
-    if (obelisk_rt_cached_vpi_expression_operand(
+    if (talos_rt_cached_vpi_expression_operand(
             context, selected.cursor, index, &child.cursor,
-            &child.exactVpiType) != OBELISK_RT_OK)
+            &child.exactVpiType) != TALOS_RT_OK)
       return false;
     inheritExpressionContext(child, selected);
     return true;
@@ -6363,16 +6363,16 @@ obelisk_rt_status selectedObjectSpan(__vpiHandle *handle,
   };
   for (;;) {
     VPIExpressionInfo expression{};
-    if (obelisk_rt_cached_vpi_expression(context, selected.cursor,
-                                         &expression) != OBELISK_RT_OK) {
+    if (talos_rt_cached_vpi_expression(context, selected.cursor,
+                                         &expression) != TALOS_RT_OK) {
       uint64_t base =
           source.form == VPIObjectForm::Indexed ? source.selectionBitOffset : 0;
       if (!width || offset > source.info.bit_width ||
           width > source.info.bit_width - offset || offset > UINT64_MAX - base)
-        return OBELISK_RT_EOF;
+        return TALOS_RT_EOF;
       span = {source.cursor, source.info, source.exactType, base + offset,
               width};
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     // A one-bit concatenation can contain exactly one positive-width data
     // operand. Preserve its structural net connection, including {1{net}}.
@@ -6387,42 +6387,42 @@ obelisk_rt_status selectedObjectSpan(__vpiHandle *handle,
       if (concat || repeat) {
         __vpiHandle child;
         if (!operand(repeat ? 1 : 0, child))
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         const auto *policy = valuePolicyFor(&child);
         if (!policy || !valueSourceFor(&child, *policy, source))
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
         selected.cursor = child.cursor;
         selected.exactVpiType = child.exactVpiType;
         continue;
       }
     }
-    if (!obelisk::reflection::isVPIBitSelection(expression.kind) &&
+    if (!talos::reflection::isVPIBitSelection(expression.kind) &&
         expression.kind != vpiPartSelect &&
         expression.kind != vpiIndexedPartSelect)
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     __vpiHandle parent;
     if (!operand(0, parent))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto *policy = valuePolicyFor(&parent);
     VPIValueSource parentSource{};
-    obelisk_rt_design_semantic_type_info_v1 semantic{};
+    talos_rt_design_semantic_type_info_v1 semantic{};
     if (!policy || !valueSourceFor(&parent, *policy, parentSource) ||
-        obelisk_rt_cached_design_semantic_type_info(
-            context, parentSource.semanticCursor, &semantic) != OBELISK_RT_OK)
-      return OBELISK_RT_INVALID_DESIGN;
+        talos_rt_cached_design_semantic_type_info(
+            context, parentSource.semanticCursor, &semantic) != TALOS_RT_OK)
+      return TALOS_RT_INVALID_DESIGN;
     bool indexed = expression.kind == vpiIndexedPartSelect;
     bool hasRange =
-        (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
+        (semantic.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
     bool ascending = hasRange && semantic.range_left < semantic.range_right;
     int64_t right = hasRange ? semantic.range_right : 0;
     int64_t bound = 0;
     if (!integer(indexed ||
-                         obelisk::reflection::isVPIBitSelection(expression.kind)
+                         talos::reflection::isVPIBitSelection(expression.kind)
                      ? 1
                      : 2,
                  bound))
-      return handle->owner->errorLevel ? OBELISK_RT_INVALID_HANDLE
-                                       : OBELISK_RT_EOF;
+      return handle->owner->errorLevel ? TALOS_RT_INVALID_HANDLE
+                                       : TALOS_RT_EOF;
     __int128 first = bound;
     if (indexed && expression.code == 1 && ascending)
       first += expression.bitWidth - 1;
@@ -6434,7 +6434,7 @@ obelisk_rt_status selectedObjectSpan(__vpiHandle *handle,
     if (parentOffset < 0 || parentOffset > parentSource.info.bit_width ||
         width >
             parentSource.info.bit_width - static_cast<uint64_t>(parentOffset))
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     offset = static_cast<uint64_t>(parentOffset);
     selected.cursor = parent.cursor;
     selected.exactVpiType = parent.exactVpiType;
@@ -6444,28 +6444,28 @@ obelisk_rt_status selectedObjectSpan(__vpiHandle *handle,
 
 // Pure selections preserve the underlying net bit's resolved strength. Other
 // expressions have ordinary value strength; they are not aliases to a net.
-obelisk_rt_status readSelectedNetStrength(__vpiHandle *handle,
+talos_rt_status readSelectedNetStrength(__vpiHandle *handle,
                                           const VPIValueSource &initial,
                                           uint16_t &strength) {
   VPISelectedSpan span{};
   auto status = selectedObjectSpan(handle, initial, 1, true, span);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
-  if (span.info.kind != OBELISK_RT_DESIGN_RECORD_NET)
-    return OBELISK_RT_EOF;
+  if (span.info.kind != TALOS_RT_DESIGN_RECORD_NET)
+    return TALOS_RT_EOF;
   return readNetStrength(handle, span.cursor, span.offset, strength)
-             ? OBELISK_RT_OK
-             : OBELISK_RT_INVALID_HANDLE;
+             ? TALOS_RT_OK
+             : TALOS_RT_INVALID_HANDLE;
 }
 
 bool isSourceSelection(__vpiHandle *handle) {
   if (handle->form != VPIObjectForm::Design || handle->statement)
     return false;
   VPIExpressionInfo expression{};
-  return obelisk_rt_cached_vpi_expression(handle->owner->context,
+  return talos_rt_cached_vpi_expression(handle->owner->context,
                                           handle->cursor,
-                                          &expression) == OBELISK_RT_OK &&
-         (obelisk::reflection::isVPIBitSelection(expression.kind) ||
+                                          &expression) == TALOS_RT_OK &&
+         (talos::reflection::isVPIBitSelection(expression.kind) ||
           expression.kind == vpiPartSelect ||
           expression.kind == vpiIndexedPartSelect);
 }
@@ -6489,26 +6489,26 @@ bool selectedObjectIdentity(__vpiHandle *handle,
   VPISelectedSpan span{};
   if (!policy || !valueSourceFor(handle, *policy, source) ||
       selectedObjectSpan(handle, source, source.info.bit_width, false, span) !=
-          OBELISK_RT_OK)
+          TALOS_RT_OK)
     return false;
   // Physical state and immutable declarations occupy separate identity
   // domains. Equal parameter values never identify different declarations.
-  if (span.info.kind == OBELISK_RT_DESIGN_RECORD_STORAGE ||
-      span.info.kind == OBELISK_RT_DESIGN_RECORD_NET) {
+  if (span.info.kind == TALOS_RT_DESIGN_RECORD_STORAGE ||
+      span.info.kind == TALOS_RT_DESIGN_RECORD_NET) {
     uint64_t stateOffset = 0;
-    if (obelisk_rt_design_state_offset(handle->owner->context, span.cursor,
+    if (talos_rt_design_state_offset(handle->owner->context, span.cursor,
                                        span.offset,
-                                       &stateOffset) != OBELISK_RT_OK)
+                                       &stateOffset) != TALOS_RT_OK)
       return false;
     identity = {span.info.kind, 0, stateOffset, span.width};
     return true;
   }
   if (span.exactType == vpiParameter || span.exactType == vpiSpecParam) {
-    identity = {OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, span.cursor.offset,
+    identity = {TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, span.cursor.offset,
                 span.offset, span.width};
     return true;
   }
-  if (span.info.capabilities & OBELISK_RT_DESIGN_CAP_FRAME_LOCAL) {
+  if (span.info.capabilities & TALOS_RT_DESIGN_CAP_FRAME_LOCAL) {
     // Source selections keep their occurrence after return, but 38.3 requires
     // a currently existing actual. Resolve the declaration in this invocation
     // before comparing allocation identity, including aliases to automatics.
@@ -6520,18 +6520,18 @@ bool selectedObjectIdentity(__vpiHandle *handle,
     if (!actual.localDeclarationID || frame == handle->owner->frames.end())
       return false;
     auto bound = frame->second.localReferences.find(actual.localDeclarationID);
-    obelisk_rt_design_info_v1 declaration{};
+    talos_rt_design_info_v1 declaration{};
     if (bound == frame->second.localReferences.end() ||
-        obelisk_rt_cached_design_info(handle->owner->context, span.cursor,
-                                      &declaration) != OBELISK_RT_OK ||
+        talos_rt_cached_design_info(handle->owner->context, span.cursor,
+                                      &declaration) != TALOS_RT_OK ||
         readFrameReference(handle->owner, bound->second, span.cursor,
                            declaration, span.offset, span.width, nullptr,
-                           nullptr) != OBELISK_RT_OK)
+                           nullptr) != TALOS_RT_OK)
       return false;
-    obelisk_rt_stable_handle_v1 decoded{};
+    talos_rt_stable_handle_v1 decoded{};
     if (bound->second.kind <= 1 &&
-        obelisk_rt_stable_handle_decode(bound->second.payload, &decoded) &&
-        decoded.kind == OBELISK_RT_STABLE_HANDLE_AUTOMATIC &&
+        talos_rt_stable_handle_decode(bound->second.payload, &decoded) &&
+        decoded.kind == TALOS_RT_STABLE_HANDLE_AUTOMATIC &&
         decoded.offset >= 0 &&
         span.offset <= UINT64_MAX - uint64_t(decoded.offset)) {
       // Automatic allocation IDs occupy a domain separate from image records
@@ -6551,48 +6551,48 @@ bool selectedObjectIdentity(__vpiHandle *handle,
 // 37.58d2: a selected bit/span sees whole-parent uses and overlapping
 // selections, not uses confined to unrelated bits. Candidate recipes are
 // immutable; their indices are evaluated at this query's observation point.
-obelisk_rt_status selectedUseRanges(__vpiHandle *handle,
+talos_rt_status selectedUseRanges(__vpiHandle *handle,
                                     std::vector<VPIRelationRange> &ranges) {
   const auto *policy = valuePolicyFor(handle);
   VPIValueSource source{};
   VPISelectedSpan span{};
   if (!policy || !valueSourceFor(handle, *policy, source))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   auto status =
       selectedObjectSpan(handle, source, source.info.bit_width, false, span);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   std::vector<VPISelectedUseCandidate> candidates;
-  status = obelisk_rt_cached_vpi_selected_use_candidates(
+  status = talos_rt_cached_vpi_selected_use_candidates(
       handle->owner->context, span.cursor, source.exactType, candidates);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   std::unordered_set<uint64_t> seen;
-  const auto *edge = obelisk::reflection::findVPITraversal(
-      source.exactType, vpiUse, obelisk::reflection::VPITraversalMode::Iterate);
+  const auto *edge = talos::reflection::findVPITraversal(
+      source.exactType, vpiUse, talos::reflection::VPITraversalMode::Iterate);
   if (!edge)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   for (const auto &candidate : candidates) {
     if (candidate.selection.offset) {
       __vpiHandle selected;
       selected.owner = handle->owner;
       selected.cursor = candidate.selection;
-      if (obelisk_rt_cached_vpi_type(handle->owner->context, selected.cursor,
-                                     &selected.exactVpiType) != OBELISK_RT_OK)
-        return OBELISK_RT_INVALID_DESIGN;
+      if (talos_rt_cached_vpi_type(handle->owner->context, selected.cursor,
+                                     &selected.exactVpiType) != TALOS_RT_OK)
+        return TALOS_RT_INVALID_DESIGN;
       inheritExpressionContext(selected, *handle);
       const auto *candidatePolicy = valuePolicyFor(&selected);
       VPIValueSource candidateSource{};
       VPISelectedSpan candidateSpan{};
       if (!candidatePolicy ||
           !valueSourceFor(&selected, *candidatePolicy, candidateSource))
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       status = selectedObjectSpan(&selected, candidateSource,
                                   candidateSource.info.bit_width, false,
                                   candidateSpan);
-      if (status == OBELISK_RT_EOF)
+      if (status == TALOS_RT_EOF)
         continue;
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       if (candidateSpan.cursor.offset != span.cursor.offset ||
           candidateSpan.offset >= span.offset + span.width ||
@@ -6600,20 +6600,20 @@ obelisk_rt_status selectedUseRanges(__vpiHandle *handle,
         continue;
     }
     for (uint64_t index = 0; index != candidate.owners.count; ++index) {
-      obelisk_rt_design_cursor_v1 owner{};
+      talos_rt_design_cursor_v1 owner{};
       uint32_t kind = 0;
       bool statement = false;
       uint64_t token = candidate.owners.first + index;
-      if (obelisk_rt_cached_vpi_relation_target(handle->owner->context, token,
+      if (talos_rt_cached_vpi_relation_target(handle->owner->context, token,
                                                 &owner, &kind,
-                                                &statement) != OBELISK_RT_OK)
-        return OBELISK_RT_INVALID_DESIGN;
-      if (obelisk::reflection::vpiObjectSetContains(edge->targets, kind) &&
+                                                &statement) != TALOS_RT_OK)
+        return TALOS_RT_INVALID_DESIGN;
+      if (talos::reflection::vpiObjectSetContains(edge->targets, kind) &&
           seen.insert(owner.offset).second)
         ranges.push_back({token, 1});
     }
   }
-  return ranges.empty() ? OBELISK_RT_EOF : OBELISK_RT_OK;
+  return ranges.empty() ? TALOS_RT_EOF : TALOS_RT_OK;
 }
 
 struct VPINetConnectionRead {
@@ -6626,27 +6626,27 @@ struct VPINetConnectionRead {
 // Preserve source dependencies without inferring Boolean influence. Only
 // concatenation/replication transports exact result-bit offsets; an ordinary
 // operator or an address read names the whole containing loading object.
-obelisk_rt_status expandNetConnectionReads(
+talos_rt_status expandNetConnectionReads(
     __vpiHandle *handle, const VPINetConnectionCandidate &candidate,
     bool bitQuery, std::vector<VPINetConnectionRead> &reads) {
   auto *context = handle->owner->context;
-  auto width = [&](obelisk_rt_design_cursor_v1 cursor, uint64_t &result) {
+  auto width = [&](talos_rt_design_cursor_v1 cursor, uint64_t &result) {
     VPIExpressionInfo recipe{};
-    if (obelisk_rt_cached_vpi_expression(context, cursor, &recipe) ==
-        OBELISK_RT_OK) {
+    if (talos_rt_cached_vpi_expression(context, cursor, &recipe) ==
+        TALOS_RT_OK) {
       result = recipe.bitWidth;
       return !recipe.sourceOnly && result;
     }
     // Width planning is immutable metadata inspection. Unrelated unbound
     // declarations/calls must not trigger value notices or require live state.
-    obelisk_rt_design_info_v1 info{};
-    if (obelisk_rt_cached_design_info(context, cursor, &info) != OBELISK_RT_OK)
+    talos_rt_design_info_v1 info{};
+    if (talos_rt_cached_design_info(context, cursor, &info) != TALOS_RT_OK)
       return false;
     result = info.bit_width;
     return result != 0;
   };
   struct Pending {
-    obelisk_rt_design_cursor_v1 cursor{};
+    talos_rt_design_cursor_v1 cursor{};
     uint32_t kind = 0;
     bool addressOnly = false, direct = false;
     uint64_t offset = 0, visible = UINT64_MAX;
@@ -6661,8 +6661,8 @@ obelisk_rt_status expandNetConnectionReads(
   if (!root.addressOnly && width(root.cursor, expressionWidth)) {
     VPIExpressionInfo recipe{};
     bool concatenation =
-        obelisk_rt_cached_vpi_expression(context, root.cursor, &recipe) ==
-            OBELISK_RT_OK &&
+        talos_rt_cached_vpi_expression(context, root.cursor, &recipe) ==
+            TALOS_RT_OK &&
         recipe.kind == vpiOperation &&
         (recipe.code == vpiConcatOp || recipe.code == vpiMultiConcatOp);
     if (candidate.ownerKind == vpiPrimTerm) {
@@ -6681,24 +6681,24 @@ obelisk_rt_status expandNetConnectionReads(
     pending.pop_back();
     VPIExpressionInfo recipe{};
     auto status =
-        obelisk_rt_cached_vpi_expression(context, current.cursor, &recipe);
-    if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+        talos_rt_cached_vpi_expression(context, current.cursor, &recipe);
+    if (status != TALOS_RT_OK && status != TALOS_RT_EOF)
       return status;
     auto operand = [&](uint32_t index, Pending &child) {
       child = current;
-      return obelisk_rt_cached_vpi_expression_operand(
+      return talos_rt_cached_vpi_expression_operand(
           context, current.cursor, index, &child.cursor, &child.kind);
     };
     const bool selection =
-        status == OBELISK_RT_OK &&
+        status == TALOS_RT_OK &&
         (recipe.kind == vpiPartSelect || recipe.kind == vpiIndexedPartSelect ||
-         obelisk::reflection::isVPIBitSelection(recipe.kind));
+         talos::reflection::isVPIBitSelection(recipe.kind));
     if (selection) {
       // Address reads do not depend on the validity of the selected data span.
       for (uint32_t index = 0; index != recipe.operandCount; ++index) {
         Pending child;
-        if (operand(index, child) != OBELISK_RT_OK)
-          return OBELISK_RT_INVALID_DESIGN;
+        if (operand(index, child) != TALOS_RT_OK)
+          return TALOS_RT_INVALID_DESIGN;
         child.addressOnly = index == 0;
         child.direct = false;
         child.offset = 0;
@@ -6707,15 +6707,15 @@ obelisk_rt_status expandNetConnectionReads(
       }
       if (current.addressOnly)
         continue;
-    } else if (status == OBELISK_RT_OK && recipe.kind == vpiOperation) {
+    } else if (status == TALOS_RT_OK && recipe.kind == vpiOperation) {
       bool concat = recipe.code == vpiConcatOp;
       bool repeat = recipe.code == vpiMultiConcatOp;
       if (current.addressOnly || !current.direct || recipe.sourceOnly ||
           (!concat && !repeat)) {
         for (uint32_t index = 0; index != recipe.operandCount; ++index) {
           Pending child;
-          if (operand(index, child) != OBELISK_RT_OK)
-            return OBELISK_RT_INVALID_DESIGN;
+          if (operand(index, child) != TALOS_RT_OK)
+            return TALOS_RT_INVALID_DESIGN;
           child.direct = false;
           child.offset = 0;
           child.visible = UINT64_MAX;
@@ -6729,17 +6729,17 @@ obelisk_rt_status expandNetConnectionReads(
            ++index) {
         Pending child;
         uint64_t childWidth = 0;
-        if (operand(index, child) != OBELISK_RT_OK ||
+        if (operand(index, child) != TALOS_RT_OK ||
             !width(child.cursor, childWidth) ||
             childWidth > UINT64_MAX - blockWidth)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         blockWidth += childWidth;
         data.push_back({child, childWidth});
       }
       if (!blockWidth || !recipe.bitWidth ||
           recipe.bitWidth % blockWidth != 0 ||
           (!repeat && recipe.bitWidth != blockWidth))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       uint64_t repetitions = repeat ? recipe.bitWidth / blockWidth : 1;
       // Vector queries return the same source occurrence once. The low copy
       // already covers every visible part of an operand in all later copies.
@@ -6760,7 +6760,7 @@ obelisk_rt_status expandNetConnectionReads(
             next.visible = UINT64_MAX;
           } else {
             if (offset > UINT64_MAX - current.offset)
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             next.offset = current.offset + offset;
             next.visible = std::min(child->second, current.visible - offset);
           }
@@ -6782,12 +6782,12 @@ obelisk_rt_status expandNetConnectionReads(
     read.candidate.expressionKind = current.kind;
     reads.push_back(read);
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 // 37.16d18/d19: derive connectivity from exact retained source roles and
 // snapshot the selected simulation span at iterator construction.
-obelisk_rt_status
+talos_rt_status
 selectedNetConnections(__vpiHandle *handle, uint32_t selector,
                        std::vector<VPIConnectionTarget> &targets) {
   const bool drivers = selector == vpiDriver || selector == vpiLocalDriver;
@@ -6797,53 +6797,53 @@ selectedNetConnections(__vpiHandle *handle, uint32_t selector,
   VPIValueSource source{};
   VPISelectedSpan query{};
   if (!policy || !valueSourceFor(handle, *policy, source))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   auto status =
       selectedObjectSpan(handle, source, source.info.bit_width, false, query);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
-  if (query.info.kind != OBELISK_RT_DESIGN_RECORD_NET)
-    return OBELISK_RT_EOF;
-  obelisk_rt_design_info_v1 declaration{};
-  if (obelisk_rt_cached_design_info(context, query.cursor, &declaration) !=
-      OBELISK_RT_OK)
-    return OBELISK_RT_INVALID_DESIGN;
+  if (query.info.kind != TALOS_RT_DESIGN_RECORD_NET)
+    return TALOS_RT_EOF;
+  talos_rt_design_info_v1 declaration{};
+  if (talos_rt_cached_design_info(context, query.cursor, &declaration) !=
+      TALOS_RT_OK)
+    return TALOS_RT_INVALID_DESIGN;
   const bool bitQuery = source.exactType == vpiNetBit;
   VPIFixedPropertyValue netType{};
   if (drivers && bitQuery &&
-      obelisk_rt_cached_vpi_fixed_property(context, query.cursor, vpiNetType,
-                                           &netType) == OBELISK_RT_OK &&
+      talos_rt_cached_vpi_fixed_property(context, query.cursor, vpiNetType,
+                                           &netType) == TALOS_RT_OK &&
       (netType.payload == vpiNettypeNet ||
        netType.payload == vpiNettypeNetSelect))
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   uint64_t queryOffset = 0;
-  if (obelisk_rt_design_state_offset(context, query.cursor, query.offset,
-                                     &queryOffset) != OBELISK_RT_OK)
-    return OBELISK_RT_INVALID_DESIGN;
-  obelisk_rt_design_cursor_v1 queryModule = query.cursor;
+  if (talos_rt_design_state_offset(context, query.cursor, query.offset,
+                                     &queryOffset) != TALOS_RT_OK)
+    return TALOS_RT_INVALID_DESIGN;
+  talos_rt_design_cursor_v1 queryModule = query.cursor;
   if (local) {
     uint32_t kind = 0;
     for (;;) {
-      if (obelisk_rt_cached_vpi_type(context, queryModule, &kind) !=
-          OBELISK_RT_OK)
-        return OBELISK_RT_INVALID_DESIGN;
+      if (talos_rt_cached_vpi_type(context, queryModule, &kind) !=
+          TALOS_RT_OK)
+        return TALOS_RT_INVALID_DESIGN;
       if (kind == vpiModule)
         break;
       if (kind == vpiInterface || kind == vpiProgram ||
-          obelisk_rt_cached_design_parent(context, queryModule, &queryModule) !=
-              OBELISK_RT_OK) {
+          talos_rt_cached_design_parent(context, queryModule, &queryModule) !=
+              TALOS_RT_OK) {
         queryModule = {};
         break;
       }
     }
   }
-  const auto *edge = obelisk::reflection::findVPITraversal(
+  const auto *edge = talos::reflection::findVPITraversal(
       source.exactType, selector,
-      obelisk::reflection::VPITraversalMode::Iterate);
+      talos::reflection::VPITraversalMode::Iterate);
   if (!edge)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   auto append = [&](VPIConnectionTarget target) {
-    if (!obelisk::reflection::vpiObjectSetContains(edge->targets, target.kind))
+    if (!talos::reflection::vpiObjectSetContains(edge->targets, target.kind))
       return;
     // An indivisible read represents the whole assignment. Its bit objects
     // would duplicate that loading occurrence; concat-only offsets stay exact.
@@ -6872,24 +6872,24 @@ selectedNetConnections(__vpiHandle *handle, uint32_t selector,
   // rows. Do not merge their instances through an enclosing module.
   if (local && !queryModule.offset) {
     VPIRelationRange physical{};
-    status = obelisk_rt_cached_vpi_relation_range(context, query.cursor,
+    status = talos_rt_cached_vpi_relation_range(context, query.cursor,
                                                   selector, true, &physical);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     for (uint64_t index = 0; index != physical.count; ++index) {
       VPIConnectionTarget target;
-      if (obelisk_rt_cached_vpi_relation_target(
+      if (talos_rt_cached_vpi_relation_target(
               context, physical.first + index, &target.cursor, &target.kind,
-              &target.statement) != OBELISK_RT_OK)
-        return OBELISK_RT_INVALID_DESIGN;
+              &target.statement) != TALOS_RT_OK)
+        return TALOS_RT_INVALID_DESIGN;
       append(target);
     }
-    return targets.empty() ? OBELISK_RT_EOF : OBELISK_RT_OK;
+    return targets.empty() ? TALOS_RT_EOF : TALOS_RT_OK;
   }
   std::vector<VPINetConnectionCandidate> candidates;
-  status = obelisk_rt_cached_vpi_net_connection_candidates(context, drivers,
+  status = talos_rt_cached_vpi_net_connection_candidates(context, drivers,
                                                            candidates);
-  if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+  if (status != TALOS_RT_OK && status != TALOS_RT_EOF)
     return status;
   std::vector<VPINetConnectionRead> reads;
   for (const auto &candidate : candidates) {
@@ -6899,7 +6899,7 @@ selectedNetConnections(__vpiHandle *handle, uint32_t selector,
       reads.push_back({candidate, true, 0, UINT64_MAX});
     else {
       status = expandNetConnectionReads(handle, candidate, bitQuery, reads);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
     }
   }
@@ -6927,50 +6927,50 @@ selectedNetConnections(__vpiHandle *handle, uint32_t selector,
     auto backing = candidate.expression;
     for (;;) {
       VPIExpressionInfo recipe{};
-      if (obelisk_rt_cached_vpi_expression(context, backing, &recipe) !=
-          OBELISK_RT_OK)
+      if (talos_rt_cached_vpi_expression(context, backing, &recipe) !=
+          TALOS_RT_OK)
         break;
       if (recipe.kind != vpiPartSelect && recipe.kind != vpiIndexedPartSelect &&
-          !obelisk::reflection::isVPIBitSelection(recipe.kind)) {
+          !talos::reflection::isVPIBitSelection(recipe.kind)) {
         backing = {};
         break;
       }
       uint32_t kind = 0;
-      if (obelisk_rt_cached_vpi_expression_operand(
-              context, backing, 0, &backing, &kind) != OBELISK_RT_OK)
-        return OBELISK_RT_INVALID_DESIGN;
+      if (talos_rt_cached_vpi_expression_operand(
+              context, backing, 0, &backing, &kind) != TALOS_RT_OK)
+        return TALOS_RT_INVALID_DESIGN;
     }
-    obelisk_rt_design_info_v1 backingInfo{};
+    talos_rt_design_info_v1 backingInfo{};
     uint64_t backingOffset = 0;
     if (!backing.offset ||
-        obelisk_rt_cached_design_info(context, backing, &backingInfo) !=
-            OBELISK_RT_OK ||
-        backingInfo.kind != OBELISK_RT_DESIGN_RECORD_NET)
+        talos_rt_cached_design_info(context, backing, &backingInfo) !=
+            TALOS_RT_OK ||
+        backingInfo.kind != TALOS_RT_DESIGN_RECORD_NET)
       continue;
-    if (obelisk_rt_design_state_offset(context, backing, 0, &backingOffset) !=
-        OBELISK_RT_OK)
-      return OBELISK_RT_INVALID_DESIGN;
+    if (talos_rt_design_state_offset(context, backing, 0, &backingOffset) !=
+        TALOS_RT_OK)
+      return TALOS_RT_INVALID_DESIGN;
     if (backingOffset >= queryOffset + query.width ||
         queryOffset >= backingOffset + backingInfo.bit_width)
       continue;
     if (!expressionPolicy ||
         !valueSourceFor(&expression, *expressionPolicy, actual))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     status = selectedObjectSpan(&expression, actual, actual.info.bit_width,
                                 false, span);
-    if (status == OBELISK_RT_EOF)
+    if (status == TALOS_RT_EOF)
       continue;
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
-    if (span.info.kind != OBELISK_RT_DESIGN_RECORD_NET)
+    if (span.info.kind != TALOS_RT_DESIGN_RECORD_NET)
       continue;
     span.width = std::min(span.width, read.visibleWidth);
     if (!span.width)
       continue;
     uint64_t first = 0;
-    if (obelisk_rt_design_state_offset(context, span.cursor, span.offset,
-                                       &first) != OBELISK_RT_OK)
-      return OBELISK_RT_INVALID_DESIGN;
+    if (talos_rt_design_state_offset(context, span.cursor, span.offset,
+                                       &first) != TALOS_RT_OK)
+      return TALOS_RT_INVALID_DESIGN;
     if (first >= queryOffset + query.width || queryOffset >= first + span.width)
       continue;
     derivedOwners.insert(candidate.owner.offset);
@@ -6992,7 +6992,7 @@ selectedNetConnections(__vpiHandle *handle, uint32_t selector,
     if (bitQuery && (drivers || read.direct)) {
       uint64_t offset = queryOffset - first;
       if (offset > UINT64_MAX - read.resultOffset)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       append({candidate.owner, vpiContAssignBit, true,
               read.resultOffset + offset});
     } else {
@@ -7002,17 +7002,17 @@ selectedNetConnections(__vpiHandle *handle, uint32_t selector,
   // Preserve other retained connection families. Direct assignments and
   // terminals above are re-derived, including collapsed backing aliases.
   VPIRelationRange physical{};
-  status = obelisk_rt_cached_vpi_relation_range(context, query.cursor, selector,
+  status = talos_rt_cached_vpi_relation_range(context, query.cursor, selector,
                                                 true, &physical);
-  if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+  if (status != TALOS_RT_OK && status != TALOS_RT_EOF)
     return status;
-  if (status == OBELISK_RT_OK)
+  if (status == TALOS_RT_OK)
     for (uint64_t index = 0; index != physical.count; ++index) {
       VPIConnectionTarget target;
-      if (obelisk_rt_cached_vpi_relation_target(
+      if (talos_rt_cached_vpi_relation_target(
               context, physical.first + index, &target.cursor, &target.kind,
-              &target.statement) != OBELISK_RT_OK)
-        return OBELISK_RT_INVALID_DESIGN;
+              &target.statement) != TALOS_RT_OK)
+        return TALOS_RT_INVALID_DESIGN;
       if ((target.kind == vpiContAssign || target.kind == vpiPrimTerm) &&
           (bitQuery || derivedOwners.count(target.cursor.offset)))
         continue;
@@ -7020,7 +7020,7 @@ selectedNetConnections(__vpiHandle *handle, uint32_t selector,
       if (!bitQuery || declaration.bit_width == 1)
         append(target);
     }
-  return targets.empty() ? OBELISK_RT_EOF : OBELISK_RT_OK;
+  return targets.empty() ? TALOS_RT_EOF : TALOS_RT_OK;
 }
 
 bool preparePrimitiveValue(__vpiHandle *handle, VPIValueSource &source) {
@@ -7030,28 +7030,28 @@ bool preparePrimitiveValue(__vpiHandle *handle, VPIValueSource &source) {
              vpiNotice);
     return false;
   };
-  auto direction = [&](obelisk_rt_design_cursor_v1 terminal) -> uint32_t {
+  auto direction = [&](talos_rt_design_cursor_v1 terminal) -> uint32_t {
     VPIFixedPropertyValue value{};
-    if (obelisk_rt_cached_vpi_fixed_property(context, terminal, vpiDirection,
-                                             &value) != OBELISK_RT_OK)
+    if (talos_rt_cached_vpi_fixed_property(context, terminal, vpiDirection,
+                                             &value) != TALOS_RT_OK)
       return 0;
     return static_cast<uint32_t>(value.payload);
   };
-  obelisk_rt_design_cursor_v1 terminal = source.cursor;
+  talos_rt_design_cursor_v1 terminal = source.cursor;
   if (source.exactType != vpiPrimTerm) {
     VPIRelationRange terminals{};
-    if (obelisk_rt_cached_vpi_relation_range(context, source.cursor,
+    if (talos_rt_cached_vpi_relation_range(context, source.cursor,
                                              vpiPrimTerm, true,
-                                             &terminals) != OBELISK_RT_OK)
+                                             &terminals) != TALOS_RT_OK)
       return unavailable();
     uint32_t outputs = 0;
     for (uint64_t index = 0; index != terminals.count; ++index) {
-      obelisk_rt_design_cursor_v1 candidate{};
+      talos_rt_design_cursor_v1 candidate{};
       uint32_t kind = 0;
       bool statement = false;
-      if (obelisk_rt_cached_vpi_relation_target(
+      if (talos_rt_cached_vpi_relation_target(
               context, terminals.first + index, &candidate, &kind,
-              &statement) != OBELISK_RT_OK ||
+              &statement) != TALOS_RT_OK ||
           statement || kind != vpiPrimTerm)
         return unavailable();
       if (direction(candidate) == vpiOutput) {
@@ -7068,11 +7068,11 @@ bool preparePrimitiveValue(__vpiHandle *handle, VPIValueSource &source) {
   uint16_t strength = 0;
   if (direction(terminal) == vpiOutput) {
     VPITerminalDriverBinding binding{};
-    if (obelisk_rt_cached_vpi_terminal_driver(context, terminal, &binding) !=
-            OBELISK_RT_OK ||
-        obelisk_rt_design_driver_strength(
+    if (talos_rt_cached_vpi_terminal_driver(context, terminal, &binding) !=
+            TALOS_RT_OK ||
+        talos_rt_design_driver_strength(
             context, binding.lowStateOffset, binding.highStateOffset, &strength,
-            useDirectStateForValue(context)) != OBELISK_RT_OK)
+            useDirectStateForValue(context)) != TALOS_RT_OK)
       return unavailable();
   } else if (source.exactType == vpiPrimTerm &&
              direction(terminal) == vpiInput) {
@@ -7080,12 +7080,12 @@ bool preparePrimitiveValue(__vpiHandle *handle, VPIValueSource &source) {
     __vpiHandle expression;
     expression.owner = handle->owner;
     bool statement = false;
-    if (obelisk_rt_cached_vpi_relation_range(context, terminal, vpiExpr, false,
-                                             &expressions) != OBELISK_RT_OK ||
+    if (talos_rt_cached_vpi_relation_range(context, terminal, vpiExpr, false,
+                                             &expressions) != TALOS_RT_OK ||
         expressions.count != 1 ||
-        obelisk_rt_cached_vpi_relation_target(
+        talos_rt_cached_vpi_relation_target(
             context, expressions.first, &expression.cursor,
-            &expression.exactVpiType, &statement) != OBELISK_RT_OK ||
+            &expression.exactVpiType, &statement) != TALOS_RT_OK ||
         statement)
       return unavailable();
     const auto *policy = valuePolicyFor(&expression);
@@ -7095,9 +7095,9 @@ bool preparePrimitiveValue(__vpiHandle *handle, VPIValueSource &source) {
         !valueRequirementsSatisfied(&expression, actual, *policy))
       return unavailable();
     auto netStrength = readSelectedNetStrength(&expression, actual, strength);
-    if (netStrength != OBELISK_RT_OK && netStrength != OBELISK_RT_EOF)
+    if (netStrength != TALOS_RT_OK && netStrength != TALOS_RT_EOF)
       return unavailable();
-    if (netStrength == OBELISK_RT_EOF) {
+    if (netStrength == TALOS_RT_EOF) {
       std::vector<uint64_t> value, unknown;
       if (!readValue(&expression, actual, value, unknown))
         return false;
@@ -7124,7 +7124,7 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
     setError(handle->owner, "VPI write value is null");
     return false;
   }
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     size_t limbs = static_cast<size_t>((width + 63) / 64);
     value.assign(limbs, 0);
     unknown.assign(limbs, 0);
@@ -7207,7 +7207,7 @@ bool decodeValue(__vpiHandle *handle, const s_vpi_value *source, uint64_t width,
     }
     return true;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(handle->owner, "could not decode VPI value", vpiSystem);
     return false;
   }
@@ -7221,58 +7221,58 @@ vpiHandle namedEventWaitingProcesses(__vpiHandle *source) {
   }
   ContextTransaction transaction(source->owner->context);
   ManagedExecutionScope managed(source->owner->context);
-  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+  if (managed.getStatus() != TALOS_RT_OK || !managed.getLane()) {
     setError(source->owner, "named event VPI query cannot enter GC scope",
              vpiInternal);
     return nullptr;
   }
   uint64_t eventID = UINT64_MAX;
   VPIClassMemberBinding member{};
-  auto status = obelisk_rt_cached_vpi_class_member(source->owner->context,
+  auto status = talos_rt_cached_vpi_class_member(source->owner->context,
                                                    source->cursor, &member);
-  if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF) {
+  if (status != TALOS_RT_OK && status != TALOS_RT_EOF) {
     setError(source->owner, "named event VPI class binding is invalid",
              vpiInternal);
     return nullptr;
   }
-  const bool staticEvent = status == OBELISK_RT_OK && member.isStatic &&
+  const bool staticEvent = status == TALOS_RT_OK && member.isStatic &&
                            member.staticEventID != UINT64_MAX;
   if (staticEvent) {
     eventID = member.staticEventID;
   } else {
     status = source->form == VPIObjectForm::Design
-                 ? obelisk_rt_cached_vpi_event_binding(source->owner->context,
+                 ? talos_rt_cached_vpi_event_binding(source->owner->context,
                                                        source->cursor, &eventID)
-                 : OBELISK_RT_EOF;
-    if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF) {
+                 : TALOS_RT_EOF;
+    if (status != TALOS_RT_OK && status != TALOS_RT_EOF) {
       setError(source->owner, "named event VPI executable binding is invalid",
                vpiInternal);
       return nullptr;
     }
-    if (status == OBELISK_RT_EOF && source->form == VPIObjectForm::Design) {
+    if (status == TALOS_RT_EOF && source->form == VPIObjectForm::Design) {
       VPIEventCellBinding cell{};
-      status = obelisk_rt_cached_vpi_event_array_cell(source->owner->context,
+      status = talos_rt_cached_vpi_event_array_cell(source->owner->context,
                                                       source->cursor, &cell);
-      if (status == OBELISK_RT_OK) {
+      if (status == TALOS_RT_OK) {
         uint64_t unknown = 0;
-        status = obelisk_rt_read_design_slice(source->owner->context,
+        status = talos_rt_read_design_slice(source->owner->context,
                                               cell.storage, cell.bitOffset, 64,
                                               &eventID, &unknown);
-        if (status != OBELISK_RT_OK || unknown) {
+        if (status != TALOS_RT_OK || unknown) {
           setError(source->owner, "named event VPI array cell read failed",
                    vpiInternal);
           return nullptr;
         }
-      } else if (status != OBELISK_RT_EOF) {
+      } else if (status != TALOS_RT_EOF) {
         setError(source->owner, "named event VPI array binding is invalid",
                  vpiInternal);
         return nullptr;
       }
     }
-    if (status == OBELISK_RT_EOF) {
+    if (status == TALOS_RT_EOF) {
       // Event variables and selected class event fields hold the executable
       // event identity. Source-only declaration anchors carry no such value.
-      obelisk_rt_design_info_v1 info{};
+      talos_rt_design_info_v1 info{};
       if (!infoFor(source, info))
         return nullptr;
       if (info.type_offset == 0 || info.bit_width != 64) {
@@ -7285,11 +7285,11 @@ vpiHandle namedEventWaitingProcesses(__vpiHandle *source) {
     }
   }
   std::vector<uint64_t> processes;
-  status = obelisk_rt_named_event_waiters(source->owner->context, eventID,
+  status = talos_rt_named_event_waiters(source->owner->context, eventID,
                                           processes);
-  if (status != OBELISK_RT_OK) {
+  if (status != TALOS_RT_OK) {
     setError(source->owner, "named event VPI waiter query failed",
-             status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+             status == TALOS_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
     return nullptr;
   }
   return makeThreadIterator(source, vpiWaitingProcesses, std::move(processes));
@@ -7304,7 +7304,7 @@ vpiHandle virtualInterfaceActual(__vpiHandle *source) {
   }
   ContextTransaction transaction(source->owner->context);
   ManagedExecutionScope managed(source->owner->context);
-  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+  if (managed.getStatus() != TALOS_RT_OK || !managed.getLane()) {
     setError(source->owner, "virtual interface VPI query cannot enter GC scope",
              vpiInternal);
     return nullptr;
@@ -7314,31 +7314,31 @@ vpiHandle virtualInterfaceActual(__vpiHandle *source) {
   uint64_t scopeID = 0;
   if (!readManagedStateWord(source, scopeID) || scopeID == 0)
     return nullptr;
-  obelisk_rt_design_cursor_v1 semantic{};
-  obelisk_rt_design_semantic_type_info_v1 info{};
+  talos_rt_design_cursor_v1 semantic{};
+  talos_rt_design_semantic_type_info_v1 info{};
   if (!semanticCursorFor(source, semantic) ||
       !semanticTypeInfo(source, semantic, info) ||
-      info.kind != OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
+      info.kind != TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
     setError(source->owner,
              "virtual interface VPI type metadata is unavailable", vpiInternal);
     return nullptr;
   }
-  obelisk_rt_design_cursor_v1 actual{};
+  talos_rt_design_cursor_v1 actual{};
   uint32_t actualType = 0;
-  if (obelisk_rt_cached_vpi_scope(source->owner->context, scopeID, &actual) !=
-          OBELISK_RT_OK ||
-      obelisk_rt_cached_vpi_type(source->owner->context, actual, &actualType) !=
-          OBELISK_RT_OK ||
+  if (talos_rt_cached_vpi_scope(source->owner->context, scopeID, &actual) !=
+          TALOS_RT_OK ||
+      talos_rt_cached_vpi_type(source->owner->context, actual, &actualType) !=
+          TALOS_RT_OK ||
       actualType != vpiInterface) {
     setError(source->owner, "invalid virtual interface reference in VPI state",
              vpiInternal);
     return nullptr;
   }
   if (info.modport_size != 0) {
-    obelisk_rt_design_cursor_v1 modport{};
-    if (obelisk_rt_cached_vpi_modport(source->owner->context, actual,
+    talos_rt_design_cursor_v1 modport{};
+    if (talos_rt_cached_vpi_modport(source->owner->context, actual,
                                       info.modport, info.modport_size,
-                                      &modport) != OBELISK_RT_OK) {
+                                      &modport) != TALOS_RT_OK) {
       setError(source->owner,
                "virtual interface modport metadata is unavailable",
                vpiInternal);
@@ -7351,10 +7351,10 @@ vpiHandle virtualInterfaceActual(__vpiHandle *source) {
 }
 
 struct VPIClassReference {
-  obelisk_rt_object_v1 *object = nullptr;
+  talos_rt_object_v1 *object = nullptr;
   uint64_t identity = 0;
   uint64_t logicalProcess = 0;
-  obelisk_rt_design_cursor_v1 semantic{};
+  talos_rt_design_cursor_v1 semantic{};
 };
 
 // The caller holds the context transaction and an active GC lane through use
@@ -7363,66 +7363,66 @@ struct VPIClassReference {
 // Capture reference identity without reporting an API error. Union views may
 // contain bytes that are not a valid value of another overlapping member type;
 // their metadata still exists, and value access reports that condition later.
-obelisk_rt_status
-captureClassReference(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
-                      uint64_t word, obelisk_rt_design_cursor_v1 semantic,
+talos_rt_status
+captureClassReference(__vpiHandle *source, talos_rt_gc_lane_v1 *lane,
+                      uint64_t word, talos_rt_design_cursor_v1 semantic,
                       uint32_t semanticKind, VPIClassReference &reference) {
   if (word == 0)
-    return OBELISK_RT_OK;
-  if (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS) {
-    const auto status = obelisk_rt_process_object_identity(
+    return TALOS_RT_OK;
+  if (semanticKind == TALOS_RT_DESIGN_SEMANTIC_PROCESS) {
+    const auto status = talos_rt_process_object_identity(
         source->owner->context, word, &reference.identity);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     reference.logicalProcess = word;
     reference.semantic = semantic;
   } else {
-    auto *object = obelisk_rt_object_from_managed_word(word);
+    auto *object = talos_rt_object_from_managed_word(word);
     const BuiltinClassKind expected =
-        semanticKind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX
+        semanticKind == TALOS_RT_DESIGN_SEMANTIC_MAILBOX
             ? BuiltinClassKind::Mailbox
-        : semanticKind == OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE
+        : semanticKind == TALOS_RT_DESIGN_SEMANTIC_SEMAPHORE
             ? BuiltinClassKind::Semaphore
             : BuiltinClassKind::None;
     ManagedObjectLease lease;
-    if (!object || word != obelisk_rt_managed_word_from_object(object) ||
-        obelisk_rt_managed_object_acquire(lane, object,
+    if (!object || word != talos_rt_managed_word_from_object(object) ||
+        talos_rt_managed_object_acquire(lane, object,
                                           expected == BuiltinClassKind::None
-                                              ? OBELISK_RT_MANAGED_CLASS
-                                              : OBELISK_RT_MANAGED_INVALID,
-                                          &lease) != OBELISK_RT_OK ||
-        obelisk_rt_managed_object_context(object) != source->owner->context ||
+                                              ? TALOS_RT_MANAGED_CLASS
+                                              : TALOS_RT_MANAGED_INVALID,
+                                          &lease) != TALOS_RT_OK ||
+        talos_rt_managed_object_context(object) != source->owner->context ||
         (expected != BuiltinClassKind::None &&
-         obelisk_rt_builtin_class_kind(lease) != expected))
-      return OBELISK_RT_INVALID_HANDLE;
+         talos_rt_builtin_class_kind(lease) != expected))
+      return TALOS_RT_INVALID_HANDLE;
     reference.object = object;
-    reference.identity = obelisk_rt_v1_object_id(object);
-    if (obelisk_rt_managed_object_kind(object) == OBELISK_RT_MANAGED_CONTAINER)
+    reference.identity = talos_rt_v1_object_id(object);
+    if (talos_rt_managed_object_kind(object) == TALOS_RT_MANAGED_CONTAINER)
       reference.semantic = semantic;
   }
   return reference.identity && reference.identity <= INT64_MAX
-             ? OBELISK_RT_OK
-             : OBELISK_RT_INVALID_HANDLE;
+             ? TALOS_RT_OK
+             : TALOS_RT_INVALID_HANDLE;
 }
 
-bool readClassReference(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
+bool readClassReference(__vpiHandle *source, talos_rt_gc_lane_v1 *lane,
                         VPIClassReference &reference) {
   uint64_t word = 0;
   if (!readManagedStateWord(source, word))
     return false;
   if (!word)
     return true;
-  obelisk_rt_design_cursor_v1 semantic{};
-  obelisk_rt_design_semantic_type_info_v1 info{};
+  talos_rt_design_cursor_v1 semantic{};
+  talos_rt_design_semantic_type_info_v1 info{};
   if (semanticCursorFor(source, semantic) &&
       !semanticTypeInfo(source, semantic, info))
     return false;
   const auto status =
       captureClassReference(source, lane, word, semantic, info.kind, reference);
-  if (status == OBELISK_RT_OK)
+  if (status == TALOS_RT_OK)
     return true;
   setError(source->owner, "invalid class reference in VPI design state",
-           status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+           status == TALOS_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
   return false;
 }
 
@@ -7434,7 +7434,7 @@ vpiHandle makeClassObjectHandle(__vpiHandle *source) {
   }
   ContextTransaction transaction(source->owner->context);
   ManagedExecutionScope managed(source->owner->context);
-  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+  if (managed.getStatus() != TALOS_RT_OK || !managed.getLane()) {
     setError(source->owner, "class VPI query cannot enter GC scope", vpiInternal);
     return nullptr;
   }
@@ -7442,25 +7442,25 @@ vpiHandle makeClassObjectHandle(__vpiHandle *source) {
   if (!readClassReference(source, managed.getLane(), reference) ||
       reference.identity == 0)
     return nullptr;
-  obelisk_rt_design_cursor_v1 typespec{};
+  talos_rt_design_cursor_v1 typespec{};
   bool isProtected = false;
   const auto *descriptor =
       reference.object
-          ? obelisk_rt_managed_object_class_descriptor(reference.object)
+          ? talos_rt_managed_object_class_descriptor(reference.object)
           : nullptr;
-  obelisk_rt_status typeStatus =
-      reference.semantic.offset ? OBELISK_RT_EOF
+  talos_rt_status typeStatus =
+      reference.semantic.offset ? TALOS_RT_EOF
       : descriptor
-          ? obelisk_rt_cached_vpi_class_typespec(
+          ? talos_rt_cached_vpi_class_typespec(
                 source->owner->context, descriptor->class_id, &typespec)
-          : OBELISK_RT_INVALID_HANDLE;
-  if ((typeStatus != OBELISK_RT_OK && typeStatus != OBELISK_RT_EOF) ||
-      (typeStatus == OBELISK_RT_OK &&
+          : TALOS_RT_INVALID_HANDLE;
+  if ((typeStatus != TALOS_RT_OK && typeStatus != TALOS_RT_EOF) ||
+      (typeStatus == TALOS_RT_OK &&
        !fixedProtectionFor(source->owner, typespec, isProtected))) {
     setError(source->owner, "class VPI type metadata is unavailable", vpiInternal);
     return nullptr;
   }
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = source->owner;
     handle->form = VPIObjectForm::ClassObject;
@@ -7475,7 +7475,7 @@ vpiHandle makeClassObjectHandle(__vpiHandle *source) {
     source->owner->hasDynamicHandles |= reference.object != nullptr;
     return keepHandle(source->owner, std::move(handle));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate VPI class object handle",
              vpiSystem);
     return nullptr;
@@ -7487,21 +7487,21 @@ vpiHandle classObjectTypespec(__vpiHandle *handle) {
     return makeTypespecHandle(handle->owner, handle->cursor,
                               handle->semanticCursor, false);
   ManagedExecutionScope managed(handle->owner->context);
-  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
+  if (managed.getStatus() != TALOS_RT_OK || !managed.getLane())
     return nullptr;
   ManagedObjectLease lease;
-  if (obelisk_rt_managed_object_acquire(
-          managed.getLane(), handle->dynamicObject, OBELISK_RT_MANAGED_CLASS,
-          &lease) != OBELISK_RT_OK ||
-      obelisk_rt_v1_object_id(handle->dynamicObject) != handle->dynamicIdentity)
+  if (talos_rt_managed_object_acquire(
+          managed.getLane(), handle->dynamicObject, TALOS_RT_MANAGED_CLASS,
+          &lease) != TALOS_RT_OK ||
+      talos_rt_v1_object_id(handle->dynamicObject) != handle->dynamicIdentity)
     return nullptr;
   const auto *descriptor =
-      obelisk_rt_managed_object_class_descriptor(handle->dynamicObject);
-  obelisk_rt_design_cursor_v1 typespec{};
+      talos_rt_managed_object_class_descriptor(handle->dynamicObject);
+  talos_rt_design_cursor_v1 typespec{};
   if (!descriptor ||
-      obelisk_rt_cached_vpi_class_typespec(
+      talos_rt_cached_vpi_class_typespec(
           handle->owner->context, descriptor->class_id, &typespec) !=
-          OBELISK_RT_OK)
+          TALOS_RT_OK)
     return nullptr;
   return makeHandle(handle->owner, typespec, vpiClassTypespec);
 }
@@ -7510,48 +7510,48 @@ vpiHandle classObjectTypespec(__vpiHandle *handle) {
 // canonical Extends chain. Display names and private payload fields do not
 // participate in VPI type identity.
 bool mailboxElementSemantic(__vpiHandle *source,
-                            obelisk_rt_design_cursor_v1 &element,
-                            obelisk_rt_design_cursor_v1 &mailboxType) {
+                            talos_rt_design_cursor_v1 &element,
+                            talos_rt_design_cursor_v1 &mailboxType) {
   mailboxType = {};
-  obelisk_rt_design_cursor_v1 semantic = source->semanticCursor;
-  obelisk_rt_design_cursor_v1 typespec = source->cursor;
-  OBELISK_RT_TRY {
+  talos_rt_design_cursor_v1 semantic = source->semanticCursor;
+  talos_rt_design_cursor_v1 typespec = source->cursor;
+  TALOS_RT_TRY {
     std::set<uint64_t> visited;
     for (;;) {
       if (!semantic.offset &&
-          obelisk_rt_cached_design_semantic_root(
-              source->owner->context, typespec, &semantic) != OBELISK_RT_OK)
+          talos_rt_cached_design_semantic_root(
+              source->owner->context, typespec, &semantic) != TALOS_RT_OK)
         break;
-      obelisk_rt_design_semantic_type_info_v1 info{};
+      talos_rt_design_semantic_type_info_v1 info{};
       if (!semanticTypeInfo(source, semantic, info))
         return false;
-      if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX &&
+      if (info.kind == TALOS_RT_DESIGN_SEMANTIC_MAILBOX &&
           semanticElement(source, semantic, element)) {
         // Legacy images can omit the canonical map; scalar snapshots remain
         // available, while aggregates require the exact layout binding.
-        (void)obelisk_rt_cached_vpi_semantic_class_typespec(
+        (void)talos_rt_cached_vpi_semantic_class_typespec(
             source->owner->context, semantic, &mailboxType);
         return true;
       }
-      if (info.kind != OBELISK_RT_DESIGN_SEMANTIC_CLASS ||
+      if (info.kind != TALOS_RT_DESIGN_SEMANTIC_CLASS ||
           !visited.insert(typespec.offset).second)
         break;
       VPIRelationRange base{};
       uint32_t type = 0;
       bool statement = false;
-      if (obelisk_rt_cached_vpi_relation_range(source->owner->context, typespec,
+      if (talos_rt_cached_vpi_relation_range(source->owner->context, typespec,
                                                vpiExtends, false,
-                                               &base) != OBELISK_RT_OK ||
+                                               &base) != TALOS_RT_OK ||
           base.count != 1 ||
-          obelisk_rt_cached_vpi_relation_target(source->owner->context,
+          talos_rt_cached_vpi_relation_target(source->owner->context,
                                                 base.first, &typespec, &type,
-                                                &statement) != OBELISK_RT_OK ||
+                                                &statement) != TALOS_RT_OK ||
           type != vpiClassTypespec || statement)
         break;
       semantic = {};
     }
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not resolve mailbox message type",
              vpiSystem);
     return false;
@@ -7562,9 +7562,9 @@ bool mailboxElementSemantic(__vpiHandle *source,
 }
 
 vpiHandle makeSnapshotHandle(VPIState *state,
-                             obelisk_rt_design_cursor_v1 source,
+                             talos_rt_design_cursor_v1 source,
                              std::shared_ptr<const VPISnapshotValue> value) {
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto handle = std::make_unique<__vpiHandle>();
     handle->owner = state;
     handle->form = VPIObjectForm::SnapshotValue;
@@ -7583,11 +7583,11 @@ vpiHandle makeSnapshotHandle(VPIState *state,
     }
     handle->logicalProcess = handle->snapshot->logicalProcess;
     handle->hasInfo = true;
-    handle->info.kind = OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
+    handle->info.kind = TALOS_RT_DESIGN_RECORD_STATIC_OBJECT;
     handle->info.bit_width = handle->snapshot->bitWidth;
     if (handle->dynamicObject) {
       ManagedExecutionScope managed(state->context);
-      if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane() ||
+      if (managed.getStatus() != TALOS_RT_OK || !managed.getLane() ||
           !dynamicHandleIsLive(*handle, managed.getLane())) {
         setError(state, "mailbox message references a reclaimed class object");
         return nullptr;
@@ -7596,29 +7596,29 @@ vpiHandle makeSnapshotHandle(VPIState *state,
     }
     return keepHandle(state, std::move(handle));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not allocate VPI message handle", vpiSystem);
     return nullptr;
   }
 }
 
 std::shared_ptr<VPISnapshotValue>
-snapshotMailboxValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
-                     obelisk_rt_design_cursor_v1 semantic,
-                     const obelisk_rt_element_type_v1 &element,
+snapshotMailboxValue(__vpiHandle *source, talos_rt_gc_lane_v1 *lane,
+                     talos_rt_design_cursor_v1 semantic,
+                     const talos_rt_element_type_v1 &element,
                      const uint8_t *bytes, bool variableView = false) {
-  obelisk_rt_design_semantic_type_info_v1 info{};
+  talos_rt_design_semantic_type_info_v1 info{};
   if (!semanticTypeInfo(source, semantic, info))
     return {};
   auto value = std::make_shared<VPISnapshotValue>();
   value->semantic = semantic;
   value->bitWidth = element.bit_width;
-  const bool fourState = (element.flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+  const bool fourState = (element.flags & TALOS_RT_ELEMENT_FOUR_STATE) != 0;
   const bool classReference =
-      info.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS ||
-      info.kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX ||
-      info.kind == OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE ||
-      info.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS;
+      info.kind == TALOS_RT_DESIGN_SEMANTIC_CLASS ||
+      info.kind == TALOS_RT_DESIGN_SEMANTIC_MAILBOX ||
+      info.kind == TALOS_RT_DESIGN_SEMANTIC_SEMAPHORE ||
+      info.kind == TALOS_RT_DESIGN_SEMANTIC_PROCESS;
   bool compatible = false;
   if (classReference) {
     value->exactType = vpiClassVar;
@@ -7626,62 +7626,62 @@ snapshotMailboxValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     compatible =
         element.value_size == 8 &&
         element.bit_width ==
-            (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS ? 64u : 0u) &&
+            (info.kind == TALOS_RT_DESIGN_SEMANTIC_PROCESS ? 64u : 0u) &&
         !fourState &&
-        (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS
-             ? element.kind == OBELISK_RT_ELEMENT_BITS
-         : info.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS
-             ? element.kind == OBELISK_RT_ELEMENT_CLASS_HANDLE
-             : element.kind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE);
-  } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_STRING) {
+        (info.kind == TALOS_RT_DESIGN_SEMANTIC_PROCESS
+             ? element.kind == TALOS_RT_ELEMENT_BITS
+         : info.kind == TALOS_RT_DESIGN_SEMANTIC_CLASS
+             ? element.kind == TALOS_RT_ELEMENT_CLASS_HANDLE
+             : element.kind == TALOS_RT_ELEMENT_CONTAINER_HANDLE);
+  } else if (info.kind == TALOS_RT_DESIGN_SEMANTIC_STRING) {
     value->isString = true;
     value->bitWidth = 64;
     value->constType = vpiStringConst;
-    compatible = element.kind == OBELISK_RT_ELEMENT_STRING &&
+    compatible = element.kind == TALOS_RT_ELEMENT_STRING &&
                  element.value_size == 8 && element.bit_width == 0 &&
                  !fourState;
-  } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_REAL ||
-             info.kind == OBELISK_RT_DESIGN_SEMANTIC_REALTIME ||
-             info.kind == OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL) {
+  } else if (info.kind == TALOS_RT_DESIGN_SEMANTIC_REAL ||
+             info.kind == TALOS_RT_DESIGN_SEMANTIC_REALTIME ||
+             info.kind == TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL) {
     value->constType = vpiRealConst;
     const uint64_t width =
-        info.kind == OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL ? 32 : 64;
-    compatible = element.kind == OBELISK_RT_ELEMENT_REAL &&
+        info.kind == TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL ? 32 : 64;
+    compatible = element.kind == TALOS_RT_ELEMENT_REAL &&
                  element.bit_width == width &&
                  element.value_size == width / 8 && !fourState;
   } else {
     switch (info.kind) {
-    case OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
-    case OBELISK_RT_DESIGN_SEMANTIC_BIT:
-    case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
-    case OBELISK_RT_DESIGN_SEMANTIC_REG:
-    case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
-    case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
-    case OBELISK_RT_DESIGN_SEMANTIC_TIME:
-    case OBELISK_RT_DESIGN_SEMANTIC_ENUM:
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION: {
+    case TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
+    case TALOS_RT_DESIGN_SEMANTIC_BIT:
+    case TALOS_RT_DESIGN_SEMANTIC_LOGIC:
+    case TALOS_RT_DESIGN_SEMANTIC_REG:
+    case TALOS_RT_DESIGN_SEMANTIC_BYTE:
+    case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
+    case TALOS_RT_DESIGN_SEMANTIC_TIME:
+    case TALOS_RT_DESIGN_SEMANTIC_ENUM:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION: {
       value->integral = true;
       value->constType = vpiBinaryConst;
       uint64_t semanticWidth;
-      if (obelisk_rt_cached_design_semantic_bit_width(
+      if (talos_rt_cached_design_semantic_bit_width(
               source->owner->context, semantic, &semanticWidth) !=
-          OBELISK_RT_OK) {
+          TALOS_RT_OK) {
         setError(source->owner, "mailbox message has no fixed semantic width",
                  vpiInternal);
         return {};
       }
       compatible =
-          (element.kind == OBELISK_RT_ELEMENT_BITS ||
-           element.kind == OBELISK_RT_ELEMENT_LOGIC) &&
+          (element.kind == TALOS_RT_ELEMENT_BITS ||
+           element.kind == TALOS_RT_ELEMENT_LOGIC) &&
           element.bit_width == semanticWidth &&
           fourState ==
-              ((info.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0 &&
-               (info.flags & OBELISK_RT_DESIGN_SEMANTIC_PROJECTED) == 0);
+              ((info.flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0 &&
+               (info.flags & TALOS_RT_DESIGN_SEMANTIC_PROJECTED) == 0);
       break;
     }
     default:
@@ -7724,10 +7724,10 @@ snapshotMailboxValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     char scratch[8]{};
     const char *data = nullptr;
     uint64_t size = 0;
-    if (obelisk_rt_validate_string(source->owner->context, word) !=
-            OBELISK_RT_OK ||
-        obelisk_rt_v1_string_view(word, scratch, &data, &size) !=
-            OBELISK_RT_OK ||
+    if (talos_rt_validate_string(source->owner->context, word) !=
+            TALOS_RT_OK ||
+        talos_rt_v1_string_view(word, scratch, &data, &size) !=
+            TALOS_RT_OK ||
         size > std::numeric_limits<size_t>::max() || size > UINT64_MAX / 8) {
       if (variableView) {
         value->readable = false;
@@ -7745,13 +7745,13 @@ snapshotMailboxValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     VPIClassReference identity;
     const auto status = captureClassReference(source, lane, value->value[0],
                                               semantic, info.kind, identity);
-    if (status != OBELISK_RT_OK) {
-      if (variableView && status != OBELISK_RT_OUT_OF_MEMORY) {
+    if (status != TALOS_RT_OK) {
+      if (variableView && status != TALOS_RT_OUT_OF_MEMORY) {
         value->readable = false;
         return value;
       }
       setError(source->owner, "invalid class reference in mailbox message",
-               status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+               status == TALOS_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
       return {};
     }
     value->object = identity.object;
@@ -7766,84 +7766,84 @@ snapshotMailboxValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
 // deliberately canonicalized by the compiler and does not need a layout row.
 bool messageElementDescriptor(__vpiHandle *source,
                               std::optional<VPIValueLayoutOwner> layoutOwner,
-                              obelisk_rt_design_cursor_v1 semantic,
-                              obelisk_rt_element_type_v1 &element) {
+                              talos_rt_design_cursor_v1 semantic,
+                              talos_rt_element_type_v1 &element) {
   element = {};
-  element.version = OBELISK_RT_VERSION;
+  element.version = TALOS_RT_VERSION;
   element.alignment = 1;
-  obelisk_rt_design_semantic_type_info_v1 info{};
+  talos_rt_design_semantic_type_info_v1 info{};
   if (!semanticTypeInfo(source, semantic, info))
     return false;
   const bool fourState =
-      (info.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0 &&
-      (info.flags & OBELISK_RT_DESIGN_SEMANTIC_PROJECTED) == 0;
+      (info.flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0 &&
+      (info.flags & TALOS_RT_DESIGN_SEMANTIC_PROJECTED) == 0;
   uint64_t width = 0;
-  if (obelisk_rt_cached_design_semantic_bit_width(
-          source->owner->context, semantic, &width) == OBELISK_RT_OK &&
-      info.kind != OBELISK_RT_DESIGN_SEMANTIC_REAL &&
-      info.kind != OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL &&
-      info.kind != OBELISK_RT_DESIGN_SEMANTIC_REALTIME) {
+  if (talos_rt_cached_design_semantic_bit_width(
+          source->owner->context, semantic, &width) == TALOS_RT_OK &&
+      info.kind != TALOS_RT_DESIGN_SEMANTIC_REAL &&
+      info.kind != TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL &&
+      info.kind != TALOS_RT_DESIGN_SEMANTIC_REALTIME) {
     element.kind =
-        fourState ? OBELISK_RT_ELEMENT_LOGIC : OBELISK_RT_ELEMENT_BITS;
+        fourState ? TALOS_RT_ELEMENT_LOGIC : TALOS_RT_ELEMENT_BITS;
     element.bit_width = width;
     element.value_size = (width - 1) / 8 + 1;
-  } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
-             info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
-             info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION) {
-    obelisk_rt_design_cursor_v1 physical{};
-    obelisk_rt_design_type_info_v1 layout{};
+  } else if (info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+             info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
+             info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION) {
+    talos_rt_design_cursor_v1 physical{};
+    talos_rt_design_type_info_v1 layout{};
     if (!layoutOwner ||
-        obelisk_rt_cached_vpi_value_element_type(source->owner->context,
+        talos_rt_cached_vpi_value_element_type(source->owner->context,
                                                  *layoutOwner, semantic,
-                                                 &physical) != OBELISK_RT_OK ||
-        obelisk_rt_cached_design_type_info(source->owner->context, physical,
-                                           &layout) != OBELISK_RT_OK ||
+                                                 &physical) != TALOS_RT_OK ||
+        talos_rt_cached_design_type_info(source->owner->context, physical,
+                                           &layout) != TALOS_RT_OK ||
         !layout.bit_width || layout.bit_width > UINT64_MAX - 7) {
       setError(source->owner, "mailbox value has no exact storage layout",
                vpiNotice);
       return false;
     }
-    element.kind = OBELISK_RT_ELEMENT_AGGREGATE;
+    element.kind = TALOS_RT_ELEMENT_AGGREGATE;
     element.value_size = (layout.bit_width + 7) / 8;
     element.bit_width = element.value_size * 8;
   } else {
     element.value_size = 8;
     switch (info.kind) {
-    case OBELISK_RT_DESIGN_SEMANTIC_REAL:
-    case OBELISK_RT_DESIGN_SEMANTIC_REALTIME:
-      element.kind = OBELISK_RT_ELEMENT_REAL;
+    case TALOS_RT_DESIGN_SEMANTIC_REAL:
+    case TALOS_RT_DESIGN_SEMANTIC_REALTIME:
+      element.kind = TALOS_RT_ELEMENT_REAL;
       element.bit_width = 64;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL:
-      element.kind = OBELISK_RT_ELEMENT_REAL;
+    case TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL:
+      element.kind = TALOS_RT_ELEMENT_REAL;
       element.bit_width = 32;
       element.value_size = 4;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_STRING:
-      element.kind = OBELISK_RT_ELEMENT_STRING;
+    case TALOS_RT_DESIGN_SEMANTIC_STRING:
+      element.kind = TALOS_RT_ELEMENT_STRING;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_CLASS:
-      element.kind = OBELISK_RT_ELEMENT_CLASS_HANDLE;
+    case TALOS_RT_DESIGN_SEMANTIC_CLASS:
+      element.kind = TALOS_RT_ELEMENT_CLASS_HANDLE;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_PROCESS:
-      element.kind = OBELISK_RT_ELEMENT_BITS;
+    case TALOS_RT_DESIGN_SEMANTIC_PROCESS:
+      element.kind = TALOS_RT_ELEMENT_BITS;
       element.bit_width = 64;
       break;
     default:
-      element.kind = OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
+      element.kind = TALOS_RT_ELEMENT_CONTAINER_HANDLE;
       break;
     }
   }
   if (fourState)
-    element.flags |= OBELISK_RT_ELEMENT_FOUR_STATE;
+    element.flags |= TALOS_RT_ELEMENT_FOUR_STATE;
   return true;
 }
 
 struct VPISnapshotRequest {
   std::shared_ptr<VPISnapshotValue> parent;
   size_t ordinal = 0;
-  obelisk_rt_design_cursor_v1 semantic{};
-  obelisk_rt_element_type_v1 element{};
+  talos_rt_design_cursor_v1 semantic{};
+  talos_rt_element_type_v1 element{};
   std::vector<uint8_t> bytes;
   bool variableView = false;
   bool readable = true;
@@ -7853,36 +7853,36 @@ struct VPISnapshotRequest {
 };
 
 std::shared_ptr<VPISnapshotValue>
-snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
+snapshotMessageNode(__vpiHandle *source, talos_rt_gc_lane_v1 *lane,
                     std::optional<VPIValueLayoutOwner> layoutOwner,
-                    obelisk_rt_design_cursor_v1 semantic,
-                    const obelisk_rt_element_type_v1 &element,
+                    talos_rt_design_cursor_v1 semantic,
+                    const talos_rt_element_type_v1 &element,
                     const uint8_t *bytes,
                     std::vector<VPISnapshotRequest> &pending,
                     std::vector<std::shared_ptr<VPISnapshotValue>> &aggregates,
                     bool variableView = false, bool readable = true) {
-  obelisk_rt_design_semantic_type_info_v1 info{};
+  talos_rt_design_semantic_type_info_v1 info{};
   if (!semanticTypeInfo(source, semantic, info))
     return {};
   const bool array =
-      info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
-      (variableView && info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY);
+      info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+      (variableView && info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY);
   const bool structure =
-      info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
-      (variableView && info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT);
-  const bool dynamic = info.kind == OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY;
-  const bool queue = info.kind == OBELISK_RT_DESIGN_SEMANTIC_QUEUE;
-  const bool associative = info.kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY;
+      info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
+      (variableView && info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT);
+  const bool dynamic = info.kind == TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY;
+  const bool queue = info.kind == TALOS_RT_DESIGN_SEMANTIC_QUEUE;
+  const bool associative = info.kind == TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY;
   const bool unionType =
-      info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION ||
-      info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
+      info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION ||
+      info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION;
   variableView |= unionType || associative;
   auto variableKind = [&]() -> uint32_t {
-    const auto *access = obelisk::reflection::findVPIIndexedAccess(vpiUnionVar);
+    const auto *access = talos::reflection::findVPIIndexedAccess(vpiUnionVar);
     return access
                ? indexedResultType(
                      source, *access, semantic,
-                     info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+                     info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
                          associative || dynamic || queue,
                      false)
                : 0;
@@ -7902,16 +7902,16 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     if (!readable) {
       value->bitWidth =
           element.bit_width ? element.bit_width : element.value_size * 8;
-      value->integral = (element.kind == OBELISK_RT_ELEMENT_BITS ||
-                         element.kind == OBELISK_RT_ELEMENT_LOGIC) &&
-                        info.kind != OBELISK_RT_DESIGN_SEMANTIC_PROCESS;
-      value->sizeKnown = info.kind != OBELISK_RT_DESIGN_SEMANTIC_STRING;
+      value->integral = (element.kind == TALOS_RT_ELEMENT_BITS ||
+                         element.kind == TALOS_RT_ELEMENT_LOGIC) &&
+                        info.kind != TALOS_RT_DESIGN_SEMANTIC_PROCESS;
+      value->sizeKnown = info.kind != TALOS_RT_DESIGN_SEMANTIC_STRING;
     }
     return value;
   }
-  const bool packed = info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
-                      info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
-                      info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
+  const bool packed = info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+                      info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+                      info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION;
   auto value = packed && readable
                    ? snapshotMailboxValue(source, lane, semantic, element,
                                           bytes, variableView)
@@ -7934,12 +7934,12 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     value->opType = vpiAssignmentPatternOp;
     aggregates.push_back(value);
   }
-  auto append = [&](obelisk_rt_design_cursor_v1 childSemantic,
-                    const obelisk_rt_element_type_v1 &childElement,
+  auto append = [&](talos_rt_design_cursor_v1 childSemantic,
+                    const talos_rt_element_type_v1 &childElement,
                     const uint8_t *childBytes, bool childReadable = true,
                     std::string childName = {}) {
     const uint64_t planes =
-        (childElement.flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
+        (childElement.flags & TALOS_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
     if (!childElement.value_size ||
         childElement.value_size > SIZE_MAX / planes) {
       setError(source->owner, "mailbox child exceeds host capacity", vpiSystem);
@@ -7960,14 +7960,14 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     return true;
   };
   if (dynamic || queue || associative) {
-    if (element.kind != OBELISK_RT_ELEMENT_CONTAINER_HANDLE ||
+    if (element.kind != TALOS_RT_ELEMENT_CONTAINER_HANDLE ||
         element.value_size != 8 || element.bit_width != 0 ||
-        (element.flags & OBELISK_RT_ELEMENT_FOUR_STATE)) {
+        (element.flags & TALOS_RT_ELEMENT_FOUR_STATE)) {
       setError(source->owner, "container message does not match its storage",
                vpiInternal);
       return {};
     }
-    obelisk_rt_managed_word_v1 word = 0;
+    talos_rt_managed_word_v1 word = 0;
     std::memcpy(&word, bytes, sizeof(word));
     if (!readable) {
       value->sizeKnown = false;
@@ -7975,13 +7975,13 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     }
     if (!word)
       return value;
-    auto *object = obelisk_rt_object_from_managed_word(word);
+    auto *object = talos_rt_object_from_managed_word(word);
     {
       ManagedObjectLease lease;
-      if (word != obelisk_rt_managed_word_from_object(object) ||
-          obelisk_rt_managed_object_acquire(lane, object,
-                                            OBELISK_RT_MANAGED_CONTAINER,
-                                            &lease) != OBELISK_RT_OK) {
+      if (word != talos_rt_managed_word_from_object(object) ||
+          talos_rt_managed_object_acquire(lane, object,
+                                            TALOS_RT_MANAGED_CONTAINER,
+                                            &lease) != TALOS_RT_OK) {
         if (variableView) {
           value->readable = value->sizeKnown = false;
           return value;
@@ -7993,72 +7993,72 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     }
     if (associative) {
       VPIAssocSnapshot copied;
-      const auto status = obelisk_rt_assoc_snapshot(object, &copied);
-      if (status != OBELISK_RT_OK || !copied.element) {
-        if (variableView && status != OBELISK_RT_OUT_OF_MEMORY &&
-            status != OBELISK_RT_OUT_OF_RESOURCES) {
+      const auto status = talos_rt_assoc_snapshot(object, &copied);
+      if (status != TALOS_RT_OK || !copied.element) {
+        if (variableView && status != TALOS_RT_OUT_OF_MEMORY &&
+            status != TALOS_RT_OUT_OF_RESOURCES) {
           value->readable = value->sizeKnown = false;
           return value;
         }
         setError(source->owner, "could not snapshot associative mailbox value",
-                 status == OBELISK_RT_OUT_OF_MEMORY ||
-                         status == OBELISK_RT_OUT_OF_RESOURCES
+                 status == TALOS_RT_OUT_OF_MEMORY ||
+                         status == TALOS_RT_OUT_OF_RESOURCES
                      ? vpiSystem
                      : vpiInternal);
         return {};
       }
-      obelisk_rt_design_cursor_v1 childSemantic{}, keySemantic{};
+      talos_rt_design_cursor_v1 childSemantic{}, keySemantic{};
       if (!semanticElement(source, semantic, childSemantic))
         return {};
-      const bool wildcard = copied.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD;
-      obelisk_rt_element_type_v1 keyElement{};
+      const bool wildcard = copied.keyKind == TALOS_RT_ASSOC_KEY_WILDCARD;
+      talos_rt_element_type_v1 keyElement{};
       if (wildcard) {
-        obelisk_rt_design_semantic_type_edge_v1 keyEdge{};
-        obelisk_rt_design_semantic_type_info_v1 keyInfo{};
+        talos_rt_design_semantic_type_edge_v1 keyEdge{};
+        talos_rt_design_semantic_type_info_v1 keyInfo{};
         if (info.edge_count != 2 ||
             !semanticEdge(source, semantic, 0, keyEdge) ||
             !semanticTypeInfo(source, keyEdge.child, keyInfo) ||
-            keyInfo.kind != OBELISK_RT_DESIGN_SEMANTIC_UNTYPED) {
+            keyInfo.kind != TALOS_RT_DESIGN_SEMANTIC_UNTYPED) {
           setError(source->owner, "wildcard index has a declared key type",
                    vpiInternal);
           return {};
         }
       } else {
-        obelisk_rt_design_semantic_type_edge_v1 keyEdge{};
+        talos_rt_design_semantic_type_edge_v1 keyEdge{};
         if (info.edge_count != 2 || !semanticEdge(source, semantic, 0, keyEdge))
           return {};
         keySemantic = keyEdge.child;
-        obelisk_rt_design_semantic_type_info_v1 keyInfo{};
+        talos_rt_design_semantic_type_info_v1 keyInfo{};
         if (!semanticTypeInfo(source, keySemantic, keyInfo) ||
             !messageElementDescriptor(source, layoutOwner, keySemantic,
                                       keyElement))
           return {};
         bool matches = false;
         switch (copied.keyKind) {
-        case OBELISK_RT_ASSOC_KEY_SIGNED:
-        case OBELISK_RT_ASSOC_KEY_UNSIGNED:
-          matches = (keyElement.kind == OBELISK_RT_ELEMENT_BITS ||
-                     keyElement.kind == OBELISK_RT_ELEMENT_LOGIC) &&
+        case TALOS_RT_ASSOC_KEY_SIGNED:
+        case TALOS_RT_ASSOC_KEY_UNSIGNED:
+          matches = (keyElement.kind == TALOS_RT_ELEMENT_BITS ||
+                     keyElement.kind == TALOS_RT_ELEMENT_LOGIC) &&
                     keyElement.bit_width == copied.keyWidth &&
-                    ((keyInfo.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) !=
-                     0) == (copied.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED);
+                    ((keyInfo.flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) !=
+                     0) == (copied.keyKind == TALOS_RT_ASSOC_KEY_SIGNED);
           break;
-        case OBELISK_RT_ASSOC_KEY_STRING:
-          matches = keyInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_STRING;
+        case TALOS_RT_ASSOC_KEY_STRING:
+          matches = keyInfo.kind == TALOS_RT_DESIGN_SEMANTIC_STRING;
           break;
-        case OBELISK_RT_ASSOC_KEY_CLASS:
-          matches = keyInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS;
+        case TALOS_RT_ASSOC_KEY_CLASS:
+          matches = keyInfo.kind == TALOS_RT_DESIGN_SEMANTIC_CLASS;
           break;
-        case OBELISK_RT_ASSOC_KEY_PROCESS:
-          matches = keyInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS;
+        case TALOS_RT_ASSOC_KEY_PROCESS:
+          matches = keyInfo.kind == TALOS_RT_DESIGN_SEMANTIC_PROCESS;
           break;
-        case OBELISK_RT_ASSOC_KEY_ELEMENT:
+        case TALOS_RT_ASSOC_KEY_ELEMENT:
           matches =
               copied.keyElement && keyElement.kind == copied.keyElement->kind &&
               keyElement.bit_width == copied.keyElement->bit_width &&
               keyElement.value_size == copied.keyElement->value_size &&
-              (keyElement.flags & OBELISK_RT_ELEMENT_FOUR_STATE) ==
-                  (copied.keyElement->flags & OBELISK_RT_ELEMENT_FOUR_STATE);
+              (keyElement.flags & TALOS_RT_ELEMENT_FOUR_STATE) ==
+                  (copied.keyElement->flags & TALOS_RT_ELEMENT_FOUR_STATE);
           break;
         }
         if (!matches) {
@@ -8098,13 +8098,13 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
                                        << ((byte % 8) * 8);
         } else {
           const uint64_t planes =
-              (keyElement.flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
+              (keyElement.flags & TALOS_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
           if (!keyElement.value_size ||
               keyElement.value_size > SIZE_MAX / planes)
             return {};
           const bool integralKey =
-              copied.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED ||
-              copied.keyKind == OBELISK_RT_ASSOC_KEY_UNSIGNED;
+              copied.keyKind == TALOS_RT_ASSOC_KEY_SIGNED ||
+              copied.keyKind == TALOS_RT_ASSOC_KEY_UNSIGNED;
           if (entry.key.size() !=
               keyElement.value_size * (integralKey ? 1 : planes)) {
             setError(source->owner, "invalid associative index storage",
@@ -8122,25 +8122,25 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
       return value;
     }
     uint32_t kind = 0;
-    const obelisk_rt_element_type_v1 *childElement = nullptr;
+    const talos_rt_element_type_v1 *childElement = nullptr;
     std::vector<uint8_t> contents;
     const auto status =
-        obelisk_rt_container_snapshot(object, &kind, &childElement, contents);
-    obelisk_rt_design_cursor_v1 childSemantic{};
-    if (status != OBELISK_RT_OK || !childElement ||
-        kind != (dynamic ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
-                         : OBELISK_RT_CONTAINER_QUEUE) ||
+        talos_rt_container_snapshot(object, &kind, &childElement, contents);
+    talos_rt_design_cursor_v1 childSemantic{};
+    if (status != TALOS_RT_OK || !childElement ||
+        kind != (dynamic ? TALOS_RT_CONTAINER_DYNAMIC_ARRAY
+                         : TALOS_RT_CONTAINER_QUEUE) ||
         !semanticElement(source, semantic, childSemantic)) {
-      if (variableView && status != OBELISK_RT_OUT_OF_MEMORY) {
+      if (variableView && status != TALOS_RT_OUT_OF_MEMORY) {
         value->readable = value->sizeKnown = false;
         return value;
       }
       setError(source->owner, "could not snapshot mailbox container value",
-               status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+               status == TALOS_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
       return {};
     }
     const uint64_t planes =
-        (childElement->flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
+        (childElement->flags & TALOS_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
     if (!childElement->value_size ||
         childElement->value_size > SIZE_MAX / planes ||
         contents.size() % (childElement->value_size * planes)) {
@@ -8160,33 +8160,33 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
         return {};
     return value;
   }
-  obelisk_rt_design_cursor_v1 physical{};
-  obelisk_rt_design_type_info_v1 layout{};
+  talos_rt_design_cursor_v1 physical{};
+  talos_rt_design_type_info_v1 layout{};
   if (!layoutOwner ||
-      obelisk_rt_cached_vpi_value_element_type(source->owner->context,
+      talos_rt_cached_vpi_value_element_type(source->owner->context,
                                                *layoutOwner, semantic,
-                                               &physical) != OBELISK_RT_OK ||
-      obelisk_rt_cached_design_type_info(source->owner->context, physical,
-                                         &layout) != OBELISK_RT_OK) {
+                                               &physical) != TALOS_RT_OK ||
+      talos_rt_cached_design_type_info(source->owner->context, physical,
+                                         &layout) != TALOS_RT_OK) {
     setError(source->owner, "mailbox aggregate has no exact storage layout",
              vpiNotice);
     return {};
   }
-  const bool fourState = (element.flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+  const bool fourState = (element.flags & TALOS_RT_ELEMENT_FOUR_STATE) != 0;
   if (!layout.bit_width || layout.bit_width > UINT64_MAX - 7 ||
-      (packed ? element.kind != (fourState ? OBELISK_RT_ELEMENT_LOGIC
-                                           : OBELISK_RT_ELEMENT_BITS)
-              : element.kind != OBELISK_RT_ELEMENT_AGGREGATE) ||
+      (packed ? element.kind != (fourState ? TALOS_RT_ELEMENT_LOGIC
+                                           : TALOS_RT_ELEMENT_BITS)
+              : element.kind != TALOS_RT_ELEMENT_AGGREGATE) ||
       element.value_size != (layout.bit_width + 7) / 8 ||
       element.bit_width !=
           (packed ? layout.bit_width : element.value_size * 8) ||
-      fourState != ((layout.flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0)) {
+      fourState != ((layout.flags & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0)) {
     setError(source->owner, "aggregate message does not match its storage",
              vpiInternal);
     return {};
   }
   uint64_t count = layout.child_count;
-  if (unionType && (info.flags & OBELISK_RT_DESIGN_SEMANTIC_TAGGED)) {
+  if (unionType && (info.flags & TALOS_RT_DESIGN_SEMANTIC_TAGGED)) {
     value->tagged = true;
     bool known = readable && layout.tag_bits <= 64 &&
                  layout.tag_bits <= layout.bit_width;
@@ -8201,7 +8201,7 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     if (known && (packed ? tag < count : tag > 0 && tag <= count))
       value->activeMember = static_cast<int64_t>(packed ? tag : tag - 1);
     if (value->activeMember >= 0) {
-      obelisk_rt_design_semantic_type_edge_v1 active{};
+      talos_rt_design_semantic_type_edge_v1 active{};
       if (!semanticEdge(source, semantic, value->activeMember, active))
         return {};
       value->tagName.assign(reinterpret_cast<const char *>(active.name),
@@ -8209,13 +8209,13 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     }
   }
   uint64_t stride = 0;
-  obelisk_rt_design_cursor_v1 arraySemantic{};
+  talos_rt_design_cursor_v1 arraySemantic{};
   if (array) {
-    obelisk_rt_design_type_info_v1 child{};
+    talos_rt_design_type_info_v1 child{};
     if (!semanticElement(source, semantic, arraySemantic) ||
-        obelisk_rt_cached_design_type_info(source->owner->context,
+        talos_rt_cached_design_type_info(source->owner->context,
                                            layout.element_type,
-                                           &child) != OBELISK_RT_OK ||
+                                           &child) != TALOS_RT_OK ||
         !child.bit_width) {
       setError(source->owner, "invalid array message layout", vpiInternal);
       return {};
@@ -8236,17 +8236,17 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
   }
   value->children.reserve(static_cast<size_t>(count));
   for (uint64_t index = 0; index != count; ++index) {
-    obelisk_rt_design_cursor_v1 childSemantic = arraySemantic;
+    talos_rt_design_cursor_v1 childSemantic = arraySemantic;
     uint64_t offset = (packed && array ? count - index - 1 : index) * stride;
     std::string childName;
     if (structure || unionType) {
-      obelisk_rt_design_cursor_v1 field{};
-      obelisk_rt_design_type_info_v1 fieldInfo{};
-      obelisk_rt_design_semantic_type_edge_v1 edge{};
-      if (obelisk_rt_cached_design_type_child(source->owner->context, physical,
-                                              index, &field) != OBELISK_RT_OK ||
-          obelisk_rt_cached_design_type_info(source->owner->context, field,
-                                             &fieldInfo) != OBELISK_RT_OK ||
+      talos_rt_design_cursor_v1 field{};
+      talos_rt_design_type_info_v1 fieldInfo{};
+      talos_rt_design_semantic_type_edge_v1 edge{};
+      if (talos_rt_cached_design_type_child(source->owner->context, physical,
+                                              index, &field) != TALOS_RT_OK ||
+          talos_rt_cached_design_type_info(source->owner->context, field,
+                                             &fieldInfo) != TALOS_RT_OK ||
           !semanticEdge(source, semantic, index, edge)) {
         setError(source->owner, "invalid struct message layout", vpiInternal);
         return {};
@@ -8255,35 +8255,35 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
       childName.assign(reinterpret_cast<const char *>(edge.name),
                        edge.name_size);
       offset = fieldInfo.packed_offset;
-      obelisk_rt_design_semantic_type_info_v1 childInfo{};
+      talos_rt_design_semantic_type_info_v1 childInfo{};
       if (!semanticTypeInfo(source, childSemantic, childInfo))
         return {};
       // A void tag names a variant containing no value (7.3.2). Its declaration
       // remains in TypespecMember; there is no VPI variable kind for void.
-      if (childInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_VOID)
+      if (childInfo.kind == TALOS_RT_DESIGN_SEMANTIC_VOID)
         continue;
     }
-    obelisk_rt_element_type_v1 childElement{};
+    talos_rt_element_type_v1 childElement{};
     if (!messageElementDescriptor(source, layoutOwner, childSemantic,
                                   childElement))
       return {};
     const bool childFour =
-        (childElement.flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+        (childElement.flags & TALOS_RT_ELEMENT_FOUR_STATE) != 0;
     const uint64_t childWidth = childElement.value_size * 8;
     // Field/element storage may end within its final byte (e.g. logic[2:0]);
     // copy only its semantic bits and leave the padding canonical zero.
     uint64_t copiedWidth =
         childElement.bit_width ? childElement.bit_width : childWidth;
-    if (childElement.kind == OBELISK_RT_ELEMENT_AGGREGATE) {
-      obelisk_rt_design_cursor_v1 childPhysical{};
-      obelisk_rt_design_type_info_v1 childLayout{};
+    if (childElement.kind == TALOS_RT_ELEMENT_AGGREGATE) {
+      talos_rt_design_cursor_v1 childPhysical{};
+      talos_rt_design_type_info_v1 childLayout{};
       if (!layoutOwner ||
-          obelisk_rt_cached_vpi_value_element_type(
+          talos_rt_cached_vpi_value_element_type(
               source->owner->context, *layoutOwner, childSemantic,
-              &childPhysical) != OBELISK_RT_OK ||
-          obelisk_rt_cached_design_type_info(source->owner->context,
+              &childPhysical) != TALOS_RT_OK ||
+          talos_rt_cached_design_type_info(source->owner->context,
                                              childPhysical,
-                                             &childLayout) != OBELISK_RT_OK)
+                                             &childLayout) != TALOS_RT_OK)
         return {};
       copiedWidth = childLayout.bit_width;
     }
@@ -8313,10 +8313,10 @@ snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
 }
 
 std::shared_ptr<const VPISnapshotValue>
-snapshotMessageValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
+snapshotMessageValue(__vpiHandle *source, talos_rt_gc_lane_v1 *lane,
                      std::optional<VPIValueLayoutOwner> layoutOwner,
-                     obelisk_rt_design_cursor_v1 semantic,
-                     const obelisk_rt_element_type_v1 &element,
+                     talos_rt_design_cursor_v1 semantic,
+                     const talos_rt_element_type_v1 &element,
                      const uint8_t *bytes) {
   // Child semantic graphs are validated DAGs. An explicit work stack avoids
   // imposing a new source nesting limit or consuming the C++ call stack.
@@ -8345,16 +8345,16 @@ snapshotMessageValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     child->indexExpression = request.indexExpression;
     if (request.parent->array && request.parent->integral && !child->array &&
         child->bitWidth == 1) {
-      obelisk_rt_design_semantic_type_info_v1 childType{};
+      talos_rt_design_semantic_type_info_v1 childType{};
       if (!semanticTypeInfo(source, child->semantic, childType))
         return {};
       const bool scalarBit =
-          childType.kind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
-          childType.kind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
-          childType.kind == OBELISK_RT_DESIGN_SEMANTIC_REG;
+          childType.kind == TALOS_RT_DESIGN_SEMANTIC_BIT ||
+          childType.kind == TALOS_RT_DESIGN_SEMANTIC_LOGIC ||
+          childType.kind == TALOS_RT_DESIGN_SEMANTIC_REG;
       if (scalarBit &&
-          (childType.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) == 0) {
-        const auto *access = obelisk::reflection::findVPIIndexedAccess(
+          (childType.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) == 0) {
+        const auto *access = talos::reflection::findVPIIndexedAccess(
             request.parent->exactType);
         if (!access)
           return {};
@@ -8400,9 +8400,9 @@ bool snapshotPackedPrefix(__vpiHandle *source, const VPISnapshotValue &value) {
     return value.integral;
   if (value.exactType != vpiBitVar && value.exactType != vpiReg)
     return false;
-  obelisk_rt_design_semantic_type_info_v1 info{};
+  talos_rt_design_semantic_type_info_v1 info{};
   return semanticTypeInfo(source, value.semantic, info) &&
-         (info.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
+         (info.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
 }
 
 const VPISnapshotValue *snapshotParentValue(__vpiHandle *source,
@@ -8437,7 +8437,7 @@ const VPISnapshotValue *snapshotParentValue(__vpiHandle *source,
 
 bool snapshotArraySize(__vpiHandle *source, uint64_t &size) {
   size = 0;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<const VPISnapshotValue *> pending{source->snapshot.get()};
     while (!pending.empty()) {
       const auto *node = pending.back();
@@ -8456,7 +8456,7 @@ bool snapshotArraySize(__vpiHandle *source, uint64_t &size) {
     }
     return true;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not count copied array elements", vpiSystem);
     return false;
   }
@@ -8465,7 +8465,7 @@ bool snapshotArraySize(__vpiHandle *source, uint64_t &size) {
 vpiHandle snapshotChildren(__vpiHandle *source, PLI_INT32 selector) {
   if (source->snapshot->children.empty())
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto iterator = std::make_unique<__vpiHandle>();
     iterator->owner = source->owner;
     iterator->kind = VPIHandleKind::Iterator;
@@ -8473,9 +8473,9 @@ vpiHandle snapshotChildren(__vpiHandle *source, PLI_INT32 selector) {
     iterator->snapshotIterator = true;
     iterator->cursor = source->cursor;
     iterator->snapshotItems.reserve(source->snapshot->children.size());
-    const auto *edge = obelisk::reflection::findVPITraversal(
+    const auto *edge = talos::reflection::findVPITraversal(
         source->snapshot->exactType, selector,
-        obelisk::reflection::VPITraversalMode::Iterate);
+        talos::reflection::VPITraversalMode::Iterate);
     if (!edge)
       return nullptr;
     const bool flatten = source->snapshot->exactType == vpiRegArray &&
@@ -8496,7 +8496,7 @@ vpiHandle snapshotChildren(__vpiHandle *source, PLI_INT32 selector) {
         pending.push_back({child});
         continue;
       }
-      if (obelisk::reflection::vpiObjectSetContains(edge->targets,
+      if (talos::reflection::vpiObjectSetContains(edge->targets,
                                                     child->exactType))
         iterator->snapshotItems.emplace_back(source->snapshot, child);
     }
@@ -8505,7 +8505,7 @@ vpiHandle snapshotChildren(__vpiHandle *source, PLI_INT32 selector) {
     copyUseRecipe(*iterator, *source);
     return keepHandle(source->owner, std::move(iterator));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate snapshot operand iterator",
              vpiSystem);
     return nullptr;
@@ -8515,27 +8515,27 @@ vpiHandle snapshotChildren(__vpiHandle *source, PLI_INT32 selector) {
 // A physical box type cannot distinguish source types such as int and
 // bit [31:0]. Use the exact immutable descriptor bound when the box was made.
 std::shared_ptr<const VPISnapshotValue>
-snapshotBoxedMessage(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
+snapshotBoxedMessage(__vpiHandle *source, talos_rt_gc_lane_v1 *lane,
                      const uint8_t *bytes) {
-  obelisk_rt_managed_word_v1 word = 0;
+  talos_rt_managed_word_v1 word = 0;
   std::memcpy(&word, bytes, sizeof(word));
-  auto *box = obelisk_rt_object_from_managed_word(word);
+  auto *box = talos_rt_object_from_managed_word(word);
   {
     ManagedObjectLease lease;
-    if (!word || !box || word != obelisk_rt_managed_word_from_object(box) ||
-        obelisk_rt_managed_object_acquire(
-            lane, box, OBELISK_RT_MANAGED_CONTAINER, &lease) != OBELISK_RT_OK) {
+    if (!word || !box || word != talos_rt_managed_word_from_object(box) ||
+        talos_rt_managed_object_acquire(
+            lane, box, TALOS_RT_MANAGED_CONTAINER, &lease) != TALOS_RT_OK) {
       setError(source->owner, "invalid box in untyped mailbox", vpiInternal);
       return {};
     }
   }
   uint64_t typeID = 0;
-  const obelisk_rt_element_type_v1 *element = nullptr;
+  const talos_rt_element_type_v1 *element = nullptr;
   std::vector<uint8_t> contents;
-  const auto status = obelisk_rt_box_snapshot(box, &typeID, &element, contents);
-  if (status != OBELISK_RT_OK || !element) {
+  const auto status = talos_rt_box_snapshot(box, &typeID, &element, contents);
+  if (status != TALOS_RT_OK || !element) {
     setError(source->owner, "could not snapshot untyped mailbox message",
-             status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+             status == TALOS_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
     return {};
   }
   if (!typeID) {
@@ -8544,13 +8544,13 @@ snapshotBoxedMessage(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     return {};
   }
   VPIBoxTypeBinding binding;
-  if (obelisk_rt_cached_vpi_box_type(source->owner->context, typeID,
-                                     &binding) != OBELISK_RT_OK) {
+  if (talos_rt_cached_vpi_box_type(source->owner->context, typeID,
+                                     &binding) != TALOS_RT_OK) {
     setError(source->owner, "invalid boxed message type metadata", vpiInternal);
     return {};
   }
   const size_t planes =
-      (element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
+      (element->flags & TALOS_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
   if (!element->value_size || element->value_size > SIZE_MAX / planes ||
       contents.size() != element->value_size * planes) {
     setError(source->owner, "invalid boxed message snapshot storage",
@@ -8565,68 +8565,68 @@ vpiHandle classMessages(__vpiHandle *source) {
   if (!source->dynamicObject)
     return nullptr;
   ManagedExecutionScope managed(source->owner->context);
-  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane()) {
+  if (managed.getStatus() != TALOS_RT_OK || !managed.getLane()) {
     setError(source->owner, "VPI mailbox query cannot enter GC scope",
              vpiInternal);
     return nullptr;
   }
   {
     ManagedObjectLease lease;
-    if (obelisk_rt_managed_object_acquire(
+    if (talos_rt_managed_object_acquire(
             managed.getLane(), source->dynamicObject,
-            OBELISK_RT_MANAGED_INVALID, &lease) != OBELISK_RT_OK ||
-        obelisk_rt_v1_object_id(source->dynamicObject) !=
+            TALOS_RT_MANAGED_INVALID, &lease) != TALOS_RT_OK ||
+        talos_rt_v1_object_id(source->dynamicObject) !=
             source->dynamicIdentity) {
       setError(source->owner, "invalid or reclaimed VPI mailbox handle");
       return nullptr;
     }
-    if (obelisk_rt_builtin_class_kind(lease) != BuiltinClassKind::Mailbox)
+    if (talos_rt_builtin_class_kind(lease) != BuiltinClassKind::Mailbox)
       return nullptr;
   }
-  obelisk_rt_design_cursor_v1 semantic{}, mailboxType{};
+  talos_rt_design_cursor_v1 semantic{}, mailboxType{};
   if (!mailboxElementSemantic(source, semantic, mailboxType))
     return nullptr;
-  obelisk_rt_design_semantic_type_info_v1 info{};
+  talos_rt_design_semantic_type_info_v1 info{};
   if (!semanticTypeInfo(source, semantic, info))
     return nullptr;
-  const bool untyped = info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNTYPED;
+  const bool untyped = info.kind == TALOS_RT_DESIGN_SEMANTIC_UNTYPED;
   std::optional<VPIValueLayoutOwner> layoutOwner;
   if (mailboxType.offset) {
     VPIValueLayoutOwner resolved;
-    if (obelisk_rt_cached_vpi_value_layout_owner(
-            source->owner->context, mailboxType, &resolved) != OBELISK_RT_OK) {
+    if (talos_rt_cached_vpi_value_layout_owner(
+            source->owner->context, mailboxType, &resolved) != TALOS_RT_OK) {
       setError(source->owner, "invalid mailbox layout owner", vpiInternal);
       return nullptr;
     }
     layoutOwner = resolved;
   }
-  const obelisk_rt_element_type_v1 *element = nullptr;
+  const talos_rt_element_type_v1 *element = nullptr;
   std::vector<uint8_t> bytes;
   const auto status =
-      obelisk_rt_mailbox_snapshot(source->dynamicObject, &element, bytes);
-  if (status != OBELISK_RT_OK || !element) {
+      talos_rt_mailbox_snapshot(source->dynamicObject, &element, bytes);
+  if (status != TALOS_RT_OK || !element) {
     setError(source->owner, "could not snapshot VPI mailbox messages",
-             status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+             status == TALOS_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
     return nullptr;
   }
   if (bytes.empty())
     return nullptr;
-  if (untyped && (element->kind != OBELISK_RT_ELEMENT_CONTAINER_HANDLE ||
-                  element->value_size != sizeof(obelisk_rt_managed_word_v1) ||
+  if (untyped && (element->kind != TALOS_RT_ELEMENT_CONTAINER_HANDLE ||
+                  element->value_size != sizeof(talos_rt_managed_word_v1) ||
                   element->bit_width != 0 ||
-                  (element->flags & OBELISK_RT_ELEMENT_FOUR_STATE))) {
+                  (element->flags & TALOS_RT_ELEMENT_FOUR_STATE))) {
     setError(source->owner, "untyped mailbox has invalid box storage",
              vpiInternal);
     return nullptr;
   }
   const uint64_t planes =
-      (element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
+      (element->flags & TALOS_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
   if (element->value_size == 0 || element->value_size > UINT64_MAX / planes ||
       bytes.size() % (element->value_size * planes) != 0) {
     setError(source->owner, "invalid mailbox snapshot storage", vpiInternal);
     return nullptr;
   }
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto iterator = std::make_unique<__vpiHandle>();
     iterator->owner = source->owner;
     iterator->kind = VPIHandleKind::Iterator;
@@ -8649,7 +8649,7 @@ vpiHandle classMessages(__vpiHandle *source) {
     }
     return keepHandle(source->owner, std::move(iterator));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(source->owner, "could not allocate VPI mailbox snapshot",
              vpiSystem);
     return nullptr;
@@ -8671,7 +8671,7 @@ vpiHandle makeReceiverHandle(__vpiHandle *source) {
 }
 
 vpiHandle classMemberByName(__vpiHandle *source, std::string_view name) {
-  obelisk_rt_design_cursor_v1 scope = source->cursor;
+  talos_rt_design_cursor_v1 scope = source->cursor;
   std::set<uint64_t> visited;
   constexpr PLI_INT32 selectors[] = {
       vpiVariables,       vpiMethods,    vpiNamedEvent,
@@ -8685,21 +8685,21 @@ vpiHandle classMemberByName(__vpiHandle *source, std::string_view name) {
       return nullptr;
     for (PLI_INT32 selector : selectors) {
       VPIRelationRange range{};
-      if (obelisk_rt_cached_vpi_relation_range(source->owner->context, scope,
+      if (talos_rt_cached_vpi_relation_range(source->owner->context, scope,
                                                selector, true,
-                                               &range) != OBELISK_RT_OK)
+                                               &range) != TALOS_RT_OK)
         continue;
       for (uint64_t index = 0; index != range.count; ++index) {
-        obelisk_rt_design_cursor_v1 target{};
+        talos_rt_design_cursor_v1 target{};
         uint32_t type = 0;
         bool statement = false;
         const uint8_t *data = nullptr;
         uint64_t size = 0;
-        if (obelisk_rt_cached_vpi_relation_target(
+        if (talos_rt_cached_vpi_relation_target(
                 source->owner->context, range.first + index, &target, &type,
-                &statement) != OBELISK_RT_OK ||
-            obelisk_rt_cached_design_name(source->owner->context, target, &data,
-                                          &size) != OBELISK_RT_OK)
+                &statement) != TALOS_RT_OK ||
+            talos_rt_cached_design_name(source->owner->context, target, &data,
+                                          &size) != TALOS_RT_OK)
           return nullptr;
         std::string_view qualified(reinterpret_cast<const char *>(data), size);
         // Match the declaration name, using the same qualification convention
@@ -8709,8 +8709,8 @@ vpiHandle classMemberByName(__vpiHandle *source, std::string_view name) {
                                      ? qualified
                                      : qualified.substr(separator + 1);
         VPIClassMemberBinding member{};
-        if (obelisk_rt_cached_vpi_class_member(source->owner->context, target,
-                                               &member) == OBELISK_RT_OK)
+        if (talos_rt_cached_vpi_class_member(source->owner->context, target,
+                                               &member) == TALOS_RT_OK)
           local = std::string_view(reinterpret_cast<const char *>(member.name),
                                    member.nameSize);
         if (local == name)
@@ -8718,15 +8718,15 @@ vpiHandle classMemberByName(__vpiHandle *source, std::string_view name) {
       }
     }
     VPIRelationRange base{};
-    if (obelisk_rt_cached_vpi_relation_range(source->owner->context, scope,
+    if (talos_rt_cached_vpi_relation_range(source->owner->context, scope,
                                              vpiExtends, false,
-                                             &base) != OBELISK_RT_OK)
+                                             &base) != TALOS_RT_OK)
       return nullptr;
     uint32_t type = 0;
     bool statement = false;
-    if (obelisk_rt_cached_vpi_relation_target(source->owner->context,
+    if (talos_rt_cached_vpi_relation_target(source->owner->context,
                                               base.first, &scope, &type,
-                                              &statement) != OBELISK_RT_OK ||
+                                              &statement) != TALOS_RT_OK ||
         type != vpiClassTypespec || statement)
       return nullptr;
   }
@@ -8739,7 +8739,7 @@ vpiHandle classPathByName(__vpiHandle *source, std::string_view path) {
   VPIState *state = source->owner;
   vpiHandle receiver = nullptr;
   vpiHandle result = nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     if (vpiTypeForHandle(source) == vpiClassVar) {
       receiver = makeClassObjectHandle(source);
       if (!receiver)
@@ -8756,18 +8756,18 @@ vpiHandle classPathByName(__vpiHandle *source, std::string_view path) {
     else if (type == vpiClassObj || type == vpiClassTypespec ||
              type == vpiClassDefn)
       result = classMemberByName(source, memberName);
-    else if (obelisk::reflection::findVPITraversal(
+    else if (talos::reflection::findVPITraversal(
                  type, vpiMember,
-                 obelisk::reflection::VPITraversalMode::Iterate)) {
-      obelisk_rt_design_cursor_v1 semantic{};
-      obelisk_rt_design_semantic_type_info_v1 info{};
+                 talos::reflection::VPITraversalMode::Iterate)) {
+      talos_rt_design_cursor_v1 semantic{};
+      talos_rt_design_semantic_type_info_v1 info{};
       if (semanticCursorFor(source, semantic) &&
           semanticTypeInfo(source, semantic, info))
         for (uint32_t index = 0; index != info.edge_count; ++index) {
-          obelisk_rt_design_semantic_type_edge_v1 edge{};
+          talos_rt_design_semantic_type_edge_v1 edge{};
           if (!semanticEdge(source, semantic, index, edge))
             break;
-          if (edge.role == OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER &&
+          if (edge.role == TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER &&
               std::string_view(reinterpret_cast<const char *>(edge.name),
                                edge.name_size) == memberName) {
             result = handleByAggregateMember(source, index);
@@ -8807,7 +8807,7 @@ vpiHandle classPathByName(__vpiHandle *source, std::string_view path) {
       state->handles.erase(reinterpret_cast<uintptr_t>(receiver));
     return result;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     state->handles.erase(reinterpret_cast<uintptr_t>(result));
     state->handles.erase(reinterpret_cast<uintptr_t>(receiver));
     setError(state, "could not resolve class member name", vpiSystem);
@@ -8817,18 +8817,18 @@ vpiHandle classPathByName(__vpiHandle *source, std::string_view path) {
 
 } // namespace
 
-obelisk_rt_status
-obelisk_rt_vpi_dispatch_time_callbacks_unlocked(obelisk_rt_context *context) {
+talos_rt_status
+talos_rt_vpi_dispatch_time_callbacks_unlocked(talos_rt_context *context) {
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state || state != currentState() || context->vpiTimeCallbackActive)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   // IEEE 1800-2023 38.36.2: cbAfterDelay runs before execution events at
   // the selected time. This is boundary work owned by the common driver,
   // including timers registered by another timer and canceled peers.
   while (!state->timeCallbacks.empty() &&
          state->timeCallbacks.begin()->first <= context->schedulerTime) {
     if (context->schedulerSlotProgress == UINT64_MAX)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     ++context->schedulerSlotProgress;
     uint64_t id = state->timeCallbacks.begin()->second;
     VPICallback callback = state->callbacks.at(id);
@@ -8850,24 +8850,24 @@ obelisk_rt_vpi_dispatch_time_callbacks_unlocked(obelisk_rt_context *context) {
     invocation.time = &time;
     ++state->callbackDepth;
     context->vpiTimeCallbackActive = true;
-    obelisk_rt_status status = OBELISK_RT_OK;
-    OBELISK_RT_TRY { (void)callback.routine(&invocation); }
-    OBELISK_RT_CATCH_ALL {
+    talos_rt_status status = TALOS_RT_OK;
+    TALOS_RT_TRY { (void)callback.routine(&invocation); }
+    TALOS_RT_CATCH_ALL {
       setError(state, "VPI callback raised an exception", vpiInternal);
-      status = OBELISK_RT_FATAL;
+      status = TALOS_RT_FATAL;
     }
     context->vpiTimeCallbackActive = false;
     --state->callbackDepth;
     // The callback may remove itself, release its handle, or cancel a peer.
     eraseCallback(state, id);
-    if (status != OBELISK_RT_OK || context->destroyPending ||
+    if (status != TALOS_RT_OK || context->destroyPending ||
         context->schedulerFinishRequested.load(std::memory_order_relaxed))
       return status;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-bool obelisk_rt_vpi_sync_due_unlocked(obelisk_rt_context *context,
+bool talos_rt_vpi_sync_due_unlocked(talos_rt_context *context,
                                       uint32_t stage) {
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state || state != currentState())
@@ -8881,17 +8881,17 @@ bool obelisk_rt_vpi_sync_due_unlocked(obelisk_rt_context *context,
   return false;
 }
 
-obelisk_rt_status
-obelisk_rt_vpi_dispatch_sync_callbacks_unlocked(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_vpi_dispatch_sync_callbacks_unlocked(talos_rt_context *context,
                                                 uint32_t stage) {
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state || state != currentState() || context->vpiTimeCallbackActive)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   // IEEE 1800-2023 38.36.2: each synchronization callback runs once, at its
   // region of the selected time. Snapshot the due set: a callback registered
   // by one of them for this time waits for the next pass over the region.
   std::vector<uint64_t> due;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     for (const auto &[dueTime, entryStage, id] : state->syncCallbacks) {
       if (dueTime > context->schedulerTime)
         break;
@@ -8899,9 +8899,9 @@ obelisk_rt_vpi_dispatch_sync_callbacks_unlocked(obelisk_rt_context *context,
         due.push_back(id);
     }
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not snapshot VPI callbacks", vpiSystem);
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
   }
   for (uint64_t id : due) {
     auto found = state->callbacks.find(id);
@@ -8924,122 +8924,122 @@ obelisk_rt_vpi_dispatch_sync_callbacks_unlocked(obelisk_rt_context *context,
     invocation.time = &time;
     ++state->callbackDepth;
     context->vpiTimeCallbackActive = true;
-    obelisk_rt_status status = OBELISK_RT_OK;
-    OBELISK_RT_TRY { (void)callback.routine(&invocation); }
-    OBELISK_RT_CATCH_ALL {
+    talos_rt_status status = TALOS_RT_OK;
+    TALOS_RT_TRY { (void)callback.routine(&invocation); }
+    TALOS_RT_CATCH_ALL {
       setError(state, "VPI callback raised an exception", vpiInternal);
-      status = OBELISK_RT_FATAL;
+      status = TALOS_RT_FATAL;
     }
     context->vpiTimeCallbackActive = false;
     --state->callbackDepth;
     eraseCallback(state, id);
-    if (status != OBELISK_RT_OK || context->destroyPending ||
+    if (status != TALOS_RT_OK || context->destroyPending ||
         context->schedulerFinishRequested.load(std::memory_order_relaxed))
       return status;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" OBELISK_VPI_EXPORT const obelisk_rt_vpi_object_model_v1 *
-obelisk_rt_v1_vpi_object_model(void) {
-  static const obelisk_rt_vpi_object_model_v1 model{
-      obelisk::reflection::vpiObjectModelImage,
-      sizeof(obelisk::reflection::vpiObjectModelImage),
-      obelisk::reflection::vpiObjectModelImageFingerprint};
+extern "C" TALOS_VPI_EXPORT const talos_rt_vpi_object_model_v1 *
+talos_rt_v1_vpi_object_model(void) {
+  static const talos_rt_vpi_object_model_v1 model{
+      talos::reflection::vpiObjectModelImage,
+      sizeof(talos::reflection::vpiObjectModelImage),
+      talos::reflection::vpiObjectModelImageFingerprint};
   return &model;
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(
-    obelisk_rt_context *context, uint64_t codeUnitID, uint32_t originKind,
+extern "C" TALOS_VPI_EXPORT talos_rt_status talos_rt_v1_vpi_frame_enter(
+    talos_rt_context *context, uint64_t codeUnitID, uint32_t originKind,
     uint64_t originID, uint64_t *outActivation) {
   if (outActivation)
     *outActivation = 0;
   if (!context || !outActivation ||
-      originKind > OBELISK_RT_VPI_FRAME_DPI_EXPORT)
-    return OBELISK_RT_INVALID_ARGUMENT;
+      originKind > TALOS_RT_VPI_FRAME_DPI_EXPORT)
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return OBELISK_RT_OK;
-  obelisk_rt_design_cursor_v1 scope{}, origin{};
+    return TALOS_RT_OK;
+  talos_rt_design_cursor_v1 scope{}, origin{};
   bool originIsStatement = false;
   uint64_t lexicalCodeUnit = UINT64_MAX;
-  obelisk_rt_status status = OBELISK_RT_OK;
-  OBELISK_RT_TRY {
+  talos_rt_status status = TALOS_RT_OK;
+  TALOS_RT_TRY {
     auto owner = state->frameLexicalOwners.find(codeUnitID);
     if (owner != state->frameLexicalOwners.end()) {
       lexicalCodeUnit = owner->second.first;
       scope = owner->second.second;
     } else {
-      status = obelisk_rt_cached_vpi_code_unit_scope(context, codeUnitID,
+      status = talos_rt_cached_vpi_code_unit_scope(context, codeUnitID,
                                                      &scope, &lexicalCodeUnit);
-      if (status != OBELISK_RT_OK)
-        return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+      if (status != TALOS_RT_OK)
+        return status == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT : status;
       state->frameLexicalOwners.emplace(codeUnitID,
                                         std::make_pair(lexicalCodeUnit, scope));
     }
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
-  status = obelisk_rt_cached_vpi_frame_origin(context, originKind, originID,
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_OUT_OF_RESOURCES; }
+  status = talos_rt_cached_vpi_frame_origin(context, originKind, originID,
                                               &origin, &originIsStatement);
-  if (status != OBELISK_RT_OK)
-    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+  if (status != TALOS_RT_OK)
+    return status == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT : status;
   const uint64_t process =
       sourceThread(state, context->activeLogicalProcessToken);
   const uint64_t parent = topFrame(state, process);
-  if (originKind == OBELISK_RT_VPI_FRAME_CODE_UNIT_SCOPE) {
+  if (originKind == TALOS_RT_VPI_FRAME_CODE_UNIT_SCOPE) {
     if (parent || originID != codeUnitID)
-      return OBELISK_RT_INVALID_FRAME;
-  } else if (originKind == OBELISK_RT_VPI_FRAME_DPI_EXPORT) {
+      return TALOS_RT_INVALID_FRAME;
+  } else if (originKind == TALOS_RT_VPI_FRAME_DPI_EXPORT) {
     if (originID != codeUnitID || state->exports.empty())
-      return OBELISK_RT_INVALID_FRAME;
+      return TALOS_RT_INVALID_FRAME;
     const auto &dispatch = state->exports.back();
     if (dispatch.codeUnit != codeUnitID || dispatch.process != process ||
         !dispatch.ticket)
-      return OBELISK_RT_INVALID_FRAME;
+      return TALOS_RT_INVALID_FRAME;
     auto calls = state->frameCalls.find(process);
     if (calls == state->frameCalls.end() || calls->second.empty())
-      return OBELISK_RT_INVALID_FRAME;
+      return TALOS_RT_INVALID_FRAME;
     const auto &call = calls->second.back();
     if (call.ticket != dispatch.ticket ||
         call.phase != VPIFrameCallPhase::Prepared || call.parent != parent)
-      return OBELISK_RT_INVALID_FRAME;
-  } else if (originKind == OBELISK_RT_VPI_FRAME_NET_RESOLUTION) {
+      return TALOS_RT_INVALID_FRAME;
+  } else if (originKind == TALOS_RT_VPI_FRAME_NET_RESOLUTION) {
     status =
-        obelisk_rt_cached_vpi_resolution_target(context, originID, codeUnitID);
-    if (status != OBELISK_RT_OK)
-      return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+        talos_rt_cached_vpi_resolution_target(context, originID, codeUnitID);
+    if (status != TALOS_RT_OK)
+      return status == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT : status;
   } else {
     uint64_t owner = UINT64_MAX;
-    obelisk_rt_design_cursor_v1 checked{};
+    talos_rt_design_cursor_v1 checked{};
     bool callIsStatement = false;
-    status = originKind == OBELISK_RT_VPI_FRAME_CALL
-                 ? obelisk_rt_cached_vpi_call(context, originID, &checked,
+    status = originKind == TALOS_RT_VPI_FRAME_CALL
+                 ? talos_rt_cached_vpi_call(context, originID, &checked,
                                               &owner, &callIsStatement)
-                 : obelisk_rt_cached_vpi_statement(context, originID, &checked,
+                 : talos_rt_cached_vpi_statement(context, originID, &checked,
                                                    &owner);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
-    obelisk_rt_design_cursor_v1 initialized{};
-    const bool initializer = originKind == OBELISK_RT_VPI_FRAME_CALL &&
-                             obelisk_rt_cached_vpi_initializer(
-                                 context, owner, &initialized) == OBELISK_RT_OK;
+    talos_rt_design_cursor_v1 initialized{};
+    const bool initializer = originKind == TALOS_RT_VPI_FRAME_CALL &&
+                             talos_rt_cached_vpi_initializer(
+                                 context, owner, &initialized) == TALOS_RT_OK;
     if ((!initializer &&
          (!parent || owner != state->frames.at(parent).lexicalCodeUnit)) ||
-        (originKind == OBELISK_RT_VPI_FRAME_STATEMENT_SCOPE &&
+        (originKind == TALOS_RT_VPI_FRAME_STATEMENT_SCOPE &&
          (owner != lexicalCodeUnit ||
           codeUnitID != state->frames.at(parent).codeUnit)))
-      return OBELISK_RT_INVALID_FRAME;
-    if (originKind == OBELISK_RT_VPI_FRAME_CALL) {
-      status = obelisk_rt_cached_vpi_call_target(context, originID, codeUnitID);
-      if (status != OBELISK_RT_OK)
-        return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+      return TALOS_RT_INVALID_FRAME;
+    if (originKind == TALOS_RT_VPI_FRAME_CALL) {
+      status = talos_rt_cached_vpi_call_target(context, originID, codeUnitID);
+      if (status != TALOS_RT_OK)
+        return status == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT : status;
     }
   }
   if (!state->nextFrameActivation)
-    return OBELISK_RT_OUT_OF_RESOURCES;
-  OBELISK_RT_TRY {
+    return TALOS_RT_OUT_OF_RESOURCES;
+  TALOS_RT_TRY {
     const uint64_t id = state->nextFrameActivation;
     auto [stack, createdStack] = state->frameStacks.try_emplace(process);
     struct Rollback {
@@ -9070,38 +9070,38 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_enter(
                          origin,
                          {},
                          originIsStatement,
-                         originKind == OBELISK_RT_VPI_FRAME_STATEMENT_SCOPE
+                         originKind == TALOS_RT_VPI_FRAME_STATEMENT_SCOPE
                              ? origin
                              : scope,
                          {}})
             .second;
     if (!rollback.insertedFrame)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     stack->second.push_back(id);
     rollback.committed = true;
     ++state->nextFrameActivation;
     *outActivation = id;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_OUT_OF_RESOURCES; }
 }
 
-static obelisk_rt_status prepareVPIFrameCall(VPIState *state, uint64_t process,
+static talos_rt_status prepareVPIFrameCall(VPIState *state, uint64_t process,
                                              uint64_t parent,
                                              uint32_t originKind,
                                              uint64_t originID,
                                              uint64_t *outTicket) {
   if (!state->nextCallTicket)
-    return OBELISK_RT_OUT_OF_RESOURCES;
-  OBELISK_RT_TRY {
+    return TALOS_RT_OUT_OF_RESOURCES;
+  TALOS_RT_TRY {
     auto [calls, inserted] = state->frameCalls.try_emplace(process);
     auto &records = calls->second;
     while (!records.empty() &&
            records.back().phase == VPIFrameCallPhase::Cancelled)
       records.pop_back();
     if (!records.empty() && records.back().phase != VPIFrameCallPhase::Entered)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     struct Rollback {
       VPIState *state;
       uint64_t process;
@@ -9118,151 +9118,151 @@ static obelisk_rt_status prepareVPIFrameCall(VPIState *state, uint64_t process,
     ++state->nextCallTicket;
     *outTicket = ticket;
     rollback.committed = true;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_OUT_OF_RESOURCES; }
 }
 
 // A pending call is an explicit source occurrence, separate from its eventual
 // activation. In particular, preparing a task call must not increase the frame
 // depth that the scheduler saves for its caller.
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_call_prepare(
-    obelisk_rt_context *context, uint64_t callID, uint64_t *outTicket) {
+extern "C" TALOS_VPI_EXPORT talos_rt_status talos_rt_v1_vpi_call_prepare(
+    talos_rt_context *context, uint64_t callID, uint64_t *outTicket) {
   if (outTicket)
     *outTicket = 0;
   if (!context || !callID || !outTicket)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   uint64_t process = sourceThread(state, context->activeLogicalProcessToken);
   uint64_t parent = topFrame(state, process);
-  obelisk_rt_design_cursor_v1 source{};
+  talos_rt_design_cursor_v1 source{};
   uint64_t owner = 0;
   bool statement = false;
   auto status =
-      obelisk_rt_cached_vpi_call(context, callID, &source, &owner, &statement);
-  if (status != OBELISK_RT_OK)
-    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
-  obelisk_rt_design_cursor_v1 initialized{};
-  const bool initializer = obelisk_rt_cached_vpi_initializer(
-                               context, owner, &initialized) == OBELISK_RT_OK;
+      talos_rt_cached_vpi_call(context, callID, &source, &owner, &statement);
+  if (status != TALOS_RT_OK)
+    return status == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT : status;
+  talos_rt_design_cursor_v1 initialized{};
+  const bool initializer = talos_rt_cached_vpi_initializer(
+                               context, owner, &initialized) == TALOS_RT_OK;
   if (!initializer &&
       (!parent || owner != state->frames.at(parent).lexicalCodeUnit))
-    return OBELISK_RT_INVALID_FRAME;
-  status = obelisk_rt_cached_vpi_frame_origin(
-      context, OBELISK_RT_VPI_FRAME_CALL, callID, &source, &statement);
-  if (status != OBELISK_RT_OK)
-    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
-  return prepareVPIFrameCall(state, process, parent, OBELISK_RT_VPI_FRAME_CALL,
+    return TALOS_RT_INVALID_FRAME;
+  status = talos_rt_cached_vpi_frame_origin(
+      context, TALOS_RT_VPI_FRAME_CALL, callID, &source, &statement);
+  if (status != TALOS_RT_OK)
+    return status == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT : status;
+  return prepareVPIFrameCall(state, process, parent, TALOS_RT_VPI_FRAME_CALL,
                              callID, outTicket);
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_resolution_prepare(obelisk_rt_context *context,
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_resolution_prepare(talos_rt_context *context,
                                      uint64_t netID, uint64_t *outTicket) {
   if (outTicket)
     *outTicket = 0;
   if (!context || !outTicket)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return OBELISK_RT_OK;
-  obelisk_rt_design_cursor_v1 net{}, function{};
+    return TALOS_RT_OK;
+  talos_rt_design_cursor_v1 net{}, function{};
   auto status =
-      obelisk_rt_cached_vpi_net_resolution(context, netID, &net, &function);
-  if (status != OBELISK_RT_OK)
-    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+      talos_rt_cached_vpi_net_resolution(context, netID, &net, &function);
+  if (status != TALOS_RT_OK)
+    return status == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT : status;
   const uint64_t process =
       sourceThread(state, context->activeLogicalProcessToken);
   return prepareVPIFrameCall(state, process, topFrame(state, process),
-                             OBELISK_RT_VPI_FRAME_NET_RESOLUTION, netID,
+                             TALOS_RT_VPI_FRAME_NET_RESOLUTION, netID,
                              outTicket);
 }
 
-obelisk_rt_status
-obelisk_rt_vpi_export_begin(obelisk_rt_context *context,
-                            const obelisk_rt_export_descriptor_v1 *descriptor,
+talos_rt_status
+talos_rt_vpi_export_begin(talos_rt_context *context,
+                            const talos_rt_export_descriptor_v1 *descriptor,
                             uint64_t *outToken) {
   if (outToken)
     *outToken = 0;
   if (!context || !descriptor || !outToken)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (!state->nextExportToken)
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
   const uint64_t process =
       sourceThread(state, context->activeLogicalProcessToken);
   uint64_t depth = 0;
   auto stack = state->frameStacks.find(process);
   if (stack != state->frameStacks.end())
     depth = stack->second.size();
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     state->exports.push_back(
         {state->nextExportToken, descriptor->code_unit_id, descriptor->scope_id,
          process, depth, context->activeLogicalProcessToken,
-         bool(descriptor->flags & OBELISK_RT_EXPORT_TASK)});
+         bool(descriptor->flags & TALOS_RT_EXPORT_TASK)});
     *outToken = state->nextExportToken++;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_OUT_OF_RESOURCES; }
 }
 
-obelisk_rt_status obelisk_rt_vpi_export_task_enter(obelisk_rt_context *context,
+talos_rt_status talos_rt_vpi_export_task_enter(talos_rt_context *context,
                                                    uint64_t executor) {
   if (!context || !executor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state || state->exports.empty() || !state->exports.back().ticket)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   auto &dispatch = state->exports.back();
   if (!dispatch.isTask || dispatch.executor || !dispatch.process ||
       dispatch.hostExecutor != context->activeLogicalProcessToken ||
       executor == dispatch.process || state->threadSources.count(executor))
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   auto calls = state->frameCalls.find(dispatch.process);
   if (calls == state->frameCalls.end() || calls->second.empty() ||
       calls->second.back().ticket != dispatch.ticket ||
       calls->second.back().phase != VPIFrameCallPhase::Prepared)
-    return OBELISK_RT_INVALID_FRAME;
+    return TALOS_RT_INVALID_FRAME;
   uint64_t unit = 0;
-  auto status = obelisk_rt_logical_process_origin(context, executor, &unit);
-  if (status != OBELISK_RT_OK || unit != dispatch.codeUnit)
-    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
-  OBELISK_RT_TRY {
+  auto status = talos_rt_logical_process_origin(context, executor, &unit);
+  if (status != TALOS_RT_OK || unit != dispatch.codeUnit)
+    return status == TALOS_RT_OK ? TALOS_RT_INVALID_ARGUMENT : status;
+  TALOS_RT_TRY {
     state->exportExecutors.emplace(
         executor, VPIExportExecutor{dispatch.process, dispatch.frameDepth,
                                     dispatch.token});
-    OBELISK_RT_TRY { state->threadSources.emplace(executor, dispatch.process); }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_TRY { state->threadSources.emplace(executor, dispatch.process); }
+    TALOS_RT_CATCH_ALL {
       state->exportExecutors.erase(executor);
-      OBELISK_RT_RETHROW;
+      TALOS_RT_RETHROW;
     }
     dispatch.executor = executor;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_OUT_OF_RESOURCES; }
 }
 
-obelisk_rt_status obelisk_rt_vpi_export_end(obelisk_rt_context *context,
+talos_rt_status talos_rt_vpi_export_end(talos_rt_context *context,
                                             uint64_t token) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return token ? OBELISK_RT_INVALID_FRAME : OBELISK_RT_OK;
+    return token ? TALOS_RT_INVALID_FRAME : TALOS_RT_OK;
   if (!token || state->exports.empty() || state->exports.back().token != token)
-    return OBELISK_RT_INVALID_FRAME;
+    return TALOS_RT_INVALID_FRAME;
   auto dispatch = state->exports.back();
   state->exports.pop_back();
   if (dispatch.executor)
@@ -9270,14 +9270,14 @@ obelisk_rt_status obelisk_rt_vpi_export_end(obelisk_rt_context *context,
   // Uninstrumented exports leave no frame state. An instrumented bridge that
   // exits exceptionally must not strand a callee or an unconsumed ticket.
   if (!dispatch.ticket)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   auto stack = state->frameStacks.find(dispatch.process);
   uint64_t depth = stack == state->frameStacks.end() ? 0 : stack->second.size();
   if (depth < dispatch.frameDepth)
-    return OBELISK_RT_OK; // A nonlocal disable already unwound the caller.
-  auto status = obelisk_rt_vpi_frame_unwind_process(context, dispatch.process,
+    return TALOS_RT_OK; // A nonlocal disable already unwound the caller.
+  auto status = talos_rt_vpi_frame_unwind_process(context, dispatch.process,
                                                     dispatch.frameDepth);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   auto calls = state->frameCalls.find(dispatch.process);
   if (calls != state->frameCalls.end()) {
@@ -9290,146 +9290,146 @@ obelisk_rt_status obelisk_rt_vpi_export_end(obelisk_rt_context *context,
     if (records.empty())
       state->frameCalls.erase(calls);
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_export_prepare(obelisk_rt_context *context,
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_export_prepare(talos_rt_context *context,
                                  uint64_t codeUnitID, uint64_t *outTicket) {
   if (outTicket)
     *outTicket = 0;
   if (!context || !outTicket)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (state->exports.empty())
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   auto &dispatch = state->exports.back();
   if (dispatch.codeUnit != codeUnitID)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (dispatch.hostExecutor != context->activeLogicalProcessToken ||
       dispatch.ticket)
-    return OBELISK_RT_INVALID_LIFECYCLE;
-  auto status = obelisk_rt_cached_vpi_export_target(
+    return TALOS_RT_INVALID_LIFECYCLE;
+  auto status = talos_rt_cached_vpi_export_target(
       context, codeUnitID, dispatch.scope, dispatch.isTask);
-  if (status != OBELISK_RT_OK)
-    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+  if (status != TALOS_RT_OK)
+    return status == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT : status;
   status = prepareVPIFrameCall(
       state, dispatch.process, topFrame(state, dispatch.process),
-      OBELISK_RT_VPI_FRAME_DPI_EXPORT, codeUnitID, outTicket);
-  if (status == OBELISK_RT_OK)
+      TALOS_RT_VPI_FRAME_DPI_EXPORT, codeUnitID, outTicket);
+  if (status == TALOS_RT_OK)
     dispatch.ticket = *outTicket;
   return status;
 }
 
-obelisk_rt_status obelisk_rt_vpi_pending_call(obelisk_rt_context *context,
+talos_rt_status talos_rt_vpi_pending_call(talos_rt_context *context,
                                               uint64_t *outCallID) {
   if (outCallID)
     *outCallID = 0;
   if (!context || !outCallID)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   uint64_t process = sourceThread(state, context->activeLogicalProcessToken);
   auto calls = state->frameCalls.find(process);
   if (calls == state->frameCalls.end() || calls->second.empty() ||
       calls->second.back().phase != VPIFrameCallPhase::Prepared)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (topFrame(state, process) != calls->second.back().parent)
-    return OBELISK_RT_INVALID_FRAME;
-  if (calls->second.back().originKind == OBELISK_RT_VPI_FRAME_CALL)
+    return TALOS_RT_INVALID_FRAME;
+  if (calls->second.back().originKind == TALOS_RT_VPI_FRAME_CALL)
     *outCallID = calls->second.back().originID;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_frame_enter_prepared(obelisk_rt_context *context,
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_frame_enter_prepared(talos_rt_context *context,
                                        uint64_t codeUnitID, uint32_t isTask,
                                        uint64_t *outActivation) {
   if (outActivation)
     *outActivation = 0;
   if (!context || !codeUnitID || isTask > 1 || !outActivation)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   uint64_t process = sourceThread(state, context->activeLogicalProcessToken);
   auto calls = state->frameCalls.find(process);
   if (calls == state->frameCalls.end() || calls->second.empty())
-    return OBELISK_RT_INVALID_FRAME;
+    return TALOS_RT_INVALID_FRAME;
   auto &call = calls->second.back();
   if (call.phase != VPIFrameCallPhase::Prepared ||
       topFrame(state, process) != call.parent)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   // Check the source target before the execution transport. A function that
   // cannot implement this invocation is a bad target even if its ABI mode also
   // differs from the requested handoff.
-  obelisk_rt_status targetStatus;
-  if (call.originKind == OBELISK_RT_VPI_FRAME_DPI_EXPORT) {
+  talos_rt_status targetStatus;
+  if (call.originKind == TALOS_RT_VPI_FRAME_DPI_EXPORT) {
     if (state->exports.empty() || state->exports.back().ticket != call.ticket ||
         state->exports.back().process != process)
-      return OBELISK_RT_INVALID_FRAME;
+      return TALOS_RT_INVALID_FRAME;
     const auto &dispatch = state->exports.back();
     targetStatus =
         codeUnitID == call.originID
-            ? obelisk_rt_cached_vpi_export_target(
+            ? talos_rt_cached_vpi_export_target(
                   context, codeUnitID, dispatch.scope, dispatch.isTask)
-            : OBELISK_RT_EOF;
+            : TALOS_RT_EOF;
   } else {
-    targetStatus = call.originKind == OBELISK_RT_VPI_FRAME_CALL
-                       ? obelisk_rt_cached_vpi_call_target(
+    targetStatus = call.originKind == TALOS_RT_VPI_FRAME_CALL
+                       ? talos_rt_cached_vpi_call_target(
                              context, call.originID, codeUnitID)
-                       : obelisk_rt_cached_vpi_resolution_target(
+                       : talos_rt_cached_vpi_resolution_target(
                              context, call.originID, codeUnitID);
   }
-  if (targetStatus != OBELISK_RT_OK)
-    return targetStatus == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT
+  if (targetStatus != TALOS_RT_OK)
+    return targetStatus == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT
                                           : targetStatus;
   bool physicalTask = false;
-  auto transport = obelisk_rt_cached_vpi_code_unit_transport(
+  auto transport = talos_rt_cached_vpi_code_unit_transport(
       context, codeUnitID, &physicalTask);
-  if (transport != OBELISK_RT_OK)
-    return transport == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT
+  if (transport != TALOS_RT_OK)
+    return transport == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT
                                        : transport;
   if (physicalTask != bool(isTask))
-    return OBELISK_RT_INVALID_LIFECYCLE;
-  if (isTask && call.originKind == OBELISK_RT_VPI_FRAME_DPI_EXPORT) {
+    return TALOS_RT_INVALID_LIFECYCLE;
+  if (isTask && call.originKind == TALOS_RT_VPI_FRAME_DPI_EXPORT) {
     if (state->exports.back().executor != context->activeLogicalProcessToken)
-      return OBELISK_RT_INVALID_FRAME;
+      return TALOS_RT_INVALID_FRAME;
   } else if (isTask) {
     uint64_t actualCall = 0;
-    auto status = obelisk_rt_vpi_activation_callsite(context, &actualCall);
-    if (status != OBELISK_RT_OK)
+    auto status = talos_rt_vpi_activation_callsite(context, &actualCall);
+    if (status != TALOS_RT_OK)
       return status;
     if (actualCall != call.originID)
-      return OBELISK_RT_INVALID_FRAME;
+      return TALOS_RT_INVALID_FRAME;
   }
-  auto status = obelisk_rt_v1_vpi_frame_enter(
+  auto status = talos_rt_v1_vpi_frame_enter(
       context, codeUnitID, call.originKind, call.originID, outActivation);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   call.callee = *outActivation;
   call.phase = VPIFrameCallPhase::Entered;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_call_finish(obelisk_rt_context *context, uint64_t ticket) {
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_call_finish(talos_rt_context *context, uint64_t ticket) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return ticket ? OBELISK_RT_INVALID_FRAME : OBELISK_RT_OK;
+    return ticket ? TALOS_RT_INVALID_FRAME : TALOS_RT_OK;
   uint64_t process = sourceThread(state, context->activeLogicalProcessToken);
   auto calls = state->frameCalls.find(process);
   if (!ticket || calls == state->frameCalls.end())
-    return OBELISK_RT_INVALID_FRAME;
+    return TALOS_RT_INVALID_FRAME;
   auto &records = calls->second;
   // Disabling an enclosing scope can bypass inner call continuations. Their
   // cancelled tickets cannot become the source of a later callee activation.
@@ -9437,146 +9437,146 @@ obelisk_rt_v1_vpi_call_finish(obelisk_rt_context *context, uint64_t ticket) {
          records.back().phase == VPIFrameCallPhase::Cancelled)
     records.pop_back();
   if (records.empty() || records.back().ticket != ticket)
-    return OBELISK_RT_INVALID_FRAME;
+    return TALOS_RT_INVALID_FRAME;
   const auto &call = records.back();
   if (call.phase != VPIFrameCallPhase::Cancelled &&
       (call.phase != VPIFrameCallPhase::Completed ||
        topFrame(state, process) != call.parent))
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   records.pop_back();
   if (records.empty())
     state->frameCalls.erase(calls);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_frame_bind(obelisk_rt_context *context, uint64_t localID,
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_frame_bind(talos_rt_context *context, uint64_t localID,
                              uint64_t automaticReference) {
   if (!context || !localID || !automaticReference)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   const uint64_t activation =
       topFrame(state, context->activeLogicalProcessToken);
   auto frame = state->frames.find(activation);
   if (frame == state->frames.end())
-    return OBELISK_RT_INVALID_FRAME;
+    return TALOS_RT_INVALID_FRAME;
   VPIFrameLocalBinding local;
-  auto status = obelisk_rt_cached_vpi_frame_local(context, localID, &local);
-  if (status != OBELISK_RT_OK)
-    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+  auto status = talos_rt_cached_vpi_frame_local(context, localID, &local);
+  if (status != TALOS_RT_OK)
+    return status == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT : status;
   if (local.lexicalCodeUnitID != frame->second.lexicalCodeUnit ||
       local.scope.offset != frame->second.lexicalScope.offset)
-    return OBELISK_RT_INVALID_FRAME;
-  obelisk_rt_design_info_v1 info{};
-  status = obelisk_rt_cached_design_info(context, local.declaration, &info);
-  if (status != OBELISK_RT_OK)
+    return TALOS_RT_INVALID_FRAME;
+  talos_rt_design_info_v1 info{};
+  status = talos_rt_cached_design_info(context, local.declaration, &info);
+  if (status != TALOS_RT_OK)
     return status;
-  status = obelisk_rt_vpi_automatic_validate(context, automaticReference,
+  status = talos_rt_vpi_automatic_validate(context, automaticReference,
                                              info.bit_width);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto [entry, inserted] = frame->second.localReferences.emplace(
         localID, VPIFrameReference{0, automaticReference});
     return inserted || entry->second == VPIFrameReference{0, automaticReference}
-               ? OBELISK_RT_OK
-               : OBELISK_RT_INVALID_FRAME;
+               ? TALOS_RT_OK
+               : TALOS_RT_INVALID_FRAME;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_OUT_OF_RESOURCES; }
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_frame_bind_alias(obelisk_rt_context *context,
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_frame_bind_alias(talos_rt_context *context,
                                    uint64_t localID,
-                                   obelisk_rt_object_v1 *owner,
+                                   talos_rt_object_v1 *owner,
                                    uint64_t payload, uint32_t managed) {
   if (!context || !localID || managed > 2 || (!managed && owner) ||
       (managed && !owner) || (managed == 2 && payload))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   auto frame =
       state->frames.find(topFrame(state, context->activeLogicalProcessToken));
   if (frame == state->frames.end())
-    return OBELISK_RT_INVALID_FRAME;
+    return TALOS_RT_INVALID_FRAME;
   VPIFrameLocalBinding local;
-  auto status = obelisk_rt_cached_vpi_frame_local(context, localID, &local);
-  if (status != OBELISK_RT_OK)
-    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+  auto status = talos_rt_cached_vpi_frame_local(context, localID, &local);
+  if (status != TALOS_RT_OK)
+    return status == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT : status;
   if (local.lexicalCodeUnitID != frame->second.lexicalCodeUnit ||
       local.scope.offset != frame->second.lexicalScope.offset)
-    return OBELISK_RT_INVALID_FRAME;
-  obelisk_rt_design_info_v1 info{};
-  status = obelisk_rt_cached_design_info(context, local.declaration, &info);
-  if (status != OBELISK_RT_OK)
+    return TALOS_RT_INVALID_FRAME;
+  talos_rt_design_info_v1 info{};
+  status = talos_rt_cached_design_info(context, local.declaration, &info);
+  if (status != TALOS_RT_OK)
     return status;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ManagedExecutionScope execution(context);
-    if (execution.getStatus() != OBELISK_RT_OK)
+    if (execution.getStatus() != TALOS_RT_OK)
       return execution.getStatus();
-    if (managed && !obelisk_rt_managed_object_belongs_to(context, owner))
-      return OBELISK_RT_INVALID_HANDLE;
+    if (managed && !talos_rt_managed_object_belongs_to(context, owner))
+      return TALOS_RT_INVALID_HANDLE;
     VPIFrameReference reference{managed + 1, payload, owner,
-                                managed ? obelisk_rt_v1_object_id(owner) : 0};
+                                managed ? talos_rt_v1_object_id(owner) : 0};
     status = readFrameReference(state, reference, local.declaration, info, 0,
                                 info.bit_width, nullptr, nullptr);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     auto [entry, inserted] =
         frame->second.localReferences.emplace(localID, reference);
-    return inserted || entry->second == reference ? OBELISK_RT_OK
-                                                  : OBELISK_RT_INVALID_FRAME;
+    return inserted || entry->second == reference ? TALOS_RT_OK
+                                                  : TALOS_RT_INVALID_FRAME;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_OUT_OF_RESOURCES; }
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_frame_checkpoint(obelisk_rt_context *context,
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_frame_checkpoint(talos_rt_context *context,
                                    uint64_t statementID) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   const uint64_t id = topFrame(state, context->activeLogicalProcessToken);
   if (!id)
-    return OBELISK_RT_INVALID_FRAME;
+    return TALOS_RT_INVALID_FRAME;
   auto &frame = state->frames.at(id);
   if (!statementID) {
     frame.statement = {};
     frame.statementUnavailable = true;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  obelisk_rt_design_cursor_v1 statement{};
+  talos_rt_design_cursor_v1 statement{};
   uint64_t owner = UINT64_MAX;
   const auto status =
-      obelisk_rt_cached_vpi_statement(context, statementID, &statement, &owner);
-  if (status != OBELISK_RT_OK)
-    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+      talos_rt_cached_vpi_statement(context, statementID, &statement, &owner);
+  if (status != TALOS_RT_OK)
+    return status == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT : status;
   if (owner != frame.lexicalCodeUnit)
-    return OBELISK_RT_INVALID_FRAME;
+    return TALOS_RT_INVALID_FRAME;
   frame.statement = statement;
   frame.statementUnavailable = false;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_vpi_frame_unwind_process(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_vpi_frame_unwind_process(talos_rt_context *context,
                                     uint64_t logicalProcess, uint64_t depth) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   auto alias = state->exportExecutors.find(logicalProcess);
   const bool exported = alias != state->exportExecutors.end();
   if (exported) {
@@ -9589,10 +9589,10 @@ obelisk_rt_vpi_frame_unwind_process(obelisk_rt_context *context,
       state->frameCalls.erase(logicalProcess);
     // The importing source may already have been disabled while the export
     // executor was queued. Never reconstruct its exited prefix.
-    return depth && !exported ? OBELISK_RT_INVALID_FRAME : OBELISK_RT_OK;
+    return depth && !exported ? TALOS_RT_INVALID_FRAME : TALOS_RT_OK;
   }
   if (depth > stack->second.size())
-    return exported ? OBELISK_RT_OK : OBELISK_RT_INVALID_FRAME;
+    return exported ? TALOS_RT_OK : TALOS_RT_INVALID_FRAME;
   bool changed = depth != stack->second.size();
   while (stack->second.size() > depth) {
     state->frames.erase(stack->second.back());
@@ -9614,58 +9614,58 @@ obelisk_rt_vpi_frame_unwind_process(obelisk_rt_context *context,
   }
   if (changed)
     ++state->frameGeneration;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_frame_unwind(obelisk_rt_context *context, uint64_t depth) {
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_frame_unwind(talos_rt_context *context, uint64_t depth) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
-  return obelisk_rt_vpi_frame_unwind_process(
+  return talos_rt_vpi_frame_unwind_process(
       context, context->activeLogicalProcessToken, depth);
 }
 
-obelisk_rt_status obelisk_rt_vpi_frame_depth_process(
-    obelisk_rt_context *context, uint64_t logicalProcess, uint64_t *outDepth) {
+talos_rt_status talos_rt_vpi_frame_depth_process(
+    talos_rt_context *context, uint64_t logicalProcess, uint64_t *outDepth) {
   if (outDepth)
     *outDepth = 0;
   if (!context || !outDepth)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   logicalProcess = sourceThread(state, logicalProcess);
   auto stack = state->frameStacks.find(logicalProcess);
   if (stack != state->frameStacks.end())
     *outDepth = stack->second.size();
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_frame_depth(obelisk_rt_context *context, uint64_t *outDepth) {
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_frame_depth(talos_rt_context *context, uint64_t *outDepth) {
   if (outDepth)
     *outDepth = 0;
   if (!context || !outDepth)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
-  return obelisk_rt_vpi_frame_depth_process(
+  return talos_rt_vpi_frame_depth_process(
       context, context->activeLogicalProcessToken, outDepth);
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_leave(
-    obelisk_rt_context *context, uint64_t activation) {
+extern "C" TALOS_VPI_EXPORT talos_rt_status talos_rt_v1_vpi_frame_leave(
+    talos_rt_context *context, uint64_t activation) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (!state)
-    return activation ? OBELISK_RT_INVALID_FRAME : OBELISK_RT_OK;
+    return activation ? TALOS_RT_INVALID_FRAME : TALOS_RT_OK;
   const uint64_t process =
       sourceThread(state, context->activeLogicalProcessToken);
   if (!activation || topFrame(state, process) != activation)
-    return OBELISK_RT_INVALID_FRAME;
+    return TALOS_RT_INVALID_FRAME;
   // A resolution or initializer call may have no procedural parent. Its normal
   // return must retain the completed ticket until the generated caller reaches
   // call_finish; abrupt process unwinding still discards every pending call.
@@ -9679,30 +9679,30 @@ extern "C" OBELISK_VPI_EXPORT obelisk_rt_status obelisk_rt_v1_vpi_frame_leave(
         state->frameStacks.erase(process);
         call.phase = VPIFrameCallPhase::Completed;
         ++state->frameGeneration;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
     }
   }
-  return obelisk_rt_vpi_frame_unwind_process(
+  return talos_rt_vpi_frame_unwind_process(
       context, process, state->frameStacks.at(process).size() - 1);
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_startup(talos_rt_context *context,
                           const char *const *modules, uint64_t moduleCount) {
   if (!context || (moduleCount != 0 && !modules) || context->vpiState ||
       currentState())
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (!activeSlot) {
-    OBELISK_RT_TRY { activeSlot = std::make_shared<VPIActiveSlot>(); }
-    OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_MEMORY; }
+    TALOS_RT_TRY { activeSlot = std::make_shared<VPIActiveSlot>(); }
+    TALOS_RT_CATCH_ALL { return TALOS_RT_OUT_OF_MEMORY; }
   }
   if (!context->execution ||
-      (context->execution->flags & OBELISK_RT_EXECUTION_VPI_READ) == 0)
-    return OBELISK_RT_PERMISSION_DENIED;
+      (context->execution->flags & TALOS_RT_EXECUTION_VPI_READ) == 0)
+    return TALOS_RT_PERMISSION_DENIED;
   std::unique_ptr<VPIState> state;
-  OBELISK_RT_TRY { state = std::make_unique<VPIState>(); }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_MEMORY; }
+  TALOS_RT_TRY { state = std::make_unique<VPIState>(); }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_OUT_OF_MEMORY; }
   state->context = context;
   state->ownerSlot = activeSlot;
   activeSlot->state.store(state.get(), std::memory_order_release);
@@ -9710,33 +9710,33 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
   for (uint64_t moduleIndex = 0; moduleIndex != moduleCount; ++moduleIndex) {
     const char *name = modules[moduleIndex];
     if (!name || !*name) {
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     }
-#if !defined(OBELISK_RT_VPI_DYNAMIC_STARTUP)
+#if !defined(TALOS_RT_VPI_DYNAMIC_STARTUP)
     // Same status as a failed dlopen, because that is what happened from the
     // caller's side; the message carries the reason it can never succeed here.
     setError(state.get(),
              "loading VPI startup modules requires a dynamic loader, which "
              "this target does not provide",
              vpiSystem);
-    return OBELISK_RT_IO_ERROR;
+    return TALOS_RT_IO_ERROR;
 #else
 #if defined(_WIN32)
     std::wstring moduleName;
-    OBELISK_RT_TRY { moduleName = std::filesystem::u8path(name).wstring(); }
-    OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+    TALOS_RT_TRY { moduleName = std::filesystem::u8path(name).wstring(); }
+    TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
     HMODULE module = nullptr;
     if (!GetModuleHandleExW(0, moduleName.c_str(), &module)) {
       std::string diagnostic = std::system_category().message(GetLastError());
       setError(state.get(), diagnostic.c_str(), vpiSystem);
-      return OBELISK_RT_IO_ERROR;
+      return TALOS_RT_IO_ERROR;
     }
     std::unique_ptr<void, DynamicModuleCloser> moduleGuard(module);
     void *symbol = reinterpret_cast<void *>(
         GetProcAddress(module, "vlog_startup_routines"));
     if (!symbol) {
       setError(state.get(), "VPI startup table is missing", vpiSystem);
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     }
     MEMORY_BASIC_INFORMATION region{};
     if (!VirtualQuery(symbol, &region, sizeof(region)) ||
@@ -9744,7 +9744,7 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
         (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)) ||
         reinterpret_cast<uintptr_t>(symbol) % alignof(void *) != 0) {
       setError(state.get(), "VPI startup table is not readable");
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     }
     size_t available =
         region.RegionSize - (static_cast<const char *>(symbol) -
@@ -9752,13 +9752,13 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
     size_t entries = std::min<size_t>(available / sizeof(void *), 65536);
     if (!entries) {
       setError(state.get(), "VPI startup table has no bounded PE storage");
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     }
 #else
     void *module = dlopen(name, RTLD_LAZY | RTLD_NOLOAD);
     if (!module) {
       setError(state.get(), dlerror(), vpiSystem);
-      return OBELISK_RT_IO_ERROR;
+      return TALOS_RT_IO_ERROR;
     }
     std::unique_ptr<void, DynamicModuleCloser> moduleGuard(module);
     dlerror();
@@ -9768,7 +9768,7 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
       setError(state.get(),
                symbolError ? symbolError : "VPI startup table is missing",
                vpiSystem);
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     }
 #if defined(__APPLE__)
     mach_vm_address_t address = reinterpret_cast<uintptr_t>(symbol);
@@ -9786,7 +9786,7 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
         table < address || table - address >= size ||
         table % alignof(void *) != 0) {
       setError(state.get(), "VPI startup table has no readable Mach-O storage");
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     }
     size_t entries = std::min<size_t>((size - (table - address)) / sizeof(void *),
                                       65536);
@@ -9800,7 +9800,7 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
     }
     if (entries == 0 || entries > 65536) {
       setError(state.get(), "VPI startup table has no bounded ELF symbol size");
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     }
 #endif
 #endif
@@ -9812,8 +9812,8 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
         terminated = true;
         break;
       }
-      OBELISK_RT_TRY { routines[index](); }
-      OBELISK_RT_CATCH_ALL {
+      TALOS_RT_TRY { routines[index](); }
+      TALOS_RT_CATCH_ALL {
         setError(state.get(), "VPI startup routine raised an exception",
                  vpiInternal);
         routineFailed = true;
@@ -9825,7 +9825,7 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
     if (!terminated || routineFailed || state->unsupportedStartup) {
       if (!terminated && !routineFailed)
         setError(state.get(), "VPI startup table is not null terminated");
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     }
 #endif
   }
@@ -9833,53 +9833,53 @@ obelisk_rt_v1_vpi_startup(obelisk_rt_context *context,
   // Ownership moves only after all startup modules have succeeded.
   context->vpiState = state.release();
   bindingGuard.release();
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_end_compile(obelisk_rt_context *context) {
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_end_compile(talos_rt_context *context) {
   if (!context || context->vpiState != currentState())
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (state->phase != VPIPhase::BeforeEndCompile)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   state->phase = VPIPhase::EndCompile;
-  obelisk_rt_status status = dispatchLifecycle(state, cbEndOfCompile);
+  talos_rt_status status = dispatchLifecycle(state, cbEndOfCompile);
   state->phase = VPIPhase::BeforeStartSimulation;
   return status;
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_start_simulation(obelisk_rt_context *context) {
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_start_simulation(talos_rt_context *context) {
   if (!context || context->vpiState != currentState())
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (state->phase != VPIPhase::BeforeStartSimulation)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   state->phase = VPIPhase::StartSimulation;
-  obelisk_rt_status status = dispatchLifecycle(state, cbStartOfSimulation);
+  talos_rt_status status = dispatchLifecycle(state, cbStartOfSimulation);
   state->phase = VPIPhase::Running;
   return status;
 }
 
-extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
-obelisk_rt_v1_vpi_end_simulation(obelisk_rt_context *context) {
+extern "C" TALOS_VPI_EXPORT talos_rt_status
+talos_rt_v1_vpi_end_simulation(talos_rt_context *context) {
   if (!context || context->vpiState != currentState())
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
   auto *state = static_cast<VPIState *>(context->vpiState);
   if (state->phase != VPIPhase::Running)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   state->phase = VPIPhase::EndSimulation;
-  obelisk_rt_status status = dispatchLifecycle(state, cbEndOfSimulation);
+  talos_rt_status status = dispatchLifecycle(state, cbEndOfSimulation);
   state->phase = VPIPhase::Ended;
   return status;
 }
 
-extern "C" OBELISK_VPI_EXPORT void
-obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context) {
+extern "C" TALOS_VPI_EXPORT void
+talos_rt_v1_vpi_shutdown(talos_rt_context *context) {
   if (!context || !context->vpiState)
     return;
   auto *state = static_cast<VPIState *>(context->vpiState);
@@ -9890,7 +9890,7 @@ obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context) {
   if (state->runtimeObserverCallbacks != 0) {
     state->runtimeObserverCallbacks = 0;
     ContextMutexLock lock(context);
-    obelisk_rt_aot_observation_demand_changed_unlocked(context, false);
+    talos_rt_aot_observation_demand_changed_unlocked(context, false);
   }
   context->vpiState = nullptr;
   context->nextVPITimeCallback.reset();
@@ -9899,7 +9899,7 @@ obelisk_rt_v1_vpi_shutdown(obelisk_rt_context *context) {
   delete state;
 }
 
-extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
+extern "C" TALOS_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
                                                            vpiHandle scope) {
   VPICallScope vpiCallScope;
   VPIState *state = requireState();
@@ -9915,8 +9915,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
   }
   std::string requested(name);
   if (requested == "$root" || requested == "\\$root ") {
-    obelisk_rt_design_cursor_v1 root{};
-    return obelisk_rt_cached_design_root(state->context, &root) == OBELISK_RT_OK
+    talos_rt_design_cursor_v1 root{};
+    return talos_rt_cached_design_root(state->context, &root) == TALOS_RT_OK
                ? makeHandle(state, root)
                : nullptr;
   }
@@ -9953,7 +9953,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
       }
     }
   }
-  obelisk_rt_design_cursor_v1 cursor{};
+  talos_rt_design_cursor_v1 cursor{};
   std::string resolvedName = requested;
   bool found = lookup(state, requested, cursor);
   if (!found && !compatibilityName.empty()) {
@@ -9979,13 +9979,13 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
     for (size_t split = requested.rfind('.'); split != std::string::npos;
          split = split == 0 ? std::string::npos
                             : requested.rfind('.', split - 1)) {
-      obelisk_rt_design_cursor_v1 prefix{};
+      talos_rt_design_cursor_v1 prefix{};
       uint32_t prefixType = 0;
       std::string prefixName = requested.substr(0, split);
       vpiHandle prefixHandle = nullptr;
       if (lookup(state, prefixName, prefix) &&
-          obelisk_rt_cached_vpi_type(state->context, prefix, &prefixType) ==
-              OBELISK_RT_OK &&
+          talos_rt_cached_vpi_type(state->context, prefix, &prefixType) ==
+              TALOS_RT_OK &&
           prefixType == vpiClassVar)
         prefixHandle = makeHandle(state, prefix, prefixType, false,
                                   sourceClassDefinitionOrigin);
@@ -10018,14 +10018,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
   }
   if (protectedNameIntermediate(state, resolvedName))
     return nullptr;
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   uint32_t exactType = 0;
-  if (obelisk_rt_cached_design_info(state->context, cursor, &info) !=
-          OBELISK_RT_OK ||
-      obelisk_rt_cached_vpi_type(state->context, cursor, &exactType) !=
-          OBELISK_RT_OK ||
+  if (talos_rt_cached_design_info(state->context, cursor, &info) !=
+          TALOS_RT_OK ||
+      talos_rt_cached_vpi_type(state->context, cursor, &exactType) !=
+          TALOS_RT_OK ||
       exactType == 0 ||
-      (info.capabilities & OBELISK_RT_DESIGN_CAP_INTERNAL) != 0) {
+      (info.capabilities & TALOS_RT_DESIGN_CAP_INTERNAL) != 0) {
     setError(state, "hierarchical name does not identify a VPI object",
              vpiNotice);
     return nullptr;
@@ -10033,11 +10033,11 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
   if (base && !absolute)
     return makeRelatedHandle(base, cursor, exactType);
   return makeHandle(state, cursor, exactType, false,
-                    obelisk::runtime::hasClassDefinitionValueOrigin(
+                    talos::runtime::hasClassDefinitionValueOrigin(
                         sourceType, sourceClassDefinitionOrigin, exactType));
 }
 
-extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
+extern "C" TALOS_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
                                                    vpiHandle reference) {
   VPICallScope vpiCallScope;
   // IEEE 1800-2023 37.43 detail 4: the innermost executing activation.
@@ -10069,8 +10069,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
     return nullptr;
   uint32_t sourceType = handle->exactVpiType;
   if (sourceType == 0 &&
-      obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
-                                 &sourceType) != OBELISK_RT_OK)
+      talos_rt_cached_vpi_type(handle->owner->context, handle->cursor,
+                                 &sourceType) != TALOS_RT_OK)
     return nullptr;
   if (handle->form == VPIObjectForm::ContAssignBit) {
     if (type == vpiParent)
@@ -10082,8 +10082,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
        ((handle->form == VPIObjectForm::Design ||
          handle->form == VPIObjectForm::Indexed) &&
         sourceType == vpiRegArray))) {
-    obelisk_rt_design_cursor_v1 semantic{};
-    obelisk_rt_design_semantic_type_info_v1 info{};
+    talos_rt_design_cursor_v1 semantic{};
+    talos_rt_design_semantic_type_info_v1 info{};
     if (semanticCursorFor(handle, semantic) &&
         semanticTypeInfo(handle, semantic, info) &&
         isVirtualInterfaceSequence(handle, semantic)) {
@@ -10111,14 +10111,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   if (handle->form == VPIObjectForm::Design && sourceType == vpiFunction &&
       (type == vpiLeftRange || type == vpiRightRange)) {
     __vpiHandle variable;
-    obelisk_rt_design_cursor_v1 semantic{};
-    obelisk_rt_design_semantic_type_info_v1 info{};
+    talos_rt_design_cursor_v1 semantic{};
+    talos_rt_design_semantic_type_info_v1 info{};
     if (!functionReturnVariable(handle, variable) ||
         !semanticCursorFor(&variable, semantic) ||
         !semanticTypeInfo(&variable, semantic, info) ||
         !isDimensionForVPIObject(variable.exactVpiType, info.kind,
                                  info.flags) ||
-        (info.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) == 0 ||
+        (info.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) == 0 ||
         isEmptyDimension(info.kind))
       return nullptr;
     return makeSemanticObjectHandle(
@@ -10139,8 +10139,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
     return nullptr;
   if (type == vpiTypespec && handle->form == VPIObjectForm::Design) {
     VPIExpressionInfo expression{};
-    if (obelisk_rt_cached_vpi_expression(handle->owner->context, handle->cursor,
-                                         &expression) == OBELISK_RT_OK &&
+    if (talos_rt_cached_vpi_expression(handle->owner->context, handle->cursor,
+                                         &expression) == TALOS_RT_OK &&
         expression.sourceOnly) {
       setError(handle->owner, "source expression has no elaborated result type",
                vpiNotice);
@@ -10149,11 +10149,11 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   }
   if (type == vpiExpr && handle->form == VPIObjectForm::Design &&
       (sourceType == vpiParameter || sourceType == vpiTypeParameter)) {
-    obelisk_rt_design_info_v1 info{};
+    talos_rt_design_info_v1 info{};
     if (!infoFor(handle, info))
       return nullptr;
     if ((info.capabilities &
-         OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) != 0) {
+         TALOS_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) != 0) {
       setError(handle->owner, "original parameter default form is unavailable",
                vpiNotice);
       return nullptr;
@@ -10163,12 +10163,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
        (type == vpiRhs && sourceType == vpiParamAssign)) &&
       handle->form == VPIObjectForm::Design) {
     VPITypeDefaultInfo original{};
-    auto status = obelisk_rt_cached_vpi_type_default(handle->owner->context,
+    auto status = talos_rt_cached_vpi_type_default(handle->owner->context,
                                                      handle->cursor, &original);
-    if (status == OBELISK_RT_OK)
+    if (status == TALOS_RT_OK)
       return makeTypespecHandle(handle->owner, handle->cursor,
                                 original.semantic, true, false, true);
-    if (status != OBELISK_RT_EOF)
+    if (status != TALOS_RT_EOF)
       return nullptr;
   }
   if (handle->form == VPIObjectForm::Frame) {
@@ -10193,8 +10193,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       if (!cursor.offset)
         return nullptr;
       uint32_t exact = 0;
-      if (obelisk_rt_cached_vpi_type(handle->owner->context, cursor, &exact) !=
-          OBELISK_RT_OK) {
+      if (talos_rt_cached_vpi_type(handle->owner->context, cursor, &exact) !=
+          TALOS_RT_OK) {
         setError(handle->owner, "invalid VPI frame source metadata",
                  vpiInternal);
         return nullptr;
@@ -10213,26 +10213,26 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       return threadParent(handle);
     if (type == vpiOrigin) {
       uint64_t codeUnit = UINT64_MAX;
-      auto status = obelisk_rt_logical_process_origin(
+      auto status = talos_rt_logical_process_origin(
           handle->owner->context, handle->logicalProcess, &codeUnit);
-      if (status != OBELISK_RT_OK) {
+      if (status != TALOS_RT_OK) {
         setError(handle->owner, "VPI thread activation lookup failed",
-                 status == OBELISK_RT_OUT_OF_RESOURCES ? vpiSystem
+                 status == TALOS_RT_OUT_OF_RESOURCES ? vpiSystem
                                                        : vpiInternal);
         return nullptr;
       }
-      obelisk_rt_design_cursor_v1 statement{};
-      status = obelisk_rt_cached_vpi_thread_origin(handle->owner->context,
+      talos_rt_design_cursor_v1 statement{};
+      status = talos_rt_cached_vpi_thread_origin(handle->owner->context,
                                                    codeUnit, &statement);
-      if (status == OBELISK_RT_EOF) {
+      if (status == TALOS_RT_EOF) {
         setError(handle->owner, "VPI thread source statement is unavailable",
                  vpiNotice);
         return nullptr;
       }
       uint32_t statementType = 0;
-      if (status != OBELISK_RT_OK ||
-          obelisk_rt_cached_vpi_type(handle->owner->context, statement,
-                                     &statementType) != OBELISK_RT_OK) {
+      if (status != TALOS_RT_OK ||
+          talos_rt_cached_vpi_type(handle->owner->context, statement,
+                                     &statementType) != TALOS_RT_OK) {
         setError(handle->owner, "VPI thread source statement lookup failed",
                  vpiInternal);
         return nullptr;
@@ -10251,8 +10251,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   if (sourceType == vpiClassVar && type == vpiClassObj)
     return makeClassObjectHandle(handle);
   if (handle->form == VPIObjectForm::SnapshotValue) {
-    const auto *relation = obelisk::reflection::findVPITraversal(
-        sourceType, type, obelisk::reflection::VPITraversalMode::Handle);
+    const auto *relation = talos::reflection::findVPITraversal(
+        sourceType, type, talos::reflection::VPITraversalMode::Handle);
     if (relation && (type == vpiLeftRange || type == vpiRightRange)) {
       int64_t bound = 0;
       if (handle->snapshot->array) {
@@ -10261,9 +10261,9 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
         bound = type == vpiLeftRange ? handle->snapshot->arrayLeft
                                      : handle->snapshot->arrayRight;
       } else {
-        obelisk_rt_design_semantic_type_info_v1 info{};
+        talos_rt_design_semantic_type_info_v1 info{};
         if (!semanticTypeInfo(handle, handle->snapshot->semantic, info) ||
-            !(info.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE))
+            !(info.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE))
           return nullptr;
         bound = type == vpiLeftRange ? info.range_left : info.range_right;
       }
@@ -10302,7 +10302,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
     if (type == vpiParent) {
       const auto *parent = snapshotParentValue(handle, *handle->snapshot);
       if (parent && relation &&
-          obelisk::reflection::vpiObjectSetContains(relation->targets,
+          talos::reflection::vpiObjectSetContains(relation->targets,
                                                     parent->exactType))
         return makeSnapshotHandle(
             handle->owner, handle->cursor,
@@ -10319,17 +10319,17 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   if (handle->dynamicObject && type == vpiParent && sourceType == vpiConstraint)
     return makeReceiverHandle(handle);
   if (handle->form == VPIObjectForm::Indexed && type == vpiScope &&
-      obelisk::reflection::findVPITraversal(
+      talos::reflection::findVPITraversal(
           sourceType, vpiScope,
-          obelisk::reflection::VPITraversalMode::Handle)) {
+          talos::reflection::VPITraversalMode::Handle)) {
     VPIClassMemberBinding member{};
-    if (obelisk_rt_cached_vpi_class_member(
-            handle->owner->context, handle->cursor, &member) == OBELISK_RT_OK) {
+    if (talos_rt_cached_vpi_class_member(
+            handle->owner->context, handle->cursor, &member) == TALOS_RT_OK) {
       if (handle->dynamicObject)
         return makeReceiverHandle(handle);
       uint32_t ownerType = 0;
-      if (obelisk_rt_cached_vpi_type(handle->owner->context, member.ownerScope,
-                                     &ownerType) != OBELISK_RT_OK)
+      if (talos_rt_cached_vpi_type(handle->owner->context, member.ownerScope,
+                                     &ownerType) != TALOS_RT_OK)
         return nullptr;
       return makeRelatedHandle(handle, member.ownerScope, ownerType, false);
     }
@@ -10341,8 +10341,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       (type == vpiTypespec || type == vpiClassTypespec))
     return makeSemanticRelation(handle, type);
   if (handle->form == VPIObjectForm::Indexed && type == vpiIndex) {
-    const auto *edge = obelisk::reflection::findVPITraversal(
-        sourceType, vpiIndex, obelisk::reflection::VPITraversalMode::Handle);
+    const auto *edge = talos::reflection::findVPITraversal(
+        sourceType, vpiIndex, talos::reflection::VPITraversalMode::Handle);
     if (!edge || !supportsIndexQuery(handle, sourceType))
       return nullptr;
     const VPISelectionStep &step = handle->selectionSteps.back();
@@ -10355,8 +10355,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   }
   if (handle->form == VPIObjectForm::Design && type == vpiIndex &&
       !isSourceSelection(handle)) {
-    const auto *edge = obelisk::reflection::findVPITraversal(
-        sourceType, vpiIndex, obelisk::reflection::VPITraversalMode::Handle);
+    const auto *edge = talos::reflection::findVPITraversal(
+        sourceType, vpiIndex, talos::reflection::VPITraversalMode::Handle);
     std::vector<VPISelectionStep> indices;
     if (!edge || !staticArrayMemberIndexSteps(handle, indices) ||
         indices.empty())
@@ -10367,8 +10367,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
         step.selectionOrdinal, vpiConstant, step.index);
   }
   if (handle->form == VPIObjectForm::Indexed && type == vpiParent) {
-    const auto *edge = obelisk::reflection::findVPITraversal(
-        sourceType, vpiParent, obelisk::reflection::VPITraversalMode::Handle);
+    const auto *edge = talos::reflection::findVPITraversal(
+        sourceType, vpiParent, talos::reflection::VPITraversalMode::Handle);
     if (!edge || handle->selectionSteps.empty())
       return nullptr;
     if (handle->exactVpiType == vpiPortBit)
@@ -10379,22 +10379,22 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       sourceType == vpiInterconnectNet && type == vpiParent) {
     VPIArrayMemberInfo member{};
     std::vector<VPISelectionStep> indices;
-    if (obelisk_rt_cached_vpi_array_member(
-            handle->owner->context, handle->cursor, &member) != OBELISK_RT_OK ||
+    if (talos_rt_cached_vpi_array_member(
+            handle->owner->context, handle->cursor, &member) != TALOS_RT_OK ||
         !staticArrayMemberIndexSteps(handle, indices) || indices.empty())
       return nullptr;
     uint32_t rootType = 0;
-    if (obelisk_rt_cached_vpi_type(handle->owner->context, member.array,
-                                   &rootType) != OBELISK_RT_OK)
+    if (talos_rt_cached_vpi_type(handle->owner->context, member.array,
+                                   &rootType) != TALOS_RT_OK)
       return nullptr;
     if (indices.size() == 1)
       return makeHandle(handle->owner, member.array, rootType);
-    const auto *access = obelisk::reflection::findVPIIndexedAccess(rootType);
+    const auto *access = talos::reflection::findVPIIndexedAccess(rootType);
     if (!access ||
         access->accessKind !=
-            obelisk::reflection::VPIIndexedAccessKind::RelationElement)
+            talos::reflection::VPIIndexedAccessKind::RelationElement)
       return nullptr;
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       std::vector<PLI_INT32> prefix;
       prefix.reserve(indices.size() - 1);
       for (size_t ordinal = 0; ordinal + 1 != indices.size(); ++ordinal) {
@@ -10412,25 +10412,25 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       return handleRelationByIndices(
           &root, *access, static_cast<PLI_INT32>(prefix.size()), prefix.data());
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner,
                "could not allocate interconnect parent selection", vpiSystem);
       return nullptr;
     }
   }
-  auto makeSimulatedNetHandle = [&](obelisk_rt_design_cursor_v1 target,
+  auto makeSimulatedNetHandle = [&](talos_rt_design_cursor_v1 target,
                                     uint32_t targetType) -> vpiHandle {
     if (handle->form == VPIObjectForm::Design)
       return makeHandle(
           handle->owner, target, targetType, false,
-          obelisk::runtime::hasClassDefinitionValueOrigin(
+          talos::runtime::hasClassDefinitionValueOrigin(
               sourceType, handle->classDefinitionOrigin, targetType));
     if (handle->form != VPIObjectForm::Indexed ||
         handle->selectionSteps.empty())
       return nullptr;
     if (target.offset == handle->cursor.offset)
       return makeIndexedPrefix(handle, handle->selectionSteps.size());
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       __vpiHandle source;
       source.owner = handle->owner;
       source.form = VPIObjectForm::Indexed;
@@ -10441,14 +10441,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       source.classDefinitionOrigin = handle->classDefinitionOrigin;
       source.selectionRootType = targetType;
       const auto *access =
-          obelisk::reflection::findVPIIndexedAccess(targetType);
+          talos::reflection::findVPIIndexedAccess(targetType);
       if (!access)
         return nullptr;
       source.selectionAccessKind = access->accessKind;
       if (!fixedProtectionFor(handle->owner, target, source.protectedObject))
         return nullptr;
 
-      obelisk_rt_design_info_v1 selectedInfo{};
+      talos_rt_design_info_v1 selectedInfo{};
       if (!infoFor(handle, selectedInfo) || selectedInfo.bit_width == 0)
         return nullptr;
       const uint64_t desiredOffset = handle->selectionBitOffset;
@@ -10457,27 +10457,27 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       steps.reserve(handle->selectionSteps.size());
       uint64_t containingOffset = 0;
       while (true) {
-        obelisk_rt_design_info_v1 rootInfo{};
-        if (obelisk_rt_cached_design_info(handle->owner->context, target,
-                                          &rootInfo) != OBELISK_RT_OK ||
+        talos_rt_design_info_v1 rootInfo{};
+        if (talos_rt_cached_design_info(handle->owner->context, target,
+                                          &rootInfo) != TALOS_RT_OK ||
             rootInfo.type_offset == 0)
           return nullptr;
-        obelisk_rt_design_cursor_v1 physical{
+        talos_rt_design_cursor_v1 physical{
             steps.empty() ? rootInfo.type_offset
                           : steps.back().physicalType.offset};
-        obelisk_rt_design_type_info_v1 typeInfo{};
-        if (obelisk_rt_cached_design_type_info(handle->owner->context, physical,
-                                               &typeInfo) != OBELISK_RT_OK)
+        talos_rt_design_type_info_v1 typeInfo{};
+        if (talos_rt_cached_design_type_info(handle->owner->context, physical,
+                                               &typeInfo) != TALOS_RT_OK)
           return nullptr;
-        bool isArray = typeInfo.kind == OBELISK_RT_DESIGN_TYPE_ARRAY;
-        bool packed = (typeInfo.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0;
+        bool isArray = typeInfo.kind == TALOS_RT_DESIGN_TYPE_ARRAY;
+        bool packed = (typeInfo.flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0;
         uint64_t childWidth = 1;
         if (isArray) {
-          obelisk_rt_design_type_info_v1 element{};
+          talos_rt_design_type_info_v1 element{};
           if (typeInfo.element_type.offset == 0 ||
-              obelisk_rt_cached_design_type_info(handle->owner->context,
+              talos_rt_cached_design_type_info(handle->owner->context,
                                                  typeInfo.element_type,
-                                                 &element) != OBELISK_RT_OK ||
+                                                 &element) != TALOS_RT_OK ||
               element.bit_width == 0)
             return nullptr;
           childWidth = element.bit_width;
@@ -10527,7 +10527,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       return makeIndexedHandle(&source, targetType, access->accessKind,
                                std::move(steps));
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner, "could not copy simulated-net selection",
                vpiSystem);
       return nullptr;
@@ -10536,19 +10536,19 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   VPIRelationRange range{};
   bool indexedSimNet =
       handle->form == VPIObjectForm::Indexed && type == vpiSimNet;
-  obelisk_rt_status relationStatus =
+  talos_rt_status relationStatus =
       (handle->form == VPIObjectForm::Design || indexedSimNet)
-          ? obelisk_rt_cached_vpi_relation_range(
+          ? talos_rt_cached_vpi_relation_range(
                 handle->owner->context, handle->cursor,
                 static_cast<uint32_t>(type), false, &range)
-          : OBELISK_RT_EOF;
-  if (relationStatus == OBELISK_RT_OK) {
-    obelisk_rt_design_cursor_v1 target{};
+          : TALOS_RT_EOF;
+  if (relationStatus == TALOS_RT_OK) {
+    talos_rt_design_cursor_v1 target{};
     uint32_t targetType = 0;
     bool targetIsStatement = false;
-    if (obelisk_rt_cached_vpi_relation_target(
+    if (talos_rt_cached_vpi_relation_target(
             handle->owner->context, range.first, &target, &targetType,
-            &targetIsStatement) != OBELISK_RT_OK)
+            &targetIsStatement) != TALOS_RT_OK)
       return nullptr;
     if (indexedSimNet) {
       if (targetIsStatement)
@@ -10560,37 +10560,37 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       return makeReceiverHandle(handle);
     return makeRelatedHandle(handle, target, targetType, targetIsStatement);
   }
-  if (relationStatus != OBELISK_RT_EOF)
+  if (relationStatus != TALOS_RT_EOF)
     return nullptr;
   if (type == vpiSimNet &&
       (handle->form == VPIObjectForm::Design || indexedSimNet)) {
     uint32_t rootType = 0;
-    const auto *edge = obelisk::reflection::findVPITraversal(
-        sourceType, vpiSimNet, obelisk::reflection::VPITraversalMode::Handle);
+    const auto *edge = talos::reflection::findVPITraversal(
+        sourceType, vpiSimNet, talos::reflection::VPITraversalMode::Handle);
     if (edge &&
-        obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
-                                   &rootType) == OBELISK_RT_OK &&
-        obelisk::reflection::vpiObjectSetContains(edge->targets, rootType))
+        talos_rt_cached_vpi_type(handle->owner->context, handle->cursor,
+                                   &rootType) == TALOS_RT_OK &&
+        talos::reflection::vpiObjectSetContains(edge->targets, rootType))
       return makeSimulatedNetHandle(handle->cursor, rootType);
   }
   if ((type == vpiLeftRange || type == vpiRightRange) &&
       (handle->form == VPIObjectForm::Design ||
        handle->form == VPIObjectForm::Indexed)) {
-    const auto *edge = obelisk::reflection::findVPITraversal(
+    const auto *edge = talos::reflection::findVPITraversal(
         sourceType, static_cast<uint32_t>(type),
-        obelisk::reflection::VPITraversalMode::Handle);
-    obelisk_rt_design_info_v1 info{};
+        talos::reflection::VPITraversalMode::Handle);
+    talos_rt_design_info_v1 info{};
     if (edge && infoFor(handle, info)) {
       if (sourceType == vpiParameter) {
         if ((info.capabilities &
-             OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) == 0)
+             TALOS_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) == 0)
           return nullptr;
-        obelisk_rt_design_cursor_v1 semanticCursor{};
-        obelisk_rt_design_semantic_type_info_v1 semanticInfo{};
+        talos_rt_design_cursor_v1 semanticCursor{};
+        talos_rt_design_semantic_type_info_v1 semanticInfo{};
         if (!semanticCursorFor(handle, semanticCursor) ||
             !semanticTypeInfo(handle, semanticCursor, semanticInfo) ||
-            semanticInfo.kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
-            (semanticInfo.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) == 0)
+            semanticInfo.kind != TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+            (semanticInfo.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) == 0)
           return nullptr;
         int64_t value = type == vpiLeftRange ? semanticInfo.range_left
                                              : semanticInfo.range_right;
@@ -10599,8 +10599,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
             semanticCursor, type == vpiLeftRange ? 0 : 1, vpiConstant, value);
       }
       if (handle->form == VPIObjectForm::Design && sourceType == vpiIODecl) {
-        obelisk_rt_design_cursor_v1 semanticCursor{};
-        obelisk_rt_design_semantic_type_info_v1 semanticInfo{};
+        talos_rt_design_cursor_v1 semanticCursor{};
+        talos_rt_design_semantic_type_info_v1 semanticInfo{};
         if (!semanticCursorFor(handle, semanticCursor) ||
             !semanticTypeInfo(handle, semanticCursor, semanticInfo) ||
             !isDimensionForVPIObject(sourceType, semanticInfo.kind,
@@ -10617,38 +10617,38 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   }
   if (vpiHandle semantic = makeSemanticRelation(handle, type))
     return semantic;
-  const auto *edge = obelisk::reflection::findVPITraversal(
+  const auto *edge = talos::reflection::findVPITraversal(
       sourceType, static_cast<uint32_t>(type),
-      obelisk::reflection::VPITraversalMode::Handle);
+      talos::reflection::VPITraversalMode::Handle);
   if (edge && edge->automaticRelation ==
-                  obelisk::reflection::VPIAutomaticRelation::ParentScope) {
+                  talos::reflection::VPIAutomaticRelation::ParentScope) {
     // Static declarations and anchored code units carry lexical ownership in
     // relation records. Their physical owner only makes the image reachable.
     if (!handle->statement) {
-      obelisk_rt_design_info_v1 info{};
+      talos_rt_design_info_v1 info{};
       if (!infoFor(handle, info) ||
-          info.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
-          (info.capabilities & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0)
+          info.kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
+          (info.capabilities & TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0)
         return nullptr;
     }
-    obelisk_rt_design_cursor_v1 parent{};
+    talos_rt_design_cursor_v1 parent{};
     uint32_t parentType = 0;
     bool parentIsStatement = false;
-    obelisk_rt_status parentStatus =
+    talos_rt_status parentStatus =
         handle->statement
-            ? obelisk_rt_cached_vpi_statement_enclosing_scope(
+            ? talos_rt_cached_vpi_statement_enclosing_scope(
                   handle->owner->context, handle->cursor, &parent,
                   &parentIsStatement)
-            : obelisk_rt_cached_design_parent(handle->owner->context,
+            : talos_rt_cached_design_parent(handle->owner->context,
                                               handle->cursor, &parent);
-    if (parentStatus != OBELISK_RT_OK ||
-        obelisk_rt_cached_vpi_type(handle->owner->context, parent,
-                                   &parentType) != OBELISK_RT_OK ||
-        !obelisk::reflection::vpiObjectSetContains(edge->targets, parentType))
+    if (parentStatus != TALOS_RT_OK ||
+        talos_rt_cached_vpi_type(handle->owner->context, parent,
+                                   &parentType) != TALOS_RT_OK ||
+        !talos::reflection::vpiObjectSetContains(edge->targets, parentType))
       return nullptr;
     return makeHandle(
         handle->owner, parent, parentType, parentIsStatement,
-        obelisk::runtime::hasClassDefinitionValueOrigin(
+        talos::runtime::hasClassDefinitionValueOrigin(
             sourceType, handle->classDefinitionOrigin, parentType));
   }
   // A hierarchical spelling does not establish a VPI relation. Queries
@@ -10656,7 +10656,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   return nullptr;
 }
 
-extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
+extern "C" TALOS_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
                                                     vpiHandle reference) {
   VPICallScope vpiCallScope;
   VPIState *state = requireState();
@@ -10669,7 +10669,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     if (path->kind == VPIHandleKind::InterModPath) {
       if (type != vpiPorts)
         return nullptr;
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         auto iterator = std::make_unique<__vpiHandle>();
         iterator->owner = state;
         iterator->kind = VPIHandleKind::Iterator;
@@ -10678,7 +10678,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         iterator->interModPathIterator = true;
         return keepHandle(state, std::move(iterator));
       }
-      OBELISK_RT_CATCH_ALL {
+      TALOS_RT_CATCH_ALL {
         setError(state, "could not allocate VPI intermodule-path iterator",
                  vpiSystem);
         return nullptr;
@@ -10686,8 +10686,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     }
   }
   if (type == vpiCallback && !reference) {
-    std::vector<obelisk_rt_design_cursor_v1> callbacks;
-    OBELISK_RT_TRY {
+    std::vector<talos_rt_design_cursor_v1> callbacks;
+    TALOS_RT_TRY {
       callbacks.reserve(state->callbacks.size());
       for (uint64_t id : state->callbackOrder)
         if (state->callbacks.find(id) != state->callbacks.end())
@@ -10702,14 +10702,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       iterator->callbackIterator = true;
       return keepHandle(state, std::move(iterator));
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(state, "could not allocate VPI callback iterator", vpiSystem);
       return nullptr;
     }
   }
   if (type == vpiUserSystf && !reference) {
-    std::vector<obelisk_rt_design_cursor_v1> systemTfs;
-    OBELISK_RT_TRY {
+    std::vector<talos_rt_design_cursor_v1> systemTfs;
+    TALOS_RT_TRY {
       systemTfs.reserve(state->systemTfs.size());
       for (uint64_t id : state->systemTfOrder)
         if (state->systemTfs.find(id) != state->systemTfs.end())
@@ -10724,33 +10724,33 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       iterator->systemTfIterator = true;
       return keepHandle(state, std::move(iterator));
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(state, "could not allocate VPI system task/function iterator",
                vpiSystem);
       return nullptr;
     }
   }
   if (type == vpiTimeQueue && !reference) {
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       std::vector<uint64_t> times;
       {
         ContextMutexLock lock(state->context);
-        obelisk_rt_status status =
-            obelisk_rt_snapshot_future_time_queues_unlocked(state->context,
+        talos_rt_status status =
+            talos_rt_snapshot_future_time_queues_unlocked(state->context,
                                                             times);
-        if (status != OBELISK_RT_OK) {
+        if (status != TALOS_RT_OK) {
           setError(state,
-                   status == OBELISK_RT_OUT_OF_MEMORY
+                   status == TALOS_RT_OUT_OF_MEMORY
                        ? "could not allocate VPI time-queue snapshot"
                        : "could not inspect scheduler time queues",
-                   status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem
+                   status == TALOS_RT_OUT_OF_MEMORY ? vpiSystem
                                                       : vpiInternal);
           return nullptr;
         }
         if ((state->phase == VPIPhase::StartSimulation ||
              state->phase == VPIPhase::Running) &&
             (state->context->vpiTimeCallbackActive ||
-             obelisk_rt_current_time_queue_pending_unlocked(state->context)))
+             talos_rt_current_time_queue_pending_unlocked(state->context)))
           times.insert(times.begin(), state->context->schedulerTime);
         for (const auto &[time, id] : state->timeCallbacks)
           times.push_back(time);
@@ -10767,16 +10767,16 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       iterator->timeQueueIterator = true;
       return keepHandle(state, std::move(iterator));
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
+    TALOS_RT_CATCH(const std::bad_alloc &) {
       setError(state, "could not allocate VPI time-queue iterator", vpiSystem);
       return nullptr;
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(state, "could not create VPI time-queue iterator", vpiInternal);
       return nullptr;
     }
   }
-  obelisk_rt_design_cursor_v1 parent{};
+  talos_rt_design_cursor_v1 parent{};
   uint32_t sourceType = 0;
   bool sourceStatement = false;
   bool sourceClassDefinitionOrigin = false;
@@ -10802,10 +10802,10 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       if (type == vpiRange)
         return makeSemanticIterator(handle, type);
       if (type == vpiBit && handle->snapshot->integral &&
-          obelisk::reflection::findVPITraversal(
+          talos::reflection::findVPITraversal(
               handle->snapshot->exactType, vpiBit,
-              obelisk::reflection::VPITraversalMode::Iterate)) {
-        OBELISK_RT_TRY {
+              talos::reflection::VPITraversalMode::Iterate)) {
+        TALOS_RT_TRY {
           auto iterator = std::make_unique<__vpiHandle>();
           iterator->owner = state;
           iterator->kind = VPIHandleKind::Iterator;
@@ -10816,7 +10816,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
           copyUseRecipe(*iterator, *handle);
           return keepHandle(state, std::move(iterator));
         }
-        OBELISK_RT_CATCH_ALL {
+        TALOS_RT_CATCH_ALL {
           setError(state, "could not allocate copied bit iterator", vpiSystem);
           return nullptr;
         }
@@ -10824,10 +10824,10 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       if (type == vpiIndex && !handle->snapshot->indexExpression &&
           handle->snapshot->parent &&
           (handle->snapshot->bitSelection || handle->snapshot->parent->array) &&
-          obelisk::reflection::findVPITraversal(
+          talos::reflection::findVPITraversal(
               handle->snapshot->exactType, vpiIndex,
-              obelisk::reflection::VPITraversalMode::Iterate)) {
-        OBELISK_RT_TRY {
+              talos::reflection::VPITraversalMode::Iterate)) {
+        TALOS_RT_TRY {
           auto iterator = std::make_unique<__vpiHandle>();
           iterator->owner = state;
           iterator->kind = VPIHandleKind::Iterator;
@@ -10859,7 +10859,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
           copyUseRecipe(*iterator, *handle);
           return keepHandle(state, std::move(iterator));
         }
-        OBELISK_RT_CATCH_ALL {
+        TALOS_RT_CATCH_ALL {
           setError(state, "could not allocate copied variable indices",
                    vpiSystem);
           return nullptr;
@@ -10867,9 +10867,9 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       }
       if (type == vpiOperand && handle->snapshot->opType)
         return snapshotChildren(handle, type);
-      const auto *edge = obelisk::reflection::findVPITraversal(
+      const auto *edge = talos::reflection::findVPITraversal(
           handle->snapshot->exactType, type,
-          obelisk::reflection::VPITraversalMode::Iterate);
+          talos::reflection::VPITraversalMode::Iterate);
       if (handle->snapshot->variableView && edge &&
           ((type == vpiMember &&
             (handle->snapshot->exactType == vpiUnionVar ||
@@ -10887,19 +10887,19 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     sourceClassDefinitionOrigin = handle->classDefinitionOrigin;
     sourceDesign = handle->form == VPIObjectForm::Design;
     if (handle->form == VPIObjectForm::ClassObject) {
-      if (!obelisk::reflection::findVPITraversal(
+      if (!talos::reflection::findVPITraversal(
               vpiClassObj, static_cast<uint32_t>(type),
-              obelisk::reflection::VPITraversalMode::Iterate))
+              talos::reflection::VPITraversalMode::Iterate))
         return nullptr;
       // Direct builtins carry their semantic type instead of an executable
       // class descriptor. Their canonical typespec owns immutable inventory,
       // including mailbox type parameters. Legacy images may omit that index.
       if (handle->semanticCursor.offset) {
-        auto status = obelisk_rt_cached_vpi_semantic_class_typespec(
+        auto status = talos_rt_cached_vpi_semantic_class_typespec(
             state->context, handle->semanticCursor, &parent);
-        if (status == OBELISK_RT_EOF)
+        if (status == TALOS_RT_EOF)
           return nullptr;
-        if (status != OBELISK_RT_OK) {
+        if (status != TALOS_RT_OK) {
           setError(state, "builtin class VPI typespec lookup failed", vpiInternal);
           return nullptr;
         }
@@ -10910,8 +10910,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     }
     sourceType = handle->exactVpiType;
     if (sourceType == 0 &&
-        obelisk_rt_cached_vpi_type(state->context, parent, &sourceType) !=
-            OBELISK_RT_OK)
+        talos_rt_cached_vpi_type(state->context, parent, &sourceType) !=
+            TALOS_RT_OK)
       return nullptr;
     if (type == vpiPortInst &&
         (sourceType == vpiNetBit || sourceType == vpiRegBit)) {
@@ -10927,11 +10927,11 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     if (type == vpiIndex && !isSourceSelection(handle) &&
         (handle->form == VPIObjectForm::Indexed ||
          handle->form == VPIObjectForm::Design)) {
-      const auto *edge = obelisk::reflection::findVPITraversal(
-          sourceType, vpiIndex, obelisk::reflection::VPITraversalMode::Iterate);
+      const auto *edge = talos::reflection::findVPITraversal(
+          sourceType, vpiIndex, talos::reflection::VPITraversalMode::Iterate);
       if (!edge || !supportsIndexQuery(handle, sourceType))
         return nullptr;
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         std::vector<VPISelectionStep> memberSteps;
         const std::vector<VPISelectionStep> *sourceSteps =
             &handle->selectionSteps;
@@ -10963,13 +10963,13 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         copyUseRecipe(*iterator, *handle);
         return keepHandle(state, std::move(iterator));
       }
-      OBELISK_RT_CATCH_ALL {
+      TALOS_RT_CATCH_ALL {
         setError(state, "could not allocate VPI index iterator", vpiSystem);
         return nullptr;
       }
     }
-  } else if (obelisk_rt_cached_design_root(state->context, &parent) !=
-             OBELISK_RT_OK) {
+  } else if (talos_rt_cached_design_root(state->context, &parent) !=
+             TALOS_RT_OK) {
     return nullptr;
   }
   const bool classSource =
@@ -10980,7 +10980,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       type == vpiParameter && sourceType == vpiClassTypespec &&
       referenceHandle &&
       (sourceInheritanceCapabilities(referenceHandle) &
-       OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC);
+       TALOS_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC);
   const bool classInventory =
       classSource && !lexicalParameters &&
       (type == vpiVariables || type == vpiMethods || type == vpiNamedEvent ||
@@ -10988,11 +10988,11 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
        type == vpiRegArray || type == vpiMemory);
   const bool interfaceInventory =
       type == vpiVirtualInterfaceVar &&
-      obelisk::reflection::findVPITraversal(
+      talos::reflection::findVPITraversal(
           sourceType, vpiVirtualInterfaceVar,
-          obelisk::reflection::VPITraversalMode::Iterate);
+          talos::reflection::VPITraversalMode::Iterate);
   if (reference && (classInventory || interfaceInventory)) {
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       std::vector<VPIRelationRange> ranges;
       std::set<uint64_t> visited;
       bool foundVariableGroup = false;
@@ -11004,9 +11004,9 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         VPIRelationRange range{};
         uint32_t memberSelector =
             type == vpiVirtualInterfaceVar ? vpiVariables : type;
-        if (obelisk_rt_cached_vpi_relation_range(state->context, scope,
+        if (talos_rt_cached_vpi_relation_range(state->context, scope,
                                                  memberSelector, true,
-                                                 &range) == OBELISK_RT_OK) {
+                                                 &range) == TALOS_RT_OK) {
           if (type != vpiVirtualInterfaceVar)
             ranges.push_back(range);
           else {
@@ -11015,13 +11015,13 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
               __vpiHandle member;
               member.owner = state;
               bool statement = false;
-              if (obelisk_rt_cached_vpi_relation_target(
+              if (talos_rt_cached_vpi_relation_target(
                       state->context, range.first + index, &member.cursor,
-                      &member.exactVpiType, &statement) != OBELISK_RT_OK)
+                      &member.exactVpiType, &statement) != TALOS_RT_OK)
                 return nullptr;
               if (statement)
                 continue;
-              obelisk_rt_design_cursor_v1 semantic{};
+              talos_rt_design_cursor_v1 semantic{};
               if (member.exactVpiType == vpiVirtualInterfaceVar ||
                   (member.exactVpiType == vpiArrayVar &&
                    semanticCursorFor(&member, semantic) &&
@@ -11033,15 +11033,15 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         if (!classSource)
           break;
         VPIRelationRange base{};
-        if (obelisk_rt_cached_vpi_relation_range(state->context, scope,
+        if (talos_rt_cached_vpi_relation_range(state->context, scope,
                                                  vpiExtends, false,
-                                                 &base) != OBELISK_RT_OK)
+                                                 &base) != TALOS_RT_OK)
           break;
         uint32_t baseType = 0;
         bool statement = false;
-        if (obelisk_rt_cached_vpi_relation_target(
+        if (talos_rt_cached_vpi_relation_target(
                 state->context, base.first, &scope, &baseType, &statement) !=
-                OBELISK_RT_OK ||
+                TALOS_RT_OK ||
             baseType != vpiClassTypespec || statement)
           return nullptr;
       }
@@ -11062,7 +11062,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       // The variable index is optional in older valid images. Preserve the
       // direct selector and physical-child paths when it is absent.
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(state, "could not allocate VPI declaration iterator", vpiSystem);
       return nullptr;
     }
@@ -11072,15 +11072,15 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
        sourceType == vpiNetBit) &&
       (type == vpiDriver || type == vpiLocalDriver || type == vpiLoad ||
        type == vpiLocalLoad)) {
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       auto iterator = std::make_unique<__vpiHandle>();
       auto status = selectedNetConnections(referenceHandle, type,
                                            iterator->connectionItems);
-      if (status == OBELISK_RT_EOF)
+      if (status == TALOS_RT_EOF)
         return nullptr;
-      if (status != OBELISK_RT_OK) {
+      if (status != TALOS_RT_OK) {
         setError(state, "could not resolve selected net connections",
-                 status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+                 status == TALOS_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
         return nullptr;
       }
       iterator->owner = state;
@@ -11090,7 +11090,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       copyUseRecipe(*iterator, *referenceHandle);
       return keepHandle(state, std::move(iterator));
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(state, "could not allocate net connection iterator", vpiSystem);
       return nullptr;
     }
@@ -11099,14 +11099,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       (sourceDesign ||
        (referenceHandle->form == VPIObjectForm::Indexed &&
         (sourceType == vpiNetBit || sourceType == vpiRegBit)))) {
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       std::vector<VPIRelationRange> ranges;
       bool selected = isSourceSelection(referenceHandle) ||
                       referenceHandle->form == VPIObjectForm::Indexed;
       auto status = selected ? selectedUseRanges(referenceHandle, ranges)
-                             : obelisk_rt_cached_vpi_expression_use_ranges(
+                             : talos_rt_cached_vpi_expression_use_ranges(
                                    state->context, parent, ranges);
-      if (status == OBELISK_RT_OK) {
+      if (status == TALOS_RT_OK) {
         auto iterator = std::make_unique<__vpiHandle>();
         iterator->owner = state;
         iterator->kind = VPIHandleKind::Iterator;
@@ -11118,21 +11118,21 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
         iterator->classDefinitionOrigin = sourceClassDefinitionOrigin;
         return keepHandle(state, std::move(iterator));
       }
-      if (selected && status == OBELISK_RT_EOF)
+      if (selected && status == TALOS_RT_EOF)
         return nullptr;
-      if (status != OBELISK_RT_EOF) {
+      if (status != TALOS_RT_EOF) {
         setError(state, "could not resolve expression uses",
-                 status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+                 status == TALOS_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
         return nullptr;
       }
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(state, "could not allocate expression-use iterator", vpiSystem);
       return nullptr;
     }
   }
   VPIRelationRange range{};
-  obelisk_rt_status relationStatus = OBELISK_RT_EOF;
+  talos_rt_status relationStatus = TALOS_RT_EOF;
   uint32_t storageSelector = static_cast<uint32_t>(type);
   bool relationElementSelector =
       reference &&
@@ -11140,48 +11140,48 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
           sourceType, static_cast<uint32_t>(type), storageSelector);
   if (reference && relationElementSelector) {
     __vpiHandle *source = referenceHandle;
-    const auto *access = source ? obelisk::reflection::findVPIIndexedAccess(
+    const auto *access = source ? talos::reflection::findVPIIndexedAccess(
                                       source->form == VPIObjectForm::Indexed
                                           ? source->selectionRootType
                                           : sourceType)
                                 : nullptr;
     if (access &&
         access->accessKind ==
-            obelisk::reflection::VPIIndexedAccessKind::RelationElement)
+            talos::reflection::VPIIndexedAccessKind::RelationElement)
       if (vpiHandle semantic = makeSemanticIterator(source, type))
         return semantic;
   }
   if (!reference || sourceDesign) {
-    relationStatus = obelisk_rt_cached_vpi_relation_range(
+    relationStatus = talos_rt_cached_vpi_relation_range(
         state->context, parent,
         relationElementSelector ? storageSelector : static_cast<uint32_t>(type),
         true, &range);
   } else {
     __vpiHandle *source = referenceHandle;
-    const auto *access = source ? obelisk::reflection::findVPIIndexedAccess(
+    const auto *access = source ? talos::reflection::findVPIIndexedAccess(
                                       source->selectionRootType)
                                 : nullptr;
     if (source && source->form == VPIObjectForm::Indexed && access &&
         access->accessKind ==
-            obelisk::reflection::VPIIndexedAccessKind::RelationElement &&
+            talos::reflection::VPIIndexedAccessKind::RelationElement &&
         relationElementSelector) {
-      relationStatus = obelisk_rt_cached_vpi_relation_range(
+      relationStatus = talos_rt_cached_vpi_relation_range(
           state->context, parent, storageSelector, true, &range);
       uint64_t remaining = source->info.bit_width;
       uint64_t prefix = source->selectionBitOffset;
-      if (relationStatus == OBELISK_RT_OK &&
+      if (relationStatus == TALOS_RT_OK &&
           (remaining == 0 || prefix > range.count / remaining ||
            prefix * remaining > range.count ||
            remaining > range.count - prefix * remaining))
-        relationStatus = OBELISK_RT_INVALID_DESIGN;
-      if (relationStatus == OBELISK_RT_OK) {
+        relationStatus = TALOS_RT_INVALID_DESIGN;
+      if (relationStatus == TALOS_RT_OK) {
         range.first += prefix * remaining;
         range.count = remaining;
       }
     }
   }
-  if (relationStatus == OBELISK_RT_OK) {
-    OBELISK_RT_TRY {
+  if (relationStatus == TALOS_RT_OK) {
+    TALOS_RT_TRY {
       auto iterator = std::make_unique<__vpiHandle>();
       iterator->owner = state;
       iterator->kind = VPIHandleKind::Iterator;
@@ -11194,12 +11194,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       }
       return keepHandle(state, std::move(iterator));
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(state, "could not allocate VPI relation iterator", vpiSystem);
       return nullptr;
     }
   }
-  if (relationStatus != OBELISK_RT_EOF)
+  if (relationStatus != TALOS_RT_EOF)
     return nullptr;
   if (reference) {
     __vpiHandle *source = referenceHandle;
@@ -11210,9 +11210,9 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
   }
   if (reference && sourceType == 0)
     return nullptr;
-  const auto *edge = obelisk::reflection::findVPITraversal(
+  const auto *edge = talos::reflection::findVPITraversal(
       sourceType, static_cast<uint32_t>(type),
-      obelisk::reflection::VPITraversalMode::Iterate);
+      talos::reflection::VPITraversalMode::Iterate);
   // Physical children implement only generated direct-child relations.
   // Cross-references (for example imports) require explicit targets even if
   // a physical child happens to have a compatible kind. NULL-root discovery
@@ -11220,16 +11220,16 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
   if (!edge || edge->statementContainment ||
       (reference &&
        (!sourceDesign || edge->automaticRelation !=
-                             obelisk::reflection::VPIAutomaticRelation::DirectChild)))
+                             talos::reflection::VPIAutomaticRelation::DirectChild)))
     return nullptr;
-  obelisk_rt_design_cursor_v1 cursor{};
-  obelisk_rt_status status =
-      obelisk_rt_cached_design_child(state->context, parent, &cursor);
-  if (status == OBELISK_RT_OK)
+  talos_rt_design_cursor_v1 cursor{};
+  talos_rt_status status =
+      talos_rt_cached_design_child(state->context, parent, &cursor);
+  if (status == TALOS_RT_OK)
     status = findMatchingDesignObject(state, cursor, edge->targets, &cursor);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     auto iterator = std::make_unique<__vpiHandle>();
     iterator->owner = state;
     iterator->kind = VPIHandleKind::Iterator;
@@ -11247,13 +11247,13 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     }
     return keepHandle(state, std::move(iterator));
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not allocate VPI iterator", vpiSystem);
     return nullptr;
   }
 }
 
-extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
+extern "C" TALOS_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
   VPICallScope vpiCallScope;
   __vpiHandle *iterator = validate(opaque, VPIHandleKind::Iterator);
   if (!iterator)
@@ -11278,11 +11278,11 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
       selected = std::shared_ptr<const VPISnapshotValue>(selected, child);
     }
     if (!selected->bitSelection) {
-      obelisk_rt_design_semantic_type_info_v1 info{};
+      talos_rt_design_semantic_type_info_v1 info{};
       if (!semanticTypeInfo(iterator, selected->semantic, info))
         return nullptr;
       const bool ranged =
-          (info.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
+          (info.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
       const int64_t left = ranged ? info.range_left : selected->bitWidth - 1;
       const int64_t right = ranged ? info.range_right : 0;
       const int64_t index = left >= right
@@ -11414,7 +11414,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
         state->handles.erase(iteratorToken);
         return nullptr;
       }
-      obelisk_rt_design_semantic_type_info_v1 info{};
+      talos_rt_design_semantic_type_info_v1 info{};
       if (!semanticTypeInfo(iterator, iterator->semanticCursor, info) ||
           !isDimensionForVPIObject(iterator->exactVpiType, info.kind,
                                    info.flags,
@@ -11422,12 +11422,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
         state->handles.erase(iteratorToken);
         return nullptr;
       }
-      obelisk_rt_design_cursor_v1 current = iterator->semanticCursor;
-      obelisk_rt_design_cursor_v1 element{};
+      talos_rt_design_cursor_v1 current = iterator->semanticCursor;
+      talos_rt_design_cursor_v1 element{};
       if (semanticElement(iterator, current, element)) {
-        obelisk_rt_design_semantic_type_info_v1 elementInfo{};
-        if (obelisk_rt_cached_design_semantic_type_info(
-                state->context, element, &elementInfo) == OBELISK_RT_OK &&
+        talos_rt_design_semantic_type_info_v1 elementInfo{};
+        if (talos_rt_cached_design_semantic_type_info(
+                state->context, element, &elementInfo) == TALOS_RT_OK &&
             isDimensionForVPIObject(iterator->exactVpiType, elementInfo.kind,
                                     elementInfo.flags))
           iterator->semanticCursor = element;
@@ -11440,10 +11440,10 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
       bool liveRange = false;
       if (iterator->next++ == 0 && iterator->useType == vpiRegArray &&
           isVirtualInterfaceSequence(iterator, current)) {
-        obelisk_rt_design_semantic_type_info_v1 dimension{};
+        talos_rt_design_semantic_type_info_v1 dimension{};
         if (semanticTypeInfo(iterator, current, dimension) &&
-            (dimension.kind == OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY ||
-             dimension.kind == OBELISK_RT_DESIGN_SEMANTIC_QUEUE)) {
+            (dimension.kind == TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY ||
+             dimension.kind == TALOS_RT_DESIGN_SEMANTIC_QUEUE)) {
           liveRange = true;
           vpiHandle use = makeUseHandle(iterator);
           if (auto *source = findHandle(use))
@@ -11498,14 +11498,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
       return result;
     }
     if (iterator->semanticIterator == VPISemanticIteratorKind::Elements) {
-      obelisk_rt_design_semantic_type_info_v1 info{};
+      talos_rt_design_semantic_type_info_v1 info{};
       if (!semanticTypeInfo(iterator, iterator->semanticCursor, info) ||
-          (info.kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
-           info.kind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY &&
-           !((info.kind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
-              info.kind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
-              info.kind == OBELISK_RT_DESIGN_SEMANTIC_REG) &&
-             (info.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0))) {
+          (info.kind != TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
+           info.kind != TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY &&
+           !((info.kind == TALOS_RT_DESIGN_SEMANTIC_BIT ||
+              info.kind == TALOS_RT_DESIGN_SEMANTIC_LOGIC ||
+              info.kind == TALOS_RT_DESIGN_SEMANTIC_REG) &&
+             (info.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0))) {
         state->handles.erase(iteratorToken);
         return nullptr;
       }
@@ -11535,13 +11535,13 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
       return result;
     }
     if (iterator->semanticIterator == VPISemanticIteratorKind::ObjectMembers) {
-      obelisk_rt_design_semantic_type_info_v1 info{};
+      talos_rt_design_semantic_type_info_v1 info{};
       if (!semanticTypeInfo(iterator, iterator->semanticCursor, info)) {
         state->handles.erase(iteratorToken);
         return nullptr;
       }
       uint32_t edgeIndex = 0;
-      obelisk_rt_design_semantic_type_edge_v1 edge{};
+      talos_rt_design_semantic_type_edge_v1 edge{};
       do {
         if (iterator->next >= info.edge_count) {
           state->handles.erase(iteratorToken);
@@ -11553,8 +11553,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
           state->handles.erase(iteratorToken);
           return nullptr;
         }
-        if (edge.role == OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER) {
-          obelisk_rt_design_semantic_type_info_v1 child{};
+        if (edge.role == TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER) {
+          talos_rt_design_semantic_type_info_v1 child{};
           if (!semanticTypeInfo(iterator, edge.child, child)) {
             state->handles.erase(iteratorToken);
             return nullptr;
@@ -11562,7 +11562,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
           // A tagged void variant has a TypespecMember but contains no
           // variable. Its normalized i1 placeholder is never exposed as a
           // BitVar.
-          if (child.kind == OBELISK_RT_DESIGN_SEMANTIC_VOID)
+          if (child.kind == TALOS_RT_DESIGN_SEMANTIC_VOID)
             continue;
           break;
         }
@@ -11577,16 +11577,16 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
         state->handles.erase(iteratorToken);
       return result;
     }
-    obelisk_rt_design_semantic_type_info_v1 info{};
+    talos_rt_design_semantic_type_info_v1 info{};
     if (!semanticTypeInfo(iterator, iterator->semanticCursor, info) ||
         iterator->next >= info.edge_count) {
       state->handles.erase(iteratorToken);
       return nullptr;
     }
-    obelisk_rt_design_semantic_type_edge_v1 edge{};
+    talos_rt_design_semantic_type_edge_v1 edge{};
     uint32_t edgeIndex = static_cast<uint32_t>(iterator->next++);
     if (!semanticEdge(iterator, iterator->semanticCursor, edgeIndex, edge) ||
-        edge.role != OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER) {
+        edge.role != TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER) {
       state->handles.erase(iteratorToken);
       return nullptr;
     }
@@ -11668,14 +11668,14 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
         iterator->owner->handles.erase(iterator->token);
         return nullptr;
       }
-      obelisk_rt_design_cursor_v1 target{};
+      talos_rt_design_cursor_v1 target{};
       uint32_t targetType = 0;
       bool targetIsStatement = false;
-      obelisk_rt_status status = obelisk_rt_cached_vpi_relation_target(
+      talos_rt_status status = talos_rt_cached_vpi_relation_target(
           iterator->owner->context,
           iterator->relationRange.first + iterator->next, &target, &targetType,
           &targetIsStatement);
-      if (status != OBELISK_RT_OK) {
+      if (status != TALOS_RT_OK) {
         VPIState *state = iterator->owner;
         state->handles.erase(iterator->token);
         setError(state, "VPI relation target lookup failed", vpiInternal);
@@ -11685,16 +11685,16 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
       if (!iterator->classMemberRanges.empty() &&
           iterator->iteratorType == vpiMethods) {
         VPIClassMemberBinding member{};
-        if (obelisk_rt_cached_vpi_class_member(iterator->owner->context, target,
-                                               &member) == OBELISK_RT_OK) {
-          OBELISK_RT_TRY {
+        if (talos_rt_cached_vpi_class_member(iterator->owner->context, target,
+                                               &member) == TALOS_RT_OK) {
+          TALOS_RT_TRY {
             if (!iterator->seenClassMethods
                      .emplace(reinterpret_cast<const char *>(member.name),
                               member.nameSize)
                      .second)
               continue;
           }
-          OBELISK_RT_CATCH_ALL {
+          TALOS_RT_CATCH_ALL {
             VPIState *state = iterator->owner;
             state->handles.erase(iterator->token);
             setError(state, "could not track inherited VPI methods", vpiSystem);
@@ -11734,27 +11734,27 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
       iterator->owner->handles.erase(iterator->token);
       return nullptr;
     }
-    obelisk_rt_design_cursor_v1 current = iterator->cursor;
-    obelisk_rt_design_cursor_v1 candidate{};
-    obelisk_rt_status status = obelisk_rt_cached_design_sibling(
+    talos_rt_design_cursor_v1 current = iterator->cursor;
+    talos_rt_design_cursor_v1 candidate{};
+    talos_rt_status status = talos_rt_cached_design_sibling(
         iterator->owner->context, current, &candidate);
-    if (status == OBELISK_RT_OK)
+    if (status == TALOS_RT_OK)
       status = findMatchingDesignObject(iterator->owner, candidate,
                                         iterator->requestedTargets, &candidate);
-    if (status == OBELISK_RT_OK)
+    if (status == TALOS_RT_OK)
       iterator->cursor = candidate;
     else
       iterator->cursor = {};
     VPIState *state = iterator->owner;
     const uintptr_t iteratorToken = iterator->token;
-    if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF) {
+    if (status != TALOS_RT_OK && status != TALOS_RT_EOF) {
       state->handles.erase(iteratorToken);
       setError(state, "VPI design iterator lookup failed", vpiInternal);
       return nullptr;
     }
     uint32_t targetType = 0;
-    if (obelisk_rt_cached_vpi_type(state->context, current, &targetType) !=
-        OBELISK_RT_OK) {
+    if (talos_rt_cached_vpi_type(state->context, current, &targetType) !=
+        TALOS_RT_OK) {
       state->handles.erase(iteratorToken);
       setError(state, "VPI design iterator target type lookup failed",
                vpiInternal);
@@ -11762,7 +11762,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
     }
     vpiHandle result = makeHandle(
         state, current, targetType, false,
-        obelisk::runtime::hasClassDefinitionValueOrigin(
+        talos::runtime::hasClassDefinitionValueOrigin(
             iterator->useType, iterator->classDefinitionOrigin, targetType));
     if (!result)
       state->handles.erase(iteratorToken);
@@ -11780,7 +11780,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
   return result;
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
+extern "C" TALOS_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                                                 vpiHandle opaque) {
   VPICallScope vpiCallScope;
   if (!opaque) {
@@ -11804,7 +11804,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   const auto *propertyDescriptor = propertyFor(handle, property);
   if (!propertyDescriptor)
     return vpiUndefined;
-  using PropertyValueKind = obelisk::reflection::VPIPropertyValueKind;
+  using PropertyValueKind = talos::reflection::VPIPropertyValueKind;
   if (propertyDescriptor->valueKind != PropertyValueKind::Boolean &&
       propertyDescriptor->valueKind != PropertyValueKind::Integer) {
     setError(handle->owner, "property is not a 32-bit integer VPI property",
@@ -11822,7 +11822,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   }
   uint32_t inheritanceCaps = sourceInheritanceCapabilities(handle);
   if (property == vpiClassType &&
-      (inheritanceCaps & OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC))
+      (inheritanceCaps & TALOS_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC))
     return vpiUserDefinedClass;
   if (property == vpiLocalParam && isUnresolvedTypeAlias(handle)) {
     setError(handle->owner, "unresolved typedef is not a parameter declaration",
@@ -11841,10 +11841,10 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
        vpiTypeForHandle(handle) == vpiFuncCall ||
        vpiTypeForHandle(handle) == vpiMethodFuncCall ||
        vpiTypeForHandle(handle) == vpiSysFuncCall)) {
-    obelisk_rt_design_info_v1 info{};
+    talos_rt_design_info_v1 info{};
     if (!infoFor(handle, info))
       return vpiUndefined;
-    if (info.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+    if (info.kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
         !info.type_offset && !info.bit_width) {
       setError(handle->owner,
                "original expression has no elaborated result type", vpiNotice);
@@ -11863,24 +11863,24 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   VPIFixedPropertyValue optional{};
   const auto optionalStatus =
       optionalPropertyFor(handle, propertyDescriptor, optional);
-  if (optionalStatus == OBELISK_RT_OK)
+  if (optionalStatus == TALOS_RT_OK)
     return static_cast<PLI_INT32>(optional.payload);
-  if (optionalStatus != OBELISK_RT_EOF)
+  if (optionalStatus != TALOS_RT_EOF)
     return vpiUndefined;
   if (handle->form == VPIObjectForm::Design &&
       vpiTypeForHandle(handle) == vpiFunction &&
       (property == vpiSize || property == vpiSigned)) {
     VPIFixedPropertyValue value{};
-    if (property == vpiSize && obelisk_rt_cached_vpi_fixed_property(
+    if (property == vpiSize && talos_rt_cached_vpi_fixed_property(
                                    handle->owner->context, handle->cursor,
-                                   vpiSize, &value) == OBELISK_RT_OK)
+                                   vpiSize, &value) == TALOS_RT_OK)
       return static_cast<PLI_INT32>(value.payload);
     return functionReturnProperty(handle, property);
   }
   if (propertyDescriptor->realization ==
-          obelisk::reflection::VPIPropertyRealization::FixedImage ||
+          talos::reflection::VPIPropertyRealization::FixedImage ||
       propertyDescriptor->realization ==
-          obelisk::reflection::VPIPropertyRealization::DefinitionImage) {
+          talos::reflection::VPIPropertyRealization::DefinitionImage) {
     // Registration handles have no source protection. Dynamic class objects
     // inherit protection from their allocated type; declarations use the image.
     if (handle->kind != VPIHandleKind::Object && property == vpiIsProtected)
@@ -11912,7 +11912,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     return static_cast<PLI_INT32>(value.payload);
   }
   if (propertyDescriptor->realization ==
-      obelisk::reflection::VPIPropertyRealization::IndexedImage) {
+      talos::reflection::VPIPropertyRealization::IndexedImage) {
     uint32_t value = 0;
     return indexedImagePropertyFor(handle, *propertyDescriptor, value)
                ? static_cast<PLI_INT32>(value)
@@ -11920,9 +11920,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   }
   if (property == vpiLocalVarDecls && handle->statement) {
     bool isScope = false;
-    if (obelisk_rt_cached_vpi_statement_is_scope(handle->owner->context,
+    if (talos_rt_cached_vpi_statement_is_scope(handle->owner->context,
                                                  handle->cursor,
-                                                 &isScope) != OBELISK_RT_OK) {
+                                                 &isScope) != TALOS_RT_OK) {
       setError(handle->owner, "for statement scope lookup failed", vpiInternal);
       return vpiUndefined;
     }
@@ -11934,7 +11934,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   if (property == vpiAllocScheme)
     return handle->allocationScheme;
   if (property == vpiActive && handle->form == VPIObjectForm::Thread)
-    return sourceThread(handle->owner, obelisk_rt_v1_process_current(
+    return sourceThread(handle->owner, talos_rt_v1_process_current(
                                            handle->owner->context)) ==
            handle->logicalProcess;
   if (property == vpiActive && handle->form == VPIObjectForm::Frame) {
@@ -11957,7 +11957,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   // storage bound to the current activation; other live transient forms already
   // passed their lifetime checks above.
   if (property == vpiHasActual) {
-    obelisk_rt_design_info_v1 info{};
+    talos_rt_design_info_v1 info{};
     if (handle->classDefinitionOrigin ||
         (handle->form == VPIObjectForm::Design && infoFor(handle, info) &&
          isSourceClassProperty(info)))
@@ -11971,11 +11971,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       return bound != frame->second.localReferences.end() &&
              readFrameReference(handle->owner, bound->second, handle->cursor,
                                 info, 0, info.bit_width, nullptr,
-                                nullptr) == OBELISK_RT_OK;
+                                nullptr) == TALOS_RT_OK;
     }
     VPIClassMemberBinding member{};
-    if (obelisk_rt_cached_vpi_class_member(
-            handle->owner->context, handle->cursor, &member) == OBELISK_RT_OK)
+    if (talos_rt_cached_vpi_class_member(
+            handle->owner->context, handle->cursor, &member) == TALOS_RT_OK)
       return member.isStatic || handle->dynamicObject != nullptr;
     return 1;
   }
@@ -11986,15 +11986,15 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   // by the fixed-image dispatch above so lexical queries remain valid without
   // a live frame.
   if (property == vpiAutomatic) {
-    obelisk_rt_design_info_v1 localInfo{};
+    talos_rt_design_info_v1 localInfo{};
     if (frameLocalInfo(handle, localInfo))
       return 1;
     const uint32_t objectType = static_cast<uint32_t>(vpiTypeForHandle(handle));
     if (objectType == vpiClassDefn || objectType == vpiClassTypespec)
       return 1;
     VPIClassMemberBinding member{};
-    if (obelisk_rt_cached_vpi_class_member(
-            handle->owner->context, handle->cursor, &member) == OBELISK_RT_OK &&
+    if (talos_rt_cached_vpi_class_member(
+            handle->owner->context, handle->cursor, &member) == TALOS_RT_OK &&
         !member.isMethod)
       return !member.isStatic;
     if (isVariableVPIKind(objectType))
@@ -12006,11 +12006,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     return 0;
   uint32_t objectType = static_cast<uint32_t>(vpiTypeForHandle(handle));
   if (property == vpiIsModPort) {
-    obelisk_rt_design_cursor_v1 semantic{};
-    obelisk_rt_design_semantic_type_info_v1 info{};
+    talos_rt_design_cursor_v1 semantic{};
+    talos_rt_design_semantic_type_info_v1 info{};
     if (!semanticCursorFor(handle, semantic) ||
         !semanticTypeInfo(handle, semantic, info) ||
-        info.kind != OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
+        info.kind != TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
       setError(handle->owner,
                "virtual interface VPI type metadata is unavailable", vpiNotice);
       return vpiUndefined;
@@ -12030,14 +12030,14 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       }
       uint64_t size = handle->snapshot->bitWidth;
       if (handle->snapshot->variableView) {
-        obelisk_rt_design_semantic_type_info_v1 info{};
+        talos_rt_design_semantic_type_info_v1 info{};
         if (!semanticTypeInfo(handle, handle->snapshot->semantic, info))
           return vpiUndefined;
         if (objectType == vpiRegArray) {
           if (!snapshotArraySize(handle, size))
             return vpiUndefined;
-        } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
-                   info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION)
+        } else if (info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
+                   info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION)
           size = info.edge_count;
         else if (objectType == vpiStringVar)
           size = handle->snapshot->string.size();
@@ -12055,9 +12055,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   }
   if (property == vpiSize &&
       (objectType == vpiStringVar || objectType == vpiRefObj)) {
-    obelisk_rt_design_info_v1 info{};
+    talos_rt_design_info_v1 info{};
     VPIObjectForm form = handle->form;
-    obelisk_rt_design_cursor_v1 cursor = handle->cursor;
+    talos_rt_design_cursor_v1 cursor = handle->cursor;
     uint64_t selectionBitOffset = handle->selectionBitOffset;
     uint32_t sourceType = objectType;
     if (objectType == vpiRefObj) {
@@ -12095,8 +12095,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   }
   VPIExpressionInfo expression{};
   if (handle->form == VPIObjectForm::Design &&
-      obelisk_rt_cached_vpi_expression(handle->owner->context, handle->cursor,
-                                       &expression) == OBELISK_RT_OK) {
+      talos_rt_cached_vpi_expression(handle->owner->context, handle->cursor,
+                                       &expression) == TALOS_RT_OK) {
     if (!propertyFor(handle, property))
       return vpiUndefined;
     if (expression.sourceOnly &&
@@ -12114,12 +12114,12 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     if (property == vpiConstantSelect)
       return expression.constantSelect;
     if (property == vpiSigned) {
-      obelisk_rt_design_semantic_type_info_v1 semantic{};
-      if (obelisk_rt_cached_design_semantic_type_info(
+      talos_rt_design_semantic_type_info_v1 semantic{};
+      if (talos_rt_cached_design_semantic_type_info(
               handle->owner->context, expression.semantic, &semantic) !=
-          OBELISK_RT_OK)
+          TALOS_RT_OK)
         return vpiUndefined;
-      return (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
+      return (semantic.flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) != 0;
     }
   }
   if (handle->kind == VPIHandleKind::Object &&
@@ -12136,32 +12136,32 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
              handle->form == VPIObjectForm::Indexed;
     if (objectType == vpiNetBit || objectType == vpiRegBit)
       return 0;
-    obelisk_rt_design_cursor_v1 semanticCursor{};
+    talos_rt_design_cursor_v1 semanticCursor{};
     bool usesSemanticSignedness =
         handle->form != VPIObjectForm::Design || objectType == vpiIODecl ||
         objectType == vpiRefObj || objectType == vpiConstant ||
         objectType == vpiParameter || objectType == vpiSpecParam ||
         isTypespecVPIKind(objectType);
     if (!usesSemanticSignedness) {
-      obelisk_rt_design_info_v1 info{};
+      talos_rt_design_info_v1 info{};
       usesSemanticSignedness =
           infoFor(handle, info) && isSourceClassProperty(info);
     }
     if (usesSemanticSignedness && semanticCursorFor(handle, semanticCursor)) {
-      obelisk_rt_design_semantic_type_info_v1 semantic{};
-      if (obelisk_rt_cached_design_semantic_type_info(
+      talos_rt_design_semantic_type_info_v1 semantic{};
+      if (talos_rt_cached_design_semantic_type_info(
               handle->owner->context, semanticCursor, &semantic) ==
-          OBELISK_RT_OK)
-        return (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
+          TALOS_RT_OK)
+        return (semantic.flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) != 0;
     }
-    obelisk_rt_design_info_v1 info{};
+    talos_rt_design_info_v1 info{};
     if (!infoFor(handle, info) || info.type_offset == 0)
       return vpiUndefined;
-    obelisk_rt_design_type_info_v1 type{};
-    if (obelisk_rt_cached_design_type_info(
-            handle->owner->context, {info.type_offset}, &type) != OBELISK_RT_OK)
+    talos_rt_design_type_info_v1 type{};
+    if (talos_rt_cached_design_type_info(
+            handle->owner->context, {info.type_offset}, &type) != TALOS_RT_OK)
       return vpiUndefined;
-    return (type.flags & OBELISK_RT_DESIGN_TYPE_SIGNED) != 0;
+    return (type.flags & TALOS_RT_DESIGN_TYPE_SIGNED) != 0;
   }
   if (handle->liveInterfaceRange && property == vpiSize) {
     if (!propertyFor(handle, property))
@@ -12180,10 +12180,10 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       property != vpiLineNo) {
     if (!propertyFor(handle, property))
       return vpiUndefined;
-    obelisk_rt_design_cursor_v1 semantic{};
+    talos_rt_design_cursor_v1 semantic{};
     if (!semanticCursorFor(handle, semantic))
       return vpiUndefined;
-    obelisk_rt_design_semantic_type_info_v1 info{};
+    talos_rt_design_semantic_type_info_v1 info{};
     if (!semanticTypeInfo(handle, semantic, info))
       return vpiUndefined;
     auto extent = [&]() -> uint64_t {
@@ -12199,13 +12199,13 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     switch (property) {
     case vpiClassType:
       switch (info.kind) {
-      case OBELISK_RT_DESIGN_SEMANTIC_CLASS:
+      case TALOS_RT_DESIGN_SEMANTIC_CLASS:
         return vpiUserDefinedClass;
-      case OBELISK_RT_DESIGN_SEMANTIC_MAILBOX:
+      case TALOS_RT_DESIGN_SEMANTIC_MAILBOX:
         return vpiMailboxClass;
-      case OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE:
+      case TALOS_RT_DESIGN_SEMANTIC_SEMAPHORE:
         return vpiSemaphoreClass;
-      case OBELISK_RT_DESIGN_SEMANTIC_PROCESS:
+      case TALOS_RT_DESIGN_SEMANTIC_PROCESS:
         return vpiProcessClass;
       default:
         return vpiUndefined;
@@ -12218,36 +12218,36 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
         size = extent();
       else if (info.bit_width != 0)
         size = info.bit_width;
-      else if ((info.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0)
+      else if ((info.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0)
         size = extent();
       return static_cast<PLI_INT32>(std::min<uint64_t>(size, INT32_MAX));
     }
     case vpiPacked:
-      return info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
-             info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
+      return info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+             info.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION;
     case vpiTagged:
-      return (info.flags & OBELISK_RT_DESIGN_SEMANTIC_TAGGED) != 0;
+      return (info.flags & TALOS_RT_DESIGN_SEMANTIC_TAGGED) != 0;
     case vpiVector:
       return isDimensionForTypespec(objectType, info.kind, info.flags,
                                     handle->suppressSemanticDimension);
     case vpiArrayType:
-      if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY)
+      if (info.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY)
         return vpiStaticArray;
-      if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY)
+      if (info.kind == TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY)
         return vpiDynamicArray;
-      if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY)
+      if (info.kind == TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY)
         return vpiAssocArray;
-      if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_QUEUE)
+      if (info.kind == TALOS_RT_DESIGN_SEMANTIC_QUEUE)
         return vpiQueueArray;
       return vpiUndefined;
     case vpiRandType:
       if (handle->form == VPIObjectForm::TypespecMember) {
-        obelisk_rt_design_semantic_type_edge_v1 edge{};
+        talos_rt_design_semantic_type_edge_v1 edge{};
         if (!semanticEdge(handle, handle->semanticCursor, handle->semanticEdge,
                           edge))
           return vpiUndefined;
-        if (edge.flags >= OBELISK_RT_DESIGN_SEMANTIC_EDGE_NOT_RANDOM &&
-            edge.flags <= OBELISK_RT_DESIGN_SEMANTIC_EDGE_RANDOM_CYCLIC)
+        if (edge.flags >= TALOS_RT_DESIGN_SEMANTIC_EDGE_NOT_RANDOM &&
+            edge.flags <= TALOS_RT_DESIGN_SEMANTIC_EDGE_RANDOM_CYCLIC)
           return static_cast<PLI_INT32>(edge.flags);
         setError(handle->owner,
                  "typespec member has invalid randomization metadata",
@@ -12300,27 +12300,27 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       return isIndexedArrayMember(handle);
 
     if (property == vpiIsMemory || property == vpiArrayType) {
-      obelisk_rt_design_cursor_v1 semantic{};
+      talos_rt_design_cursor_v1 semantic{};
       if (semanticCursorFor(handle, semantic) &&
           isVirtualInterfaceSequence(handle, semantic)) {
-        obelisk_rt_design_semantic_type_info_v1 type{};
+        talos_rt_design_semantic_type_info_v1 type{};
         if (!semanticTypeInfo(handle, semantic, type))
           return vpiUndefined;
         if (property == vpiArrayType) {
-          if (type.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY)
+          if (type.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY)
             return vpiStaticArray;
-          if (type.kind == OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY)
+          if (type.kind == TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY)
             return vpiDynamicArray;
-          if (type.kind == OBELISK_RT_DESIGN_SEMANTIC_QUEUE)
+          if (type.kind == TALOS_RT_DESIGN_SEMANTIC_QUEUE)
             return vpiQueueArray;
-          if (type.kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY)
+          if (type.kind == TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY)
             return vpiAssocArray;
         } else {
-          obelisk_rt_design_cursor_v1 child{};
-          obelisk_rt_design_semantic_type_info_v1 childType{};
+          talos_rt_design_cursor_v1 child{};
+          talos_rt_design_semantic_type_info_v1 childType{};
           return semanticElement(handle, semantic, child) &&
                  semanticTypeInfo(handle, child, childType) &&
-                 childType.kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE;
+                 childType.kind == TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE;
         }
       }
     }
@@ -12348,24 +12348,24 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     }
 
     if (property == vpiPacked) {
-      const auto *access = obelisk::reflection::findVPIIndexedAccess(
+      const auto *access = talos::reflection::findVPIIndexedAccess(
           static_cast<uint32_t>(vpiTypeForHandle(handle)));
       if (access &&
           access->accessKind ==
-              obelisk::reflection::VPIIndexedAccessKind::RelationElement) {
-        obelisk_rt_design_cursor_v1 semantic{};
-        obelisk_rt_design_semantic_type_info_v1 semanticInfo{};
+              talos::reflection::VPIIndexedAccessKind::RelationElement) {
+        talos_rt_design_cursor_v1 semantic{};
+        talos_rt_design_semantic_type_info_v1 semanticInfo{};
         if (!semanticCursorFor(handle, semantic) ||
             !semanticTypeInfo(handle, semantic, semanticInfo))
           return vpiUndefined;
-        return semanticInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY;
+        return semanticInfo.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY;
       }
     }
 
-    obelisk_rt_design_type_info_v1 type{};
+    talos_rt_design_type_info_v1 type{};
     if (!physicalTypeInfo(handle, type))
       return vpiUndefined;
-    return (type.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0;
+    return (type.flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0;
   }
   if (property == vpiSize) {
     if (!propertyFor(handle, property))
@@ -12380,26 +12380,26 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       }
       return 0;
     }
-    obelisk_rt_design_info_v1 info{};
+    talos_rt_design_info_v1 info{};
     if (!infoFor(handle, info))
       return vpiUndefined;
     uint32_t exactType = static_cast<uint32_t>(vpiTypeForHandle(handle));
-    obelisk_rt_design_cursor_v1 semantic{};
+    talos_rt_design_cursor_v1 semantic{};
     if (exactType == vpiStructVar || exactType == vpiUnionVar ||
         exactType == vpiStructNet || exactType == vpiUnionNet) {
-      obelisk_rt_design_semantic_type_info_v1 aggregate{};
+      talos_rt_design_semantic_type_info_v1 aggregate{};
       if (semanticCursorFor(handle, semantic) &&
           semanticTypeInfo(handle, semantic, aggregate) &&
-          (aggregate.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
-           aggregate.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION))
+          (aggregate.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
+           aggregate.kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION))
         return static_cast<PLI_INT32>(
             std::min<uint32_t>(aggregate.edge_count, INT32_MAX));
     }
     if (isSourceClassProperty(info)) {
       uint64_t width = 0;
       if (semanticCursorFor(handle, semantic) &&
-          obelisk_rt_cached_design_semantic_bit_width(
-              handle->owner->context, semantic, &width) == OBELISK_RT_OK)
+          talos_rt_cached_design_semantic_bit_width(
+              handle->owner->context, semantic, &width) == TALOS_RT_OK)
         return static_cast<PLI_INT32>(std::min<uint64_t>(width, INT32_MAX));
       setError(handle->owner,
                "lexical class property has no value-dependent size", vpiNotice);
@@ -12416,13 +12416,13 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     if ((exactType == vpiRegArray || exactType == vpiNetArray ||
          exactType == vpiInterconnectArray) &&
         info.type_offset != 0) {
-      obelisk_rt_design_type_info_v1 type{};
-      if (obelisk_rt_cached_design_type_info(handle->owner->context,
+      talos_rt_design_type_info_v1 type{};
+      if (talos_rt_cached_design_type_info(handle->owner->context,
                                              {info.type_offset},
-                                             &type) != OBELISK_RT_OK)
+                                             &type) != TALOS_RT_OK)
         return vpiUndefined;
-      if (type.kind == OBELISK_RT_DESIGN_TYPE_ARRAY &&
-          (type.flags & OBELISK_RT_DESIGN_TYPE_PACKED) == 0) {
+      if (type.kind == TALOS_RT_DESIGN_TYPE_ARRAY &&
+          (type.flags & TALOS_RT_DESIGN_TYPE_PACKED) == 0) {
         uint64_t count = 0;
         if (!unpackedArrayElementCount(handle, {info.type_offset}, count)) {
           setError(handle->owner, "invalid unpacked-array VPI size metadata",
@@ -12432,7 +12432,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
         return static_cast<PLI_INT32>(std::min<uint64_t>(count, INT32_MAX));
       }
     }
-    return info.kind == OBELISK_RT_DESIGN_RECORD_SCOPE
+    return info.kind == TALOS_RT_DESIGN_RECORD_SCOPE
                ? 0
                : static_cast<PLI_INT32>(
                      std::min<uint64_t>(info.bit_width, INT32_MAX));
@@ -12453,27 +12453,27 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       return vpiUndefined;
     auto *context = handle->owner->context;
     VPIRelationRange owner{}, terminals{};
-    obelisk_rt_design_cursor_v1 primitive{};
+    talos_rt_design_cursor_v1 primitive{};
     uint32_t kind = 0;
     bool statement = false;
-    if (obelisk_rt_cached_vpi_relation_range(context, handle->cursor,
+    if (talos_rt_cached_vpi_relation_range(context, handle->cursor,
                                              vpiPrimitive, false,
-                                             &owner) == OBELISK_RT_OK &&
+                                             &owner) == TALOS_RT_OK &&
         owner.count == 1 &&
-        obelisk_rt_cached_vpi_relation_target(context, owner.first, &primitive,
+        talos_rt_cached_vpi_relation_target(context, owner.first, &primitive,
                                               &kind,
-                                              &statement) == OBELISK_RT_OK &&
+                                              &statement) == TALOS_RT_OK &&
         !statement &&
-        obelisk_rt_cached_vpi_relation_range(context, primitive, vpiPrimTerm,
+        talos_rt_cached_vpi_relation_range(context, primitive, vpiPrimTerm,
                                              true,
-                                             &terminals) == OBELISK_RT_OK) {
+                                             &terminals) == TALOS_RT_OK) {
       // The validated relation group is dense and is the terminal source order.
       // Reuse that ordinal instead of serializing one fixed fact per terminal.
       for (uint32_t index = 0; index != terminals.count; ++index) {
-        obelisk_rt_design_cursor_v1 terminal{};
-        if (obelisk_rt_cached_vpi_relation_target(
+        talos_rt_design_cursor_v1 terminal{};
+        if (talos_rt_cached_vpi_relation_target(
                 context, terminals.first + index, &terminal, &kind,
-                &statement) != OBELISK_RT_OK)
+                &statement) != TALOS_RT_OK)
           break;
         if (!statement && terminal.offset == handle->cursor.offset)
           return static_cast<PLI_INT32>(index);
@@ -12488,23 +12488,23 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       property == vpiVector) {
     uint32_t exactType = handle->exactVpiType;
     if (exactType == 0 &&
-        obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
-                                   &exactType) == OBELISK_RT_OK)
+        talos_rt_cached_vpi_type(handle->owner->context, handle->cursor,
+                                   &exactType) == TALOS_RT_OK)
       handle->exactVpiType = exactType;
-    if (!obelisk::reflection::findVPIProperty(exactType, property)) {
+    if (!talos::reflection::findVPIProperty(exactType, property)) {
       setError(handle->owner, "property is not defined for this VPI object",
                vpiNotice);
       return vpiUndefined;
     }
-    obelisk_rt_design_info_v1 info{};
+    talos_rt_design_info_v1 info{};
     if (!infoFor(handle, info))
       return vpiUndefined;
-    const bool isPort = info.kind == OBELISK_RT_DESIGN_RECORD_PORT;
+    const bool isPort = info.kind == TALOS_RT_DESIGN_RECORD_PORT;
     if (property == vpiDirection) {
       if (exactType == vpiIODecl) {
         uint32_t direction =
-            (info.capabilities & OBELISK_RT_DESIGN_CAP_IO_DIRECTION_MASK) >>
-            OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT;
+            (info.capabilities & TALOS_RT_DESIGN_CAP_IO_DIRECTION_MASK) >>
+            TALOS_RT_DESIGN_CAP_IO_DIRECTION_SHIFT;
         return direction == 0 ? vpiUndefined
                               : static_cast<PLI_INT32>(direction);
       }
@@ -12513,11 +12513,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
                  vpiNotice);
         return vpiUndefined;
       }
-      if ((info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_REF) != 0)
+      if ((info.capabilities & TALOS_RT_DESIGN_CAP_PORT_REF) != 0)
         return vpiRef;
-      bool input = (info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_INPUT) != 0;
+      bool input = (info.capabilities & TALOS_RT_DESIGN_CAP_PORT_INPUT) != 0;
       bool output =
-          (info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_OUTPUT) != 0;
+          (info.capabilities & TALOS_RT_DESIGN_CAP_PORT_OUTPUT) != 0;
       if (input && output)
         return vpiInout;
       return input ? vpiInput : vpiOutput;
@@ -12529,8 +12529,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
         return vpiUndefined;
       }
       return static_cast<PLI_INT32>(
-          (info.capabilities & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
-          OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT);
+          (info.capabilities & TALOS_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
+          TALOS_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT);
     }
     if (property == vpiPortType) {
       if (!isPort) {
@@ -12557,18 +12557,18 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   if (property == vpiLineNo) {
     if (handle->originalTypeDefault) {
       VPITypeDefaultInfo original{};
-      if (obelisk_rt_cached_vpi_type_default(handle->owner->context,
+      if (talos_rt_cached_vpi_type_default(handle->owner->context,
                                              handle->cursor,
-                                             &original) != OBELISK_RT_OK)
+                                             &original) != TALOS_RT_OK)
         return vpiUndefined;
       return original.line;
     }
     const uint8_t *file = nullptr;
     uint64_t fileSize = 0;
     uint32_t line = 0, column = 0;
-    if (obelisk_rt_cached_design_source(handle->owner->context, handle->cursor,
+    if (talos_rt_cached_design_source(handle->owner->context, handle->cursor,
                                         &file, &fileSize, &line,
-                                        &column) != OBELISK_RT_OK)
+                                        &column) != TALOS_RT_OK)
       return vpiUndefined;
     return static_cast<PLI_INT32>(std::min<uint32_t>(line, INT32_MAX));
   }
@@ -12576,7 +12576,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   return vpiUndefined;
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
+extern "C" TALOS_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
                                                   vpiHandle opaque) {
   VPICallScope vpiCallScope;
   __vpiHandle *handle = findHandle(opaque);
@@ -12586,21 +12586,21 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
   if (!descriptor)
     return vpiUndefined;
   if (descriptor->valueKind !=
-      obelisk::reflection::VPIPropertyValueKind::Int64) {
+      talos::reflection::VPIPropertyValueKind::Int64) {
     setError(handle->owner, "property is not a 64-bit integer VPI property",
              vpiNotice);
     return vpiUndefined;
   }
   VPIFixedPropertyValue optional{};
   const auto optionalStatus = optionalPropertyFor(handle, descriptor, optional);
-  if (optionalStatus == OBELISK_RT_OK)
+  if (optionalStatus == TALOS_RT_OK)
     return static_cast<PLI_INT64>(optional.payload);
-  if (optionalStatus != OBELISK_RT_EOF)
+  if (optionalStatus != TALOS_RT_EOF)
     return vpiUndefined;
   if (descriptor->realization ==
-          obelisk::reflection::VPIPropertyRealization::FixedImage ||
+          talos::reflection::VPIPropertyRealization::FixedImage ||
       descriptor->realization ==
-          obelisk::reflection::VPIPropertyRealization::DefinitionImage) {
+          talos::reflection::VPIPropertyRealization::DefinitionImage) {
     VPIFixedPropertyValue value{};
     if (!fixedPropertyFor(handle, *descriptor, value) ||
         value.kind != static_cast<uint8_t>(descriptor->valueKind))
@@ -12612,9 +12612,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
   if (property == vpiObjId && vpiTypeForHandle(handle) == vpiClassVar) {
     ContextTransaction transaction(handle->owner->context);
     ManagedExecutionScope managed(handle->owner->context);
-    obelisk_rt_gc_lane_v1 *lane = managed.getLane();
-    if (managed.getStatus() != OBELISK_RT_OK || !lane ||
-        obelisk_rt_managed_lane_context(lane) != handle->owner->context) {
+    talos_rt_gc_lane_v1 *lane = managed.getLane();
+    if (managed.getStatus() != TALOS_RT_OK || !lane ||
+        talos_rt_managed_lane_context(lane) != handle->owner->context) {
       setError(handle->owner, "class VPI query cannot enter GC scope",
                vpiInternal);
       return vpiUndefined;
@@ -12657,12 +12657,12 @@ static bool decompileSnapshotScalar(__vpiHandle *handle,
                vpiSystem);
       return false;
     }
-    obelisk_rt_design_semantic_type_info_v1 info{};
+    talos_rt_design_semantic_type_info_v1 info{};
     if (!value.unsignedIndex && !semanticTypeInfo(handle, value.semantic, info))
       return false;
     result = std::to_string(value.bitWidth) +
              ((!value.bitSelection &&
-               (info.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED))
+               (info.flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED))
                   ? "'sb"
                   : "'b") +
              bits;
@@ -12782,9 +12782,9 @@ static bool decompileSnapshot(__vpiHandle *handle,
 // The original parameter default and the effective parameter value are
 // separate objects; decompilation follows only the original occurrence tree.
 bool decompileSourceExpression(__vpiHandle *handle, std::string &result) {
-  using obelisk::reflection::findVPISourceOperator;
+  using talos::reflection::findVPISourceOperator;
   struct Pending {
-    obelisk_rt_design_cursor_v1 cursor{};
+    talos_rt_design_cursor_v1 cursor{};
     uint32_t type = 0;
     uint8_t parentPrecedence = 0;
     bool parenthesizeEqual = false;
@@ -12796,7 +12796,7 @@ bool decompileSourceExpression(__vpiHandle *handle, std::string &result) {
              vpiInternal);
     return false;
   };
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::string text;
     bool escapedIdentifier = false;
     auto append = [&](std::string_view token) {
@@ -12823,9 +12823,9 @@ bool decompileSourceExpression(__vpiHandle *handle, std::string &result) {
       }
       if (item.type == vpiParameter) {
         VPIFixedPropertyValue nameProperty{};
-        if (obelisk_rt_cached_vpi_fixed_property(context, item.cursor, vpiName,
+        if (talos_rt_cached_vpi_fixed_property(context, item.cursor, vpiName,
                                                  &nameProperty) !=
-                OBELISK_RT_OK ||
+                TALOS_RT_OK ||
             !nameProperty.stringSize || nameProperty.stringSize > SIZE_MAX)
           return invalid();
         std::string_view name(
@@ -12840,24 +12840,24 @@ bool decompileSourceExpression(__vpiHandle *handle, std::string &result) {
       }
       if (item.type == vpiConstant) {
         VPIFrozenValue value{};
-        obelisk_rt_design_cursor_v1 semantic{};
-        obelisk_rt_design_semantic_type_info_v1 info{};
-        if (obelisk_rt_cached_vpi_frozen_value(context, item.cursor, &value) !=
-                OBELISK_RT_OK ||
-            (value.kindAndFlags & obelisk::reflection::frozenValueKindMask) !=
+        talos_rt_design_cursor_v1 semantic{};
+        talos_rt_design_semantic_type_info_v1 info{};
+        if (talos_rt_cached_vpi_frozen_value(context, item.cursor, &value) !=
+                TALOS_RT_OK ||
+            (value.kindAndFlags & talos::reflection::frozenValueKindMask) !=
                 static_cast<uint32_t>(
-                    obelisk::reflection::FrozenValueKind::Packed) ||
+                    talos::reflection::FrozenValueKind::Packed) ||
             !value.bitWidth ||
-            obelisk_rt_cached_design_semantic_root(
-                context, item.cursor, &semantic) != OBELISK_RT_OK ||
-            obelisk_rt_cached_design_semantic_type_info(context, semantic,
-                                                        &info) != OBELISK_RT_OK)
+            talos_rt_cached_design_semantic_root(
+                context, item.cursor, &semantic) != TALOS_RT_OK ||
+            talos_rt_cached_design_semantic_type_info(context, semantic,
+                                                        &info) != TALOS_RT_OK)
           return invalid();
         const uint64_t bytes = (value.bitWidth - 1) / 8 + 1;
         if (bytes > UINT64_MAX / 2 || value.payloadSize != bytes * 2)
           return invalid();
         append(std::to_string(value.bitWidth));
-        append((info.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) ? "'sb" : "'b");
+        append((info.flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) ? "'sb" : "'b");
         for (uint64_t bit = value.bitWidth; bit != 0;) {
           --bit;
           const bool v = (value.payload[bit / 8] >> (bit % 8)) & 1;
@@ -12869,15 +12869,15 @@ bool decompileSourceExpression(__vpiHandle *handle, std::string &result) {
       if (item.type != vpiOperation)
         return invalid();
       VPIFixedPropertyValue property{};
-      if (obelisk_rt_cached_vpi_fixed_property(context, item.cursor, vpiOpType,
-                                               &property) != OBELISK_RT_OK)
+      if (talos_rt_cached_vpi_fixed_property(context, item.cursor, vpiOpType,
+                                               &property) != TALOS_RT_OK)
         return invalid();
       const auto *operation = findVPISourceOperator(property.payload);
       VPIRelationRange operands{};
       if (!operation ||
-          obelisk_rt_cached_vpi_relation_range(context, item.cursor, vpiOperand,
+          talos_rt_cached_vpi_relation_range(context, item.cursor, vpiOperand,
                                                true,
-                                               &operands) != OBELISK_RT_OK ||
+                                               &operands) != TALOS_RT_OK ||
           operands.count != operation->arity)
         return invalid();
       const bool parentheses =
@@ -12892,9 +12892,9 @@ bool decompileSourceExpression(__vpiHandle *handle, std::string &result) {
         --ordinal;
         Pending child;
         bool statement = false;
-        if (obelisk_rt_cached_vpi_relation_target(
+        if (talos_rt_cached_vpi_relation_target(
                 context, operands.first + ordinal, &child.cursor, &child.type,
-                &statement) != OBELISK_RT_OK ||
+                &statement) != TALOS_RT_OK ||
             statement)
           return invalid();
         child.parentPrecedence = operation->precedence;
@@ -12921,7 +12921,7 @@ bool decompileSourceExpression(__vpiHandle *handle, std::string &result) {
     result = std::move(text);
     return true;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(handle->owner, "could not decompile original VPI expression",
              vpiSystem);
     return false;
@@ -12932,7 +12932,7 @@ bool decompileSourceExpression(__vpiHandle *handle, std::string &result) {
 // from a display hierarchy. A missing exact identifier is an unavailable query.
 bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
   struct Pending {
-    obelisk_rt_design_cursor_v1 cursor{};
+    talos_rt_design_cursor_v1 cursor{};
     uint32_t kind = 0;
     std::string_view identifier;
     std::string token;
@@ -12940,7 +12940,7 @@ bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
     bool parenthesizeEqual = false;
   };
   auto *context = handle->owner->context;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::string text;
     bool escaped = false;
     auto append = [&](std::string_view value) {
@@ -12966,8 +12966,8 @@ bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
         continue;
       }
       VPIExpressionInfo expression{};
-      if (obelisk_rt_cached_vpi_expression(context, item.cursor, &expression) !=
-          OBELISK_RT_OK) {
+      if (talos_rt_cached_vpi_expression(context, item.cursor, &expression) !=
+          TALOS_RT_OK) {
         if (item.identifier.empty()) {
           setError(handle->owner,
                    "exact source reference spelling is unavailable", vpiNotice);
@@ -12992,25 +12992,25 @@ bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
       std::vector<Pending> children;
       for (uint32_t index = 0; index != expression.operandCount; ++index) {
         Pending child;
-        if (obelisk_rt_cached_vpi_expression_operand(
+        if (talos_rt_cached_vpi_expression_operand(
                 context, item.cursor, index, &child.cursor, &child.kind) !=
-            OBELISK_RT_OK)
+            TALOS_RT_OK)
           return false;
         const uint8_t *name = nullptr;
         uint64_t size = 0;
-        auto status = obelisk_rt_cached_vpi_expression_operand_identifier(
+        auto status = talos_rt_cached_vpi_expression_operand_identifier(
             context, item.cursor, index, &name, &size);
-        if (status == OBELISK_RT_OK)
+        if (status == TALOS_RT_OK)
           child.identifier =
               std::string_view(reinterpret_cast<const char *>(name), size);
-        else if (status != OBELISK_RT_EOF)
+        else if (status != TALOS_RT_EOF)
           return false;
         children.push_back(std::move(child));
       }
       std::vector<Pending> ordered;
       const auto *operation =
           item.kind == vpiOperation
-              ? obelisk::reflection::findVPISourceOnlyOperator(expression.code)
+              ? talos::reflection::findVPISourceOnlyOperator(expression.code)
               : nullptr;
       bool parenthesize =
           operation && (operation->precedence < item.parentPrecedence ||
@@ -13022,58 +13022,58 @@ bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
         // A cast's Typespec is already retained by its semantic root. Render
         // a proven equivalent integral type without inventing an alias name
         // from hierarchy (6.24.1, 37.59 details 3 and 5).
-        auto typeInfo = [&](obelisk_rt_design_cursor_v1 cursor,
-                            obelisk_rt_design_semantic_type_info_v1 &info) {
-          obelisk_rt_design_cursor_v1 semantic{};
-          return obelisk_rt_cached_design_semantic_root(
-                     context, cursor, &semantic) == OBELISK_RT_OK &&
-                 obelisk_rt_cached_design_semantic_type_info(
-                     context, semantic, &info) == OBELISK_RT_OK &&
-                 obelisk_rt_cached_design_semantic_bit_width(
-                     context, semantic, &info.bit_width) == OBELISK_RT_OK;
+        auto typeInfo = [&](talos_rt_design_cursor_v1 cursor,
+                            talos_rt_design_semantic_type_info_v1 &info) {
+          talos_rt_design_cursor_v1 semantic{};
+          return talos_rt_cached_design_semantic_root(
+                     context, cursor, &semantic) == TALOS_RT_OK &&
+                 talos_rt_cached_design_semantic_type_info(
+                     context, semantic, &info) == TALOS_RT_OK &&
+                 talos_rt_cached_design_semantic_bit_width(
+                     context, semantic, &info.bit_width) == TALOS_RT_OK;
         };
-        obelisk_rt_design_semantic_type_info_v1 target{}, operand{};
+        talos_rt_design_semantic_type_info_v1 target{}, operand{};
         if (children.size() != 1 || !typeInfo(item.cursor, target) ||
             !typeInfo(children[0].cursor, operand))
           return false;
-        const bool sign = target.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED;
-        const bool state = target.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE;
+        const bool sign = target.flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED;
+        const bool state = target.flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE;
         const char *keyword = nullptr;
         uint32_t width = 0;
         bool keywordState = false;
         switch (target.kind) {
-        case OBELISK_RT_DESIGN_SEMANTIC_BIT:
+        case TALOS_RT_DESIGN_SEMANTIC_BIT:
           keyword = "bit";
           width = 1;
           break;
-        case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
-        case OBELISK_RT_DESIGN_SEMANTIC_REG:
+        case TALOS_RT_DESIGN_SEMANTIC_LOGIC:
+        case TALOS_RT_DESIGN_SEMANTIC_REG:
           keyword = "logic";
           width = 1;
           keywordState = true;
           break;
-        case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
+        case TALOS_RT_DESIGN_SEMANTIC_BYTE:
           keyword = "byte";
           width = 8;
           break;
-        case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
+        case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
           keyword = "shortint";
           width = 16;
           break;
-        case OBELISK_RT_DESIGN_SEMANTIC_INT:
+        case TALOS_RT_DESIGN_SEMANTIC_INT:
           keyword = "int";
           width = 32;
           break;
-        case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
+        case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
           keyword = "longint";
           width = 64;
           break;
-        case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
+        case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
           keyword = "integer";
           width = 32;
           keywordState = true;
           break;
-        case OBELISK_RT_DESIGN_SEMANTIC_TIME:
+        case TALOS_RT_DESIGN_SEMANTIC_TIME:
           keyword = "time";
           width = 64;
           keywordState = true;
@@ -13087,28 +13087,28 @@ bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
           // normalization to plain integral vectors: nominal aggregate/enum
           // types require their exact source type spelling.
           auto scalar = target;
-          obelisk_rt_design_cursor_v1 scalarCursor{};
-          if (obelisk_rt_cached_design_semantic_root(
-                  context, item.cursor, &scalarCursor) != OBELISK_RT_OK)
+          talos_rt_design_cursor_v1 scalarCursor{};
+          if (talos_rt_cached_design_semantic_root(
+                  context, item.cursor, &scalarCursor) != TALOS_RT_OK)
             return false;
-          while (scalar.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
+          while (scalar.kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
                  scalar.edge_count == 1) {
-            obelisk_rt_design_semantic_type_edge_v1 edge{};
-            if (obelisk_rt_cached_design_semantic_type_edge(
-                    context, scalarCursor, 0, &edge) != OBELISK_RT_OK ||
-                edge.role != OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT ||
-                obelisk_rt_cached_design_semantic_type_info(
-                    context, edge.child, &scalar) != OBELISK_RT_OK)
+            talos_rt_design_semantic_type_edge_v1 edge{};
+            if (talos_rt_cached_design_semantic_type_edge(
+                    context, scalarCursor, 0, &edge) != TALOS_RT_OK ||
+                edge.role != TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT ||
+                talos_rt_cached_design_semantic_type_info(
+                    context, edge.child, &scalar) != TALOS_RT_OK)
               return false;
             scalarCursor = edge.child;
           }
           bool integral =
-              (scalar.kind >= OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL &&
-               scalar.kind <= OBELISK_RT_DESIGN_SEMANTIC_INTEGER) ||
-              scalar.kind == OBELISK_RT_DESIGN_SEMANTIC_TIME;
+              (scalar.kind >= TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL &&
+               scalar.kind <= TALOS_RT_DESIGN_SEMANTIC_INTEGER) ||
+              scalar.kind == TALOS_RT_DESIGN_SEMANTIC_TIME;
           if (!integral || !target.bit_width ||
               state !=
-                  bool(operand.flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE)) {
+                  bool(operand.flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE)) {
             setError(handle->owner, "exact cast target spelling is unavailable",
                      vpiNotice);
             return false;
@@ -13157,7 +13157,7 @@ bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
         ordered.push_back(std::move(children[0]));
         ordered.push_back(token(" [ "));
         ordered.push_back(std::move(children[1]));
-        if (!obelisk::reflection::isVPIBitSelection(item.kind)) {
+        if (!talos::reflection::isVPIBitSelection(item.kind)) {
           ordered.push_back(token(item.kind == vpiPartSelect ? " : "
                                   : expression.code == 1     ? " +: "
                                                              : " -: "));
@@ -13176,14 +13176,14 @@ bool decompileRetainedExpression(__vpiHandle *handle, std::string &result) {
     result = std::move(text);
     return true;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(handle->owner, "could not decompile retained VPI expression",
              vpiSystem);
     return false;
   }
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
+extern "C" TALOS_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                                                      vpiHandle opaque) {
   VPICallScope vpiCallScope;
   __vpiHandle *handle = findHandle(opaque);
@@ -13194,18 +13194,18 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     PLI_INT32 type = vpiTypeForHandle(handle);
     const auto *descriptor = type == vpiUndefined
                                  ? nullptr
-                                 : obelisk::reflection::findVPIObjectKind(
+                                 : talos::reflection::findVPIObjectKind(
                                        static_cast<uint32_t>(type));
     if (!descriptor) {
       setError(handle->owner, "VPI object type has no symbolic spelling",
                vpiNotice);
       return nullptr;
     }
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       scratch = descriptor->apiName;
       return scratch.data();
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner, "VPI type-name buffer is out of memory",
                vpiSystem);
       return nullptr;
@@ -13220,11 +13220,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     if (property == vpiName && handle->snapshot->variableView) {
       if (handle->snapshot->name.empty())
         return nullptr;
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         scratch = handle->snapshot->name;
         return scratch.data();
       }
-      OBELISK_RT_CATCH_ALL {
+      TALOS_RT_CATCH_ALL {
         setError(handle->owner, "could not copy snapshot member name",
                  vpiSystem);
         return nullptr;
@@ -13235,12 +13235,12 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                vpiNotice);
       return nullptr;
     }
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       return decompileSnapshot(handle, *handle->snapshot, scratch)
                  ? scratch.data()
                  : nullptr;
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner, "could not decompile VPI message value",
                vpiSystem);
       return nullptr;
@@ -13264,18 +13264,18 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
   }
   if (propertyDescriptor &&
       propertyDescriptor->valueKind !=
-          obelisk::reflection::VPIPropertyValueKind::String &&
+          talos::reflection::VPIPropertyValueKind::String &&
       !propertyDescriptor->symbolicString) {
     setError(handle->owner, "property is not a string VPI property", vpiNotice);
     return nullptr;
   }
   if (propertyDescriptor &&
       propertyDescriptor->realization ==
-          obelisk::reflection::VPIPropertyRealization::IndexedImage) {
+          talos::reflection::VPIPropertyRealization::IndexedImage) {
     uint32_t value = 0;
     if (!indexedImagePropertyFor(handle, *propertyDescriptor, value))
       return nullptr;
-    const auto *symbolic = obelisk::reflection::findVPIIntegerPropertyValue(
+    const auto *symbolic = talos::reflection::findVPIIntegerPropertyValue(
         propertyDescriptor->property, value);
     if (!symbolic || symbolic->symbolicName[0] == '\0') {
       setError(handle->owner,
@@ -13283,11 +13283,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                vpiNotice);
       return nullptr;
     }
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       scratch = symbolic->symbolicName;
       return scratch.data();
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner, "VPI symbolic-property buffer is out of memory",
                vpiSystem);
       return nullptr;
@@ -13297,7 +13297,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
   // Parameter decompilation separately uses the same declared identifier.
   const auto *imageDescriptor = propertyDescriptor;
   if (property == vpiName)
-    imageDescriptor = obelisk::reflection::findVPIProperty(
+    imageDescriptor = talos::reflection::findVPIProperty(
         static_cast<uint32_t>(vpiTypeForHandle(handle)), property);
   const bool selectedName =
       property == vpiName && handle->form == VPIObjectForm::Indexed &&
@@ -13317,10 +13317,10 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
   VPIFixedPropertyValue optional{};
   const auto optionalStatus = optionalPropertyFor(
       selectedName ? &exactNameSource : handle, imageDescriptor, optional);
-  if (optionalStatus == OBELISK_RT_OK) {
-    OBELISK_RT_TRY {
+  if (optionalStatus == TALOS_RT_OK) {
+    TALOS_RT_TRY {
       if (imageDescriptor->valueKind ==
-          obelisk::reflection::VPIPropertyValueKind::String) {
+          talos::reflection::VPIPropertyValueKind::String) {
         scratch.assign(reinterpret_cast<const char *>(optional.stringData),
                        static_cast<size_t>(optional.stringSize));
         if (selectedName)
@@ -13328,7 +13328,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
             scratch += "[" + std::to_string(step.index) + "]";
         return scratch.data();
       }
-      const auto *symbolic = obelisk::reflection::findVPIIntegerPropertyValue(
+      const auto *symbolic = talos::reflection::findVPIIntegerPropertyValue(
           imageDescriptor->property, static_cast<uint32_t>(optional.payload));
       if (imageDescriptor->symbolicString && symbolic &&
           symbolic->symbolicName[0]) {
@@ -13339,34 +13339,34 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                vpiNotice);
       return nullptr;
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner, "VPI property string buffer is out of memory",
                vpiSystem);
       return nullptr;
     }
   }
-  if (optionalStatus != OBELISK_RT_EOF)
+  if (optionalStatus != TALOS_RT_EOF)
     return nullptr;
   VPIFixedPropertyValue declarationName{};
   const bool hasDeclarationName =
       property == vpiDecompile && handle->form == VPIObjectForm::Design &&
       vpiTypeForHandle(handle) == vpiParameter &&
-      obelisk_rt_cached_vpi_fixed_property(handle->owner->context,
+      talos_rt_cached_vpi_fixed_property(handle->owner->context,
                                            handle->cursor, vpiName,
-                                           &declarationName) == OBELISK_RT_OK;
+                                           &declarationName) == TALOS_RT_OK;
   if (propertyDescriptor &&
       (propertyDescriptor->realization ==
-           obelisk::reflection::VPIPropertyRealization::FixedImage ||
+           talos::reflection::VPIPropertyRealization::FixedImage ||
        propertyDescriptor->realization ==
-           obelisk::reflection::VPIPropertyRealization::DefinitionImage)) {
+           talos::reflection::VPIPropertyRealization::DefinitionImage)) {
     if (propertyDescriptor->symbolicString &&
         propertyDescriptor->valueKind ==
-            obelisk::reflection::VPIPropertyValueKind::Integer) {
+            talos::reflection::VPIPropertyValueKind::Integer) {
       VPIFixedPropertyValue value{};
       if (!fixedPropertyFor(handle, *propertyDescriptor, value) ||
           value.kind != static_cast<uint8_t>(propertyDescriptor->valueKind))
         return nullptr;
-      const auto *symbolic = obelisk::reflection::findVPIIntegerPropertyValue(
+      const auto *symbolic = talos::reflection::findVPIIntegerPropertyValue(
           propertyDescriptor->property, static_cast<uint32_t>(value.payload));
       if (!symbolic || symbolic->symbolicName[0] == '\0') {
         setError(handle->owner,
@@ -13374,18 +13374,18 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                  vpiNotice);
         return nullptr;
       }
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         scratch = symbolic->symbolicName;
         return scratch.data();
       }
-      OBELISK_RT_CATCH_ALL {
+      TALOS_RT_CATCH_ALL {
         setError(handle->owner, "VPI symbolic-property buffer is out of memory",
                  vpiSystem);
         return nullptr;
       }
     }
     if (propertyDescriptor->valueKind !=
-        obelisk::reflection::VPIPropertyValueKind::String) {
+        talos::reflection::VPIPropertyValueKind::String) {
       setError(handle->owner, "property is not a string VPI property",
                vpiNotice);
       return nullptr;
@@ -13396,12 +13396,12 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
       return nullptr;
     if (property == vpiDefFile && value.stringSize == 0)
       return nullptr;
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       scratch.assign(reinterpret_cast<const char *>(value.stringData),
                      static_cast<size_t>(value.stringSize));
       return scratch.data();
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner, "VPI property string buffer is out of memory",
                vpiSystem);
       return nullptr;
@@ -13410,8 +13410,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
   if (property == vpiDecompile) {
     VPIExpressionInfo expression{};
     if (handle->form == VPIObjectForm::Design && !handle->statement &&
-        obelisk_rt_cached_vpi_expression(handle->owner->context, handle->cursor,
-                                         &expression) == OBELISK_RT_OK)
+        talos_rt_cached_vpi_expression(handle->owner->context, handle->cursor,
+                                         &expression) == TALOS_RT_OK)
       return decompileRetainedExpression(handle, scratch) ? scratch.data()
                                                           : nullptr;
     if (hasDeclarationName)
@@ -13420,23 +13420,23 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     const auto type = vpiTypeForHandle(handle);
     if (handle->form == VPIObjectForm::Design &&
         (type == vpiConstant || type == vpiOperation)) {
-      obelisk_rt_design_info_v1 info{};
+      talos_rt_design_info_v1 info{};
       if (!infoFor(handle, info))
         return nullptr;
-      if (info.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT)
+      if (info.kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT)
         return decompileSourceExpression(handle, scratch) ? scratch.data()
                                                           : nullptr;
     }
     if (!nameFor(handle, scratch) || scratch.empty())
       return nullptr;
-    obelisk_rt_design_cursor_v1 parent{};
+    talos_rt_design_cursor_v1 parent{};
     const uint8_t *parentName = nullptr;
     uint64_t parentNameSize = 0;
-    if (obelisk_rt_cached_design_parent(handle->owner->context, handle->cursor,
-                                        &parent) == OBELISK_RT_OK &&
-        obelisk_rt_cached_design_name(handle->owner->context, parent,
+    if (talos_rt_cached_design_parent(handle->owner->context, handle->cursor,
+                                        &parent) == TALOS_RT_OK &&
+        talos_rt_cached_design_name(handle->owner->context, parent,
                                       &parentName,
-                                      &parentNameSize) == OBELISK_RT_OK &&
+                                      &parentNameSize) == TALOS_RT_OK &&
         parentNameSize != 0 && scratch.size() > parentNameSize &&
         std::memcmp(scratch.data(), parentName,
                     static_cast<size_t>(parentNameSize)) == 0) {
@@ -13450,8 +13450,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     return scratch.data();
   }
   uint32_t objectType = static_cast<uint32_t>(vpiTypeForHandle(handle));
-  const bool concreteTypespec = obelisk::reflection::vpiObjectSetContains(
-      obelisk::reflection::VPIObjectSetID::ConcreteTypespecObjects, objectType);
+  const bool concreteTypespec = talos::reflection::vpiObjectSetContains(
+      talos::reflection::VPIObjectSetID::ConcreteTypespecObjects, objectType);
   if (handle->form == VPIObjectForm::Indexed && objectType == vpiPortBit &&
       property == vpiName)
     return nullptr;
@@ -13463,23 +13463,23 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
   }
   if (property == vpiFullName && handle->form == VPIObjectForm::Design &&
       (objectType == vpiParameter || objectType == vpiTypeParameter)) {
-    obelisk_rt_design_cursor_v1 scope{};
-    if (obelisk_rt_cached_vpi_definition_member_scope(
-            handle->owner->context, handle->cursor, &scope) == OBELISK_RT_OK) {
+    talos_rt_design_cursor_v1 scope{};
+    if (talos_rt_cached_vpi_definition_member_scope(
+            handle->owner->context, handle->cursor, &scope) == TALOS_RT_OK) {
       const uint8_t *local = nullptr, *parent = nullptr;
       uint64_t localSize = 0, parentSize = 0;
-      if (obelisk_rt_cached_design_name(handle->owner->context, handle->cursor,
-                                        &local, &localSize) != OBELISK_RT_OK ||
-          obelisk_rt_cached_design_name(handle->owner->context, scope, &parent,
-                                        &parentSize) != OBELISK_RT_OK)
+      if (talos_rt_cached_design_name(handle->owner->context, handle->cursor,
+                                        &local, &localSize) != TALOS_RT_OK ||
+          talos_rt_cached_design_name(handle->owner->context, scope, &parent,
+                                        &parentSize) != TALOS_RT_OK)
         return nullptr;
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         scratch.assign(reinterpret_cast<const char *>(parent), parentSize);
         scratch.push_back('.');
         scratch.append(reinterpret_cast<const char *>(local), localSize);
         return scratch.data();
       }
-      OBELISK_RT_CATCH_ALL {
+      TALOS_RT_CATCH_ALL {
         setError(handle->owner, "could not materialize parameter full name",
                  vpiSystem);
         return nullptr;
@@ -13491,29 +13491,29 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     const uint8_t *memberName = nullptr;
     uint64_t memberNameSize = 0;
     VPIRelationRange range{};
-    obelisk_rt_design_cursor_v1 instance{};
+    talos_rt_design_cursor_v1 instance{};
     uint32_t instanceType = 0;
     bool statement = false;
-    if (obelisk_rt_cached_design_name(handle->owner->context, handle->cursor,
+    if (talos_rt_cached_design_name(handle->owner->context, handle->cursor,
                                       &memberName,
-                                      &memberNameSize) != OBELISK_RT_OK ||
+                                      &memberNameSize) != TALOS_RT_OK ||
         memberNameSize == 0 ||
-        obelisk_rt_cached_vpi_relation_range(handle->owner->context,
+        talos_rt_cached_vpi_relation_range(handle->owner->context,
                                              handle->cursor, vpiInstance, false,
-                                             &range) != OBELISK_RT_OK ||
-        obelisk_rt_cached_vpi_relation_target(
+                                             &range) != TALOS_RT_OK ||
+        talos_rt_cached_vpi_relation_target(
             handle->owner->context, range.first, &instance, &instanceType,
-            &statement) != OBELISK_RT_OK ||
+            &statement) != TALOS_RT_OK ||
         statement)
       return nullptr;
     const uint8_t *instanceName = nullptr;
     uint64_t instanceNameSize = 0;
-    if (obelisk_rt_cached_design_name(handle->owner->context, instance,
+    if (talos_rt_cached_design_name(handle->owner->context, instance,
                                       &instanceName,
-                                      &instanceNameSize) != OBELISK_RT_OK ||
+                                      &instanceNameSize) != TALOS_RT_OK ||
         instanceNameSize == 0)
       return nullptr;
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       scratch.assign(reinterpret_cast<const char *>(instanceName),
                      static_cast<size_t>(instanceNameSize));
       scratch.push_back('.');
@@ -13521,7 +13521,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                      static_cast<size_t>(memberNameSize));
       return scratch.data();
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner, "could not materialize RefObj full name",
                vpiSystem);
       return nullptr;
@@ -13529,49 +13529,49 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
   }
   if (isSemanticObjectForm(handle->form) && property == vpiName) {
     if (handle->form == VPIObjectForm::TypespecMember) {
-      obelisk_rt_design_semantic_type_edge_v1 edge{};
+      talos_rt_design_semantic_type_edge_v1 edge{};
       if (!semanticEdge(handle, handle->semanticCursor, handle->semanticEdge,
                         edge) ||
-          edge.role != OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER ||
+          edge.role != TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER ||
           edge.name_size == 0)
         return nullptr;
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         scratch.assign(reinterpret_cast<const char *>(edge.name),
                        static_cast<size_t>(edge.name_size));
         return scratch.data();
       }
-      OBELISK_RT_CATCH_ALL {
+      TALOS_RT_CATCH_ALL {
         setError(handle->owner, "could not materialize member name", vpiSystem);
         return nullptr;
       }
     }
     if (handle->form != VPIObjectForm::Typespec)
       return nullptr;
-    obelisk_rt_design_semantic_type_info_v1 info{};
+    talos_rt_design_semantic_type_info_v1 info{};
     if (!semanticTypeInfo(handle, handle->semanticCursor, info) ||
-        (info.kind != OBELISK_RT_DESIGN_SEMANTIC_CLASS &&
-         info.kind != OBELISK_RT_DESIGN_SEMANTIC_PROCESS &&
-         info.kind != OBELISK_RT_DESIGN_SEMANTIC_MAILBOX &&
-         info.kind != OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE &&
-         info.kind != OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE))
+        (info.kind != TALOS_RT_DESIGN_SEMANTIC_CLASS &&
+         info.kind != TALOS_RT_DESIGN_SEMANTIC_PROCESS &&
+         info.kind != TALOS_RT_DESIGN_SEMANTIC_MAILBOX &&
+         info.kind != TALOS_RT_DESIGN_SEMANTIC_SEMAPHORE &&
+         info.kind != TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE))
       return nullptr;
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       if (info.name_size != 0) {
         scratch.assign(reinterpret_cast<const char *>(info.name),
                        static_cast<size_t>(info.name_size));
-      } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS) {
+      } else if (info.kind == TALOS_RT_DESIGN_SEMANTIC_PROCESS) {
         scratch = "process";
-      } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE) {
+      } else if (info.kind == TALOS_RT_DESIGN_SEMANTIC_SEMAPHORE) {
         scratch = "semaphore";
-      } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX) {
+      } else if (info.kind == TALOS_RT_DESIGN_SEMANTIC_MAILBOX) {
         scratch = "mailbox$" + std::to_string(handle->semanticCursor.offset);
-      } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS &&
+      } else if (info.kind == TALOS_RT_DESIGN_SEMANTIC_CLASS &&
                  info.identity_target.offset != 0) {
         const uint8_t *name = nullptr;
         uint64_t size = 0;
-        if (obelisk_rt_cached_design_name(handle->owner->context,
+        if (talos_rt_cached_design_name(handle->owner->context,
                                           info.identity_target, &name,
-                                          &size) != OBELISK_RT_OK ||
+                                          &size) != TALOS_RT_OK ||
             size == 0)
           return nullptr;
         scratch.assign(reinterpret_cast<const char *>(name),
@@ -13588,7 +13588,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
       }
       return scratch.data();
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner, "could not materialize typespec name", vpiSystem);
       return nullptr;
     }
@@ -13600,7 +13600,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
       VPIValueSource source{};
       VPISelectedSpan span{};
       if (!policy || !valueSourceFor(handle, *policy, source) ||
-          selectedObjectSpan(handle, source, 1, false, span) != OBELISK_RT_OK) {
+          selectedObjectSpan(handle, source, 1, false, span) != TALOS_RT_OK) {
         setError(handle->owner, "selected bit has no current existing name",
                  vpiNotice);
         return nullptr;
@@ -13610,16 +13610,16 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
       parent.cursor = span.cursor;
       parent.exactVpiType = span.exactType;
       inheritExpressionContext(parent, *handle);
-      obelisk_rt_design_cursor_v1 semanticCursor{};
-      obelisk_rt_design_semantic_type_info_v1 semantic{};
+      talos_rt_design_cursor_v1 semanticCursor{};
+      talos_rt_design_semantic_type_info_v1 semantic{};
       if (!semanticCursorFor(&parent, semanticCursor) ||
-          obelisk_rt_cached_design_semantic_type_info(
+          talos_rt_cached_design_semantic_type_info(
               handle->owner->context, semanticCursor, &semantic) !=
-              OBELISK_RT_OK ||
+              TALOS_RT_OK ||
           !nameFor(&parent, scratch))
         return nullptr;
       bool hasRange =
-          (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
+          (semantic.flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
       bool ascending = hasRange && semantic.range_left < semantic.range_right;
       __int128 index = hasRange ? semantic.range_right : 0;
       index += ascending ? -static_cast<__int128>(span.offset) : span.offset;
@@ -13627,12 +13627,12 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
         return nullptr;
       if (property == vpiName) {
         VPIFixedPropertyValue exact{};
-        auto nameStatus = obelisk_rt_cached_vpi_fixed_property(
+        auto nameStatus = talos_rt_cached_vpi_fixed_property(
             handle->owner->context, parent.cursor, vpiName, &exact);
-        if (nameStatus == OBELISK_RT_OK) {
+        if (nameStatus == TALOS_RT_OK) {
           scratch.assign(reinterpret_cast<const char *>(exact.stringData),
                          static_cast<size_t>(exact.stringSize));
-        } else if (nameStatus == OBELISK_RT_EOF) {
+        } else if (nameStatus == TALOS_RT_EOF) {
           size_t dot = scratch.rfind('.'), colon = scratch.rfind("::");
           if (colon != std::string::npos &&
               (dot == std::string::npos || colon > dot))
@@ -13647,16 +13647,16 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     }
     if (property == vpiName && objectType == vpiModport) {
       VPIModportBinding binding{};
-      if (obelisk_rt_cached_vpi_modport_binding(handle->owner->context,
+      if (talos_rt_cached_vpi_modport_binding(handle->owner->context,
                                                 handle->cursor,
-                                                &binding) != OBELISK_RT_OK)
+                                                &binding) != TALOS_RT_OK)
         return nullptr;
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         scratch.assign(reinterpret_cast<const char *>(binding.name),
                        static_cast<size_t>(binding.nameSize));
         return scratch.data();
       }
-      OBELISK_RT_CATCH_ALL {
+      TALOS_RT_CATCH_ALL {
         setError(handle->owner, "could not materialize modport name",
                  vpiSystem);
         return nullptr;
@@ -13664,28 +13664,28 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     }
     if (property == vpiName) {
       VPIClassMemberBinding member{};
-      if (obelisk_rt_cached_vpi_class_member(handle->owner->context,
+      if (talos_rt_cached_vpi_class_member(handle->owner->context,
                                              handle->cursor,
-                                             &member) == OBELISK_RT_OK) {
+                                             &member) == TALOS_RT_OK) {
         return nameFor(handle, scratch, true) ? scratch.data() : nullptr;
       }
     }
     if (property == vpiFullName && handle->dynamicObject) {
       VPIClassMemberBinding member{};
-      if (obelisk_rt_cached_vpi_class_member(handle->owner->context,
+      if (talos_rt_cached_vpi_class_member(handle->owner->context,
                                              handle->cursor,
-                                             &member) == OBELISK_RT_OK &&
+                                             &member) == TALOS_RT_OK &&
           !member.isStatic && !member.isMethod)
         return nullptr;
     }
     if (property == vpiName && !handle->statement) {
-      obelisk_rt_design_info_v1 info{};
-      if (obelisk_rt_cached_design_info(handle->owner->context, handle->cursor,
-                                        &info) != OBELISK_RT_OK)
+      talos_rt_design_info_v1 info{};
+      if (talos_rt_cached_design_info(handle->owner->context, handle->cursor,
+                                        &info) != TALOS_RT_OK)
         return nullptr;
-      if (info.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+      if (info.kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
           concreteTypespec && handle->exactVpiType != vpiClassTypespec &&
-          (info.capabilities & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0)
+          (info.capabilities & TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0)
         return nullptr;
     }
     if (!nameFor(handle, scratch))
@@ -13714,9 +13714,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
   if (property == vpiFile) {
     if (handle->originalTypeDefault) {
       VPITypeDefaultInfo original{};
-      if (obelisk_rt_cached_vpi_type_default(handle->owner->context,
+      if (talos_rt_cached_vpi_type_default(handle->owner->context,
                                              handle->cursor,
-                                             &original) != OBELISK_RT_OK ||
+                                             &original) != TALOS_RT_OK ||
           !original.fileSize)
         return nullptr;
       scratch.assign(reinterpret_cast<const char *>(original.file),
@@ -13726,9 +13726,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     const uint8_t *file = nullptr;
     uint64_t size = 0;
     uint32_t line = 0, column = 0;
-    if (obelisk_rt_cached_design_source(handle->owner->context, handle->cursor,
+    if (talos_rt_cached_design_source(handle->owner->context, handle->cursor,
                                         &file, &size, &line,
-                                        &column) != OBELISK_RT_OK)
+                                        &column) != TALOS_RT_OK)
       return nullptr;
     if (size == 0) {
       scratch.clear();
@@ -13742,7 +13742,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
   return nullptr;
 }
 
-extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
+extern "C" TALOS_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
                                                  p_vpi_value destination) {
   VPICallScope vpiCallScope;
   __vpiHandle *handle = validate(opaque);
@@ -13790,7 +13790,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   else if (destination->format == vpiObjTypeVal)
     if (!resolveObjectTypeValueFormat(handle, source, destination->format))
       return;
-  if (!obelisk::reflection::acceptsVPIValueFormat(
+  if (!talos::reflection::acceptsVPIValueFormat(
           *source.policy, static_cast<uint32_t>(destination->format))) {
     setError(handle->owner, "value format is not valid for this VPI object",
              vpiNotice);
@@ -13816,7 +13816,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   if (managedStringSource) {
     stringTransaction.emplace(handle->owner->context);
     stringManaged.emplace(handle->owner->context);
-    if (stringManaged->getStatus() != OBELISK_RT_OK ||
+    if (stringManaged->getStatus() != TALOS_RT_OK ||
         !stringManaged->getLane()) {
       setError(handle->owner, "managed string VPI query cannot enter GC scope",
                vpiInternal);
@@ -13825,22 +13825,22 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   }
   std::vector<uint64_t> &value = handle->owner->readValueScratch;
   std::vector<uint64_t> &unknown = handle->owner->readUnknownScratch;
-  obelisk_rt_managed_word_v1 rootedString = 0;
+  talos_rt_managed_word_v1 rootedString = 0;
   std::optional<ScopedManagedWordRoot> stringRoot;
   if (managedStringSource) {
     if (!readManagedStateWord(handle, source, rootedString))
       return;
-    if (obelisk_rt_v1_gc_candidate_root(handle->owner->context, rootedString,
-                                        OBELISK_RT_MANAGED_ROOT_KIND_STRING) !=
+    if (talos_rt_v1_gc_candidate_root(handle->owner->context, rootedString,
+                                        TALOS_RT_MANAGED_ROOT_KIND_STRING) !=
         rootedString) {
       setError(handle->owner, "invalid managed string in VPI design state",
                vpiInternal);
       return;
     }
     stringRoot.emplace(stringManaged->getLane(), &rootedString);
-    if (stringRoot->getStatus() != OBELISK_RT_OK ||
-        obelisk_rt_validate_string(handle->owner->context, rootedString) !=
-            OBELISK_RT_OK) {
+    if (stringRoot->getStatus() != TALOS_RT_OK ||
+        talos_rt_validate_string(handle->owner->context, rootedString) !=
+            TALOS_RT_OK) {
       setError(handle->owner, "invalid managed string in VPI design state",
                vpiInternal);
       return;
@@ -13849,21 +13849,21 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
     return;
   }
   uint64_t width = source.info.bit_width;
-  uint32_t semanticKind = OBELISK_RT_DESIGN_SEMANTIC_UNKNOWN;
+  uint32_t semanticKind = TALOS_RT_DESIGN_SEMANTIC_UNKNOWN;
   if (source.hasSemanticCursor) {
-    obelisk_rt_design_semantic_type_info_v1 semantic{};
-    if (obelisk_rt_cached_design_semantic_type_info(handle->owner->context,
+    talos_rt_design_semantic_type_info_v1 semantic{};
+    if (talos_rt_cached_design_semantic_type_info(handle->owner->context,
                                                     source.semanticCursor,
-                                                    &semantic) == OBELISK_RT_OK)
+                                                    &semantic) == TALOS_RT_OK)
       semanticKind = semantic.kind;
   }
   const bool realSource =
-      semanticKind == OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL ||
-      semanticKind == OBELISK_RT_DESIGN_SEMANTIC_REAL ||
-      semanticKind == OBELISK_RT_DESIGN_SEMANTIC_REALTIME ||
+      semanticKind == TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL ||
+      semanticKind == TALOS_RT_DESIGN_SEMANTIC_REAL ||
+      semanticKind == TALOS_RT_DESIGN_SEMANTIC_REALTIME ||
       exactType == vpiShortRealVar || exactType == vpiShortRealNet ||
       exactType == vpiRealVar || exactType == vpiRealNet;
-  const bool stringSource = semanticKind == OBELISK_RT_DESIGN_SEMANTIC_STRING ||
+  const bool stringSource = semanticKind == TALOS_RT_DESIGN_SEMANTIC_STRING ||
                             exactType == vpiStringVar;
   double sourceReal = 0;
   if (realSource) {
@@ -13881,12 +13881,12 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
         setError(handle->owner, "could not format real VPI value", vpiSystem);
         return;
       }
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         handle->owner->valueStringScratch.assign(rendered,
                                                  static_cast<size_t>(length));
         destination->value.str = handle->owner->valueStringScratch.data();
       }
-      OBELISK_RT_CATCH_ALL {
+      TALOS_RT_CATCH_ALL {
         setError(handle->owner, "could not format real VPI value", vpiSystem);
       }
       return;
@@ -13902,11 +13902,11 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
                vpiNotice);
       return;
     }
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       value.assign(1, static_cast<uint64_t>(static_cast<int64_t>(rounded)));
       unknown.assign(1, 0);
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner, "could not convert real VPI value", vpiSystem);
       return;
     }
@@ -13920,11 +13920,11 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
       bytes = handle->snapshot->string.data();
       size = handle->snapshot->string.size();
     } else {
-      obelisk_rt_string_v1 string =
+      talos_rt_string_v1 string =
           managedStringSource ? rootedString
-                              : static_cast<obelisk_rt_string_v1>(value[0]);
-      if (obelisk_rt_v1_string_view(string, scratch, &bytes, &size) !=
-          OBELISK_RT_OK) {
+                              : static_cast<talos_rt_string_v1>(value[0]);
+      if (talos_rt_v1_string_view(string, scratch, &bytes, &size) !=
+          TALOS_RT_OK) {
         setError(handle->owner, "could not read SystemVerilog string value",
                  vpiInternal);
         return;
@@ -13936,18 +13936,18 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
                  "SystemVerilog string exceeds VPI host capacity", vpiSystem);
         return;
       }
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         handle->owner->valueStringScratch.assign(bytes ? bytes : "",
                                                  static_cast<size_t>(size));
         destination->value.str = handle->owner->valueStringScratch.data();
       }
-      OBELISK_RT_CATCH_ALL {
+      TALOS_RT_CATCH_ALL {
         setError(handle->owner, "could not materialize VPI string value",
                  vpiSystem);
       }
       return;
     }
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       if (size > std::numeric_limits<size_t>::max() ||
           !packStringValue(
               std::string_view(bytes ? bytes : "", static_cast<size_t>(size)),
@@ -13957,13 +13957,13 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
         return;
       }
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       setError(handle->owner, "could not convert VPI string value", vpiSystem);
       return;
     }
   }
   const bool isSigned = valueSigned(handle, source) || realSource;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     switch (destination->format) {
     case vpiVectorVal: {
       size_t words = 0;
@@ -14002,7 +14002,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
       bool u = width != 0 && logicBit(unknown, 0);
       destination->value.scalar = !u ? (v ? vpi1 : vpi0) : (v ? vpiZ : vpiX);
       if (width != 0 &&
-          (source.info.kind == OBELISK_RT_DESIGN_RECORD_NET ||
+          (source.info.kind == TALOS_RT_DESIGN_RECORD_NET ||
            source.primitiveValue) &&
           u && !v) {
         const uint64_t offset = source.form == VPIObjectForm::Indexed
@@ -14104,7 +14104,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
         return;
       }
       handle->owner->strengthScratch.resize(static_cast<size_t>(width));
-      const bool net = source.info.kind == OBELISK_RT_DESIGN_RECORD_NET;
+      const bool net = source.info.kind == TALOS_RT_DESIGN_RECORD_NET;
       for (uint64_t bit = 0; bit != width; ++bit) {
         const bool v = logicBit(value, bit);
         const bool u = logicBit(unknown, bit);
@@ -14118,7 +14118,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
                               strength.s1);
         } else if (source.exactType == vpiNetBit && isSourceSelection(handle)) {
           uint16_t range = 0;
-          if (readSelectedNetStrength(handle, source, range) != OBELISK_RT_OK) {
+          if (readSelectedNetStrength(handle, source, range) != TALOS_RT_OK) {
             setError(handle->owner, "selected net bit strength is unavailable",
                      vpiNotice);
             return;
@@ -14148,15 +14148,15 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
       break;
     }
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setError(handle->owner, "VPI value result is out of memory", vpiSystem);
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(handle->owner, "could not convert VPI value", vpiInternal);
   }
 }
 
-extern "C" OBELISK_VPI_EXPORT void vpi_get_time(vpiHandle opaque,
+extern "C" TALOS_VPI_EXPORT void vpi_get_time(vpiHandle opaque,
                                                 p_vpi_time destination) {
   VPICallScope vpiCallScope;
   VPIState *state = requireState();
@@ -14219,7 +14219,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_time(vpiHandle opaque,
   }
 }
 
-extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
+extern "C" TALOS_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
                                                       p_vpi_value source,
                                                       p_vpi_time,
                                                       PLI_INT32 flags) {
@@ -14230,7 +14230,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
   if (!allowProtectedSource(handle, "vpi_put_value") ||
       rejectSourceClassPropertyValue(handle))
     return nullptr;
-  obelisk_rt_design_info_v1 localInfo{};
+  talos_rt_design_info_v1 localInfo{};
   if (frameLocalInfo(handle, localInfo)) {
     setError(handle->owner, "automatic frame variable writes are unavailable",
              vpiNotice);
@@ -14241,15 +14241,15 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
              vpiNotice);
     return nullptr;
   }
-  obelisk_rt_context *context = handle->owner->context;
+  talos_rt_context *context = handle->owner->context;
   if (!context->execution ||
-      (context->execution->flags & OBELISK_RT_EXECUTION_VPI_WRITE) == 0) {
+      (context->execution->flags & TALOS_RT_EXECUTION_VPI_WRITE) == 0) {
     setError(handle->owner, "VPI mutation requires --vpi=full");
     return nullptr;
   }
   VPIClassMemberBinding member{};
-  bool classMember = obelisk_rt_cached_vpi_class_member(
-                         context, handle->cursor, &member) == OBELISK_RT_OK;
+  bool classMember = talos_rt_cached_vpi_class_member(
+                         context, handle->cursor, &member) == TALOS_RT_OK;
   if (handle->classDefinitionOrigin ||
       (classMember &&
        (member.isMethod || (!member.isStatic && !handle->dynamicObject)))) {
@@ -14261,8 +14261,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
              "indexed VPI writes require selected-state scheduling support");
     return nullptr;
   }
-  obelisk_rt_design_info_v1 info{};
-  if (!infoFor(handle, info) || info.kind == OBELISK_RT_DESIGN_RECORD_DRIVER) {
+  talos_rt_design_info_v1 info{};
+  if (!infoFor(handle, info) || info.kind == TALOS_RT_DESIGN_RECORD_DRIVER) {
     setError(handle->owner, "VPI driver writes are not supported");
     return nullptr;
   }
@@ -14274,7 +14274,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
     return nullptr;
   }
   if (flags == vpiReleaseFlag) {
-    if (obelisk_rt_v1_design_release(context, storage) != OBELISK_RT_OK)
+    if (talos_rt_v1_design_release(context, storage) != TALOS_RT_OK)
       setError(handle->owner, "VPI release failed");
     else if (source)
       // IEEE 1800-2023 38.34: release returns the object's resolved value.
@@ -14301,57 +14301,57 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
     ContextTransaction transaction(context);
     ManagedExecutionScope managed(context);
     ManagedObjectLease lease;
-    if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane() ||
-        obelisk_rt_managed_object_acquire(
-            managed.getLane(), handle->dynamicObject, OBELISK_RT_MANAGED_CLASS,
-            &lease) != OBELISK_RT_OK ||
-        obelisk_rt_v1_object_id(handle->dynamicObject) !=
+    if (managed.getStatus() != TALOS_RT_OK || !managed.getLane() ||
+        talos_rt_managed_object_acquire(
+            managed.getLane(), handle->dynamicObject, TALOS_RT_MANAGED_CLASS,
+            &lease) != TALOS_RT_OK ||
+        talos_rt_v1_object_id(handle->dynamicObject) !=
             handle->dynamicIdentity) {
       setError(handle->owner, "class member receiver is invalid");
       return nullptr;
     }
     const auto *descriptor =
-        obelisk_rt_managed_object_class_descriptor(handle->dynamicObject);
+        talos_rt_managed_object_class_descriptor(handle->dynamicObject);
     while (descriptor && descriptor->class_id != member.classID)
       descriptor = descriptor->base;
-    obelisk_rt_design_type_info_v1 type{};
+    talos_rt_design_type_info_v1 type{};
     if (!descriptor ||
-        obelisk_rt_cached_design_type_info(context, {info.type_offset},
-                                           &type) != OBELISK_RT_OK) {
+        talos_rt_cached_design_type_info(context, {info.type_offset},
+                                           &type) != TALOS_RT_OK) {
       setError(handle->owner, "class member layout is invalid", vpiInternal);
       return nullptr;
     }
     const uint64_t bytes = info.bit_width / 8 + (info.bit_width % 8 != 0);
     const bool fourState =
-        (type.flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+        (type.flags & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0;
     // The public write entry points acquire the object lock and notify field
     // observers. Release our validation lease before entering them; the active
     // GC lane continues to protect the receiver.
-    obelisk_rt_managed_object_release(&lease);
-    obelisk_rt_status status =
+    talos_rt_managed_object_release(&lease);
+    talos_rt_status status =
         fourState
-            ? obelisk_rt_v1_object_write_planes(handle->dynamicObject,
+            ? talos_rt_v1_object_write_planes(handle->dynamicObject,
                                                 member.byteOffset, value.data(),
                                                 unknown.data(), bytes)
-            : obelisk_rt_v1_object_write(handle->dynamicObject,
+            : talos_rt_v1_object_write(handle->dynamicObject,
                                          member.byteOffset, value.data(),
                                          bytes);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       setError(handle->owner, "VPI class member write failed");
     return nullptr;
   }
-  obelisk_rt_status status =
+  talos_rt_status status =
       flags == vpiForceFlag
-          ? obelisk_rt_v1_design_force(context, storage, value.data(),
+          ? talos_rt_v1_design_force(context, storage, value.data(),
                                        unknown.data(), info.bit_width)
-          : obelisk_rt_v1_design_write(context, storage, value.data(),
+          : talos_rt_v1_design_write(context, storage, value.data(),
                                        unknown.data(), info.bit_width);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     setError(handle->owner, "VPI write failed");
   return nullptr;
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
+extern "C" TALOS_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
                                                             vpiHandle second) {
   VPICallScope vpiCallScope;
   __vpiHandle *left = findHandle(first);
@@ -14408,10 +14408,10 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
   bool sameDeclaration = left->cursor.offset == right->cursor.offset;
   if (!sameDeclaration) {
     VPIClassMemberBinding a{}, b{};
-    if (obelisk_rt_cached_vpi_class_member(left->owner->context, left->cursor,
-                                           &a) == OBELISK_RT_OK &&
-        obelisk_rt_cached_vpi_class_member(right->owner->context, right->cursor,
-                                           &b) == OBELISK_RT_OK &&
+    if (talos_rt_cached_vpi_class_member(left->owner->context, left->cursor,
+                                           &a) == TALOS_RT_OK &&
+        talos_rt_cached_vpi_class_member(right->owner->context, right->cursor,
+                                           &b) == TALOS_RT_OK &&
         !a.isMethod && !b.isMethod && a.classID == b.classID &&
         a.isStatic == b.isStatic)
       sameDeclaration =
@@ -14453,7 +14453,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
          left->integralValue == right->integralValue && sameSelection;
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_release_handle(vpiHandle opaque) {
+extern "C" TALOS_VPI_EXPORT PLI_INT32 vpi_release_handle(vpiHandle opaque) {
   VPICallScope vpiCallScope;
   VPIState *state = requireState();
   const uintptr_t token = reinterpret_cast<uintptr_t>(opaque);
@@ -14473,11 +14473,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_release_handle(vpiHandle opaque) {
   return 1;
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_free_object(vpiHandle object) {
+extern "C" TALOS_VPI_EXPORT PLI_INT32 vpi_free_object(vpiHandle object) {
   return vpi_release_handle(object);
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32
+extern "C" TALOS_VPI_EXPORT PLI_INT32
 vpi_chk_error(p_vpi_error_info destination) {
   VPIState *state = currentState();
   if (!state || state->errorLevel == 0)
@@ -14488,19 +14488,19 @@ vpi_chk_error(p_vpi_error_info destination) {
     destination->state = vpiRun;
     destination->level = level;
     destination->message = state->errorMessage.data();
-    destination->product = const_cast<char *>("Obelisk");
+    destination->product = const_cast<char *>("Talos");
     destination->code = state->errorCode.data();
   }
   return level;
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_vprintf(PLI_BYTE8 *format,
+extern "C" TALOS_VPI_EXPORT PLI_INT32 vpi_vprintf(PLI_BYTE8 *format,
                                                     va_list arguments) {
   VPICallScope vpiCallScope;
   return requireState() && format ? std::vprintf(format, arguments) : -1;
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_printf(PLI_BYTE8 *format, ...) {
+extern "C" TALOS_VPI_EXPORT PLI_INT32 vpi_printf(PLI_BYTE8 *format, ...) {
   va_list arguments;
   va_start(arguments, format);
   int result = vpi_vprintf(format, arguments);
@@ -14508,18 +14508,18 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_printf(PLI_BYTE8 *format, ...) {
   return result;
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_flush(void) {
+extern "C" TALOS_VPI_EXPORT PLI_INT32 vpi_flush(void) {
   VPICallScope vpiCallScope;
   return requireState() ? std::fflush(nullptr) : -1;
 }
 
-extern "C" OBELISK_VPI_EXPORT void *vpi_get_userdata(vpiHandle opaque) {
+extern "C" TALOS_VPI_EXPORT void *vpi_get_userdata(vpiHandle opaque) {
   VPICallScope vpiCallScope;
   __vpiHandle *handle = validate(opaque);
   return handle ? handle->userData : nullptr;
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_put_userdata(vpiHandle opaque,
+extern "C" TALOS_VPI_EXPORT PLI_INT32 vpi_put_userdata(vpiHandle opaque,
                                                          void *data) {
   VPICallScope vpiCallScope;
   __vpiHandle *handle = validate(opaque);
@@ -14529,7 +14529,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_put_userdata(vpiHandle opaque,
   return 1;
 }
 
-extern "C" OBELISK_VPI_EXPORT vpiHandle
+extern "C" TALOS_VPI_EXPORT vpiHandle
 vpi_register_cb(p_cb_data callbackData) {
   VPICallScope vpiCallScope;
   VPIState *state = currentState();
@@ -14604,7 +14604,7 @@ vpi_register_cb(p_cb_data callbackData) {
     callback.dueTime = state->context->schedulerTime + delay;
   }
   // Lifecycle callbacks ignore obj, time, value and index (38.36.3).
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     if (state->nextCallbackId == std::numeric_limits<uint64_t>::max()) {
       setError(state, "VPI callback identifier space is exhausted", vpiSystem);
       return nullptr;
@@ -14616,16 +14616,16 @@ vpi_register_cb(p_cb_data callbackData) {
       setError(state, "VPI callback identifier collision", vpiInternal);
       return nullptr;
     }
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       state->callbackOrder.push_back(id);
       if (sync)
         state->syncCallbacks.emplace(callback.dueTime, *sync, id);
       else if (timer)
         state->timeCallbacks.emplace(callback.dueTime, id);
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       eraseCallback(state, id);
-      OBELISK_RT_RETHROW;
+      TALOS_RT_RETHROW;
     }
     vpiHandle result = makeCallbackHandle(state, id);
     if (!result) {
@@ -14639,17 +14639,17 @@ vpi_register_cb(p_cb_data callbackData) {
     }
     return result;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setError(state, "VPI callback registry is out of memory", vpiSystem);
     return nullptr;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not register VPI callback", vpiInternal);
     return nullptr;
   }
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_remove_cb(vpiHandle opaque) {
+extern "C" TALOS_VPI_EXPORT PLI_INT32 vpi_remove_cb(vpiHandle opaque) {
   VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state)
@@ -14663,7 +14663,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_remove_cb(vpiHandle opaque) {
   return removeCallbackHandle(state, found->second.get());
 }
 
-extern "C" OBELISK_VPI_EXPORT void vpi_get_cb_info(vpiHandle opaque,
+extern "C" TALOS_VPI_EXPORT void vpi_get_cb_info(vpiHandle opaque,
                                                    p_cb_data destination) {
   VPICallScope vpiCallScope;
   if (!destination)
@@ -14682,7 +14682,7 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_cb_info(vpiHandle opaque,
   }
 }
 
-extern "C" OBELISK_VPI_EXPORT void
+extern "C" TALOS_VPI_EXPORT void
 vpi_get_systf_info(vpiHandle opaque, p_vpi_systf_data destination) {
   VPICallScope vpiCallScope;
   VPIState *state = requireState();
@@ -14711,7 +14711,7 @@ vpi_get_systf_info(vpiHandle opaque, p_vpi_systf_data destination) {
   destination->user_data = systemTf->userData;
 }
 
-extern "C" OBELISK_VPI_EXPORT vpiHandle
+extern "C" TALOS_VPI_EXPORT vpiHandle
 vpi_register_systf(p_vpi_systf_data registration) {
   VPICallScope vpiCallScope;
   VPIState *state = currentState();
@@ -14754,7 +14754,7 @@ vpi_register_systf(p_vpi_systf_data registration) {
     return nullptr;
   }
 
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     if (state->nextSystemTfId == std::numeric_limits<uint64_t>::max()) {
       setError(state, "VPI system task/function identifier space is exhausted",
                vpiSystem);
@@ -14778,10 +14778,10 @@ vpi_register_systf(p_vpi_systf_data registration) {
                vpiInternal);
       return nullptr;
     }
-    OBELISK_RT_TRY { state->systemTfOrder.push_back(id); }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_TRY { state->systemTfOrder.push_back(id); }
+    TALOS_RT_CATCH_ALL {
       state->systemTfs.erase(id);
-      OBELISK_RT_RETHROW;
+      TALOS_RT_RETHROW;
     }
     vpiHandle result = makeSystemTfHandle(state, id);
     if (!result) {
@@ -14790,42 +14790,42 @@ vpi_register_systf(p_vpi_systf_data registration) {
     }
     return result;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setError(state, "VPI system task/function registry is out of memory",
              vpiSystem);
     return nullptr;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not register VPI system task/function", vpiInternal);
     return nullptr;
   }
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32
+extern "C" TALOS_VPI_EXPORT PLI_INT32
 vpi_get_vlog_info(p_vpi_vlog_info info) {
   VPICallScope vpiCallScope;
-  static char product[] = "Obelisk";
+  static char product[] = "Talos";
   static char version[] = "prototype";
   VPIState *state = requireState();
   if (!state || !info)
     return 0;
   *info = {};
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(state->context->mutex);
     state->vlogArgumentScratch = state->context->vpiArguments;
     if (state->vlogArgumentScratch.empty())
-      state->vlogArgumentScratch.emplace_back("obelisk");
+      state->vlogArgumentScratch.emplace_back("talos");
     state->vlogArgumentPointers.clear();
     state->vlogArgumentPointers.reserve(state->vlogArgumentScratch.size());
     for (std::string &argument : state->vlogArgumentScratch)
       state->vlogArgumentPointers.push_back(argument.data());
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setError(state, "VPI invocation argument result is out of memory",
              vpiSystem);
     return 0;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not snapshot VPI invocation arguments", vpiInternal);
     return 0;
   }
@@ -14842,7 +14842,7 @@ vpi_get_vlog_info(p_vpi_vlog_info info) {
   return 1;
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get_data(PLI_INT32, PLI_BYTE8 *,
+extern "C" TALOS_VPI_EXPORT PLI_INT32 vpi_get_data(PLI_INT32, PLI_BYTE8 *,
                                                      PLI_INT32) {
   VPICallScope vpiCallScope;
   VPIState *state = requireState();
@@ -14852,7 +14852,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get_data(PLI_INT32, PLI_BYTE8 *,
   return 0;
 }
 
-extern "C" OBELISK_VPI_EXPORT void vpi_get_delays(vpiHandle opaque,
+extern "C" TALOS_VPI_EXPORT void vpi_get_delays(vpiHandle opaque,
                                                   p_vpi_delay destination) {
   VPICallScope vpiCallScope;
   VPIState *state = requireState();
@@ -14872,11 +14872,11 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_delays(vpiHandle opaque,
     setError(state, "VPI handle does not have delay metadata", vpiNotice);
     return;
   }
-  obelisk_rt_design_info_v1 info{};
+  talos_rt_design_info_v1 info{};
   if (!interModPath) {
     if (!infoFor(handle, info))
       return;
-    if (info.kind != OBELISK_RT_DESIGN_RECORD_NET) {
+    if (info.kind != TALOS_RT_DESIGN_RECORD_NET) {
       setError(state, "VPI delay metadata is unavailable", vpiNotice);
       return;
     }
@@ -14908,14 +14908,14 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_delays(vpiHandle opaque,
   if (!interModPath) {
     uint64_t bitOffset =
         handle->form == VPIObjectForm::Indexed ? handle->selectionBitOffset : 0;
-    obelisk_rt_status status =
-        obelisk_rt_cached_vpi_net_delay(handle->owner->context, handle->cursor,
+    talos_rt_status status =
+        talos_rt_cached_vpi_net_delay(handle->owner->context, handle->cursor,
                                         bitOffset, info.bit_width, &delay);
-    if (status != OBELISK_RT_OK) {
+    if (status != TALOS_RT_OK) {
       setError(state,
-               status == OBELISK_RT_EOF ? "VPI delay metadata is unavailable"
+               status == TALOS_RT_EOF ? "VPI delay metadata is unavailable"
                                         : "VPI net delay image lookup failed",
-               status == OBELISK_RT_EOF ? vpiNotice : vpiInternal);
+               status == TALOS_RT_EOF ? vpiNotice : vpiInternal);
       return;
     }
   }
@@ -15003,12 +15003,12 @@ uint64_t signExtendArrayElement(uint64_t value, uint64_t width) {
 }
 
 bool prepareArrayElement(__vpiHandle *source,
-                         obelisk::reflection::VPIIndexedAccessKind accessKind,
+                         talos::reflection::VPIIndexedAccessKind accessKind,
                          uint32_t rootType,
                          const std::vector<VPISelectionStep> &baseSteps,
                          const std::vector<VPIArrayDimension> &dimensions,
                          uint64_t flattened, __vpiHandle &element,
-                         obelisk_rt_design_info_v1 &info) {
+                         talos_rt_design_info_v1 &info) {
   std::vector<int64_t> coordinates(dimensions.size());
   for (size_t dimension = dimensions.size(); dimension != 0;) {
     --dimension;
@@ -15113,7 +15113,7 @@ void failArrayValueQuery(VPIState *state, p_vpi_arrayvalue destination,
   setError(state, message, level);
 }
 
-extern "C" OBELISK_VPI_EXPORT void
+extern "C" TALOS_VPI_EXPORT void
 vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
                     PLI_INT32 *indices, PLI_UINT32 num) {
   VPICallScope vpiCallScope;
@@ -15158,14 +15158,14 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
   }
   const bool userAllocated = (destination->flags & vpiUserAllocFlag) != 0;
 
-  const auto *access = obelisk::reflection::findVPIIndexedAccess(sourceType);
+  const auto *access = talos::reflection::findVPIIndexedAccess(sourceType);
   const auto accessKind =
       source->form == VPIObjectForm::Indexed ? source->selectionAccessKind
       : access                               ? access->accessKind
-               : obelisk::reflection::VPIIndexedAccessKind::RelationElement;
+               : talos::reflection::VPIIndexedAccessKind::RelationElement;
   if (!access ||
       accessKind ==
-          obelisk::reflection::VPIIndexedAccessKind::RelationElement) {
+          talos::reflection::VPIIndexedAccessKind::RelationElement) {
     failArrayValueQuery(state, destination,
                         "VPI array query has no fixed storage geometry",
                         vpiNotice);
@@ -15176,35 +15176,35 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
                                 : sourceType;
   std::vector<VPISelectionStep> baseSteps;
   std::vector<VPIArrayDimension> dimensions;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     if (source->form == VPIObjectForm::Indexed)
       baseSteps = source->selectionSteps;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     failArrayValueQuery(state, destination,
                         "could not allocate VPI array selection", vpiSystem);
     return;
   }
 
-  obelisk_rt_design_info_v1 object{};
+  talos_rt_design_info_v1 object{};
   if (!infoFor(source, object) || object.type_offset == 0)
     return;
-  obelisk_rt_design_cursor_v1 physical{
+  talos_rt_design_cursor_v1 physical{
       baseSteps.empty() ? object.type_offset
                         : baseSteps.back().physicalType.offset};
-  obelisk_rt_design_type_info_v1 elementType{};
+  talos_rt_design_type_info_v1 elementType{};
   uint64_t elementCount = 1;
   uint64_t elementStride = 0;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     for (;;) {
-      if (obelisk_rt_cached_design_type_info(state->context, physical,
-                                             &elementType) != OBELISK_RT_OK) {
+      if (talos_rt_cached_design_type_info(state->context, physical,
+                                             &elementType) != TALOS_RT_OK) {
         failArrayValueQuery(state, destination,
                             "VPI array type metadata is invalid", vpiInternal);
         return;
       }
-      if (elementType.kind != OBELISK_RT_DESIGN_TYPE_ARRAY ||
-          (elementType.flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0)
+      if (elementType.kind != TALOS_RT_DESIGN_TYPE_ARRAY ||
+          (elementType.flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0)
         break;
       uint64_t ignored = 0, extent = 0;
       if (!sourceIndexOrdinal(elementType.range_left, elementType.range_right,
@@ -15221,15 +15221,15 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
       physical = elementType.element_type;
     }
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     failArrayValueQuery(state, destination,
                         "could not allocate VPI array geometry", vpiSystem);
     return;
   }
   if (dimensions.empty() || elementType.bit_width == 0 ||
-      ((elementType.kind == OBELISK_RT_DESIGN_TYPE_STRUCT ||
-        elementType.kind == OBELISK_RT_DESIGN_TYPE_UNION) &&
-       (elementType.flags & OBELISK_RT_DESIGN_TYPE_PACKED) == 0)) {
+      ((elementType.kind == TALOS_RT_DESIGN_TYPE_STRUCT ||
+        elementType.kind == TALOS_RT_DESIGN_TYPE_UNION) &&
+       (elementType.flags & TALOS_RT_DESIGN_TYPE_PACKED) == 0)) {
     failArrayValueQuery(state, destination,
                         "VPI array element is not a packed static value",
                         vpiNotice);
@@ -15258,8 +15258,8 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
   }
 
   __vpiHandle firstElement;
-  obelisk_rt_design_info_v1 firstInfo{};
-  OBELISK_RT_TRY {
+  talos_rt_design_info_v1 firstInfo{};
+  TALOS_RT_TRY {
     if (!prepareArrayElement(source, accessKind, rootType, baseSteps,
                              dimensions, first, firstElement, firstInfo)) {
       failArrayValueQuery(state, destination,
@@ -15268,13 +15268,13 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
       return;
     }
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     failArrayValueQuery(state, destination,
                         "could not allocate VPI array element", vpiSystem);
     return;
   }
   const uint32_t elementVPIType = firstElement.exactVpiType;
-  if (!obelisk::reflection::acceptsVPIArrayValueFormat(destination->format,
+  if (!talos::reflection::acceptsVPIArrayValueFormat(destination->format,
                                                        elementVPIType)) {
     failArrayValueQuery(
         state, destination,
@@ -15316,7 +15316,7 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
     return;
   }
 
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     switch (destination->format) {
     case vpiIntVal:
       if (!userAllocated) {
@@ -15381,12 +15381,12 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
       return;
     }
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     failArrayValueQuery(state, destination, "VPI array result is out of memory",
                         vpiSystem);
     return;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     failArrayValueQuery(state, destination,
                         "could not allocate VPI array result", vpiInternal);
     return;
@@ -15415,18 +15415,18 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
   }
   std::vector<uint64_t> &value = state->readValueScratch;
   std::vector<uint64_t> &unknown = state->readUnknownScratch;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     value.assign(readWords, 0);
     unknown.assign(readWords, 0);
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     failArrayValueQuery(state, destination,
                         "VPI array read buffer is out of memory", vpiSystem);
     return;
   }
-  if (obelisk_rt_read_design_slice(
+  if (talos_rt_read_design_slice(
           state->context, source->cursor, firstElement.selectionBitOffset,
-          readWidth, value.data(), unknown.data()) != OBELISK_RT_OK) {
+          readWidth, value.data(), unknown.data()) != TALOS_RT_OK) {
     failArrayValueQuery(state, destination, "VPI array design read failed");
     return;
   }
@@ -15518,7 +15518,7 @@ vpi_get_value_array(vpiHandle opaque, p_vpi_arrayvalue destination,
   }
 }
 
-extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_multi(PLI_INT32 type,
+extern "C" TALOS_VPI_EXPORT vpiHandle vpi_handle_multi(PLI_INT32 type,
                                                          vpiHandle first,
                                                          vpiHandle second,
                                                          ...) {
@@ -15546,7 +15546,7 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_multi(PLI_INT32 type,
     setError(state, "VPI intermodule path requires port or port-bit handles");
     return nullptr;
   }
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<VPIInterModPathEndpoint> ports{
         interModPathEndpointFor(*firstHandle),
         interModPathEndpointFor(*secondHandle)};
@@ -15554,16 +15554,16 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_multi(PLI_INT32 type,
       setError(state, "VPI intermodule path requires distinct endpoints");
       return nullptr;
     }
-    obelisk_rt_design_info_v1 firstInfo{};
-    obelisk_rt_design_info_v1 secondInfo{};
+    talos_rt_design_info_v1 firstInfo{};
+    talos_rt_design_info_v1 secondInfo{};
     if (!infoFor(firstHandle, firstInfo) || !infoFor(secondHandle, secondInfo))
       return nullptr;
-    if (firstInfo.kind != OBELISK_RT_DESIGN_RECORD_PORT ||
-        secondInfo.kind != OBELISK_RT_DESIGN_RECORD_PORT ||
+    if (firstInfo.kind != TALOS_RT_DESIGN_RECORD_PORT ||
+        secondInfo.kind != TALOS_RT_DESIGN_RECORD_PORT ||
         firstInfo.bit_width == 0 ||
         firstInfo.bit_width != secondInfo.bit_width ||
-        (firstInfo.capabilities & OBELISK_RT_DESIGN_CAP_PORT_OUTPUT) == 0 ||
-        (secondInfo.capabilities & OBELISK_RT_DESIGN_CAP_PORT_INPUT) == 0) {
+        (firstInfo.capabilities & TALOS_RT_DESIGN_CAP_PORT_OUTPUT) == 0 ||
+        (secondInfo.capabilities & TALOS_RT_DESIGN_CAP_PORT_INPUT) == 0) {
       setError(
           state,
           "VPI intermodule path requires same-width output and input ports");
@@ -15571,45 +15571,45 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_multi(PLI_INT32 type,
     }
     return makeInterModPathHandle(state, ports);
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not allocate VPI intermodule-path endpoints",
              vpiSystem);
     return nullptr;
   }
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_mcd_name(PLI_UINT32 descriptor) {
+extern "C" TALOS_VPI_EXPORT PLI_BYTE8 *vpi_mcd_name(PLI_UINT32 descriptor) {
   VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state)
     return nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(state->context);
     std::string_view name;
-    if (!obelisk_rt_file_name_unlocked(state->context, descriptor, name)) {
+    if (!talos_rt_file_name_unlocked(state->context, descriptor, name)) {
       setError(state, "invalid or non-single-channel VPI file descriptor");
       return nullptr;
     }
     state->fileNameScratch.assign(name);
     return state->fileNameScratch.data();
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setError(state, "VPI file name result is out of memory", vpiSystem);
     return nullptr;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setError(state, "could not retrieve VPI file name", vpiInternal);
     return nullptr;
   }
 }
 
-extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_index(vpiHandle object,
+extern "C" TALOS_VPI_EXPORT vpiHandle vpi_handle_by_index(vpiHandle object,
                                                             PLI_INT32 index) {
   VPICallScope vpiCallScope;
   return handleByIndices(object, 1, &index);
 }
 
-extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_multi_index(
+extern "C" TALOS_VPI_EXPORT vpiHandle vpi_handle_by_multi_index(
     vpiHandle object, PLI_INT32 count, PLI_INT32 *indices) {
   VPICallScope vpiCallScope;
   return handleByIndices(object, count, indices);
@@ -15662,11 +15662,11 @@ PLI_INT32 controlCoverage(VPIState *state, int32_t control, PLI_INT32 type,
     return 0;
   uint64_t scopeID = 0;
   int32_t status = 0;
-  if (obelisk_rt_coverage_scope_for_path(state->context, path, scopeID) !=
-          OBELISK_RT_OK ||
-      obelisk_rt_v1_coverage_control_instance(
+  if (talos_rt_coverage_scope_for_path(state->context, path, scopeID) !=
+          TALOS_RT_OK ||
+      talos_rt_v1_coverage_control_instance(
           state->context, control, *coverageType, svCovModule, scopeID,
-          &status) != OBELISK_RT_OK) {
+          &status) != TALOS_RT_OK) {
     setError(state, "VPI coverage control found no coverage for the instance",
              vpiNotice);
     return 0;
@@ -15684,17 +15684,17 @@ PLI_INT32 persistCoverage(VPIState *state, bool save, PLI_INT32 type,
     return 0;
   }
   ManagedExecutionScope managed(state->context);
-  obelisk_rt_gc_lane_v1 *lane = managed.getLane();
-  obelisk_rt_string_v1 string = 0;
+  talos_rt_gc_lane_v1 *lane = managed.getLane();
+  talos_rt_string_v1 string = 0;
   int32_t status = 0;
-  if (managed.getStatus() != OBELISK_RT_OK || !lane ||
-      obelisk_rt_v1_string_create(lane, name, std::strlen(name), &string) !=
-          OBELISK_RT_OK ||
-      (save ? obelisk_rt_v1_coverage_database_save(
+  if (managed.getStatus() != TALOS_RT_OK || !lane ||
+      talos_rt_v1_string_create(lane, name, std::strlen(name), &string) !=
+          TALOS_RT_OK ||
+      (save ? talos_rt_v1_coverage_database_save(
                   state->context, *coverageType, string, &status)
-            : obelisk_rt_v1_coverage_database_merge(
+            : talos_rt_v1_coverage_database_merge(
                   state->context, *coverageType, string, &status)) !=
-          OBELISK_RT_OK) {
+          TALOS_RT_OK) {
     setError(state, "VPI coverage persistence failed", vpiNotice);
     return 0;
   }
@@ -15703,7 +15703,7 @@ PLI_INT32 persistCoverage(VPIState *state, bool save, PLI_INT32 type,
 
 } // namespace
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
+extern "C" TALOS_VPI_EXPORT PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
   VPICallScope vpiCallScope;
   VPIState *state = requireState();
   if (!state)
@@ -15717,13 +15717,13 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
     // IEEE 1800-2023 38.4: the diagnostic level is the $stop or $finish
     // argument.
     PLI_INT32 diagnostic = va_arg(arguments, PLI_INT32);
-    obelisk_rt_status status =
+    talos_rt_status status =
         operation == vpiFinish
-            ? obelisk_rt_v1_scheduler_finish(state->context,
+            ? talos_rt_v1_scheduler_finish(state->context,
                                              static_cast<uint32_t>(diagnostic))
-            : obelisk_rt_v1_scheduler_stop(state->context,
+            : talos_rt_v1_scheduler_stop(state->context,
                                            static_cast<uint32_t>(diagnostic));
-    result = status == OBELISK_RT_OK;
+    result = status == TALOS_RT_OK;
     if (!result)
       setError(state, "VPI simulation control failed");
     break;

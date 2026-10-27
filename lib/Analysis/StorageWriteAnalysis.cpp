@@ -1,15 +1,15 @@
 //===- StorageWriteAnalysis.cpp - Storage-write dataflow
 //--------------------===//
-#include "obelisk/Analysis/StorageWriteAnalysis.h"
+#include "talos/Analysis/StorageWriteAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Interfaces/CallInterfaces.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 
 void StorageViewFact::print(raw_ostream &os) const {
   if (!hasRoot())
@@ -422,4 +422,4 @@ bool StorageWriteAnalysis::hasDirectDynamicSelection(Value reference) const {
          proof->second.directDynamicSelection == reference;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

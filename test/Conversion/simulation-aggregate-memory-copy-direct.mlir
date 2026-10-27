@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --implicit-check-not=i426 --implicit-check-not='llvm.call @obelisk_rt_v1_native_state'
-// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -passes='default<O3>,verify' -disable-output
+// RUN: talos-opt %s --talos-sim-build-compute-graph='vpi=off' --talos-sim-specialize-static-state-nba --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --implicit-check-not=i426 --implicit-check-not='llvm.call @talos_rt_v1_native_state'
+// RUN: talos-opt %s --talos-sim-build-compute-graph='vpi=off' --talos-sim-specialize-static-state-nba --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | opt -passes='default<O3>,verify' -disable-output
 
 // Direct state/private and state/state copies stay in memory. A 426-bit store
 // copies 53 bytes and masks the last two bits, preserving neighboring state.
@@ -10,13 +10,13 @@
 // CHECK: llvm.intr.memcpy
 // CHECK: llvm.mlir.constant(3 : i8)
 // CHECK: llvm.store {{.*}} : i8, !llvm.ptr
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_signal_transition
 // CHECK: llvm.return
 // CHECK-LABEL: llvm.func @copy_state
 // CHECK-COUNT-5: llvm.intr.memcpy
 // CHECK: llvm.mlir.constant(3 : i8)
 // CHECK: llvm.store {{.*}} : i8, !llvm.ptr
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_signal_transition
 // CHECK: llvm.return
 
 !record = !simulation.packed_struct<[

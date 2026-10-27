@@ -1,15 +1,15 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir 2>&1 | FileCheck %s --check-prefix=PROOF
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir 2>&1 | FileCheck %s --check-prefix=PROOF
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
 // Holds wider than one machine word may skip staging only when both planes
 // match and no earlier update is pending. writer1 stages a different value
 // before the equal one, so its equal capture still overwrites the pending NBA.
-// PROOF: obelisk native unchanged NBA roots: 4/4
-// PLAN-LABEL: llvm.func @writer1.__obelisk_eval_body_0(
-// PLAN: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// PROOF: talos native unchanged NBA roots: 4/4
+// PLAN-LABEL: llvm.func @writer1.__talos_eval_body_0(
+// PLAN: llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // PLAN: llvm.icmp "ne"
 // PLAN: llvm.cond_br
-// PLAN: llvm.mlir.addressof @__obelisk_eval_nba_valid_
+// PLAN: llvm.mlir.addressof @__talos_eval_nba_valid_
 // PLAN: llvm.return
 
 !word = !simulation.logic<130>

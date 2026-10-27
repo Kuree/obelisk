@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep))' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep))' \
 // RUN:   -o %t.planned.mlir
-// RUN: obelisk-opt %t.planned.mlir \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %t.planned.mlir \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
 // Feed preplanned Simulation IR to one conversion pass.  The emitted eval
@@ -107,7 +107,7 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @consume.__obelisk_eval_body_0(
+// CHECK-LABEL: llvm.func @consume.__talos_eval_body_0(
 // CHECK: llvm.icmp "sge"
 // CHECK: llvm.icmp "sle"
 // CHECK: llvm.icmp "slt"
@@ -120,6 +120,6 @@ module attributes {
 // CHECK: llvm.lshr
 // CHECK: llvm.and
 // CHECK: llvm.or
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_load_plane
 // CHECK-NOT: llvm.call @malloc
 // CHECK: llvm.return

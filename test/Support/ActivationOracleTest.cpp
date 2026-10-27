@@ -8,12 +8,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Analysis/ActivationIdempotenceAnalysis.h"
-#include "obelisk/Analysis/ActivationRegionAnalysis.h"
-#include "obelisk/Analysis/HandleDataflowAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/ActivationIdempotenceAnalysis.h"
+#include "talos/Analysis/ActivationRegionAnalysis.h"
+#include "talos/Analysis/HandleDataflowAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Simulation/SimulationDialect.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -33,8 +33,8 @@
 #include <vector>
 
 using namespace mlir;
-using obelisk::analysis::ActivationMemoryAnalysis;
-using obelisk::analysis::ActivationRegionAnalysis;
+using talos::analysis::ActivationMemoryAnalysis;
+using talos::analysis::ActivationRegionAnalysis;
 
 namespace {
 
@@ -254,13 +254,13 @@ protected:
   void SetUp() override {
     context.loadDialect<arith::ArithDialect, cf::ControlFlowDialect,
                         func::FuncDialect, scf::SCFDialect, ub::UBDialect,
-                        obelisk::schedule::ScheduleDialect,
-                        obelisk::sim::ObeliskSimulationDialect>();
+                        talos::schedule::ScheduleDialect,
+                        talos::sim::TalosSimulationDialect>();
     cases = allCases();
     module = parseSourceString<ModuleOp>(program(cases), &context);
     ASSERT_TRUE(module);
-    module->walk([&](obelisk::sim::SimDesignOp op) { design = op; });
-    for (auto function : design.getBody().getOps<obelisk::sim::SimFuncOp>())
+    module->walk([&](talos::sim::SimDesignOp op) { design = op; });
+    for (auto function : design.getBody().getOps<talos::sim::SimFuncOp>())
       functions.push_back(function);
     ASSERT_EQ(functions.size(), cases.size());
   }
@@ -268,8 +268,8 @@ protected:
   MLIRContext context;
   std::vector<Case> cases;
   OwningOpRef<ModuleOp> module;
-  obelisk::sim::SimDesignOp design;
-  std::vector<obelisk::sim::SimFuncOp> functions;
+  talos::sim::SimDesignOp design;
+  std::vector<talos::sim::SimFuncOp> functions;
 };
 
 std::string describe(const Case &c) {
@@ -279,7 +279,7 @@ std::string describe(const Case &c) {
 }
 
 TEST_F(ActivationOracle, IdempotenceProofsAreSound) {
-  obelisk::analysis::HandleDataflowAnalysis handles(design);
+  talos::analysis::HandleDataflowAnalysis handles(design);
   std::vector<State> states = allStates();
   unsigned accepted = 0, rejectedNonidempotent = 0;
   for (auto [c, function] : llvm::zip_equal(cases, functions)) {
@@ -288,7 +288,7 @@ TEST_F(ActivationOracle, IdempotenceProofsAreSound) {
         function, handles, {},
         ActivationMemoryAnalysis::DependencyMode::ReachingValues);
     ASSERT_TRUE(analysis.isValid());
-    bool admitted = obelisk::analysis::hasIdempotentStateTransition(
+    bool admitted = talos::analysis::hasIdempotentStateTransition(
         analysis.getActivationFunction(), analysis.getMemory(), handles);
     bool idempotent = true;
     for (const State &state : states) {
@@ -320,7 +320,7 @@ Bits bits(ArrayRef<ActivationMemoryAnalysis::Range> ranges) {
 }
 
 TEST_F(ActivationOracle, InputDependenciesCoverEveryObservedBit) {
-  obelisk::analysis::HandleDataflowAnalysis handles(design);
+  talos::analysis::HandleDataflowAnalysis handles(design);
   std::vector<State> states = allStates();
   for (auto [c, function] : llvm::zip_equal(cases, functions)) {
     SCOPED_TRACE(describe(c));

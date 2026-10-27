@@ -1,14 +1,14 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // Preponed snapshots, sampled-history rings and clocked-sample rings are
 // runtime-owned. Each query must independently create a checkpoint; none may
 // silently enter a hot generated closure just because the surrounding output
 // supports snapshots.
 // CHECK: module attributes {{.*}}schedule.eval.generated
-// CHECK-DAG: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path
-// CHECK-DAG: llvm.call @obelisk_rt_v1_sampled_read
-// CHECK-DAG: llvm.call @obelisk_rt_v1_sampled_history
-// CHECK-DAG: llvm.call @obelisk_rt_v1_clocked_sample_read
+// CHECK-DAG: llvm.func @work.__talos_eval_body_0.__talos_checkpoint_path
+// CHECK-DAG: llvm.call @talos_rt_v1_sampled_read
+// CHECK-DAG: llvm.call @talos_rt_v1_sampled_history
+// CHECK-DAG: llvm.call @talos_rt_v1_clocked_sample_read
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",

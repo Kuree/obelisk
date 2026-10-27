@@ -1,10 +1,10 @@
 // RUN: %target_clang %target_pic -c \
 // RUN:   %S/Inputs/dpi_export_task_invalid_impl.c \
 // RUN:   -I%resource_dir/include -o %t.o
-// RUN: obelisk %s %t.o -o %t.native
+// RUN: talos %s %t.o -o %t.native
 // RUN: not --status=19 %t.native > %t.native.out
 // RUN: test ! -s %t.native.out
-// RUN: obelisk --execution-tier=bytecode %s %t.o -o %t.bytecode
+// RUN: talos --execution-tier=bytecode %s %t.o -o %t.bytecode
 // RUN: not --status=19 %t.bytecode > %t.bytecode.out
 // RUN: test ! -s %t.bytecode.out
 

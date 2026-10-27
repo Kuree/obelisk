@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=2},obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=2},talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // With identical continuation returns (each member resumes with its current
 // value), both cohorts share one helper. The base test keeps separate
 // helpers for different return values.
 // CHECK-LABEL: simulation.design @return_mapping
-// CHECK-COUNT-2: simulation.spawn @__obelisk_region_kernel_
-// CHECK: simulation.call @[[MEMBER:__obelisk_region_kernel_[A-Za-z0-9_]+\.__member]](
+// CHECK-COUNT-2: simulation.spawn @__talos_region_kernel_
+// CHECK: simulation.call @[[MEMBER:__talos_region_kernel_[A-Za-z0-9_]+\.__member]](
 // CHECK: simulation.call @[[MEMBER]](
 // CHECK: simulation.func private @[[MEMBER]](
 // CHECK-NOT: simulation.func private @{{.*}}.__member

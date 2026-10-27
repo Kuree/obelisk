@@ -1,5 +1,5 @@
-// RUN: not obelisk-opt --split-input-file \
-// RUN:   --convert-obelisk-sim-values-to-standard %s -o /dev/null 2>&1 \
+// RUN: not talos-opt --split-input-file \
+// RUN:   --convert-talos-sim-values-to-standard %s -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --implicit-check-not=unrealized_conversion_cast
 
 // Keep this as a legalization-output check rather than verify-diagnostics:

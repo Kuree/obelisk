@@ -4,16 +4,16 @@
 #include "SimulationTableProcess.h"
 #include "SimulationProcessCoroutineLowering.h"
 #include "mlir/Interfaces/CallInterfaces.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Conversion/SimulationRuntime.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Conversion/SimulationRuntime.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk::detail {
+namespace talos::detail {
 
 std::optional<NativeTableProcess>
 analyzeTableProcess(sim::SimFuncOp function,
@@ -88,15 +88,15 @@ analyzeTableProcess(sim::SimFuncOp function,
     SmallVector<Value> watched;
     SmallVector<uint32_t> edges;
     if (auto change = dyn_cast<sim::SimSuspendChangeOp>(op)) {
-      wait.kind = OBELISK_RT_SUSPEND_CHANGE;
+      wait.kind = TALOS_RT_SUSPEND_CHANGE;
       watched.push_back(change.getWatched());
-      edges.push_back(OBELISK_RT_WAIT_EDGE_CHANGE);
+      edges.push_back(TALOS_RT_WAIT_EDGE_CHANGE);
     } else if (auto edge = dyn_cast<sim::SimSuspendEdgeOp>(op)) {
-      wait.kind = OBELISK_RT_SUSPEND_EDGE;
+      wait.kind = TALOS_RT_SUSPEND_EDGE;
       watched.push_back(edge.getWatched());
       edges.push_back(static_cast<uint32_t>(edge.getEdge()));
     } else if (auto any = dyn_cast<sim::SimSuspendAnyOp>(op)) {
-      wait.kind = OBELISK_RT_SUSPEND_EDGE;
+      wait.kind = TALOS_RT_SUSPEND_EDGE;
       llvm::append_range(watched, any.getWatched());
       for (int32_t edge : any.getEdges())
         edges.push_back(edge);
@@ -106,7 +106,7 @@ analyzeTableProcess(sim::SimFuncOp function,
     if ((schedule::has<schedule::metadata::topLevelWildcardWait>(op) ||
          schedule::has<schedule::metadata::proceduralEventWait>(op)) &&
         !schedule::has<schedule::metadata::repeatingAlwaysWait>(op))
-      wait.flags = OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+      wait.flags = TALOS_RT_WAIT_SUPPRESS_ACTIVE_SELF;
     for (auto [value, edge] : llvm::zip_equal(watched, edges)) {
       auto argument = dyn_cast<BlockArgument>(value);
       auto reference = dyn_cast<sim::RefType>(value.getType());
@@ -133,7 +133,7 @@ analyzeTableProcess(sim::SimFuncOp function,
       // bit.
       wait.watches.push_back(
           {slot.valueOffset, edge,
-           edge == OBELISK_RT_WAIT_EDGE_CHANGE ? uint32_t(*width) : 1u});
+           edge == TALOS_RT_WAIT_EDGE_CHANGE ? uint32_t(*width) : 1u});
     }
     if (watched.empty())
       return std::nullopt;
@@ -159,7 +159,7 @@ void materializeTableProcess(PreparedSuspendableProcess &process) {
   auto waitType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, i64, recordType, pointer});
   auto &waits = process.tableProcess->waits;
-  std::string prefix = process.baseName + ".__obelisk_table";
+  std::string prefix = process.baseName + ".__talos_table";
   for (auto [index, wait] : llvm::enumerate(waits)) {
     auto arrayType = LLVM::LLVMArrayType::get(watchType, wait.watches.size());
     makeConstantGlobal(
@@ -192,7 +192,7 @@ void materializeTableProcess(PreparedSuspendableProcess &process) {
         Value array = LLVM::ZeroOp::create(builder, location, waitsType);
         for (auto [index, wait] : llvm::enumerate(waits)) {
           Value record = LLVM::ZeroOp::create(builder, location, recordType);
-          const uint32_t header[] = {OBELISK_RT_VERSION, wait.kind, wait.flags,
+          const uint32_t header[] = {TALOS_RT_VERSION, wait.kind, wait.flags,
                                      uint32_t(wait.watches.size())};
           for (auto [field, value] : llvm::enumerate(header))
             record =
@@ -231,7 +231,7 @@ void materializeTableProcess(PreparedSuspendableProcess &process) {
         Value plan = LLVM::ZeroOp::create(builder, location, planType);
         plan = insertValue(
             builder, location, plan,
-            llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 0);
+            llvmConstant(builder, location, i32, TALOS_RT_VERSION), 0);
         plan =
             insertValue(builder, location, plan,
                         llvmConstant(builder, location, i32, waits.size()), 1);
@@ -248,8 +248,8 @@ void materializeTableProcess(PreparedSuspendableProcess &process) {
 
 void declareTableProcessRuntimeABI(ModuleOp module) {
   MLIRContext *context = module.getContext();
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_table_process_execute",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_table_process_execute",
                            IntegerType::get(context, 32),
                            {LLVM::LLVMPointerType::get(context)});
 }
-} // namespace obelisk::detail
+} // namespace talos::detail

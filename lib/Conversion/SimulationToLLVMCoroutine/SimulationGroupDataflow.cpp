@@ -1,9 +1,9 @@
 //===- SimulationGroupDataflow.cpp - Predicated native computation --------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Runtime/ReadySet.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Runtime/ReadySet.h"
 
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
@@ -19,7 +19,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 /// Prove a finite computation, using dense predicated dataflow when its
 /// overlapping physical windows fit bounded SSA slots, or retaining its CFG.
@@ -60,7 +60,7 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
   auto reject = [&](StringRef reason, Operation *operation = nullptr) {
     if (native::has<native::DebugTiming>(
             function->getParentOfType<ModuleOp>())) {
-      llvm::errs() << "obelisk group dataflow rejected: "
+      llvm::errs() << "talos group dataflow rejected: "
                    << function.getSymName() << " " << reason;
       if (operation)
         llvm::errs() << " (" << *operation << ")";
@@ -69,7 +69,7 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
     return false;
   };
   auto ingress =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupIngress>(
+      ::talos::schedule::get<::talos::schedule::Field::EvalGroupIngress>(
           function);
   if (!ingress || function.empty())
     return false;
@@ -111,8 +111,8 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
     }
     auto address = pointer.getDefiningOp<LLVM::AddressOfOp>();
     if (!address || (address.getGlobalName() != ingress.getValue() &&
-                     address.getGlobalName() != "__obelisk_state_value" &&
-                     address.getGlobalName() != "__obelisk_state_unknown"))
+                     address.getGlobalName() != "__talos_state_value" &&
+                     address.getGlobalName() != "__talos_state_unknown"))
       return {};
     auto global = symbols.lookup<LLVM::GlobalOp>(address.getGlobalName());
     auto array = global ? dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType())
@@ -443,7 +443,7 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
   // through exact, final SSA words proved empty. Missing words stop progress;
   // no ready bit is consumed and no additional state load is introduced.
   auto rawCount =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalReadyWordCount>(
+      ::talos::schedule::get<::talos::schedule::Field::EvalReadyWordCount>(
           function);
   if (rawCount && rawCount.getUInt() > 1 &&
       rawCount.getUInt() <= runtime::ReadySetLayout::flatWordLimit) {
@@ -480,8 +480,8 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
       if (hints) {
         final[cacheID] = lower;
         slots[cacheID].written = true;
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalCacheHintWords>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::EvalCacheHintWords>(
             function, builder.getI64IntegerAttr(hints));
       }
     }
@@ -495,14 +495,14 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
   if (entry->getOperations().size() > budget)
     return reject("materialization budget");
   function.getBody().takeBody(replacement);
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalPredicatedDataflow>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalPredicatedDataflow>(
       function, builder.getUnitAttr());
   if (mergedRanges)
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalCoalescedSlots>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalCoalescedSlots>(
         function, builder.getI64IntegerAttr(mergedRanges));
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalDataflowSlots>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalDataflowSlots>(
       function, builder.getI64IntegerAttr(slots.size()));
   return true;
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

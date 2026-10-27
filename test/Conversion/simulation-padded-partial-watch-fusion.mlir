@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion))' -o %t
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion))' -o %t
 // RUN: FileCheck %s < %t
-// RUN: obelisk-opt %t --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o /dev/null
+// RUN: talos-opt %t --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' -o /dev/null
 
 // Padded descending unpacked arrays: only the first outer element is internal.
 // The padding after each i3 lane is not a dependency or an external watch.
@@ -48,10 +48,10 @@ module {
     }
   }
 }
-// CHECK: simulation.spawn @__obelisk_region_kernel_
+// CHECK: simulation.spawn @__talos_region_kernel_
 // CHECK-NOT: simulation.func @producer_consumer
 // CHECK-NOT: simulation.func @bank
-// CHECK: simulation.func private @__obelisk_region_kernel_
+// CHECK: simulation.func private @__talos_region_kernel_
 // CHECK: %[[INPUT:.*]] = simulation.context.storage %arg0[0]
 // CHECK: %[[DATA:.*]] = simulation.context.storage %arg0[2]
 // CHECK: %[[MIDDLE:.*]] = simulation.ref.subelement %[[DATA]]{{\[\[1\]\]}}

@@ -1,12 +1,12 @@
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 #include "vpi_user.h"
 #include <stdio.h>
 
-extern obelisk_rt_status
-__real_obelisk_rt_v1_scheduler_run(obelisk_rt_context *context);
-extern obelisk_rt_status
-__real_obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context);
-static obelisk_rt_context *simulation;
+extern talos_rt_status
+__real_talos_rt_v1_scheduler_run(talos_rt_context *context);
+extern talos_rt_status
+__real_talos_rt_v1_scheduler_run_aot(talos_rt_context *context);
+static talos_rt_context *simulation;
 static vpiHandle count;
 static int calls, failed;
 static PLI_INT32 observeClock(p_cb_data data);
@@ -19,7 +19,7 @@ static PLI_INT32 beforeInitialization(p_cb_data data) {
       !value.value.vector || value.value.vector[0].bval != 0xffffffffu) {
     fprintf(stderr, "zero-delay timer must precede Active initialization\n");
     failed = 1;
-    obelisk_rt_v1_scheduler_finish(simulation, 0);
+    talos_rt_v1_scheduler_finish(simulation, 0);
     return 0;
   }
   s_vpi_time delay = {0};
@@ -32,7 +32,7 @@ static PLI_INT32 beforeInitialization(p_cb_data data) {
   vpiHandle timer = vpi_register_cb(&next);
   if (!timer) {
     failed = 1;
-    obelisk_rt_v1_scheduler_finish(simulation, 0);
+    talos_rt_v1_scheduler_finish(simulation, 0);
   } else {
     vpi_release_handle(timer);
   }
@@ -54,7 +54,7 @@ static PLI_INT32 observeClock(p_cb_data data) {
     printf("periodic timer time=%u count=%d\n", expectedTime, expectedCount);
   }
   if (failed || ++calls == 3) {
-    obelisk_rt_v1_scheduler_finish(simulation, 0);
+    talos_rt_v1_scheduler_finish(simulation, 0);
   } else {
     s_vpi_time delay = {0};
     delay.type = vpiSimTime;
@@ -66,7 +66,7 @@ static PLI_INT32 observeClock(p_cb_data data) {
     vpiHandle timer = vpi_register_cb(&next);
     if (!timer) {
       failed = 1;
-      obelisk_rt_v1_scheduler_finish(simulation, 0);
+      talos_rt_v1_scheduler_finish(simulation, 0);
     } else {
       vpi_release_handle(timer);
     }
@@ -74,17 +74,17 @@ static PLI_INT32 observeClock(p_cb_data data) {
   return 0;
 }
 
-static obelisk_rt_status runWithTimer(
-    obelisk_rt_context *context,
-    obelisk_rt_status (*run)(obelisk_rt_context *)) {
+static talos_rt_status runWithTimer(
+    talos_rt_context *context,
+    talos_rt_status (*run)(talos_rt_context *)) {
   if (simulation)
     return run(context);
   simulation = context;
-  obelisk_rt_status status = obelisk_rt_v1_vpi_startup(context, 0, 0);
-  if (status == OBELISK_RT_OK)
-    status = obelisk_rt_v1_vpi_end_compile(context);
-  if (status == OBELISK_RT_OK)
-    status = obelisk_rt_v1_vpi_start_simulation(context);
+  talos_rt_status status = talos_rt_v1_vpi_startup(context, 0, 0);
+  if (status == TALOS_RT_OK)
+    status = talos_rt_v1_vpi_end_compile(context);
+  if (status == TALOS_RT_OK)
+    status = talos_rt_v1_vpi_start_simulation(context);
   count = vpi_handle_by_name("external_clock.count", 0);
   s_vpi_time delay = {0};
   delay.type = vpiSimTime;
@@ -94,24 +94,24 @@ static obelisk_rt_status runWithTimer(
   callback.time = &delay;
   vpiHandle timer = vpi_register_cb(&callback);
   if (!count || !timer)
-    status = OBELISK_RT_INVALID_HANDLE;
+    status = TALOS_RT_INVALID_HANDLE;
   else
     vpi_release_handle(timer);
-  if (status == OBELISK_RT_OK)
+  if (status == TALOS_RT_OK)
     status = run(context);
   if (failed || calls != 3)
-    status = OBELISK_RT_INVALID_DESIGN;
-  obelisk_rt_v1_vpi_end_simulation(context);
-  obelisk_rt_v1_vpi_shutdown(context);
+    status = TALOS_RT_INVALID_DESIGN;
+  talos_rt_v1_vpi_end_simulation(context);
+  talos_rt_v1_vpi_shutdown(context);
   simulation = 0;
   return status;
 }
 
-obelisk_rt_status
-__wrap_obelisk_rt_v1_scheduler_run(obelisk_rt_context *context) {
-  return runWithTimer(context, __real_obelisk_rt_v1_scheduler_run);
+talos_rt_status
+__wrap_talos_rt_v1_scheduler_run(talos_rt_context *context) {
+  return runWithTimer(context, __real_talos_rt_v1_scheduler_run);
 }
-obelisk_rt_status
-__wrap_obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
-  return runWithTimer(context, __real_obelisk_rt_v1_scheduler_run_aot);
+talos_rt_status
+__wrap_talos_rt_v1_scheduler_run_aot(talos_rt_context *context) {
+  return runWithTimer(context, __real_talos_rt_v1_scheduler_run_aot);
 }

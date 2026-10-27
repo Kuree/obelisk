@@ -3,7 +3,7 @@ if(NOT DEFINED INPUT OR NOT DEFINED OUTPUT OR NOT DEFINED SYMBOL)
 endif()
 
 file(READ "${INPUT}" contents)
-string(FIND "${contents}" ")OBELISKASSET\"" terminator)
+string(FIND "${contents}" ")TALOSASSET\"" terminator)
 if(NOT terminator EQUAL -1)
   message(FATAL_ERROR "${INPUT} contains the reserved raw-string terminator")
 endif()
@@ -22,9 +22,9 @@ file(MAKE_DIRECTORY "${output_dir}")
 set(temporary "${OUTPUT}.tmp")
 file(WRITE "${temporary}"
   "// Generated from ${input_name}; do not edit.\n"
-  "static constexpr llvm::StringLiteral ${SYMBOL} = R\"OBELISKASSET("
+  "static constexpr llvm::StringLiteral ${SYMBOL} = R\"TALOSASSET("
   "${contents}"
-  ")OBELISKASSET\";\n")
+  ")TALOSASSET\";\n")
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${temporary}" "${OUTPUT}"
   RESULT_VARIABLE copy_result)

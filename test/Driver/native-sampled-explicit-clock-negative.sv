@@ -1,7 +1,7 @@
-// RUN: not obelisk --std=1800-2023 -emit-llvm -DMISMATCH %s 2>&1 | FileCheck %s --check-prefix=MISMATCH
-// RUN: not obelisk --std=1800-2023 -emit-llvm -DIFF_CLOCK %s 2>&1 | FileCheck %s --check-prefix=IFF
-// RUN: not obelisk --std=1800-2023 -emit-llvm -DCOMPUTED %s 2>&1 | FileCheck %s --check-prefix=COMPUTED
-// RUN: not obelisk --std=1800-2023 -emit-llvm %s 2>&1 | FileCheck %s --check-prefix=UNBOUND
+// RUN: not talos --std=1800-2023 -emit-llvm -DMISMATCH %s 2>&1 | FileCheck %s --check-prefix=MISMATCH
+// RUN: not talos --std=1800-2023 -emit-llvm -DIFF_CLOCK %s 2>&1 | FileCheck %s --check-prefix=IFF
+// RUN: not talos --std=1800-2023 -emit-llvm -DCOMPUTED %s 2>&1 | FileCheck %s --check-prefix=COMPUTED
+// RUN: not talos --std=1800-2023 -emit-llvm %s 2>&1 | FileCheck %s --check-prefix=UNBOUND
 
 module native_sampled_explicit_clock_negative;
   logic clk = 0;

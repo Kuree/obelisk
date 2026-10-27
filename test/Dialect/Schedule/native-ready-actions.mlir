@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --schedule-coalesce-native-ready -o %t
-// RUN: obelisk-opt %t --cse | FileCheck %s
-// RUN: obelisk-opt %t --convert-native-schedule-actions-to-llvm | FileCheck %s --check-prefix=LOWER
+// RUN: talos-opt %s --schedule-coalesce-native-ready -o %t
+// RUN: talos-opt %t --cse | FileCheck %s
+// RUN: talos-opt %t --convert-native-schedule-actions-to-llvm | FileCheck %s --check-prefix=LOWER
 // Pending-mask union must respect consume, alias, observation and publication.
 module {
   llvm.func @updates(%base: !llvm.ptr, %ctx: !llvm.ptr) -> i64 {
@@ -20,7 +20,7 @@ module {
     schedule.ready.update %base, %one {capacity = 128 : i64, word = 0 : i64, consume = false} : (!llvm.ptr, i64) -> ()
     // CHECK: schedule.transition
     // CHECK: schedule.transition
-    // LOWER-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_static_transition
+    // LOWER-COUNT-2: llvm.call @talos_rt_v1_scheduler_static_transition
     schedule.transition %ctx, %zero, %zero, %zero, %one, %zero {static_state = 1 : i64, width = 1 : i64, source_owner = #schedule.source_owner<codeUnit = 9 : i64, continuation = 0 : i64>} : (!llvm.ptr, i64, i64, i64, i64, i64) -> ()
     schedule.transition %ctx, %zero, %one, %zero, %zero, %zero {static_state = 1 : i64, width = 1 : i64, source_owner = #schedule.source_owner<codeUnit = 9 : i64, continuation = 0 : i64>} : (!llvm.ptr, i64, i64, i64, i64, i64) -> ()
     llvm.return %observed : i64

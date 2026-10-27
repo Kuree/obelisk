@@ -1,4 +1,4 @@
-// RUN: env OBELISK_TEST_INPUT=%s %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.LiveUnionMembers
+// RUN: env TALOS_TEST_INPUT=%s %obj_root/test/talos-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.LiveUnionMembers
 #int = #simulation.vpi_type<kind = int, isSigned = true, isFourState = false,
     range = [31, 0], children = [], childNames = []>
 #long = #simulation.vpi_type<kind = longint, isSigned = true, isFourState = false,

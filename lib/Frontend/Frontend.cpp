@@ -1,13 +1,13 @@
 //===- Frontend.cpp - slang semantic AST to Slang dialect importer -------===//
 
-#include "obelisk/Frontend/Frontend.h"
+#include "talos/Frontend/Frontend.h"
 
 #include "SDF.h"
 
-#include "obelisk/Dialect/ForeachLoopMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationDialect.h"
-#include "obelisk/Dialect/Slang/SlangOps.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
+#include "talos/Dialect/ForeachLoopMetadata.h"
+#include "talos/Dialect/Simulation/SimulationDialect.h"
+#include "talos/Dialect/Slang/SlangOps.h"
+#include "talos/Reflection/VPIObjectModel.h"
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -77,7 +77,7 @@ using RepeatProd = RandSeqProductionSymbol::RepeatProd;
 using CaseProd = RandSeqProductionSymbol::CaseProd;
 } // namespace slang::ast
 
-namespace obelisk::frontend {
+namespace talos::frontend {
 namespace {
 
 std::string formatReal(double value) {
@@ -103,7 +103,7 @@ constexpr llvm::StringLiteral declaredTimePrecisionAttrName =
 // IEEE 1800-2017 20.7 query order cannot be reconstructed from a canonical
 // storage type after unpacked-array typedef boundaries have been erased.
 constexpr llvm::StringLiteral arrayQueryDimensionsAttrName =
-    "obelisk.array_query_dimensions";
+    "talos.array_query_dimensions";
 // Identity a type reference shares with every other reference to a matching
 // type (IEEE 1800-2017 6.22.1), so that the comparisons 6.23 allows can be
 // settled without re-implementing the matching rules downstream.
@@ -1373,7 +1373,7 @@ public:
     else                                                                       \
       importNode<slangir::CppType##Op>(node);                                  \
   }
-#include "obelisk/Dialect/Slang/SlangASTNodes.def"
+#include "talos/Dialect/Slang/SlangASTNodes.def"
 #undef SLANG_AST_NODE
 
   void handle(const slang::ast::InvalidStatement &node) {
@@ -2885,7 +2885,7 @@ private:
           (delays.size() == 1 || delays.size() == 2 || delays.size() == 3 ||
            delays.size() == 6 || delays.size() == 12);
       if (supportedCandidate)
-        attrs.set("obelisk.simple_timing_path", builder.getUnitAttr());
+        attrs.set("talos.simple_timing_path", builder.getUnitAttr());
     }
 
     if constexpr (std::same_as<T, slang::ast::SystemTimingCheckSymbol>) {
@@ -3179,9 +3179,9 @@ private:
           negativeCombined &&
           combinedWindow > static_cast<__int128>(precisionFs);
       if (negativeCombined)
-        attrs.set("obelisk.negative_timing_check", builder.getUnitAttr());
+        attrs.set("talos.negative_timing_check", builder.getUnitAttr());
       if (negativeCombined && !validNegativeWindow)
-        attrs.set("obelisk.invalid_negative_timing_window",
+        attrs.set("talos.invalid_negative_timing_window",
                   builder.getUnitAttr());
       auto freezeFlag = [&](size_t index) -> std::optional<bool> {
         if (index >= arguments.size() || !arguments[index].expr)
@@ -3226,7 +3226,7 @@ private:
                          static_cast<int32_t>(slangir::EdgeKind::BothEdges)) &&
           (!(timeSkew || fullSkew) || (eventBased && remainActive)) &&
           !unsupportedCombinedOption) {
-        attrs.set("obelisk.basic_timing_check", builder.getUnitAttr());
+        attrs.set("talos.basic_timing_check", builder.getUnitAttr());
         if (timeSkew || fullSkew) {
           // IEEE 1800-2017 31.4.2/.3 default to timer mode when the optional
           // event_based_flag is absent or zero. Freeze both mode flags here:
@@ -3568,7 +3568,7 @@ private:
               if (field->getInitializer())
                 ordinals.push_back(field->fieldIndex);
             if (!ordinals.empty())
-              attrs.set("obelisk.aggregate_member_initializer_ordinals",
+              attrs.set("talos.aggregate_member_initializer_ordinals",
                         builder.getDenseI64ArrayAttr(ordinals));
           }
         }
@@ -3947,9 +3947,9 @@ private:
           system->subroutine.get() ==
               compilation.getSystemMethod(slang::ast::SymbolKind::ClassType,
                                           "randomize"))
-        attrs.set("obelisk.implicit_this_randomize", builder.getUnitAttr());
+        attrs.set("talos.implicit_this_randomize", builder.getUnitAttr());
       if (sdfAnnotations.isAppliedCall(node))
-        attrs.set("obelisk.sdf_compile_time_applied", builder.getUnitAttr());
+        attrs.set("talos.sdf_compile_time_applied", builder.getUnitAttr());
       bool isSuperClass = false;
       slang::SourceRange callRange = getSourceRange(node);
       if (callRange.start().valid() && callRange.end().valid() &&
@@ -7616,7 +7616,7 @@ static std::vector<std::string>
 buildSlangArguments(ArrayRef<std::string> inputs,
                     const FrontendOptions &options) {
   std::vector<std::string> result;
-  result.emplace_back("obelisk");
+  result.emplace_back("talos");
   result.emplace_back("--std");
   result.emplace_back(options.languageVersion == LanguageVersion::IEEE1800_2017
                           ? "1800-2017"
@@ -7853,7 +7853,7 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
   // Anonymous and typedef enums need not have an imported declaration node.
   // Preserve their exact domains before releasing the elaborated AST.
   if (ArrayAttr domains = importer.getEnumDomains(); !domains.empty())
-    (*module)->setAttr("obelisk.enum_domains", domains);
+    (*module)->setAttr("talos.enum_domains", domains);
 
   if (verifyIR && failed(verify(*module))) {
     emitError(UnknownLoc::get(&context))
@@ -7867,4 +7867,4 @@ std::string getSlangVersion() {
   return "slang version " + slang::VersionInfo::getVersionString();
 }
 
-} // namespace obelisk::frontend
+} // namespace talos::frontend

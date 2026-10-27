@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: not %obelisk -emit-slang %s -o /dev/null
+// RUN: not %talos -emit-slang %s -o /dev/null
 
 // IEEE 1800-2023 15.4.9: the compiler verifies that put, try_put, peek,
 // try_peek, get, and try_get of a parameterized mailbox use argument types

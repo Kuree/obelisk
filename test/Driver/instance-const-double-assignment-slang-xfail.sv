@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: not %obelisk -emit-slang %s -o /dev/null
+// RUN: not %talos -emit-slang %s -o /dev/null
 
 // IEEE 1800-2023 8.19: an instance constant can be assigned only once in
 // its class constructor. Slang v11 rejects an assignment outside the

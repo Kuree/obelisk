@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --test-talos-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
 
 module attributes {
@@ -11,7 +11,7 @@ module attributes {
   simulation.design @clocking_output {
     simulation.scope.decl 0 hierarchy "top"
     simulation.code_unit.decl 9000000 in 0 root_initializer
-        hierarchy "__obelisk_root"
+        hierarchy "__talos_root"
     simulation.code_unit.decl 9000001 in 0 initial
         hierarchy "top.clocking_output"
     simulation.storage.decl 0 in 0 : !simulation.logic<1> design
@@ -44,5 +44,5 @@ module attributes {
 // CHECK: intrinsic {{.*}} id=0x0001024d inputs=2 outputs=0 flags=1
 // CHECK: intrinsic {{.*}} id=0x0001024e inputs=2 outputs=1 flags=1
 
-// NATIVE: llvm.call @obelisk_rt_v1_clocking_output_track
-// NATIVE: llvm.call @obelisk_rt_v1_clocking_output_current
+// NATIVE: llvm.call @talos_rt_v1_clocking_output_track
+// NATIVE: llvm.call @talos_rt_v1_clocking_output_current

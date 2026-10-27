@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -verify-diagnostics
+// RUN: talos-opt %s -verify-diagnostics
 
 module {
   simulation.func @too_many_clocks(

@@ -2,12 +2,12 @@
 // RUN: mkdir -p %t.collision/first %t.collision/second
 // RUN: %target_clang -fPIC -nostdlib -shared %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.collision/first/plugin.so
 // RUN: cp %t.collision/first/plugin.so %t.collision/second/plugin.so
-// RUN: not obelisk %S/dpi.sv %t.collision/first/plugin.so %t.collision/second/plugin.so -o %t.collision.exe 2>&1 | FileCheck %s --check-prefix=COLLISION
-// RUN: not obelisk --target=wasm32 %S/dpi.sv %t.collision/first/plugin.so -o %t.wasm 2>&1 | FileCheck %s --check-prefix=WASM-NATIVE
+// RUN: not talos %S/dpi.sv %t.collision/first/plugin.so %t.collision/second/plugin.so -o %t.collision.exe 2>&1 | FileCheck %s --check-prefix=COLLISION
+// RUN: not talos --target=wasm32 %S/dpi.sv %t.collision/first/plugin.so -o %t.wasm 2>&1 | FileCheck %s --check-prefix=WASM-NATIVE
 // RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/native_probe_failure.c -o %t.probe-failure.so
-// RUN: not obelisk %S/dpi.sv %t.probe-failure.so -o %t.probe-failure 2>&1 | FileCheck %s --check-prefix=PROBE-FAILURE
+// RUN: not talos %S/dpi.sv %t.probe-failure.so -o %t.probe-failure 2>&1 | FileCheck %s --check-prefix=PROBE-FAILURE
 
 // COLLISION: duplicate runtime loader identity 'plugin.so'
 // PROBE-FAILURE: could not load shared library
-// PROBE-FAILURE-SAME: undefined symbol: obelisk_missing_probe_symbol
+// PROBE-FAILURE-SAME: undefined symbol: talos_missing_probe_symbol
 // WASM-NATIVE: native input '{{.*}}.so' is only valid when linking a final executable

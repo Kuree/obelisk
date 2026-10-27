@@ -132,8 +132,8 @@ function simulationModule({ steps = [], status = 0, time = null } = {}) {
   if (time) {
     functions.push([4], [4]);
     exports.push(
-      [...name('obelisk_final_time'), 0x00, 7],
-      [...name('obelisk_time_precision_fs'), 0x00, 8],
+      [...name('talos_final_time'), 0x00, 7],
+      [...name('talos_time_precision_fs'), 0x00, 8],
     );
     bodies.push(
       body([0x00], [0x42, ...signed(time.ticks)]),
@@ -225,20 +225,20 @@ globalThis.self = {
   importScripts(path) {
     importedScripts.push(path);
     if (path === './toolchain.js') {
-      self.installObeliskToolchain = async (mod) => {
+      self.installTalosToolchain = async (mod) => {
         assert.equal(mod, module);
         installCalls++;
       };
-    } else if (path === './obelisk-cov.js') {
+    } else if (path === './talos-cov.js') {
       if (covBehavior === 'no-factory') {
-        delete self.createObeliskCovModule;
+        delete self.createTalosCovModule;
         return;
       }
-      self.createObeliskCovModule = async (options) => {
+      self.createTalosCovModule = async (options) => {
         assert.equal(options.noInitialRun, true);
-        assert.equal(options.thisProgram, '/bin/obelisk-cov');
-        assert.equal(options.locateFile('obelisk-cov.wasm'),
-          new URL('../../web/obelisk-cov.wasm', import.meta.url).href);
+        assert.equal(options.thisProgram, '/bin/talos-cov');
+        assert.equal(options.locateFile('talos-cov.wasm'),
+          new URL('../../web/talos-cov.wasm', import.meta.url).href);
         const covFiles = new Map();
         covModules.push(covFiles);
         return {
@@ -251,12 +251,12 @@ globalThis.self = {
             covCalls.push(argv);
             // Emscripten reports a non-zero exit by throwing its status.
             if (covBehavior === 'exit') {
-              options.printErr('obelisk-cov: stopped early');
+              options.printErr('talos-cov: stopped early');
               throw { status: 3 };
             }
-            if (covBehavior === 'crash') throw new Error('obelisk-cov crashed');
+            if (covBehavior === 'crash') throw new Error('talos-cov crashed');
             if (covBehavior === 'fail') {
-              options.printErr('obelisk-cov: bad database');
+              options.printErr('talos-cov: bad database');
               return 1;
             }
             covFiles.set(argv[argv.indexOf('-o') + 1], '<!doctype html>report');
@@ -264,14 +264,14 @@ globalThis.self = {
           },
         };
       };
-    } else if (path === './obelisk.js') {
-      self.createObeliskModule = async (options) => {
+    } else if (path === './talos.js') {
+      self.createTalosModule = async (options) => {
         factoryCalls++;
         factoryOptions = options;
         assert.equal(options.noInitialRun, true);
-        assert.equal(options.thisProgram, '/bin/obelisk');
-        assert.equal(options.locateFile('obelisk.wasm'),
-          new URL('../../web/obelisk.wasm', import.meta.url).href);
+        assert.equal(options.thisProgram, '/bin/talos');
+        assert.equal(options.locateFile('talos.wasm'),
+          new URL('../../web/talos.wasm', import.meta.url).href);
         return module;
       };
     }
@@ -303,7 +303,7 @@ const join = (output) => output.map((message) => message.text).join('');
 
 await self.onmessage({ data: { type: 'preload' } });
 assert.deepEqual(messages.at(-1), { type: 'ready' });
-assert.deepEqual(importedScripts, ['./toolchain.js', './obelisk.js']);
+assert.deepEqual(importedScripts, ['./toolchain.js', './talos.js']);
 assert.equal(factoryCalls, 1);
 assert.equal(installCalls, 1);
 factoryOptions.printErr('\x1b[36mwork/design.sv\x1b[0m:\x1b[96m11:12\x1b[0m: warning');
@@ -516,7 +516,7 @@ assert.deepEqual(result.messages, [{ type: 'failed', message: 'driver crashed' }
 // A run request that asks for its coverage report, compiled with --coverage,
 // names its sources without work/ and writes a coverage database. The run's
 // result comes first, marked as having a report pending, without the
-// database; obelisk-cov's HTML report follows as the final message.
+// database; talos-cov's HTML report follows as the final message.
 const coverageRun = (args) => request({ args, stage: 'run', kind: 'binary', coverageReport: true });
 behavior = 'success';
 simulation = simulationModule({
@@ -558,10 +558,10 @@ assert.equal(covCalls.length, reportsBefore);
 // A report that fails, exits by throwing, crashes, or whose script lacks the
 // module says why in the final message.
 for (const [behavior, message] of [
-  ['fail', 'obelisk-cov: bad database'],
-  ['exit', 'obelisk-cov: stopped early'],
-  ['crash', 'obelisk-cov crashed'],
-  ['no-factory', 'obelisk-cov.js did not expose createObeliskCovModule'],
+  ['fail', 'talos-cov: bad database'],
+  ['exit', 'talos-cov: stopped early'],
+  ['crash', 'talos-cov crashed'],
+  ['no-factory', 'talos-cov.js did not expose createTalosCovModule'],
 ]) {
   covBehavior = behavior;
   simulation = simulationModule({ steps: [{ file: 'design.obcov', text: 'bad' }] });

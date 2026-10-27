@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE --check-prefix=COMMON
-// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BYTECODE --check-prefix=COMMON
-// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=false' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=AUTO --check-prefix=COMMON
-// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --allow-unregistered-dialect --mlir-to-llvmir | opt -passes=verify -disable-output
+// RUN: talos-opt %s --talos-sim-materialize-dpi-exports --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE --check-prefix=COMMON
+// RUN: talos-opt %s --talos-sim-materialize-dpi-exports --encode-talos-sim-to-bytecode='vpi=off require-bytecode=true' --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BYTECODE --check-prefix=COMMON
+// RUN: talos-opt %s --talos-sim-materialize-dpi-exports --encode-talos-sim-to-bytecode='vpi=off require-bytecode=false' --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=AUTO --check-prefix=COMMON
+// RUN: talos-opt %s --talos-sim-materialize-dpi-exports --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --allow-unregistered-dialect --mlir-to-llvmir | opt -passes=verify -disable-output
 
 // Runtime behavior is checked in ../Runtime/simulation-dpi-export-lowering.test.
 
@@ -51,7 +51,7 @@ module attributes {
       dpi.logical_inputs = 0 : i32
     }
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %initial = simulation.spawn @initial(%ctx) :
@@ -312,8 +312,8 @@ module attributes {
 // COMMON-DAG: llvm.func @export_narrow(%{{.*}}: i8 {llvm.signext}, %{{.*}}: i8 {llvm.zeroext}, %{{.*}}: i8 {llvm.zeroext}) -> (i8 {llvm.signext})
 // COMMON-DAG: llvm.and {{.*}}, %{{.*}} : i8
 // COMMON-DAG: llvm.func @export_vector(%{{.*}}: !llvm.ptr, %{{.*}}: !llvm.ptr)
-// COMMON-DAG: llvm.call @obelisk_rt_v1_dpi_export_unpack_vector
-// COMMON-DAG: llvm.call @obelisk_rt_v1_dpi_export_pack_vector
+// COMMON-DAG: llvm.call @talos_rt_v1_dpi_export_unpack_vector
+// COMMON-DAG: llvm.call @talos_rt_v1_dpi_export_pack_vector
 // COMMON-DAG: llvm.func @export_output(%{{.*}}: !llvm.ptr)
 // COMMON-DAG: llvm.store {{.*}}, {{.*}} {alignment = 1 : i64} : i16, !llvm.ptr
 // COMMON-DAG: llvm.func @export_ping()
@@ -322,11 +322,11 @@ module attributes {
 // COMMON-DAG: llvm.func @export_echo_string
 // COMMON-DAG: llvm.func @export_reenter_string
 // COMMON-DAG: llvm.func @export_scoped
-// COMMON-DAG: llvm.call @obelisk_rt_v1_export_call
-// COMMON-DAG: llvm.mlir.global internal constant @__obelisk_dpi_exports_v1
+// COMMON-DAG: llvm.call @talos_rt_v1_export_call
+// COMMON-DAG: llvm.mlir.global internal constant @__talos_dpi_exports_v1
 // NATIVE-NOT: dpi_export_bytecode{{[|>]}}
-// NATIVE-NOT: @obelisk_rt_v1_dpi_export_bytecode_link_anchor
+// NATIVE-NOT: @talos_rt_v1_dpi_export_bytecode_link_anchor
 // BYTECODE-DAG: #runtime.features<{{[^>]*}}dpi_export_bytecode
-// BYTECODE-DAG: llvm.call @obelisk_rt_v1_dpi_export_bytecode_link_anchor
+// BYTECODE-DAG: llvm.call @talos_rt_v1_dpi_export_bytecode_link_anchor
 // AUTO-NOT: dpi_export_bytecode{{[|>]}}
-// AUTO-NOT: @obelisk_rt_v1_dpi_export_bytecode_link_anchor
+// AUTO-NOT: @talos_rt_v1_dpi_export_bytecode_link_anchor

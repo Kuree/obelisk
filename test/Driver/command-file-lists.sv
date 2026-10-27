@@ -1,16 +1,16 @@
 // Real-world .f manifests use '+'-separated include directories and defines.
 // Their source and include-search order must survive command-file expansion.
 // RUN: %split-file %s %t.dir
-// RUN: cd %t.dir && obelisk -O0 -f root.f -o %t.exe
+// RUN: cd %t.dir && talos -O0 -f root.f -o %t.exe
 // RUN: %t.exe | FileCheck %s
-// RUN: cd %t.dir && obelisk -E --single-unit \
+// RUN: cd %t.dir && talos -E --single-unit \
 // RUN:   +incdir+first+second +define+ENABLED+VALUE=7 '-DEXPR=1+2' \
 // RUN:   'package.sv' main.sv | FileCheck %s --check-prefix=PREPROCESS
-// RUN: cd %t.dir && obelisk -E --single-unit -I'first+extra' \
+// RUN: cd %t.dir && talos -E --single-unit -I'first+extra' \
 // RUN:   -DENABLED -DVALUE=7 '-DEXPR=1+2' package.sv main.sv \
 // RUN:   | FileCheck %s --check-prefix=PREPROCESS
-// RUN: not obelisk -E +incdir+ %s 2>&1 | FileCheck %s --check-prefix=EMPTY-INCLUDE
-// RUN: not obelisk -E +define+VALUE=7++ENABLED %s 2>&1 \
+// RUN: not talos -E +incdir+ %s 2>&1 | FileCheck %s --check-prefix=EMPTY-INCLUDE
+// RUN: not talos -E +define+VALUE=7++ENABLED %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=EMPTY-MACRO
 
 // CHECK: lists = 7 11 3

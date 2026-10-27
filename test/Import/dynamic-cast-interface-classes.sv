@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s | FileCheck %s
+// RUN: talos -emit-slang %s | FileCheck %s
 
 // IEEE 1800-2023 8.16, 8.26.5: a cast to or from an interface class succeeds
 // when the referenced object's class implements the destination, so it is a

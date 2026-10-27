@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(canonicalize,mem2reg,canonicalize)))' | FileCheck %s --check-prefix=REF
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -passes='default<O3>,verify' -S | FileCheck %s --check-prefix=OPT
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(canonicalize,mem2reg,canonicalize)))' | FileCheck %s --check-prefix=REF
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | opt -passes='default<O3>,verify' -S | FileCheck %s --check-prefix=OPT
 
 // LLVM keeps runtime-indexed storage in memory and promotes fixed fields.
 // OPT-LABEL: define i426 @dynamic_update(
@@ -23,7 +23,7 @@
 // REF: simulation.return
 // LLVM-LABEL: llvm.func @dynamic_update
 // LLVM: llvm.alloca
-// LLVM-NOT: llvm.call @obelisk_rt_v1_native_state_alloc
+// LLVM-NOT: llvm.call @talos_rt_v1_native_state_alloc
 // LLVM: llvm.getelementptr
 // LLVM: llvm.load {{.*}} -> i216
 // LLVM: llvm.store {{.*}} : i216, !llvm.ptr
@@ -143,6 +143,6 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // Private-reference classification must survive CFG forwarding before bulk
 // copy formation; a local bit offset can never become a runtime handle.
 // LLVM-LABEL: llvm.func @forwarded_copy_out
-// LLVM-NOT: llvm.call @obelisk_rt_v1_native_state_alloc
-// LLVM-NOT: llvm.call @obelisk_rt_v1_native_ref_copy
+// LLVM-NOT: llvm.call @talos_rt_v1_native_state_alloc
+// LLVM-NOT: llvm.call @talos_rt_v1_native_ref_copy
 // LLVM: llvm.return

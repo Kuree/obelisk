@@ -1,7 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov --coverage-test=real-point 2>&1 | FileCheck %s --check-prefix=WARN --implicit-check-not='functional coverpoint'
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON --implicit-check-not='"option":11,'
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON --implicit-check-not='"option":11,'
 
 // IEEE 1800-2023 19.5.1 and 19.7.1: real bins, open ranges, +/- and +%- ranges
 // and real_interval, with detect_overlap warning only where it is enabled.

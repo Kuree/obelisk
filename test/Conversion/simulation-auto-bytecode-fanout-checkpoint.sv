@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt --test-obelisk-native-backend='scheduler=auto timing=true' -o %t.mlir 2> %t.trace
+// RUN: talos -emit-slang %s | talos-opt --test-talos-native-backend='scheduler=auto timing=true' -o %t.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 // RUN: FileCheck %s < %t.mlir
 
@@ -8,9 +8,9 @@
 // reaches the generic scheduler at a runtime checkpoint, and the rest of the
 // design keeps Auto's generated eval island.
 // TRACE-NOT: partial eval disabled
-// TRACE: obelisk eval executor inventory: tier1=1 tier2=2 runtime_checkpoints=1
+// TRACE: talos eval executor inventory: tier1=1 tier2=2 runtime_checkpoints=1
 // TRACE-NOT: partial eval disabled
-// CHECK: llvm.func @__obelisk_eval_dispatch_v1
+// CHECK: llvm.func @__talos_eval_dispatch_v1
 
 module native_partial_auto_fallback_bytecode_fanout;
   logic clk = 0;

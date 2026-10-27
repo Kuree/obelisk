@@ -3,10 +3,10 @@
 #include "SimulationLocalStorageLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -16,7 +16,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 Value offsetNativeHandle(OpBuilder &builder, Location location, Value handle,
@@ -42,7 +42,7 @@ Value offsetNativeHandle(OpBuilder &builder, Location location, Value handle,
                          : IntegerAttr{};
   if (handleValue && offsetValue) {
     uint64_t folded =
-        obelisk_rt_stable_handle_offset(handleValue.getValue().getZExtValue(),
+        talos_rt_stable_handle_offset(handleValue.getValue().getZExtValue(),
                                         offsetValue.getValue().getSExtValue());
     return arith::ConstantOp::create(
         builder, location, builder.getI64Type(),
@@ -51,7 +51,7 @@ Value offsetNativeHandle(OpBuilder &builder, Location location, Value handle,
   auto call = LLVM::CallOp::create(
       builder, location, TypeRange{builder.getI64Type()},
       SymbolRefAttr::get(builder.getContext(),
-                         "obelisk_rt_v1_native_handle_offset"),
+                         "talos_rt_v1_native_handle_offset"),
       ValueRange{handle, offset});
   // Keep the root/offset form until native access and NBA consumers finish
   // resolving it. The proof permits plain encoded addition afterwards: the
@@ -424,4 +424,4 @@ void populateNativeHandleConversionPatterns(
       converter, context, locals, inBoundsSelections);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

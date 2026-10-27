@@ -6,8 +6,8 @@ void proof_reset();
 uint64_t proof_known();
 uint8_t proof_latched();
 uint8_t proof_dirty();
-void __obelisk_eval_promotion_invalidate_range_v1(uint64_t, uint64_t);
-void __obelisk_eval_promotion_recheck_range_v1(uint64_t, uint64_t);
+void __talos_eval_promotion_invalidate_range_v1(uint64_t, uint64_t);
+void __talos_eval_promotion_recheck_range_v1(uint64_t, uint64_t);
 }
 
 int main() {
@@ -26,7 +26,7 @@ int main() {
       bool second = overlaps(64, 66);
       uint64_t known = 3 & ~(uint64_t(first) | (uint64_t(second) << 1));
       proof_reset();
-      __obelisk_eval_promotion_invalidate_range_v1(offset, width);
+      __talos_eval_promotion_invalidate_range_v1(offset, width);
       if (proof_known() != known || proof_latched() != !(first || second) ||
           proof_dirty() != (first || second)) {
         std::fprintf(stderr, "invalidate offset=%llu width=%llu\n",
@@ -35,7 +35,7 @@ int main() {
         return 1;
       }
       proof_reset();
-      __obelisk_eval_promotion_recheck_range_v1(offset, width);
+      __talos_eval_promotion_recheck_range_v1(offset, width);
       if (proof_known() != 3 || proof_latched() != 1 ||
           proof_dirty() != (first || second))
         return 2;

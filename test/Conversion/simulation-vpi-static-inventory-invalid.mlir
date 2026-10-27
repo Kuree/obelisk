@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=read' 2>&1 \
+// RUN: not talos-opt %s --encode-talos-sim-to-bytecode='vpi=read' 2>&1 \
 // RUN:   | FileCheck %s
 
 module attributes {

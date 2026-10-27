@@ -1,10 +1,10 @@
-// RUN: obelisk --vpi=off -O0 %s -o %t.native
+// RUN: talos --vpi=off -O0 %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk --vpi=off -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos --vpi=off -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
-// RUN: obelisk -O0 --vpi=off --compile-threads=1 -emit-sim %s -o %t.serial.mlir
-// RUN: obelisk -O0 --vpi=off --compile-threads=8 -emit-sim %s -o %t.parallel.mlir
+// RUN: talos -O0 --vpi=off --compile-threads=1 -emit-sim %s -o %t.serial.mlir
+// RUN: talos -O0 --vpi=off --compile-threads=8 -emit-sim %s -o %t.parallel.mlir
 // RUN: diff -u %t.serial.mlir %t.parallel.mlir
 
 class conditional_base;

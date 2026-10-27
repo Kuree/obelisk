@@ -1,2 +1,2 @@
 # REQUIRES: node
-# RUN: %node %S/../Support/CheckCoverageOrdering.js %S/../../tools/obelisk-cov/CoverageReport.js
+# RUN: %node %S/../Support/CheckCoverageOrdering.js %S/../../tools/talos-cov/CoverageReport.js

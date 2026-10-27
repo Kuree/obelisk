@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s -o /dev/null
+// RUN: talos-opt --split-input-file --verify-diagnostics %s -o /dev/null
 
 #int = #simulation.vpi_type<kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>
 #bits = #simulation.vpi_type<kind = bit, isSigned = false, isFourState = false, range = [2, 0], children = [], childNames = []>

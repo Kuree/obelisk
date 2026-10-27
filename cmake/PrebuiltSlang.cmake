@@ -1,11 +1,11 @@
 # Reuse completed dependency artifacts without configuring or writing into the
 # supplying build. Slang's public definitions affect its header ABI, so read
-# those settings from the original Obelisk cache rather than the consuming build.
-function(obelisk_import_prebuilt_slang)
-  set(build "${OBELISK_SLANG_PREBUILT_BUILD_DIR}")
+# those settings from the original Talos cache rather than the consuming build.
+function(talos_import_prebuilt_slang)
+  set(build "${TALOS_SLANG_PREBUILT_BUILD_DIR}")
   if(NOT EXISTS "${build}/CMakeCache.txt")
     message(FATAL_ERROR
-      "OBELISK_SLANG_PREBUILT_BUILD_DIR must name an existing Obelisk CMake "
+      "TALOS_SLANG_PREBUILT_BUILD_DIR must name an existing Talos CMake "
       "build directory, not its Slang dependency subdirectory")
   endif()
   load_cache("${build}" READ_WITH_PREFIX prebuilt_
@@ -15,13 +15,13 @@ function(obelisk_import_prebuilt_slang)
     SLANG_LIB_NAME SLANG_USE_THREADS SLANG_USE_MIMALLOC SLANG_USE_CPPTRACE
     SLANG_INCLUDE_PYLIB FMT_SOURCE_DIR FMT_DEBUG_POSTFIX FMT_MODULE
     FMT_SAFE_DURATION_CAST)
-  if(NOT prebuilt_CMAKE_PROJECT_NAME STREQUAL "obelisk" OR
+  if(NOT prebuilt_CMAKE_PROJECT_NAME STREQUAL "talos" OR
      prebuilt_CMAKE_CONFIGURATION_TYPES OR prebuilt_BUILD_SHARED_LIBS OR
      prebuilt_SLANG_INCLUDE_PYLIB OR prebuilt_SLANG_USE_MIMALLOC OR
      prebuilt_SLANG_USE_CPPTRACE OR prebuilt_Boost_DIR OR prebuilt_FMT_MODULE)
     message(FATAL_ERROR
-      "OBELISK_SLANG_PREBUILT_BUILD_DIR requires a single-configuration "
-      "Obelisk build with static Slang, vendored Boost, and no mimalloc, "
+      "TALOS_SLANG_PREBUILT_BUILD_DIR requires a single-configuration "
+      "Talos build with static Slang, vendored Boost, and no mimalloc, "
       "cpptrace, Python library, or fmt modules")
   endif()
   if(CMAKE_CROSSCOMPILING OR prebuilt_CMAKE_TOOLCHAIN_FILE)
@@ -57,12 +57,12 @@ function(obelisk_import_prebuilt_slang)
   endforeach()
   file(STRINGS "${source}/CMakeLists.txt" version
     REGEX "^set\\(SLANG_VERSION_(MAJOR|MINOR) [0-9]+\\)$")
-  string(REPLACE "." ";" expected_version "${OBELISK_SLANG_VERSION}")
+  string(REPLACE "." ";" expected_version "${TALOS_SLANG_VERSION}")
   list(GET expected_version 0 major)
   list(GET expected_version 1 minor)
   if(NOT version STREQUAL
      "set(SLANG_VERSION_MAJOR ${major});set(SLANG_VERSION_MINOR ${minor})")
-    message(FATAL_ERROR "Prebuilt Slang must be v${OBELISK_SLANG_VERSION}")
+    message(FATAL_ERROR "Prebuilt Slang must be v${TALOS_SLANG_VERSION}")
   endif()
 
   add_library(fmt::fmt STATIC IMPORTED GLOBAL)
@@ -92,7 +92,7 @@ function(obelisk_import_prebuilt_slang)
     target_compile_definitions(slang::slang INTERFACE SLANG_USE_THREADS)
     target_link_libraries(slang::slang INTERFACE Threads::Threads)
   endif()
-  set(OBELISK_SLANG_SOURCE_DIR "${source}" PARENT_SCOPE)
+  set(TALOS_SLANG_SOURCE_DIR "${source}" PARENT_SCOPE)
   message(STATUS
-    "Reusing slang v${OBELISK_SLANG_VERSION} from Obelisk build ${build}")
+    "Reusing slang v${TALOS_SLANG_VERSION} from Talos build ${build}")
 endfunction()

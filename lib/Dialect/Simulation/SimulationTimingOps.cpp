@@ -6,11 +6,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "SimulationVerifiers.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/OutputItemFlags.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/OutputItemFlags.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -39,7 +39,7 @@
 
 using namespace mlir;
 
-namespace obelisk::sim {
+namespace talos::sim {
 
 Operation::operand_range SimCovergroupClockEventRegisterOp::getPrimaries() {
   return getValues().take_front(
@@ -152,12 +152,12 @@ LogicalResult SimCovergroupClockEventRegisterOp::verify() {
       SymbolTable::getSymbolVisibility(function) !=
           SymbolTable::Visibility::Private ||
       !function->hasAttr("internal") ||
-      !::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+      !::talos::schedule::has<::talos::schedule::Field::DetachedControls>(
           function) ||
-      !::obelisk::schedule::has<::obelisk::schedule::Field::PrimeOnSpawn>(
+      !::talos::schedule::has<::talos::schedule::Field::PrimeOnSpawn>(
           function) ||
-      !::obelisk::schedule::has<
-          ::obelisk::schedule::Field::CovergroupClockingSampler>(function) ||
+      !::talos::schedule::has<
+          ::talos::schedule::Field::CovergroupClockingSampler>(function) ||
       sim::has<sim::metadata::MulticlockSequenceCoordinator>(function) ||
       sim::has<sim::metadata::TimingCheckCoordinator>(function))
     return emitOpError(
@@ -729,10 +729,10 @@ LogicalResult SimSuspendObserveOp::verify() {
   }
   if (llvm::is_contained(usedConditions, false))
     return emitOpError("contains an unreferenced condition observer");
-  bool concurrentCancel = ::obelisk::schedule::has<
-      ::obelisk::schedule::Field::ConcurrentCancelLevelTrue>((*this));
-  bool concurrentAbort = ::obelisk::schedule::has<
-      ::obelisk::schedule::Field::ConcurrentAbortLevelTrue>((*this));
+  bool concurrentCancel = ::talos::schedule::has<
+      ::talos::schedule::Field::ConcurrentCancelLevelTrue>((*this));
+  bool concurrentAbort = ::talos::schedule::has<
+      ::talos::schedule::Field::ConcurrentAbortLevelTrue>((*this));
   if (concurrentCancel && concurrentAbort)
     return emitOpError(
         "cannot be both a concurrent-cancel and concurrent-abort suspension");
@@ -740,14 +740,14 @@ LogicalResult SimSuspendObserveOp::verify() {
     auto function = (*this)->getParentOfType<SimFuncOp>();
     if (!function || !function->hasAttr("internal") ||
         !(concurrentCancel
-              ? ::obelisk::schedule::has<
-                    ::obelisk::schedule::Field::ConcurrentCancel>(function)
-              : ::obelisk::schedule::has<
-                    ::obelisk::schedule::Field::ConcurrentAbort>(function)) ||
-        !::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+              ? ::talos::schedule::has<
+                    ::talos::schedule::Field::ConcurrentCancel>(function)
+              : ::talos::schedule::has<
+                    ::talos::schedule::Field::ConcurrentAbort>(function)) ||
+        !::talos::schedule::has<::talos::schedule::Field::DetachedControls>(
             function) ||
-        !::obelisk::schedule::has<
-            ::obelisk::schedule::Field::PrioritySignalResume>(function) ||
+        !::talos::schedule::has<
+            ::talos::schedule::Field::PrioritySignalResume>(function) ||
         function.getEntryKind() != EntryKind::Fork ||
         function.getHomeRegion() != EventRegion::Reactive)
       return emitOpError() << "concurrent "
@@ -873,12 +873,12 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
     return operation->emitOpError("time multiplier must be positive");
   unsigned itemIndex = 0;
   for (auto [logicalIndex, flags] : llvm::enumerate(itemFlags)) {
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) != 0 &&
+    if ((flags & TALOS_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) != 0 &&
         (!allowDesignatedFormat || logicalIndex != 0))
       return operation->emitOpError(
           "designated format must be the first string output-format item");
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_OMITTED) != 0) {
-      if (flags != OBELISK_RT_OUTPUT_ITEM_OMITTED)
+    if ((flags & TALOS_RT_OUTPUT_ITEM_OMITTED) != 0) {
+      if (flags != TALOS_RT_OUTPUT_ITEM_OMITTED)
         return operation->emitOpError(
             "omitted display items cannot carry other flags");
       continue;
@@ -886,10 +886,10 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
     if (itemIndex == items.size())
       return operation->emitOpError("item flags require more display operands");
     Value item = items[itemIndex++];
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_ENUM) != 0) {
-      if (flags != OBELISK_RT_OUTPUT_ITEM_ENUM &&
+    if ((flags & TALOS_RT_OUTPUT_ITEM_ENUM) != 0) {
+      if (flags != TALOS_RT_OUTPUT_ITEM_ENUM &&
           flags !=
-              (OBELISK_RT_OUTPUT_ITEM_ENUM | OBELISK_RT_OUTPUT_ITEM_SIGNED))
+              (TALOS_RT_OUTPUT_ITEM_ENUM | TALOS_RT_OUTPUT_ITEM_SIGNED))
         return operation->emitOpError(
             "enum display items may only also carry the signed flag");
       if (!isa<IntegerType, LogicType>(item.getType()) ||
@@ -900,9 +900,9 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
       ++itemIndex;
       continue;
     }
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_NET) != 0) {
-      if (flags != OBELISK_RT_OUTPUT_ITEM_NET &&
-          flags != (OBELISK_RT_OUTPUT_ITEM_NET | OBELISK_RT_OUTPUT_ITEM_SIGNED))
+    if ((flags & TALOS_RT_OUTPUT_ITEM_NET) != 0) {
+      if (flags != TALOS_RT_OUTPUT_ITEM_NET &&
+          flags != (TALOS_RT_OUTPUT_ITEM_NET | TALOS_RT_OUTPUT_ITEM_SIGNED))
         return operation->emitOpError(
             "net display items may only also carry the signed flag");
       if (!isa<IntegerType, LogicType>(item.getType()) ||
@@ -913,8 +913,8 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
       ++itemIndex;
       continue;
     }
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE) != 0) {
-      if (flags != OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE)
+    if ((flags & TALOS_RT_OUTPUT_ITEM_RAW_AGGREGATE) != 0) {
+      if (flags != TALOS_RT_OUTPUT_ITEM_RAW_AGGREGATE)
         return operation->emitOpError(
             "raw aggregate display items cannot carry other flags");
       if (!isa<StringType>(item.getType()) || itemIndex + 1 >= items.size() ||
@@ -934,84 +934,84 @@ static LogicalResult verifyOutputItems(Operation *operation, ValueRange items,
           "items must be literal bytes, packed integers, or f64 reals; "
           "managed strings, containers, class handles, and virtual-interface "
           "and process handles are also accepted");
-    if ((flags & ~OBELISK_RT_OUTPUT_ITEM_ALL) != 0)
+    if ((flags & ~TALOS_RT_OUTPUT_ITEM_ALL) != 0)
       return operation->emitOpError(
           "display item flags contain an unknown bit");
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_CONTAINER) != 0 &&
+    if ((flags & TALOS_RT_OUTPUT_ITEM_CONTAINER) != 0 &&
         !isa<DynamicArrayType, QueueType, AssocArrayType>(item.getType()))
       return operation->emitOpError(
           "container display flags require a container operand");
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_CLASS) != 0 &&
+    if ((flags & TALOS_RT_OUTPUT_ITEM_CLASS) != 0 &&
         !isa<ClassHandleType>(item.getType()))
       return operation->emitOpError(
           "class-handle display flags require a class-handle operand");
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE) != 0 &&
+    if ((flags & TALOS_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE) != 0 &&
         !isa<VirtualInterfaceType>(item.getType()))
       return operation->emitOpError(
           "virtual-interface display flags require a virtual-interface "
           "operand");
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_PROCESS) != 0 &&
+    if ((flags & TALOS_RT_OUTPUT_ITEM_PROCESS) != 0 &&
         !isa<ProcessType>(item.getType()))
       return operation->emitOpError(
           "process display flags require a process-handle operand");
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_REAL) != 0 && !item.getType().isF64())
+    if ((flags & TALOS_RT_OUTPUT_ITEM_REAL) != 0 && !item.getType().isF64())
       return operation->emitOpError(
           "real display items must have f64 operands");
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_REAL) == 0 && item.getType().isF64())
+    if ((flags & TALOS_RT_OUTPUT_ITEM_REAL) == 0 && item.getType().isF64())
       return operation->emitOpError("f64 display operands must be marked real");
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_REAL_TIME) != 0 &&
-        (flags & OBELISK_RT_OUTPUT_ITEM_REAL) == 0)
+    if ((flags & TALOS_RT_OUTPUT_ITEM_REAL_TIME) != 0 &&
+        (flags & TALOS_RT_OUTPUT_ITEM_REAL) == 0)
       return operation->emitOpError(
           "realtime display items must also be marked real");
     if ((flags &
-         (OBELISK_RT_OUTPUT_ITEM_REAL | OBELISK_RT_OUTPUT_ITEM_SIGNED)) ==
-        (OBELISK_RT_OUTPUT_ITEM_REAL | OBELISK_RT_OUTPUT_ITEM_SIGNED))
+         (TALOS_RT_OUTPUT_ITEM_REAL | TALOS_RT_OUTPUT_ITEM_SIGNED)) ==
+        (TALOS_RT_OUTPUT_ITEM_REAL | TALOS_RT_OUTPUT_ITEM_SIGNED))
       return operation->emitOpError(
           "real display items cannot be marked signed");
     if (isa<BytesType>(item.getType()) &&
-        flags == OBELISK_RT_OUTPUT_ITEM_SIGNED)
+        flags == TALOS_RT_OUTPUT_ITEM_SIGNED)
       return operation->emitOpError("literal byte items cannot be signed");
     if (isa<BytesType>(item.getType()) && flags != 0 &&
         (!allowDesignatedFormat ||
-         flags != OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT))
+         flags != TALOS_RT_OUTPUT_ITEM_DESIGNATED_FORMAT))
       return operation->emitOpError(
           "only a string output-format literal may carry the designated "
           "format flag");
     if (isa<StringType>(item.getType())) {
-      if (flags != OBELISK_RT_OUTPUT_ITEM_STRING &&
-          flags != (OBELISK_RT_OUTPUT_ITEM_STRING |
-                    OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) &&
+      if (flags != TALOS_RT_OUTPUT_ITEM_STRING &&
+          flags != (TALOS_RT_OUTPUT_ITEM_STRING |
+                    TALOS_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) &&
           flags !=
-              (OBELISK_RT_OUTPUT_ITEM_STRING | OBELISK_RT_OUTPUT_ITEM_FORMAT))
+              (TALOS_RT_OUTPUT_ITEM_STRING | TALOS_RT_OUTPUT_ITEM_FORMAT))
         return operation->emitOpError(
             "managed string items require the string flag and may also carry "
             "the format flag");
     } else if (isa<DynamicArrayType, QueueType, AssocArrayType>(
                    item.getType())) {
-      if (flags != OBELISK_RT_OUTPUT_ITEM_CONTAINER)
+      if (flags != TALOS_RT_OUTPUT_ITEM_CONTAINER)
         return operation->emitOpError(
             "managed container items require only the container flag");
     } else if (isa<ClassHandleType>(item.getType())) {
-      if (flags != OBELISK_RT_OUTPUT_ITEM_CLASS)
+      if (flags != TALOS_RT_OUTPUT_ITEM_CLASS)
         return operation->emitOpError(
             "class-handle items require only the class-handle flag");
     } else if (isa<VirtualInterfaceType>(item.getType())) {
-      if (flags != OBELISK_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE)
+      if (flags != TALOS_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE)
         return operation->emitOpError(
             "virtual-interface items require only the virtual-interface "
             "flag");
     } else if (isa<ProcessType>(item.getType())) {
-      if (flags != OBELISK_RT_OUTPUT_ITEM_PROCESS)
+      if (flags != TALOS_RT_OUTPUT_ITEM_PROCESS)
         return operation->emitOpError(
             "process-handle items require only the process flag");
     } else if (item.getType().isF64()) {
-      if (flags != OBELISK_RT_OUTPUT_ITEM_REAL &&
+      if (flags != TALOS_RT_OUTPUT_ITEM_REAL &&
           flags !=
-              (OBELISK_RT_OUTPUT_ITEM_REAL | OBELISK_RT_OUTPUT_ITEM_REAL_TIME))
+              (TALOS_RT_OUTPUT_ITEM_REAL | TALOS_RT_OUTPUT_ITEM_REAL_TIME))
         return operation->emitOpError(
             "f64 items require the real flag and may carry the realtime flag");
     } else if (!isa<BytesType>(item.getType()) && flags != 0 &&
-               flags != OBELISK_RT_OUTPUT_ITEM_SIGNED) {
+               flags != TALOS_RT_OUTPUT_ITEM_SIGNED) {
       return operation->emitOpError(
           "packed integer items may only carry the signed flag");
     }
@@ -1055,4 +1055,4 @@ LogicalResult SimFileReadMemTokenOp::verify() {
   return success();
 }
 
-} // namespace obelisk::sim
+} // namespace talos::sim

@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=LLVM
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --test-talos-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
@@ -48,9 +48,9 @@ module attributes {
 }
 
 // LLVM-LABEL: llvm.func @process(
-// LLVM: llvm.call @obelisk_rt_v1_object_override
-// LLVM-COUNT-2: llvm.call @obelisk_rt_v1_object_override
-// LLVM-COUNT-2: llvm.call @obelisk_rt_v1_object_release_override
+// LLVM: llvm.call @talos_rt_v1_object_override
+// LLVM-COUNT-2: llvm.call @talos_rt_v1_object_override
+// LLVM-COUNT-2: llvm.call @talos_rt_v1_object_release_override
 // LLVM-NOT: simulation.override
 // LLVM-NOT: simulation.dynamic_override
 // LLVM-NOT: simulation.release_override

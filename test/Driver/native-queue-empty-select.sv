@@ -1,8 +1,8 @@
 // XFAIL: *
 // Slang v11 attempts to constant-evaluate an empty queue rvalue select.
-// RUN: obelisk -O0 %s -o %t.native
+// RUN: talos -O0 %s -o %t.native
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 
 module native_queue_empty_select;

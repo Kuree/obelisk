@@ -1,20 +1,20 @@
 //===- SimulationToBytecode.cpp - Strict design-wide bytecode encoder -----===//
 
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Conversion/FunctionalCoverageSchemaVerification.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Conversion/FunctionalCoverageSchemaVerification.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
 
-#include "obelisk/Analysis/ClassBitstreamPlan.h"
-#include "obelisk/Analysis/NativeStorageLayout.h"
+#include "talos/Analysis/ClassBitstreamPlan.h"
+#include "talos/Analysis/NativeStorageLayout.h"
 
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
-#include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/SimulationProcessFrameAnalysis.h"
+#include "talos/Analysis/SimulationVPIAnalysis.h"
+#include "talos/Runtime/Runtime.h"
 
-#include "obelisk/Analysis/SSAValueAnalysis.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -36,27 +36,27 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_ENCODEOBELISKSIMTOBYTECODEPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#define GEN_PASS_DEF_ENCODETALOSSIMTOBYTECODEPASS
+#include "talos/Conversion/Passes.h.inc"
 
 namespace bytecode {
 namespace {
 
-constexpr uint32_t kExecutionHasBytecode = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+constexpr uint32_t kExecutionHasBytecode = TALOS_RT_EXECUTION_HAS_BYTECODE;
 constexpr uint32_t kExecutionHasDatabase =
-    OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE;
-constexpr uint32_t kExecutionVPIRead = OBELISK_RT_EXECUTION_VPI_READ;
-constexpr uint32_t kExecutionVPIWrite = OBELISK_RT_EXECUTION_VPI_WRITE;
+    TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE;
+constexpr uint32_t kExecutionVPIRead = TALOS_RT_EXECUTION_VPI_READ;
+constexpr uint32_t kExecutionVPIWrite = TALOS_RT_EXECUTION_VPI_WRITE;
 constexpr uint32_t kExecutionRequireBytecode =
-    OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
+    TALOS_RT_EXECUTION_REQUIRE_BYTECODE;
 constexpr uint32_t kExecutionPreponedSnapshot =
-    OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
+    TALOS_RT_EXECUTION_PREPONED_SNAPSHOT;
 constexpr uint32_t kExecutionWaveformMetadata =
-    OBELISK_RT_EXECUTION_WAVEFORM_METADATA;
-constexpr uint32_t kDatabaseProfileRead = OBELISK_RT_DESIGN_PROFILE_READ;
-constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
+    TALOS_RT_EXECUTION_WAVEFORM_METADATA;
+constexpr uint32_t kDatabaseProfileRead = TALOS_RT_DESIGN_PROFILE_READ;
+constexpr uint32_t kDatabaseProfileWrite = TALOS_RT_DESIGN_PROFILE_WRITE;
 
 } // namespace
 
@@ -223,7 +223,7 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
   result.requiresRecursiveBitstreamFeature = requiresRecursiveBitstreamFeature;
   result.executionFlags = kExecutionHasBytecode;
   if (native::has<native::TwoState>(design->getParentOfType<ModuleOp>()))
-    result.executionFlags |= OBELISK_RT_EXECUTION_TWO_STATE;
+    result.executionFlags |= TALOS_RT_EXECUTION_TWO_STATE;
   if (!result.sampledRanges.empty())
     result.executionFlags |= kExecutionPreponedSnapshot;
   if (options.requireBytecode)
@@ -849,12 +849,12 @@ SmallVector<uint8_t> Encoder::serializeDatabase(uint32_t profile,
 
 namespace {
 
-class EncodeObeliskSimToBytecodePass final
-    : public impl::EncodeObeliskSimToBytecodePassBase<
-          EncodeObeliskSimToBytecodePass> {
+class EncodeTalosSimToBytecodePass final
+    : public impl::EncodeTalosSimToBytecodePassBase<
+          EncodeTalosSimToBytecodePass> {
 public:
   using Base =
-      impl::EncodeObeliskSimToBytecodePassBase<EncodeObeliskSimToBytecodePass>;
+      impl::EncodeTalosSimToBytecodePassBase<EncodeTalosSimToBytecodePass>;
   using Base::Base;
 
   void runOnOperation() override {
@@ -967,7 +967,7 @@ planSimulationSampledState(sim::SimDesignOp design) {
   result.ranges = std::move(*ranges);
   result.stateBitCount = state->bits;
   if (!result.ranges.empty())
-    result.executionFlags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
+    result.executionFlags = TALOS_RT_EXECUTION_PREPONED_SNAPSHOT;
   return result;
 }
 
@@ -995,4 +995,4 @@ encodeSimulationDesign(sim::SimDesignOp design,
   return encoder.encode();
 }
 
-} // namespace obelisk
+} // namespace talos

@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // Source queue mutations are covered at the unit-lowering boundary. Runtime
 // tests separately exercise ring ordering and the declared maximum-index
 // bound, while backend tests cover native and bytecode op lowering.
 
-!int = !obelisk.integral<32, true, false, 31 : 0, int>
-!queue = !obelisk.queue<!int, 1>
+!int = !talos.integral<32, true, false, 31 : 0, int>
+!queue = !talos.queue<!int, 1>
 
 module {
   simulation.design @queue_mutations {
@@ -57,103 +57,103 @@ module {
           code_unit_id = 9700001 : i64,
           simulation.void_function
         } {
-      obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
-        obelisk.sv.expression.call attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 1 : i64} {
+        talos.sv.expression.call attributes {
             argument_count = 2 : i64, callee_name = "push_back",
             constraint_restrictions = [], has_inline_constraints = false,
             has_iterator_expression = false, has_output_arguments = false,
             has_this_class = false, is_super_class = false,
             is_system_call = true, node_id = 2 : i64,
-            semantic_type = !obelisk.void, subroutine_kind = 0 : i32,
+            semantic_type = !talos.void, subroutine_kind = 0 : i32,
             system_library_cell = "work.top",
             system_scope_path = "top"} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 3 : i64, referenced_path = "top.queue",
               referenced_symbol = @queue, semantic_type = !queue} {
           }
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               node_id = 4 : i64, constant_value = "4",
               semantic_type = !int} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 5 : i64} {
-        obelisk.sv.expression.call attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 5 : i64} {
+        talos.sv.expression.call attributes {
             argument_count = 2 : i64, callee_name = "push_front",
             constraint_restrictions = [], has_inline_constraints = false,
             has_iterator_expression = false, has_output_arguments = false,
             has_this_class = false, is_super_class = false,
             is_system_call = true, node_id = 6 : i64,
-            semantic_type = !obelisk.void, subroutine_kind = 0 : i32,
+            semantic_type = !talos.void, subroutine_kind = 0 : i32,
             system_library_cell = "work.top",
             system_scope_path = "top"} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 7 : i64, referenced_path = "top.queue",
               referenced_symbol = @queue, semantic_type = !queue} {
           }
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               node_id = 8 : i64, constant_value = "5",
               semantic_type = !int} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 9 : i64} {
-        obelisk.sv.expression.call attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 9 : i64} {
+        talos.sv.expression.call attributes {
             argument_count = 3 : i64, callee_name = "insert",
             constraint_restrictions = [], has_inline_constraints = false,
             has_iterator_expression = false, has_output_arguments = false,
             has_this_class = false, is_super_class = false,
             is_system_call = true, node_id = 10 : i64,
-            semantic_type = !obelisk.void, subroutine_kind = 0 : i32,
+            semantic_type = !talos.void, subroutine_kind = 0 : i32,
             system_library_cell = "work.top",
             system_scope_path = "top"} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 11 : i64, referenced_path = "top.queue",
               referenced_symbol = @queue, semantic_type = !queue} {
           }
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               node_id = 12 : i64, constant_value = "1",
               semantic_type = !int} {
           }
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               node_id = 13 : i64, constant_value = "6",
               semantic_type = !int} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {
+      talos.sv.statement.expression_statement attributes {
           node_id = 14 : i64} {
-        obelisk.sv.expression.call attributes {
+        talos.sv.expression.call attributes {
             argument_count = 2 : i64, callee_name = "delete",
             constraint_restrictions = [], has_inline_constraints = false,
             has_iterator_expression = false, has_output_arguments = false,
             has_this_class = false, is_super_class = false,
             is_system_call = true, node_id = 15 : i64,
-            semantic_type = !obelisk.void, subroutine_kind = 0 : i32,
+            semantic_type = !talos.void, subroutine_kind = 0 : i32,
             system_library_cell = "work.top",
             system_scope_path = "top"} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 16 : i64, referenced_path = "top.queue",
               referenced_symbol = @queue, semantic_type = !queue} {
           }
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               node_id = 17 : i64, constant_value = "1",
               semantic_type = !int} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {
+      talos.sv.statement.expression_statement attributes {
           node_id = 18 : i64} {
-        obelisk.sv.expression.call attributes {
+        talos.sv.expression.call attributes {
             argument_count = 1 : i64, callee_name = "delete",
             constraint_restrictions = [], has_inline_constraints = false,
             has_iterator_expression = false, has_output_arguments = false,
             has_this_class = false, is_super_class = false,
             is_system_call = true, node_id = 19 : i64,
-            semantic_type = !obelisk.void, subroutine_kind = 0 : i32,
+            semantic_type = !talos.void, subroutine_kind = 0 : i32,
             system_library_cell = "work.top",
             system_scope_path = "top"} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 20 : i64, referenced_path = "top.queue",
               referenced_symbol = @queue, semantic_type = !queue} {
           }

@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-captures))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-captures),obelisk-sim-materialize-dpi-exports,convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-captures),obelisk-sim-materialize-dpi-exports,simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-captures))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-captures),talos-sim-materialize-dpi-exports,convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-captures),talos-sim-materialize-dpi-exports,simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off require-bytecode=true},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -84,10 +84,10 @@ module attributes {
   }
 }
 
-// NATIVE-LABEL: llvm.func internal @exported.__obelisk_dpi_export_bridge.__obelisk_activate_checked(
+// NATIVE-LABEL: llvm.func internal @exported.__talos_dpi_export_bridge.__talos_activate_checked(
 // NATIVE-SAME: %{{.*}}: !llvm.ptr, %{{.*}}: i64, %{{.*}}: !llvm.ptr) -> i32
-// NATIVE: llvm.call @exported.__obelisk_dpi_export_bridge.__obelisk_activate_checked({{.*}}) : (!llvm.ptr, i64, !llvm.ptr) -> i32
+// NATIVE: llvm.call @exported.__talos_dpi_export_bridge.__talos_activate_checked({{.*}}) : (!llvm.ptr, i64, !llvm.ptr) -> i32
 
-// BYTECODE-LABEL: llvm.func @exported.__obelisk_dpi_export_bridge.__obelisk_dpi_export(
+// BYTECODE-LABEL: llvm.func @exported.__talos_dpi_export_bridge.__talos_dpi_export(
 // BYTECODE: llvm.mlir.constant(-127 : i8) : i8
-// BYTECODE: llvm.call @obelisk_rt_v1_dpi_export_task_bytecode_run
+// BYTECODE: llvm.call @talos_rt_v1_dpi_export_task_bytecode_run

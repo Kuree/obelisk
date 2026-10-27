@@ -5,14 +5,14 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_SPECIALIZEREFERENCEJOINSPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 class SpecializeReferenceJoinsPass final
@@ -150,4 +150,4 @@ public:
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

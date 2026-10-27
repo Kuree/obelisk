@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),test-obelisk-static-specialization-analysis)' 2>&1 | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba),test-talos-static-specialization-analysis)' 2>&1 | FileCheck %s
 
 module {
   simulation.design @static_specialization {

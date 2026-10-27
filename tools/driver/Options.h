@@ -1,11 +1,11 @@
-//===- Options.h - Obelisk compiler driver options -------------*- C++ -*-===//
+//===- Options.h - Talos compiler driver options -------------*- C++ -*-===//
 
-#ifndef OBELISK_TOOLS_DRIVER_OPTIONS_H
-#define OBELISK_TOOLS_DRIVER_OPTIONS_H
+#ifndef TALOS_TOOLS_DRIVER_OPTIONS_H
+#define TALOS_TOOLS_DRIVER_OPTIONS_H
 
 #include "llvm/Option/OptTable.h"
 
-namespace obelisk::driver {
+namespace talos::driver {
 
 namespace options {
 
@@ -21,6 +21,6 @@ enum ID {
 
 const llvm::opt::OptTable &getDriverOptTable();
 
-} // namespace obelisk::driver
+} // namespace talos::driver
 
-#endif // OBELISK_TOOLS_DRIVER_OPTIONS_H
+#endif // TALOS_TOOLS_DRIVER_OPTIONS_H

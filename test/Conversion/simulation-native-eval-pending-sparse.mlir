@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --finalize-native-llvm -o %t.mlir
+// RUN: talos-opt %s --finalize-native-llvm -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk-opt %s --finalize-native-llvm --mlir-disable-threading | diff %t.mlir -
+// RUN: talos-opt %s --finalize-native-llvm --mlir-disable-threading | diff %t.mlir -
 
 // LRM 4.9.4/10.4.2: every captured value/XZ pair remains attached to its
 // target through outlined calls and a canonical handoff, and is consumed once.
@@ -10,21 +10,21 @@
 // index. Cold calls outside the eval closure adopt/export only their root
 // scope. ../Runtime/simulation-native-eval-pending-sparse.test executes this
 // self-checking program.
-// CHECK: llvm.func internal @capture4096.__obelisk_pending
+// CHECK: llvm.func internal @capture4096.__talos_pending
 // CHECK-LABEL: llvm.func @capture4096()
 // CHECK-NOT: llvm.mlir.addressof @acc0
 // CHECK: llvm.mlir.addressof @acc4096
 // CHECK-NOT: llvm.mlir.addressof @acc0
 // CHECK: llvm.return
-// CHECK: llvm.func internal @consume4096.__obelisk_pending
-// CHECK-NOT: @canonical_only.__obelisk_pending
+// CHECK: llvm.func internal @consume4096.__talos_pending
+// CHECK-NOT: @canonical_only.__talos_pending
 // CHECK-LABEL: llvm.func @canonical_only()
 // CHECK: llvm.return
-// CHECK: llvm.func internal @query.__obelisk_pending
-// CHECK: llvm.func internal @pending4096.__obelisk_pending
-// CHECK: llvm.func internal @__obelisk_eval_dispatch_v1.__obelisk_pending
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_execute_aot_actor
-// CHECK: llvm.func @__obelisk_eval_dispatch_v1()
+// CHECK: llvm.func internal @query.__talos_pending
+// CHECK: llvm.func internal @pending4096.__talos_pending
+// CHECK: llvm.func internal @__talos_eval_dispatch_v1.__talos_pending
+// CHECK: llvm.call @talos_rt_v1_scheduler_execute_aot_actor
+// CHECK: llvm.func @__talos_eval_dispatch_v1()
 // 5 bitmap words + 8 value/XZ pairs + one transient word = 22 words.
 // CHECK: llvm.mlir.constant(22 : i64)
 // CHECK: llvm.alloca
@@ -38,15 +38,15 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
   llvm.mlir.global @acc128(dense<0> : tensor<136xi8>) : !llvm.array<136 x i8>
   llvm.mlir.global @acc4095(dense<0> : tensor<136xi8>) : !llvm.array<136 x i8>
   llvm.mlir.global @acc4096(dense<0> : tensor<136xi8>) : !llvm.array<136 x i8>
-  llvm.mlir.global @__obelisk_aot_nba_dirty_roots_v1(dense<0> : tensor<520xi8>) : !llvm.array<520 x i8>
-  llvm.mlir.global @__obelisk_aot_nba_dirty_summary_v1(dense<0> : tensor<16xi8>) : !llvm.array<16 x i8>
-  llvm.mlir.global internal @__obelisk_current_context() : !llvm.ptr {
+  llvm.mlir.global @__talos_aot_nba_dirty_roots_v1(dense<0> : tensor<520xi8>) : !llvm.array<520 x i8>
+  llvm.mlir.global @__talos_aot_nba_dirty_summary_v1(dense<0> : tensor<16xi8>) : !llvm.array<16 x i8>
+  llvm.mlir.global internal @__talos_current_context() : !llvm.ptr {
     %null = llvm.mlir.zero : !llvm.ptr
     llvm.return %null : !llvm.ptr
   }
-  llvm.func @__obelisk_eval_write_guard_0_v1()
-  llvm.func @obelisk_rt_v1_scheduler_execute_aot_actor(!llvm.ptr, i32) -> i32
-  llvm.func @obelisk_rt_v1_scheduler_prepare_eval_nba(!llvm.ptr, !llvm.ptr) -> i32
+  llvm.func @__talos_eval_write_guard_0_v1()
+  llvm.func @talos_rt_v1_scheduler_execute_aot_actor(!llvm.ptr, i32) -> i32
+  llvm.func @talos_rt_v1_scheduler_prepare_eval_nba(!llvm.ptr, !llvm.ptr) -> i32
 
   llvm.func @capture0() {
     %acc = llvm.mlir.addressof @acc0 : !llvm.ptr
@@ -67,13 +67,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.store %one, %valid : i32, !llvm.ptr
     llvm.store %nba, %region : i32, !llvm.ptr
     llvm.store %zero, %transient : i64, !llvm.ptr
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %leaf = llvm.getelementptr %dirty[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %old = llvm.load %leaf {schedule.eval.pending_dirty_root = 0 : i32} : !llvm.ptr -> i64
     %bit = llvm.mlir.constant(1 : i64) : i64
     %marked = llvm.or %old, %bit : i64
     llvm.store %marked, %leaf {schedule.eval.pending_dirty_root = 0 : i32, schedule.eval.pending_stage_spec = array<i64: 0, 1, 32, 4294967295, 2, 1>} : i64, !llvm.ptr
-    %summary = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %summary = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %page = llvm.getelementptr %summary[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %prior = llvm.load %page {schedule.eval.pending_summary_root = 0 : i32} : !llvm.ptr -> i64
     %pagebit = llvm.mlir.constant(1 : i64) : i64
@@ -117,13 +117,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.store %one, %valid : i32, !llvm.ptr
     llvm.store %nba, %region : i32, !llvm.ptr
     llvm.store %zero, %transient : i64, !llvm.ptr
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %leaf = llvm.getelementptr %dirty[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %old = llvm.load %leaf {schedule.eval.pending_dirty_root = 1 : i32} : !llvm.ptr -> i64
     %bit = llvm.mlir.constant(2 : i64) : i64
     %marked = llvm.or %old, %bit : i64
     llvm.store %marked, %leaf {schedule.eval.pending_dirty_root = 1 : i32, schedule.eval.pending_stage_spec = array<i64: 1, 2, 32, 4294967295, 2, 2>} : i64, !llvm.ptr
-    %summary = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %summary = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %page = llvm.getelementptr %summary[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %prior = llvm.load %page {schedule.eval.pending_summary_root = 1 : i32} : !llvm.ptr -> i64
     %pagebit = llvm.mlir.constant(1 : i64) : i64
@@ -167,13 +167,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.store %one, %valid : i32, !llvm.ptr
     llvm.store %nba, %region : i32, !llvm.ptr
     llvm.store %zero, %transient : i64, !llvm.ptr
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %leaf = llvm.getelementptr %dirty[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %old = llvm.load %leaf {schedule.eval.pending_dirty_root = 63 : i32} : !llvm.ptr -> i64
     %bit = llvm.mlir.constant(9223372036854775808 : i64) : i64
     %marked = llvm.or %old, %bit : i64
     llvm.store %marked, %leaf {schedule.eval.pending_dirty_root = 63 : i32, schedule.eval.pending_stage_spec = array<i64: 63, 64, 32, 4294967295, 2, 3>} : i64, !llvm.ptr
-    %summary = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %summary = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %page = llvm.getelementptr %summary[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %prior = llvm.load %page {schedule.eval.pending_summary_root = 63 : i32} : !llvm.ptr -> i64
     %pagebit = llvm.mlir.constant(1 : i64) : i64
@@ -217,13 +217,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.store %one, %valid : i32, !llvm.ptr
     llvm.store %nba, %region : i32, !llvm.ptr
     llvm.store %zero, %transient : i64, !llvm.ptr
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %leaf = llvm.getelementptr %dirty[8] : (!llvm.ptr) -> !llvm.ptr, i8
     %old = llvm.load %leaf {schedule.eval.pending_dirty_root = 64 : i32} : !llvm.ptr -> i64
     %bit = llvm.mlir.constant(1 : i64) : i64
     %marked = llvm.or %old, %bit : i64
     llvm.store %marked, %leaf {schedule.eval.pending_dirty_root = 64 : i32, schedule.eval.pending_stage_spec = array<i64: 64, 65, 32, 4294967295, 2, 4>} : i64, !llvm.ptr
-    %summary = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %summary = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %page = llvm.getelementptr %summary[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %prior = llvm.load %page {schedule.eval.pending_summary_root = 64 : i32} : !llvm.ptr -> i64
     %pagebit = llvm.mlir.constant(2 : i64) : i64
@@ -267,13 +267,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.store %one, %valid : i32, !llvm.ptr
     llvm.store %nba, %region : i32, !llvm.ptr
     llvm.store %zero, %transient : i64, !llvm.ptr
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %leaf = llvm.getelementptr %dirty[8] : (!llvm.ptr) -> !llvm.ptr, i8
     %old = llvm.load %leaf {schedule.eval.pending_dirty_root = 127 : i32} : !llvm.ptr -> i64
     %bit = llvm.mlir.constant(9223372036854775808 : i64) : i64
     %marked = llvm.or %old, %bit : i64
     llvm.store %marked, %leaf {schedule.eval.pending_dirty_root = 127 : i32, schedule.eval.pending_stage_spec = array<i64: 127, 128, 32, 4294967295, 2, 5>} : i64, !llvm.ptr
-    %summary = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %summary = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %page = llvm.getelementptr %summary[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %prior = llvm.load %page {schedule.eval.pending_summary_root = 127 : i32} : !llvm.ptr -> i64
     %pagebit = llvm.mlir.constant(2 : i64) : i64
@@ -317,13 +317,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.store %one, %valid : i32, !llvm.ptr
     llvm.store %nba, %region : i32, !llvm.ptr
     llvm.store %zero, %transient : i64, !llvm.ptr
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %leaf = llvm.getelementptr %dirty[16] : (!llvm.ptr) -> !llvm.ptr, i8
     %old = llvm.load %leaf {schedule.eval.pending_dirty_root = 128 : i32} : !llvm.ptr -> i64
     %bit = llvm.mlir.constant(1 : i64) : i64
     %marked = llvm.or %old, %bit : i64
     llvm.store %marked, %leaf {schedule.eval.pending_dirty_root = 128 : i32, schedule.eval.pending_stage_spec = array<i64: 128, 129, 32, 4294967295, 2, 6>} : i64, !llvm.ptr
-    %summary = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %summary = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %page = llvm.getelementptr %summary[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %prior = llvm.load %page {schedule.eval.pending_summary_root = 128 : i32} : !llvm.ptr -> i64
     %pagebit = llvm.mlir.constant(4 : i64) : i64
@@ -367,13 +367,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.store %one, %valid : i32, !llvm.ptr
     llvm.store %nba, %region : i32, !llvm.ptr
     llvm.store %zero, %transient : i64, !llvm.ptr
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %leaf = llvm.getelementptr %dirty[504] : (!llvm.ptr) -> !llvm.ptr, i8
     %old = llvm.load %leaf {schedule.eval.pending_dirty_root = 4095 : i32} : !llvm.ptr -> i64
     %bit = llvm.mlir.constant(9223372036854775808 : i64) : i64
     %marked = llvm.or %old, %bit : i64
     llvm.store %marked, %leaf {schedule.eval.pending_dirty_root = 4095 : i32, schedule.eval.pending_stage_spec = array<i64: 4095, 4096, 32, 4294967295, 2, 7>} : i64, !llvm.ptr
-    %summary = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %summary = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %page = llvm.getelementptr %summary[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %prior = llvm.load %page {schedule.eval.pending_summary_root = 4095 : i32} : !llvm.ptr -> i64
     %pagebit = llvm.mlir.constant(9223372036854775808 : i64) : i64
@@ -417,13 +417,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.store %one, %valid : i32, !llvm.ptr
     llvm.store %nba, %region : i32, !llvm.ptr
     llvm.store %zero, %transient : i64, !llvm.ptr
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %leaf = llvm.getelementptr %dirty[512] : (!llvm.ptr) -> !llvm.ptr, i8
     %old = llvm.load %leaf {schedule.eval.pending_dirty_root = 4096 : i32} : !llvm.ptr -> i64
     %bit = llvm.mlir.constant(1 : i64) : i64
     %marked = llvm.or %old, %bit : i64
     llvm.store %marked, %leaf {schedule.eval.pending_dirty_root = 4096 : i32, schedule.eval.pending_stage_spec = array<i64: 4096, 4097, 32, 4294967295, 2, 8>} : i64, !llvm.ptr
-    %summary = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %summary = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %page = llvm.getelementptr %summary[8] : (!llvm.ptr) -> !llvm.ptr, i8
     %prior = llvm.load %page {schedule.eval.pending_summary_root = 4096 : i32} : !llvm.ptr -> i64
     %pagebit = llvm.mlir.constant(1 : i64) : i64
@@ -449,51 +449,51 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.return %result : i64
   }
   llvm.func @canonical_only() -> i64 {
-    %summary = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %summary = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %bits = llvm.load %summary {schedule.eval.pending_runtime_root = 5000 : i32} : !llvm.ptr -> i64
     llvm.return %bits : i64
   }
   llvm.func @query() -> i64 {
     %zero = llvm.mlir.constant(0 : i64) : i64
-    %base0 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %base0 = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %ptr0 = llvm.getelementptr %base0[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %bits0 = llvm.load %ptr0 : !llvm.ptr -> i64
     %sum0 = llvm.xor %zero, %bits0 : i64
-    %base1 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %base1 = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %ptr1 = llvm.getelementptr %base1[8] : (!llvm.ptr) -> !llvm.ptr, i8
     %bits1 = llvm.load %ptr1 : !llvm.ptr -> i64
     %sum1 = llvm.xor %sum0, %bits1 : i64
-    %base2 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %base2 = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %ptr2 = llvm.getelementptr %base2[16] : (!llvm.ptr) -> !llvm.ptr, i8
     %bits2 = llvm.load %ptr2 : !llvm.ptr -> i64
     %sum2 = llvm.xor %sum1, %bits2 : i64
-    %base3 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %base3 = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %ptr3 = llvm.getelementptr %base3[504] : (!llvm.ptr) -> !llvm.ptr, i8
     %bits3 = llvm.load %ptr3 : !llvm.ptr -> i64
     %sum3 = llvm.xor %sum2, %bits3 : i64
-    %base4 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %base4 = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %ptr4 = llvm.getelementptr %base4[512] : (!llvm.ptr) -> !llvm.ptr, i8
     %bits4 = llvm.load %ptr4 : !llvm.ptr -> i64
     %sum4 = llvm.xor %sum3, %bits4 : i64
-    %base5 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %base5 = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %ptr5 = llvm.getelementptr %base5[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %bits5 = llvm.load %ptr5 : !llvm.ptr -> i64
     %sum5 = llvm.xor %sum4, %bits5 : i64
-    %base6 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %base6 = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %ptr6 = llvm.getelementptr %base6[8] : (!llvm.ptr) -> !llvm.ptr, i8
     %bits6 = llvm.load %ptr6 : !llvm.ptr -> i64
     %sum6 = llvm.xor %sum5, %bits6 : i64
     llvm.return %sum6 : i64
   }
   llvm.func @pending4096() -> i64 {
-    %dirty = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %dirty = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %leaf = llvm.getelementptr %dirty[512] : (!llvm.ptr) -> !llvm.ptr, i8
     %bits = llvm.load %leaf {schedule.eval.pending_dirty_root = 4096 : i32} : !llvm.ptr -> i64
     %one = llvm.mlir.constant(1 : i64) : i64
     %result = llvm.and %bits, %one : i64
     llvm.return %result : i64
   }
-  llvm.func @__obelisk_eval_dispatch_v1() -> i64 attributes {schedule.eval.call_closure_root} {
+  llvm.func @__talos_eval_dispatch_v1() -> i64 attributes {schedule.eval.call_closure_root} {
     %null = llvm.mlir.zero : !llvm.ptr
     %slot = llvm.mlir.constant(0 : i32) : i32
     %zero = llvm.mlir.constant(0 : i64) : i64
@@ -512,7 +512,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     %last = llvm.call @pending4096() : () -> i64
     %one64 = llvm.mlir.constant(1 : i64) : i64
     %lastOK = llvm.icmp "eq" %last, %one64 : i64
-    %status = llvm.call @obelisk_rt_v1_scheduler_execute_aot_actor(%null, %slot) : (!llvm.ptr, i32) -> i32
+    %status = llvm.call @talos_rt_v1_scheduler_execute_aot_actor(%null, %slot) : (!llvm.ptr, i32) -> i32
     %zero32 = llvm.mlir.constant(0 : i32) : i32
     %cutOK = llvm.icmp "eq" %status, %zero32 : i32
     %value0 = llvm.call @consume0() : () -> i64
@@ -531,25 +531,25 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     %sum6 = llvm.add %sum5, %value6 : i64
     %value7 = llvm.call @consume4096() : () -> i64
     %sum7 = llvm.add %sum6, %value7 : i64
-    %base0 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %base0 = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %ptr0 = llvm.getelementptr %base0[0] : (!llvm.ptr) -> !llvm.ptr, i8
     llvm.store %zero, %ptr0 : i64, !llvm.ptr
-    %base1 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %base1 = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %ptr1 = llvm.getelementptr %base1[8] : (!llvm.ptr) -> !llvm.ptr, i8
     llvm.store %zero, %ptr1 : i64, !llvm.ptr
-    %base2 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %base2 = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %ptr2 = llvm.getelementptr %base2[16] : (!llvm.ptr) -> !llvm.ptr, i8
     llvm.store %zero, %ptr2 : i64, !llvm.ptr
-    %base3 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %base3 = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %ptr3 = llvm.getelementptr %base3[504] : (!llvm.ptr) -> !llvm.ptr, i8
     llvm.store %zero, %ptr3 : i64, !llvm.ptr
-    %base4 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1 : !llvm.ptr
+    %base4 = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1 : !llvm.ptr
     %ptr4 = llvm.getelementptr %base4[512] : (!llvm.ptr) -> !llvm.ptr, i8
     llvm.store %zero, %ptr4 : i64, !llvm.ptr
-    %base5 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %base5 = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %ptr5 = llvm.getelementptr %base5[0] : (!llvm.ptr) -> !llvm.ptr, i8
     llvm.store %zero, %ptr5 : i64, !llvm.ptr
-    %base6 = llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1 : !llvm.ptr
+    %base6 = llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1 : !llvm.ptr
     %ptr6 = llvm.getelementptr %base6[8] : (!llvm.ptr) -> !llvm.ptr, i8
     llvm.store %zero, %ptr6 : i64, !llvm.ptr
     %after = llvm.call @query() : () -> i64
@@ -562,8 +562,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.return %result : i64
   }
   llvm.func @main() -> i32 {
-    %first = llvm.call @__obelisk_eval_dispatch_v1() : () -> i64
-    %second = llvm.call @__obelisk_eval_dispatch_v1() : () -> i64
+    %first = llvm.call @__talos_eval_dispatch_v1() : () -> i64
+    %second = llvm.call @__talos_eval_dispatch_v1() : () -> i64
     %expected = llvm.mlir.constant(292 : i64) : i64
     %one = llvm.mlir.constant(1 : i32) : i32
     %zero = llvm.mlir.constant(0 : i32) : i32

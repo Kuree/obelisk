@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-nba-influence -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-nba-influence -o /dev/null 2>&1 | FileCheck %s
 // Sparse backward fixed point: transitive/cyclic cones, NBA cuts, aliases, and top.
 #g = #schedule.graph<version = 1, vpi = off, workers = 1, nodes = [], edges = [], regions = [#schedule.region<kind = active, groups = []>, #schedule.region<kind = nba, groups = []>, #schedule.region<kind = observed, groups = []>, #schedule.region<kind = reactive, groups = []>, #schedule.region<kind = postponed, groups = []>]>
 module {

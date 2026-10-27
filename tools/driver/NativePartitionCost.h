@@ -1,7 +1,7 @@
 //===- NativePartitionCost.h - Definition-local partition weights -*- C++ -*-===//
 
-#ifndef OBELISK_TOOLS_DRIVER_NATIVEPARTITIONCOST_H
-#define OBELISK_TOOLS_DRIVER_NATIVEPARTITIONCOST_H
+#ifndef TALOS_TOOLS_DRIVER_NATIVEPARTITIONCOST_H
+#define TALOS_TOOLS_DRIVER_NATIVEPARTITIONCOST_H
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 
-namespace obelisk::driver::detail {
+namespace talos::driver::detail {
 
 inline uint64_t estimateNativeGlobalWeight(const llvm::GlobalVariable &global) {
   if (!global.hasInitializer())
@@ -42,6 +42,6 @@ inline uint64_t estimateNativeGlobalWeight(const llvm::GlobalVariable &global) {
   return weight;
 }
 
-} // namespace obelisk::driver::detail
+} // namespace talos::driver::detail
 
 #endif

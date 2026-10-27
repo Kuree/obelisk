@@ -11,29 +11,29 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/Mem2Reg.h"
 #include "mlir/Transforms/RegionUtils.h"
-#include "obelisk/Analysis/AccessFootprintAnalysis.h"
-#include "obelisk/Analysis/LocalStorageAnalysis.h"
-#include "obelisk/Analysis/NativeAOTAnalysis.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Analysis/StaticSpecializationAnalysis.h"
-#include "obelisk/Conversion/SimulationToSchedule/Utils.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/OutputItemFlags.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/AccessFootprintAnalysis.h"
+#include "talos/Analysis/LocalStorageAnalysis.h"
+#include "talos/Analysis/NativeAOTAnalysis.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
+#include "talos/Analysis/StaticSpecializationAnalysis.h"
+#include "talos/Conversion/SimulationToSchedule/Utils.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Runtime/RuntimeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/Transforms/NativeTransforms.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/OutputItemFlags.h"
+#include "talos/Runtime/StableHandle.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 using namespace mlir;
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 // A private generated activation may print snapshots without scheduling a
 // process or consulting canonical design state. Keep dynamic formats, managed
@@ -47,8 +47,8 @@ bool isDirectOutput(sim::SimDisplayOp display) {
       !display.getScopeAttr())
     return false;
   constexpr uint32_t allowed =
-      OBELISK_RT_OUTPUT_ITEM_SIGNED | OBELISK_RT_OUTPUT_ITEM_OMITTED |
-      OBELISK_RT_OUTPUT_ITEM_REAL | OBELISK_RT_OUTPUT_ITEM_NET;
+      TALOS_RT_OUTPUT_ITEM_SIGNED | TALOS_RT_OUTPUT_ITEM_OMITTED |
+      TALOS_RT_OUTPUT_ITEM_REAL | TALOS_RT_OUTPUT_ITEM_NET;
   for (int32_t flags : display.getItemFlags())
     if (uint32_t(flags) & ~allowed)
       return false;
@@ -107,11 +107,11 @@ bool isAssertionControlRead(Operation *operation) {
 void annotateCompactNBAMetadata(ModuleOp module) {
   MLIRContext *context = module.getContext();
   module.walk([&](sim::SimFuncOp function) {
-    if (!::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalSelectedTwoState>(function))
+    if (!::talos::schedule::has<
+            ::talos::schedule::Field::EvalSelectedTwoState>(function))
       return;
     function.walk([&](sim::SimNBAEnqueueOp nba) {
-      ::obelisk::schedule::set<schedule::metadata::evalCompactNBAMetadata>(
+      ::talos::schedule::set<schedule::metadata::evalCompactNBAMetadata>(
           nba, UnitAttr::get(context));
     });
   });
@@ -120,7 +120,7 @@ void annotateCompactNBAMetadata(ModuleOp module) {
 static void eraseEvalDiscardableStores(sim::SimFuncOp function) {
   SmallVector<sim::SimRefStoreOp> stores;
   function.walk([&](sim::SimRefStoreOp store) {
-    if (::obelisk::schedule::has<schedule::metadata::evalDiscardableStore>(
+    if (::talos::schedule::has<schedule::metadata::evalDiscardableStore>(
             store))
       stores.push_back(store);
   });
@@ -156,7 +156,7 @@ LogicalResult materializeEvalTwoStateVariants(
     if (!design)
       return;
     design.walk([&](sim::SimRefStoreOp store) {
-      ::obelisk::schedule::remove<schedule::metadata::evalDiscardableStore>(
+      ::talos::schedule::remove<schedule::metadata::evalDiscardableStore>(
           store);
     });
   });
@@ -231,7 +231,7 @@ LogicalResult materializeEvalTwoStateVariants(
     IntegerAttr codeUnit = function.getCodeUnitIdAttr();
     if (!codeUnit || !actorSlots.contains(codeUnit.getUInt()))
       continue;
-    auto body = ::obelisk::schedule::get<::obelisk::schedule::Field::EvalBody>(
+    auto body = ::talos::schedule::get<::talos::schedule::Field::EvalBody>(
         function);
     if (!body)
       continue;
@@ -242,10 +242,10 @@ LogicalResult materializeEvalTwoStateVariants(
     // four-state body instead of manufacturing a coordinator-owned route that
     // has no valid initialization boundary.
     if (!target ||
-        !::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+        !::talos::schedule::has<::talos::schedule::Field::EvalRawCaptures>(
             target) ||
-        ::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalInductiveTwoState>(target) ||
+        ::talos::schedule::has<
+            ::talos::schedule::Field::EvalInductiveTwoState>(target) ||
         target.getEntryKind() == sim::EntryKind::Observer)
       continue;
     if (rootSet.insert(target.getOperation()).second)
@@ -303,14 +303,14 @@ LogicalResult materializeEvalTwoStateVariants(
                  sim::SimDriverDriveChangedOp>(operation));
       });
     if (hasRuntimeDriverResolution)
-      ::obelisk::schedule::set<
+      ::talos::schedule::set<
           schedule::metadata::evalUnsupportedCheckpointOwner>(
           root, StringAttr::get(module.getContext(), root.getSymName()));
     // Without optional path variants, a cold leaf executes through the whole
     // canonical activation. Preserve the edge qualification and any preceding
     // NBA staging instead of admitting a runtime call to the eval hot closure.
     if (!specializeTwoState && hasRuntimeCheckpoint)
-      ::obelisk::schedule::set<schedule::Field::EvalCheckpointOnly>(
+      ::talos::schedule::set<schedule::Field::EvalCheckpointOnly>(
           root, UnitAttr::get(module.getContext()));
   }
 
@@ -321,7 +321,7 @@ LogicalResult materializeEvalTwoStateVariants(
   for (sim::SimFuncOp root : roots)
     root.walk([&](Operation *operation) {
       if (isDirectOutput(operation))
-        ::obelisk::schedule::set<schedule::Field::EvalDirectOutput>(
+        ::talos::schedule::set<schedule::Field::EvalDirectOutput>(
             operation, UnitAttr::get(module.getContext()));
     });
   llvm::SmallPtrSet<Operation *, 32> variantEligibleSources;
@@ -381,10 +381,10 @@ LogicalResult materializeEvalTwoStateVariants(
       if (!stateHandles)
         return false;
       auto handleValue = stateHandles->find(*found->second.descriptor);
-      obelisk_rt_stable_handle_v1 decoded{};
+      talos_rt_stable_handle_v1 decoded{};
       if (handleValue == stateHandles->end() ||
-          !obelisk_rt_stable_handle_decode(handleValue->second, &decoded) ||
-          decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+          !talos_rt_stable_handle_decode(handleValue->second, &decoded) ||
+          decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC ||
           decoded.offset != 0) {
         invalidRange = true;
         return false;
@@ -454,7 +454,7 @@ LogicalResult materializeEvalTwoStateVariants(
           runtimeFree = false;
           checkpointSafe = false;
         }
-        if (isa_and_nonnull<runtime::ObeliskRuntimeDialect>(
+        if (isa_and_nonnull<runtime::TalosRuntimeDialect>(
                 operation->getDialect())) {
           preserving = false;
           runtimeFree = false;
@@ -557,8 +557,8 @@ LogicalResult materializeEvalTwoStateVariants(
           // handoffs. Input-only certificates are profitable with the fully
           // generated barrier's independently latched destination proofs;
           // changing the shared path also changes its partition/inlining cost.
-          if (::obelisk::schedule::has<
-                  ::obelisk::schedule::Field::EvalRuntimeCalendar>(module)) {
+          if (::talos::schedule::has<
+                  ::talos::schedule::Field::EvalRuntimeCalendar>(module)) {
             auto found = provenance.find(nba.getDestination());
             if (found != provenance.end() && found->second.descriptor &&
                 domains->isInductivelyTwoState(found->second.resource,
@@ -701,8 +701,8 @@ LogicalResult materializeEvalTwoStateVariants(
       locallyCheckpointSafe[source.getOperation()] = checkpointSafe;
     }
     for (sim::SimFuncOp source : sources) {
-      if (!::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalRawCaptures>(source))
+      if (!::talos::schedule::has<
+              ::talos::schedule::Field::EvalRawCaptures>(source))
         continue;
       llvm::SmallDenseSet<PhysicalRange, 16> closureRanges;
       llvm::SmallDenseSet<PhysicalRange, 16> inductiveClosureRanges;
@@ -748,8 +748,8 @@ LogicalResult materializeEvalTwoStateVariants(
           // Ordinary value helpers remain in this body's boundary because
           // their direct logic results cannot be routed independently.
           if (callee != source &&
-              ::obelisk::schedule::has<
-                  ::obelisk::schedule::Field::EvalRawCaptures>(callee))
+              ::talos::schedule::has<
+                  ::talos::schedule::Field::EvalRawCaptures>(callee))
             return;
           closure.push_back(callee);
         });
@@ -786,12 +786,12 @@ LogicalResult materializeEvalTwoStateVariants(
         encoded.push_back(static_cast<int64_t>(offset));
         encoded.push_back(static_cast<int64_t>(width));
       }
-      ::obelisk::schedule::set<
-          ::obelisk::schedule::Field::EvalLocalPromotionRanges>(
+      ::talos::schedule::set<
+          ::talos::schedule::Field::EvalLocalPromotionRanges>(
           source, DenseI64ArrayAttr::get(module.getContext(), encoded));
       if (closureKnownPreserving) {
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalConditionallyTwoState>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::EvalConditionallyTwoState>(
             source, UnitAttr::get(module.getContext()));
       }
       // A pure activation can stage X/Z through an NBA (IEEE 1800-2023
@@ -824,13 +824,13 @@ LogicalResult materializeEvalTwoStateVariants(
         }
       }
       if (!closureRuntimeFree || knownOnlyPath)
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::EvalInheritedTwoStateCheckpoint>(
             source, UnitAttr::get(module.getContext()));
       if (knownOnlyPath)
         knownOnlyPathSources.insert(source.getOperation());
       if (!closureRuntimeFree && closureKnownPreserving)
-        ::obelisk::schedule::set<
+        ::talos::schedule::set<
             schedule::metadata::evalPathGuardedKnownPreserving>(
             source, UnitAttr::get(module.getContext()));
       if (needsVariant.contains(source) &&
@@ -846,8 +846,8 @@ LogicalResult materializeEvalTwoStateVariants(
     SmallVector<Operation *> rejected;
     for (Operation *operation : routeEligibleSources)
       for (Operation *callee : sourceCallees.lookup(operation))
-        if (::obelisk::schedule::has<
-                ::obelisk::schedule::Field::EvalRawCaptures>(callee) &&
+        if (::talos::schedule::has<
+                ::talos::schedule::Field::EvalRawCaptures>(callee) &&
             needsVariant.contains(callee) &&
             !routeEligibleSources.contains(callee)) {
           rejected.push_back(operation);
@@ -857,8 +857,8 @@ LogicalResult materializeEvalTwoStateVariants(
       Operation *operation = rejected.pop_back_val();
       if (!routeEligibleSources.erase(operation))
         continue;
-      ::obelisk::schedule::remove<
-          ::obelisk::schedule::Field::EvalConditionallyTwoState>(operation);
+      ::talos::schedule::remove<
+          ::talos::schedule::Field::EvalConditionallyTwoState>(operation);
       for (Operation *caller : sourceCallers.lookup(operation))
         if (routeEligibleSources.contains(caller))
           rejected.push_back(caller);
@@ -873,8 +873,8 @@ LogicalResult materializeEvalTwoStateVariants(
         routeClosureRanges;
     for (Operation *operation : routeEligibleSources) {
       auto source = cast<sim::SimFuncOp>(operation);
-      auto encoded = ::obelisk::schedule::get<
-          ::obelisk::schedule::Field::EvalLocalPromotionRanges>(source);
+      auto encoded = ::talos::schedule::get<
+          ::talos::schedule::Field::EvalLocalPromotionRanges>(source);
       if (!encoded || (encoded.size() & 1) != 0)
         return source.emitError("has malformed local promotion ranges"),
                failure();
@@ -892,8 +892,8 @@ LogicalResult materializeEvalTwoStateVariants(
       Operation *callee = rangeWorklist.pop_back_val();
       rangeQueued.erase(callee);
       // Checkpoint callees own independent guarded promotion closures.
-      if (::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+      if (::talos::schedule::has<
+              ::talos::schedule::Field::EvalInheritedTwoStateCheckpoint>(
               callee))
         continue;
       SmallVector<PhysicalRange> contribution(
@@ -918,13 +918,13 @@ LogicalResult materializeEvalTwoStateVariants(
       for (auto [offset, width] : orderedRanges) {
         encoded.push_back(static_cast<int64_t>(offset));
         encoded.push_back(static_cast<int64_t>(width));
-        if (!::obelisk::schedule::has<
-                ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+        if (!::talos::schedule::has<
+                ::talos::schedule::Field::EvalInheritedTwoStateCheckpoint>(
                 operation))
           selectedRanges.insert({offset, width});
       }
-      ::obelisk::schedule::set<
-          ::obelisk::schedule::Field::EvalLocalPromotionRanges>(
+      ::talos::schedule::set<
+          ::talos::schedule::Field::EvalLocalPromotionRanges>(
           operation, DenseI64ArrayAttr::get(module.getContext(), encoded));
     }
 
@@ -942,8 +942,8 @@ LogicalResult materializeEvalTwoStateVariants(
             variantSymbols.lookup<sim::SimFuncOp>(call.getCallee());
         if (!callee || callee.isExternal())
           return;
-        if (::obelisk::schedule::has<
-                ::obelisk::schedule::Field::EvalRawCaptures>(callee) &&
+        if (::talos::schedule::has<
+                ::talos::schedule::Field::EvalRawCaptures>(callee) &&
             !routeEligibleSources.contains(callee.getOperation()))
           return;
         eligibleClosure.push_back(callee);
@@ -991,8 +991,8 @@ LogicalResult materializeEvalTwoStateVariants(
   // canonical route instead.
   bool netsDirectlyAddressable =
       llvm::all_of(stateLayout.nets, [&](const auto &entry) {
-        obelisk_rt_stable_handle_v1 decoded{};
-        return obelisk_rt_stable_handle_decode(entry.second, &decoded) &&
+        talos_rt_stable_handle_v1 decoded{};
+        return talos_rt_stable_handle_decode(entry.second, &decoded) &&
                stateLayout.directHandles.contains(decoded.id);
       });
   // A dry-run predicate may evaluate a value helper only when its complete
@@ -1057,7 +1057,7 @@ LogicalResult materializeEvalTwoStateVariants(
                               Operation *operation = nullptr) {
       if (!native::has<native::DebugTiming>(module))
         return;
-      llvm::errs() << "obelisk eval probe rejected: " << source.getSymName()
+      llvm::errs() << "talos eval probe rejected: " << source.getSymName()
                    << ": " << reason;
       if (operation)
         llvm::errs() << " (" << operation->getName() << ")";
@@ -1074,7 +1074,7 @@ LogicalResult materializeEvalTwoStateVariants(
       // No speculative state is needed when the activation immediately
       // checkpoints. In particular, do not create entry shadow cells that
       // would be destroyed while replacing this entire block below.
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalCheckpointOnly>(
+      ::talos::schedule::set<::talos::schedule::Field::EvalCheckpointOnly>(
           source, builder.getUnitAttr());
       return sim::SimFuncOp{};
     }
@@ -1122,10 +1122,10 @@ LogicalResult materializeEvalTwoStateVariants(
       if (!handles)
         return std::nullopt;
       auto handle = handles->find(*origin.descriptor);
-      obelisk_rt_stable_handle_v1 decoded{};
+      talos_rt_stable_handle_v1 decoded{};
       if (handle == handles->end() ||
-          !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-          decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+          !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+          decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC ||
           decoded.offset != 0)
         return std::nullopt;
       const auto *bound = stateLayout.findBound(decoded.id);
@@ -1362,13 +1362,13 @@ LogicalResult materializeEvalTwoStateVariants(
         sim::EntryKind::Function, attributes, argumentAttrs);
     variantSymbols.insert(probe);
     detail::copyNativePartition(source, probe);
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalBorrowedCaptures>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalBorrowedCaptures>(
         probe, builder.getUnitAttr());
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::EvalPathKnownPredicate>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::EvalPathKnownPredicate>(
         probe, builder.getUnitAttr());
-    if (::obelisk::schedule::has<detail::cleanEvalBodyAttr>(source))
-      ::obelisk::schedule::set<detail::cleanEvalBodyAttr>(
+    if (::talos::schedule::has<detail::cleanEvalBodyAttr>(source))
+      ::talos::schedule::set<detail::cleanEvalBodyAttr>(
           probe, builder.getUnitAttr());
     SymbolTable::setSymbolVisibility(probe, SymbolTable::Visibility::Private);
 
@@ -1632,7 +1632,7 @@ LogicalResult materializeEvalTwoStateVariants(
       traceRejection("all exits are checkpoints");
       // Resume the canonical actor for this activation. Unlike restarting an
       // outlined body, that preserves the selected edge and any NBA prefix.
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalCheckpointOnly>(
+      ::talos::schedule::set<::talos::schedule::Field::EvalCheckpointOnly>(
           source, builder.getUnitAttr());
       variantSymbols.erase(probe);
       return sim::SimFuncOp{};
@@ -1815,7 +1815,7 @@ LogicalResult materializeEvalTwoStateVariants(
       continue;
     builder.setInsertionPointToEnd(&design.getBody().front());
     SmallString<96> base;
-    (source.getSymName() + ".__obelisk_two_state").toVector(base);
+    (source.getSymName() + ".__talos_two_state").toVector(base);
     unsigned counter = 0;
     SmallString<96> name = SymbolTable::generateSymbolName<96>(
         base,
@@ -1842,27 +1842,27 @@ LogicalResult materializeEvalTwoStateVariants(
     auto variant = cast<sim::SimFuncOp>(cloned);
     variant.setSymName(name);
     variant.setCodeUnitIdAttr(builder.getI64IntegerAttr(codeUnit));
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalInductiveTwoState>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalInductiveTwoState>(
         variant, builder.getUnitAttr());
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalFourStateSource>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalFourStateSource>(
         variant,
         FlatSymbolRefAttr::get(module.getContext(), source.getSymName()));
     if (knownOnlyPathSources.contains(source.getOperation()))
-      ::obelisk::schedule::set<schedule::Field::EvalInfallible>(
+      ::talos::schedule::set<schedule::Field::EvalInfallible>(
           variant, builder.getUnitAttr());
     variant.walk([&](sim::SimNBAEnqueueOp nba) {
-      ::obelisk::schedule::set<schedule::metadata::evalCompactNBAMetadata>(
+      ::talos::schedule::set<schedule::metadata::evalCompactNBAMetadata>(
           nba, UnitAttr::get(module.getContext()));
     });
     SymbolTable::setSymbolVisibility(variant, SymbolTable::Visibility::Private);
     variantSymbols.insert(cloned, design.getBody().front().end());
-    ::obelisk::schedule::set<schedule::metadata::evalTwoStateVariant>(
+    ::talos::schedule::set<schedule::metadata::evalTwoStateVariant>(
         source, FlatSymbolRefAttr::get(module.getContext(), name));
-    if (::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+    if (::talos::schedule::has<
+            ::talos::schedule::Field::EvalInheritedTwoStateCheckpoint>(
             source)) {
       SmallString<112> probeName;
-      (source.getSymName() + ".__obelisk_path_known").toVector(probeName);
+      (source.getSymName() + ".__talos_path_known").toVector(probeName);
       unsigned probeCounter = 0;
       probeName = SymbolTable::generateSymbolName<112>(
           probeName,
@@ -1879,13 +1879,13 @@ LogicalResult materializeEvalTwoStateVariants(
         if (resetPathSources.contains(source.getOperation())) {
           // This optional early-entry proof may fail on an unsupported
           // overlay. Retain the valid whole-owner range certificate.
-          ::obelisk::schedule::remove<
-              ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+          ::talos::schedule::remove<
+              ::talos::schedule::Field::EvalInheritedTwoStateCheckpoint>(
               source);
-          ::obelisk::schedule::remove<
-              ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+          ::talos::schedule::remove<
+              ::talos::schedule::Field::EvalInheritedTwoStateCheckpoint>(
               variant);
-          ::obelisk::schedule::remove<schedule::Field::EvalInfallible>(variant);
+          ::talos::schedule::remove<schedule::Field::EvalInfallible>(variant);
           variantNames[source.getSymName()] = name.str().str();
           variants.push_back(variant);
           variantDeclarations[variant.getOperation()] =
@@ -1900,12 +1900,12 @@ LogicalResult materializeEvalTwoStateVariants(
         // keeps the runtime leaf inline, so the owner can no longer belong to
         // a generated eval closure; record it for the scheduler decision.
         unsupportedVariantSources.insert(source.getSymName());
-        ::obelisk::schedule::remove<schedule::metadata::evalTwoStateVariant>(
+        ::talos::schedule::remove<schedule::metadata::evalTwoStateVariant>(
             source);
-        ::obelisk::schedule::remove<
-            ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+        ::talos::schedule::remove<
+            ::talos::schedule::Field::EvalInheritedTwoStateCheckpoint>(
             source);
-        ::obelisk::schedule::set<
+        ::talos::schedule::set<
             schedule::metadata::evalUnsupportedCheckpointOwner>(
             source, builder.getStringAttr(source.getSymName()));
         variantSymbols.erase(variant);
@@ -1913,7 +1913,7 @@ LogicalResult materializeEvalTwoStateVariants(
         continue;
       } else {
         SmallString<112> checkpointProbeName;
-        (source.getSymName() + ".__obelisk_checkpoint_path")
+        (source.getSymName() + ".__talos_checkpoint_path")
             .toVector(checkpointProbeName);
         unsigned checkpointProbeCounter = 0;
         checkpointProbeName = SymbolTable::generateSymbolName<112>(
@@ -1940,10 +1940,10 @@ LogicalResult materializeEvalTwoStateVariants(
             builder.getStringAttr(checkpointProbeName),
             builder.getStringAttr("known-state checkpoint path predicate"),
             builder.getUnitAttr());
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalPathKnownProbe>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::EvalPathKnownProbe>(
             variant, FlatSymbolRefAttr::get(module.getContext(), probeName));
-        ::obelisk::schedule::set<schedule::metadata::evalPathGuardedTwoState>(
+        ::talos::schedule::set<schedule::metadata::evalPathGuardedTwoState>(
             variant, builder.getUnitAttr());
         pathProbeRoutes.push_back(schedule::PathProbeRouteAttr::get(
             builder.getContext(),
@@ -1976,8 +1976,8 @@ LogicalResult materializeEvalTwoStateVariants(
   }
   SmallVector<sim::SimFuncOp> retained;
   for (sim::SimFuncOp variant : variants) {
-    auto sourceRef = ::obelisk::schedule::get<
-        ::obelisk::schedule::Field::EvalFourStateSource>(variant);
+    auto sourceRef = ::talos::schedule::get<
+        ::talos::schedule::Field::EvalFourStateSource>(variant);
     sim::SimFuncOp source =
         sourceRef ? variantSymbols.lookup<sim::SimFuncOp>(sourceRef.getValue())
                   : sim::SimFuncOp{};
@@ -1987,7 +1987,7 @@ LogicalResult materializeEvalTwoStateVariants(
     }
     if (source) {
       unsupportedVariantSources.insert(source.getSymName());
-      ::obelisk::schedule::remove<schedule::metadata::evalTwoStateVariant>(
+      ::talos::schedule::remove<schedule::metadata::evalTwoStateVariant>(
           source);
       variantNames.erase(source.getSymName());
     }
@@ -2025,7 +2025,7 @@ LogicalResult materializeEvalTwoStateVariants(
       sim::SimFuncOp callee =
           variantSymbols.lookup<sim::SimFuncOp>(call.getCallee());
       if (!callee || callee.isExternal() ||
-          ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+          ::talos::schedule::has<::talos::schedule::Field::EvalRawCaptures>(
               callee))
         return;
       if (helperSet.insert(callee.getOperation()).second)
@@ -2062,7 +2062,7 @@ LogicalResult materializeEvalTwoStateVariants(
       continue;
     builder.setInsertionPointToEnd(&design.getBody().front());
     SmallString<112> base;
-    (source.getSymName() + ".__obelisk_eval_private").toVector(base);
+    (source.getSymName() + ".__talos_eval_private").toVector(base);
     unsigned counter = 0;
     SmallString<112> name = SymbolTable::generateSymbolName<112>(
         base,
@@ -2089,13 +2089,13 @@ LogicalResult materializeEvalTwoStateVariants(
     auto clone = cast<sim::SimFuncOp>(detached);
     clone.setSymName(name);
     clone.setCodeUnitIdAttr(builder.getI64IntegerAttr(codeUnit));
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalPrivateHelper>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalPrivateHelper>(
         clone, builder.getUnitAttr());
-    ::obelisk::schedule::remove<schedule::metadata::evalTwoStateVariant>(clone);
-    ::obelisk::schedule::remove<
-        ::obelisk::schedule::Field::EvalConditionallyTwoState>(clone);
-    ::obelisk::schedule::remove<
-        ::obelisk::schedule::Field::EvalLocalPromotionRanges>(clone);
+    ::talos::schedule::remove<schedule::metadata::evalTwoStateVariant>(clone);
+    ::talos::schedule::remove<
+        ::talos::schedule::Field::EvalConditionallyTwoState>(clone);
+    ::talos::schedule::remove<
+        ::talos::schedule::Field::EvalLocalPromotionRanges>(clone);
     SymbolTable::setSymbolVisibility(clone, SymbolTable::Visibility::Private);
     variantSymbols.insert(detached, design.getBody().front().end());
     privateHelperNames[source.getSymName()] = name.str().str();
@@ -2120,7 +2120,7 @@ LogicalResult materializeEvalTwoStateVariants(
   auto markDirectOutput = [&](sim::SimFuncOp function) {
     function.walk([&](sim::SimDisplayOp display) {
       if (isDirectOutput(display))
-        ::obelisk::schedule::set<schedule::Field::EvalDirectOutput>(
+        ::talos::schedule::set<schedule::Field::EvalDirectOutput>(
             display, builder.getUnitAttr());
     });
   };
@@ -2139,7 +2139,7 @@ LogicalResult materializeEvalTwoStateVariants(
   for (sim::SimFuncOp helper : privateHelpers)
     eraseEvalDiscardableStores(helper);
   if (!pathProbeRoutes.empty())
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalPathProbeRoutes>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalPathProbeRoutes>(
         module, builder.getArrayAttr(pathProbeRoutes));
   return success();
 }
@@ -2157,7 +2157,7 @@ void materializeCleanEvalBodies(sim::SimDesignOp design) {
     nextCodeUnit = std::max(nextCodeUnit, declaration.getId() + 1);
   for (auto actor : design.getBody().front().getOps<sim::SimFuncOp>()) {
     auto body =
-        ::obelisk::schedule::get<::obelisk::schedule::Field::EvalBody>(actor);
+        ::talos::schedule::get<::talos::schedule::Field::EvalBody>(actor);
     auto source = body ? design.lookupSymbol<sim::SimFuncOp>(body.getValue())
                        : sim::SimFuncOp{};
     if (!source || source.getEntryKind() == sim::EntryKind::Observer)
@@ -2179,8 +2179,8 @@ void materializeCleanEvalBodies(sim::SimDesignOp design) {
   SymbolTable symbols(design);
   for (sim::SimFuncOp source : sources) {
     auto clone = cast<sim::SimFuncOp>(source->clone());
-    clone.setSymName((source.getSymName() + ".__obelisk_clean").str());
-    ::obelisk::schedule::set<detail::cleanEvalBodyAttr>(clone,
+    clone.setSymName((source.getSymName() + ".__talos_clean").str());
+    ::talos::schedule::set<detail::cleanEvalBodyAttr>(clone,
                                                         builder.getUnitAttr());
     clone.setCodeUnitIdAttr(builder.getI64IntegerAttr(nextCodeUnit));
     symbols.insert(clone, design.getBody().front().end());
@@ -2206,13 +2206,13 @@ void materializeCleanEvalBodies(sim::SimDesignOp design) {
         call.setCallee(clone.getSymName());
     });
   for (auto [actor, source] : roots)
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalBody>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalBody>(
         actor, FlatSymbolRefAttr::get(clones.lookup(source).getSymNameAttr()));
   // The canonical copies are no longer generated-evaluator roots. Keeping
   // their raw marker would pull guarded runtime loads back into the closure.
   for (sim::SimFuncOp source : sources)
-    ::obelisk::schedule::remove<::obelisk::schedule::Field::EvalRawCaptures>(
+    ::talos::schedule::remove<::talos::schedule::Field::EvalRawCaptures>(
         source);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

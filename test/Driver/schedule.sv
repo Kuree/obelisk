@@ -1,11 +1,11 @@
-// RUN: obelisk -emit-schedule --threads=2 --vpi=read %s | FileCheck %s
-// RUN: obelisk -emit-sim --vpi=full %s | FileCheck %s --check-prefix=FULL-VPI
-// RUN: obelisk -emit-schedule --compile-threads=1 %s > %t.one
-// RUN: obelisk -emit-schedule --compile-threads=4 %s | diff %t.one -
-// RUN: obelisk -emit-schedule --mlir-print-debuginfo %s | FileCheck %s --check-prefix=LOC
-// RUN: not obelisk -emit-schedule --threads=0 %s 2>&1 | FileCheck %s --check-prefix=BAD-THREADS
-// RUN: not obelisk -emit-schedule --compile-threads=0 %s 2>&1 | FileCheck %s --check-prefix=BAD-COMPILE-THREADS
-// RUN: not obelisk -emit-schedule --vpi=write %s 2>&1 | FileCheck %s --check-prefix=BAD-VPI
+// RUN: talos -emit-schedule --threads=2 --vpi=read %s | FileCheck %s
+// RUN: talos -emit-sim --vpi=full %s | FileCheck %s --check-prefix=FULL-VPI
+// RUN: talos -emit-schedule --compile-threads=1 %s > %t.one
+// RUN: talos -emit-schedule --compile-threads=4 %s | diff %t.one -
+// RUN: talos -emit-schedule --mlir-print-debuginfo %s | FileCheck %s --check-prefix=LOC
+// RUN: not talos -emit-schedule --threads=0 %s 2>&1 | FileCheck %s --check-prefix=BAD-THREADS
+// RUN: not talos -emit-schedule --compile-threads=0 %s 2>&1 | FileCheck %s --check-prefix=BAD-COMPILE-THREADS
+// RUN: not talos -emit-schedule --vpi=write %s 2>&1 | FileCheck %s --check-prefix=BAD-VPI
 
 module schedule_smoke;
   logic source;

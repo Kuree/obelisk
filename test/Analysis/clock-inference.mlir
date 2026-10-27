@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-clock-inference -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-clock-inference -o /dev/null 2>&1 | FileCheck %s
 // The dense CFG join takes max, suspension resets the activation, and
 // zero-time loops converge to many writes. Physical aliases share a domain.
 module {

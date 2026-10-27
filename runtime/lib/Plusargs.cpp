@@ -17,24 +17,24 @@
 
 namespace {
 
-obelisk_rt_status buildPlusargIndex(obelisk_rt_context *context) {
+talos_rt_status buildPlusargIndex(talos_rt_context *context) {
   if (context->plusargIndexBuilt)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (context->plusargs.empty()) {
     context->plusargIndexBuilt = true;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (context->plusargs.size() > UINT32_MAX)
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
   size_t characterCount = 0;
   for (const std::string &argument : context->plusargs) {
     if (argument.size() > UINT32_MAX ||
         characterCount > UINT32_MAX - argument.size())
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     characterCount += argument.size();
   }
   if (characterCount == UINT32_MAX)
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
 
   std::vector<PlusargIndexNode> nodes;
   std::vector<PlusargIndexEdge> edges;
@@ -68,16 +68,16 @@ obelisk_rt_status buildPlusargIndex(obelisk_rt_context *context) {
   context->plusargIndexNodes.swap(nodes);
   context->plusargIndexEdges.swap(edges);
   context->plusargIndexBuilt = true;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 // The matched argument, or nullptr when no plusarg starts with `prefix`.
-obelisk_rt_status findPlusarg(obelisk_rt_context *context,
+talos_rt_status findPlusarg(talos_rt_context *context,
                               std::string_view prefix,
                               const std::string *&match) {
   match = nullptr;
-  obelisk_rt_status status = buildPlusargIndex(context);
-  if (status != OBELISK_RT_OK || context->plusargIndexNodes.empty())
+  talos_rt_status status = buildPlusargIndex(context);
+  if (status != TALOS_RT_OK || context->plusargIndexNodes.empty())
     return status;
   uint32_t node = 0;
   for (unsigned char character : prefix) {
@@ -86,13 +86,13 @@ obelisk_rt_status findPlusarg(obelisk_rt_context *context,
            context->plusargIndexEdges[edge].character != character)
       edge = context->plusargIndexEdges[edge].nextEdge;
     if (edge == UINT32_MAX)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     node = context->plusargIndexEdges[edge].nextNode;
   }
   uint32_t argument = context->plusargIndexNodes[node].firstArgument;
   if (argument != UINT32_MAX)
     match = &context->plusargs[argument];
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 bool splitValueFormat(std::string_view format, std::string &prefix,
@@ -170,15 +170,15 @@ void setPlaneBit(uint8_t *plane, uint64_t bit) {
 
 } // namespace
 
-extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
-    obelisk_rt_string_v1 string, uint32_t radix, uint64_t bitWidth, void *value,
+extern "C" talos_rt_status talos_rt_v1_plusarg_parse_logic(
+    talos_rt_string_v1 string, uint32_t radix, uint64_t bitWidth, void *value,
     uint64_t valueSize, void *unknown, uint64_t unknownSize) {
   if (!value || !unknown || bitWidth == 0 || bitWidth > UINT64_MAX - 7 ||
       (radix != 2 && radix != 8 && radix != 10 && radix != 16))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint64_t byteCount = (bitWidth + 7) / 8;
   if (byteCount > valueSize || byteCount > unknownSize || byteCount > SIZE_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   auto *valueBytes = static_cast<uint8_t *>(value);
   auto *unknownBytes = static_cast<uint8_t *>(unknown);
   std::memset(valueBytes, 0, static_cast<size_t>(byteCount));
@@ -187,9 +187,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(string, scratch, &bytes, &size);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(string, scratch, &bytes, &size);
+  if (status != TALOS_RT_OK)
     return status;
   uint64_t begin = 0;
   while (begin != size && scanSpace(bytes[begin]))
@@ -244,10 +244,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
   // 21.6. Signs, separators, or whitespace without a digit are malformed.
   if (!valid || (digitCount == 0 && size != 0)) {
     fillUnknown(valueBytes, unknownBytes, byteCount, bitWidth);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (digitCount == 0)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
 
   if (decimalUnknown) {
     bool highImpedance =
@@ -260,7 +260,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
       valueBytes[byteCount - 1] &= mask;
       unknownBytes[byteCount - 1] &= mask;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
   // Preserve the common scalar path: a native accumulator avoids walking up
@@ -337,7 +337,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
   if (negative) {
     if (hasUnknown) {
       fillUnknown(valueBytes, unknownBytes, byteCount, bitWidth);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     uint32_t carry = 1;
     for (uint64_t byte = 0; byte != byteCount; ++byte) {
@@ -351,27 +351,27 @@ extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_parse_logic(
     valueBytes[byteCount - 1] &= mask;
     unknownBytes[byteCount - 1] &= mask;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_plusarg_parse_real(obelisk_rt_string_v1 string,
+extern "C" talos_rt_status
+talos_rt_v1_plusarg_parse_real(talos_rt_string_v1 string,
                                  double *outValue) {
   if (!outValue)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outValue = 0.0;
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(string, scratch, &bytes, &size);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(string, scratch, &bytes, &size);
+  if (status != TALOS_RT_OK)
     return status;
   if (size == 0)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (size > SIZE_MAX)
-    return OBELISK_RT_OUT_OF_RESOURCES;
-  OBELISK_RT_TRY {
+    return TALOS_RT_OUT_OF_RESOURCES;
+  TALOS_RT_TRY {
     std::string spelling;
     spelling.reserve(static_cast<size_t>(size));
     for (uint64_t index = 0; index != size; ++index)
@@ -384,106 +384,106 @@ obelisk_rt_v1_plusarg_parse_real(obelisk_rt_string_v1 string,
     if (begin != end && *begin == '+')
       ++begin;
     double value = 0.0;
-    auto parsed = obelisk_rt_from_chars_real(begin, end, value);
+    auto parsed = talos_rt_from_chars_real(begin, end, value);
     if (parsed.ec == std::errc{} && parsed.ptr == end)
       *outValue = value;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_plusarg_test(obelisk_rt_context *context,
-                           obelisk_rt_string_v1 name, uint32_t *outFound) {
+extern "C" talos_rt_status
+talos_rt_v1_plusarg_test(talos_rt_context *context,
+                           talos_rt_string_v1 name, uint32_t *outFound) {
   if (!context || !outFound)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outFound = 0;
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(name, scratch, &bytes, &size);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(name, scratch, &bytes, &size);
+  if (status != TALOS_RT_OK)
     return status;
   return guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     const std::string *match = nullptr;
-    obelisk_rt_status findStatus =
+    talos_rt_status findStatus =
         findPlusarg(context, std::string_view(bytes, size), match);
     *outFound = match ? 1u : 0u;
     return findStatus;
   });
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_plusarg_value(obelisk_rt_context *context,
-                            obelisk_rt_gc_lane_v1 *lane,
-                            obelisk_rt_string_v1 prefix,
-                            obelisk_rt_string_v1 *outTail, uint32_t *outFound) {
+extern "C" talos_rt_status
+talos_rt_v1_plusarg_value(talos_rt_context *context,
+                            talos_rt_gc_lane_v1 *lane,
+                            talos_rt_string_v1 prefix,
+                            talos_rt_string_v1 *outTail, uint32_t *outFound) {
   if (!context || !outTail || !outFound)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outTail = 0;
   *outFound = 0;
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(prefix, scratch, &bytes, &size);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(prefix, scratch, &bytes, &size);
+  if (status != TALOS_RT_OK)
     return status;
   std::string tail;
   status = guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     const std::string *match = nullptr;
-    obelisk_rt_status findStatus =
+    talos_rt_status findStatus =
         findPlusarg(context, std::string_view(bytes, size), match);
-    if (findStatus != OBELISK_RT_OK)
+    if (findStatus != TALOS_RT_OK)
       return findStatus;
     if (!match)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     tail = match->substr(static_cast<size_t>(size));
     *outFound = 1;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   });
-  if (status != OBELISK_RT_OK || !*outFound)
+  if (status != TALOS_RT_OK || !*outFound)
     return status;
-  return obelisk_rt_v1_string_create(lane, tail.data(), tail.size(), outTail);
+  return talos_rt_v1_string_create(lane, tail.data(), tail.size(), outTail);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_plusarg_scan(
-    obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
-    obelisk_rt_string_v1 format, obelisk_rt_string_v1 *outTail,
+extern "C" talos_rt_status talos_rt_v1_plusarg_scan(
+    talos_rt_context *context, talos_rt_gc_lane_v1 *lane,
+    talos_rt_string_v1 format, talos_rt_string_v1 *outTail,
     uint32_t *outConversion, uint32_t *outFound) {
   if (!context || !lane || !outTail || !outConversion || !outFound)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outTail = 0;
   *outConversion = 0;
   *outFound = 0;
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(format, scratch, &bytes, &size);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(format, scratch, &bytes, &size);
+  if (status != TALOS_RT_OK)
     return status;
   std::string prefix;
   if (!splitValueFormat(std::string_view(bytes, size), prefix, *outConversion))
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
 
   std::string tail;
   status = guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     const std::string *match = nullptr;
-    obelisk_rt_status findStatus = findPlusarg(context, prefix, match);
-    if (findStatus != OBELISK_RT_OK)
+    talos_rt_status findStatus = findPlusarg(context, prefix, match);
+    if (findStatus != TALOS_RT_OK)
       return findStatus;
     if (!match)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     tail = match->substr(prefix.size());
     *outFound = 1;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   });
-  if (status != OBELISK_RT_OK || !*outFound)
+  if (status != TALOS_RT_OK || !*outFound)
     return status;
-  return obelisk_rt_v1_string_create(lane, tail.data(), tail.size(), outTail);
+  return talos_rt_v1_string_create(lane, tail.data(), tail.size(), outTail);
 }

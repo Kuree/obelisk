@@ -1,9 +1,9 @@
-// RUN: obelisk -O3 %s -o %t.native
+// RUN: talos -O3 %s -o %t.native
 // RUN: %t.native > %t.native.out 2>&1
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode 2>&1 | diff -u %t.native.out -
-// RUN: obelisk --std=1800-2017 -O3 %s -o %t.2017
+// RUN: talos --std=1800-2017 -O3 %s -o %t.2017
 // RUN: %t.2017 2>&1 | diff -u %t.native.out -
 
 class conditional_item;

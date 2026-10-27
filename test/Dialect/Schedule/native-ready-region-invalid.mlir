@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics
+// RUN: talos-opt %s --split-input-file --verify-diagnostics
 module {
   llvm.func @bad(%base: !llvm.ptr) {
     // expected-error @+1 {{ready word must name a leaf within capacity}}

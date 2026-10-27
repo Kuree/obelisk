@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
-// RUN: not obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-set-module-attributes{attrs="{schedule.native_scheduler = 2 : i32}"},simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' 2>&1 | FileCheck %s --check-prefix=AOT-REJECT
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: not talos-opt %s --pass-pipeline='builtin.module(test-talos-set-module-attributes{attrs="{schedule.native_scheduler = 2 : i32}"},simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),convert-talos-sim-processes-to-llvm-coroutines)' 2>&1 | FileCheck %s --check-prefix=AOT-REJECT
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -42,9 +42,9 @@ module attributes {
 // the same activation. Only explicit-suspend (4) or terminate (2) dispositions
 // publish scheduler actions and coroutine-yield. A runtime failure reports
 // scheduler status and terminates the activation.
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_process_control(!llvm.ptr, i64, i32, !llvm.ptr) -> i32
-// NATIVE-LABEL: llvm.func @control.__obelisk_coro_ramp
-// NATIVE-COUNT-3: llvm.call @obelisk_rt_v1_process_control
+// NATIVE-DAG: llvm.func @talos_rt_v1_process_control(!llvm.ptr, i64, i32, !llvm.ptr) -> i32
+// NATIVE-LABEL: llvm.func @control.__talos_coro_ramp
+// NATIVE-COUNT-3: llvm.call @talos_rt_v1_process_control
 // NATIVE: ^[[RELOAD:bb[0-9]+]]:  // 3 preds:
 // NATIVE: llvm.load {{.*}} : !llvm.ptr -> i64
 // NATIVE: llvm.switch %{{.*}} : i32, ^{{.*}} [
@@ -54,7 +54,7 @@ module attributes {
 // NATIVE: llvm.mlir.constant(4 : i32)
 // NATIVE: llvm.mlir.constant(2 : i32)
 // NATIVE: llvm.intr.coro.suspend
-// NATIVE: llvm.call @obelisk_rt_v1_scheduler_fail
+// NATIVE: llvm.call @talos_rt_v1_scheduler_fail
 
 // Bytecode opcode 58 is append-only. Its flags are the proper ProcessControl
 // enum encodings: resume=2, suspend=1, kill=0. Source0 is the initialized

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph),test-obelisk-activation-phases)' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph),test-talos-activation-phases)' -o /dev/null 2>&1 | FileCheck %s
 
 // IEEE 1800-2023 4.5: phase p of a time slot runs after p - 1 NBA regions.
 // Each block prints `{time-zero phases|later-slot phases}`. The root

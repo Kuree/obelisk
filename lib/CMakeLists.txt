@@ -6,27 +6,27 @@ add_subdirectory(Conversion)
 add_subdirectory(Frontend)
 add_subdirectory(LLVM)
 
-include(${PROJECT_SOURCE_DIR}/cmake/ObeliskPrecompiledHeaders.cmake)
+include(${PROJECT_SOURCE_DIR}/cmake/TalosPrecompiledHeaders.cmake)
 
 set(_simulation_ops
-  "${PROJECT_SOURCE_DIR}/include/obelisk/Dialect/Simulation/SimulationOps.h")
-obelisk_precompile_headers(ObeliskSimulationIR "${_simulation_ops}")
-obelisk_precompile_headers(ObeliskSimulationAnalysis "${_simulation_ops}")
-obelisk_precompile_headers(ObeliskSimulationTransforms
+  "${PROJECT_SOURCE_DIR}/include/talos/Dialect/Simulation/SimulationOps.h")
+talos_precompile_headers(TalosSimulationIR "${_simulation_ops}")
+talos_precompile_headers(TalosSimulationAnalysis "${_simulation_ops}")
+talos_precompile_headers(TalosSimulationTransforms
   "${_simulation_ops}" <mlir/Pass/Pass.h>)
-obelisk_precompile_headers(ObeliskSimulationToBytecode "${_simulation_ops}")
-obelisk_precompile_headers(ObeliskToSimulation
-  "${PROJECT_SOURCE_DIR}/include/obelisk/Dialect/Obelisk/ObeliskOps.h"
+talos_precompile_headers(TalosSimulationToBytecode "${_simulation_ops}")
+talos_precompile_headers(TalosToSimulation
+  "${PROJECT_SOURCE_DIR}/include/talos/Dialect/Talos/TalosOps.h"
   "${_simulation_ops}")
-obelisk_precompile_headers(ObeliskSimulationToLLVMCoroutine
+talos_precompile_headers(TalosSimulationToLLVMCoroutine
   "${_simulation_ops}"
   <mlir/Dialect/LLVMIR/LLVMDialect.h>
   <mlir/Transforms/DialectConversion.h>)
-obelisk_precompile_headers(ObeliskSimulationToSchedule "${_simulation_ops}")
-obelisk_precompile_headers(ObeliskSimulationToScheduleNative
+talos_precompile_headers(TalosSimulationToSchedule "${_simulation_ops}")
+talos_precompile_headers(TalosSimulationToScheduleNative
   "${_simulation_ops}" <mlir/Dialect/LLVMIR/LLVMDialect.h>)
-obelisk_precompile_headers(ObeliskScheduleTransforms
+talos_precompile_headers(TalosScheduleTransforms
   "${_simulation_ops}" <mlir/Pass/Pass.h>)
-obelisk_precompile_headers(ObeliskScheduleNativeTransforms
+talos_precompile_headers(TalosScheduleNativeTransforms
   "${_simulation_ops}" <mlir/Dialect/LLVMIR/LLVMDialect.h> <mlir/Pass/Pass.h>)
 unset(_simulation_ops)

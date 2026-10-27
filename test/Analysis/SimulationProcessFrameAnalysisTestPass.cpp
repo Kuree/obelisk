@@ -2,8 +2,8 @@
 
 #include "AnalysisTestPasses.h"
 
-#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/SimulationProcessFrameAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -17,37 +17,37 @@ using namespace mlir;
 
 namespace {
 
-StringRef getFieldKindName(obelisk::ProcessFrameFieldKind kind) {
+StringRef getFieldKindName(talos::ProcessFrameFieldKind kind) {
   switch (kind) {
-  case obelisk::ProcessFrameFieldKind::Capture:
+  case talos::ProcessFrameFieldKind::Capture:
     return "capture";
-  case obelisk::ProcessFrameFieldKind::Continuation:
+  case talos::ProcessFrameFieldKind::Continuation:
     return "continuation";
-  case obelisk::ProcessFrameFieldKind::Live:
+  case talos::ProcessFrameFieldKind::Live:
     return "live";
-  case obelisk::ProcessFrameFieldKind::Wait:
+  case talos::ProcessFrameFieldKind::Wait:
     return "wait";
   }
   llvm_unreachable("unknown process frame field kind");
 }
 
-StringRef getFieldFlagsName(obelisk::ProcessFrameFieldFlags flags) {
+StringRef getFieldFlagsName(talos::ProcessFrameFieldFlags flags) {
   switch (flags) {
-  case obelisk::ProcessFrameFieldFlags::None:
+  case talos::ProcessFrameFieldFlags::None:
     return "none";
-  case obelisk::ProcessFrameFieldFlags::FourStateValue:
+  case talos::ProcessFrameFieldFlags::FourStateValue:
     return "four-state-value";
-  case obelisk::ProcessFrameFieldFlags::FourStateUnknown:
+  case talos::ProcessFrameFieldFlags::FourStateUnknown:
     return "four-state-unknown";
-  case obelisk::ProcessFrameFieldFlags::ManagedRoot:
+  case talos::ProcessFrameFieldFlags::ManagedRoot:
     return "managed-root";
-  case obelisk::ProcessFrameFieldFlags::CandidateRoot:
+  case talos::ProcessFrameFieldFlags::CandidateRoot:
     return "candidate-root";
   }
   llvm_unreachable("unknown process frame field flags");
 }
 
-unsigned getBlockIndex(obelisk::sim::SimFuncOp function, Block *target) {
+unsigned getBlockIndex(talos::sim::SimFuncOp function, Block *target) {
   for (auto [index, block] : llvm::enumerate(function.getBody()))
     if (&block == target)
       return index;
@@ -55,7 +55,7 @@ unsigned getBlockIndex(obelisk::sim::SimFuncOp function, Block *target) {
 }
 
 void printValueLayout(StringRef prefix, unsigned index,
-                      const obelisk::ProcessFrameValue &value) {
+                      const talos::ProcessFrameValue &value) {
   llvm::errs() << "    " << prefix << index;
   if (value.storageSize == 0) {
     llvm::errs() << " context\n";
@@ -71,7 +71,7 @@ void printValueLayout(StringRef prefix, unsigned index,
     llvm::errs() << " roots=";
     llvm::interleaveComma(value.managedRootOffsets, llvm::errs());
     bool first = true;
-    for (const obelisk::sim::ManagedHandleSlot &slot : value.managedRootSlots) {
+    for (const talos::sim::ManagedHandleSlot &slot : value.managedRootSlots) {
       if (!slot.conditional)
         continue;
       llvm::errs() << (first ? " candidate-roots=" : ",") << slot.bitOffset
@@ -90,7 +90,7 @@ public:
       SimulationProcessFrameAnalysisTestPass)
 
   StringRef getArgument() const final {
-    return "test-obelisk-simulation-process-frame-analysis";
+    return "test-talos-simulation-process-frame-analysis";
   }
   StringRef getDescription() const final {
     return "print canonical process frame analysis facts";
@@ -111,16 +111,16 @@ public:
       return signalPassFailure();
     }
 
-    SmallVector<obelisk::sim::SimFuncOp> functions;
-    module.walk([&](obelisk::sim::SimFuncOp function) {
+    SmallVector<talos::sim::SimFuncOp> functions;
+    module.walk([&](talos::sim::SimFuncOp function) {
       if (!function.isExternal())
         functions.push_back(function);
     });
     llvm::sort(functions, [](auto lhs, auto rhs) {
       return lhs.getSymName() < rhs.getSymName();
     });
-    for (obelisk::sim::SimFuncOp function : functions) {
-      auto frame = obelisk::SimulationProcessFrameAnalysis::create(function,
+    for (talos::sim::SimFuncOp function : functions) {
+      auto frame = talos::SimulationProcessFrameAnalysis::create(function,
                                                                    *dataLayout);
       if (failed(frame)) {
         signalPassFailure();
@@ -132,27 +132,27 @@ public:
   }
 
 private:
-  static void printFrame(obelisk::sim::SimFuncOp function,
-                         const obelisk::SimulationProcessFrameAnalysis &frame) {
+  static void printFrame(talos::sim::SimFuncOp function,
+                         const talos::SimulationProcessFrameAnalysis &frame) {
     llvm::errs() << "frame @" << function.getSymName()
                  << " size=" << frame.getFrameSize()
                  << " align=" << frame.getFrameAlignment()
                  << " checksum=" << frame.getChecksum() << "\n";
     for (auto [index, value] : llvm::enumerate(frame.getEntryCaptureLayout()))
       printValueLayout("capture", index, value);
-    for (const obelisk::ProcessFrameField &field : frame.getFields()) {
+    for (const talos::ProcessFrameField &field : frame.getFields()) {
       llvm::errs() << "    field " << getFieldKindName(field.kind) << " "
                    << getFieldFlagsName(field.flags)
                    << " offset=" << field.offset << " size=" << field.size
                    << " align=" << field.alignment;
-      if (field.flags == obelisk::ProcessFrameFieldFlags::CandidateRoot)
+      if (field.flags == talos::ProcessFrameFieldFlags::CandidateRoot)
         llvm::errs() << " kinds=" << field.reserved;
       llvm::errs() << "\n";
     }
     llvm::errs() << "    continuations=";
     llvm::interleaveComma(frame.getContinuations(), llvm::errs());
     llvm::errs() << "\n";
-    for (const obelisk::ProcessSuspension &suspension :
+    for (const talos::ProcessSuspension &suspension :
          frame.getSuspensions()) {
       llvm::errs() << "    suspend "
                    << suspension.operation->getName().getStringRef()
@@ -169,10 +169,10 @@ private:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 
 void registerSimulationProcessFrameAnalysisTestPass() {
   PassRegistration<SimulationProcessFrameAnalysisTestPass>();
 }
 
-} // namespace obelisk
+} // namespace talos

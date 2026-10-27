@@ -1,12 +1,12 @@
-// RUN: not obelisk-opt %s -split-input-file --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' 2>&1 | FileCheck %s
+// RUN: not talos-opt %s -split-input-file --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' 2>&1 | FileCheck %s
 //
 // Empty or inferred effect summaries are not proof that a function is safe to
 // duplicate in a checkpoint predicate. Inspect the complete helper closure:
 // state reads need an overlay, writes must not run twice, and recursion needs
 // a conservative cycle break. Forced eval must reject these unguarded owners.
 
-// CHECK: obelisk eval probe rejected: work.__obelisk_eval_body_0: unsupported effect (simulation.call)
-// CHECK: an eval owner keeps an unguarded runtime leaf in work.__obelisk_eval_body_0
+// CHECK: talos eval probe rejected: work.__talos_eval_body_0: unsupported effect (simulation.call)
+// CHECK: an eval owner keeps an unguarded runtime leaf in work.__talos_eval_body_0
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
@@ -75,8 +75,8 @@ module attributes {
 
 // -----
 
-// CHECK: obelisk eval probe rejected: work.__obelisk_eval_body_0: unsupported effect (simulation.call)
-// CHECK: an eval owner keeps an unguarded runtime leaf in work.__obelisk_eval_body_0
+// CHECK: talos eval probe rejected: work.__talos_eval_body_0: unsupported effect (simulation.call)
+// CHECK: an eval owner keeps an unguarded runtime leaf in work.__talos_eval_body_0
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
@@ -145,8 +145,8 @@ module attributes {
 
 // -----
 
-// CHECK: obelisk eval probe rejected: work.__obelisk_eval_body_0: unsupported effect (simulation.call)
-// CHECK: an eval owner keeps an unguarded runtime leaf in work.__obelisk_eval_body_0
+// CHECK: talos eval probe rejected: work.__talos_eval_body_0: unsupported effect (simulation.call)
+// CHECK: an eval owner keeps an unguarded runtime leaf in work.__talos_eval_body_0
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",

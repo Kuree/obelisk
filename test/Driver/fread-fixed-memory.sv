@@ -1,6 +1,6 @@
-// RUN: obelisk -O0 --vpi=off %s -o %t.native
+// RUN: talos -O0 --vpi=off %s -o %t.native
 // RUN: %t.native > %t.native.out
-// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: diff -u %t.bytecode.out %t.native.out
 // RUN: FileCheck %s < %t.native.out
@@ -15,11 +15,11 @@ module fread_fixed_memory;
   logic [11:0] words[0:2];
 
   task open_input;
-    descriptor = $fopen("obelisk-fread-fixed-memory.tmp", "r");
+    descriptor = $fopen("talos-fread-fixed-memory.tmp", "r");
   endtask
 
   initial begin
-    descriptor = $fopen("obelisk-fread-fixed-memory.tmp", "w");
+    descriptor = $fopen("talos-fread-fixed-memory.tmp", "w");
     $fwrite(descriptor, "ABCDEFGH");
     $fclose(descriptor);
 

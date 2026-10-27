@@ -1,8 +1,8 @@
 // REQUIRES: native-elf
 // RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_control.c -I%resource_dir/include -o %t.probe.so
-// RUN: obelisk -O0 --vpi=full --coverage=toggle %s %t.probe.so -o %t.native
+// RUN: talos -O0 --vpi=full --coverage=toggle %s %t.probe.so -o %t.native
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk -O3 --vpi=full --coverage=toggle --execution-tier=bytecode %s %t.probe.so -o %t.bytecode
+// RUN: talos -O3 --vpi=full --coverage=toggle --execution-tier=bytecode %s %t.probe.so -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 
 // IEEE 1800-2023 40.5.3: vpi_control starts and stops coverage of an instance

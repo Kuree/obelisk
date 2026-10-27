@@ -1,10 +1,10 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O3 -emit-sim %t/entry-order.sv -o %t/entry-order.mlir
+// RUN: talos -O3 -emit-sim %t/entry-order.sv -o %t/entry-order.mlir
 // RUN: FileCheck %s --check-prefix=ENTRY-FUSED < %t/entry-order.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-entry-order.test.
 
-// ENTRY-FUSED: __obelisk_fused_
+// ENTRY-FUSED: __talos_fused_
 
 //--- entry-order.sv
 module initial_entry_order;

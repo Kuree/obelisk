@@ -1,10 +1,10 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=line -o %t.line %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=line -o %t.line %s
 // RUN: %t.line --coverage-output=%t.line.obcov --coverage-test=smoke
-// RUN: obelisk-cov inspect %t.line.obcov | FileCheck %s --check-prefix=LINE-INSPECT
-// RUN: obelisk-cov report --format=text %t.line.obcov | FileCheck %s --check-prefix=LINE
+// RUN: talos-cov inspect %t.line.obcov | FileCheck %s --check-prefix=LINE-INSPECT
+// RUN: talos-cov report --format=text %t.line.obcov | FileCheck %s --check-prefix=LINE
 // RUN: %t.line --coverage-output=%t.suppressed.obcov --no-coverage-dump
 // RUN: test ! -e %t.suppressed.obcov
-// RUN: %obelisk --std=1800-2023 -O0 -o %t.functional-only %s
+// RUN: %talos --std=1800-2023 -O0 -o %t.functional-only %s
 // RUN: %t.functional-only --coverage-output=%t.functional-only.obcov && test ! -e %t.functional-only.obcov
 
 // Requesting line coverage dumps a database at exit with no further option,

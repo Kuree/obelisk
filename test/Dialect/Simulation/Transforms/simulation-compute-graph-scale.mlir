@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file \
-// RUN:   --pass-pipeline='builtin.module(test-obelisk-insert-block-chain,simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' \
+// RUN: talos-opt %s --split-input-file \
+// RUN:   --pass-pipeline='builtin.module(test-talos-insert-block-chain,simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' \
 // RUN:   | FileCheck %s
 
 // Generated process CFGs reach tens of thousands of blocks. Every graph

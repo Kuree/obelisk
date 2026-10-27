@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --obelisk-sim-materialize-clocked-control | FileCheck %s --check-prefix=STATE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --talos-sim-materialize-clocked-control | FileCheck %s --check-prefix=STATE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-materialize-clocked-control,talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN --check-prefix=BARRIER < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.llvm.mlir
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=PLAN --check-prefix=VPIBARRIER
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=PLAN --check-prefix=VPIBARRIER
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.disable_two_state_specialization}"' | obelisk-opt --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=PLAN --implicit-check-not='__obelisk_two_state' --implicit-check-not='schedule.eval.local_promotion_ranges'
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-materialize-clocked-control,talos-sim-build-compute-graph{vpi=read},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=read},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=PLAN --check-prefix=VPIBARRIER
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-materialize-clocked-control,talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=full},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=PLAN --check-prefix=VPIBARRIER
+// RUN: talos-opt %s '--test-talos-set-module-attributes=attrs="{native.disable_two_state_specialization}"' | talos-opt --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-materialize-clocked-control,talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=PLAN --implicit-check-not='__talos_two_state' --implicit-check-not='schedule.eval.local_promotion_ranges'
 
 // Writable capability alone must likewise preserve Tier 1: no writer or
 // callback is attached in this fixture. Actual mutation is a cold handoff.
@@ -23,15 +23,15 @@
 // STATE-COUNT-1: simulation.suspend.edge posedge
 // STATE-NOT: simulation.suspend.edge
 // STATE-LABEL: simulation.func @report
-// PLAN: __obelisk_eval_body
-// PLAN: llvm.call @obelisk_rt_v1_eval_display
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// PLAN: __talos_eval_body
+// PLAN: llvm.call @talos_rt_v1_eval_display
+// PLAN: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
 // A terminating checkpoint returns to finals without re-entering the model.
 
 // The known-state predicate must bypass every accumulator in an empty bitmap
 // word, as occurs in the post-NBA combinational fixpoint. The dirty-root path
 // remains separate and retains its canonical/staged unknown checks.
-// NBAKNOWN-LABEL: llvm.func internal @__obelisk_eval_nba_known_v1
+// NBAKNOWN-LABEL: llvm.func internal @__talos_eval_nba_known_v1
 // NBAKNOWN: %[[DIRTY:.*]] = llvm.and {{.*}} : i64
 // NBAKNOWN-NEXT: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64)
 // NBAKNOWN-NEXT: %[[EMPTY:.*]] = llvm.icmp "eq" %[[DIRTY]], %[[ZERO]] : i64
@@ -40,13 +40,13 @@
 // NBAKNOWN: llvm.cond_br
 // NBAKNOWN: ^[[NEXT]]:
 // NBAKNOWN-NEXT: llvm.br
-// NBAKNOWN: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
-// NBAKNOWN: llvm.mlir.addressof @__obelisk_state_unknown
+// NBAKNOWN: llvm.mlir.addressof @__talos_aot_nba_accumulator_
+// NBAKNOWN: llvm.mlir.addressof @__talos_state_unknown
 
 // A fixed-only design skips the NBA barrier when its bitmap is empty, then
 // checks for dirty local route proofs at the coordinator boundary.
-// BARRIER-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// BARRIER: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// BARRIER-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// BARRIER: llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // BARRIER: %[[DIRTY:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
 // BARRIER-NEXT: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64)
 // BARRIER-NEXT: %[[EMPTY:.*]] = llvm.icmp "eq" %[[DIRTY]], %[[ZERO]] : i64
@@ -54,7 +54,7 @@
 // BARRIER-NEXT: llvm.cond_br %[[EMPTY]], ^[[DONE:bb[0-9]+]](%[[OK]] : i32), ^[[COMMIT:bb[0-9]+]]
 // BARRIER-NEXT: ^[[COMMIT]]:
 // BARRIER: ^[[DONE]](%[[STATUS:.*]]: i32):
-// BARRIER-NEXT: %[[BOUNDARY:.*]] = llvm.call @__obelisk_eval_route_promotion_boundary_v1(%[[STATUS]]) : (i32) -> i32
+// BARRIER-NEXT: %[[BOUNDARY:.*]] = llvm.call @__talos_eval_route_promotion_boundary_v1(%[[STATUS]]) : (i32) -> i32
 // BARRIER-NEXT: llvm.br ^[[EXIT:bb[0-9]+]](%[[BOUNDARY]] : i32)
 // BARRIER: ^[[EXIT]](%[[RESULT:.*]]: i32):
 // BARRIER-NEXT: llvm.return %[[RESULT]] : i32
@@ -62,10 +62,10 @@
 // With VPI a value-change callback can observe every NBA update (IEEE
 // 1800-2017 38.36.1), so the updates use the ordered queue and its count
 // joins the empty-barrier test.
-// VPIBARRIER-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// VPIBARRIER: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// VPIBARRIER-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// VPIBARRIER: llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // VPIBARRIER: %[[DIRTY:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
-// VPIBARRIER-NEXT: llvm.mlir.addressof @__obelisk_eval_ordered_nba_queue_v1
+// VPIBARRIER-NEXT: llvm.mlir.addressof @__talos_eval_ordered_nba_queue_v1
 // VPIBARRIER: %[[COUNT:.*]] = llvm.load {{.*}} : !llvm.ptr -> i32
 // VPIBARRIER-NEXT: %[[WIDE:.*]] = llvm.zext %[[COUNT]] : i32 to i64
 // VPIBARRIER-NEXT: %[[PENDING:.*]] = llvm.or %[[DIRTY]], %[[WIDE]] : i64

@@ -1,8 +1,8 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O3 -emit-sim %t/rejected.sv -o %t/rejected.mlir
+// RUN: talos -O3 -emit-sim %t/rejected.sv -o %t/rejected.mlir
 // RUN: FileCheck %s --check-prefix=COHORT < %t/rejected.mlir
 
-// COHORT: __obelisk_fused_
+// COHORT: __talos_fused_
 
 //--- rejected.sv
 module rejected_fusions;

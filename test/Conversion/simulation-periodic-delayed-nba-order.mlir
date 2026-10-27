@@ -1,27 +1,27 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // IEEE 1800-2023 4.6(b), 10.4.2 Example 6: an NBA enqueued at t=0 for t=15
 // precedes the assignment executed at t=15. The delayed NBA enters the runtime
 // queue, and writer0, which targets the same root, enqueues through that queue
 // behind it. The independent writers keep generated scalar staging.
-// CHECK-LABEL: llvm.func @observe.__obelisk_coro_ramp(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_nba(
-// CHECK-LABEL: llvm.func @writer0.__obelisk_eval_body_0(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_nba(
-// CHECK-LABEL: llvm.func @writer1.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @observe.__talos_coro_ramp(
+// CHECK: llvm.call @talos_rt_v1_scheduler_nba(
+// CHECK-LABEL: llvm.func @writer0.__talos_eval_body_0(
+// CHECK: llvm.call @talos_rt_v1_scheduler_nba(
+// CHECK-LABEL: llvm.func @writer1.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @writer2.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @writer2.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @writer3.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @writer3.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
 
 !word = !simulation.logic<32>

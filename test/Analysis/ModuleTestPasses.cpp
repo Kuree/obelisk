@@ -43,7 +43,7 @@ public:
   PrefixSymbolsTestPass(const PrefixSymbolsTestPass &other)
       : PassWrapper(other) {}
 
-  StringRef getArgument() const final { return "test-obelisk-prefix-symbols"; }
+  StringRef getArgument() const final { return "test-talos-prefix-symbols"; }
   StringRef getDescription() const final {
     return "prefix every symbol defined in the top-level module";
   }
@@ -79,7 +79,7 @@ public:
       : PassWrapper(other) {}
 
   StringRef getArgument() const final {
-    return "test-obelisk-export-llvm-symbols";
+    return "test-talos-export-llvm-symbols";
   }
   StringRef getDescription() const final {
     return "give named LLVM globals external linkage and rename main";
@@ -128,7 +128,7 @@ public:
       : PassWrapper(other) {}
 
   StringRef getArgument() const final {
-    return "test-obelisk-set-module-attributes";
+    return "test-talos-set-module-attributes";
   }
   StringRef getDescription() const final {
     return "merge a dictionary of attributes into the top-level module";
@@ -206,7 +206,7 @@ public:
       : PassWrapper(other) {}
 
   StringRef getArgument() const final {
-    return "test-obelisk-edit-attributes";
+    return "test-talos-edit-attributes";
   }
   StringRef getDescription() const final {
     return "edit, replace within, or erase operations that match attributes";
@@ -321,7 +321,7 @@ public:
       matched.push_back(operation);
     });
     if (matched.empty()) {
-      module.emitError("test-obelisk-edit-attributes matched no operation");
+      module.emitError("test-talos-edit-attributes matched no operation");
       return signalPassFailure();
     }
     for (Operation *&operation : matched) {
@@ -333,7 +333,7 @@ public:
       }
       if (operandValue || poisonType) {
         if (static_cast<uint64_t>(operandIndex) >= operation->getNumOperands()) {
-          operation->emitError("test-obelisk-edit-attributes operand index is "
+          operation->emitError("test-talos-edit-attributes operand index is "
                                "out of range");
           return signalPassFailure();
         }
@@ -363,7 +363,7 @@ public:
         operation->erase();
       }
     if (from && !replaced) {
-      module.emitError("test-obelisk-edit-attributes replaced nothing");
+      module.emitError("test-talos-edit-attributes replaced nothing");
       return signalPassFailure();
     }
   }
@@ -411,7 +411,7 @@ public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(InsertBlockChainTestPass)
 
   StringRef getArgument() const final {
-    return "test-obelisk-insert-block-chain";
+    return "test-talos-insert-block-chain";
   }
   StringRef getDescription() const final {
     return "expand each branch marked test.chain_length into a block chain";
@@ -451,7 +451,7 @@ class UnrollLoopsTestPass
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(UnrollLoopsTestPass)
 
-  StringRef getArgument() const final { return "test-obelisk-unroll-loops"; }
+  StringRef getArgument() const final { return "test-talos-unroll-loops"; }
   StringRef getDescription() const final {
     return "fully unroll every constant-trip scf.for";
   }
@@ -465,7 +465,7 @@ public:
     for (scf::ForOp loop : loops) {
       parents.insert(loop->getParentOp());
       if (failed(loopUnrollFull(loop))) {
-        loop.emitError("test-obelisk-unroll-loops needs a constant trip count");
+        loop.emitError("test-talos-unroll-loops needs a constant trip count");
         return signalPassFailure();
       }
     }
@@ -494,7 +494,7 @@ class ReplicateTestPass
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ReplicateTestPass)
 
-  StringRef getArgument() const final { return "test-obelisk-replicate"; }
+  StringRef getArgument() const final { return "test-talos-replicate"; }
   StringRef getDescription() const final {
     return "replicate operations marked test.replicate with indexed names";
   }
@@ -610,7 +610,7 @@ private:
 };
 } // namespace
 
-namespace obelisk {
+namespace talos {
 void registerModuleTestPasses() {
   PassRegistration<PrefixSymbolsTestPass>();
   PassRegistration<ExportLLVMSymbolsTestPass>();
@@ -620,4 +620,4 @@ void registerModuleTestPasses() {
   PassRegistration<UnrollLoopsTestPass>();
   PassRegistration<ReplicateTestPass>();
 }
-} // namespace obelisk
+} // namespace talos

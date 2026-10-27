@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // An owner whose activation reaches its checkpoint leaf unconditionally has
 // no generated path to guard: the route probe can only ever answer
@@ -101,33 +101,33 @@ module attributes {
 
 // Falling back leaves no path dispatcher, no cold checkpoint callback, and no
 // checkpoint publication behind.
-// CHECK-NOT: llvm.func @__obelisk_eval_path_dispatch_v1_
-// CHECK-NOT: llvm.func @__obelisk_eval_four_state_fallback_v1_
-// CHECK-NOT: llvm.func @__obelisk_eval_checkpoint_body_v1_
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_queue_aot_checkpoint
+// CHECK-NOT: llvm.func @__talos_eval_path_dispatch_v1_
+// CHECK-NOT: llvm.func @__talos_eval_four_state_fallback_v1_
+// CHECK-NOT: llvm.func @__talos_eval_checkpoint_body_v1_
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_queue_aot_checkpoint
 
 // The activation keeps its complete body: the NBA publication that precedes
 // the display leaf still stages into the accumulator and marks its dirty
 // root, and the display stays inline rather than moving to a cold Tier-3
 // callback.
-// CHECK-LABEL: llvm.func @guarded.__obelisk_table_body
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
-// CHECK: llvm.call @obelisk_rt_v1_display
+// CHECK-LABEL: llvm.func @guarded.__talos_table_body
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_0
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
+// CHECK: llvm.call @talos_rt_v1_display
 
 // -----
 
 // CHECK-LABEL: // {{-----}}
-// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_{{.*}}.__obelisk_execute.checkpoint(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_execute_aot_actor
+// CHECK-LABEL: llvm.func @__talos_direct_fragment_{{.*}}.__talos_execute.checkpoint(
+// CHECK: llvm.call @talos_rt_v1_scheduler_execute_aot_actor
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_{{.*}}.__obelisk_execute(
+// CHECK-LABEL: llvm.func @__talos_direct_fragment_{{.*}}.__talos_execute(
 // CHECK-NOT: llvm.call
-// CHECK: llvm.mlir.addressof @__obelisk_eval_checkpoint_callback_v1
+// CHECK: llvm.mlir.addressof @__talos_eval_checkpoint_callback_v1
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_queue_aot_checkpoint
+// CHECK-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// CHECK: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
+// CHECK: llvm.call @talos_rt_v1_scheduler_queue_aot_checkpoint
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

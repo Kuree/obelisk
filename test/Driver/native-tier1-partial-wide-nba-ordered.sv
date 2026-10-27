@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.native
+// RUN: talos -O3 --native-scheduler=auto %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.native.out
-// RUN: obelisk -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
+// RUN: talos -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 // RUN: FileCheck %s --check-prefix=NO-CHECKPOINT < %t.ll
 
@@ -37,7 +37,7 @@ module native_tier1_partial_wide_nba_ordered;
   end
 endmodule
 
-// LLVM: @__obelisk_eval_ordered_nba_queue_v1
-// LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
-// NO-CHECKPOINT-NOT: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
+// LLVM: @__talos_eval_ordered_nba_queue_v1
+// LLVM: define {{.*}}i32 @__talos_eval_dispatch_v1
+// NO-CHECKPOINT-NOT: call i32 @talos_rt_v1_scheduler_execute_aot_actor
 // OUTPUT: ordered low=0 high=4 edges=4 loop_edges=4

@@ -2,11 +2,11 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Analysis/SimulationStorageAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/SimulationStorageAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -22,7 +22,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 Value zeroNativeValue(OpBuilder &builder, Location location, Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
@@ -49,7 +49,7 @@ public:
         op, LLVM::CallOp::create(
                 rewriter, op.getLoc(), TypeRange{rewriter.getI64Type()},
                 SymbolRefAttr::get(rewriter.getContext(),
-                                   "obelisk_rt_v1_container_size"),
+                                   "talos_rt_v1_container_size"),
                 managedObjectPointer(rewriter, op.getLoc(),
                                      adaptor.getContainer().front()))
                 .getResult());
@@ -77,7 +77,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_container_create_like"),
+                               "talos_rt_v1_container_create_like"),
             ValueRange{lane,
                        managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getPreferred().front()),
@@ -120,7 +120,7 @@ public:
     Value traceSlots = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!traceOffsets.empty()) {
       std::string name =
-          "__obelisk_element_trace_" + std::to_string(op.getTypeId());
+          "__talos_element_trace_" + std::to_string(op.getTypeId());
       traceSlots =
           LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer, name);
     }
@@ -159,8 +159,8 @@ public:
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(
                 rewriter.getContext(),
-                patternName ? "obelisk_rt_v1_container_create_typed_pattern"
-                            : "obelisk_rt_v1_container_create_typed"),
+                patternName ? "talos_rt_v1_container_create_typed_pattern"
+                            : "talos_rt_v1_container_create_typed"),
             arguments)
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -190,7 +190,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_container_clone"),
+                               "talos_rt_v1_container_clone"),
             ValueRange{lane,
                        managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getInput().front()),
@@ -250,7 +250,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_container_import_fixed"),
+                               "talos_rt_v1_container_import_fixed"),
             ValueRange{
                 lane,
                 managedObjectPointer(rewriter, location,
@@ -320,7 +320,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_container_export_fixed"),
+                               "talos_rt_v1_container_export_fixed"),
             ValueRange{
                 managedObjectPointer(rewriter, location,
                                      adaptor.getContainer().front()),
@@ -403,7 +403,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_container_export_bitstream"),
+                               "talos_rt_v1_container_export_bitstream"),
             ValueRange{
                 managedObjectPointer(rewriter, location,
                                      adaptor.getContainer().front()),
@@ -461,7 +461,7 @@ public:
         sim::getPackedWidth(op.getResult().getType());
     if (failed(inputStorage) || failed(outputStorage) || !outputWidth ||
         op.getPlan().size() <
-            OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_HEADER_WORDS ||
+            TALOS_RT_RECURSIVE_BITSTREAM_PLAN_HEADER_WORDS ||
         adaptor.getInput().size() !=
             analysis::getSimulationPhysicalStorageCount(*inputStorage) ||
         resultTypes.size() !=
@@ -502,7 +502,7 @@ public:
           LLVM::CallOp::create(
               rewriter, location, TypeRange{i32},
               SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v2_recursive_export_bitstream"),
+                                 "talos_rt_v2_recursive_export_bitstream"),
               ValueRange{context, c64(site.getValue().getZExtValue()),
                          inputs[0], inputs.size() == 2 ? inputs[1] : null,
                          c64(inputStorage->size), c64(inputWidth),
@@ -524,7 +524,7 @@ public:
           LLVM::CallOp::create(
               rewriter, location, TypeRange{i32},
               SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v1_recursive_export_bitstream"),
+                                 "talos_rt_v1_recursive_export_bitstream"),
               ValueRange{context, inputs[0],
                          inputs.size() == 2 ? inputs[1] : null,
                          c64(inputStorage->size), c64(inputWidth),
@@ -628,7 +628,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_aggregate_export_bitstream"),
+                               "talos_rt_v1_aggregate_export_bitstream"),
             ValueRange{inputs[0], inputs.size() == 2 ? inputs[1] : null,
                        c64(inputStorage->size), c64(*inputWidth),
                        c32(inputStorage->fourState), outputs[0],
@@ -638,7 +638,7 @@ public:
                        c64(op.getPlan().size() * sizeof(int64_t))})
             .getResult();
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value context =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     reportManagedStatus(rewriter, location, context, status);
@@ -727,7 +727,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_aggregate_import_bitstream"),
+                               "talos_rt_v1_aggregate_import_bitstream"),
             ValueRange{inputs[0], inputs.size() == 2 ? inputs[1] : null,
                        c64(inputStorage->size), c64(*inputWidth),
                        c32(inputStorage->fourState), outputs[0],
@@ -737,7 +737,7 @@ public:
                        c64(op.getPlan().size() * sizeof(int64_t))})
             .getResult();
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value context =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     reportManagedStatus(rewriter, location, context, status);
@@ -769,7 +769,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_container_swap"),
+                               "talos_rt_v1_container_swap"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getContainer().front()),
                        adaptor.getLeft().front(), adaptor.getRight().front()})
@@ -794,7 +794,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_container_delete"),
+                                          "talos_rt_v1_container_delete"),
                        managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getContainer().front()))
                        .getResult();
@@ -819,7 +819,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_queue_delete_index"),
+                               "talos_rt_v1_queue_delete_index"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getQueue().front()),
                        adaptor.getIndex().front()})
@@ -856,7 +856,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_queue_insert"),
+                               "talos_rt_v1_queue_insert"),
             ValueRange{lane,
                        managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getQueue().front()),
@@ -895,7 +895,7 @@ public:
     Value traceSlots = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!traceOffsets.empty()) {
       std::string name =
-          "__obelisk_mailbox_element_trace_" + std::to_string(op.getTypeId());
+          "__talos_mailbox_element_trace_" + std::to_string(op.getTypeId());
       traceSlots =
           LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer, name);
     }
@@ -903,7 +903,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_mailbox_create_typed"),
+                               "talos_rt_v1_mailbox_create_typed"),
             ValueRange{lane, c64(op.getTypeId()),
                        c32(static_cast<uint32_t>(op.getElementKind())),
                        c32(static_cast<uint32_t>(op.getElementFlags())),
@@ -938,7 +938,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_mailbox_num"),
+                               "talos_rt_v1_mailbox_num"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getMailbox().front()),
                        count})
@@ -971,7 +971,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{i32},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_semaphore_create"),
+                                          "talos_rt_v1_semaphore_create"),
                        ValueRange{lane, adaptor.getKeys().front(), output})
                        .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -998,7 +998,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_semaphore_put"),
+                               "talos_rt_v1_semaphore_put"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getSemaphore().front()),
                        adaptor.getKeys().front()})
@@ -1029,7 +1029,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_semaphore_try_get"),
+                               "talos_rt_v1_semaphore_try_get"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getSemaphore().front()),
                        adaptor.getKeys().front(), successStorage})
@@ -1074,7 +1074,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_mailbox_try_put"),
+                               "talos_rt_v1_mailbox_try_put"),
             ValueRange{lane,
                        managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getMailbox().front()),
@@ -1129,8 +1129,8 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               Remove ? "obelisk_rt_v1_mailbox_try_get"
-                                      : "obelisk_rt_v1_mailbox_try_peek"),
+                               Remove ? "talos_rt_v1_mailbox_try_get"
+                                      : "talos_rt_v1_mailbox_try_peek"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getMailbox().front()),
                        storage.front(), unknown, present})
@@ -1200,7 +1200,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_random_next"),
+                                          "talos_rt_v1_random_next"),
                        ValueRange{context, output})
                        .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -1226,7 +1226,7 @@ public:
     Value status =
         LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{i32},
                              SymbolRefAttr::get(rewriter.getContext(),
-                                                "obelisk_rt_v1_random_legacy"),
+                                                "talos_rt_v1_random_legacy"),
                              ValueRange{context, output})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -1252,7 +1252,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_random_get_state"),
+                                          "talos_rt_v1_random_get_state"),
                        ValueRange{context, snapshot})
                        .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -1285,7 +1285,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_random_set_state"),
+                                          "talos_rt_v1_random_set_state"),
                        ValueRange{context, snapshot})
                        .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -1320,7 +1320,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_sampled_read"),
+                               "talos_rt_v1_sampled_read"),
             ValueRange{adaptor.getContext().front(),
                        adaptor.getSource().front(),
                        llvmConstant(rewriter, op.getLoc(),
@@ -1390,7 +1390,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_sampled_history"),
+                               "talos_rt_v1_sampled_history"),
             ValueRange{adaptor.getContext().front(), c64(op.getId()),
                        c64(plane.getWidth()), c64(op.getDepth()),
                        c32(resultTypes.size() == 2), gate, currentValue,
@@ -1446,7 +1446,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_clocked_sample_update"),
+                               "talos_rt_v1_clocked_sample_update"),
             ValueRange{adaptor.getContext().front(), c64(op.getId()),
                        c64(plane.getWidth()), c64(op.getDepth()),
                        c32(adaptor.getCurrent().size() == 2), gate,
@@ -1488,7 +1488,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_clocked_sample_read"),
+                               "talos_rt_v1_clocked_sample_read"),
             ValueRange{adaptor.getContext().front(), c64(op.getId()),
                        c64(plane.getWidth()), c64(op.getDepth()),
                        c64(op.getAge()), c32(resultTypes.size() == 2),
@@ -1519,7 +1519,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_random_seed"),
+                                          "talos_rt_v1_random_seed"),
                        ValueRange{context, adaptor.getSeed().front()})
                        .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -1543,7 +1543,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_random_bounded"),
+                                          "talos_rt_v1_random_bounded"),
                        ValueRange{context, adaptor.getBound().front(), output})
                        .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -1572,7 +1572,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_random_distribution"),
+                               "talos_rt_v1_random_distribution"),
             ValueRange{
                 context,
                 llvmConstant(rewriter, op.getLoc(), i32,
@@ -1611,7 +1611,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_stochastic_queue"),
+                               "talos_rt_v1_stochastic_queue"),
             ValueRange{
                 context,
                 llvmConstant(rewriter, op.getLoc(), i32,
@@ -1656,7 +1656,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_random_cycle_next"),
+                               "talos_rt_v1_random_cycle_next"),
             ValueRange{adaptor.getKey().front(), adaptor.getPosition().front(),
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI32Type(), op.getWidth()),
@@ -1695,8 +1695,8 @@ public:
                             byteGEP(rewriter, op.getLoc(), words, index * 8),
                             8);
     StringRef name = op.getValue().getType().isF32()
-                         ? "obelisk_rt_v1_random_real32_to_rank"
-                         : "obelisk_rt_v1_random_real64_to_rank";
+                         ? "talos_rt_v1_random_real32_to_rank"
+                         : "talos_rt_v1_random_real64_to_rank";
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
@@ -1708,10 +1708,10 @@ public:
     // placeholder, report false, and let its frozen IEEE payload remain state.
     Value nonfinite = LLVM::ICmpOp::create(
         rewriter, op.getLoc(), LLVM::ICmpPredicate::eq, status,
-        llvmConstant(rewriter, op.getLoc(), i32, OBELISK_RT_INVALID_ARGUMENT));
+        llvmConstant(rewriter, op.getLoc(), i32, TALOS_RT_INVALID_ARGUMENT));
     Value checked = LLVM::SelectOp::create(
         rewriter, op.getLoc(), nonfinite,
-        llvmConstant(rewriter, op.getLoc(), i32, OBELISK_RT_OK), status);
+        llvmConstant(rewriter, op.getLoc(), i32, TALOS_RT_OK), status);
     Value runtimeStatus = runtime::RTStatusFromBitsOp::create(
         rewriter, op.getLoc(), runtime::StatusType::get(rewriter.getContext()),
         checked);
@@ -1730,7 +1730,7 @@ public:
     }
     Value finite = LLVM::ICmpOp::create(
         rewriter, op.getLoc(), LLVM::ICmpPredicate::eq, status,
-        llvmConstant(rewriter, op.getLoc(), i32, OBELISK_RT_OK));
+        llvmConstant(rewriter, op.getLoc(), i32, TALOS_RT_OK));
     rewriter.replaceOp(op, ValueRange{rank, finite});
     return success();
   }
@@ -1766,8 +1766,8 @@ public:
     Type valueType = op.getValue().getType();
     Value output = entryAlloca(rewriter, op.getLoc(), valueType, 1, 8);
     StringRef name = valueType.isF32()
-                         ? "obelisk_rt_v1_random_real32_from_rank"
-                         : "obelisk_rt_v1_random_real64_from_rank";
+                         ? "talos_rt_v1_random_real32_from_rank"
+                         : "talos_rt_v1_random_real64_from_rank";
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
@@ -1805,7 +1805,7 @@ public:
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
     StringRef program = op.getProgram();
-    std::string name = "__obelisk_random_program_" +
+    std::string name = "__talos_random_program_" +
                        llvm::utohexstr(llvm::hash_value(program));
     Value programAddress =
         LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer, name);
@@ -1830,7 +1830,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_random_solve_modes_state"),
+                               "talos_rt_v1_random_solve_modes_state"),
             ValueRange{
                 context, programAddress, c64(program.size()),
                 adaptor.getStart().front(), adaptor.getMutableMask().front(),
@@ -1892,7 +1892,7 @@ public:
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
     StringRef program = op.getProgram();
-    std::string name = "__obelisk_random_program_" +
+    std::string name = "__talos_random_program_" +
                        llvm::utohexstr(llvm::hash_value(program));
     Value programAddress =
         LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer, name);
@@ -1975,9 +1975,9 @@ public:
     arguments.append(
         {adaptor.getRngState().front(), adaptor.getRngIncrement().front()});
     Value nextKey, nextPosition, nextDomain;
-    StringRef functionName = "obelisk_rt_v1_random_solve_wide_modes_state";
+    StringRef functionName = "talos_rt_v1_random_solve_wide_modes_state";
     if constexpr (std::is_same_v<Op, sim::SimRandomCycleSampleOp>) {
-      functionName = "obelisk_rt_v1_random_cycle_sample";
+      functionName = "talos_rt_v1_random_cycle_sample";
       arguments.append({adaptor.getKey().front(), adaptor.getPosition().front(),
                         adaptor.getDomain().front(),
                         adaptor.getFieldOffset().front(),
@@ -2084,7 +2084,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_container_read_checked"),
+                               "talos_rt_v1_container_read_checked"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getContainer().front()),
                        adaptor.getIndex().front(), storage.front(),
@@ -2135,7 +2135,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_container_write"),
+                               "talos_rt_v1_container_write"),
             ValueRange{lane,
                        managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getContainer().front()),
@@ -2175,7 +2175,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_box_bind_type"),
+                               "talos_rt_v1_box_bind_type"),
             ValueRange{context,
                        managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getInput().front()),
@@ -2201,7 +2201,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_box_is_type"),
+                               "talos_rt_v1_box_is_type"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getInput().front()),
                        llvmConstant(rewriter, op.getLoc(),
@@ -2259,7 +2259,7 @@ Value emitRandomInitializationEnter(OpBuilder &builder, Location location,
       LLVM::CallOp::create(
           builder, location, TypeRange{builder.getI32Type()},
           SymbolRefAttr::get(builder.getContext(),
-                             "obelisk_rt_v1_random_initialization_enter"),
+                             "talos_rt_v1_random_initialization_enter"),
           ValueRange{context, llvmConstant(builder, location, i64, scope),
                      output})
           .getResult();
@@ -2273,10 +2273,10 @@ void emitRandomInitializationLeave(OpBuilder &builder, Location location,
       LLVM::CallOp::create(
           builder, location, TypeRange{builder.getI32Type()},
           SymbolRefAttr::get(builder.getContext(),
-                             "obelisk_rt_v1_random_initialization_leave"),
+                             "talos_rt_v1_random_initialization_leave"),
           ValueRange{context, activation})
           .getResult();
   reportManagedStatus(builder, location, context, status);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

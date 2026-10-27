@@ -1,11 +1,11 @@
 //===- SCCP.cpp - Threaded interprocedural simulation SCCP ---------------===//
 
-#include "obelisk/Analysis/ClassDispatchAnalysis.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Analysis/ClassDispatchAnalysis.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/SimulationVPIAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -32,14 +32,14 @@
 using namespace mlir;
 using namespace mlir::dataflow;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMSCCPPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMSCCPPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 
-namespace sim = ::obelisk::sim;
+namespace sim = ::talos::sim;
 
 using BoundaryFact = ConstantValue;
 
@@ -345,14 +345,14 @@ static void rewriteFunction(const DenseMap<Value, ConstantValue> &constants,
   }
 }
 
-class ObeliskSimSCCPPass
-    : public impl::ObeliskSimSCCPPassBase<ObeliskSimSCCPPass> {
+class TalosSimSCCPPass
+    : public impl::TalosSimSCCPPassBase<TalosSimSCCPPass> {
 public:
   using Base::Base;
   void runOnOperation() override;
 };
 
-void ObeliskSimSCCPPass::runOnOperation() {
+void TalosSimSCCPPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   // Driver declarations remain fixed across all solver waves. Share only
   // their immutable index; each worker derives its own current value facts.
@@ -932,4 +932,4 @@ void ObeliskSimSCCPPass::runOnOperation() {
 }
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

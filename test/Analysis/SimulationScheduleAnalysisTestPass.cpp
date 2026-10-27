@@ -2,7 +2,7 @@
 
 #include "AnalysisTestPasses.h"
 
-#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
+#include "talos/Analysis/SimulationScheduleAnalysis.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -23,21 +23,21 @@ public:
       SimulationScheduleAnalysisTestPass)
 
   StringRef getArgument() const final {
-    return "test-obelisk-simulation-schedule-analysis";
+    return "test-talos-simulation-schedule-analysis";
   }
   StringRef getDescription() const final {
     return "print shared native and bytecode schedule ranks";
   }
 
   void runOnOperation() final {
-    SmallVector<obelisk::sim::SimDesignOp> designs(
-        getOperation().getOps<obelisk::sim::SimDesignOp>());
+    SmallVector<talos::sim::SimDesignOp> designs(
+        getOperation().getOps<talos::sim::SimDesignOp>());
     llvm::sort(designs, [](auto lhs, auto rhs) {
       return lhs.getSymName() < rhs.getSymName();
     });
-    for (obelisk::sim::SimDesignOp design : designs) {
-      FailureOr<obelisk::analysis::SimulationScheduleAnalysis> analysis =
-          obelisk::analysis::SimulationScheduleAnalysis::compute(design);
+    for (talos::sim::SimDesignOp design : designs) {
+      FailureOr<talos::analysis::SimulationScheduleAnalysis> analysis =
+          talos::analysis::SimulationScheduleAnalysis::compute(design);
       if (failed(analysis)) {
         signalPassFailure();
         return;
@@ -49,18 +49,18 @@ public:
 
 private:
   static void
-  printDesign(obelisk::sim::SimDesignOp design,
-              const obelisk::analysis::SimulationScheduleAnalysis &analysis) {
+  printDesign(talos::sim::SimDesignOp design,
+              const talos::analysis::SimulationScheduleAnalysis &analysis) {
     llvm::errs() << "schedule @" << design.getSymName() << "\n";
-    SmallVector<obelisk::sim::SimFuncOp> functions;
-    design.walk([&](obelisk::sim::SimFuncOp function) {
+    SmallVector<talos::sim::SimFuncOp> functions;
+    design.walk([&](talos::sim::SimFuncOp function) {
       if (analysis.getEntryRank(function.getOperation()))
         functions.push_back(function);
     });
     llvm::sort(functions, [](auto lhs, auto rhs) {
       return lhs.getSymName() < rhs.getSymName();
     });
-    for (obelisk::sim::SimFuncOp function : functions) {
+    for (talos::sim::SimFuncOp function : functions) {
       llvm::errs() << "  func @" << function.getSymName() << " entry="
                    << *analysis.getEntryRank(function.getOperation()) << "\n";
       for (auto [index, block] : llvm::enumerate(function.getBody()))
@@ -72,10 +72,10 @@ private:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 
 void registerSimulationScheduleAnalysisTestPass() {
   PassRegistration<SimulationScheduleAnalysisTestPass>();
 }
 
-} // namespace obelisk
+} // namespace talos

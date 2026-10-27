@@ -1,10 +1,10 @@
 //===- SlangDialect.cpp - Elaborated slang semantic AST dialect ----------===//
 
-#include "obelisk/Dialect/ForeachLoopMetadata.h"
-#include "obelisk/Dialect/ImplicitLoopScope.h"
-#include "obelisk/Dialect/Slang/SlangOps.h"
-#include "obelisk/Dialect/SourceClassMetadata.h"
-#include "obelisk/Dialect/SourceParameterMetadata.h"
+#include "talos/Dialect/ForeachLoopMetadata.h"
+#include "talos/Dialect/ImplicitLoopScope.h"
+#include "talos/Dialect/Slang/SlangOps.h"
+#include "talos/Dialect/SourceClassMetadata.h"
+#include "talos/Dialect/SourceParameterMetadata.h"
 
 #include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/Diagnostics.h"
@@ -16,15 +16,15 @@
 
 using namespace mlir;
 
-#include "obelisk/Dialect/Slang/SlangDialect.cpp.inc"
-#include "obelisk/Dialect/Slang/SlangEnums.cpp.inc"
+#include "talos/Dialect/Slang/SlangDialect.cpp.inc"
+#include "talos/Dialect/Slang/SlangEnums.cpp.inc"
 
 #define GET_TYPEDEF_CLASSES
-#include "obelisk/Dialect/Slang/SlangTypes.cpp.inc"
+#include "talos/Dialect/Slang/SlangTypes.cpp.inc"
 
 // The op definitions are compiled by the SlangOpDefs*.cpp shards.
 
-namespace obelisk::slangir {
+namespace talos::slangir {
 
 namespace {
 
@@ -73,7 +73,7 @@ verifySourceRange(llvm::function_ref<InFlightDiagnostic()> emitError,
 void SlangDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST
-#include "obelisk/Dialect/Slang/SlangTypes.cpp.inc"
+#include "talos/Dialect/Slang/SlangTypes.cpp.inc"
       >();
 
   // Registration for the sharded op definitions. Each shard registers its
@@ -879,4 +879,4 @@ LogicalResult TaggedPatternOp::verify() {
   return success();
 }
 
-} // namespace obelisk::slangir
+} // namespace talos::slangir

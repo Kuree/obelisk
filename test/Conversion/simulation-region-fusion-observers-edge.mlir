@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},obelisk-sim-materialize-compute-fusion))' -o %t 2>&1 | FileCheck %s --check-prefix=REASON
-// RUN: FileCheck %s --check-prefix=KEEP --implicit-check-not=__obelisk_region_kernel_ < %t
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},talos-sim-materialize-compute-fusion))' -o %t 2>&1 | FileCheck %s --check-prefix=REASON
+// RUN: FileCheck %s --check-prefix=KEEP --implicit-check-not=__talos_region_kernel_ < %t
 
 // An edge observer of the result also keeps the cohort unfused.
 // REASON: statement component rejected: outside watch in observer on repeated storage 3

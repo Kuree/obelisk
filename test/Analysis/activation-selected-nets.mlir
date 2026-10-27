@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=reaching-values=true publications=true' -o %t.analyzed 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s '--test-talos-activation-regions=reaching-values=true publications=true' -o %t.analyzed 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
 
 // A selected resolved-net read depends on both candidate nets and on the

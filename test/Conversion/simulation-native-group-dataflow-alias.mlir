@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
+// RUN: talos-opt %s --talos-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=LE < %t.mlir
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"E-m:e-p:64:64-i64:64-n8:16:32:64-S128\"}"' --obelisk-materialize-native-eval-groups | FileCheck %s --check-prefix=BE
+// RUN: talos-opt %s '--test-talos-set-module-attributes=attrs="{llvm.data_layout = \"E-m:e-p:64:64-i64:64-n8:16:32:64-S128\"}"' --talos-materialize-native-eval-groups | FileCheck %s --check-prefix=BE
 
 // Runtime behavior is checked in ../Runtime/simulation-native-group-dataflow-alias.test.
 
@@ -24,10 +24,10 @@
 // BE-DAG: llvm.mlir.constant(-16711681 : i32)
 // BE-DAG: llvm.mlir.constant(65535 : i32)
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
-  llvm.mlir.global internal @__obelisk_state_value(dense<[17,34,51,68,0,0,0,0,0,0,0,0,1,2,3,4,0,0,0,0]> : tensor<20xi8>) : !llvm.array<20 x i8>
-  llvm.mlir.global internal @__obelisk_state_unknown(dense<[-86,-69,-52,-35,0,0,0,0,0,0,0,0]> : tensor<12xi8>) : !llvm.array<12 x i8>
+  llvm.mlir.global internal @__talos_state_value(dense<[17,34,51,68,0,0,0,0,0,0,0,0,1,2,3,4,0,0,0,0]> : tensor<20xi8>) : !llvm.array<20 x i8>
+  llvm.mlir.global internal @__talos_state_unknown(dense<[-86,-69,-52,-35,0,0,0,0,0,0,0,0]> : tensor<12xi8>) : !llvm.array<12 x i8>
   llvm.mlir.global internal @ready(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
-  llvm.mlir.global internal @__obelisk_eval_promotion_pending_mask_v1(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
+  llvm.mlir.global internal @__talos_eval_promotion_pending_mask_v1(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
   llvm.mlir.global internal @slow(0 : i32) : i32
   llvm.func @group() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready} {
     %p = llvm.mlir.addressof @slow : !llvm.ptr
@@ -38,7 +38,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   llvm.func @dataflow() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
     %count = llvm.mlir.constant(1 : i64) : i64
     %temporary = llvm.alloca %count x i32 : (i64) -> !llvm.ptr
-    %value = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %value = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %byte = llvm.getelementptr %value[1] : (!llvm.ptr) -> !llvm.ptr, i8
     %output = llvm.getelementptr %value[4] : (!llvm.ptr) -> !llvm.ptr, i8
     %snapshot = llvm.getelementptr %value[8] : (!llvm.ptr) -> !llvm.ptr, i8
@@ -52,7 +52,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.store %after, %output : i32, !llvm.ptr
     %middle = llvm.load %byte : !llvm.ptr -> i16
     llvm.store %middle, %value : i16, !llvm.ptr
-    %unknown = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %unknown = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     %unknown_byte = llvm.getelementptr %unknown[1] : (!llvm.ptr) -> !llvm.ptr, i8
     %unknown_output = llvm.getelementptr %unknown[4] : (!llvm.ptr) -> !llvm.ptr, i8
     %unknown_snapshot = llvm.getelementptr %unknown[8] : (!llvm.ptr) -> !llvm.ptr, i8
@@ -78,10 +78,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
   llvm.func @main() -> i32 {
     llvm.call @group() : () -> ()
-    %value = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %value = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %output = llvm.getelementptr %value[4] : (!llvm.ptr) -> !llvm.ptr, i8
     %snapshot = llvm.getelementptr %value[8] : (!llvm.ptr) -> !llvm.ptr, i8
-    %unknown = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %unknown = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     %unknown_output = llvm.getelementptr %unknown[4] : (!llvm.ptr) -> !llvm.ptr, i8
     %unknown_snapshot = llvm.getelementptr %unknown[8] : (!llvm.ptr) -> !llvm.ptr, i8
     %v = llvm.load %value : !llvm.ptr -> i32

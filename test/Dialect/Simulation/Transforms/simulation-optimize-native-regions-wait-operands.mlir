@@ -2,7 +2,7 @@
 // exits through a conditional branch, the operands belonging to the wait block
 // must be held back and re-supplied on the branch that finally reaches it,
 // exactly as the unconditional exit already does.
-// RUN: obelisk-opt %s --obelisk-sim-optimize-native-regions | FileCheck %s
+// RUN: talos-opt %s --talos-sim-optimize-native-regions | FileCheck %s
 
 module {
   simulation.design @native_region attributes {

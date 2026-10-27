@@ -2,8 +2,8 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -11,7 +11,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 namespace {
 
@@ -43,7 +43,7 @@ Value assocKeyFieldGEP(OpBuilder &builder, Location location, Value key,
 } // namespace
 
 std::string getAssocKeyPlanGlobalName(uint64_t typeID) {
-  return "__obelisk_assoc_key_plan_" + std::to_string(typeID);
+  return "__talos_assoc_key_plan_" + std::to_string(typeID);
 }
 
 Value makeNativeAssocKey(OpBuilder &builder, Location location,
@@ -144,7 +144,7 @@ static Value makeNativeAssocTrace(OpBuilder &builder, Location location,
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   if (offsets.empty())
     return LLVM::ZeroOp::create(builder, location, pointer);
-  std::string name = "__obelisk_element_trace_" + std::to_string(typeID);
+  std::string name = "__talos_element_trace_" + std::to_string(typeID);
   return LLVM::AddressOfOp::create(builder, location, pointer, name);
 }
 
@@ -183,7 +183,7 @@ public:
         c64(op.getBitWidth()),
         trace,
         c64(op.getTraceOffsets().size())};
-    StringRef callee = "obelisk_rt_v1_assoc_create_typed";
+    StringRef callee = "talos_rt_v1_assoc_create_typed";
     if (op.getKeyKind() == sim::AssocKeyKind::Element) {
       // The key's element descriptor and equality plan follow; their globals
       // are reserved before conversion.
@@ -205,7 +205,7 @@ public:
                         c64(descriptor->bitWidth), keyTrace,
                         c64(descriptor->traceOffsets.size()), keyPlan,
                         c64(plan->size() * sizeof(uint64_t))});
-      callee = "obelisk_rt_v1_assoc_create_element_keyed";
+      callee = "talos_rt_v1_assoc_create_element_keyed";
     } else {
       arguments.append(
           {c32(static_cast<uint32_t>(op.getKeyKind())), c64(op.getKeyWidth())});
@@ -267,7 +267,7 @@ public:
                          8);
     if (sim::isManagedHandleType(op.getResult().getType()))
       planeSize = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
-                               sizeof(obelisk_rt_managed_word_v1));
+                               sizeof(talos_rt_managed_word_v1));
     Value unknownSize =
         storage.size() == 2
             ? planeSize
@@ -276,7 +276,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_assoc_read_checked"),
+                               "talos_rt_v1_assoc_read_checked"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getArray().front()),
                        key, storage.front(), planeSize, unknown, unknownSize,
@@ -314,7 +314,7 @@ lowerAssocValueMutation(Op op, Adaptor adaptor,
   if (auto width = sim::getPackedWidth(op.getValue().getType()))
     bytes = (*width + 7) / 8;
   else if (sim::isManagedHandleType(op.getValue().getType()))
-    bytes = sizeof(obelisk_rt_managed_word_v1);
+    bytes = sizeof(talos_rt_managed_word_v1);
   else if (isa<sim::EventType>(op.getValue().getType()))
     bytes = sizeof(uint64_t);
   else if (auto floating = dyn_cast<FloatType>(op.getValue().getType()))
@@ -359,7 +359,7 @@ public:
   matchAndRewrite(sim::SimAssocWriteOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     return lowerAssocValueMutation(op, adaptor, rewriter,
-                                   "obelisk_rt_v1_assoc_write_checked");
+                                   "talos_rt_v1_assoc_write_checked");
   }
 };
 
@@ -371,7 +371,7 @@ public:
   matchAndRewrite(sim::SimAssocSetDefaultOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     return lowerAssocValueMutation(op, adaptor, rewriter,
-                                   "obelisk_rt_v1_assoc_set_default_checked");
+                                   "talos_rt_v1_assoc_set_default_checked");
   }
 };
 
@@ -393,7 +393,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_assoc_exists"),
+                               "talos_rt_v1_assoc_exists"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getArray().front()),
                        key, output})
@@ -425,7 +425,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_assoc_delete"),
+                               "talos_rt_v1_assoc_delete"),
             ValueRange{managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getArray().front()),
                        key})
@@ -456,11 +456,11 @@ public:
     StringRef callee;
     int32_t direction = static_cast<int32_t>(op.getDirection());
     if (op.getEndpoint())
-      callee = direction > 0 ? "obelisk_rt_v1_assoc_first"
-                             : "obelisk_rt_v1_assoc_last";
+      callee = direction > 0 ? "talos_rt_v1_assoc_first"
+                             : "talos_rt_v1_assoc_last";
     else
-      callee = direction > 0 ? "obelisk_rt_v1_assoc_next"
-                             : "obelisk_rt_v1_assoc_prev";
+      callee = direction > 0 ? "talos_rt_v1_assoc_next"
+                             : "talos_rt_v1_assoc_prev";
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     Value status =
         LLVM::CallOp::create(
@@ -542,4 +542,4 @@ void populateManagedAssociativeToLLVMConversionPatterns(
                                                                context);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

@@ -1,15 +1,15 @@
 //===- NativeStorageLayout.cpp - LLVM aggregate storage geometry ----------===//
 
-#include "obelisk/Analysis/NativeStorageLayout.h"
+#include "talos/Analysis/NativeStorageLayout.h"
 #include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/SimulationAnalysis.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/Support/Error.h"
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 
 LogicalResult verifyNativeStorageLayouts(Operation *root,
                                          const llvm::DataLayout &dataLayout) {
@@ -337,4 +337,4 @@ FailureOr<Type> encodeNativeStorageLayout(Type type, Operation *scope) {
   return encoded;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

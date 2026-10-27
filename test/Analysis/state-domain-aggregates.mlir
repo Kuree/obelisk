@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -o /dev/null --pass-pipeline='builtin.module(test-obelisk-sim-state-domain)' 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o /dev/null --pass-pipeline='builtin.module(test-talos-sim-state-domain)' 2>&1 | FileCheck %s
 
 !record = !simulation.unpacked_struct<[
   #simulation.field<name = "logic", type = !simulation.logic<8>, ordinal = 0, packedOffset = 0>,

@@ -1,12 +1,12 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
+// RUN: talos -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.eval 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: talos -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.eval 2>&1 | FileCheck %s --check-prefix=PLAN
 // RUN: %t.eval | FileCheck %s
 // A fused cohort selects between its private array and external storage.
 // Loads retain the value observed before the later private store, including
 // X/Z planes. A local address choice must not force a runtime checkpoint.
-// PLAN: obelisk statement scheduling: eligible=2 cohorts=1 plans=1 dataflow=1
-// PLAN-NOT: checkpoint admission: {{.*}}__obelisk_region_kernel
+// PLAN: talos statement scheduling: eligible=2 cohorts=1 plans=1 dataflow=1
+// PLAN-NOT: checkpoint admission: {{.*}}__talos_region_kernel
 // CHECK: result=1f,23
 // CHECK-NEXT: result=08,0c
 // CHECK-NEXT: result=xx,xx

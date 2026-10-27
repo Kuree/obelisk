@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
 // IEEE 1800-2017 Annex N threads a separate 32-bit seed through $dist_*.
 // Both the variate and the updated seed must cross the native runtime ABI.
 
 // CHECK-LABEL: llvm.func @draw(
-// CHECK: llvm.call @obelisk_rt_v1_random_distribution(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %[[RESULT_PTR:[0-9]+]], %[[SEED_PTR:[0-9]+]])
+// CHECK: llvm.call @talos_rt_v1_random_distribution(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %[[RESULT_PTR:[0-9]+]], %[[SEED_PTR:[0-9]+]])
 // CHECK: %[[RESULT:.*]] = llvm.load %[[RESULT_PTR]]
 // CHECK: %[[NEXT_SEED:.*]] = llvm.load %[[SEED_PTR]]
 // CHECK: %[[WITH_RESULT:.*]] = llvm.insertvalue %[[RESULT]], {{.*}}[0]
@@ -14,7 +14,7 @@
 // The no-argument `$random` form uses the same Annex N algorithm through its
 // dedicated context-global state, not the process-local `$urandom` ABI.
 // CHECK-LABEL: llvm.func @legacy(
-// CHECK: llvm.call @obelisk_rt_v1_random_legacy(%{{.*}}, %[[LEGACY_PTR:[0-9]+]])
+// CHECK: llvm.call @talos_rt_v1_random_legacy(%{{.*}}, %[[LEGACY_PTR:[0-9]+]])
 // CHECK: %[[LEGACY:.*]] = llvm.load %[[LEGACY_PTR]]
 // CHECK: llvm.insertvalue %[[LEGACY]], {{.*}}[0]
 

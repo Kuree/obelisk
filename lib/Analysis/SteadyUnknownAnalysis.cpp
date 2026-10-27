@@ -1,13 +1,13 @@
 //===- SteadyUnknownAnalysis.cpp - Storage bits X/Z in steady state -------===//
 
-#include "obelisk/Analysis/SteadyUnknownAnalysis.h"
-#include "obelisk/Analysis/BoundedLoopAnalysis.h"
-#include "obelisk/Analysis/HandleDataflowAnalysis.h"
-#include "obelisk/Analysis/LocalStorageAnalysis.h"
-#include "obelisk/Analysis/NativeStorageLayout.h"
-#include "obelisk/Analysis/UnknownBitGeometry.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationTypes.h"
+#include "talos/Analysis/SteadyUnknownAnalysis.h"
+#include "talos/Analysis/BoundedLoopAnalysis.h"
+#include "talos/Analysis/HandleDataflowAnalysis.h"
+#include "talos/Analysis/LocalStorageAnalysis.h"
+#include "talos/Analysis/NativeStorageLayout.h"
+#include "talos/Analysis/UnknownBitGeometry.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationTypes.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -23,7 +23,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
 using namespace bits;
@@ -1403,4 +1403,4 @@ SteadyUnknownAnalysis::compute(sim::SimDesignOp design) {
   return result;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

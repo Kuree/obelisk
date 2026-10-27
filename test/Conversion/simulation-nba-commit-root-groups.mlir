@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 //
 // Nine roots span a full group and a partial final group. Skipping the first
 // group must still visit the ninth root; per-root selection remains intact.
-// CHECK-LABEL: llvm.func internal @__obelisk_aot_static_nba_commit_two_state_fast_v1
+// CHECK-LABEL: llvm.func internal @__talos_aot_static_nba_commit_two_state_fast_v1
 // CHECK: llvm.mlir.constant(255 : i64)
 // CHECK: llvm.and
 // CHECK: llvm.icmp "eq"

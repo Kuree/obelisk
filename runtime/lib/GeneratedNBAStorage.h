@@ -1,8 +1,8 @@
 //===- GeneratedNBAStorage.h - Physical generated NBA records ---*- C++ -*-===//
-#ifndef OBELISK_RUNTIME_LIB_GENERATEDNBASTORAGE_H
-#define OBELISK_RUNTIME_LIB_GENERATEDNBASTORAGE_H
+#ifndef TALOS_RUNTIME_LIB_GENERATEDNBASTORAGE_H
+#define TALOS_RUNTIME_LIB_GENERATEDNBASTORAGE_H
 
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -17,7 +17,7 @@ struct TwoStateNBAAccumulator {
   uint64_t transient[4];
 };
 static_assert(sizeof(TwoStateNBAAccumulator) ==
-              sizeof(obelisk_rt_generated_nba_accumulator_256) - 32);
+              sizeof(talos_rt_generated_nba_accumulator_256) - 32);
 
 template <typename T> class NBAFieldReference {
 public:
@@ -63,30 +63,30 @@ class GeneratedNBAStorage {
   }
 
 public:
-  GeneratedNBAStorage(obelisk_rt_generated_nba_accumulator_256 *base,
+  GeneratedNBAStorage(talos_rt_generated_nba_accumulator_256 *base,
                       bool twoState)
       : value(field<uint64_t>(base, 0)),
         unknown(twoState ? nullptr
                          : field<uint64_t>(
                                base,
-                               offsetof(obelisk_rt_generated_nba_accumulator_256,
+                               offsetof(talos_rt_generated_nba_accumulator_256,
                                         unknown))),
         write_mask(field<uint64_t>(
             base, select(twoState, offsetof(TwoStateNBAAccumulator, write_mask),
-                         offsetof(obelisk_rt_generated_nba_accumulator_256,
+                         offsetof(talos_rt_generated_nba_accumulator_256,
                                   write_mask)))),
         valid(field<uint32_t>(
             base, select(twoState, offsetof(TwoStateNBAAccumulator, valid),
-                         offsetof(obelisk_rt_generated_nba_accumulator_256,
+                         offsetof(talos_rt_generated_nba_accumulator_256,
                                   valid)))),
         exec_region(field<uint32_t>(
             base,
             select(twoState, offsetof(TwoStateNBAAccumulator, exec_region),
-                   offsetof(obelisk_rt_generated_nba_accumulator_256,
+                   offsetof(talos_rt_generated_nba_accumulator_256,
                             exec_region)))),
         transient(field<uint64_t>(
             base, select(twoState, offsetof(TwoStateNBAAccumulator, transient),
-                         offsetof(obelisk_rt_generated_nba_accumulator_256,
+                         offsetof(talos_rt_generated_nba_accumulator_256,
                                   transient)))),
         base(base),
         bytes(twoState ? sizeof(TwoStateNBAAccumulator) : sizeof(*base)) {}

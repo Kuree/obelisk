@@ -1,5 +1,5 @@
-// RUN: obelisk-translate --import-sdf %s | FileCheck %s
-// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+// RUN: talos-translate --import-sdf %s | FileCheck %s
+// RUN: talos-translate --import-sdf %s | talos-opt | FileCheck %s
 
 (DELAYFILE
   (SDFVERSION "4.0")
@@ -9,8 +9,8 @@
     (INSTANCE)
     (DELAY (ABSOLUTE))))
 
-// CHECK: obelisk_sdf.delay_file
+// CHECK: talos_sdf.delay_file
 // CHECK-SAME: version "4.0"
-// CHECK-SAME: timescale = #obelisk_sdf.timescale<amount = <"1">, unit = ns>
-// CHECK: obelisk_sdf.cell
+// CHECK-SAME: timescale = #talos_sdf.timescale<amount = <"1">, unit = ns>
+// CHECK: talos_sdf.cell
 // CHECK-SAME: "sdf_aot_static"

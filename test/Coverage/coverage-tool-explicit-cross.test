@@ -1,6 +1,6 @@
 # RUN: %coverage-fixture %t.obcov 28 explicit-report 1 cross-explicit
-# RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --implicit-check-not='"first_'
-# RUN: obelisk-cov report --format=html -o %t.html %t.obcov
+# RUN: talos-cov report --format=json %t.obcov | FileCheck %s --implicit-check-not='"first_'
+# RUN: talos-cov report --format=html -o %t.html %t.obcov
 # RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html 'top.dut.cg.cp_x_cp2 targets cp, cp2' 'selected = (intersect {<0x1,0x2>} matches all || intersect {<0x1,0xb>} matches all)' %}
 
 # An explicit cross bin (IEEE 1800-2023 19.6.1) is reported with its plan,

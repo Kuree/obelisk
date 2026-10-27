@@ -1,15 +1,15 @@
 //===- NativeExecutionCounts.h - Opt-in generated execution diagnostics
 //----===//
 
-#ifndef OBELISK_DRIVER_NATIVEEXECUTIONCOUNTS_H
-#define OBELISK_DRIVER_NATIVEEXECUTIONCOUNTS_H
+#ifndef TALOS_DRIVER_NATIVEEXECUTIONCOUNTS_H
+#define TALOS_DRIVER_NATIVEEXECUTIONCOUNTS_H
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 
-namespace obelisk::driver::detail {
+namespace talos::driver::detail {
 
 /// Counts generated function entries before native optimization/partitioning.
 /// Coroutine ramps (before splitting) also count their entries and resumes,
@@ -27,12 +27,12 @@ inline bool addNativeExecutionCounts(llvm::Module &module) {
   for (Function &function : module) {
     StringRef name = function.getName();
     if (!function.isDeclaration() &&
-        (name.starts_with("__obelisk_eval_ranked_group_") ||
-         name.starts_with("__obelisk_direct_fragment_") ||
-         name == "__obelisk_eval_dispatch_v1" ||
-         name.starts_with("__obelisk_aot_static_nba_commit") ||
-         name.contains(".__obelisk_eval_body_") ||
-         name.ends_with(".__obelisk_coro_ramp")))
+        (name.starts_with("__talos_eval_ranked_group_") ||
+         name.starts_with("__talos_direct_fragment_") ||
+         name == "__talos_eval_dispatch_v1" ||
+         name.starts_with("__talos_aot_static_nba_commit") ||
+         name.contains(".__talos_eval_body_") ||
+         name.ends_with(".__talos_coro_ramp")))
       functions.push_back(&function);
   }
   if (functions.empty())
@@ -49,7 +49,7 @@ inline bool addNativeExecutionCounts(llvm::Module &module) {
   SmallVector<unsigned> firstCounter;
   for (Function *function : functions) {
     firstCounter.push_back(counterNames.size());
-    if (!function->getName().ends_with(".__obelisk_coro_ramp")) {
+    if (!function->getName().ends_with(".__talos_coro_ramp")) {
       counterNames.push_back(function->getName().str());
       continue;
     }
@@ -60,15 +60,15 @@ inline bool addNativeExecutionCounts(llvm::Module &module) {
   auto *countsType = ArrayType::get(i64, counterNames.size());
   auto *counts = new GlobalVariable(
       module, countsType, false, GlobalValue::InternalLinkage,
-      ConstantAggregateZero::get(countsType), "__obelisk_execution_counts");
+      ConstantAggregateZero::get(countsType), "__talos_execution_counts");
   counts->setAlignment(Align(8));
   // 0 at simulation time zero (or before a context exists), else 1.
   Function *phase = nullptr;
   if (GlobalVariable *current =
-          module.getGlobalVariable("__obelisk_current_context", true)) {
+          module.getGlobalVariable("__talos_current_context", true)) {
     phase = Function::Create(FunctionType::get(i64, false),
                              GlobalValue::InternalLinkage,
-                             "__obelisk_execution_phase", module);
+                             "__talos_execution_phase", module);
     phase->addFnAttr(Attribute::NoInline);
     auto *entry = BasicBlock::Create(context, "entry", phase);
     auto *query = BasicBlock::Create(context, "query", phase);
@@ -78,7 +78,7 @@ inline bool addNativeExecutionCounts(llvm::Module &module) {
     builder.CreateCondBr(builder.CreateIsNull(runtime), zero, query);
     builder.SetInsertPoint(query);
     FunctionCallee time =
-        module.getOrInsertFunction("obelisk_rt_v1_scheduler_time",
+        module.getOrInsertFunction("talos_rt_v1_scheduler_time",
                                    FunctionType::get(i64, {pointer}, false));
     Value *now = builder.CreateCall(time, {runtime});
     builder.CreateRet(builder.CreateZExt(
@@ -102,7 +102,7 @@ inline bool addNativeExecutionCounts(llvm::Module &module) {
     store->setVolatile(true);
   };
   for (auto [function, first] : llvm::zip_equal(functions, firstCounter)) {
-    bool ramp = function->getName().ends_with(".__obelisk_coro_ramp");
+    bool ramp = function->getName().ends_with(".__talos_coro_ramp");
     count(&*function->getEntryBlock().getFirstInsertionPt(), first, ramp);
     if (!ramp)
       continue;
@@ -134,14 +134,14 @@ inline bool addNativeExecutionCounts(llvm::Module &module) {
   SmallVector<Constant *> names;
   for (const std::string &name : counterNames)
     names.push_back(
-        builder.CreateGlobalString(name, "__obelisk_execution_name"));
+        builder.CreateGlobalString(name, "__talos_execution_name"));
   auto *namesType = ArrayType::get(builder.getPtrTy(), names.size());
   auto *nameTable = new GlobalVariable(
       module, namesType, true, GlobalValue::InternalLinkage,
-      ConstantArray::get(namesType, names), "__obelisk_execution_names");
+      ConstantArray::get(namesType, names), "__talos_execution_names");
   auto *report = Function::Create(FunctionType::get(builder.getVoidTy(), false),
                                   GlobalValue::InternalLinkage,
-                                  "__obelisk_execution_counts_report", module);
+                                  "__talos_execution_counts_report", module);
   report->addFnAttr(Attribute::NoInline);
   auto *entry = BasicBlock::Create(context, "entry", report);
   auto *loop = BasicBlock::Create(context, "loop", report);
@@ -150,7 +150,7 @@ inline bool addNativeExecutionCounts(llvm::Module &module) {
   auto *done = BasicBlock::Create(context, "done", report);
   builder.SetInsertPoint(entry);
   Constant *format = builder.CreateGlobalString(
-      "obelisk-execution-count\t%s\t%llu\n", "__obelisk_execution_format");
+      "talos-execution-count\t%s\t%llu\n", "__talos_execution_format");
   auto printf = module.getOrInsertFunction(
       "printf",
       FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, true));
@@ -206,6 +206,6 @@ inline bool addNativeExecutionCounts(llvm::Module &module) {
   return true;
 }
 
-} // namespace obelisk::driver::detail
+} // namespace talos::driver::detail
 
 #endif

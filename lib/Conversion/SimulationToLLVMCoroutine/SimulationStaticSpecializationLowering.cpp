@@ -2,8 +2,8 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -12,7 +12,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 constexpr int32_t likelyBranchWeight = (1 << 20) - 1;
@@ -24,8 +24,8 @@ Value loadStaticSpecializationFast(ConversionPatternRewriter &rewriter,
   IntegerType i32 = rewriter.getI32Type();
   Value fastAddress =
       LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                nba ? "__obelisk_static_specialization_fast_v1"
-                                    : "__obelisk_state_specialization_fast_v1");
+                                nba ? "__talos_static_specialization_fast_v1"
+                                    : "__talos_state_specialization_fast_v1");
   Value fast = LLVM::LoadOp::create(rewriter, location, i32, fastAddress, 4);
   return arith::CmpIOp::create(
       rewriter, location, arith::CmpIPredicate::ne, fast,
@@ -81,14 +81,14 @@ Value staticSpecializationGuard(ConversionPatternRewriter &rewriter,
 
   rewriter.setInsertionPointToEnd(slowBlock);
   Value contextAddress = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                   "__obelisk_current_context");
+                                                   "__talos_current_context");
   Value context =
       LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
   Value allowed =
       LLVM::CallOp::create(
           rewriter, location, TypeRange{i32},
           SymbolRefAttr::get(rewriter.getContext(),
-                             "obelisk_rt_v1_static_specialization_guard"),
+                             "talos_rt_v1_static_specialization_guard"),
           ValueRange{context, llvmConstant(rewriter, location, i32, UINT32_MAX),
                      llvmConstant(rewriter, location, i32, staticID),
                      llvmConstant(rewriter, location, i32, flags)})
@@ -126,12 +126,12 @@ Value staticNBASpecializationGuard(ConversionPatternRewriter &rewriter,
 
   rewriter.setInsertionPointToEnd(slowBlock);
   Value contextAddress = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                   "__obelisk_current_context");
+                                                   "__talos_current_context");
   Value context =
       LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
   StringRef guardName =
-      guardedVisibility ? "obelisk_rt_v1_static_nba_specialization_guard_write"
-                        : "obelisk_rt_v1_static_nba_specialization_guard";
+      guardedVisibility ? "talos_rt_v1_static_nba_specialization_guard_write"
+                        : "talos_rt_v1_static_nba_specialization_guard";
   Value allowed =
       LLVM::CallOp::create(
           rewriter, location, TypeRange{i32},
@@ -147,4 +147,4 @@ Value staticNBASpecializationGuard(ConversionPatternRewriter &rewriter,
   return result;
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

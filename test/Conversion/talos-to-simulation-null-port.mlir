@@ -1,0 +1,105 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | \
+// RUN:   FileCheck %s
+
+// IEEE 1800-2017 23.2.2.1 permits an empty non-ANSI port expression. Slang
+// represents it as a void formal with no internal path or actual expression;
+// it contributes no topology and must not require a flattened descriptor.
+// Clause 23.3.3.1 also permits a net port used in both directions to be
+// coerced to inout. Its implicit width conversion is topology metadata: only
+// the overlapping low bits merge and unmatched bits stay undriven.
+
+// CHECK: simulation.design @design
+// CHECK-SAME: edges = []
+// CHECK: simulation.net.decl
+// CHECK-COUNT-1: simulation.func @__talos_root
+// CHECK-NOT: talos.sv.
+
+module {
+  talos.sv.symbol.definition @s0.leaf attributes {
+    definition_kind = 0 : i32, hierarchical_name = "leaf", name = "leaf",
+    node_id = 0 : i64
+  } {}
+  talos.sv.symbol.definition @s1.top attributes {
+    definition_kind = 0 : i32, hierarchical_name = "top", name = "top",
+    node_id = 1 : i64
+  } {}
+  talos.sv.symbol.root @s2.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64
+  } {
+    talos.sv.symbol.compilation_unit @s3 attributes {
+      hierarchical_name = "$unit", node_id = 3 : i64
+    } {}
+    talos.sv.symbol.instance @s4.top attributes {
+      hierarchical_name = "top", is_uninstantiated = false, name = "top",
+      node_id = 4 : i64, referenced_path = "top",
+      referenced_symbol = @s1.top
+    } {
+      talos.sv.symbol.instance_body @s5.top attributes {
+        hierarchical_name = "top", name = "top", node_id = 5 : i64,
+        time_precision_fs = 1000000 : i64,
+        time_unit_fs = 1000000 : i64
+      } {
+        talos.sv.symbol.net @s6.a attributes {
+          hierarchical_name = "top.a", is_implicit = false, name = "a",
+          net_kind = 1 : i32, node_id = 6 : i64,
+          semantic_type = !talos.integral<1, false, true, 0 : 0, logic>
+        } {}
+        talos.sv.symbol.instance @s7.i attributes {
+          hierarchical_name = "top.i", is_uninstantiated = false, name = "i",
+          node_id = 7 : i64, referenced_path = "leaf",
+          referenced_symbol = @s0.leaf
+        } {
+          talos.sv.port.connection attributes {
+            actual_is_constant = false, direction = 2 : i32,
+            formal_name = "value", formal_ordinal = 0 : i64,
+            formal_path = "top.i.value",
+            formal_symbol = @s2.$root::@s4.top::@s5.top::@s7.i::@s8.leaf::@s9.value,
+            formal_type = !talos.ranged_packed_array<1 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>,
+            internal_path = "top.i.value",
+            internal_symbol = @s2.$root::@s4.top::@s5.top::@s7.i::@s8.leaf::@s10.value,
+            is_ansi = true, is_net = true, node_id = 8 : i64,
+            provenance = 0 : i32
+          } {} {
+            talos.sv.expression.conversion attributes {
+              is_implicit = true, node_id = 9 : i64,
+              semantic_type = !talos.ranged_packed_array<1 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>
+            } {
+              talos.sv.expression.named_value attributes {
+                node_id = 10 : i64, referenced_path = "top.a",
+                referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.a,
+                semantic_type = !talos.integral<1, false, true, 0 : 0, logic>
+              } {}
+            }
+          }
+          talos.sv.port.connection attributes {
+            actual_is_constant = false, direction = 0 : i32,
+            formal_ordinal = 1 : i64, formal_path = "top.i",
+            formal_symbol = @s2.$root::@s4.top::@s5.top::@s7.i::@s8.leaf::@s11,
+            formal_type = !talos.void, is_ansi = false, is_net = false,
+            node_id = 11 : i64, provenance = 4 : i32
+          } {} {}
+          talos.sv.symbol.instance_body @s8.leaf attributes {
+            hierarchical_name = "top.i", name = "leaf", node_id = 12 : i64,
+            time_precision_fs = 1000000 : i64,
+            time_unit_fs = 1000000 : i64
+          } {
+            talos.sv.symbol.port @s9.value attributes {
+              direction = 0 : i32, hierarchical_name = "top.i.value",
+              name = "value", node_id = 13 : i64,
+              semantic_type = !talos.ranged_packed_array<1 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>
+            } {}
+            talos.sv.symbol.net @s10.value attributes {
+              hierarchical_name = "top.i.value", is_implicit = false,
+              name = "value", net_kind = 1 : i32, node_id = 14 : i64,
+              semantic_type = !talos.ranged_packed_array<1 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>
+            } {}
+            talos.sv.symbol.port @s11 attributes {
+              direction = 0 : i32, hierarchical_name = "top.i",
+              node_id = 15 : i64, semantic_type = !talos.void
+            } {}
+          }
+        }
+      }
+    }
+  }
+}

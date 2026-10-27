@@ -1,9 +1,9 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
+// RUN: talos-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
 // RUN: %t +load_only --coverage-load=%t.obcov | FileCheck %s
 // RUN: %t --coverage-output=%t.second.obcov | FileCheck %s
-// RUN: obelisk-cov merge -o %t.merged.obcov %t.obcov %t.second.obcov
+// RUN: talos-cov merge -o %t.merged.obcov %t.obcov %t.second.obcov
 // RUN: %t +load_only --coverage-load=%t.merged.obcov | FileCheck %s --check-prefix=MERGED
 
 // Each of 16 array elements is a separately constructed covergroup with its

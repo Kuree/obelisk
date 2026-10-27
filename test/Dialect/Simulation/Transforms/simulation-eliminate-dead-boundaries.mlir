@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-boundaries,simulation.func(canonicalize,cse)))' > %t.threaded
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-boundaries,simulation.func(canonicalize,cse)))' | diff -u %t.threaded -
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-boundaries,simulation.func(canonicalize,cse)))' > %t.threaded
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-boundaries,simulation.func(canonicalize,cse)))' | diff -u %t.threaded -
 // RUN: FileCheck %s < %t.threaded
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-boundaries{missed-remarks=true}))' -o /dev/null 2> %t.remarks
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-boundaries{missed-remarks=true}))' -o /dev/null 2>&1 | diff -u %t.remarks -
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-boundaries{missed-remarks=true}))' -o /dev/null 2> %t.remarks
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-boundaries{missed-remarks=true}))' -o /dev/null 2>&1 | diff -u %t.remarks -
 // RUN: FileCheck %s --check-prefix=REMARK < %t.remarks
-// RUN: obelisk-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-boundaries))' | FileCheck %s --check-prefix=LOC
+// RUN: talos-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-boundaries))' | FileCheck %s --check-prefix=LOC
 
 module {
   simulation.design @boundaries {

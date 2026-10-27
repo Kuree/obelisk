@@ -1,5 +1,5 @@
 // REQUIRES: native-elf
-// RUN: %obelisk -O0 -emit-llvm %s -o %t.ll
+// RUN: %talos -O0 -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=MAIN < %t.ll
 // RUN: FileCheck %s --check-prefix=RAMP < %t.ll
 
@@ -7,7 +7,7 @@
 // need no .eh_frame entries.
 // MAIN: define {{.*}}@main({{.*}}) #[[MAIN:[0-9]+]] {
 // MAIN: attributes #[[MAIN]] = { {{.*}}nounwind
-// RAMP: define {{.*}}@{{.*}}.__obelisk_coro_ramp({{.*}}) #[[RAMP:[0-9]+]] {
+// RAMP: define {{.*}}@{{.*}}.__talos_coro_ramp({{.*}}) #[[RAMP:[0-9]+]] {
 // RAMP: attributes #[[RAMP]] = { {{.*}}nounwind
 
 module native_elf_nounwind;

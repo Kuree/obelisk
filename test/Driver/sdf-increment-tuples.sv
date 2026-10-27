@@ -1,4 +1,4 @@
-// RUN: cd %S && obelisk -emit-slang %s -o %t.mlir
+// RUN: cd %S && talos -emit-slang %s -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 
 module sdf_tuple_cell(input wire source, output wire destination);
@@ -32,5 +32,5 @@ endmodule
 // CHECK-DAG: timing_delay_count = 12 : i64, timing_delay_fs = array<i64: 99, 102, 97, 104, 95, 106, 97, 104, 95, 106, 97, 104>
 // CHECK-DAG: timing_delay_count = 12 : i64, timing_delay_fs = array<i64: 101, 98, 103, 96, 105, 94, 107, 92, 109, 90, 111, 88>
 // CHECK-NOT: slang.symbol.sdf
-// CHECK-NOT: obelisk.sdf.table
-// CHECK-NOT: obelisk_sdf.
+// CHECK-NOT: talos.sdf.table
+// CHECK-NOT: talos_sdf.

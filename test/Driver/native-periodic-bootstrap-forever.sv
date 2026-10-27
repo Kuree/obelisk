@@ -1,4 +1,4 @@
-// RUN: obelisk -O3 --execution-tier=native --native-scheduler=auto %s -o %t.auto
+// RUN: talos -O3 --execution-tier=native --native-scheduler=auto %s -o %t.auto
 // RUN: %t.auto | FileCheck %s
 
 // The testbench `initial` loop carries `n` and the `$value$plusargs` result

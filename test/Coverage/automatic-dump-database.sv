@@ -1,9 +1,9 @@
-// RUN: %obelisk --std=1800-2023 -O0 -DREQUEST_COVERAGE_DATABASE -o %t.database %S/automatic-dump.sv
+// RUN: %talos --std=1800-2023 -O0 -DREQUEST_COVERAGE_DATABASE -o %t.database %S/automatic-dump.sv
 // RUN: %t.database --coverage-output=%t.database.obcov
-// RUN: obelisk-cov inspect %t.database.obcov | FileCheck %s --check-prefix=DATABASE-INSPECT
+// RUN: talos-cov inspect %t.database.obcov | FileCheck %s --check-prefix=DATABASE-INSPECT
 // RUN: mkdir -p %t.dump-output-directory
 // RUN: not --status=4 %t.database --coverage-output=%t.dump-output-directory 2>&1 | FileCheck %s --check-prefix=DUMP-IO
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=line -DDUMP_FATAL -o %t.dump-fatal %S/automatic-dump.sv
+// RUN: %talos --std=1800-2023 -O0 --coverage=line -DDUMP_FATAL -o %t.dump-fatal %S/automatic-dump.sv
 // RUN: not --status=19 %t.dump-fatal --coverage-output=%t.dump-output-directory 2>&1 | FileCheck %s --check-prefix=DUMP-FATAL
 
 // A $get_coverage call requests the functional database, which is dumped at

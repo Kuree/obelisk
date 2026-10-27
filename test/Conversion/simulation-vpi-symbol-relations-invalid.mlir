@@ -1,5 +1,5 @@
-// RUN: obelisk-opt --verify-diagnostics %s \
-// RUN:   --encode-obelisk-sim-to-bytecode='vpi=read'
+// RUN: talos-opt --verify-diagnostics %s \
+// RUN:   --encode-talos-sim-to-bytecode='vpi=read'
 
 // A semantic alias already supplies vpiTypedefAlias. Explicit relations cannot
 // overwrite that slice even when their target is the same physical object.

@@ -1,13 +1,13 @@
-#include "obelisk/Analysis/PrivateStorageAnalysis.h"
-#include "obelisk/Analysis/DPIEffectAnalysis.h"
+#include "talos/Analysis/PrivateStorageAnalysis.h"
+#include "talos/Analysis/DPIEffectAnalysis.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 PrivateStorageAnalysis::PrivateStorageAnalysis(sim::SimDesignOp design) {
   for (auto decl : design.getOps<sim::SimStorageDeclOp>())
     if ((decl.getLifetime() == sim::Lifetime::Static ||
@@ -144,4 +144,4 @@ PrivateStorageAnalysis::PrivateStorageAnalysis(sim::SimDesignOp design) {
   for (uint64_t id : escaped)
     roots.erase(id);
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

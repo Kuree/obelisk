@@ -1,4 +1,4 @@
-// RUN: obelisk -O3 -emit-sim %s -o - 2>/dev/null | FileCheck %s
+// RUN: talos -O3 -emit-sim %s -o - 2>/dev/null | FileCheck %s
 
 // Classify NBA roots by who can observe an intermediate NBA value:
 //  - single: one write per activation, clocked by a free-running clock; no

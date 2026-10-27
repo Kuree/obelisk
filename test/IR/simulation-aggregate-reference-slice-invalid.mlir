@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 module {
   func.func @outside(%ctx: !simulation.context, %owner: !simulation.argument_ref<!simulation.unpacked_array<0 : 0 x i32>>) {

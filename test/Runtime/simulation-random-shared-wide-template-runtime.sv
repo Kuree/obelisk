@@ -1,5 +1,5 @@
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | obelisk-opt --test-obelisk-print-random-programs -o /dev/null 2>&1 | FileCheck %s --check-prefix=PLAN
-// RUN: %obelisk --std=1800-2023 -O0 -o %t %s
+// RUN: %talos --std=1800-2023 -emit-talos %s | talos-opt '--lower-talos-to-sim=opt-level=0' | talos-opt --test-talos-print-random-programs -o /dev/null 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: %talos --std=1800-2023 -O0 -o %t %s
 // RUN: %t --seed=13 | FileCheck %s --check-prefix=RUNTIME
 // REQUIRES: compiled-sampler
 

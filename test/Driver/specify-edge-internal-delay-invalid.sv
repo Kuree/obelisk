@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not talos -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
 
 module specify_edge_internal_delay_invalid(
     input wire clock, input wire data, output wire destination);

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{grow-acyclic=false},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{grow-acyclic=false},talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
 
 // Growth is off: these observers stay outside to test the closure proof.
 // IEEE 1800-2023 4.3: an exclusively owned conditional hold may remain an
@@ -6,7 +6,7 @@
 // unchanged inputs. Keep its original state and activation protocol. Old-state
 // snapshots and downstream transition counters still block the transformation.
 // CHECK-LABEL: simulation.design @held_observer
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK: simulation.spawn @__talos_region_kernel_0_0
 // CHECK: simulation.spawn @held
 // CHECK: simulation.func @held
 // CHECK: simulation.ref.load
@@ -85,11 +85,11 @@ module {
 // -----
 
 // CHECK-LABEL: simulation.design @snapshot_observer
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 // CHECK: simulation.spawn @producer_and_consumer
 // CHECK: simulation.spawn @transform
 // CHECK: simulation.spawn @held
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 module {
   simulation.design @snapshot_observer {
     simulation.scope.decl 0
@@ -162,11 +162,11 @@ module {
 // -----
 
 // CHECK-LABEL: simulation.design @counted_observer
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 // CHECK: simulation.spawn @producer_and_consumer
 // CHECK: simulation.spawn @transform
 // CHECK: simulation.spawn @held
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 module {
   simulation.design @counted_observer {
     simulation.scope.decl 0

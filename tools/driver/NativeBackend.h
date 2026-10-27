@@ -1,17 +1,17 @@
 //===- NativeBackend.h - Registered host-native backend ---------*- C++ -*-===//
 
-#ifndef OBELISK_TOOLS_DRIVER_NATIVEBACKEND_H
-#define OBELISK_TOOLS_DRIVER_NATIVEBACKEND_H
+#ifndef TALOS_TOOLS_DRIVER_NATIVEBACKEND_H
+#define TALOS_TOOLS_DRIVER_NATIVEBACKEND_H
 
 #include "TargetBackend.h"
 
 #include <memory>
 
-namespace obelisk::driver {
+namespace talos::driver {
 
 /// Builds the host-native backend registered for this platform by CMake.
 std::unique_ptr<TargetBackend> createNativeBackend();
 
-} // namespace obelisk::driver
+} // namespace talos::driver
 
-#endif // OBELISK_TOOLS_DRIVER_NATIVEBACKEND_H
+#endif // TALOS_TOOLS_DRIVER_NATIVEBACKEND_H

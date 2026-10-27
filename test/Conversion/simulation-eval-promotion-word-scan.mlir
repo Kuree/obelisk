@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | diff %t.mlir -
-// RUN: FileCheck %s --implicit-check-not=__obelisk_eval_selected_variant_v1_ --implicit-check-not=__obelisk_eval_kernel_promotion_ready_v1_ < %t.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | diff %t.mlir -
+// RUN: FileCheck %s --implicit-check-not=__talos_eval_selected_variant_v1_ --implicit-check-not=__talos_eval_kernel_promotion_ready_v1_ < %t.mlir
 // RUN: FileCheck %s --check-prefix=RANGE < %t.mlir
 // RUN: FileCheck %s --check-prefix=KERNEL < %t.mlir
-// RUN: FileCheck %s --check-prefix=VARIANT --implicit-check-not=__obelisk_eval_function_route_v1_ --implicit-check-not=__obelisk_eval_variant_dispatch_v1_ < %t.mlir
+// RUN: FileCheck %s --check-prefix=VARIANT --implicit-check-not=__talos_eval_function_route_v1_ --implicit-check-not=__talos_eval_variant_dispatch_v1_ < %t.mlir
 // RUN: FileCheck %s --check-prefix=STORE < %t.mlir
 // RUN: FileCheck %s --check-prefix=CLOCK < %t.mlir
 
@@ -13,39 +13,39 @@
 // boundary nor the gap to another range may contribute unrelated X/Z bits
 // to promotion evidence, regardless of the generated scan's load widths.
 // Both routes share the existing owner certificates; no duplicate scan.
-// CHECK-LABEL: llvm.func @__obelisk_eval_route_promotion_scan_v1
+// CHECK-LABEL: llvm.func @__talos_eval_route_promotion_scan_v1
 // CHECK-NEXT: llvm.return
 
 // Write-only NBA destinations at 432 and 440 have separate commit certificates
 // and must not extend the activation's input ranges (LRM 4.9.4, 10.4.2).
-// KERNEL-DAG: llvm.mlir.global internal constant @__obelisk_eval_kernel_promotion_ranges_v1(dense<[6, 7, -65536, 281474976710655, 0, 3, -2048, 4095, 2, 5, -1099511627776, 2199023255551, 5, 6, -1, -1]>
-// KERNEL-DAG: llvm.mlir.global internal constant @__obelisk_eval_kernel_promotion_owners_v1(dense<[0, 1, 0, 1, 1, 4, 0, 2]>
-// KERNEL-DAG: llvm.mlir.global internal @__obelisk_eval_kernel_promotion_hints_v1(dense<0> : tensor<4xi64>)
-// RANGE-DAG: llvm.mlir.global internal constant @__obelisk_eval_proof_dependencies_v1(dense<{{.*}}> : tensor<{{[0-9]+}}x4xi64>)
-// RANGE-DAG: llvm.mlir.global internal constant @__obelisk_eval_proof_certificates_v1
-// RANGE-LABEL: llvm.func @__obelisk_eval_promotion_invalidate_range_v1
-// RANGE: llvm.call @obelisk_rt_v1_native_promotion_invalidate_ranges
+// KERNEL-DAG: llvm.mlir.global internal constant @__talos_eval_kernel_promotion_ranges_v1(dense<[6, 7, -65536, 281474976710655, 0, 3, -2048, 4095, 2, 5, -1099511627776, 2199023255551, 5, 6, -1, -1]>
+// KERNEL-DAG: llvm.mlir.global internal constant @__talos_eval_kernel_promotion_owners_v1(dense<[0, 1, 0, 1, 1, 4, 0, 2]>
+// KERNEL-DAG: llvm.mlir.global internal @__talos_eval_kernel_promotion_hints_v1(dense<0> : tensor<4xi64>)
+// RANGE-DAG: llvm.mlir.global internal constant @__talos_eval_proof_dependencies_v1(dense<{{.*}}> : tensor<{{[0-9]+}}x4xi64>)
+// RANGE-DAG: llvm.mlir.global internal constant @__talos_eval_proof_certificates_v1
+// RANGE-LABEL: llvm.func @__talos_eval_promotion_invalidate_range_v1
+// RANGE: llvm.call @talos_rt_v1_native_promotion_invalidate_ranges
 
-// STORE-LABEL: llvm.func @work.__obelisk_eval_body_0(
+// STORE-LABEL: llvm.func @work.__talos_eval_body_0(
 // STORE: llvm.store
 // STORE: llvm.icmp "ne"
 // STORE: llvm.cond_br
-// STORE: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
-// STORE-LABEL: llvm.func @other_work.__obelisk_eval_body_0(
-// STORE: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
-// STORE-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_two_state_0(
-// STORE-NOT: __obelisk_eval_promotion_publish_unknown_v1
-// STORE-LABEL: llvm.func @other_work.__obelisk_eval_body_0.__obelisk_two_state_0(
-// STORE-NOT: __obelisk_eval_promotion_publish_unknown_v1
+// STORE: llvm.call preserve_mostcc @__talos_eval_promotion_publish_unknown_v1
+// STORE-LABEL: llvm.func @other_work.__talos_eval_body_0(
+// STORE: llvm.call preserve_mostcc @__talos_eval_promotion_publish_unknown_v1
+// STORE-LABEL: llvm.func @work.__talos_eval_body_0.__talos_two_state_0(
+// STORE-NOT: __talos_eval_promotion_publish_unknown_v1
+// STORE-LABEL: llvm.func @other_work.__talos_eval_body_0.__talos_two_state_0(
+// STORE-NOT: __talos_eval_promotion_publish_unknown_v1
 // STORE: llvm.func
 
 // Four-state clocks have real unknown-plane accesses, but their bytes are
 // outside every value-domain certificate. Keep their canonical semantics
 // without emitting guards or proof publications in the generated clock loop.
-// CLOCK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CLOCK-NOT: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
-// CLOCK: llvm.mlir.addressof @__obelisk_state_unknown
-// CLOCK-NOT: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
+// CLOCK-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// CLOCK-NOT: llvm.call preserve_mostcc @__talos_eval_promotion_publish_unknown_v1
+// CLOCK: llvm.mlir.addressof @__talos_state_unknown
+// CLOCK-NOT: llvm.call preserve_mostcc @__talos_eval_promotion_publish_unknown_v1
 // CLOCK: llvm.func
 
 module attributes {
@@ -155,10 +155,10 @@ module attributes {
   }
 }
 
-// VARIANT-LABEL: llvm.func @__obelisk_direct_fragment_2_12.__obelisk_execute(
+// VARIANT-LABEL: llvm.func @__talos_direct_fragment_2_12.__talos_execute(
 // VARIANT: %[[OWNER:.*]] = llvm.mlir.constant(1 : i64)
-// VARIANT: llvm.call @__obelisk_eval_kernel_promotion_ready_v1(%[[OWNER]])
+// VARIANT: llvm.call @__talos_eval_kernel_promotion_ready_v1(%[[OWNER]])
 // VARIANT: llvm.cond_br
-// VARIANT: llvm.call @work.__obelisk_eval_body_0.__obelisk_two_state_0
-// VARIANT: llvm.call @__obelisk_eval_four_state_fallback_v1_0
+// VARIANT: llvm.call @work.__talos_eval_body_0.__talos_two_state_0
+// VARIANT: llvm.call @__talos_eval_four_state_fallback_v1_0
 // VARIANT: llvm.return {{.*}} : i32

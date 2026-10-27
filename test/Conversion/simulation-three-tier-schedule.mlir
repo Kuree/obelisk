@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=1}))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=1}))' -o %t
-// RUN: obelisk-opt %t -o %t.roundtrip
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-materialize-graph-regions{max-acyclic-cost=1}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-materialize-graph-regions{max-acyclic-cost=1}))' -o %t
+// RUN: talos-opt %t -o %t.roundtrip
 // RUN: diff %t %t.roundtrip
 
 module {

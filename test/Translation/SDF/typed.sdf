@@ -1,13 +1,13 @@
-// RUN: obelisk-translate --import-sdf %s | FileCheck %s
-// RUN: obelisk-translate --import-sdf --mlir-print-op-generic %s | FileCheck %s --check-prefix=GENERIC
-// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+// RUN: talos-translate --import-sdf %s | FileCheck %s
+// RUN: talos-translate --import-sdf --mlir-print-op-generic %s | FileCheck %s --check-prefix=GENERIC
+// RUN: talos-translate --import-sdf %s | talos-opt | FileCheck %s
 
 (DELAYFILE
   (SDFVERSION "4.0")
   (DESIGN "typed")
   (DATE "today")
-  (VENDOR "obelisk")
-  (PROGRAM "obelisk-translate")
+  (VENDOR "talos")
+  (PROGRAM "talos-translate")
   (VERSION "1")
   (DIVIDER /)
   // IEEE 1497-2001 5.2.8 spells a header rtriple as one bare token.
@@ -43,24 +43,24 @@
       (ABSOLUTE (LATENCY (1:2:3)))
       (INCREMENT (LATENCY (4))))))
 
-// CHECK: obelisk_sdf.delay_file
+// CHECK: talos_sdf.delay_file
 // CHECK-SAME: version "4.0"
-// CHECK-SAME: timescale = #obelisk_sdf.timescale
-// CHECK-SAME: voltage = #obelisk_sdf.delay_value<form = triple, min = <"0.9">, typ = <"1.0">, max = <"1.1">>
-// CHECK: obelisk_sdf.cell
-// CHECK: obelisk_sdf.path_delay
-// CHECK-SAME: delays [#obelisk_sdf.delay_value
-// CHECK: #obelisk_sdf.condition_token
-// CHECK: obelisk_sdf.interconnect_delay
-// CHECK: obelisk_sdf.terminal_delay
-// CHECK: obelisk_sdf.pulse
-// CHECK: obelisk_sdf.timing_check
-// CHECK: obelisk_sdf.timing_check bidirectskew
-// CHECK: obelisk_sdf.label absolute "LATENCY" = #obelisk_sdf.delay_value
-// CHECK: obelisk_sdf.label increment "LATENCY" = #obelisk_sdf.delay_value
+// CHECK-SAME: timescale = #talos_sdf.timescale
+// CHECK-SAME: voltage = #talos_sdf.delay_value<form = triple, min = <"0.9">, typ = <"1.0">, max = <"1.1">>
+// CHECK: talos_sdf.cell
+// CHECK: talos_sdf.path_delay
+// CHECK-SAME: delays [#talos_sdf.delay_value
+// CHECK: #talos_sdf.condition_token
+// CHECK: talos_sdf.interconnect_delay
+// CHECK: talos_sdf.terminal_delay
+// CHECK: talos_sdf.pulse
+// CHECK: talos_sdf.timing_check
+// CHECK: talos_sdf.timing_check bidirectskew
+// CHECK: talos_sdf.label absolute "LATENCY" = #talos_sdf.delay_value
+// CHECK: talos_sdf.label increment "LATENCY" = #talos_sdf.delay_value
 // CHECK-NOT: simulation
 // CHECK-NOT: runtime
 
-// GENERIC: "obelisk_sdf.delay_file"
-// GENERIC: "obelisk_sdf.path_delay"
-// GENERIC: #obelisk_sdf.condition<tokens = [#obelisk_sdf.condition_token
+// GENERIC: "talos_sdf.delay_file"
+// GENERIC: "talos_sdf.path_delay"
+// GENERIC: #talos_sdf.condition<tokens = [#talos_sdf.condition_token

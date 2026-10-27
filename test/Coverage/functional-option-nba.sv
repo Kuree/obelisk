@@ -1,6 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=REPORT
 
 // IEEE 10.4.2, 19.7 and 19.10. One configuration, two instances and two
 // event occurrences exercise whole fields, clipped masks, strings, delayed

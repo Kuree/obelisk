@@ -1,6 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
 
 // IEEE 1800-2023 11.5.1 and 19.6.1.2. Each cross has one broad tuple bin;
 // its associated values cover 65 source bits and signed or four-state indices.

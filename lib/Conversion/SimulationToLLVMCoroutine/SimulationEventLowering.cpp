@@ -2,7 +2,7 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -10,14 +10,14 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 Value loadCurrentRuntimeContext(ConversionPatternRewriter &rewriter,
                                 Location location) {
   Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
   Value address = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                            "__obelisk_current_context");
+                                            "__talos_current_context");
   return LLVM::LoadOp::create(rewriter, location, pointer, address, 8);
 }
 
@@ -40,7 +40,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_scheduler_event_create"),
+                               "talos_rt_v1_scheduler_event_create"),
             ValueRange{context, output})
             .getResult();
     reportManagedStatus(rewriter, location, context, status);
@@ -70,7 +70,7 @@ public:
       LLVM::CallOp::create(
           rewriter, location, TypeRange{},
           SymbolRefAttr::get(rewriter.getContext(),
-                             "obelisk_rt_v1_scheduler_event_replace_after"),
+                             "talos_rt_v1_scheduler_event_replace_after"),
           ValueRange{loadCurrentRuntimeContext(rewriter, location),
                      adaptor.getEvent().front(),
                      llvmConstant(rewriter, location, rewriter.getI32Type(),
@@ -82,7 +82,7 @@ public:
     LLVM::CallOp::create(
         rewriter, location, TypeRange{},
         SymbolRefAttr::get(rewriter.getContext(),
-                           "obelisk_rt_v1_scheduler_event_after"),
+                           "talos_rt_v1_scheduler_event_after"),
         ValueRange{loadCurrentRuntimeContext(rewriter, location),
                    adaptor.getEvent().front(),
                    llvmConstant(rewriter, location, rewriter.getI32Type(),
@@ -108,7 +108,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_scheduler_event_triggered"),
+                               "talos_rt_v1_scheduler_event_triggered"),
             ValueRange{loadCurrentRuntimeContext(rewriter, location),
                        adaptor.getEvent().front()})
             .getResult();
@@ -135,7 +135,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_clocking_output_track"),
+                               "talos_rt_v1_clocking_output_track"),
             ValueRange{
                 context, adaptor.getClock().front(),
                 llvmConstant(rewriter, location, rewriter.getI64Type(),
@@ -165,7 +165,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_clocking_output_current"),
+                               "talos_rt_v1_clocking_output_current"),
             ValueRange{
                 loadCurrentRuntimeContext(rewriter, location),
                 adaptor.getClock().front(),
@@ -193,7 +193,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_scheduler_wait_order_failed"),
+                               "talos_rt_v1_scheduler_wait_order_failed"),
             ValueRange{loadCurrentRuntimeContext(rewriter, location)})
             .getResult();
     rewriter.replaceOpWithNewOp<LLVM::TruncOp>(operation, rewriter.getI1Type(),
@@ -217,7 +217,7 @@ public:
     rewriter.replaceOpWithNewOp<LLVM::CallOp>(
         operation, TypeRange{rewriter.getI64Type()},
         SymbolRefAttr::get(rewriter.getContext(),
-                           "obelisk_rt_v1_clock_occurrence_consume"),
+                           "talos_rt_v1_clock_occurrence_consume"),
         ValueRange{loadCurrentRuntimeContext(rewriter, location), site});
     return success();
   }
@@ -241,7 +241,7 @@ public:
     rewriter.replaceOpWithNewOp<LLVM::CallOp>(
         operation, TypeRange{rewriter.getI64Type()},
         SymbolRefAttr::get(rewriter.getContext(),
-                           "obelisk_rt_v1_nochange_update"),
+                           "talos_rt_v1_nochange_update"),
         ValueRange{loadCurrentRuntimeContext(rewriter, location), site,
                    adaptor.getMask().front(), adaptor.getStartOffset().front(),
                    adaptor.getEndOffset().front()});
@@ -277,4 +277,4 @@ void populateEventToLLVMConversionPatterns(RewritePatternSet &patterns,
                EventEqualConversion>(converter, patterns.getContext());
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

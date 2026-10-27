@@ -1,11 +1,11 @@
 // RUN: %target_clang %target_pic -c %S/Inputs/two_state_dpi.c -I%resource_dir/include -o %t.o
-// RUN: obelisk --two-state -O3 %s %t.o -o %t.native
+// RUN: talos --two-state -O3 %s %t.o -o %t.native
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk --two-state -O3 --execution-tier=bytecode %s %t.o -o %t.bytecode
+// RUN: talos --two-state -O3 --execution-tier=bytecode %s %t.o -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
-// RUN: obelisk --two-state --emit-dpi-header %s -o %t.h
+// RUN: talos --two-state --emit-dpi-header %s -o %t.h
 // RUN: FileCheck %s --check-prefix=HEADER < %t.h
-// RUN: obelisk --emit-dpi-header %s | diff -u %t.h -
+// RUN: talos --emit-dpi-header %s | diff -u %t.h -
 
 // Two-state execution must preserve the declared C representation, including
 // svLogicVecVal's interleaved aval/bval words, and project foreign X/Z to zero.

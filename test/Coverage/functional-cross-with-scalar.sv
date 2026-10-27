@@ -1,8 +1,8 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=TEXT
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
-// RUN: obelisk-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=TEXT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
 
 // IEEE 1800-2023 19.6.1.2: a with predicate that does not depend on the cross
 // items is evaluated once per bin tuple, and the matches count applies to each

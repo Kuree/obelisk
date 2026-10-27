@@ -3,17 +3,17 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Pass/Pass.h"
-#include "obelisk/Analysis/BoundedLoopAnalysis.h"
-#include "obelisk/Analysis/IntegerRangeIPO.h"
-#include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
-#include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/BoundedLoopAnalysis.h"
+#include "talos/Analysis/IntegerRangeIPO.h"
+#include "talos/Analysis/ScopedIntegerRangeAnalysis.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_FOLDNATIVESCALARVALUESPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "talos/Conversion/Passes.h.inc"
 namespace {
 class FoldNativeScalarValuesPass final
     : public impl::FoldNativeScalarValuesPassBase<FoldNativeScalarValuesPass> {
@@ -118,4 +118,4 @@ public:
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

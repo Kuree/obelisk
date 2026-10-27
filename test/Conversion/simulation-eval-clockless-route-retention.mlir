@@ -1,18 +1,18 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | diff %t.mlir -
-// RUN: FileCheck %s --implicit-check-not=__obelisk_eval_selected_variant_v1_ --implicit-check-not=__obelisk_periodic_clock_plan_v1 --implicit-check-not=__obelisk_eval_function_route_v1_ --implicit-check-not=__obelisk_eval_variant_dispatch_v1_ < %t.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | diff %t.mlir -
+// RUN: FileCheck %s --implicit-check-not=__talos_eval_selected_variant_v1_ --implicit-check-not=__talos_periodic_clock_plan_v1 --implicit-check-not=__talos_eval_function_route_v1_ --implicit-check-not=__talos_eval_variant_dispatch_v1_ < %t.mlir
 
 // The design of simulation-periodic-reset-publication.mlir with unequal clock
 // phases, which keep the clockless event-driven wrapper instead of a periodic
 // plan. That hot wrapper must not reseed variant selectors or pending proofs
 // either; the plan-installation invalidator remains responsible for fresh
 // executions. Function routes need no generated variant dispatch.
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_kernel_promotion_latched_v1
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_route_promotion_pending_v1
-// CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK-NOT: @__obelisk_eval_selected_variant_v1_
-// CHECK-NOT: @__obelisk_eval_route_promotion_pending_v1
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
+// CHECK-DAG: llvm.mlir.global internal @__talos_eval_kernel_promotion_latched_v1
+// CHECK-DAG: llvm.mlir.global internal @__talos_eval_route_promotion_pending_v1
+// CHECK-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// CHECK-NOT: @__talos_eval_selected_variant_v1_
+// CHECK-NOT: @__talos_eval_route_promotion_pending_v1
+// CHECK: llvm.call @talos_rt_v1_scheduler_run_aot_nodes
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

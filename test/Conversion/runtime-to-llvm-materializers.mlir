@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --convert-obelisk-runtime-to-llvm %s | FileCheck %s
+// RUN: talos-opt --convert-talos-runtime-to-llvm %s | FileCheck %s
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"

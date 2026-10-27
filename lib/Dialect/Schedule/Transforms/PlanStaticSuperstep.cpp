@@ -1,13 +1,13 @@
 //===- PlanStaticSuperstep.cpp - Plan guarded native supersteps ----------===//
 
-#include "obelisk/Analysis/NativeAOTAnalysis.h"
-#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/NativeAOTAnalysis.h"
+#include "talos/Analysis/SimulationScheduleAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -15,22 +15,22 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMPLANSTATICSUPERSTEPPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMPLANSTATICSUPERSTEPPASS
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 
-class ObeliskSimPlanStaticSuperstepPass
-    : public impl::ObeliskSimPlanStaticSuperstepPassBase<
-          ObeliskSimPlanStaticSuperstepPass> {
+class TalosSimPlanStaticSuperstepPass
+    : public impl::TalosSimPlanStaticSuperstepPassBase<
+          TalosSimPlanStaticSuperstepPass> {
 public:
   using Base::Base;
   void runOnOperation() override;
 };
 
-void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
+void TalosSimPlanStaticSuperstepPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
   if (!graph) {
@@ -38,7 +38,7 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
                        "compute graph");
     return signalPassFailure();
   }
-  ::obelisk::schedule::remove<schedule::metadata::staticSuperstep>(design);
+  ::talos::schedule::remove<schedule::metadata::staticSuperstep>(design);
   // This pass only publishes plan metadata; function identities are fixed.
   // Resolve every graph fragment through one symbol index.
   SymbolTable symbols(design);
@@ -131,11 +131,11 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
       design.emitRemark() << "static superstep not planned: " << reason;
     return;
   }
-  ::obelisk::schedule::set<schedule::metadata::staticSuperstep>(
+  ::talos::schedule::set<schedule::metadata::staticSuperstep>(
       design, schedule::StaticSuperstepAttr::get(
                   design.getContext(), schedule::metadata::schemaVersion, graph,
                   ArrayAttr::get(design.getContext(), actors)));
 }
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

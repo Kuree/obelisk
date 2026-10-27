@@ -1,8 +1,8 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov --coverage-test=type-options | FileCheck %s --check-prefix=QUERY
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
-// RUN: obelisk-cov report --format=html %t.obcov | FileCheck %s --check-prefix=HTML
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov report --format=html %t.obcov | FileCheck %s --check-prefix=HTML
 
 // IEEE 1800-2023 19.7.1 permits these type options to be changed at any
 // time. The pre-construction writes must affect configurations resolved by

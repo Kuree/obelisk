@@ -1,14 +1,14 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --test-talos-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
-// RUN: env OBELISK_TEST_INPUT=%s OBELISK_TEST_OUTPUT=%t.off \
-// RUN:   OBELISK_TEST_VPI=off %obj_root/test/obelisk-design-database-dump-test \
+// RUN: env TALOS_TEST_INPUT=%s TALOS_TEST_OUTPUT=%t.off \
+// RUN:   TALOS_TEST_VPI=off %obj_root/test/talos-design-database-dump-test \
 // RUN:   --gtest_filter=GeneratedDesignDatabase.Dump
 // RUN: FileCheck %s --check-prefix=DATABASE < %t.off
-// RUN: env OBELISK_TEST_INPUT=%s OBELISK_TEST_OUTPUT=%t.read \
-// RUN:   OBELISK_TEST_VPI=read %obj_root/test/obelisk-design-database-dump-test \
+// RUN: env TALOS_TEST_INPUT=%s TALOS_TEST_OUTPUT=%t.read \
+// RUN:   TALOS_TEST_VPI=read %obj_root/test/talos-design-database-dump-test \
 // RUN:   --gtest_filter=GeneratedDesignDatabase.Dump
 // RUN: FileCheck %s --check-prefix=VPI < %t.read
 
@@ -246,10 +246,10 @@ module attributes {
 }
 
 // NATIVE-LABEL: llvm.func @dump
-// NATIVE: llvm.call @obelisk_rt_v1_dump_ports
-// NATIVE: llvm.call @obelisk_rt_v1_dump_ports_control
-// NATIVE: llvm.call @obelisk_rt_v1_dump_ports_control
-// NATIVE: llvm.call @obelisk_rt_v1_dump_ports_control
+// NATIVE: llvm.call @talos_rt_v1_dump_ports
+// NATIVE: llvm.call @talos_rt_v1_dump_ports_control
+// NATIVE: llvm.call @talos_rt_v1_dump_ports_control
+// NATIVE: llvm.call @talos_rt_v1_dump_ports_control
 // NATIVE-NOT: simulation.port.decl
 
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010232 inputs=3 outputs=0 flags=0

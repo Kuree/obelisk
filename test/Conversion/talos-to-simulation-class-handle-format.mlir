@@ -1,0 +1,112 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' \
+// RUN:   '--encode-talos-sim-to-bytecode=vpi=off' -o /dev/null
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines -o /dev/null
+
+module attributes {
+  llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
+  talos.sv.symbol.definition @s0.top attributes {
+    definition_kind = 0 : i32, hierarchical_name = "top", name = "top",
+    node_id = 0 : i64
+  } {}
+  talos.sv.symbol.root @s1.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
+  } {
+    talos.sv.symbol.compilation_unit @s2 attributes {
+      hierarchical_name = "$unit", node_id = 2 : i64
+    } {
+      talos.sv.type.class_type @s3.C attributes {
+        bitstream_width = 0 : i64, declared_interfaces = [],
+        generic_parameter_paths = [], generic_parameter_symbols = [],
+        has_base_constructor_call = false, has_cycles = false,
+        hierarchical_name = "C", implemented_interfaces = [],
+        is_abstract = false, is_final = false, is_interface = false,
+        is_uninstantiated = false, name = "C", node_id = 3 : i64,
+        semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.C>,
+        this_variable_path = "C::this",
+        this_variable_symbol = @s1.$root::@s2::@s3.C::@s4.this
+      } {
+        talos.sv.symbol.variable @s4.this attributes {
+          hierarchical_name = "C::this", is_compiler_generated, is_const,
+          name = "this", node_id = 4 : i64,
+          semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.C>
+        } {}
+      }
+    }
+    talos.sv.symbol.instance @s5.top attributes {
+      hierarchical_name = "top", is_uninstantiated = false, name = "top",
+      node_id = 5 : i64, referenced_path = "top",
+      referenced_symbol = @s0.top
+    } {
+      talos.sv.symbol.instance_body @s6.top attributes {
+        hierarchical_name = "top", name = "top", node_id = 6 : i64,
+        time_precision_fs = 1000000 : i64,
+        time_unit_fs = 1000000 : i64
+      } {
+        talos.sv.symbol.variable @s7.value attributes {
+          hierarchical_name = "top.value", lifetime = 1 : i32,
+          name = "value", node_id = 7 : i64,
+          semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.C>
+        } {}
+        talos.sv.symbol.variable @s8.text attributes {
+          hierarchical_name = "top.text", lifetime = 1 : i32,
+          name = "text", node_id = 8 : i64,
+          semantic_type = !talos.string
+        } {}
+        talos.sv.symbol.procedural_block @s9 attributes {
+          hierarchical_name = "top", node_id = 9 : i64,
+          procedure_kind = 0 : i32,
+          time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64
+        } {
+          talos.sv.statement.expression_statement attributes {
+            node_id = 10 : i64
+          } {
+            talos.sv.expression.assignment attributes {
+              assignment_kind = 0 : i32, is_signed = false,
+              node_id = 11 : i64, semantic_type = !talos.string
+            } {
+              talos.sv.expression.named_value attributes {
+                is_signed = false, node_id = 12 : i64,
+                referenced_path = "top.text",
+                referenced_symbol = @s1.$root::@s5.top::@s6.top::@s8.text,
+                semantic_type = !talos.string
+              } {}
+              talos.sv.expression.call attributes {
+                argument_count = 2 : i64, callee_name = "$sformatf",
+                constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>,
+                has_inline_constraints = false, has_iterator_expression = false,
+                has_output_arguments = false, has_this_class = false,
+                is_signed = false, is_super_class = false,
+                is_system_call = true, node_id = 13 : i64,
+                semantic_type = !talos.string, subroutine_kind = 0 : i32,
+                system_library_cell = "work.top", system_scope_path = "top",
+                system_scope_symbol = @s1.$root::@s5.top::@s6.top
+              } {
+                talos.sv.expression.string_literal attributes {
+                  constant_value = "%p", is_signed = false,
+                  node_id = 14 : i64,
+                  semantic_type = !talos.ranged_packed_array<15 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>
+                } {}
+                talos.sv.expression.named_value attributes {
+                  is_signed = false, node_id = 15 : i64,
+                  referenced_path = "top.value",
+                  referenced_symbol = @s1.$root::@s5.top::@s6.top::@s7.value,
+                  semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.C>
+                } {}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// CHECK: %[[VALUE:.*]] = simulation.ref.load {{.*}} :
+// CHECK-SAME: -> !simulation.class_handle<@__talos_class_s3_C>
+// CHECK: simulation.string.output_format
+// CHECK-SAME: %[[VALUE]]
+// CHECK-SAME: flags = [32, 64]

@@ -7,16 +7,16 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
 #include "gtest/gtest.h"
 #include <cstdlib>
 #include <cstring>
 #include <set>
 
 namespace {
-using namespace obelisk::reflection;
+using namespace talos::reflection;
 
 template <typename Bytes> uint64_t imageChecksum(const Bytes &bytes) {
   uint64_t hash = UINT64_C(14695981039346656037);
@@ -28,23 +28,23 @@ template <typename Bytes> uint64_t imageChecksum(const Bytes &bytes) {
 }
 
 TEST(GeneratedDesignDatabase, InterfaceCallDispatch) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -61,10 +61,10 @@ TEST(GeneratedDesignDatabase, InterfaceCallDispatch) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
   // The call's physical top never filters compatible instances (25.9).
   // Extern functions name their provider; forkjoin tasks invoke their retained
   // aggregation declaration, including an empty provider list (25.7.4).
@@ -75,12 +75,12 @@ TEST(GeneratedDesignDatabase, InterfaceCallDispatch) {
     SCOPED_TRACE(call);
     for (uint64_t callee : {0,  44, 45, 47, 48, 54, 57, 60,  64,  70, 71,
                             72, 73, 74, 75, 76, 80, 90, 100, 101, 999})
-      EXPECT_EQ(obelisk_rt_cached_vpi_call_target(runtime, 10 + call, callee),
-                expected[call].count(callee) ? OBELISK_RT_OK : OBELISK_RT_EOF);
+      EXPECT_EQ(talos_rt_cached_vpi_call_target(runtime, 10 + call, callee),
+                expected[call].count(callee) ? TALOS_RT_OK : TALOS_RT_EOF);
   }
-  EXPECT_EQ(obelisk_rt_cached_vpi_call_target(runtime, 999, 45),
-            OBELISK_RT_EOF);
-  obelisk_rt_v1_context_destroy(runtime);
+  EXPECT_EQ(talos_rt_cached_vpi_call_target(runtime, 999, 45),
+            TALOS_RT_EOF);
+  talos_rt_v1_context_destroy(runtime);
 
   const auto &image = encoded->designDatabase;
   HeaderView header(image.data());
@@ -204,8 +204,8 @@ TEST(GeneratedDesignDatabase, InterfaceCallDispatch) {
     auto corrupt = execution;
     corrupt.design_database = bytes.data();
     corrupt.design_database_size = bytes.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&corrupt),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&corrupt),
+              TALOS_RT_INVALID_DESIGN);
   };
   for (uint32_t flags : {1, 4, 7, 13})
     invalid("invalid call proof flags", [&](auto &bytes) {

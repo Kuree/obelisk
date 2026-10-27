@@ -1,6 +1,0 @@
-// Runtime semantics for ../Conversion/obelisk-to-simulation-program-final-region.mlir.
-
-// RUN: obelisk-opt %S/../Conversion/obelisk-to-simulation-program-final-region.mlir '--lower-obelisk-to-sim=opt-level=0' --encode-obelisk-sim-to-bytecode='vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
-// RUN: %t.exe
-// RUN: %t.exe --execution-tier=bytecode

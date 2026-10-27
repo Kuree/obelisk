@@ -1,9 +1,9 @@
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=eval --mlir-timing -emit-llvm %s -o %t.ll 2> %t.timing
+// RUN: talos --clocked-kernels=immediate -O3 --native-scheduler=eval --mlir-timing -emit-llvm %s -o %t.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=CADENCE < %t.timing
 // RUN: FileCheck %s --check-prefix=SLOTS < %t.ll
 // RUN: FileCheck %s --check-prefix=NO-QUEUE < %t.ll
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=eval %s -o %t.eval
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.diag
+// RUN: talos --clocked-kernels=immediate -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.diag
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.eval.out
 // RUN: FileCheck %s --check-prefix=DIAG < %t.diag
 
@@ -44,11 +44,11 @@ module native_tier1_clock_cadence;
 endmodule
 
 // CADENCE: periodic signal proof: clocks=1 {{.*}}cadence-outputs=1 periodic-bits={{[2-9]|[1-9][0-9]+}}
-// SLOTS: @__obelisk_eval_nba_slots_
-// SLOTS: define {{.*}}i32 @__obelisk_eval_dispatch_v1
-// NO-QUEUE-NOT: call {{.*}}@obelisk_rt_v1_eval_nba_reserve
+// SLOTS: @__talos_eval_nba_slots_
+// SLOTS: define {{.*}}i32 @__talos_eval_dispatch_v1
+// NO-QUEUE-NOT: call {{.*}}@talos_rt_v1_eval_nba_reserve
 // OUTPUT: cadence pre 34 3 3
 // OUTPUT-NEXT: post 35 4 4
-// DIAG: obelisk-signal-diagnostics
+// DIAG: talos-signal-diagnostics
 // DIAG-SAME: aot_fallbacks=0
 // DIAG-SAME: eval_dispatches={{[1-9][0-9]*}}

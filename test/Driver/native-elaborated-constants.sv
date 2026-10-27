@@ -1,9 +1,9 @@
-// RUN: obelisk -O3 %s -o %t.native
+// RUN: talos -O3 %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s --implicit-check-not=unreachable-param-wait < %t.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
-// RUN: obelisk -emit-sim %s | FileCheck %s --check-prefix=SIM
+// RUN: talos -emit-sim %s | FileCheck %s --check-prefix=SIM
 
 package constant_pkg;
   parameter int PKG_VALUE = 17;

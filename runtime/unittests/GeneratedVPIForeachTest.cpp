@@ -4,10 +4,10 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Runtime/Runtime.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -18,21 +18,21 @@
 
 namespace {
 TEST(GeneratedDesignDatabase, FixedArrayForeach) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
-  obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_VERSION;
+  talos_rt_execution_descriptor_v1 execution{};
+  execution.version = TALOS_RT_VERSION;
   execution.flags = encoded->executionFlags;
   execution.bytecode = encoded->bytecode.data();
   execution.bytecode_size = encoded->bytecode.size();
@@ -41,13 +41,13 @@ TEST(GeneratedDesignDatabase, FixedArrayForeach) {
   execution.state_bit_count = encoded->stateBitCount;
   for (unsigned byte = 0; byte != 8; ++byte)
     execution.checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
   std::vector<vpiHandle> handles;
   auto keep = [&](vpiHandle handle) {
     if (handle)
@@ -138,7 +138,7 @@ TEST(GeneratedDesignDatabase, FixedArrayForeach) {
     for (size_t j = 0; j != i; ++j)
       EXPECT_EQ(vpi_compare_objects(skipped[i], skipped[j]), 0);
   }
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   const auto &image = encoded->designDatabase;
   HeaderView header(image.data());
   SemanticDirectoryView directory(image.data() + header.getReserved());
@@ -171,8 +171,8 @@ TEST(GeneratedDesignDatabase, FixedArrayForeach) {
     auto malformed = execution;
     malformed.design_database = bytes.data();
     malformed.design_database_size = bytes.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&malformed),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&malformed),
+              TALOS_RT_INVALID_DESIGN);
   };
   {
     auto bytes = image;
@@ -267,10 +267,10 @@ TEST(GeneratedDesignDatabase, FixedArrayForeach) {
     // Re-encode a source with only the collection relation retained, so no
     // orphan NullOp or local record independently causes the rejection.
     auto partial = mlir::cast<mlir::ModuleOp>(module->clone());
-    auto partialDesign = *partial.getOps<obelisk::sim::SimDesignOp>().begin();
-    obelisk::sim::SimVPIForeachDeclOp allSkipped;
+    auto partialDesign = *partial.getOps<talos::sim::SimDesignOp>().begin();
+    talos::sim::SimVPIForeachDeclOp allSkipped;
     for (auto declaration :
-         partialDesign.getOps<obelisk::sim::SimVPIForeachDeclOp>())
+         partialDesign.getOps<talos::sim::SimVPIForeachDeclOp>())
       if (llvm::all_of(declaration.getLoopVariables(),
                        [](mlir::Attribute slot) {
                          return mlir::isa<mlir::UnitAttr>(slot);
@@ -278,24 +278,24 @@ TEST(GeneratedDesignDatabase, FixedArrayForeach) {
         allSkipped = declaration;
     ASSERT_TRUE(allSkipped);
     mlir::OpBuilder builder(allSkipped);
-    auto source = obelisk::sim::VPIObjectRefAttr::get(
-        &context, obelisk::sim::VPIObjectRefKind::Statement,
+    auto source = talos::sim::VPIObjectRefAttr::get(
+        &context, talos::sim::VPIObjectRefKind::Statement,
         allSkipped.getStatementIdAttr());
-    obelisk::sim::SimVPIRelationDeclOp::create(
+    talos::sim::SimVPIRelationDeclOp::create(
         builder, allSkipped.getLoc(), source, vpiVariables,
-        obelisk::sim::VPIRelationMode::Iterate, 0, allSkipped.getCollection());
+        talos::sim::VPIRelationMode::Iterate, 0, allSkipped.getCollection());
     allSkipped.erase();
-    auto incomplete = obelisk::encodeSimulationDesign(partialDesign, options);
+    auto incomplete = talos::encodeSimulationDesign(partialDesign, options);
     ASSERT_TRUE(mlir::succeeded(incomplete));
     auto malformed = execution;
     malformed.design_database = incomplete->designDatabase.data();
     malformed.design_database_size = incomplete->designDatabase.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&malformed),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&malformed),
+              TALOS_RT_INVALID_DESIGN);
     partial.erase();
   }
   for (auto handle : handles)
     vpi_release_handle(handle);
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 }
 } // namespace

@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph))'
+// RUN: talos-opt %s --split-input-file --verify-diagnostics \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph))'
 
 // The compute-effect analysis distinguishes mutable variable storage from
 // resolved nets and rejects multiple continuous writers to one variable.

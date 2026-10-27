@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 module attributes {
   // expected-error @below {{random-value reference requires a nonzero width}}

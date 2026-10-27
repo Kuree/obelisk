@@ -2,9 +2,9 @@
 # inventory. The generated files still contain one named concrete `def` per AST
 # kind; generation keeps the source and target dialect lists in lockstep.
 
-function(obelisk_generate_slang_ast_ops dialect output)
+function(talos_generate_slang_ast_ops dialect output)
   file(READ
-    "${PROJECT_SOURCE_DIR}/include/obelisk/Dialect/Slang/SlangASTNodes.def"
+    "${PROJECT_SOURCE_DIR}/include/talos/Dialect/Slang/SlangASTNodes.def"
     inventory)
   string(REGEX MATCHALL
     "SLANG_AST_NODE\\([^,]+, [^,]+, [^)]+\\)"
@@ -12,14 +12,14 @@ function(obelisk_generate_slang_ast_ops dialect output)
 
   if(dialect STREQUAL "slang")
     set(text
-      "include \"obelisk/Dialect/Slang/SlangOpsBase.td\"\n\n")
+      "include \"talos/Dialect/Slang/SlangOpsBase.td\"\n\n")
     set(base "SlangASTNodeOp")
     set(prefix "")
     set(namespace_prefix "")
-  elseif(dialect STREQUAL "obelisk")
+  elseif(dialect STREQUAL "talos")
     set(text
-      "include \"obelisk/Dialect/Obelisk/ObeliskASTOpsBase.td\"\n\n")
-    set(base "ObeliskASTNodeOp")
+      "include \"talos/Dialect/Talos/TalosASTOpsBase.td\"\n\n")
+    set(base "TalosASTNodeOp")
     set(prefix "SV")
     set(namespace_prefix "sv.")
   else()
@@ -83,7 +83,7 @@ function(obelisk_generate_slang_ast_ops dialect output)
     if(dialect STREQUAL "slang")
       set(ir_prefix "Slang")
     else()
-      set(ir_prefix "Obelisk")
+      set(ir_prefix "Talos")
     endif()
 
     set(op_base "${base}")

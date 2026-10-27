@@ -3,20 +3,20 @@
 # simulator output. Relocate the compiler (a hard link, which finds its resources
 # beside the link) so the real support tree is untouched.
 # Flag precedence is checked in lto-options-precedence.test.
-# RUN: mkdir -p %t/bin %t/lib/obelisk/targets/%target_triple
-# RUN: ln -f %obelisk %t/bin/obelisk
-# RUN: touch %t/lib/obelisk/targets/%target_triple/.complete %t/lib/obelisk/targets/%target_triple/clang_rt.crtbegin.o
+# RUN: mkdir -p %t/bin %t/lib/talos/targets/%target_triple
+# RUN: ln -f %talos %t/bin/talos
+# RUN: touch %t/lib/talos/targets/%target_triple/.complete %t/lib/talos/targets/%target_triple/clang_rt.crtbegin.o
 
 # The default is non-LTO, including at the implicit -O3. -flto opts in only
 # above -O0, and whole-design bytecode follows the same runtime-link policy.
-# RUN: not %t/bin/obelisk %S/no-lto.sv -o %t/default 2>&1 | FileCheck %s --check-prefix=OBJECT
-# RUN: not %t/bin/obelisk -O0 -flto %S/no-lto.sv -o %t/o0-lto 2>&1 | FileCheck %s --check-prefix=OBJECT
-# RUN: not %t/bin/obelisk -O3 -flto %S/no-lto.sv -o %t/o3-lto 2>&1 | FileCheck %s --check-prefix=LTO
-# RUN: not %t/bin/obelisk --execution-tier=bytecode -flto %S/no-lto.sv -o %t/bytecode-lto 2>&1 | FileCheck %s --check-prefix=LTO
+# RUN: not %t/bin/talos %S/no-lto.sv -o %t/default 2>&1 | FileCheck %s --check-prefix=OBJECT
+# RUN: not %t/bin/talos -O0 -flto %S/no-lto.sv -o %t/o0-lto 2>&1 | FileCheck %s --check-prefix=OBJECT
+# RUN: not %t/bin/talos -O3 -flto %S/no-lto.sv -o %t/o3-lto 2>&1 | FileCheck %s --check-prefix=LTO
+# RUN: not %t/bin/talos --execution-tier=bytecode -flto %S/no-lto.sv -o %t/bytecode-lto 2>&1 | FileCheck %s --check-prefix=LTO
 
-# RUN: obelisk --help | FileCheck %s --check-prefix=HELP
+# RUN: talos --help | FileCheck %s --check-prefix=HELP
 # HELP: -flto {{ *}}Enable LTO above -O0 (ThinLTO for partitioned native designs)
 # HELP: -fno-lto {{ *}}Disable LTO and link the object runtime archive (default)
 
-# OBJECT: obelisk: error: native support is missing '{{.*[\\/]}}libobelisk_rt.a'
-# LTO: obelisk: error: native support is missing '{{.*[\\/]}}libobelisk_rt_lto.a'
+# OBJECT: talos: error: native support is missing '{{.*[\\/]}}libtalos_rt.a'
+# LTO: talos: error: native support is missing '{{.*[\\/]}}libtalos_rt_lto.a'

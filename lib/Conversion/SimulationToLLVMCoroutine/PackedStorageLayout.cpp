@@ -2,15 +2,15 @@
 
 #include "PackedStorageLayout.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/TargetParser/Triple.h"
 
 using namespace mlir;
-namespace obelisk::detail {
+namespace talos::detail {
 
 PackedStorageLayout::PackedStorageLayout(ModuleOp module,
                                          const llvm::DataLayout &layout)
@@ -144,4 +144,4 @@ std::optional<PackedAccessUnit> PackedStorageLayout::get(
   return std::nullopt;
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

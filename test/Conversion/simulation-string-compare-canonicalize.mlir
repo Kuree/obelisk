@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
 
 module {
   // This is the Simulation IR shape produced for a string selector tested

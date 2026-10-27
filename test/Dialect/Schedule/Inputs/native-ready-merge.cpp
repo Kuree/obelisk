@@ -1,10 +1,10 @@
-#include "obelisk/Runtime/ReadySet.h"
+#include "talos/Runtime/ReadySet.h"
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
 
-using obelisk::runtime::ReadySetLayout;
-using obelisk::runtime::ReadySetView;
+using talos::runtime::ReadySetLayout;
+using talos::runtime::ReadySetView;
 extern "C" {
 #define MERGE(N) void merge_##N(uint64_t *, uint64_t *);
 MERGE(1)

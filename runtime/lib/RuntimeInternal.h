@@ -1,8 +1,8 @@
 //===- RuntimeInternal.h - Shared native runtime internals -------*- C++
 //-*-===//
 
-#ifndef OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H
-#define OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H
+#ifndef TALOS_RUNTIME_LIB_RUNTIMEINTERNAL_H
+#define TALOS_RUNTIME_LIB_RUNTIMEINTERNAL_H
 
 #include "../../lib/Coverage/CoverageIndex.h"
 #include "CanonicalPlane.h"
@@ -10,11 +10,11 @@
 #include "ExceptionSupport.h"
 #include "StrengthFormat.h"
 #include "TimedUpdateQueue.h"
-#include "obelisk/Coverage/CoverageDatabase.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Runtime/EvalNBAQueue.h"
-#include "obelisk/Runtime/ReadySet.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Coverage/CoverageDatabase.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Runtime/EvalNBAQueue.h"
+#include "talos/Runtime/ReadySet.h"
+#include "talos/Runtime/Runtime.h"
 
 #include <algorithm>
 #include <array>
@@ -42,15 +42,15 @@
 // different section naming rules, while WebAssembly has a single code section.
 #if defined(__ELF__) && (defined(__clang__) || defined(__GNUC__)) &&           \
     !defined(__wasm__)
-#define OBELISK_RT_FEATURE_TEXT                                                \
-  __attribute__((noinline, cold, section(".obelisk.feature.text")))
-#define OBELISK_RT_FEATURE_HELPER                                              \
-  __attribute__((section(".obelisk.feature.text")))
-#define OBELISK_RT_RECURSIVE_BITSTREAM_TEXT                                    \
+#define TALOS_RT_FEATURE_TEXT                                                \
+  __attribute__((noinline, cold, section(".talos.feature.text")))
+#define TALOS_RT_FEATURE_HELPER                                              \
+  __attribute__((section(".talos.feature.text")))
+#define TALOS_RT_RECURSIVE_BITSTREAM_TEXT                                    \
   __attribute__((noinline, cold,                                               \
-                 section(".obelisk.feature.recursive_bitstream.text")))
-#define OBELISK_RT_RECURSIVE_BITSTREAM_HELPER                                  \
-  __attribute__((section(".obelisk.feature.recursive_bitstream.text")))
+                 section(".talos.feature.recursive_bitstream.text")))
+#define TALOS_RT_RECURSIVE_BITSTREAM_HELPER                                  \
+  __attribute__((section(".talos.feature.recursive_bitstream.text")))
 
 // Do not apply the explicit section attributes to closure call operators.
 // GCC emits closures as COMDAT functions and, on AArch64, rejects mixing them
@@ -61,32 +61,32 @@
 // WebAssembly has a single code section, so it cannot provide the ELF-style
 // feature text section above.  Keep feature services out of their callers and
 // give the backend its portable cold-placement hint instead.
-#define OBELISK_RT_FEATURE_TEXT __attribute__((noinline, cold))
-#define OBELISK_RT_FEATURE_HELPER
-#define OBELISK_RT_RECURSIVE_BITSTREAM_TEXT __attribute__((noinline, cold))
-#define OBELISK_RT_RECURSIVE_BITSTREAM_HELPER
+#define TALOS_RT_FEATURE_TEXT __attribute__((noinline, cold))
+#define TALOS_RT_FEATURE_HELPER
+#define TALOS_RT_RECURSIVE_BITSTREAM_TEXT __attribute__((noinline, cold))
+#define TALOS_RT_RECURSIVE_BITSTREAM_HELPER
 #else
-#define OBELISK_RT_FEATURE_TEXT
-#define OBELISK_RT_FEATURE_HELPER
-#define OBELISK_RT_RECURSIVE_BITSTREAM_TEXT
-#define OBELISK_RT_RECURSIVE_BITSTREAM_HELPER
+#define TALOS_RT_FEATURE_TEXT
+#define TALOS_RT_FEATURE_HELPER
+#define TALOS_RT_RECURSIVE_BITSTREAM_TEXT
+#define TALOS_RT_RECURSIVE_BITSTREAM_HELPER
 #endif
 
-constexpr uint64_t OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG =
-    OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+constexpr uint64_t TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG =
+    TALOS_RT_LOGICAL_PROCESS_NATIVE_TAG;
 
 /// Decode the fixed-width managed-word ABI without truncating it on 32-bit
 /// targets. Heap objects are aligned and therefore always use tag zero.
-inline obelisk_rt_object_v1 *
-obelisk_rt_object_from_managed_word(obelisk_rt_managed_word_v1 word) noexcept {
+inline talos_rt_object_v1 *
+talos_rt_object_from_managed_word(talos_rt_managed_word_v1 word) noexcept {
   if (word > std::numeric_limits<uintptr_t>::max() || (word & UINT64_C(3)) != 0)
     return nullptr;
-  return reinterpret_cast<obelisk_rt_object_v1 *>(static_cast<uintptr_t>(word));
+  return reinterpret_cast<talos_rt_object_v1 *>(static_cast<uintptr_t>(word));
 }
 
-inline obelisk_rt_managed_word_v1 obelisk_rt_managed_word_from_object(
-    const obelisk_rt_object_v1 *object) noexcept {
-  return static_cast<obelisk_rt_managed_word_v1>(
+inline talos_rt_managed_word_v1 talos_rt_managed_word_from_object(
+    const talos_rt_object_v1 *object) noexcept {
+  return static_cast<talos_rt_managed_word_v1>(
       reinterpret_cast<uintptr_t>(object));
 }
 
@@ -94,18 +94,18 @@ inline obelisk_rt_managed_word_v1 obelisk_rt_managed_word_from_object(
 // wasm runtime is compiled with -fno-exceptions and a noexcept libc++, so
 // explicitly detected unrepresentable allocations follow the same fatal path
 // as allocator failures there.
-[[noreturn]] inline void obelisk_rt_out_of_memory() {
-#if !defined(OBELISK_RT_IGNORE_EXCEPTIONS) &&                                  \
+[[noreturn]] inline void talos_rt_out_of_memory() {
+#if !defined(TALOS_RT_IGNORE_EXCEPTIONS) &&                                  \
     (defined(__cpp_exceptions) || defined(_CPPUNWIND))
   throw std::bad_alloc();
 #else
-  std::fputs("obelisk runtime: out of memory\n", stderr);
+  std::fputs("talos runtime: out of memory\n", stderr);
   std::abort();
 #endif
 }
 
 inline std::optional<uint64_t>
-obelisk_rt_scan_raw_size(uint64_t bitWidth, bool fourState) noexcept {
+talos_rt_scan_raw_size(uint64_t bitWidth, bool fourState) noexcept {
   if (bitWidth == 0 || bitWidth > UINT64_MAX - 31)
     return std::nullopt;
   uint64_t words = (bitWidth + 31) / 32;
@@ -115,12 +115,12 @@ obelisk_rt_scan_raw_size(uint64_t bitWidth, bool fourState) noexcept {
   return words * bytesPerWord;
 }
 
-inline bool obelisk_rt_decode_scan_raw(const char *input, uint64_t inputSize,
+inline bool talos_rt_decode_scan_raw(const char *input, uint64_t inputSize,
                                        uint64_t bitWidth, bool fourState,
                                        void *value, uint64_t valueSize,
                                        void *unknown,
                                        uint64_t unknownSize) noexcept {
-  auto rawSize = obelisk_rt_scan_raw_size(bitWidth, fourState);
+  auto rawSize = talos_rt_scan_raw_size(bitWidth, fourState);
   if (!rawSize || inputSize != *rawSize || bitWidth > UINT64_MAX - 7)
     return false;
   uint64_t packedSize = (bitWidth + 7) / 8;
@@ -177,14 +177,14 @@ struct FileEntry {
   std::string name{};
 };
 
-bool obelisk_rt_file_name_unlocked(obelisk_rt_context *context,
+bool talos_rt_file_name_unlocked(talos_rt_context *context,
                                    uint32_t descriptor,
                                    std::string_view &name) noexcept;
 
 // std::from_chars(first, last, value, std::chars_format::general) for double.
 // libc++ provides that overload only from macOS 26, so the runtime matches its
 // subject sequence itself and converts it in the "C" locale.
-std::from_chars_result obelisk_rt_from_chars_real(const char *first,
+std::from_chars_result talos_rt_from_chars_real(const char *first,
                                                   const char *last,
                                                   double &value);
 
@@ -210,7 +210,7 @@ struct DynamicScanCacheEntry {
   uint64_t hash = 0;
   uint64_t size = 0;
   uint64_t identity = 0;
-  obelisk_rt_string_v1 inlineValue = 0;
+  talos_rt_string_v1 inlineValue = 0;
   std::shared_ptr<const DynamicScanPlan> plan;
 };
 
@@ -222,14 +222,14 @@ struct DynamicScanState {
   uint64_t contentCompareBytes = 0;
 };
 
-obelisk_rt_status obelisk_rt_dynamic_scan_plan(
-    obelisk_rt_context *context, obelisk_rt_string_v1 format,
+talos_rt_status talos_rt_dynamic_scan_plan(
+    talos_rt_context *context, talos_rt_string_v1 format,
     std::shared_ptr<const DynamicScanPlan> &plan) noexcept;
 
 struct OwnedElementTypeDescriptor {
-  obelisk_rt_element_type_v1 descriptor{};
-  obelisk_rt_trace_layout_v1 trace{};
-  std::vector<obelisk_rt_trace_entry_v1> entries;
+  talos_rt_element_type_v1 descriptor{};
+  talos_rt_trace_layout_v1 trace{};
+  std::vector<talos_rt_trace_entry_v1> entries;
   std::shared_ptr<const std::vector<uint64_t>> pattern;
   std::shared_ptr<const std::vector<uint8_t>> defaultImage;
 };
@@ -237,15 +237,15 @@ struct OwnedElementTypeDescriptor {
 // Append an IEEE-style recursive assignment-pattern representation of a
 // managed sequential container. This is shared by display formatting while
 // keeping the container storage layout private to Containers.cpp.
-obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
+talos_rt_status talos_rt_container_pattern(talos_rt_object_v1 *container,
                                                std::string &output,
                                                unsigned depth);
 
 // Append the characters of a managed dynamic array or queue of 8-bit
 // integral elements, as %s formats an unpacked array of byte (IEEE 1800-2023
 // 21.2.1.7). Any other container is an argument mismatch.
-obelisk_rt_status
-obelisk_rt_container_byte_text(obelisk_rt_object_v1 *container,
+talos_rt_status
+talos_rt_container_byte_text(talos_rt_object_v1 *container,
                                std::string &output);
 
 struct CoverageTupleQueueSnapshot {
@@ -269,8 +269,8 @@ struct CoverageSetSnapshot {
 // Validate and copy one transient CrossQueueType before functional coverage
 // resolution. Container internals remain private; Coverage.cpp receives only
 // canonical logical-order planes and never retains the managed owner.
-obelisk_rt_status obelisk_rt_coverage_tuple_queue_snapshot(
-    obelisk_rt_context *context, obelisk_rt_object_v1 *queue,
+talos_rt_status talos_rt_coverage_tuple_queue_snapshot(
+    talos_rt_context *context, talos_rt_object_v1 *queue,
     uint64_t expectedElementType, uint64_t expectedProvenanceSpan,
     bool expectedFourState, uint64_t maximumElements,
     CoverageTupleQueueSnapshot &output);
@@ -278,23 +278,23 @@ obelisk_rt_status obelisk_rt_coverage_tuple_queue_snapshot(
 // Private constructor staging. Tokens belong to one context; preparation
 // resolves point bins without publishing a configuration or instance. Candidate
 // snapshots contain distinct selected value tuples in CrossValType layout.
-obelisk_rt_status obelisk_rt_coverage_prepare_construction(
-    obelisk_rt_context *context, uint64_t type,
-    const obelisk_rt_functional_value_v1 *expressions, uint64_t expressionCount,
+talos_rt_status talos_rt_coverage_prepare_construction(
+    talos_rt_context *context, uint64_t type,
+    const talos_rt_functional_value_v1 *expressions, uint64_t expressionCount,
     uint64_t *outToken);
-obelisk_rt_status obelisk_rt_coverage_prepared_candidates(
-    obelisk_rt_context *context, uint64_t token, uint64_t selector,
+talos_rt_status talos_rt_coverage_prepared_candidates(
+    talos_rt_context *context, uint64_t token, uint64_t selector,
     uint32_t maximumCandidates, CoverageTupleQueueSnapshot &output);
-obelisk_rt_status
-obelisk_rt_coverage_release_preparation(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_coverage_release_preparation(talos_rt_context *context,
                                         uint64_t token);
 
 // Validate and copy one transient state-bin set expression before functional
 // coverage resolution. Both dynamic arrays and queues are accepted and queue
 // storage is linearized in logical index order. Coverage.cpp receives only
 // canonical planes and never retains the managed owner.
-obelisk_rt_status obelisk_rt_coverage_set_snapshot(
-    obelisk_rt_context *context, obelisk_rt_object_v1 *container,
+talos_rt_status talos_rt_coverage_set_snapshot(
+    talos_rt_context *context, talos_rt_object_v1 *container,
     uint64_t expectedBitWidth, uint32_t expectedElementKind,
     bool expectedFourState, uint64_t maximumElements,
     CoverageSetSnapshot &output);
@@ -339,7 +339,7 @@ public:
   }
 
   InsertResult insert(uint64_t token,
-                      const obelisk_rt_random_state_v1 &randomState) {
+                      const talos_rt_random_state_v1 &randomState) {
     auto state = std::lower_bound(
         randomStates.begin(), randomStates.end(), token,
         [](const auto &entry, uint64_t value) { return entry.first < value; });
@@ -348,15 +348,15 @@ public:
       return insert(token);
     }
     randomStates.insert(state, {token, randomState});
-    OBELISK_RT_TRY { return insert(token); }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_TRY { return insert(token); }
+    TALOS_RT_CATCH_ALL {
       state = std::lower_bound(randomStates.begin(), randomStates.end(), token,
                                [](const auto &entry, uint64_t value) {
                                  return entry.first < value;
                                });
       if (state != randomStates.end() && state->first == token)
         randomStates.erase(state);
-      OBELISK_RT_RETHROW;
+      TALOS_RT_RETHROW;
     }
   }
 
@@ -406,7 +406,7 @@ public:
   }
   size_t rangeCount() const { return ranges.size(); }
   size_t randomStateCount() const { return randomStates.size(); }
-  obelisk_rt_random_state_v1 *randomState(uint64_t token) {
+  talos_rt_random_state_v1 *randomState(uint64_t token) {
     auto found = std::lower_bound(
         randomStates.begin(), randomStates.end(), token,
         [](const auto &entry, uint64_t value) { return entry.first < value; });
@@ -417,7 +417,7 @@ public:
 
 private:
   std::vector<std::pair<uint64_t, uint64_t>> ranges;
-  std::vector<std::pair<uint64_t, obelisk_rt_random_state_v1>> randomStates;
+  std::vector<std::pair<uint64_t, talos_rt_random_state_v1>> randomStates;
 };
 
 // Small persistent design frames are recycled within a simulation context.
@@ -480,12 +480,12 @@ public:
         break;
     }
 
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       Bucket &bucket = buckets[bucketIndex(capacity)];
       std::lock_guard<std::mutex> lock(bucket.mutex);
       bucket.buffers.push_back(std::move(buffer));
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       cachedBytes.fetch_sub(capacity, std::memory_order_relaxed);
       cachedBufferCount.fetch_sub(1, std::memory_order_relaxed);
       // Recycling is an optimization; the buffer is freed by its destructor.
@@ -527,93 +527,93 @@ private:
   std::atomic<size_t> cachedBufferCount{0};
 };
 
-inline bool obelisk_rt_is_process_home_region(uint32_t region) {
-  return region == OBELISK_RT_REGION_ACTIVE ||
-         region == OBELISK_RT_REGION_OBSERVED ||
-         region == OBELISK_RT_REGION_REACTIVE ||
-         region == OBELISK_RT_REGION_POSTPONED;
+inline bool talos_rt_is_process_home_region(uint32_t region) {
+  return region == TALOS_RT_REGION_ACTIVE ||
+         region == TALOS_RT_REGION_OBSERVED ||
+         region == TALOS_RT_REGION_REACTIVE ||
+         region == TALOS_RT_REGION_POSTPONED;
 }
 
-inline bool obelisk_rt_is_mutable_home_region(uint32_t region) {
-  return region == OBELISK_RT_REGION_ACTIVE ||
-         region == OBELISK_RT_REGION_REACTIVE;
+inline bool talos_rt_is_mutable_home_region(uint32_t region) {
+  return region == TALOS_RT_REGION_ACTIVE ||
+         region == TALOS_RT_REGION_REACTIVE;
 }
 
 /// A region a suspension may resume in: a home region, or the Inactive
 /// (Re-Inactive) region that follows a mutable home. The latter is checked
 /// against the actual home when the process suspends.
-inline bool obelisk_rt_is_process_resume_region(uint32_t region) {
-  return obelisk_rt_is_process_home_region(region) ||
-         region == OBELISK_RT_REGION_INACTIVE ||
-         region == OBELISK_RT_REGION_RE_INACTIVE;
+inline bool talos_rt_is_process_resume_region(uint32_t region) {
+  return talos_rt_is_process_home_region(region) ||
+         region == TALOS_RT_REGION_INACTIVE ||
+         region == TALOS_RT_REGION_RE_INACTIVE;
 }
 
 /// The action flag bits that describe where a suspension resumes.
 inline constexpr uint32_t kResumeActionFlags =
-    OBELISK_RT_ACTION_RESUME_REGION_VALID |
-    OBELISK_RT_ACTION_RESUME_REGION_MASK |
-    OBELISK_RT_ACTION_RESUME_POST_OBSERVED;
+    TALOS_RT_ACTION_RESUME_REGION_VALID |
+    TALOS_RT_ACTION_RESUME_REGION_MASK |
+    TALOS_RT_ACTION_RESUME_POST_OBSERVED;
 
 /// Whether the resume bits of `flags` are well formed: no override, one
 /// explicit resume region, or the post-Observed iteration of the home region.
-inline bool obelisk_rt_valid_resume_action_flags(uint32_t flags) {
-  uint32_t region = (flags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
-                    OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
-  if ((flags & OBELISK_RT_ACTION_RESUME_REGION_VALID) == 0)
+inline bool talos_rt_valid_resume_action_flags(uint32_t flags) {
+  uint32_t region = (flags & TALOS_RT_ACTION_RESUME_REGION_MASK) >>
+                    TALOS_RT_ACTION_RESUME_REGION_SHIFT;
+  if ((flags & TALOS_RT_ACTION_RESUME_REGION_VALID) == 0)
     return region == 0;
-  return (flags & OBELISK_RT_ACTION_RESUME_POST_OBSERVED) == 0 &&
-         obelisk_rt_is_process_resume_region(region);
+  return (flags & TALOS_RT_ACTION_RESUME_POST_OBSERVED) == 0 &&
+         talos_rt_is_process_resume_region(region);
 }
 
-inline bool obelisk_rt_decode_schedule_flags(uint32_t flags, uint32_t &phase,
+inline bool talos_rt_decode_schedule_flags(uint32_t flags, uint32_t &phase,
                                              uint32_t &homeRegion) {
   constexpr uint32_t known =
-      OBELISK_RT_SCHEDULE_FINAL | OBELISK_RT_SCHEDULE_HOME_MASK |
-      OBELISK_RT_SCHEDULE_INITIAL | OBELISK_RT_SCHEDULE_STARTUP |
-      OBELISK_RT_SCHEDULE_DETACHED_CONTROLS |
-      OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL | OBELISK_RT_SCHEDULE_ROOT;
+      TALOS_RT_SCHEDULE_FINAL | TALOS_RT_SCHEDULE_HOME_MASK |
+      TALOS_RT_SCHEDULE_INITIAL | TALOS_RT_SCHEDULE_STARTUP |
+      TALOS_RT_SCHEDULE_DETACHED_CONTROLS |
+      TALOS_RT_SCHEDULE_PRIORITY_SIGNAL | TALOS_RT_SCHEDULE_ROOT;
   if ((flags & ~known) != 0)
     return false;
-  phase = (flags & OBELISK_RT_SCHEDULE_FINAL) != 0 ? 1u : 0u;
+  phase = (flags & TALOS_RT_SCHEDULE_FINAL) != 0 ? 1u : 0u;
   homeRegion =
-      (flags & OBELISK_RT_SCHEDULE_HOME_MASK) >> OBELISK_RT_SCHEDULE_HOME_SHIFT;
-  return obelisk_rt_is_process_home_region(homeRegion) &&
-         (phase == 0 || homeRegion == OBELISK_RT_REGION_ACTIVE);
+      (flags & TALOS_RT_SCHEDULE_HOME_MASK) >> TALOS_RT_SCHEDULE_HOME_SHIFT;
+  return talos_rt_is_process_home_region(homeRegion) &&
+         (phase == 0 || homeRegion == TALOS_RT_REGION_ACTIVE);
 }
 
 /// Computes the region a suspension queues its resumption in. A post-Observed
 /// resumption of an Active-home process queues with Observed and sets
 /// `postObserved`, which orders it after all other work there.
 inline bool
-obelisk_rt_next_queued_region(uint32_t homeRegion, uint32_t suspendKind,
+talos_rt_next_queued_region(uint32_t homeRegion, uint32_t suspendKind,
                               uint64_t delayPayload, uint32_t actionFlags,
                               uint32_t &queuedRegion, bool &postObserved) {
   if ((actionFlags &
-       ~(OBELISK_RT_ACTION_FRAME_WAIT_RECORD | kResumeActionFlags)) != 0 ||
-      !obelisk_rt_valid_resume_action_flags(actionFlags))
+       ~(TALOS_RT_ACTION_FRAME_WAIT_RECORD | kResumeActionFlags)) != 0 ||
+      !talos_rt_valid_resume_action_flags(actionFlags))
     return false;
   postObserved = false;
-  if ((actionFlags & OBELISK_RT_ACTION_RESUME_POST_OBSERVED) != 0) {
+  if ((actionFlags & TALOS_RT_ACTION_RESUME_POST_OBSERVED) != 0) {
     // IEEE 1800-2023 9.4.2.4, 14.10: the process executes in the first
     // iteration of its home region set after the Observed region.
-    if (!obelisk_rt_is_mutable_home_region(homeRegion))
+    if (!talos_rt_is_mutable_home_region(homeRegion))
       return false;
-    postObserved = homeRegion == OBELISK_RT_REGION_ACTIVE;
-    queuedRegion = postObserved ? OBELISK_RT_REGION_OBSERVED : homeRegion;
+    postObserved = homeRegion == TALOS_RT_REGION_ACTIVE;
+    queuedRegion = postObserved ? TALOS_RT_REGION_OBSERVED : homeRegion;
     return true;
   }
-  if ((actionFlags & OBELISK_RT_ACTION_RESUME_REGION_VALID) != 0) {
-    queuedRegion = (actionFlags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
-                   OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
+  if ((actionFlags & TALOS_RT_ACTION_RESUME_REGION_VALID) != 0) {
+    queuedRegion = (actionFlags & TALOS_RT_ACTION_RESUME_REGION_MASK) >>
+                   TALOS_RT_ACTION_RESUME_REGION_SHIFT;
     // IEEE 1800-2023 4.4.2.3: resuming in the Inactive region of the home
     // iteration is the resumption `@(event) #0` would make, in one step.
-    if (obelisk_rt_is_mutable_home_region(homeRegion) &&
+    if (talos_rt_is_mutable_home_region(homeRegion) &&
         queuedRegion == homeRegion + 1)
       return true;
-    return obelisk_rt_is_process_home_region(queuedRegion);
+    return talos_rt_is_process_home_region(queuedRegion);
   }
-  if (suspendKind == OBELISK_RT_SUSPEND_DELAY && delayPayload == 0) {
-    if (!obelisk_rt_is_mutable_home_region(homeRegion))
+  if (suspendKind == TALOS_RT_SUSPEND_DELAY && delayPayload == 0) {
+    if (!talos_rt_is_mutable_home_region(homeRegion))
       return false;
     queuedRegion = homeRegion + 1;
     return true;
@@ -622,8 +622,8 @@ obelisk_rt_next_queued_region(uint32_t homeRegion, uint32_t suspendKind,
   return true;
 }
 
-inline uint32_t obelisk_rt_commit_region(uint32_t homeRegion) {
-  return obelisk_rt_is_mutable_home_region(homeRegion) ? homeRegion + 2
+inline uint32_t talos_rt_commit_region(uint32_t homeRegion) {
+  return talos_rt_is_mutable_home_region(homeRegion) ? homeRegion + 2
                                                        : UINT32_MAX;
 }
 
@@ -643,8 +643,8 @@ struct ProcessCallerDepths {
 };
 
 struct ScheduledProcess {
-  obelisk_rt_process_instance_v1 *instance = nullptr;
-  std::vector<obelisk_rt_process_instance_v1 *> callers;
+  talos_rt_process_instance_v1 *instance = nullptr;
+  std::vector<talos_rt_process_instance_v1 *> callers;
   // Control-stack size immediately before each corresponding task call.
   // This identifies the caller continuation to restore when a live task
   // activation is disabled from another logical process.
@@ -673,18 +673,18 @@ struct ScheduledProcess {
   // layout or continuation inventory. Park that binding until the outermost
   // task returns; unrelated AOT slots remain executable in the shared loop.
   uint32_t suspendedAOTActorSlot = UINT32_MAX;
-  uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
+  uint32_t suspendKind = TALOS_RT_SUSPEND_NONE;
   uint32_t phase = 0;
-  uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
+  uint32_t homeRegion = TALOS_RT_REGION_ACTIVE;
   uint32_t scheduleRank = UINT32_MAX;
   uint64_t insertionSequence = 0;
   uint64_t waitSequence = 0;
-  obelisk_rt_random_state_v1 random{};
+  talos_rt_random_state_v1 random{};
   // Executable event-region ordinal. Normally the immutable home region,
   // temporarily an inactive region after #0 or an explicit resume override.
   uint32_t queuedRegion = 0;
   // Set with a post-Observed resumption queued in Observed; meaningful only
-  // while queuedRegion is Observed (see obelisk_rt_scheduler_rank).
+  // while queuedRegion is Observed (see talos_rt_scheduler_rank).
   bool postObserved = false;
   bool started = false;
   bool urgent = false;
@@ -699,21 +699,21 @@ struct ScheduledProcess {
   bool computedObserverWaitRegistered = false;
 };
 
-obelisk_rt_status obelisk_rt_mailbox_wait_ready(obelisk_rt_object_v1 *mailbox,
+talos_rt_status talos_rt_mailbox_wait_ready(talos_rt_object_v1 *mailbox,
                                                 uint32_t predicate,
                                                 bool &ready);
-obelisk_rt_status
-obelisk_rt_semaphore_keys_ready(obelisk_rt_object_v1 *semaphore, int32_t keys,
+talos_rt_status
+talos_rt_semaphore_keys_ready(talos_rt_object_v1 *semaphore, int32_t keys,
                                 bool &ready);
-obelisk_rt_status
-obelisk_rt_semaphore_try_get_raw(obelisk_rt_object_v1 *semaphore, int32_t keys,
+talos_rt_status
+talos_rt_semaphore_try_get_raw(talos_rt_object_v1 *semaphore, int32_t keys,
                                  uint32_t *outSuccess);
-obelisk_rt_status
-obelisk_rt_semaphore_wait_ready(obelisk_rt_context *context,
-                                obelisk_rt_object_v1 *semaphore, int32_t keys,
+talos_rt_status
+talos_rt_semaphore_wait_ready(talos_rt_context *context,
+                                talos_rt_object_v1 *semaphore, int32_t keys,
                                 uint64_t waitSequence, bool &ready);
-obelisk_rt_status
-obelisk_rt_semaphore_wait_acquire(const obelisk_rt_wait_record_v1 *wait,
+talos_rt_status
+talos_rt_semaphore_wait_acquire(const talos_rt_wait_record_v1 *wait,
                                   bool &acquired);
 
 struct SignalValueSnapshot {
@@ -727,21 +727,21 @@ struct SignalValueSnapshot {
 // allocation, changes scheduler status, nor supplies executable out-of-range
 // fallback bits. The caller keeps an active GC lane while consuming managed
 // words copied from a successful read.
-obelisk_rt_status obelisk_rt_vpi_automatic_validate(obelisk_rt_context *context,
+talos_rt_status talos_rt_vpi_automatic_validate(talos_rt_context *context,
                                                     uint64_t reference,
                                                     uint64_t bitWidth) noexcept;
-obelisk_rt_status
-obelisk_rt_vpi_automatic_read(obelisk_rt_context *context, uint64_t reference,
+talos_rt_status
+talos_rt_vpi_automatic_read(talos_rt_context *context, uint64_t reference,
                               uint64_t bitOffset, uint64_t bitWidth,
                               uint8_t *outValue, uint8_t *outUnknown) noexcept;
 
 // Query-only access to a complete stable state reference, including design
 // and static roots. Invalid extents never use executable fallback bits.
-obelisk_rt_status obelisk_rt_vpi_state_validate(obelisk_rt_context *context,
+talos_rt_status talos_rt_vpi_state_validate(talos_rt_context *context,
                                                 uint64_t reference,
                                                 uint64_t bitWidth) noexcept;
-obelisk_rt_status
-obelisk_rt_vpi_state_read(obelisk_rt_context *context, uint64_t reference,
+talos_rt_status
+talos_rt_vpi_state_read(talos_rt_context *context, uint64_t reference,
                           uint64_t bitOffset, uint64_t bitWidth,
                           uint8_t *outValue, uint8_t *outUnknown) noexcept;
 
@@ -751,12 +751,12 @@ struct NativeAutomaticState {
     uint32_t allowedKinds;
   };
   uint64_t bitWidth = 0;
-  obelisk_rt_process_instance_v1 *owner = nullptr;
+  talos_rt_process_instance_v1 *owner = nullptr;
   uint64_t designOwner = 0;
   uint64_t referenceCount = 1;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
-  obelisk_rt_object_v1 *managedValue = nullptr;
+  talos_rt_object_v1 *managedValue = nullptr;
   bool managedRootRegistered = false;
   std::vector<uint64_t> managedRootByteOffsets;
   std::vector<CandidateRoot> candidateRootByteOffsets;
@@ -867,14 +867,14 @@ struct NativeStaticStateRange {
 };
 
 // The generated per-root unknown summary
-// (obelisk_rt_v1_native_state_bind_unknown_summary), which generated code
-// tests directly. With OBELISK_RT_VERIFY_UNKNOWN_SUMMARY set, scheduler steps
+// (talos_rt_v1_native_state_bind_unknown_summary), which generated code
+// tests directly. With TALOS_RT_VERIFY_UNKNOWN_SUMMARY set, scheduler steps
 // and refreshes check the root of every clear bit against its pattern.
 struct NativeUnknownSummary {
   uint64_t *generated = nullptr;
   const uint8_t *plane = nullptr;
   uint64_t planeBits = 0;
-  std::vector<obelisk_rt_native_unknown_root_v1> roots;
+  std::vector<talos_rt_native_unknown_root_v1> roots;
   std::vector<uint64_t> patterns;
   // Root indices sorted by bit offset; roots are disjoint.
   std::vector<uint32_t> byOffset;
@@ -886,13 +886,13 @@ struct NativeUnknownSummary {
   };
   std::vector<Mismatch> mismatches;
   bool verify = false;
-  // Reported with OBELISK_RT_SIGNAL_DIAGNOSTICS.
+  // Reported with TALOS_RT_SIGNAL_DIAGNOSTICS.
   uint64_t refreshes = 0, rescans = 0, cleared = 0, markedAll = 0,
            markedRoots = 0;
 };
 
 // Static transitions merged while one statement executes as one event; see
-// obelisk_rt_v1_scheduler_publication_batch_begin. The window covers
+// talos_rt_v1_scheduler_publication_batch_begin. The window covers
 // kWindowBits root-relative bits from windowLow plus one word of overhang.
 // changed/posedge/negedge accumulate the OR of every write; old* holds each
 // bit before its first write and new* its latest value.
@@ -916,7 +916,7 @@ struct PublicationBatch {
   uint32_t staticID = 0; // zero while the window is empty
   uint64_t logicalProcessToken = 0;
   uint64_t logicalProcessParent = 0;
-  const obelisk_rt_context *aotContext = nullptr;
+  const talos_rt_context *aotContext = nullptr;
   uint64_t rootWidth = 0;
   uint64_t windowLow = 0;
   uint64_t touchedLow = 0;
@@ -931,7 +931,7 @@ struct ScheduledNBA {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
   uint64_t clockingOutput = UINT64_MAX;
-  uint32_t execRegion = OBELISK_RT_REGION_NBA;
+  uint32_t execRegion = TALOS_RT_REGION_NBA;
   uint32_t retainedAutomaticID = 0;
   uint8_t *valuePlane = nullptr;
   uint8_t *unknownPlane = nullptr;
@@ -946,8 +946,8 @@ struct ScheduledNBA {
   uint32_t realWidth = 0;
   bool managedValue = false;
   bool inlinePacked = false;
-  obelisk_rt_string_v1 rootedString = 0;
-  obelisk_rt_object_v1 *rootedManaged = nullptr;
+  talos_rt_string_v1 rootedString = 0;
+  talos_rt_object_v1 *rootedManaged = nullptr;
   uint64_t inlineValue = 0;
   uint64_t inlineUnknown = 0;
   std::vector<uint8_t> value;
@@ -972,7 +972,7 @@ struct StaticNBAAccumulator {
   uint8_t *valuePlane = nullptr;
   uint8_t *unknownPlane = nullptr;
   uint64_t planeBitCount = 0;
-  uint32_t execRegion = OBELISK_RT_REGION_NBA;
+  uint32_t execRegion = TALOS_RT_REGION_NBA;
   uint64_t sequence = 0;
   bool valid = false;
   std::vector<uint64_t> value;
@@ -990,8 +990,8 @@ struct StaticNBAAccumulator {
 struct ScheduledManagedNBA {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
-  uint32_t execRegion = OBELISK_RT_REGION_NBA;
-  obelisk_rt_object_v1 *destination = nullptr;
+  uint32_t execRegion = TALOS_RT_REGION_NBA;
+  talos_rt_object_v1 *destination = nullptr;
   uint64_t offset = 0;
   uint64_t planeSize = 0;
   bool referencePath = false;
@@ -999,20 +999,20 @@ struct ScheduledManagedNBA {
   std::vector<uint8_t> unknown;
   // Empty for a whole-property update; otherwise the bits it replaces.
   std::vector<uint8_t> mask;
-  std::vector<obelisk_rt_object_v1 *> managedValues;
+  std::vector<talos_rt_object_v1 *> managedValues;
 };
 
 struct ScheduledDesignNBA {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
-  uint32_t execRegion = OBELISK_RT_REGION_NBA;
+  uint32_t execRegion = TALOS_RT_REGION_NBA;
   uint32_t handleKind = 0;
   int64_t begin = 0;
   int64_t start = 0;
   int64_t end = 0;
   uint64_t bitWidth = 0;
   bool stringValue = false;
-  obelisk_rt_string_v1 rootedString = 0;
+  talos_rt_string_v1 rootedString = 0;
   std::vector<uint64_t> value;
   std::vector<uint64_t> unknown;
 };
@@ -1020,7 +1020,7 @@ struct ScheduledDesignNBA {
 struct ScheduledDesignEvent {
   uint64_t sequence = 0;
   uint64_t dueTime = 0;
-  uint32_t execRegion = OBELISK_RT_REGION_NBA;
+  uint32_t execRegion = TALOS_RT_REGION_NBA;
   uint64_t stableID = 0;
   uint32_t retainedAutomaticID = 0;
 };
@@ -1082,16 +1082,16 @@ struct ScheduledDesignTask {
   uint32_t waitOrderIndex = 0;
   std::vector<std::unique_ptr<SignalSubscription>> signalSubscriptions;
   std::unique_ptr<SignalWaitLatch> signalLatch;
-  uint32_t suspendKind = OBELISK_RT_SUSPEND_NONE;
+  uint32_t suspendKind = TALOS_RT_SUSPEND_NONE;
   uint32_t phase = 0;
-  uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
+  uint32_t homeRegion = TALOS_RT_REGION_ACTIVE;
   uint32_t scheduleRank = UINT32_MAX;
   uint32_t queuedRegion = 0;
   // See ScheduledProcess::postObserved.
   bool postObserved = false;
   uint64_t insertionSequence = 0;
   uint64_t waitSequence = 0;
-  obelisk_rt_random_state_v1 random{};
+  talos_rt_random_state_v1 random{};
   bool started = false;
   bool urgent = false;
   bool terminated = false;
@@ -1110,9 +1110,9 @@ struct ScheduledDesignTask {
 /// in the first Active iteration after the Observed region, so it follows the
 /// other work queued with Observed, such as clocking-block input samples.
 template <typename Process>
-inline uint32_t obelisk_rt_scheduler_rank(const Process &process) {
+inline uint32_t talos_rt_scheduler_rank(const Process &process) {
   return process.postObserved &&
-                 process.queuedRegion == OBELISK_RT_REGION_OBSERVED
+                 process.queuedRegion == TALOS_RT_REGION_OBSERVED
              ? UINT32_MAX
              : process.scheduleRank;
 }
@@ -1125,10 +1125,10 @@ struct InitializationRandomScopes {
     uint64_t previousScope;
     uint64_t previousProcess;
     uint64_t previousParent;
-    obelisk_rt_random_state_v1 *previousRandom;
+    talos_rt_random_state_v1 *previousRandom;
   };
   // Map nodes keep saved stream pointers stable across nested scope entries.
-  std::map<uint64_t, obelisk_rt_random_state_v1> streams;
+  std::map<uint64_t, talos_rt_random_state_v1> streams;
   std::vector<Activation> activations;
   uint64_t activeScope = 0;
   uint64_t nextToken = 1;
@@ -1226,9 +1226,9 @@ static_assert(sizeof(void *) != 8 || sizeof(SignalSubscription) == 72,
 struct ClockOccurrenceCondition {
   uint64_t stableID = UINT64_MAX;
   uint32_t width = 0;
-  uint32_t predicate = OBELISK_RT_WAIT_CONDITION_KNOWN_ONE;
+  uint32_t predicate = TALOS_RT_WAIT_CONDITION_KNOWN_ONE;
   uint64_t observerCodeUnitID = 0;
-  std::vector<obelisk_rt_computed_capture_v1> observerCaptures;
+  std::vector<talos_rt_computed_capture_v1> observerCaptures;
 
   bool isObserver() const { return observerCodeUnitID != 0; }
 };
@@ -1347,7 +1347,7 @@ struct CovergroupClockEventRegistration {
   // fixed-width v1 records. Own the image in aligned storage so those typed
   // views remain well-defined on hosts with strict alignment requirements.
   std::vector<uint64_t> eventPlan;
-  std::vector<obelisk_rt_computed_capture_v1> captures;
+  std::vector<talos_rt_computed_capture_v1> captures;
   std::vector<std::unique_ptr<CovergroupClockEventClause>> clauses;
 };
 
@@ -1491,7 +1491,7 @@ struct RecursiveWatchGroupState {
 // or execution engine when the feature anchor is absent.
 struct ClassBitstreamState {
   void (*destroy)(ClassBitstreamState *) noexcept = nullptr;
-  void (*notifyRange)(ClassBitstreamState *, obelisk_rt_context *, uint64_t,
+  void (*notifyRange)(ClassBitstreamState *, talos_rt_context *, uint64_t,
                       uint64_t, uint64_t) noexcept = nullptr;
 };
 
@@ -1534,16 +1534,16 @@ public:
       : byteCount((bitWidth + 7) / 8) {
     if (bitWidth > UINT64_MAX - 7 ||
         byteCount > std::numeric_limits<size_t>::max() / uint64_t{3})
-      obelisk_rt_out_of_memory();
+      talos_rt_out_of_memory();
     if (byteCount > kInlineBytes)
       overflow.assign(static_cast<size_t>(byteCount * 3), 0);
   }
 
   void record(uint64_t bit, uint32_t edges) {
     set(changed(), bit);
-    if ((edges & OBELISK_RT_SIGNAL_POSEDGE) != 0)
+    if ((edges & TALOS_RT_SIGNAL_POSEDGE) != 0)
       set(posedge(), bit);
-    if ((edges & OBELISK_RT_SIGNAL_NEGEDGE) != 0)
+    if ((edges & TALOS_RT_SIGNAL_NEGEDGE) != 0)
       set(negedge(), bit);
   }
 
@@ -1567,7 +1567,7 @@ private:
 };
 
 struct ImportBinding {
-  obelisk_rt_import_callback_v1 callback = nullptr;
+  talos_rt_import_callback_v1 callback = nullptr;
   void *userData = nullptr;
   uint64_t abiSignature = 0;
 };
@@ -1582,7 +1582,7 @@ struct ControlActivation {
 };
 
 struct DpiScopeHandle {
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   uint64_t id = 0;
   uint64_t parentID = UINT64_MAX;
   std::string name;
@@ -1595,11 +1595,11 @@ struct DpiScopeHandle {
 // export implementation in a separate archive member lets import-only and
 // no-DPI executables avoid linking it.
 struct ActiveDpiCall {
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   DpiScopeHandle *scope = nullptr;
   std::string callerFile;
   uint32_t callerLine = 0;
-  obelisk_rt_status exportStatus = OBELISK_RT_OK;
+  talos_rt_status exportStatus = TALOS_RT_OK;
   uint32_t importFlags = 0;
   bool disabledState = false;
   bool disableAcknowledged = false;
@@ -1611,19 +1611,19 @@ extern thread_local ActiveDpiCall *activeDpiCall;
 // The bytecode interpreter is always linked, while DPI aggregate marshalling
 // is pay-for-play. A DPI bytecode feature anchor installs these pointers;
 // ordinary designs retain null pointers and no undefined DPI symbols.
-extern decltype(&obelisk_rt_v1_dpi_open_array_aggregate_pack)
+extern decltype(&talos_rt_v1_dpi_open_array_aggregate_pack)
     designBytecodeDpiOpenAggregatePack;
-extern decltype(&obelisk_rt_v1_dpi_open_array_aggregate_unpack)
+extern decltype(&talos_rt_v1_dpi_open_array_aggregate_unpack)
     designBytecodeDpiOpenAggregateUnpack;
-extern decltype(&obelisk_rt_v1_dpi_aggregate_pack)
+extern decltype(&talos_rt_v1_dpi_aggregate_pack)
     designBytecodeDpiAggregatePack;
-extern decltype(&obelisk_rt_v1_dpi_aggregate_unpack)
+extern decltype(&talos_rt_v1_dpi_aggregate_unpack)
     designBytecodeDpiAggregateUnpack;
-extern decltype(&obelisk_rt_v1_dpi_open_array_aggregate_roots_push)
+extern decltype(&talos_rt_v1_dpi_open_array_aggregate_roots_push)
     designBytecodeDpiOpenAggregateRootsPush;
-extern decltype(&obelisk_rt_v1_dpi_aggregate_roots_pop)
+extern decltype(&talos_rt_v1_dpi_aggregate_roots_pop)
     designBytecodeDpiAggregateRootsPop;
-extern decltype(&obelisk_rt_v1_dpi_aggregate_state_alloc)
+extern decltype(&talos_rt_v1_dpi_aggregate_state_alloc)
     designBytecodeDpiAggregateStateAlloc;
 
 class ManagedHeap;
@@ -1704,7 +1704,7 @@ struct NetPassComponent {
 };
 
 struct NetAliasCache {
-  const obelisk_rt_execution_descriptor_v1 *execution = nullptr;
+  const talos_rt_execution_descriptor_v1 *execution = nullptr;
   std::unordered_map<uint64_t, uint64_t> rootByBit;
   std::unordered_map<uint64_t, std::vector<uint64_t>> members;
   std::unordered_map<uint64_t, std::vector<NetDriverBit>> driverBits;
@@ -1887,9 +1887,9 @@ struct VPIClassMemberBinding {
   uint64_t byteOffset = UINT64_MAX;
   // Preserve the lexical ClassDefn or canonical specialization that owns this
   // declaration separately from the runtime class's canonical specialization.
-  obelisk_rt_design_cursor_v1 ownerScope{};
-  obelisk_rt_design_cursor_v1 ownerTypespec{};
-  obelisk_rt_design_cursor_v1 backingStorage{};
+  talos_rt_design_cursor_v1 ownerScope{};
+  talos_rt_design_cursor_v1 ownerTypespec{};
+  talos_rt_design_cursor_v1 backingStorage{};
   uint64_t staticEventID = UINT64_MAX;
   bool isStatic = false;
   bool isMethod = false;
@@ -1899,7 +1899,7 @@ struct VPIClassMemberBinding {
 
 // Exact source identity for a modport within one physical interface instance.
 struct VPIModportBinding {
-  obelisk_rt_design_cursor_v1 scope{};
+  talos_rt_design_cursor_v1 scope{};
   const uint8_t *name = nullptr;
   uint64_t nameSize = 0;
 };
@@ -1910,11 +1910,11 @@ struct FunctionalCoverageValue {
   uint64_t valueSize = 0;
   uint32_t kind = 0;
   uint32_t argumentRefKind = 0;
-  obelisk::coverage::FunctionalExpressionResultKind resultKind =
-      obelisk::coverage::FunctionalExpressionResultKind::Integral;
+  talos::coverage::FunctionalExpressionResultKind resultKind =
+      talos::coverage::FunctionalExpressionResultKind::Integral;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
-  obelisk_rt_object_v1 *owner = nullptr;
+  talos_rt_object_v1 *owner = nullptr;
   uint64_t payload = 0;
 };
 
@@ -1926,59 +1926,59 @@ struct VPIFixedPropertyValue {
 };
 
 struct VPITypeDefaultInfo {
-  obelisk_rt_design_cursor_v1 semantic{};
+  talos_rt_design_cursor_v1 semantic{};
   const uint8_t *file = nullptr;
   uint64_t fileSize = 0;
   uint32_t line = 0;
 };
-obelisk_rt_status
-obelisk_rt_cached_vpi_type_default(const obelisk_rt_context *,
-                                   obelisk_rt_design_cursor_v1,
+talos_rt_status
+talos_rt_cached_vpi_type_default(const talos_rt_context *,
+                                   talos_rt_design_cursor_v1,
                                    VPITypeDefaultInfo *) noexcept;
 
 struct VPIExpressionInfo {
   uint32_t kind = 0, code = 0, operandCount = 0;
   uint64_t bitWidth = 0;
-  obelisk_rt_design_cursor_v1 semantic{};
+  talos_rt_design_cursor_v1 semantic{};
   bool constantSelect = false;
   bool sourceOnly = false;
 };
-obelisk_rt_status
-obelisk_rt_cached_vpi_expression(const obelisk_rt_context *,
-                                 obelisk_rt_design_cursor_v1,
+talos_rt_status
+talos_rt_cached_vpi_expression(const talos_rt_context *,
+                                 talos_rt_design_cursor_v1,
                                  VPIExpressionInfo *) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_expression_operand(
-    const obelisk_rt_context *, obelisk_rt_design_cursor_v1, uint32_t,
-    obelisk_rt_design_cursor_v1 *, uint32_t *) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_expression_operand_identifier(
-    const obelisk_rt_context *, obelisk_rt_design_cursor_v1, uint32_t,
+talos_rt_status talos_rt_cached_vpi_expression_operand(
+    const talos_rt_context *, talos_rt_design_cursor_v1, uint32_t,
+    talos_rt_design_cursor_v1 *, uint32_t *) noexcept;
+talos_rt_status talos_rt_cached_vpi_expression_operand_identifier(
+    const talos_rt_context *, talos_rt_design_cursor_v1, uint32_t,
     const uint8_t **, uint64_t *) noexcept;
 // Merge retained physical Uses with exact statement/port/terminal Uses derived
 // from recipe leaf bindings. No reverse records are duplicated per instance.
-obelisk_rt_status obelisk_rt_cached_vpi_expression_use_ranges(
-    const obelisk_rt_context *, obelisk_rt_design_cursor_v1,
+talos_rt_status talos_rt_cached_vpi_expression_use_ranges(
+    const talos_rt_context *, talos_rt_design_cursor_v1,
     std::vector<VPIRelationRange> &) noexcept;
 
 // A zero selection denotes a whole-declaration use. Nonzero cursors retain
 // exact source selection syntax; the VPI layer filters their current spans.
 struct VPISelectedUseCandidate {
   VPIRelationRange owners;
-  obelisk_rt_design_cursor_v1 selection;
+  talos_rt_design_cursor_v1 selection;
 };
-obelisk_rt_status obelisk_rt_cached_vpi_selected_use_candidates(
-    const obelisk_rt_context *, obelisk_rt_design_cursor_v1,
+talos_rt_status talos_rt_cached_vpi_selected_use_candidates(
+    const talos_rt_context *, talos_rt_design_cursor_v1,
     uint32_t selectedKind, std::vector<VPISelectedUseCandidate> &) noexcept;
 
 // Existing source connections, enumerated only for cold Driver/Load queries.
 // The role expression may be a shared recipe or an ordinary declaration. Peer
 // is the opposite assignment side, used only for independently proved bit maps.
 struct VPINetConnectionCandidate {
-  obelisk_rt_design_cursor_v1 owner{}, expression{}, peer{}, module{};
+  talos_rt_design_cursor_v1 owner{}, expression{}, peer{}, module{};
   uint32_t ownerKind = 0, expressionKind = 0, peerKind = 0;
   bool addressOnly = false;
 };
-obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
-    const obelisk_rt_context *, bool drivers,
+talos_rt_status talos_rt_cached_vpi_net_connection_candidates(
+    const talos_rt_context *, bool drivers,
     std::vector<VPINetConnectionCandidate> &) noexcept;
 
 struct VPIFrozenValue {
@@ -2004,7 +2004,7 @@ struct VPIRelationIndexInfo {
 };
 
 struct VPIArrayMemberInfo {
-  obelisk_rt_design_cursor_v1 array{};
+  talos_rt_design_cursor_v1 array{};
   VPIRelationIndexInfo index{};
   uint32_t arrayType = 0;
   uint32_t ordinal = 0;
@@ -2016,8 +2016,8 @@ struct FunctionalCoverageBinState {
   uint64_t item = 0;
   uint64_t valueSet = 0;
   uint64_t atLeast = 1;
-  obelisk::coverage::FunctionalBinKind kind =
-      obelisk::coverage::FunctionalBinKind::State;
+  talos::coverage::FunctionalBinKind kind =
+      talos::coverage::FunctionalBinKind::State;
   uint32_t flags = 0;
   uint64_t count = 0;
   bool overflow = false;
@@ -2059,16 +2059,16 @@ struct FunctionalCoverageCrossTupleState {
 };
 
 using FunctionalCoverageCrossTupleCounters =
-    obelisk::coverage::detail::IndexMap<std::vector<uint64_t>,
+    talos::coverage::detail::IndexMap<std::vector<uint64_t>,
                                         FunctionalCoverageCrossTupleState>;
 
 struct FunctionalCoverageQueryMetadata;
 
 struct FunctionalCoverageTypeState {
-  obelisk::coverage::Digest configuration{};
+  talos::coverage::Digest configuration{};
   /// Immutable constructor-resolved metadata for this configuration. Sampling
   /// and binding must not scan configurations constructed earlier.
-  std::shared_ptr<const obelisk::coverage::Database> configurationSchema;
+  std::shared_ptr<const talos::coverage::Database> configurationSchema;
   /// Immutable item/bin indexes shared by full and projected method queries.
   std::shared_ptr<const FunctionalCoverageQueryMetadata> queryMetadata;
   uint32_t instanceGoal = 100;
@@ -2081,8 +2081,8 @@ struct FunctionalCoverageTypeState {
   /// Bin-construction policy frozen when this configuration was resolved.
   bool distributeFirst = false;
   uint64_t groupCrossNumPrintMissing = 0;
-  obelisk::coverage::detail::IndexMap<uint64_t, uint64_t> crossNumPrintMissing;
-  obelisk::coverage::detail::IndexSet<uint64_t>
+  talos::coverage::detail::IndexMap<uint64_t, uint64_t> crossNumPrintMissing;
+  talos::coverage::detail::IndexSet<uint64_t>
       explicitCrossNumPrintMissingItems;
   std::vector<uint64_t> items;
   std::vector<uint8_t> itemAggregating;
@@ -2105,7 +2105,7 @@ struct FunctionalCoverageTypeState {
 
 struct FunctionalCoverageTypeKey {
   uint64_t typeID = 0;
-  obelisk::coverage::Digest configuration{};
+  talos::coverage::Digest configuration{};
 
   bool operator<(const FunctionalCoverageTypeKey &other) const {
     return std::tie(typeID, configuration) <
@@ -2113,7 +2113,7 @@ struct FunctionalCoverageTypeKey {
   }
 };
 
-namespace obelisk::coverage::detail {
+namespace talos::coverage::detail {
 template <> struct IndexKey<::FunctionalCoverageTypeKey> {
   template <typename Bytes>
   static void append(Bytes &bytes, const ::FunctionalCoverageTypeKey &key) {
@@ -2121,7 +2121,7 @@ template <> struct IndexKey<::FunctionalCoverageTypeKey> {
     IndexKey<Digest>::append(bytes, key.configuration);
   }
 };
-} // namespace obelisk::coverage::detail
+} // namespace talos::coverage::detail
 
 /// Mutable type-option state is context-wide and keyed only by stable schema
 /// identities. It is deliberately separate from resolved configurations so a
@@ -2132,10 +2132,10 @@ struct FunctionalCoverageTypeOptions {
   std::optional<uint32_t> weight;
   std::optional<bool> mergeInstances;
   std::optional<bool> distributeFirst;
-  obelisk::coverage::detail::IndexMap<uint64_t, uint32_t> itemGoals;
-  obelisk::coverage::detail::IndexMap<uint64_t, uint32_t> itemWeights;
+  talos::coverage::detail::IndexMap<uint64_t, uint32_t> itemGoals;
+  talos::coverage::detail::IndexMap<uint64_t, uint32_t> itemWeights;
   /// Zero names the group; positive keys name template FunctionalItems.
-  obelisk::coverage::detail::IndexMap<uint64_t, std::string> comments;
+  talos::coverage::detail::IndexMap<uint64_t, std::string> comments;
 };
 
 struct FunctionalCoverageTransitionState {
@@ -2150,7 +2150,7 @@ struct FunctionalCoverageTransitionState {
   uint64_t samplesConsumed = 0;
 };
 
-namespace obelisk::coverage::detail {
+namespace talos::coverage::detail {
 template <> struct IndexKey<::FunctionalCoverageTransitionState> {
   template <typename Bytes>
   static void append(Bytes &bytes,
@@ -2162,15 +2162,15 @@ template <> struct IndexKey<::FunctionalCoverageTransitionState> {
     IndexKey<uint64_t>::append(bytes, key.samplesConsumed);
   }
 };
-} // namespace obelisk::coverage::detail
+} // namespace talos::coverage::detail
 
 struct FunctionalCoverageInstanceState {
   using TransitionActiveState = FunctionalCoverageTransitionState;
   using TransitionStates =
-      obelisk::coverage::detail::IndexSet<TransitionActiveState>;
+      talos::coverage::detail::IndexSet<TransitionActiveState>;
 
   uint64_t typeID = 0;
-  obelisk::coverage::Digest configuration{};
+  talos::coverage::Digest configuration{};
   std::string name;
   bool generatedName = false;
   bool enabled = true;
@@ -2183,17 +2183,17 @@ struct FunctionalCoverageInstanceState {
   std::vector<uint32_t> itemWeights;
   /// Effective threshold for every resolved item, including zero-bin items.
   std::vector<uint64_t> itemAtLeast;
-  obelisk::coverage::detail::IndexSet<uint64_t> explicitAtLeastItems;
-  obelisk::coverage::detail::IndexMap<uint64_t, uint64_t> crossAtLeast;
+  talos::coverage::detail::IndexSet<uint64_t> explicitAtLeastItems;
+  talos::coverage::detail::IndexMap<uint64_t, uint64_t> crossAtLeast;
   /// Cross print limits use template IDs because procedural selectors and
   /// persisted instance-option owners are stable across resolved schemas.
-  obelisk::coverage::detail::IndexMap<uint64_t, uint64_t> crossNumPrintMissing;
-  obelisk::coverage::detail::IndexSet<uint64_t>
+  talos::coverage::detail::IndexMap<uint64_t, uint64_t> crossNumPrintMissing;
+  talos::coverage::detail::IndexSet<uint64_t>
       explicitCrossNumPrintMissingItems;
   /// Mutable comments keyed by zero for the group or by template item ID.
-  obelisk::coverage::detail::IndexMap<uint64_t, std::string> comments;
+  talos::coverage::detail::IndexMap<uint64_t, std::string> comments;
   std::unordered_set<uint64_t> disabledItems;
-  obelisk::coverage::detail::IndexMap<uint64_t, FunctionalCoverageValue>
+  talos::coverage::detail::IndexMap<uint64_t, FunctionalCoverageValue>
       formals;
   std::vector<FunctionalCoverageBinState> bins;
   /// Live overlapping matches in frozen per-type alternative slots. A
@@ -2205,7 +2205,7 @@ struct FunctionalCoverageInstanceState {
   /// copying them. Empty alternatives have null slots and allocate no set.
   std::vector<std::shared_ptr<const TransitionStates>> transitionActive;
   std::unordered_set<uint64_t> transitionSampledItems;
-  obelisk::coverage::detail::IndexMap<uint64_t,
+  talos::coverage::detail::IndexMap<uint64_t,
                                       FunctionalCoverageCrossTupleCounters>
       crossTuples;
 };
@@ -2235,11 +2235,11 @@ struct CoverageFSMMachine {
 struct CovergroupBlockEventRegistration {
   uint64_t id = 0;
   uint64_t covergroupHandle = 0;
-  obelisk_rt_object_v1 *receiver = nullptr;
-  const obelisk_rt_execution_descriptor_v1 *execution = nullptr;
+  talos_rt_object_v1 *receiver = nullptr;
+  const talos_rt_execution_descriptor_v1 *execution = nullptr;
   uint64_t observerCodeUnitID = 0;
   bool native = false;
-  std::vector<obelisk_rt_computed_capture_v1> captures;
+  std::vector<talos_rt_computed_capture_v1> captures;
   // Construction-time automatic captures outlive the process that invoked
   // new(). Retain them for the context-owned service lifetime; context
   // teardown destroys the complete automatic-state table after this record.
@@ -2265,7 +2265,7 @@ struct FunctionalCoverageLoadedData;
 struct FunctionalCoverageDiagnosticIndex;
 
 struct CoverageState {
-  std::unique_ptr<obelisk::coverage::Database> schema;
+  std::unique_ptr<talos::coverage::Database> schema;
   std::shared_ptr<const FunctionalCoverageConstructionSchemas>
       constructionSchemas;
   std::vector<std::shared_ptr<FunctionalCoveragePreparedConstruction>>
@@ -2275,24 +2275,24 @@ struct CoverageState {
       loadedConfigurationSchemas;
   mutable std::shared_ptr<const FunctionalCoverageLoadedData> loadedData;
   std::shared_ptr<FunctionalCoverageDiagnosticIndex> diagnosticIndex;
-  obelisk::coverage::detail::IndexMap<uint64_t,
-                                      std::vector<obelisk::coverage::Digest>>
+  talos::coverage::detail::IndexMap<uint64_t,
+                                      std::vector<talos::coverage::Digest>>
       configurationsByType;
-  const obelisk::coverage::Database *configurationIndexSchema = nullptr;
-  obelisk::coverage::detail::IndexSet<FunctionalCoverageTypeKey>
+  const talos::coverage::Database *configurationIndexSchema = nullptr;
+  talos::coverage::detail::IndexSet<FunctionalCoverageTypeKey>
       configurationKeys;
   size_t indexedConfigurations = 0;
   /// Empty expression batches have only three possible mutable construction
   /// states: no override, false, or true. Cache their exact configuration keys
   /// rather than resolving bins or scanning prior configurations at every new.
-  obelisk::coverage::detail::IndexMap<std::pair<uint64_t, uint32_t>,
-                                      obelisk::coverage::Digest>
+  talos::coverage::detail::IndexMap<std::pair<uint64_t, uint32_t>,
+                                      talos::coverage::Digest>
       payloadlessConfigurations;
   uint64_t nextInstance = 1;
-  obelisk::coverage::detail::IndexMap<FunctionalCoverageTypeKey,
+  talos::coverage::detail::IndexMap<FunctionalCoverageTypeKey,
                                       FunctionalCoverageTypeState>
       types;
-  obelisk::coverage::detail::IndexMap<uint64_t, FunctionalCoverageTypeOptions>
+  talos::coverage::detail::IndexMap<uint64_t, FunctionalCoverageTypeOptions>
       typeOptions;
   std::unordered_map<uint64_t, FunctionalCoverageInstanceState> instances;
   std::unique_ptr<std::atomic<uint64_t>[]> lineCounters;
@@ -2301,7 +2301,7 @@ struct CoverageState {
   std::vector<uint8_t> lineExcluded;
   uint64_t lineCount = 0;
   // Assertion success counters follow the line points in the dense point
-  // index space of obelisk_rt_v1_coverage_point_hit.
+  // index space of talos_rt_v1_coverage_point_hit.
   std::unique_ptr<std::atomic<uint64_t>[]> assertionCounters;
   std::unique_ptr<std::atomic<uint8_t>[]> assertionOverflow;
   std::unique_ptr<std::atomic<uint8_t>[]> assertionEnabled;
@@ -2337,36 +2337,36 @@ struct CoverageState {
   uint64_t persistedRunFlags = 0;
   bool dumpSuppressed = false;
   bool outputExplicit = false;
-  obelisk::coverage::UUID runUUID{};
+  talos::coverage::UUID runUUID{};
 };
 
 // The Clause 40 coverage scope of the elaborated instance named `path`.
-obelisk_rt_status
-obelisk_rt_coverage_scope_for_path(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_coverage_scope_for_path(talos_rt_context *context,
                                    std::string_view path, uint64_t &scopeID);
 
 // Query immutable resolved covergroup type policy while the context mutex is
 // held. This is internal runtime state, not a second public ABI surface.
-obelisk_rt_status
-obelisk_rt_covergroup_strobe_unlocked(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_covergroup_strobe_unlocked(talos_rt_context *context,
                                       uint64_t handle, bool &strobe);
 
 // Validate immutable ownership and the procedural mutability of an option
 // before capturing a deferred write. Exactly one of handle/typeID is nonzero.
-obelisk_rt_status obelisk_rt_covergroup_validate_option_reference(
-    obelisk_rt_context *context, uint64_t handle, uint64_t typeID,
+talos_rt_status talos_rt_covergroup_validate_option_reference(
+    talos_rt_context *context, uint64_t handle, uint64_t typeID,
     uint64_t itemID, uint32_t option);
 
 /// Record a committed canonical state transition. The caller owns the context
 /// mutex. Covered aliases are intentionally represented by separate bindings.
-void obelisk_rt_coverage_record_transition_unlocked(
-    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+void talos_rt_coverage_record_transition_unlocked(
+    talos_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *newValue, const uint8_t *newUnknown);
 
 /// Return whether a registered static state contributes any toggle
 /// obligations. The caller owns the context mutex.
-bool obelisk_rt_coverage_tracks_static_state_unlocked(
-    const obelisk_rt_context *context, uint32_t staticID);
+bool talos_rt_coverage_tracks_static_state_unlocked(
+    const talos_rt_context *context, uint32_t staticID);
 
 struct SampledHistoryState {
   uint64_t bitWidth = 0;
@@ -2426,7 +2426,7 @@ struct NativeScopedWriteState {
 // schedulerFinishRequested after the Final phase consumed a pending request.
 inline constexpr uint32_t kSchedulerFinishConsumedByFinals = 2;
 
-struct obelisk_rt_context {
+struct talos_rt_context {
   // Mutable state is guarded separately from logical execution. Evaluator
   // callbacks release `mutex` while arbitrary user code runs, but retain the
   // recursive transaction lock so another thread cannot interleave a state or
@@ -2470,11 +2470,11 @@ struct obelisk_rt_context {
   std::unordered_map<int32_t, StochasticQueueState> stochasticQueues;
   std::shared_ptr<const uint8_t> errorLifetime;
   std::vector<ScheduledProcess> scheduledProcesses;
-  const obelisk_rt_native_schedule_plan *nativeSchedulePlan = nullptr;
+  const talos_rt_native_schedule_plan *nativeSchedulePlan = nullptr;
   // Some merged fragment of the installed plan is executable. The fragment
   // table is immutable, so installation classifies it once.
   bool nativeScheduleExecutableFragments = false;
-  std::vector<obelisk::runtime::EvalNBAQueue *> nativeEvalNBAQueues;
+  std::vector<talos::runtime::EvalNBAQueue *> nativeEvalNBAQueues;
   bool nativeStateInitialized = false;
   bool nativeStateSharingAllowed = false;
   uint8_t *nativeStateValue = nullptr;
@@ -2484,25 +2484,25 @@ struct obelisk_rt_context {
   // Addressing permission for native fragments in either scheduler.
   // This does not authorize static fanout, NBA elision, or two-state execution.
   uint32_t *nativeStateSpecializationFast = nullptr;
-  const obelisk_rt_static_nba_root *nativeScheduleNBARoots = nullptr;
+  const talos_rt_static_nba_root *nativeScheduleNBARoots = nullptr;
   uint32_t nativeScheduleNBARootCount = 0;
-  const obelisk_rt_static_nba_site *nativeScheduleNBASites = nullptr;
+  const talos_rt_static_nba_site *nativeScheduleNBASites = nullptr;
   uint64_t nativeScheduleNBASiteCount = 0;
-  const obelisk_rt_static_fanout_entry *nativeScheduleFanoutEntries = nullptr;
+  const talos_rt_static_fanout_entry *nativeScheduleFanoutEntries = nullptr;
   uint64_t nativeScheduleFanoutEntryCount = 0;
-  const obelisk_rt_static_actor_root *nativeScheduleActorRoots = nullptr;
+  const talos_rt_static_actor_root *nativeScheduleActorRoots = nullptr;
   uint64_t nativeScheduleActorRootCount = 0;
   std::vector<std::pair<uint64_t, uint64_t>> nativeScheduleActorRootRanges;
   std::vector<uint32_t> nativeScheduleNBASiteIndex;
   std::vector<uint32_t> nativeScheduleNBARootIndex;
-  std::vector<obelisk_rt_process_instance_v1 *> nativeScheduleActors;
+  std::vector<talos_rt_process_instance_v1 *> nativeScheduleActors;
   std::vector<uint64_t> nativeScheduleActorTokens;
   std::vector<size_t> nativeScheduleActorIndices;
-  std::vector<obelisk_rt_native_schedule_node> nativeScheduleNodes;
-  const obelisk_rt_native_schedule_node *nativeScheduleNodeSource = nullptr;
+  std::vector<talos_rt_native_schedule_node> nativeScheduleNodes;
+  const talos_rt_native_schedule_node *nativeScheduleNodeSource = nullptr;
   std::vector<std::vector<std::pair<uint32_t, uint32_t>>>
       nativeScheduleActorNodes;
-  obelisk::runtime::CursorReadySet nativeScheduleReadyNodes;
+  talos::runtime::CursorReadySet nativeScheduleReadyNodes;
   std::vector<uint32_t> nativeScheduleFanoutNodes;
   std::vector<uint64_t> nativeScheduleNodeIngress;
   std::vector<std::pair<uint64_t, uint64_t>> nativeScheduleFanoutRanges;
@@ -2514,13 +2514,13 @@ struct obelisk_rt_context {
   uint32_t nativeScheduleDirectActorSlot = UINT32_MAX;
   uint32_t nativeScheduleCheckpointActorSlot = UINT32_MAX;
   uint32_t nativeScheduleCheckpointContinuation = 0;
-  obelisk_rt_native_checkpoint_callback nativeScheduleCheckpointCallback =
+  talos_rt_native_checkpoint_callback nativeScheduleCheckpointCallback =
       nullptr;
   std::vector<uint64_t> nativeScheduleDeadlines;
   std::vector<uint32_t> nativeScheduleDeadlineHeap;
   std::vector<uint32_t> nativeScheduleDeadlinePositions;
-  std::vector<obelisk_rt_aot_deopt_actor> nativeScheduleSnapshotActors;
-  std::vector<obelisk_rt_aot_deopt_nba> nativeScheduleSnapshotNBAs;
+  std::vector<talos_rt_aot_deopt_actor> nativeScheduleSnapshotActors;
+  std::vector<talos_rt_aot_deopt_nba> nativeScheduleSnapshotNBAs;
   bool nativeScheduleRunning = false;
   bool prioritySignalPending = false;
   bool nativeScheduleDeoptimized = false;
@@ -2564,7 +2564,7 @@ struct obelisk_rt_context {
   std::unordered_map<uint64_t, size_t> scheduledProcessIndices;
   // Active instances only: suspended task callers are reindexed on return.
   // Multiple registration retains the earliest scheduler token semantics.
-  std::unordered_multimap<obelisk_rt_process_instance_v1 *, uint64_t>
+  std::unordered_multimap<talos_rt_process_instance_v1 *, uint64_t>
       scheduledProcessTokens;
   std::unordered_set<uint64_t> nativePollCandidates;
   NativeReadyPublicationBatch *nativeReadyPublicationBatch = nullptr;
@@ -2647,7 +2647,7 @@ struct obelisk_rt_context {
   std::unordered_map<uint64_t, size_t> scheduledDesignTaskIndices;
   std::unordered_set<uint64_t> designPollCandidates;
   // Logical processes that suspended for a post-Observed resumption, native
-  // tokens tagged with OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG. Promotion keeps
+  // tokens tagged with TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG. Promotion keeps
   // the entries still waiting and drops the rest.
   std::vector<uint64_t> postObservedResumptions;
   ReusableByteBufferPool designTaskFrames;
@@ -2696,7 +2696,7 @@ struct obelisk_rt_context {
   size_t finishedProcessParentsPruneSize = 64;
   // A bytecode design task is moved out of the scheduler vector while it
   // executes, so its lane-local stream cannot be rediscovered by token.
-  obelisk_rt_random_state_v1 *activeRandom = nullptr;
+  talos_rt_random_state_v1 *activeRandom = nullptr;
   uint64_t monitorLogicalProcessToken = 0;
   bool monitorEnabled = true;
   // What the registered monitor reported last. A monitor process wakes on any
@@ -2705,7 +2705,7 @@ struct obelisk_rt_context {
   std::string monitorReport;
   bool monitorReported = false;
   std::vector<uint64_t> activeControls;
-  obelisk_rt_process_instance_v1 *activeNativeProcess = nullptr;
+  talos_rt_process_instance_v1 *activeNativeProcess = nullptr;
   bool designTaskExecuting = false;
   bool schedulerCompactionPending = false;
   size_t schedulerDeadProcessCount = 0;
@@ -2797,18 +2797,18 @@ struct obelisk_rt_context {
   // only while the native scheduler owns the context transaction.
   uint32_t nativePeriodicTerminationRequested = 0;
   uint32_t schedulerFinishVerbosity = 0;
-  obelisk_rt_status schedulerFinishStatus = OBELISK_RT_OK;
-  obelisk_rt_status schedulerStatus = OBELISK_RT_OK;
+  talos_rt_status schedulerFinishStatus = TALOS_RT_OK;
+  talos_rt_status schedulerStatus = TALOS_RT_OK;
   uint32_t observerDepth = 0;
   bool observerForcesCanonicalPlane = false;
-  const obelisk_rt_execution_descriptor_v1 *execution = nullptr;
+  const talos_rt_execution_descriptor_v1 *execution = nullptr;
   // Live simulation state is owned by the context.  The planes use the same
   // little-endian limb representation as bytecode values and are never stored
   // in the immutable reflection image.
   CanonicalPlane stateValue;
   CanonicalPlane stateUnknown;
   bool twoState() const {
-    return execution && (execution->flags & OBELISK_RT_EXECUTION_TWO_STATE);
+    return execution && (execution->flags & TALOS_RT_EXECUTION_TWO_STATE);
   }
   // Canonical state captured once at entry to each time slot, before any
   // Active-region work. Sampled-value reads never consult the live planes.
@@ -2844,8 +2844,8 @@ struct obelisk_rt_context {
     // Shadow storage is outside the managed heap. Keep every validated
     // referent precise and live while its layer remains active, including a
     // lower-priority procedural assign hidden beneath force.
-    std::vector<obelisk_rt_object_v1 *> forceRoots;
-    std::vector<obelisk_rt_object_v1 *> assignRoots;
+    std::vector<talos_rt_object_v1 *> forceRoots;
+    std::vector<talos_rt_object_v1 *> assignRoots;
   };
   // Class-property overrides are keyed by monotonic object identity and byte
   // offset. Variable selects are not legal force targets, so one exact field
@@ -2868,20 +2868,20 @@ struct obelisk_rt_context {
   NetAliasCache netAliases;
   DesignDatabaseCache designDatabase;
   bool designDatabaseRegistered = false;
-  obelisk::designbytecode::Image designBytecodeImage;
+  talos::designbytecode::Image designBytecodeImage;
   bool designBytecodeImageValidated = false;
   // Fast-path plans of designBytecodeImage's functions, indexed by function
   // and decoded on first execution (empty: not decoded yet).
-  std::vector<std::vector<obelisk::designbytecode::FastOp>> designBytecodePlans;
+  std::vector<std::vector<talos::designbytecode::FastOp>> designBytecodePlans;
   void *vpiState = nullptr;
   // Waveform dump plan, shadow planes, and output buffer. Allocated on the
   // first $dumpfile/$dumpvars and owned by the context.
   VCDTraceState *vcdState = nullptr;
   EVCDTraceState *evcdState = nullptr;
-  std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>
+  std::unordered_map<uint64_t, const talos_rt_class_descriptor_v1 *>
       managedClasses;
   std::shared_ptr<ManagedClassValidationCache> managedClassValidation;
-  std::unordered_map<uint64_t, const obelisk_rt_element_type_v1 *>
+  std::unordered_map<uint64_t, const talos_rt_element_type_v1 *>
       managedElementTypes;
   std::unordered_map<uint64_t, std::unique_ptr<OwnedElementTypeDescriptor>>
       managedOwnedElementTypes;
@@ -2903,9 +2903,9 @@ struct obelisk_rt_context {
       managedWatchWaiters;
   uint64_t nextManagedWatchToken = 1;
   std::unique_ptr<CoverageState> coverage;
-  std::vector<obelisk_rt_process_instance_v1 *> managedRootProcesses;
+  std::vector<talos_rt_process_instance_v1 *> managedRootProcesses;
   ManagedHeap *managedHeap = nullptr;
-  obelisk_rt_random_state_v1 random{};
+  talos_rt_random_state_v1 random{};
   uint64_t configuredSeed = 1;
   // IEEE 1800 Annex N state for the no-argument `$random` form. Keep this
   // independent of hierarchical `$urandom` streams and initialize it to the
@@ -2955,41 +2955,41 @@ struct obelisk_rt_context {
   std::unique_ptr<NativeScopedWriteState> nativeScopedWrite;
   std::unique_ptr<InitializationRandomScopes> initializationRandomScopes;
 
-  obelisk_rt_context();
-  ~obelisk_rt_context();
+  talos_rt_context();
+  ~talos_rt_context();
 };
 
 // Execute due Pre-Active foreign work; never advance time or drain actors.
-obelisk_rt_status
-obelisk_rt_vpi_dispatch_time_callbacks_unlocked(obelisk_rt_context *context);
+talos_rt_status
+talos_rt_vpi_dispatch_time_callbacks_unlocked(talos_rt_context *context);
 /// VPI synchronization callback stages (IEEE 1800-2023 4.10 Table 4-1).
 enum : uint32_t {
-  OBELISK_RT_VPI_SYNC_PRE_NBA = 0,
-  OBELISK_RT_VPI_SYNC_READ_ONLY = 1,
+  TALOS_RT_VPI_SYNC_PRE_NBA = 0,
+  TALOS_RT_VPI_SYNC_READ_ONLY = 1,
 };
 /// Whether a synchronization callback of `stage` is due in this time slot.
-bool obelisk_rt_vpi_sync_due_unlocked(obelisk_rt_context *context,
+bool talos_rt_vpi_sync_due_unlocked(talos_rt_context *context,
                                       uint32_t stage);
-obelisk_rt_status
-obelisk_rt_vpi_dispatch_sync_callbacks_unlocked(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_vpi_dispatch_sync_callbacks_unlocked(talos_rt_context *context,
                                                 uint32_t stage);
 
 inline ReplaceableEventFeatureState *
-obelisk_rt_replaceable_events(obelisk_rt_context *context) {
+talos_rt_replaceable_events(talos_rt_context *context) {
   return context && context->clockOccurrences
              ? context->clockOccurrences->replaceableEvents.get()
              : nullptr;
 }
 
 inline const ReplaceableEventFeatureState *
-obelisk_rt_replaceable_events(const obelisk_rt_context *context) {
+talos_rt_replaceable_events(const talos_rt_context *context) {
   return context && context->clockOccurrences
              ? context->clockOccurrences->replaceableEvents.get()
              : nullptr;
 }
 
 inline void
-obelisk_rt_invalidate_design_ready_cohort(obelisk_rt_context *context) {
+talos_rt_invalidate_design_ready_cohort(talos_rt_context *context) {
   if (!context)
     return;
   context->designReadyCohortExactScan = false;
@@ -3003,8 +3003,8 @@ obelisk_rt_invalidate_design_ready_cohort(obelisk_rt_context *context) {
 // Caller holds the context lock and handles allocation failures. Only a new
 // direct native signal candidate is admissible. Every other mutation keeps
 // the ordinary generation invalidation, so gaps cannot be mistaken for wakes.
-inline void obelisk_rt_record_native_ready_publication_unlocked(
-    obelisk_rt_context *context, uint64_t token, bool inserted) {
+inline void talos_rt_record_native_ready_publication_unlocked(
+    talos_rt_context *context, uint64_t token, bool inserted) {
   uint64_t previous = context->schedulerSelectionGeneration;
   if (++context->schedulerSelectionGeneration == 0)
     context->schedulerSelectionGeneration = 1;
@@ -3022,73 +3022,73 @@ inline void obelisk_rt_record_native_ready_publication_unlocked(
 }
 
 inline void
-obelisk_rt_set_design_task_filter_unlocked(obelisk_rt_context *context,
+talos_rt_set_design_task_filter_unlocked(talos_rt_context *context,
                                            bool active, uint64_t forcedTask) {
   if (!context)
     return;
   if (context->nativeScheduleDesignTaskFilterActive != active ||
       context->nativeScheduleForcedDesignTask != forcedTask)
-    obelisk_rt_invalidate_design_ready_cohort(context);
+    talos_rt_invalidate_design_ready_cohort(context);
   context->nativeScheduleDesignTaskFilterActive = active;
   context->nativeScheduleForcedDesignTask = forcedTask;
 }
 
-void obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
+void talos_rt_sync_native_state_range_unlocked(talos_rt_context *context,
                                                  uint64_t begin,
                                                  uint64_t width);
 
-obelisk_rt_status
-obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context);
+talos_rt_status
+talos_rt_capture_preponed_unlocked(talos_rt_context *context);
 /// Retakes the time-zero Preponed snapshot once the root initializer has run.
 /// Declaration initializers precede every time-zero event (IEEE 1800-2023
 /// 6.8, 16.5.1), so the values they establish are what time zero samples.
-obelisk_rt_status
-obelisk_rt_recapture_initialized_preponed_unlocked(obelisk_rt_context *context);
+talos_rt_status
+talos_rt_recapture_initialized_preponed_unlocked(talos_rt_context *context);
 
 // Emit every waveform value that changed during the time slot that is about to
 // end. Called immediately before each scheduler time advance and once more when
 // the run terminates, so a slot is recorded exactly once at its own time. This
 // is a no-op when no dump file is open.
-obelisk_rt_status obelisk_rt_dump_slot_unlocked(obelisk_rt_context *context);
+talos_rt_status talos_rt_dump_slot_unlocked(talos_rt_context *context);
 
 // Nonzero while a dump file is open. Execution tiers that advance time without
 // re-entering the runtime must not be selected while this holds.
-bool obelisk_rt_dump_active_unlocked(const obelisk_rt_context *context);
+bool talos_rt_dump_active_unlocked(const talos_rt_context *context);
 
 // Number of distinct canonical ranges the dump differences per time slot.
 // Aliased declarations collapse onto one range, so this is at most the number
 // of traced `$var` declarations.
-uint64_t obelisk_rt_dump_traced_range_count(const obelisk_rt_context *context);
+uint64_t talos_rt_dump_traced_range_count(const talos_rt_context *context);
 
 // Flush and release the dump state during context teardown.
-void obelisk_rt_dump_destroy(obelisk_rt_context *context) noexcept;
+void talos_rt_dump_destroy(talos_rt_context *context) noexcept;
 
 inline std::unordered_set<uint64_t> &
-obelisk_rt_unstarted_actors(obelisk_rt_context *context, uint32_t phase) {
+talos_rt_unstarted_actors(talos_rt_context *context, uint32_t phase) {
   return phase == 0 ? context->unstartedActiveActors
                     : context->unstartedFinalActors;
 }
 
-inline void obelisk_rt_register_unstarted_actor(obelisk_rt_context *context,
+inline void talos_rt_register_unstarted_actor(talos_rt_context *context,
                                                 uint32_t phase,
                                                 uint64_t logicalToken) {
-  obelisk_rt_unstarted_actors(context, phase).insert(logicalToken);
+  talos_rt_unstarted_actors(context, phase).insert(logicalToken);
 }
 
-inline void obelisk_rt_unregister_unstarted_actor(obelisk_rt_context *context,
+inline void talos_rt_unregister_unstarted_actor(talos_rt_context *context,
                                                   uint32_t phase,
                                                   uint64_t logicalToken) {
-  obelisk_rt_unstarted_actors(context, phase).erase(logicalToken);
+  talos_rt_unstarted_actors(context, phase).erase(logicalToken);
 }
 
 inline bool
-obelisk_rt_logical_process_terminated(const obelisk_rt_context *context,
+talos_rt_logical_process_terminated(const talos_rt_context *context,
                                       uint64_t logicalToken) {
   if (!context || logicalToken == 0)
     return false;
-  if ((logicalToken & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0)
+  if ((logicalToken & TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0)
     return context->terminatedNativeProcesses.count(
-               logicalToken & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0;
+               logicalToken & ~TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0;
   return context->terminatedDesignTasks.count(logicalToken) != 0;
 }
 
@@ -3099,17 +3099,17 @@ obelisk_rt_logical_process_terminated(const obelisk_rt_context *context,
 // active region would observe the values from before that region ran, and the
 // Postponed region would then be reached twice in one time slot
 // (IEEE 1800-2017 4.4.2.9).
-inline uint32_t obelisk_rt_unstarted_actor_region(obelisk_rt_context *context,
+inline uint32_t talos_rt_unstarted_actor_region(talos_rt_context *context,
                                                   uint32_t phase) {
-  auto &actors = obelisk_rt_unstarted_actors(context, phase);
+  auto &actors = talos_rt_unstarted_actors(context, phase);
   uint32_t earliest = UINT32_MAX;
   for (auto actor = actors.begin(); actor != actors.end();) {
     uint64_t logicalToken = *actor;
     bool pending = false;
     bool explicitlySuspended = false;
-    uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
-    if ((logicalToken & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
-      uint64_t token = logicalToken & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+    uint32_t homeRegion = TALOS_RT_REGION_ACTIVE;
+    if ((logicalToken & TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
+      uint64_t token = logicalToken & ~TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG;
       auto indexed = context->scheduledProcessIndices.find(token);
       if (indexed != context->scheduledProcessIndices.end() &&
           indexed->second < context->scheduledProcesses.size()) {
@@ -3144,8 +3144,8 @@ inline uint32_t obelisk_rt_unstarted_actor_region(obelisk_rt_context *context,
       continue;
     }
     // Nothing can precede the active region, so stop compacting there.
-    if (homeRegion == OBELISK_RT_REGION_ACTIVE)
-      return OBELISK_RT_REGION_ACTIVE;
+    if (homeRegion == TALOS_RT_REGION_ACTIVE)
+      return TALOS_RT_REGION_ACTIVE;
     earliest = std::min(earliest, homeRegion);
     ++actor;
   }
@@ -3155,7 +3155,7 @@ inline uint32_t obelisk_rt_unstarted_actor_region(obelisk_rt_context *context,
 // Read-only counterpart used by inspection APIs. Unlike the scheduler helper,
 // this never compacts stale inventory entries.
 inline uint32_t
-obelisk_rt_peek_unstarted_actor_region(const obelisk_rt_context *context,
+talos_rt_peek_unstarted_actor_region(const talos_rt_context *context,
                                        uint32_t phase) {
   const auto &actors = phase == 0 ? context->unstartedActiveActors
                                   : context->unstartedFinalActors;
@@ -3163,9 +3163,9 @@ obelisk_rt_peek_unstarted_actor_region(const obelisk_rt_context *context,
   for (uint64_t logicalToken : actors) {
     bool pending = false;
     bool explicitlySuspended = false;
-    uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
-    if ((logicalToken & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
-      uint64_t token = logicalToken & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+    uint32_t homeRegion = TALOS_RT_REGION_ACTIVE;
+    if ((logicalToken & TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
+      uint64_t token = logicalToken & ~TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG;
       auto indexed = context->scheduledProcessIndices.find(token);
       if (indexed != context->scheduledProcessIndices.end() &&
           indexed->second < context->scheduledProcesses.size()) {
@@ -3190,101 +3190,101 @@ obelisk_rt_peek_unstarted_actor_region(const obelisk_rt_context *context,
     }
     if (!pending || explicitlySuspended)
       continue;
-    if (homeRegion == OBELISK_RT_REGION_ACTIVE)
-      return OBELISK_RT_REGION_ACTIVE;
+    if (homeRegion == TALOS_RT_REGION_ACTIVE)
+      return TALOS_RT_REGION_ACTIVE;
     earliest = std::min(earliest, homeRegion);
   }
   return earliest;
 }
 
-inline bool obelisk_rt_unstarted_actor_pending(obelisk_rt_context *context,
+inline bool talos_rt_unstarted_actor_pending(talos_rt_context *context,
                                                uint32_t phase) {
   // Keep the steady-state empty inventory check inline. Region selection also
   // compacts stale startup entries and is intentionally a much larger helper.
-  return !obelisk_rt_unstarted_actors(context, phase).empty() &&
-         obelisk_rt_unstarted_actor_region(context, phase) != UINT32_MAX;
+  return !talos_rt_unstarted_actors(context, phase).empty() &&
+         talos_rt_unstarted_actor_region(context, phase) != UINT32_MAX;
 }
 
 inline bool
-obelisk_rt_has_conditional_signal_waiters(const obelisk_rt_context *context) {
+talos_rt_has_conditional_signal_waiters(const talos_rt_context *context) {
   return context && (!context->nativeConditionalSignalWaiters.empty() ||
                      !context->designConditionalSignalWaiters.empty() ||
                      (context->clockOccurrences &&
                       context->clockOccurrences->conditionalWaitCount != 0));
 }
 
-inline bool obelisk_rt_is_clock_occurrence_wait_flags(uint32_t flags) {
-  return (flags & ~(OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL |
-                    OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS)) ==
-         OBELISK_RT_WAIT_CLOCK_OCCURRENCE;
+inline bool talos_rt_is_clock_occurrence_wait_flags(uint32_t flags) {
+  return (flags & ~(TALOS_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL |
+                    TALOS_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS)) ==
+         TALOS_RT_WAIT_CLOCK_OCCURRENCE;
 }
 
 inline bool
-obelisk_rt_is_slot_final_clock_occurrence_wait_flags(uint32_t flags) {
-  return obelisk_rt_is_clock_occurrence_wait_flags(flags) &&
-         (flags & OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL) != 0;
+talos_rt_is_slot_final_clock_occurrence_wait_flags(uint32_t flags) {
+  return talos_rt_is_clock_occurrence_wait_flags(flags) &&
+         (flags & TALOS_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL) != 0;
 }
 
-inline bool obelisk_rt_is_slot_final_clock_occurrence_wait(
-    const obelisk_rt_wait_record_v1 *wait) {
+inline bool talos_rt_is_slot_final_clock_occurrence_wait(
+    const talos_rt_wait_record_v1 *wait) {
   return wait &&
-         obelisk_rt_is_slot_final_clock_occurrence_wait_flags(wait->flags);
+         talos_rt_is_slot_final_clock_occurrence_wait_flags(wait->flags);
 }
 
 inline bool
-obelisk_rt_design_signal_wait_blocked(const ScheduledDesignTask &task) {
+talos_rt_design_signal_wait_blocked(const ScheduledDesignTask &task) {
   if (task.terminated || !task.started || task.signalTriggered)
     return false;
-  bool signalSuspend = task.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
-                       task.suspendKind == OBELISK_RT_SUSPEND_EDGE;
-  if (signalSuspend && task.waitSize >= sizeof(obelisk_rt_wait_record_v1) &&
+  bool signalSuspend = task.suspendKind == TALOS_RT_SUSPEND_CHANGE ||
+                       task.suspendKind == TALOS_RT_SUSPEND_EDGE;
+  if (signalSuspend && task.waitSize >= sizeof(talos_rt_wait_record_v1) &&
       task.waitOffset <= task.frame.size() &&
       task.waitSize <= task.frame.size() - task.waitOffset) {
-    const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+    const auto *wait = reinterpret_cast<const talos_rt_wait_record_v1 *>(
         task.frame.data() + task.waitOffset);
-    if (wait->flags == OBELISK_RT_WAIT_LEVEL_TRUE ||
-        wait->flags == OBELISK_RT_WAIT_EDGE_IFF ||
-        obelisk_rt_is_clock_occurrence_wait_flags(wait->flags))
+    if (wait->flags == TALOS_RT_WAIT_LEVEL_TRUE ||
+        wait->flags == TALOS_RT_WAIT_EDGE_IFF ||
+        talos_rt_is_clock_occurrence_wait_flags(wait->flags))
       return true;
   }
   return !task.signalSubscriptions.empty() && task.signalLatch &&
          !task.signalLatch->triggered &&
-         (signalSuspend || task.suspendKind == OBELISK_RT_SUSPEND_OBSERVER);
+         (signalSuspend || task.suspendKind == TALOS_RT_SUSPEND_OBSERVER);
 }
 
-ManagedHeap *obelisk_rt_managed_heap_create(obelisk_rt_context *context);
-void obelisk_rt_managed_heap_destroy(ManagedHeap *heap) noexcept;
+ManagedHeap *talos_rt_managed_heap_create(talos_rt_context *context);
+void talos_rt_managed_heap_destroy(ManagedHeap *heap) noexcept;
 // Reserve a nonzero identity in the same context-local namespace as managed
 // objects. This does not allocate or root an object and needs no active lane.
-obelisk_rt_status obelisk_rt_managed_identity_reserve(
-    obelisk_rt_context *context, uint64_t *outIdentity) noexcept;
+talos_rt_status talos_rt_managed_identity_reserve(
+    talos_rt_context *context, uint64_t *outIdentity) noexcept;
 // IEEE 1800-2023 9.7 and 37.33: map an existing process class object to a
 // stable identity shared with the managed-object namespace. Finished/killed
 // process objects remain valid through the scheduler's existing tombstones.
-obelisk_rt_status obelisk_rt_process_object_identity(
-    obelisk_rt_context *context, uint64_t logicalProcess,
+talos_rt_status talos_rt_process_object_identity(
+    talos_rt_context *context, uint64_t logicalProcess,
     uint64_t *outIdentity) noexcept;
 /// Collections the heap made at designated collection points.
-uint64_t obelisk_rt_managed_heap_designated_collections(ManagedHeap *heap);
+uint64_t talos_rt_managed_heap_designated_collections(ManagedHeap *heap);
 /// Whether a schedule has designated the heap's collection points.
-bool obelisk_rt_managed_heap_collections_designated(ManagedHeap *heap);
+bool talos_rt_managed_heap_collections_designated(ManagedHeap *heap);
 /// Compiled code roots managed values only at GC polls; allocation records
-/// pressure instead of collecting (OBELISK_RT_EXECUTION_POLLED_COLLECTION).
-void obelisk_rt_managed_heap_poll_collections(ManagedHeap *heap);
-bool obelisk_rt_managed_heap_collections_polled(ManagedHeap *heap);
+/// pressure instead of collecting (TALOS_RT_EXECUTION_POLLED_COLLECTION).
+void talos_rt_managed_heap_poll_collections(ManagedHeap *heap);
+bool talos_rt_managed_heap_collections_polled(ManagedHeap *heap);
 /// Whether a collector waits for the active lanes to park.
-bool obelisk_rt_managed_heap_collection_requested(ManagedHeap *heap);
+bool talos_rt_managed_heap_collection_requested(ManagedHeap *heap);
 /// Reclaim pressure that is due between two activations. Does nothing while
 /// this thread runs a managed activation.
-obelisk_rt_status obelisk_rt_managed_heap_collect_between_activations(
-    obelisk_rt_context *context);
-obelisk_rt_status
-obelisk_rt_managed_execution_enter(obelisk_rt_context *context,
-                                   obelisk_rt_gc_lane_v1 **outLane,
+talos_rt_status talos_rt_managed_heap_collect_between_activations(
+    talos_rt_context *context);
+talos_rt_status
+talos_rt_managed_execution_enter(talos_rt_context *context,
+                                   talos_rt_gc_lane_v1 **outLane,
                                    bool *outEntered);
-void obelisk_rt_managed_execution_leave(obelisk_rt_gc_lane_v1 *lane,
+void talos_rt_managed_execution_leave(talos_rt_gc_lane_v1 *lane,
                                         bool entered);
-using ManagedRootVisit = void (*)(void *, obelisk_rt_object_v1 **);
+using ManagedRootVisit = void (*)(void *, talos_rt_object_v1 **);
 using ManagedRootEnumerate = void (*)(void *, ManagedRootVisit, void *);
 
 // Caller-owned lane-local root provider. Providers form a stack and enumerate
@@ -3297,38 +3297,38 @@ struct ManagedRootProvider {
   uint64_t cookie = 0;
 };
 
-obelisk_rt_status obelisk_rt_managed_roots_push(obelisk_rt_gc_lane_v1 *lane,
+talos_rt_status talos_rt_managed_roots_push(talos_rt_gc_lane_v1 *lane,
                                                 ManagedRootProvider *provider,
                                                 ManagedRootEnumerate enumerate,
                                                 void *environment);
-obelisk_rt_status obelisk_rt_managed_roots_pop(obelisk_rt_gc_lane_v1 *lane,
+talos_rt_status talos_rt_managed_roots_pop(talos_rt_gc_lane_v1 *lane,
                                                ManagedRootProvider *provider);
-const obelisk_rt_class_descriptor_v1 *
-obelisk_rt_managed_class_lookup(obelisk_rt_context *context, uint64_t classID);
-obelisk_rt_random_state_v1 *
-obelisk_rt_random_active_state_unlocked(obelisk_rt_context *context);
-void obelisk_rt_random_split_unlocked(obelisk_rt_context *context,
-                                      obelisk_rt_random_state_v1 &child);
+const talos_rt_class_descriptor_v1 *
+talos_rt_managed_class_lookup(talos_rt_context *context, uint64_t classID);
+talos_rt_random_state_v1 *
+talos_rt_random_active_state_unlocked(talos_rt_context *context);
+void talos_rt_random_split_unlocked(talos_rt_context *context,
+                                      talos_rt_random_state_v1 &child);
 uint64_t
-obelisk_rt_random_initialization_scope_unlocked(obelisk_rt_context *context);
-void obelisk_rt_random_split_initialization_unlocked(
-    obelisk_rt_context *context, uint64_t scope,
-    obelisk_rt_random_state_v1 &child);
-void obelisk_rt_random_seed_context_unlocked(obelisk_rt_context *context,
+talos_rt_random_initialization_scope_unlocked(talos_rt_context *context);
+void talos_rt_random_split_initialization_unlocked(
+    talos_rt_context *context, uint64_t scope,
+    talos_rt_random_state_v1 &child);
+void talos_rt_random_seed_context_unlocked(talos_rt_context *context,
                                              uint64_t seed);
-bool obelisk_rt_managed_object_belongs_to(
-    obelisk_rt_context *context, obelisk_rt_object_v1 *object) noexcept;
-obelisk_rt_context *
-obelisk_rt_managed_lane_context(const obelisk_rt_gc_lane_v1 *lane) noexcept;
-const obelisk_rt_element_type_v1 *
-obelisk_rt_managed_element_type_lookup(obelisk_rt_context *context,
+bool talos_rt_managed_object_belongs_to(
+    talos_rt_context *context, talos_rt_object_v1 *object) noexcept;
+talos_rt_context *
+talos_rt_managed_lane_context(const talos_rt_gc_lane_v1 *lane) noexcept;
+const talos_rt_element_type_v1 *
+talos_rt_managed_element_type_lookup(talos_rt_context *context,
                                        uint64_t typeID);
 
-using ManagedObjectAccess = obelisk_rt_status (*)(void *, uint8_t *, uint64_t);
-using ManagedTraceVisit = void (*)(void *, obelisk_rt_object_v1 *);
+using ManagedObjectAccess = talos_rt_status (*)(void *, uint8_t *, uint64_t);
+using ManagedTraceVisit = void (*)(void *, talos_rt_object_v1 *);
 struct ManagedObjectLease;
-OBELISK_RT_FEATURE_HELPER void
-obelisk_rt_managed_object_release(ManagedObjectLease *lease) noexcept;
+TALOS_RT_FEATURE_HELPER void
+talos_rt_managed_object_release(ManagedObjectLease *lease) noexcept;
 struct ManagedObjectLease {
   void *metadata = nullptr;
   uint8_t *object = nullptr;
@@ -3343,7 +3343,7 @@ struct ManagedObjectLease {
   }
   ManagedObjectLease &operator=(ManagedObjectLease &&other) noexcept {
     if (this != &other) {
-      obelisk_rt_managed_object_release(this);
+      talos_rt_managed_object_release(this);
       metadata = std::exchange(other.metadata, nullptr);
       object = std::exchange(other.object, nullptr);
       extent = std::exchange(other.extent, 0);
@@ -3351,70 +3351,70 @@ struct ManagedObjectLease {
     }
     return *this;
   }
-  ~ManagedObjectLease() { obelisk_rt_managed_object_release(this); }
+  ~ManagedObjectLease() { talos_rt_managed_object_release(this); }
 };
 // IEEE 1800-2023 37.33: mailboxes and semaphores are class objects even
 // though their implementation uses managed container storage. Inspect an
 // already-acquired lease so a caller never reacquires the same ticket lock.
 enum class BuiltinClassKind : uint32_t {
-  None = OBELISK_RT_BUILTIN_CLASS_NONE,
-  Mailbox = OBELISK_RT_BUILTIN_CLASS_MAILBOX,
-  Semaphore = OBELISK_RT_BUILTIN_CLASS_SEMAPHORE
+  None = TALOS_RT_BUILTIN_CLASS_NONE,
+  Mailbox = TALOS_RT_BUILTIN_CLASS_MAILBOX,
+  Semaphore = TALOS_RT_BUILTIN_CLASS_SEMAPHORE
 };
 BuiltinClassKind
-obelisk_rt_builtin_class_kind(const ManagedObjectLease &lease) noexcept;
+talos_rt_builtin_class_kind(const ManagedObjectLease &lease) noexcept;
 
 // Classification reads only immutable metadata and never takes an object
 // ticket lock. The caller must keep the object live in an active GC lane.
 BuiltinClassKind
-obelisk_rt_builtin_class_kind_unlocked(obelisk_rt_object_v1 *object) noexcept;
-BuiltinClassKind obelisk_rt_builtin_container_kind(const uint8_t *object,
+talos_rt_builtin_class_kind_unlocked(talos_rt_object_v1 *object) noexcept;
+BuiltinClassKind talos_rt_builtin_container_kind(const uint8_t *object,
                                                    uint64_t extent) noexcept;
 // Resolve a direct builtin or a user class's private direct builtin payload.
 // The returned payload borrows the caller's active GC lifetime; no root is
 // added.
-obelisk_rt_status
-obelisk_rt_builtin_class_payload(obelisk_rt_object_v1 *object,
+talos_rt_status
+talos_rt_builtin_class_payload(talos_rt_object_v1 *object,
                                  BuiltinClassKind expected,
-                                 obelisk_rt_object_v1 **outPayload);
+                                 talos_rt_object_v1 **outPayload);
 
 // Copies mailbox messages in FIFO order, with each value plane followed by
 // its unknown plane when the element is four-state. The caller must keep its
 // GC lane active and root traced copied values before reaching a safepoint.
 // No lease for mailbox may be held while calling this helper.
-obelisk_rt_status obelisk_rt_mailbox_snapshot(
-    obelisk_rt_object_v1 *mailbox,
-    const obelisk_rt_element_type_v1 **outElement,
+talos_rt_status talos_rt_mailbox_snapshot(
+    talos_rt_object_v1 *mailbox,
+    const talos_rt_element_type_v1 **outElement,
     std::vector<uint8_t> &outValues);
 
 // Snapshot exact live threads still blocked on a named event. Event IDs are
 // executable event identities; UINT64_MAX is the language null event.
-obelisk_rt_status
-obelisk_rt_named_event_waiters(obelisk_rt_context *context, uint64_t eventID,
+talos_rt_status
+talos_rt_named_event_waiters(talos_rt_context *context, uint64_t eventID,
                                std::vector<uint64_t> &outProcesses);
 
 // The outermost activation defines a thread's source origin, independently
 // of the currently executing task/function or its lexical containment.
-obelisk_rt_status
-obelisk_rt_logical_process_origin(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_logical_process_origin(talos_rt_context *context,
                                   uint64_t logicalProcess,
                                   uint64_t *outCodeUnit) noexcept;
 
 // Copies a sequential value container without changing its contents. Mailbox
 // identities are excluded; callers preserve class references instead. The
 // active lane must remain entered until copied managed words are inspected.
-obelisk_rt_status
-obelisk_rt_container_snapshot(obelisk_rt_object_v1 *container,
+talos_rt_status
+talos_rt_container_snapshot(talos_rt_object_v1 *container,
                               uint32_t *outKind,
-                              const obelisk_rt_element_type_v1 **outElement,
+                              const talos_rt_element_type_v1 **outElement,
                               std::vector<uint8_t> &outValues);
 
 // Copy the complete value/unknown planes of a one-element boxed array. The
 // caller holds an active lane until conversion of any copied managed words.
 // Type ID zero denotes an unbound legacy box, not an inferred source type.
-obelisk_rt_status
-obelisk_rt_box_snapshot(obelisk_rt_object_v1 *box, uint64_t *outTypeID,
-                        const obelisk_rt_element_type_v1 **outElement,
+talos_rt_status
+talos_rt_box_snapshot(talos_rt_object_v1 *box, uint64_t *outTypeID,
+                        const talos_rt_element_type_v1 **outElement,
                         std::vector<uint8_t> &outPlanes);
 // Copies one sequential-container element under the same owner/buffer access
 // as its size and descriptor. A missing index requests metadata only; an index
@@ -3423,11 +3423,11 @@ obelisk_rt_box_snapshot(obelisk_rt_object_v1 *box, uint64_t *outTypeID,
 struct VPIContainerElementSnapshot {
   uint32_t kind = 0;
   uint64_t size = 0;
-  const obelisk_rt_element_type_v1 *element = nullptr;
+  const talos_rt_element_type_v1 *element = nullptr;
   std::vector<uint8_t> value;
 };
-obelisk_rt_status
-obelisk_rt_container_element_snapshot(obelisk_rt_object_v1 *container,
+talos_rt_status
+talos_rt_container_element_snapshot(talos_rt_object_v1 *container,
                                       std::optional<uint64_t> index,
                                       VPIContainerElementSnapshot *outSnapshot);
 
@@ -3446,94 +3446,94 @@ struct VPIAssocSnapshotEntry {
 struct VPIAssocSnapshot {
   uint32_t keyKind = 0;
   uint64_t keyWidth = 0;
-  const obelisk_rt_element_type_v1 *keyElement = nullptr;
-  const obelisk_rt_element_type_v1 *element = nullptr;
+  const talos_rt_element_type_v1 *keyElement = nullptr;
+  const talos_rt_element_type_v1 *element = nullptr;
   std::vector<VPIAssocSnapshotEntry> entries;
 };
-obelisk_rt_status obelisk_rt_assoc_snapshot(obelisk_rt_object_v1 *array,
+talos_rt_status talos_rt_assoc_snapshot(talos_rt_object_v1 *array,
                                             VPIAssocSnapshot *outSnapshot);
 
 // Returns logical process tokens, including the native-process tag. The
 // caller holds an active lane and no lease for object; the helper does not
 // change wait readiness or scheduler state and promises no iteration order.
-obelisk_rt_status obelisk_rt_builtin_class_waiters(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *object,
+talos_rt_status talos_rt_builtin_class_waiters(
+    talos_rt_gc_lane_v1 *lane, talos_rt_object_v1 *object,
     std::vector<uint64_t> &outProcesses);
 
-obelisk_rt_status obelisk_rt_managed_allocate(obelisk_rt_gc_lane_v1 *lane,
-                                              obelisk_rt_managed_kind_v1 kind,
+talos_rt_status talos_rt_managed_allocate(talos_rt_gc_lane_v1 *lane,
+                                              talos_rt_managed_kind_v1 kind,
                                               uint64_t extent,
                                               uint64_t alignment,
                                               const void *runtimeDescriptor,
-                                              obelisk_rt_object_v1 **outObject);
+                                              talos_rt_object_v1 **outObject);
 // Allocate while the calling lane remains active without entering a
 // safepoint. This is reserved for publishing allocation-backed caches from
 // operations whose inputs are not compiler-visible GC roots. The allocation
 // still uses the ordinary allocator and updates all accounting; a subsequent
 // ordinary allocation observes the collection threshold.
-OBELISK_RT_FEATURE_HELPER obelisk_rt_status
-obelisk_rt_managed_allocate_without_safepoint(obelisk_rt_gc_lane_v1 *lane,
-                                              obelisk_rt_managed_kind_v1 kind,
+TALOS_RT_FEATURE_HELPER talos_rt_status
+talos_rt_managed_allocate_without_safepoint(talos_rt_gc_lane_v1 *lane,
+                                              talos_rt_managed_kind_v1 kind,
                                               uint64_t extent,
                                               uint64_t alignment,
                                               const void *runtimeDescriptor,
-                                              obelisk_rt_object_v1 **outObject);
-obelisk_rt_status
-obelisk_rt_managed_object_access(obelisk_rt_object_v1 *object,
-                                 obelisk_rt_managed_kind_v1 expectedKind,
+                                              talos_rt_object_v1 **outObject);
+talos_rt_status
+talos_rt_managed_object_access(talos_rt_object_v1 *object,
+                                 talos_rt_managed_kind_v1 expectedKind,
                                  ManagedObjectAccess access, void *environment);
 // Feature-local zero-copy traversal can retain a managed object's ticket lock
 // across an explicit continuation frame. Every successful acquire must be
 // paired with exactly one release; acquiring a second lease for the same
 // object before releasing the first is invalid.
-OBELISK_RT_FEATURE_HELPER obelisk_rt_status obelisk_rt_managed_object_acquire(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *object,
-    obelisk_rt_managed_kind_v1 expectedKind, ManagedObjectLease *outLease);
-obelisk_rt_managed_kind_v1
-obelisk_rt_managed_object_kind(const obelisk_rt_object_v1 *object) noexcept;
+TALOS_RT_FEATURE_HELPER talos_rt_status talos_rt_managed_object_acquire(
+    talos_rt_gc_lane_v1 *lane, talos_rt_object_v1 *object,
+    talos_rt_managed_kind_v1 expectedKind, ManagedObjectLease *outLease);
+talos_rt_managed_kind_v1
+talos_rt_managed_object_kind(const talos_rt_object_v1 *object) noexcept;
 uint64_t
-obelisk_rt_managed_object_extent(const obelisk_rt_object_v1 *object) noexcept;
-obelisk_rt_context *
-obelisk_rt_managed_object_context(const obelisk_rt_object_v1 *object) noexcept;
+talos_rt_managed_object_extent(const talos_rt_object_v1 *object) noexcept;
+talos_rt_context *
+talos_rt_managed_object_context(const talos_rt_object_v1 *object) noexcept;
 /// Invalidates every thread's class dispatch memo. A destroyed context's
 /// descriptors may be freed and their addresses reused.
-void obelisk_rt_retire_dispatch_memos() noexcept;
-const obelisk_rt_class_descriptor_v1 *
-obelisk_rt_managed_object_class_descriptor(
-    const obelisk_rt_object_v1 *object) noexcept;
-uint64_t obelisk_rt_managed_watch_range(obelisk_rt_object_v1 *object,
+void talos_rt_retire_dispatch_memos() noexcept;
+const talos_rt_class_descriptor_v1 *
+talos_rt_managed_object_class_descriptor(
+    const talos_rt_object_v1 *object) noexcept;
+uint64_t talos_rt_managed_watch_range(talos_rt_object_v1 *object,
                                         uint64_t offset,
                                         uint64_t size) noexcept;
-void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
+void talos_rt_managed_trace_runtime_object(talos_rt_managed_kind_v1 kind,
                                              uint8_t *object, uint64_t extent,
                                              ManagedTraceVisit visit,
                                              void *environment) noexcept;
 // Replaces each container a strong slot of a traced value image holds with its
 // value copy, as assignment does (IEEE 1800-2023 7.6). Mailbox and semaphore
 // objects are class identities and stay shared. The caller roots the image.
-obelisk_rt_status
-obelisk_rt_clone_traced_containers(obelisk_rt_gc_lane_v1 *lane, uint8_t *image,
-                                   const obelisk_rt_trace_layout_v1 *layout);
+talos_rt_status
+talos_rt_clone_traced_containers(talos_rt_gc_lane_v1 *lane, uint8_t *image,
+                                   const talos_rt_trace_layout_v1 *layout);
 // A whole dynamic aggregate selected by force / procedural assign is a value,
 // not a mutable reference. Suppress mutations through that selected value
 // while its owning override layer is active.
-bool obelisk_rt_managed_value_mutation_masked(
-    obelisk_rt_object_v1 *object) noexcept;
-obelisk_rt_status obelisk_rt_reference_path_shape(obelisk_rt_object_v1 *path,
+bool talos_rt_managed_value_mutation_masked(
+    talos_rt_object_v1 *object) noexcept;
+talos_rt_status talos_rt_reference_path_shape(talos_rt_object_v1 *path,
                                                   uint64_t valueSize,
                                                   uint64_t bitWidth,
                                                   uint32_t fourState,
                                                   uint32_t managedValue);
-obelisk_rt_status obelisk_rt_reference_path_element(
-    obelisk_rt_object_v1 *path, const obelisk_rt_element_type_v1 **outElement);
-void obelisk_rt_enumerate_design_managed_roots(
-    obelisk_rt_context *context, ManagedRootVisit visit,
+talos_rt_status talos_rt_reference_path_element(
+    talos_rt_object_v1 *path, const talos_rt_element_type_v1 **outElement);
+void talos_rt_enumerate_design_managed_roots(
+    talos_rt_context *context, ManagedRootVisit visit,
     void *visitorEnvironment) noexcept;
-obelisk_rt_status
-obelisk_rt_validate_string(obelisk_rt_context *context,
-                           obelisk_rt_string_v1 string) noexcept;
-obelisk_rt_status obelisk_rt_class_bitstream_export_bytecode(
-    obelisk_rt_context *context, uint32_t function, uint32_t site,
+talos_rt_status
+talos_rt_validate_string(talos_rt_context *context,
+                           talos_rt_string_v1 string) noexcept;
+talos_rt_status talos_rt_class_bitstream_export_bytecode(
+    talos_rt_context *context, uint32_t function, uint32_t site,
     const void *input_value, const void *input_unknown,
     uint64_t input_plane_size, uint64_t input_bit_width,
     uint32_t input_four_state, void *out_value, void *out_unknown,
@@ -3543,23 +3543,23 @@ obelisk_rt_status obelisk_rt_class_bitstream_export_bytecode(
 
 class ManagedExecutionScope {
 public:
-  explicit ManagedExecutionScope(obelisk_rt_context *context)
-      : status(context ? obelisk_rt_managed_execution_enter(context, &lane,
+  explicit ManagedExecutionScope(talos_rt_context *context)
+      : status(context ? talos_rt_managed_execution_enter(context, &lane,
                                                             &entered)
-                       : OBELISK_RT_OK) {}
+                       : TALOS_RT_OK) {}
   ManagedExecutionScope(const ManagedExecutionScope &) = delete;
   ManagedExecutionScope &operator=(const ManagedExecutionScope &) = delete;
   ~ManagedExecutionScope() {
-    obelisk_rt_managed_execution_leave(lane, entered);
+    talos_rt_managed_execution_leave(lane, entered);
   }
 
-  obelisk_rt_status getStatus() const { return status; }
-  obelisk_rt_gc_lane_v1 *getLane() const { return lane; }
+  talos_rt_status getStatus() const { return status; }
+  talos_rt_gc_lane_v1 *getLane() const { return lane; }
 
 private:
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  obelisk_rt_status status = OBELISK_RT_OK;
+  talos_rt_status status = TALOS_RT_OK;
 };
 
 // Serialize a complete external mutation or scheduler fragment across any
@@ -3567,22 +3567,22 @@ private:
 // context, final cleanup is deferred until the outermost transaction returns.
 class ContextTransaction {
 public:
-  explicit ContextTransaction(obelisk_rt_context *context);
+  explicit ContextTransaction(talos_rt_context *context);
   ContextTransaction(const ContextTransaction &) = delete;
   ContextTransaction &operator=(const ContextTransaction &) = delete;
   ~ContextTransaction() noexcept;
 
 private:
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   std::unique_lock<std::recursive_mutex> transactionLock;
-  obelisk_rt_context *previousThreadContext = nullptr;
+  talos_rt_context *previousThreadContext = nullptr;
   uint32_t previousThreadDepth = 0;
   bool nested = false;
 };
 
 class ContextCallbackUnlock {
 public:
-  explicit ContextCallbackUnlock(obelisk_rt_context *context)
+  explicit ContextCallbackUnlock(talos_rt_context *context)
       : context(context) {
     context->mutex.unlock();
   }
@@ -3591,72 +3591,72 @@ public:
   ~ContextCallbackUnlock() { context->mutex.lock(); }
 
 private:
-  obelisk_rt_context *context;
+  talos_rt_context *context;
 };
 
-void setLastErrorUnlocked(obelisk_rt_context *context, std::string message);
+void setLastErrorUnlocked(talos_rt_context *context, std::string message);
 /// Latch a nonterminating simulation error while the context mutex is held.
 /// The scheduler continues running, but orderly shutdown reports failure.
-void latchSchedulerErrorUnlocked(obelisk_rt_context *context) noexcept;
+void latchSchedulerErrorUnlocked(talos_rt_context *context) noexcept;
 /// Begin the Final phase (IEEE 1800-2023 9.2.3). A pending termination
 /// request is consumed so final procedures run to completion unless they
 /// execute $finish themselves.
-void enterFinalPhaseUnlocked(obelisk_rt_context *context) noexcept;
-void setLastError(obelisk_rt_context *context, std::string message);
-void obelisk_rt_report_signal_diagnostics_unlocked(obelisk_rt_context *context);
-void obelisk_rt_release_native_schedule_plan(
-    obelisk_rt_context *context) noexcept;
-void obelisk_rt_release_eval_nba_queues(obelisk_rt_context *context) noexcept;
-void obelisk_rt_aot_external_write_unlocked(obelisk_rt_context *context);
-void obelisk_rt_aot_observation_demand_changed_unlocked(
-    obelisk_rt_context *context, bool active);
-void obelisk_rt_aot_external_write_range_unlocked(obelisk_rt_context *context,
+void enterFinalPhaseUnlocked(talos_rt_context *context) noexcept;
+void setLastError(talos_rt_context *context, std::string message);
+void talos_rt_report_signal_diagnostics_unlocked(talos_rt_context *context);
+void talos_rt_release_native_schedule_plan(
+    talos_rt_context *context) noexcept;
+void talos_rt_release_eval_nba_queues(talos_rt_context *context) noexcept;
+void talos_rt_aot_external_write_unlocked(talos_rt_context *context);
+void talos_rt_aot_observation_demand_changed_unlocked(
+    talos_rt_context *context, bool active);
+void talos_rt_aot_external_write_range_unlocked(talos_rt_context *context,
                                                   uint64_t bitOffset,
                                                   uint64_t bitWidth,
                                                   bool persistent);
-void obelisk_rt_aot_external_write_handle_unlocked(obelisk_rt_context *context,
+void talos_rt_aot_external_write_handle_unlocked(talos_rt_context *context,
                                                    uint64_t stableID,
                                                    uint64_t bitOffset,
                                                    uint64_t bitWidth,
                                                    bool persistent);
-bool obelisk_rt_aot_external_deposit_unlocked(obelisk_rt_context *context,
+bool talos_rt_aot_external_deposit_unlocked(talos_rt_context *context,
                                               uint64_t stableID,
                                               uint64_t bitOffset,
                                               uint64_t bitWidth);
-void obelisk_rt_aot_release_range_unlocked(obelisk_rt_context *context,
+void talos_rt_aot_release_range_unlocked(talos_rt_context *context,
                                            uint64_t bitOffset,
                                            uint64_t bitWidth);
 
-void obelisk_rt_retain_controls_unlocked(obelisk_rt_context *context,
+void talos_rt_retain_controls_unlocked(talos_rt_context *context,
                                          const std::vector<uint64_t> &controls);
-void obelisk_rt_release_control_unlocked(obelisk_rt_context *context,
+void talos_rt_release_control_unlocked(talos_rt_context *context,
                                          uint64_t control);
-void obelisk_rt_release_controls_unlocked(
-    obelisk_rt_context *context, const std::vector<uint64_t> &controls);
+void talos_rt_release_controls_unlocked(
+    talos_rt_context *context, const std::vector<uint64_t> &controls);
 
-void obelisk_rt_program_register_unlocked(obelisk_rt_context *context,
+void talos_rt_program_register_unlocked(talos_rt_context *context,
                                           uint64_t logicalProcess,
                                           uint64_t programOwner);
-void obelisk_rt_program_complete_unlocked(obelisk_rt_context *context,
+void talos_rt_program_complete_unlocked(talos_rt_context *context,
                                           uint64_t logicalProcess,
                                           uint64_t programOwner);
-void obelisk_rt_program_seal_unlocked(obelisk_rt_context *context);
+void talos_rt_program_seal_unlocked(talos_rt_context *context);
 
 /// Whether every-bit-known truth holds for any watched bit of a level wait
 /// entry, reading through the current publication snapshot.
-bool obelisk_rt_level_wait_entry_true_unlocked(
-    const obelisk_rt_context *context, const obelisk_rt_wait_entry_v1 &entry);
+bool talos_rt_level_wait_entry_true_unlocked(
+    const talos_rt_context *context, const talos_rt_wait_entry_v1 &entry);
 /// Resensitizes a process resumed while WAITING (IEEE 1800-2023 9.7): events
 /// that occurred while it was suspended are forgotten, while a level wait is
 /// satisfied by its current value and a delay keeps its deadline.
-void obelisk_rt_resensitize_process_unlocked(obelisk_rt_context *context,
+void talos_rt_resensitize_process_unlocked(talos_rt_context *context,
                                              ScheduledProcess &process);
-void obelisk_rt_resensitize_design_task_unlocked(obelisk_rt_context *context,
+void talos_rt_resensitize_design_task_unlocked(talos_rt_context *context,
                                                  ScheduledDesignTask &task);
 
 /// Drops finished-process links from which no live process descends.
-void obelisk_rt_prune_finished_process_parents_unlocked(
-    obelisk_rt_context *context);
+void talos_rt_prune_finished_process_parents_unlocked(
+    talos_rt_context *context);
 
 // A join_none branch may finish, or be killed by a disable that does not reach
 // its children, while processes spawned beneath it remain live. They stay its
@@ -3665,11 +3665,11 @@ void obelisk_rt_prune_finished_process_parents_unlocked(
 // fork and kill() in an ancestor, and kill() of the FINISHED or KILLED branch
 // itself, still reach them as descendants (9.6.3, 9.7). The caller has
 // already cleared the branch's parent mark.
-inline void obelisk_rt_record_terminated_parent_unlocked(
-    obelisk_rt_context *context, uint64_t terminated, uint64_t parent) {
+inline void talos_rt_record_terminated_parent_unlocked(
+    talos_rt_context *context, uint64_t terminated, uint64_t parent) {
   auto &links = context->finishedProcessParents;
   if (links.size() >= context->finishedProcessParentsPruneSize) {
-    obelisk_rt_prune_finished_process_parents_unlocked(context);
+    talos_rt_prune_finished_process_parents_unlocked(context);
     // The prune scanned every link and scheduled process. Record at least as
     // many links again before the next one so retirement stays amortized O(1)
     // however many processes are alive.
@@ -3683,10 +3683,10 @@ inline void obelisk_rt_record_terminated_parent_unlocked(
 
 /// Records the parent of a naturally finishing process that spawned children.
 inline void
-obelisk_rt_retire_process_parent_unlocked(obelisk_rt_context *context,
+talos_rt_retire_process_parent_unlocked(talos_rt_context *context,
                                           uint64_t finished, uint64_t parent) {
   if (context->logicalProcessParentsWithChildren.erase(finished))
-    obelisk_rt_record_terminated_parent_unlocked(context, finished, parent);
+    talos_rt_record_terminated_parent_unlocked(context, finished, parent);
 }
 
 /// Returns `root` and every logical process descending from it: live
@@ -3696,40 +3696,40 @@ obelisk_rt_retire_process_parent_unlocked(obelisk_rt_context *context,
 /// linear in the scheduled processes and finished links, independent of the
 /// tree's size or depth.
 std::unordered_set<uint64_t>
-obelisk_rt_collect_process_tree_unlocked(const obelisk_rt_context *context,
+talos_rt_collect_process_tree_unlocked(const talos_rt_context *context,
                                          uint64_t root, bool &rootLive);
 
-obelisk_rt_status obelisk_rt_initialize_design_bytecode_image(
-    const obelisk_rt_execution_descriptor_v1 &execution,
-    obelisk::designbytecode::Image &image) noexcept;
+talos_rt_status talos_rt_initialize_design_bytecode_image(
+    const talos_rt_execution_descriptor_v1 &execution,
+    talos::designbytecode::Image &image) noexcept;
 
-DpiScopeHandle *obelisk_rt_find_dpi_scope(obelisk_rt_context *context,
+DpiScopeHandle *talos_rt_find_dpi_scope(talos_rt_context *context,
                                           uint64_t id);
-obelisk_rt_status obelisk_rt_initialize_dpi_scopes(
-    obelisk_rt_context *context,
-    const obelisk_rt_execution_descriptor_v1 *execution);
+talos_rt_status talos_rt_initialize_dpi_scopes(
+    talos_rt_context *context,
+    const talos_rt_execution_descriptor_v1 *execution);
 
 // Cold VPI query support. The caller holds the recursive context lock. This
 // snapshots only canonical future scheduler calendars, never their heaps,
 // mirrors, or deoptimization scratch state.
-obelisk_rt_status obelisk_rt_snapshot_future_time_queues_unlocked(
-    const obelisk_rt_context *context, std::vector<uint64_t> &times);
-bool obelisk_rt_current_time_queue_pending_unlocked(
-    obelisk_rt_context *context);
-bool obelisk_rt_design_task_pending_before_read_only_unlocked(
-    obelisk_rt_context *context);
+talos_rt_status talos_rt_snapshot_future_time_queues_unlocked(
+    const talos_rt_context *context, std::vector<uint64_t> &times);
+bool talos_rt_current_time_queue_pending_unlocked(
+    talos_rt_context *context);
+bool talos_rt_design_task_pending_before_read_only_unlocked(
+    talos_rt_context *context);
 
 template <typename Callable>
-obelisk_rt_status guarded(obelisk_rt_context *context,
+talos_rt_status guarded(talos_rt_context *context,
                           Callable &&callable) noexcept {
-  OBELISK_RT_TRY { return callable(); }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_TRY { return callable(); }
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setLastError(context, "runtime allocation failed");
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setLastError(context, "unexpected runtime exception");
-    return OBELISK_RT_IO_ERROR;
+    return TALOS_RT_IO_ERROR;
   }
 }
 
@@ -3737,126 +3737,126 @@ obelisk_rt_status guarded(obelisk_rt_context *context,
 // feature section prevents a cold callable from leaving a template
 // instantiation in the ordinary runtime text.
 template <typename Callable>
-OBELISK_RT_FEATURE_HELPER obelisk_rt_status obelisk_rt_feature_guarded(
-    obelisk_rt_context *context, Callable &&callable) noexcept {
-  OBELISK_RT_TRY { return callable(); }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+TALOS_RT_FEATURE_HELPER talos_rt_status talos_rt_feature_guarded(
+    talos_rt_context *context, Callable &&callable) noexcept {
+  TALOS_RT_TRY { return callable(); }
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setLastError(context, "runtime allocation failed");
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setLastError(context, "unexpected runtime exception");
-    return OBELISK_RT_IO_ERROR;
+    return TALOS_RT_IO_ERROR;
   }
 }
 
 // The IEEE 1800-2017 21.2.1.7 rendering of one singular integral value inside
 // an assignment pattern: the default decimal format of $display (21.2.1),
 // unpadded. Shared so a container element reads the same as a struct member.
-std::string obelisk_rt_pattern_integer_text(uint64_t width, bool isSigned,
+std::string talos_rt_pattern_integer_text(uint64_t width, bool isSigned,
                                             const uint64_t *value,
                                             const uint64_t *unknown);
 
-obelisk_rt_status makeBuffer(std::string_view source,
-                             obelisk_rt_buffer_v1 *output);
+talos_rt_status makeBuffer(std::string_view source,
+                             talos_rt_buffer_v1 *output);
 bool validBytes(const void *data, uint64_t size);
 std::string hostErrorMessage(int error);
 
 // Cancel every not-yet-matured deferred-immediate report owned by one
 // logical process. The caller must hold the context mutex.
-void obelisk_rt_flush_deferred_immediate_reports_unlocked(
-    obelisk_rt_context *context, uint64_t logicalProcess);
+void talos_rt_flush_deferred_immediate_reports_unlocked(
+    talos_rt_context *context, uint64_t logicalProcess);
 // IEEE 1800-2023 16.4.2: a process resuming from an event control or a wait
 // statement reaches a deferred assertion flush point. Resuming from a delay,
 // a fork join, or a built-in blocking method does not.
-inline bool obelisk_rt_resume_flushes_deferred_reports(uint32_t suspendKind) {
+inline bool talos_rt_resume_flushes_deferred_reports(uint32_t suspendKind) {
   switch (suspendKind) {
-  case OBELISK_RT_SUSPEND_CHANGE:
-  case OBELISK_RT_SUSPEND_EDGE:
-  case OBELISK_RT_SUSPEND_EVENT:
-  case OBELISK_RT_SUSPEND_EVENT_ORDER:
-  case OBELISK_RT_SUSPEND_CHILDREN:
-  case OBELISK_RT_SUSPEND_OBSERVER:
+  case TALOS_RT_SUSPEND_CHANGE:
+  case TALOS_RT_SUSPEND_EDGE:
+  case TALOS_RT_SUSPEND_EVENT:
+  case TALOS_RT_SUSPEND_EVENT_ORDER:
+  case TALOS_RT_SUSPEND_CHILDREN:
+  case TALOS_RT_SUSPEND_OBSERVER:
     return true;
   default:
     return false;
   }
 }
 inline bool
-obelisk_rt_generated_deferred_reports_pending(const obelisk_rt_context *context) {
+talos_rt_generated_deferred_reports_pending(const talos_rt_context *context) {
   return context->generatedDeferredReports != 0;
 }
-bool obelisk_rt_cancel_deferred_immediate_assertion_unlocked(
-    obelisk_rt_context *context, uint64_t assertion,
+bool talos_rt_cancel_deferred_immediate_assertion_unlocked(
+    talos_rt_context *context, uint64_t assertion,
     uint64_t logicalProcess = 0);
 
-obelisk_rt_status writeUnlocked(obelisk_rt_context *context,
+talos_rt_status writeUnlocked(talos_rt_context *context,
                                 uint32_t descriptor, const void *data,
                                 uint64_t size, uint64_t *outWritten);
 
 // Fully validate immutable bytecode metadata without executing or mutating a
 // process frame. Missing continuations are tier-unavailable; malformed
 // programs are invalid bytecode.
-obelisk_rt_status
-obelisk_rt_validate_bytecode_program(const obelisk_rt_bytecode_v1 &program,
+talos_rt_status
+talos_rt_validate_bytecode_program(const talos_rt_bytecode_v1 &program,
                                      uint32_t continuation) noexcept;
-bool obelisk_rt_validate_computed_wait_record(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    const obelisk_rt_computed_wait_record_v1 *wait, uint64_t available);
+bool talos_rt_validate_computed_wait_record(
+    const talos_rt_execution_descriptor_v1 *execution,
+    const talos_rt_computed_wait_record_v1 *wait, uint64_t available);
 
 // Design-wide bytecode helpers shared by process construction/dispatch.
 // Standalone descriptors receive full validation; context-bound dispatch
 // reuses the image validated when that context was created.
-obelisk_rt_status obelisk_rt_validate_design_bytecode(
-    const obelisk_rt_design_bytecode_entry_v1 &entry,
-    obelisk_rt_context *context, uint64_t *outScratchSize,
+talos_rt_status talos_rt_validate_design_bytecode(
+    const talos_rt_design_bytecode_entry_v1 &entry,
+    talos_rt_context *context, uint64_t *outScratchSize,
     uint64_t *outScratchAlignment) noexcept;
-obelisk_rt_status obelisk_rt_execute_design_bytecode(
-    const obelisk_rt_design_bytecode_entry_v1 &entry,
-    obelisk_rt_context *context, void *frame, uint64_t frameSize,
+talos_rt_status talos_rt_execute_design_bytecode(
+    const talos_rt_design_bytecode_entry_v1 &entry,
+    talos_rt_context *context, void *frame, uint64_t frameSize,
     uint64_t scratchOffset, uint64_t scratchSize, uint32_t continuation,
     uint64_t instructionLimit,
-    obelisk_rt_fragment_action_v1 *outAction) noexcept;
-obelisk_rt_status obelisk_rt_execute_design_observer(
-    const obelisk_rt_execution_descriptor_v1 &execution,
-    obelisk_rt_context *context, uint32_t function,
-    const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
+    talos_rt_fragment_action_v1 *outAction) noexcept;
+talos_rt_status talos_rt_execute_design_observer(
+    const talos_rt_execution_descriptor_v1 &execution,
+    talos_rt_context *context, uint32_t function,
+    const talos_rt_computed_capture_v1 *captures, uint32_t captureCount,
     uint64_t *value, uint64_t *unknown, uint32_t limbCount) noexcept;
-obelisk_rt_status obelisk_rt_execute_design_export(
-    const obelisk_rt_execution_descriptor_v1 &execution,
-    const obelisk_rt_export_descriptor_v1 &descriptor,
-    obelisk_rt_context *context, const obelisk_rt_import_input_v1 *inputs,
-    uint32_t inputCount, obelisk_rt_import_output_v1 *outputs,
+talos_rt_status talos_rt_execute_design_export(
+    const talos_rt_execution_descriptor_v1 &execution,
+    const talos_rt_export_descriptor_v1 &descriptor,
+    talos_rt_context *context, const talos_rt_import_input_v1 *inputs,
+    uint32_t inputCount, talos_rt_import_output_v1 *outputs,
     uint32_t outputCount) noexcept;
-obelisk_rt_status obelisk_rt_execute_design_export_task(
-    const obelisk_rt_execution_descriptor_v1 &execution,
-    const obelisk_rt_export_descriptor_v1 &descriptor,
-    obelisk_rt_context *context, const obelisk_rt_import_input_v1 *inputs,
-    uint32_t inputCount, obelisk_rt_import_output_v1 *outputs,
+talos_rt_status talos_rt_execute_design_export_task(
+    const talos_rt_execution_descriptor_v1 &execution,
+    const talos_rt_export_descriptor_v1 &descriptor,
+    talos_rt_context *context, const talos_rt_import_input_v1 *inputs,
+    uint32_t inputCount, talos_rt_import_output_v1 *outputs,
     uint32_t outputCount, const uint8_t *directions,
     const int64_t *const *aggregatePlans,
     const uint64_t *aggregatePlanWords) noexcept;
-obelisk_rt_status
-obelisk_rt_run_dpi_export_task_logical(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_run_dpi_export_task_logical(talos_rt_context *context,
                                        uint64_t logical) noexcept;
-obelisk_rt_status
-obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept;
+talos_rt_status
+talos_rt_initialize_design_state(talos_rt_context *context) noexcept;
 
 // Generated process spawns are already bound to a validated context. Reuse
 // its immutable design-bytecode image while retaining the public standalone
 // creation entry point for descriptors without a context.
-extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create_for_context(
-    obelisk_rt_context *context,
-    const obelisk_rt_process_descriptor_v1 *descriptor,
-    obelisk_rt_process_instance_v1 **outInstance);
-obelisk_rt_status obelisk_rt_resolve_design_drivers(obelisk_rt_context *context,
+extern "C" talos_rt_status talos_rt_v1_process_instance_create_for_context(
+    talos_rt_context *context,
+    const talos_rt_process_descriptor_v1 *descriptor,
+    talos_rt_process_instance_v1 **outInstance);
+talos_rt_status talos_rt_resolve_design_drivers(talos_rt_context *context,
                                                     uint64_t begin,
                                                     uint64_t end) noexcept;
-obelisk_rt_status
-obelisk_rt_design_net_is_connected(obelisk_rt_context *context, uint64_t begin,
+talos_rt_status
+talos_rt_design_net_is_connected(talos_rt_context *context, uint64_t begin,
                                    uint64_t end, bool *outConnected) noexcept;
-obelisk_rt_status obelisk_rt_run_one_design_task(
-    obelisk_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
+talos_rt_status talos_rt_run_one_design_task(
+    talos_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
     uint64_t maximumInsertionSequence, bool *outProgress,
     bool stopBeforeExecution = false) noexcept;
 // IEEE 1800-2023 4.5, 9.4.2.4, 14.10: once a post-Observed resumption is the
@@ -3864,206 +3864,206 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
 // every ready post-Observed resumption moves to its Active home together. The
 // Inactive and NBA work any of them schedules then follows all of them; those
 // not yet ready wait for a later Observed region.
-void obelisk_rt_promote_post_observed_resumptions_unlocked(
-    obelisk_rt_context *context);
+void talos_rt_promote_post_observed_resumptions_unlocked(
+    talos_rt_context *context);
 enum class PostObservedPromotion { Stale, Waiting, Promoted };
-PostObservedPromotion obelisk_rt_promote_post_observed_design_task_unlocked(
-    obelisk_rt_context *context, uint64_t taskID);
-obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
+PostObservedPromotion talos_rt_promote_post_observed_design_task_unlocked(
+    talos_rt_context *context, uint64_t taskID);
+talos_rt_status talos_rt_prime_design_task(talos_rt_context *context,
                                                uint64_t taskID) noexcept;
-obelisk_rt_status
-obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_apply_managed_nba(talos_rt_context *context,
                              const ScheduledManagedNBA &update);
 
 // Append one already-committed scalar transition while the context mutex is
 // held, and latch level/iff observers against the state at this exact
 // occurrence. Both native stores and design bytecode use this path.
-bool obelisk_rt_append_signal_event_unlocked(obelisk_rt_context *context,
+bool talos_rt_append_signal_event_unlocked(talos_rt_context *context,
                                              uint64_t bitOffset, bool oldValue,
                                              bool oldUnknown, bool newValue,
                                              bool newUnknown);
-bool obelisk_rt_append_signal_event_unlocked(obelisk_rt_context *context,
+bool talos_rt_append_signal_event_unlocked(talos_rt_context *context,
                                              uint64_t bitOffset, bool oldValue,
                                              bool oldUnknown, bool newValue,
                                              bool newUnknown,
                                              bool evaluateComputedObservers);
-bool obelisk_rt_publish_signal_occurrence_unlocked(
-    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+bool talos_rt_publish_signal_occurrence_unlocked(
+    talos_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     uint32_t edges, uint64_t *outSequence = nullptr);
-bool obelisk_rt_read_signal_bit_unlocked(obelisk_rt_context *context,
+bool talos_rt_read_signal_bit_unlocked(talos_rt_context *context,
                                          uint64_t stableID, uint64_t bit,
                                          bool &value, bool &unknown,
                                          bool useSnapshot = true);
 // Publish one packed transition mask for a committed signal range. The three
 // planes retain per-bit edge identity so a batched NBA cannot spuriously wake
 // a posedge waiter because another bit in the range had a posedge.
-bool obelisk_rt_publish_signal_transition_batch_unlocked(
-    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+bool talos_rt_publish_signal_transition_batch_unlocked(
+    talos_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     uint64_t edgeBitOffset = 0, uint64_t *outSequence = nullptr,
     const uint8_t *oldValue = nullptr, const uint8_t *oldUnknown = nullptr,
     const uint8_t *newValue = nullptr, const uint8_t *newUnknown = nullptr);
-bool obelisk_rt_publish_native_signal_transition_unlocked(
-    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+bool talos_rt_publish_native_signal_transition_unlocked(
+    talos_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
     const uint8_t *newUnknown, bool indexedExternalDeposit = false,
     bool establishesOverride = false);
-bool obelisk_rt_read_clock_condition_publication_bit_unlocked(
-    const obelisk_rt_context *context, uint64_t stableID, uint64_t bit,
+bool talos_rt_read_clock_condition_publication_bit_unlocked(
+    const talos_rt_context *context, uint64_t stableID, uint64_t bit,
     bool &value, bool &unknown);
-bool obelisk_rt_latch_conditional_signal_waiters_unlocked(
-    obelisk_rt_context *context, uint64_t stableID, uint32_t edges);
-bool obelisk_rt_latch_conditional_signal_range_unlocked(
-    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+bool talos_rt_latch_conditional_signal_waiters_unlocked(
+    talos_rt_context *context, uint64_t stableID, uint32_t edges);
+bool talos_rt_latch_conditional_signal_range_unlocked(
+    talos_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     uint32_t edges);
-bool obelisk_rt_register_signal_wait_unlocked(
-    obelisk_rt_context *context, const obelisk_rt_wait_record_v1 *wait,
+bool talos_rt_register_signal_wait_unlocked(
+    talos_rt_context *context, const talos_rt_wait_record_v1 *wait,
     std::vector<std::unique_ptr<SignalSubscription>> &subscriptions,
     std::unique_ptr<SignalWaitLatch> &latch, uint64_t waiterToken = 0,
     bool designWaiter = false);
-bool obelisk_rt_register_computed_signal_wait_unlocked(
-    obelisk_rt_context *context, obelisk_rt_computed_wait_record_v1 *wait,
+bool talos_rt_register_computed_signal_wait_unlocked(
+    talos_rt_context *context, talos_rt_computed_wait_record_v1 *wait,
     uint64_t waiterToken, bool designWaiter,
     std::vector<std::unique_ptr<SignalSubscription>> &subscriptions,
     std::unique_ptr<SignalWaitLatch> &latch);
-void obelisk_rt_unregister_signal_wait_unlocked(
-    obelisk_rt_context *context,
+void talos_rt_unregister_signal_wait_unlocked(
+    talos_rt_context *context,
     std::vector<std::unique_ptr<SignalSubscription>> &subscriptions,
     uint64_t waiterToken = 0, bool designWaiter = false);
-bool obelisk_rt_notify_managed_waiters_unlocked(obelisk_rt_context *context,
+bool talos_rt_notify_managed_waiters_unlocked(talos_rt_context *context,
                                                 uint64_t token);
-bool obelisk_rt_notify_observer_event_unlocked(obelisk_rt_context *context,
+bool talos_rt_notify_observer_event_unlocked(talos_rt_context *context,
                                                uint64_t stableID);
-bool obelisk_rt_initialize_event_order_wait_unlocked(
-    obelisk_rt_context *context, const obelisk_rt_wait_record_v1 *wait,
+bool talos_rt_initialize_event_order_wait_unlocked(
+    talos_rt_context *context, const talos_rt_wait_record_v1 *wait,
     uint32_t &index, bool &ready, bool &failed);
-bool obelisk_rt_notify_event_order_waiters_unlocked(obelisk_rt_context *context,
+bool talos_rt_notify_event_order_waiters_unlocked(talos_rt_context *context,
                                                     uint64_t stableID);
-bool obelisk_rt_notify_observer_signal_unlocked(obelisk_rt_context *context,
+bool talos_rt_notify_observer_signal_unlocked(talos_rt_context *context,
                                                 uint64_t stableID,
                                                 uint64_t width);
-bool obelisk_rt_notify_observer_managed_unlocked(obelisk_rt_context *context,
+bool talos_rt_notify_observer_managed_unlocked(talos_rt_context *context,
                                                  uint64_t token);
-bool obelisk_rt_evaluate_covergroup_managed_clock_events_unlocked(
-    obelisk_rt_context *context, uint64_t token);
-void obelisk_rt_notify_managed_watch(obelisk_rt_object_v1 *object,
-                                     obelisk_rt_managed_watch_kind kind,
+bool talos_rt_evaluate_covergroup_managed_clock_events_unlocked(
+    talos_rt_context *context, uint64_t token);
+void talos_rt_notify_managed_watch(talos_rt_object_v1 *object,
+                                     talos_rt_managed_watch_kind kind,
                                      uint64_t selector, uint64_t size = 0);
-bool obelisk_rt_evaluate_design_observers_unlocked(obelisk_rt_context *context,
+bool talos_rt_evaluate_design_observers_unlocked(talos_rt_context *context,
                                                    uint32_t dependencyKind,
                                                    uint64_t publishedHandle,
                                                    uint64_t publishedWidth);
-bool obelisk_rt_evaluate_design_clock_condition_unlocked(
-    obelisk_rt_context *context, uint64_t taskID, uint64_t codeUnitID,
-    const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
+bool talos_rt_evaluate_design_clock_condition_unlocked(
+    talos_rt_context *context, uint64_t taskID, uint64_t codeUnitID,
+    const talos_rt_computed_capture_v1 *captures, uint32_t captureCount,
     uint64_t &value, uint64_t &unknown);
-bool obelisk_rt_evaluate_design_bound_observer_unlocked(
-    obelisk_rt_context *context, uint64_t taskID, uint64_t codeUnitID,
-    const obelisk_rt_computed_capture_v1 *captures, uint32_t captureCount,
+bool talos_rt_evaluate_design_bound_observer_unlocked(
+    talos_rt_context *context, uint64_t taskID, uint64_t codeUnitID,
+    const talos_rt_computed_capture_v1 *captures, uint32_t captureCount,
     uint64_t *value, uint64_t *unknown, uint32_t limbCapacity);
-void obelisk_rt_erase_automatic_bookkeeping_unlocked(
-    obelisk_rt_context *context, uint32_t automaticID);
-obelisk_rt_status obelisk_rt_native_state_alloc_with_root_offsets(
-    obelisk_rt_context *context, uint64_t bitWidth, const uint8_t *value,
+void talos_rt_erase_automatic_bookkeeping_unlocked(
+    talos_rt_context *context, uint32_t automaticID);
+talos_rt_status talos_rt_native_state_alloc_with_root_offsets(
+    talos_rt_context *context, uint64_t bitWidth, const uint8_t *value,
     const uint8_t *unknown, std::vector<uint64_t> bitOffsets,
     uint64_t *outHandle);
-obelisk_rt_status
-obelisk_rt_native_state_alloc_managed(obelisk_rt_context *context,
-                                      obelisk_rt_object_v1 *value,
+talos_rt_status
+talos_rt_native_state_alloc_managed(talos_rt_context *context,
+                                      talos_rt_object_v1 *value,
                                       uint64_t *outHandle);
 // Normalize a flat design-plane range to the stable identity used by native
 // waits and publications. The caller holds context->mutex.
 uint64_t
-obelisk_rt_canonical_state_handle_unlocked(const obelisk_rt_context *context,
+talos_rt_canonical_state_handle_unlocked(const talos_rt_context *context,
                                            uint64_t bitOffset,
                                            uint64_t bitWidth) noexcept;
-void obelisk_rt_invalidate_signal_snapshots_unlocked(
-    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth);
+void talos_rt_invalidate_signal_snapshots_unlocked(
+    talos_rt_context *context, uint64_t bitOffset, uint64_t bitWidth);
 
-obelisk_rt_status obelisk_rt_force_design_nets(obelisk_rt_context *context,
+talos_rt_status talos_rt_force_design_nets(talos_rt_context *context,
                                                uint64_t begin, uint64_t width,
                                                const uint8_t *value,
                                                const uint8_t *unknown) noexcept;
-obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
+talos_rt_status talos_rt_release_design_nets(talos_rt_context *context,
                                                  uint64_t begin,
                                                  uint64_t width) noexcept;
 uint64_t
-obelisk_rt_canonical_net_bit_unlocked(const obelisk_rt_context *context,
+talos_rt_canonical_net_bit_unlocked(const talos_rt_context *context,
                                       uint64_t bit) noexcept;
-void obelisk_rt_claim_override_range_unlocked(
-    obelisk_rt_context *context, uint64_t begin, uint64_t width, bool assign,
+void talos_rt_claim_override_range_unlocked(
+    talos_rt_context *context, uint64_t begin, uint64_t width, bool assign,
     uint64_t owner, std::vector<uint64_t> &retiredOwners);
-void obelisk_rt_release_override_range_unlocked(
-    obelisk_rt_context *context, uint64_t begin, uint64_t width, bool assign,
+void talos_rt_release_override_range_unlocked(
+    talos_rt_context *context, uint64_t begin, uint64_t width, bool assign,
     std::vector<uint64_t> &retiredOwners);
-bool obelisk_rt_override_owner_matches_unlocked(
-    const obelisk_rt_context *context, uint64_t bit, bool assign,
+bool talos_rt_override_owner_matches_unlocked(
+    const talos_rt_context *context, uint64_t bit, bool assign,
     uint64_t owner);
-obelisk_rt_status
-obelisk_rt_retire_override_owners(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_retire_override_owners(talos_rt_context *context,
                                   std::vector<uint64_t> retiredOwners);
 
-bool obelisk_rt_checked_design_record(
-    const obelisk_rt_execution_descriptor_v1 *execution, uint64_t offset,
+bool talos_rt_checked_design_record(
+    const talos_rt_execution_descriptor_v1 *execution, uint64_t offset,
     const uint8_t *&record, uint32_t &kind) noexcept;
 
-obelisk_rt_status obelisk_rt_initialize_design_database(
-    const obelisk_rt_execution_descriptor_v1 *execution,
+talos_rt_status talos_rt_initialize_design_database(
+    const talos_rt_execution_descriptor_v1 *execution,
     DesignDatabaseCache &cache) noexcept;
-obelisk_rt_status obelisk_rt_register_design_database(
-    const obelisk_rt_execution_descriptor_v1 *execution,
+talos_rt_status talos_rt_register_design_database(
+    const talos_rt_execution_descriptor_v1 *execution,
     const DesignDatabaseCache &cache) noexcept;
-void obelisk_rt_unregister_design_database(
-    const obelisk_rt_execution_descriptor_v1 *execution) noexcept;
-obelisk_rt_status
-obelisk_rt_cached_design_root(const obelisk_rt_context *context,
-                              obelisk_rt_design_cursor_v1 *outCursor) noexcept;
-obelisk_rt_status obelisk_rt_cached_design_parent(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
-obelisk_rt_status
-obelisk_rt_cached_design_child(const obelisk_rt_context *context,
-                               obelisk_rt_design_cursor_v1 cursor,
-                               obelisk_rt_design_cursor_v1 *outCursor) noexcept;
-obelisk_rt_status obelisk_rt_cached_design_child_at(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    uint64_t index, obelisk_rt_design_cursor_v1 *outCursor) noexcept;
-obelisk_rt_status obelisk_rt_cached_design_sibling(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
-obelisk_rt_status obelisk_rt_cached_design_lookup(
-    const obelisk_rt_context *context, const uint8_t *name, uint64_t nameSize,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
-obelisk_rt_status
-obelisk_rt_cached_design_info(const obelisk_rt_context *context,
-                              obelisk_rt_design_cursor_v1 cursor,
-                              obelisk_rt_design_info_v1 *outInfo) noexcept;
-obelisk_rt_status obelisk_rt_cached_design_type_info(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_type_info_v1 *outInfo) noexcept;
-obelisk_rt_status obelisk_rt_cached_design_type_child(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    uint64_t index, obelisk_rt_design_cursor_v1 *outCursor) noexcept;
-obelisk_rt_status obelisk_rt_cached_design_semantic_root(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 object,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+void talos_rt_unregister_design_database(
+    const talos_rt_execution_descriptor_v1 *execution) noexcept;
+talos_rt_status
+talos_rt_cached_design_root(const talos_rt_context *context,
+                              talos_rt_design_cursor_v1 *outCursor) noexcept;
+talos_rt_status talos_rt_cached_design_parent(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_cursor_v1 *outCursor) noexcept;
+talos_rt_status
+talos_rt_cached_design_child(const talos_rt_context *context,
+                               talos_rt_design_cursor_v1 cursor,
+                               talos_rt_design_cursor_v1 *outCursor) noexcept;
+talos_rt_status talos_rt_cached_design_child_at(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    uint64_t index, talos_rt_design_cursor_v1 *outCursor) noexcept;
+talos_rt_status talos_rt_cached_design_sibling(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_cursor_v1 *outCursor) noexcept;
+talos_rt_status talos_rt_cached_design_lookup(
+    const talos_rt_context *context, const uint8_t *name, uint64_t nameSize,
+    talos_rt_design_cursor_v1 *outCursor) noexcept;
+talos_rt_status
+talos_rt_cached_design_info(const talos_rt_context *context,
+                              talos_rt_design_cursor_v1 cursor,
+                              talos_rt_design_info_v1 *outInfo) noexcept;
+talos_rt_status talos_rt_cached_design_type_info(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_type_info_v1 *outInfo) noexcept;
+talos_rt_status talos_rt_cached_design_type_child(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    uint64_t index, talos_rt_design_cursor_v1 *outCursor) noexcept;
+talos_rt_status talos_rt_cached_design_semantic_root(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 object,
+    talos_rt_design_cursor_v1 *outCursor) noexcept;
 // Canonical specialization bindings preserve the lexical semantic identity.
-obelisk_rt_status obelisk_rt_cached_vpi_class_typespec(
-    const obelisk_rt_context *context, uint64_t classID,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+talos_rt_status talos_rt_cached_vpi_class_typespec(
+    const talos_rt_context *context, uint64_t classID,
+    talos_rt_design_cursor_v1 *outCursor) noexcept;
 // A virtual-interface value is its physical scope ID; zero denotes null.
-obelisk_rt_status
-obelisk_rt_cached_vpi_scope(const obelisk_rt_context *context, uint64_t scopeID,
-                            obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+talos_rt_status
+talos_rt_cached_vpi_scope(const talos_rt_context *context, uint64_t scopeID,
+                            talos_rt_design_cursor_v1 *outCursor) noexcept;
 // A named-event array leaf selects a private storage cell without creating
 // another public VPI identity. The offset is in bits relative to storage.
 struct VPIEventCellBinding {
-  obelisk_rt_design_cursor_v1 storage{};
+  talos_rt_design_cursor_v1 storage{};
   uint64_t bitOffset = 0;
 };
-obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 event,
+talos_rt_status talos_rt_cached_vpi_event_array_cell(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 event,
     VPIEventCellBinding *outBinding) noexcept;
 
 // Stable source identities used by explicit frame events. Cursor provenance is
@@ -4074,264 +4074,264 @@ obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
 // implies that any activation has initialized or bound executable storage.
 struct VPIFrameLocalBinding {
   uint64_t id = 0;
-  obelisk_rt_design_cursor_v1 declaration{};
+  talos_rt_design_cursor_v1 declaration{};
   uint64_t lexicalCodeUnitID = 0;
-  obelisk_rt_design_cursor_v1 scope{};
+  talos_rt_design_cursor_v1 scope{};
   uint32_t ordinal = 0;
 };
-obelisk_rt_status
-obelisk_rt_cached_vpi_frame_local(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_frame_local(const talos_rt_context *context,
                                   uint64_t id,
                                   VPIFrameLocalBinding *outBinding) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_frame_locals(
-    const obelisk_rt_context *context, uint64_t lexicalCodeUnitID,
-    obelisk_rt_design_cursor_v1 scope,
+talos_rt_status talos_rt_cached_vpi_frame_locals(
+    const talos_rt_context *context, uint64_t lexicalCodeUnitID,
+    talos_rt_design_cursor_v1 scope,
     std::vector<VPIFrameLocalBinding> &outBindings) noexcept;
 
-obelisk_rt_status obelisk_rt_cached_vpi_initializer(
-    const obelisk_rt_context *context, uint64_t codeUnitID,
-    obelisk_rt_design_cursor_v1 *outSource) noexcept;
+talos_rt_status talos_rt_cached_vpi_initializer(
+    const talos_rt_context *context, uint64_t codeUnitID,
+    talos_rt_design_cursor_v1 *outSource) noexcept;
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_call(const obelisk_rt_context *context, uint64_t callID,
-                           obelisk_rt_design_cursor_v1 *outCursor,
+talos_rt_status
+talos_rt_cached_vpi_call(const talos_rt_context *context, uint64_t callID,
+                           talos_rt_design_cursor_v1 *outCursor,
                            uint64_t *outOwnerCodeUnitID,
                            bool *outIsStatement) noexcept;
-obelisk_rt_status
-obelisk_rt_cached_vpi_statement(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_statement(const talos_rt_context *context,
                                 uint64_t statementID,
-                                obelisk_rt_design_cursor_v1 *outCursor,
+                                talos_rt_design_cursor_v1 *outCursor,
                                 uint64_t *outOwnerCodeUnitID) noexcept;
 // Resolve the executable call transport independently of the public source
 // callable kind. A mapped DPI task has a Function transport and Task scope.
-obelisk_rt_status
-obelisk_rt_cached_vpi_code_unit_transport(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_code_unit_transport(const talos_rt_context *context,
                                           uint64_t codeUnitID,
                                           bool *outIsTask) noexcept;
-obelisk_rt_status
-obelisk_rt_cached_vpi_code_unit_scope(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_code_unit_scope(const talos_rt_context *context,
                                       uint64_t codeUnitID,
-                                      obelisk_rt_design_cursor_v1 *outCursor,
+                                      talos_rt_design_cursor_v1 *outCursor,
                                       uint64_t *outLexicalCodeUnitID) noexcept;
-obelisk_rt_status
-obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_call_target(const talos_rt_context *context,
                                   uint64_t callID,
                                   uint64_t calleeCodeUnitID) noexcept;
 // Resolve the exact net and its retained nettype resolution function.
-obelisk_rt_status obelisk_rt_cached_vpi_net_resolution(
-    const obelisk_rt_context *context, uint64_t netID,
-    obelisk_rt_design_cursor_v1 *outNet,
-    obelisk_rt_design_cursor_v1 *outFunction) noexcept;
-obelisk_rt_status
-obelisk_rt_cached_vpi_resolution_target(const obelisk_rt_context *context,
+talos_rt_status talos_rt_cached_vpi_net_resolution(
+    const talos_rt_context *context, uint64_t netID,
+    talos_rt_design_cursor_v1 *outNet,
+    talos_rt_design_cursor_v1 *outFunction) noexcept;
+talos_rt_status
+talos_rt_cached_vpi_resolution_target(const talos_rt_context *context,
                                         uint64_t netID,
                                         uint64_t calleeCodeUnitID) noexcept;
 // OriginKind: 0 code-unit scope, 1 call, 2 scoped statement, 3 resolution net.
-obelisk_rt_status obelisk_rt_cached_vpi_frame_origin(
-    const obelisk_rt_context *context, uint32_t originKind, uint64_t originID,
-    obelisk_rt_design_cursor_v1 *outCursor, bool *outIsStatement) noexcept;
+talos_rt_status talos_rt_cached_vpi_frame_origin(
+    const talos_rt_context *context, uint32_t originKind, uint64_t originID,
+    talos_rt_design_cursor_v1 *outCursor, bool *outIsStatement) noexcept;
 
 // Remove activations belonging to a returned, disabled, or killed scope.
 // Scheduler callers hold the context mutex; this helper is also safe to call
 // recursively from ordinary execution. A zero target depth removes the root.
 // Scoped provenance for C-to-SystemVerilog dispatch. These runtime-only
 // boundaries do not themselves create an observable activation.
-obelisk_rt_status
-obelisk_rt_vpi_export_begin(obelisk_rt_context *context,
-                            const obelisk_rt_export_descriptor_v1 *descriptor,
+talos_rt_status
+talos_rt_vpi_export_begin(talos_rt_context *context,
+                            const talos_rt_export_descriptor_v1 *descriptor,
                             uint64_t *outToken);
-obelisk_rt_status obelisk_rt_vpi_export_task_enter(obelisk_rt_context *context,
+talos_rt_status talos_rt_vpi_export_task_enter(talos_rt_context *context,
                                                    uint64_t executor);
-obelisk_rt_status obelisk_rt_vpi_export_end(obelisk_rt_context *context,
+talos_rt_status talos_rt_vpi_export_end(talos_rt_context *context,
                                             uint64_t token);
-obelisk_rt_status
-obelisk_rt_cached_vpi_export_target(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_export_target(const talos_rt_context *context,
                                     uint64_t codeUnitID, uint64_t scopeID,
                                     bool isTask) noexcept;
-obelisk_rt_status
-obelisk_rt_vpi_frame_unwind_process(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_vpi_frame_unwind_process(talos_rt_context *context,
                                     uint64_t logicalProcess, uint64_t depth);
-obelisk_rt_status obelisk_rt_vpi_pending_call(obelisk_rt_context *context,
+talos_rt_status talos_rt_vpi_pending_call(talos_rt_context *context,
                                               uint64_t *outCallID);
-obelisk_rt_status
-obelisk_rt_vpi_bind_native_callsite(obelisk_rt_context *context,
-                                    obelisk_rt_process_instance_v1 *callee,
+talos_rt_status
+talos_rt_vpi_bind_native_callsite(talos_rt_context *context,
+                                    talos_rt_process_instance_v1 *callee,
                                     uint64_t callID, uint64_t preparedCallID);
-obelisk_rt_status
-obelisk_rt_vpi_activation_callsite(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_vpi_activation_callsite(talos_rt_context *context,
                                    uint64_t *outCallID);
-obelisk_rt_status
-obelisk_rt_vpi_frame_depth_process(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_vpi_frame_depth_process(talos_rt_context *context,
                                    uint64_t logicalProcess, uint64_t *outDepth);
 
 // Returns the immutable source statement for an exact executable code unit,
 // or EOF when this image has no retained thread-origin binding.
-obelisk_rt_status obelisk_rt_cached_vpi_thread_origin(
-    const obelisk_rt_context *context, uint64_t codeUnitID,
-    obelisk_rt_design_cursor_v1 *outStatement) noexcept;
+talos_rt_status talos_rt_cached_vpi_thread_origin(
+    const talos_rt_context *context, uint64_t codeUnitID,
+    talos_rt_design_cursor_v1 *outStatement) noexcept;
 // Returns EOF when the source event uses a mutable cell or has no executable
 // binding in this image. A successful lookup may return event identity zero.
-obelisk_rt_status
-obelisk_rt_cached_vpi_event_binding(const obelisk_rt_context *context,
-                                    obelisk_rt_design_cursor_v1 event,
+talos_rt_status
+talos_rt_cached_vpi_event_binding(const talos_rt_context *context,
+                                    talos_rt_design_cursor_v1 event,
                                     uint64_t *outEventID) noexcept;
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_modport_binding(const obelisk_rt_context *context,
-                                      obelisk_rt_design_cursor_v1 modport,
+talos_rt_status
+talos_rt_cached_vpi_modport_binding(const talos_rt_context *context,
+                                      talos_rt_design_cursor_v1 modport,
                                       VPIModportBinding *outBinding) noexcept;
-obelisk_rt_status
-obelisk_rt_cached_vpi_modport(const obelisk_rt_context *context,
-                              obelisk_rt_design_cursor_v1 scope,
+talos_rt_status
+talos_rt_cached_vpi_modport(const talos_rt_context *context,
+                              talos_rt_design_cursor_v1 scope,
                               const uint8_t *name, uint64_t nameSize,
-                              obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+                              talos_rt_design_cursor_v1 *outCursor) noexcept;
 // Return the immutable normalized storage type for a node in a canonical
 // mailbox's effective element DAG. Legacy images without bindings return EOF.
 // Exact layout ownership stays separate from source object identity. Box
 // descriptors are rows in their own validated table, never packed VPI objects.
 struct VPIValueLayoutOwner {
-  obelisk::reflection::ValueLayoutOwnerKind kind =
-      obelisk::reflection::ValueLayoutOwnerKind::ReflectedObject;
+  talos::reflection::ValueLayoutOwnerKind kind =
+      talos::reflection::ValueLayoutOwnerKind::ReflectedObject;
   uint32_t index = 0;
 };
 struct VPIBoxTypeBinding {
   VPIValueLayoutOwner layout;
-  obelisk_rt_design_cursor_v1 semantic{};
-  obelisk_rt_design_cursor_v1 physical{};
+  talos_rt_design_cursor_v1 semantic{};
+  talos_rt_design_cursor_v1 physical{};
 };
-obelisk_rt_status obelisk_rt_cached_vpi_value_layout_owner(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 owner,
+talos_rt_status talos_rt_cached_vpi_value_layout_owner(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 owner,
     VPIValueLayoutOwner *outOwner) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_value_element_type(
-    const obelisk_rt_context *context, VPIValueLayoutOwner owner,
-    obelisk_rt_design_cursor_v1 semantic,
-    obelisk_rt_design_cursor_v1 *outType) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_value_element_type(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 owner,
-    obelisk_rt_design_cursor_v1 semantic,
-    obelisk_rt_design_cursor_v1 *outType) noexcept;
+talos_rt_status talos_rt_cached_vpi_value_element_type(
+    const talos_rt_context *context, VPIValueLayoutOwner owner,
+    talos_rt_design_cursor_v1 semantic,
+    talos_rt_design_cursor_v1 *outType) noexcept;
+talos_rt_status talos_rt_cached_vpi_value_element_type(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 owner,
+    talos_rt_design_cursor_v1 semantic,
+    talos_rt_design_cursor_v1 *outType) noexcept;
 // Validate a runtime element against exact reflected semantic/storage graphs.
 // Source signedness and descriptor IDs are independent of physical shape.
-obelisk_rt_status
-obelisk_rt_vpi_element_matches(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_vpi_element_matches(const talos_rt_context *context,
                                VPIValueLayoutOwner owner,
-                               obelisk_rt_design_cursor_v1 semantic,
-                               const obelisk_rt_element_type_v1 *element);
+                               talos_rt_design_cursor_v1 semantic,
+                               const talos_rt_element_type_v1 *element);
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_box_type(const obelisk_rt_context *context, uint64_t id,
+talos_rt_status
+talos_rt_cached_vpi_box_type(const talos_rt_context *context, uint64_t id,
                                VPIBoxTypeBinding *outType) noexcept;
 
-obelisk_rt_status obelisk_rt_cached_vpi_mailbox_element_type(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 typespec,
-    obelisk_rt_design_cursor_v1 semantic,
-    obelisk_rt_design_cursor_v1 *outType) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_class_member(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 member,
+talos_rt_status talos_rt_cached_vpi_mailbox_element_type(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 typespec,
+    talos_rt_design_cursor_v1 semantic,
+    talos_rt_design_cursor_v1 *outType) noexcept;
+talos_rt_status talos_rt_cached_vpi_class_member(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 member,
     VPIClassMemberBinding *outBinding) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_semantic_class_typespec(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 semantic,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept;
-obelisk_rt_status obelisk_rt_cached_design_semantic_type_info(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_semantic_type_info_v1 *outInfo) noexcept;
+talos_rt_status talos_rt_cached_vpi_semantic_class_typespec(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 semantic,
+    talos_rt_design_cursor_v1 *outCursor) noexcept;
+talos_rt_status talos_rt_cached_design_semantic_type_info(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_semantic_type_info_v1 *outInfo) noexcept;
 // Return an integral/real semantic width, including nested packed dimensions
 // and enum bases. EOF denotes a semantic kind without a fixed packed width.
-obelisk_rt_status
-obelisk_rt_cached_design_semantic_bit_width(const obelisk_rt_context *context,
-                                            obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status
+talos_rt_cached_design_semantic_bit_width(const talos_rt_context *context,
+                                            talos_rt_design_cursor_v1 cursor,
                                             uint64_t *outWidth) noexcept;
-obelisk_rt_status obelisk_rt_cached_design_semantic_type_edge(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    uint64_t index, obelisk_rt_design_semantic_type_edge_v1 *outEdge) noexcept;
-obelisk_rt_status obelisk_rt_cached_design_source(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_cached_design_semantic_type_edge(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    uint64_t index, talos_rt_design_semantic_type_edge_v1 *outEdge) noexcept;
+talos_rt_status talos_rt_cached_design_source(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     const uint8_t **outFile, uint64_t *outFileSize, uint32_t *outLine,
     uint32_t *outColumn) noexcept;
 
-obelisk_rt_status obelisk_rt_cached_design_name(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_cached_design_name(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     const uint8_t **outData, uint64_t *outSize) noexcept;
 
 // Read a narrow bit window from one reflected storage object. This is the
 // cold VPI/debugger path and deliberately preserves direct native state
 // access without allocating buffers proportional to the containing object.
-obelisk_rt_status
-obelisk_rt_read_design_slice(obelisk_rt_context *context,
-                             obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status
+talos_rt_read_design_slice(talos_rt_context *context,
+                             talos_rt_design_cursor_v1 cursor,
                              uint64_t bitOffset, uint64_t bitWidth,
                              uint64_t *value, uint64_t *unknown) noexcept;
 
 // Resolve one reflected storage/net bit to its canonical global-state
 // coordinate. Query-only consumers use this instead of confusing a source
 // object ID with its independently allocated state offset.
-obelisk_rt_status obelisk_rt_design_state_offset(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_design_state_offset(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     uint64_t bitOffset, uint64_t *outStateOffset) noexcept;
 
-obelisk_rt_status obelisk_rt_cached_vpi_type(const obelisk_rt_context *context,
-                                             obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_cached_vpi_type(const talos_rt_context *context,
+                                             talos_rt_design_cursor_v1 cursor,
                                              uint32_t *outType) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_fixed_property(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_cached_vpi_fixed_property(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     uint32_t selector, VPIFixedPropertyValue *outValue) noexcept;
 // Exact instance context for a shared declaration; EOF for physical records.
-obelisk_rt_status obelisk_rt_cached_vpi_definition_member_scope(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_cursor_v1 *outScope) noexcept;
+talos_rt_status talos_rt_cached_vpi_definition_member_scope(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_cursor_v1 *outScope) noexcept;
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_frozen_value(const obelisk_rt_context *context,
-                                   obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status
+talos_rt_cached_vpi_frozen_value(const talos_rt_context *context,
+                                   talos_rt_design_cursor_v1 cursor,
                                    VPIFrozenValue *outValue) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_resolved_net_type(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_cached_vpi_resolved_net_type(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     uint64_t bitOffset, uint64_t bitWidth, uint32_t *outType) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_net_delay(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_cached_vpi_net_delay(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     uint64_t bitOffset, uint64_t bitWidth, VPINetDelayValue *outDelay) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_relation_range(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 source,
+talos_rt_status talos_rt_cached_vpi_relation_range(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 source,
     uint32_t selector, bool iterate, VPIRelationRange *outRange) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_relation_target(
-    const obelisk_rt_context *context, uint64_t relationIndex,
-    obelisk_rt_design_cursor_v1 *outCursor, uint32_t *outType,
+talos_rt_status talos_rt_cached_vpi_relation_target(
+    const talos_rt_context *context, uint64_t relationIndex,
+    talos_rt_design_cursor_v1 *outCursor, uint32_t *outType,
     bool *outStatement) noexcept;
-obelisk_rt_status
-obelisk_rt_cached_vpi_relation_index(const obelisk_rt_context *context,
-                                     obelisk_rt_design_cursor_v1 source,
+talos_rt_status
+talos_rt_cached_vpi_relation_index(const talos_rt_context *context,
+                                     talos_rt_design_cursor_v1 source,
                                      VPIRelationIndexInfo *outInfo) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_relation_index_dimension(
-    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+talos_rt_status talos_rt_cached_vpi_relation_index_dimension(
+    const talos_rt_context *context, const VPIRelationIndexInfo &info,
     uint32_t dimension, int64_t *outLeft, int64_t *outRight) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_relation_index_key(
-    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+talos_rt_status talos_rt_cached_vpi_relation_index_key(
+    const talos_rt_context *context, const VPIRelationIndexInfo &info,
     int64_t index, uint32_t *outOrdinal) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_relation_index_ordinal_key(
-    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+talos_rt_status talos_rt_cached_vpi_relation_index_ordinal_key(
+    const talos_rt_context *context, const VPIRelationIndexInfo &info,
     uint32_t ordinal, int64_t *outIndex) noexcept;
-obelisk_rt_status
-obelisk_rt_cached_vpi_array_member(const obelisk_rt_context *context,
-                                   obelisk_rt_design_cursor_v1 member,
+talos_rt_status
+talos_rt_cached_vpi_array_member(const talos_rt_context *context,
+                                   talos_rt_design_cursor_v1 member,
                                    VPIArrayMemberInfo *outInfo) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_statement_scope(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
-    obelisk_rt_design_cursor_v1 *outScope) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_statement_enclosing_scope(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
-    obelisk_rt_design_cursor_v1 *outScope, bool *outStatement) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_statement_parent(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
-    obelisk_rt_design_cursor_v1 *outParent) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_statement_owner(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
-    obelisk_rt_design_cursor_v1 *outOwner) noexcept;
-obelisk_rt_status
-obelisk_rt_cached_vpi_statement_is_scope(const obelisk_rt_context *context,
-                                         obelisk_rt_design_cursor_v1 statement,
+talos_rt_status talos_rt_cached_vpi_statement_scope(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 statement,
+    talos_rt_design_cursor_v1 *outScope) noexcept;
+talos_rt_status talos_rt_cached_vpi_statement_enclosing_scope(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 statement,
+    talos_rt_design_cursor_v1 *outScope, bool *outStatement) noexcept;
+talos_rt_status talos_rt_cached_vpi_statement_parent(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 statement,
+    talos_rt_design_cursor_v1 *outParent) noexcept;
+talos_rt_status talos_rt_cached_vpi_statement_owner(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 statement,
+    talos_rt_design_cursor_v1 *outOwner) noexcept;
+talos_rt_status
+talos_rt_cached_vpi_statement_is_scope(const talos_rt_context *context,
+                                         talos_rt_design_cursor_v1 statement,
                                          bool *outIsScope) noexcept;
-obelisk_rt_status obelisk_rt_cached_vpi_statement_is_protected(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
+talos_rt_status talos_rt_cached_vpi_statement_is_protected(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 statement,
     bool *outIsProtected) noexcept;
 
 // Exact output contribution. Missing binding returns EOF. Selected bit offsets
@@ -4340,9 +4340,9 @@ struct VPITerminalDriverBinding {
   uint64_t lowStateOffset = 0;
   uint64_t highStateOffset = UINT64_MAX;
 };
-obelisk_rt_status
-obelisk_rt_cached_vpi_terminal_driver(const obelisk_rt_context *,
-                                      obelisk_rt_design_cursor_v1 terminal,
+talos_rt_status
+talos_rt_cached_vpi_terminal_driver(const talos_rt_context *,
+                                      talos_rt_design_cursor_v1 terminal,
                                       VPITerminalDriverBinding *) noexcept;
 
-#endif // OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H
+#endif // TALOS_RUNTIME_LIB_RUNTIMEINTERNAL_H

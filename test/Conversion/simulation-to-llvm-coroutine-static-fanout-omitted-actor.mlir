@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s
 
 // The planner certifies the exact Clause 31 clock coordinator as the sole
 // runtime-owned omission.
 // simulation-to-llvm-coroutine-static-fanout-bridged.mlir covers an omitted
 // actor the planner did not certify.
-// CHECK: llvm.mlir.global internal constant @__obelisk_aot_static_fanout_v1
+// CHECK: llvm.mlir.global internal constant @__talos_aot_static_fanout_v1
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

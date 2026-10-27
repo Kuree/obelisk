@@ -1,9 +1,9 @@
-// RUN: obelisk -O3 --std=1800-2023 %s -o %t.native
+// RUN: talos -O3 --std=1800-2023 %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --std=1800-2023 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --std=1800-2023 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
-// RUN: obelisk --std=1800-2023 -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=LLVM
+// RUN: talos --std=1800-2023 -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=LLVM
 
 class node;
   int value;
@@ -175,4 +175,4 @@ endmodule
 // CHECK-NEXT: before 7
 // CHECK-NEXT: continued 1
 
-// LLVM: @__obelisk_current_context = internal thread_local global ptr null
+// LLVM: @__talos_current_context = internal thread_local global ptr null

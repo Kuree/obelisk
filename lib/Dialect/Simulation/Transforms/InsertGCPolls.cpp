@@ -1,25 +1,25 @@
 //===- InsertGCPolls.cpp - Managed-heap collection polls -----------------===//
 
-#include "obelisk/Analysis/ManagedCollectionAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Analysis/ManagedCollectionAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/IR/Builders.h"
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMINSERTGCPOLLSPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMINSERTGCPOLLSPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 
-namespace sim = ::obelisk::sim;
+namespace sim = ::talos::sim;
 
-class ObeliskSimInsertGCPollsPass final
-    : public impl::ObeliskSimInsertGCPollsPassBase<
-          ObeliskSimInsertGCPollsPass> {
+class TalosSimInsertGCPollsPass final
+    : public impl::TalosSimInsertGCPollsPassBase<
+          TalosSimInsertGCPollsPass> {
 public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
@@ -55,4 +55,4 @@ public:
 };
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

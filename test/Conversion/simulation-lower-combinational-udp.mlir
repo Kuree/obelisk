@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
-!logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
+!logic1 = !talos.integral<1, false, true, 0 : 0, logic>
 
 module {
   simulation.design @combinational_udp {
@@ -45,12 +45,12 @@ module {
                       #simulation.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.a", argument = 2, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.b", argument = 3, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 10 : i64, semantic_type = !logic1} {
-        obelisk.sv.expression.named_value attributes {node_id = 11 : i64, referenced_path = "top.out", referenced_symbol = @out, semantic_type = !logic1} {}
-        obelisk.sv.expression.empty_argument attributes {node_id = 12 : i64, semantic_type = !logic1} {}
+      talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 10 : i64, semantic_type = !logic1} {
+        talos.sv.expression.named_value attributes {node_id = 11 : i64, referenced_path = "top.out", referenced_symbol = @out, semantic_type = !logic1} {}
+        talos.sv.expression.empty_argument attributes {node_id = 12 : i64, semantic_type = !logic1} {}
       }
-      obelisk.sv.expression.named_value attributes {node_id = 13 : i64, referenced_path = "top.a", referenced_symbol = @a, semantic_type = !logic1} {}
-      obelisk.sv.expression.named_value attributes {node_id = 14 : i64, referenced_path = "top.b", referenced_symbol = @b, semantic_type = !logic1} {}
+      talos.sv.expression.named_value attributes {node_id = 13 : i64, referenced_path = "top.a", referenced_symbol = @a, semantic_type = !logic1} {}
+      talos.sv.expression.named_value attributes {node_id = 14 : i64, referenced_path = "top.b", referenced_symbol = @b, semantic_type = !logic1} {}
       simulation.return
     }
   }

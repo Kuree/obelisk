@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
-// RUN: obelisk-opt %s --canonicalize='top-down=false' | FileCheck %s
-// RUN: obelisk-opt %s --canonicalize -o %t.once
-// RUN: obelisk-opt %t.once --canonicalize -o %t.twice
+// RUN: talos-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize='top-down=false' | FileCheck %s
+// RUN: talos-opt %s --canonicalize -o %t.once
+// RUN: talos-opt %t.once --canonicalize -o %t.twice
 // RUN: diff %t.once %t.twice
 
 // Integer selections retain the extract-of-insert simplifications available

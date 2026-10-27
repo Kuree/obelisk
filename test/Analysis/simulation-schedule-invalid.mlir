@@ -1,5 +1,5 @@
-// RUN: not obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(test-obelisk-simulation-schedule-analysis)' \
+// RUN: not talos-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(test-talos-simulation-schedule-analysis)' \
 // RUN:   2>&1 | FileCheck %s
 
 // CHECK: error: 'simulation.func' op compute-graph fragment block is out of range

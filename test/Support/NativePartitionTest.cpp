@@ -14,7 +14,7 @@
 #include "llvm/IR/Verifier.h"
 #include "gtest/gtest.h"
 
-using obelisk::driver::detail::estimateNativeGlobalWeight;
+using talos::driver::detail::estimateNativeGlobalWeight;
 using namespace llvm;
 
 namespace {
@@ -44,10 +44,10 @@ TEST(NativeModulePruning, SymbolDCEKeepsCallbacksExportsAndLifecycleRoots) {
         llvm.call @dead_a() : () -> ()
         llvm.return
       }
-      llvm.mlir.global internal @__obelisk_current_context(0 : i64) : i64
-      llvm.mlir.global internal @__obelisk_state_value(0 : i64) : i64
-      llvm.mlir.global internal @__obelisk_state_unknown(0 : i64) : i64
-      llvm.mlir.global internal @__obelisk_execution_descriptor_v1(0 : i64) : i64
+      llvm.mlir.global internal @__talos_current_context(0 : i64) : i64
+      llvm.mlir.global internal @__talos_state_value(0 : i64) : i64
+      llvm.mlir.global internal @__talos_state_unknown(0 : i64) : i64
+      llvm.mlir.global internal @__talos_execution_descriptor_v1(0 : i64) : i64
       llvm.mlir.global internal @unused_data(0 : i64) : i64
     }
   )mlir",
@@ -55,7 +55,7 @@ TEST(NativeModulePruning, SymbolDCEKeepsCallbacksExportsAndLifecycleRoots) {
   ASSERT_TRUE(module);
   llvm::StringSet<> exports;
   exports.insert("foreign_entry");
-  auto removed = obelisk::driver::detail::pruneNativeExecutableSymbols(
+  auto removed = talos::driver::detail::pruneNativeExecutableSymbols(
       *module, exports, true);
   ASSERT_TRUE(mlir::succeeded(removed));
   EXPECT_EQ(removed->size(), 3u);
@@ -64,10 +64,10 @@ TEST(NativeModulePruning, SymbolDCEKeepsCallbacksExportsAndLifecycleRoots) {
   EXPECT_TRUE(removed->contains("unused_data"));
   for (StringRef name :
        {"main", "foreign_entry", "callback", "callback_table",
-        "__obelisk_current_context", "__obelisk_state_value",
-        "__obelisk_state_unknown", "__obelisk_execution_descriptor_v1"})
+        "__talos_current_context", "__talos_state_value",
+        "__talos_state_unknown", "__talos_execution_descriptor_v1"})
     EXPECT_NE(module->lookupSymbol(name), nullptr) << name.str();
-  auto noLifecycle = obelisk::driver::detail::pruneNativeExecutableSymbols(
+  auto noLifecycle = talos::driver::detail::pruneNativeExecutableSymbols(
       *module, exports, false);
   ASSERT_TRUE(mlir::succeeded(noLifecycle));
   EXPECT_EQ(noLifecycle->size(), 4u);
@@ -104,7 +104,7 @@ TEST(NativeModulePruning, PreservesExportsAndCallbacksButDropsDeadCycles) {
   llvm::StringSet<> exports;
   exports.insert("foreign_entry");
   auto removed =
-      obelisk::driver::detail::pruneNativeExecutableModel(module, exports);
+      talos::driver::detail::pruneNativeExecutableModel(module, exports);
   EXPECT_TRUE(removed.contains("dead_a"));
   EXPECT_TRUE(removed.contains("dead_b"));
   EXPECT_EQ(removed.size(), 2u);
@@ -119,7 +119,7 @@ TEST(NativeModulePruning, PreservesExportsAndCallbacksButDropsDeadCycles) {
 TEST(NativeExecutionCounts, RequiresMainWithoutMutatingLibraryModule) {
   LLVMContext context;
   Module module("library", context);
-  EXPECT_FALSE(obelisk::driver::detail::addNativeExecutionCounts(module));
+  EXPECT_FALSE(talos::driver::detail::addNativeExecutionCounts(module));
   EXPECT_TRUE(module.empty());
   EXPECT_TRUE(module.global_empty());
 }
@@ -132,7 +132,7 @@ TEST(NativeExecutionCounts, NoExecutorHasNoInstrumentationCost) {
                                 GlobalValue::ExternalLinkage, "main", module);
   builder.SetInsertPoint(BasicBlock::Create(context, "entry", main));
   builder.CreateRet(builder.getInt32(0));
-  EXPECT_TRUE(obelisk::driver::detail::addNativeExecutionCounts(module));
+  EXPECT_TRUE(talos::driver::detail::addNativeExecutionCounts(module));
   EXPECT_EQ(module.size(), 1u);
   EXPECT_EQ(main->getInstructionCount(), 1u);
   EXPECT_TRUE(module.global_empty());
@@ -143,9 +143,9 @@ TEST(NativeExecutionCounts, ReportsBothExitsAndKeepsDistinctDomainEntries) {
   Module module("entries", context);
   IRBuilder<> builder(context);
   auto *type = FunctionType::get(builder.getVoidTy(), false);
-  for (StringRef name : {"__obelisk_eval_ranked_group_0",
-                         "__obelisk_eval_ranked_group_0.dataflow",
-                         "__obelisk_eval_dispatch_v1", "unrelated"}) {
+  for (StringRef name : {"__talos_eval_ranked_group_0",
+                         "__talos_eval_ranked_group_0.dataflow",
+                         "__talos_eval_dispatch_v1", "unrelated"}) {
     auto *function =
         Function::Create(type, GlobalValue::ExternalLinkage, name, module);
     function->addFnAttr(Attribute::Speculatable);
@@ -162,26 +162,26 @@ TEST(NativeExecutionCounts, ReportsBothExitsAndKeepsDistinctDomainEntries) {
   builder.CreateCondBr(main->getArg(0), success, failure);
   builder.SetInsertPoint(success);
   auto *invoke =
-      builder.CreateCall(module.getFunction("__obelisk_eval_ranked_group_0"));
+      builder.CreateCall(module.getFunction("__talos_eval_ranked_group_0"));
   invoke->addFnAttr(Attribute::Speculatable);
   builder.CreateRet(builder.getInt32(0));
   builder.SetInsertPoint(failure);
   builder.CreateRet(builder.getInt32(1));
-  ASSERT_TRUE(obelisk::driver::detail::addNativeExecutionCounts(module));
+  ASSERT_TRUE(talos::driver::detail::addNativeExecutionCounts(module));
   EXPECT_FALSE(verifyModule(module, &errs()));
-  auto *counts = module.getNamedGlobal("__obelisk_execution_counts");
+  auto *counts = module.getNamedGlobal("__talos_execution_counts");
   ASSERT_NE(counts, nullptr);
   EXPECT_EQ(cast<ArrayType>(counts->getValueType())->getNumElements(), 3u);
   EXPECT_TRUE(counts->getInitializer()->isNullValue());
   EXPECT_EQ(module.getFunction("unrelated")->getInstructionCount(), 1u);
-  EXPECT_FALSE(module.getFunction("__obelisk_eval_ranked_group_0")
+  EXPECT_FALSE(module.getFunction("__talos_eval_ranked_group_0")
                    ->hasFnAttribute(Attribute::Speculatable));
   EXPECT_FALSE(invoke->hasFnAttr(Attribute::Speculatable));
   for (BasicBlock *block : {success, failure}) {
     auto *call = dyn_cast<CallInst>(block->getTerminator()->getPrevNode());
     ASSERT_NE(call, nullptr);
     EXPECT_EQ(call->getCalledFunction()->getName(),
-              "__obelisk_execution_counts_report");
+              "__talos_execution_counts_report");
   }
 }
 
@@ -192,12 +192,12 @@ TEST(NativeExecutionCounts, CountsTakenLoopIterationsAcrossInvocations) {
   IRBuilder<> builder(context);
   auto *leaf = Function::Create(FunctionType::get(builder.getVoidTy(), false),
                                 GlobalValue::ExternalLinkage,
-                                "__obelisk_eval_ranked_group_0", *module);
+                                "__talos_eval_ranked_group_0", *module);
   builder.SetInsertPoint(BasicBlock::Create(context, "entry", leaf));
   builder.CreateRetVoid();
   auto *dispatch = Function::Create(
       FunctionType::get(builder.getVoidTy(), {builder.getInt64Ty()}, false),
-      GlobalValue::ExternalLinkage, "__obelisk_eval_dispatch_v1", *module);
+      GlobalValue::ExternalLinkage, "__talos_eval_dispatch_v1", *module);
   auto *entry = BasicBlock::Create(context, "entry", dispatch);
   auto *loop = BasicBlock::Create(context, "loop", dispatch);
   auto *body = BasicBlock::Create(context, "body", dispatch);
@@ -220,8 +220,8 @@ TEST(NativeExecutionCounts, CountsTakenLoopIterationsAcrossInvocations) {
                                 GlobalValue::ExternalLinkage, "main", *module);
   builder.SetInsertPoint(BasicBlock::Create(context, "entry", main));
   builder.CreateRet(builder.getInt32(0));
-  ASSERT_TRUE(obelisk::driver::detail::addNativeExecutionCounts(*module));
-  auto *counts = module->getNamedGlobal("__obelisk_execution_counts");
+  ASSERT_TRUE(talos::driver::detail::addNativeExecutionCounts(*module));
+  auto *counts = module->getNamedGlobal("__talos_execution_counts");
   auto *read = Function::Create(
       FunctionType::get(builder.getInt64Ty(), {builder.getInt64Ty()}, false),
       GlobalValue::ExternalLinkage, "read_count", *module);

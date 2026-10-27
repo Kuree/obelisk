@@ -3,7 +3,7 @@
 #include "SimulationAOTPlanning.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -14,15 +14,15 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 LogicalResult makeNativeAOTPlanLegacy(
     ModuleOp module, const llvm::DataLayout &dataLayout, uint32_t actorCount,
-    ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
+    ArrayRef<talos_rt_native_schedule_node> executableNodes,
     const NativeStateLayout &stateLayout,
     const NativeStaticNBAPlan &staticNBAPlan,
     const NativeStaticFanoutPlan &staticFanoutPlan,
-    ArrayRef<obelisk_rt_static_actor_root> actorRoots, bool enableDirectState,
+    ArrayRef<talos_rt_static_actor_root> actorRoots, bool enableDirectState,
     bool enableStaticNBA, bool enableStaticControl, bool enableStaticFanout,
     bool enableCleanSuperstep, bool fullyStatic, bool rootSlotZero,
     const analysis::SimulationVPIAnalysis &vpi) {
@@ -34,13 +34,13 @@ LogicalResult makeNativeAOTPlanLegacy(
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
-  ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;
-  ArrayRef<obelisk_rt_static_nba_site> nbaSites = staticNBAPlan.sites;
-  SmallVector<obelisk_rt_static_fanout_entry> indexedFanoutEntries;
+  ArrayRef<talos_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;
+  ArrayRef<talos_rt_static_nba_site> nbaSites = staticNBAPlan.sites;
+  SmallVector<talos_rt_static_fanout_entry> indexedFanoutEntries;
   if (staticFanoutPlan.exact) {
     indexedFanoutEntries.assign(staticFanoutPlan.entries.begin(),
                                 staticFanoutPlan.entries.end());
-    for (obelisk_rt_static_fanout_entry &entry : indexedFanoutEntries) {
+    for (talos_rt_static_fanout_entry &entry : indexedFanoutEntries) {
       auto node = llvm::find_if(executableNodes, [&](const auto &candidate) {
         return candidate.actor_slot == entry.actor_slot &&
                candidate.continuation == entry.continuation;
@@ -50,10 +50,10 @@ LogicalResult makeNativeAOTPlanLegacy(
             "static fanout has no indexed compute fragment");
       entry.compute_node =
           static_cast<uint32_t>(node - executableNodes.begin());
-      entry.reserved &= ~OBELISK_RT_FANOUT_ROUTE_MASK;
+      entry.reserved &= ~TALOS_RT_FANOUT_ROUTE_MASK;
     }
   }
-  ArrayRef<obelisk_rt_static_fanout_entry> fanoutEntries = indexedFanoutEntries;
+  ArrayRef<talos_rt_static_fanout_entry> fanoutEntries = indexedFanoutEntries;
   // Static time/region control and exact actor fanout are independent of VPI
   // reads. Writable VPI hands dirty roots and the affected event slot to the
   // existing guarded state/control paths; the exact dependency table remains
@@ -78,22 +78,22 @@ LogicalResult makeNativeAOTPlanLegacy(
                              << (byte * 8);
   }
   Type stateType = LLVM::LLVMArrayType::get(pointer, actorCount);
-  constexpr StringLiteral stateName = "__obelisk_aot_schedule_state_v1";
-  constexpr StringLiteral nodesName = "__obelisk_aot_schedule_nodes_v1";
-  constexpr StringLiteral nbaRootsName = "__obelisk_aot_nba_roots_v1";
-  constexpr StringLiteral nbaSitesName = "__obelisk_aot_nba_sites_v1";
+  constexpr StringLiteral stateName = "__talos_aot_schedule_state_v1";
+  constexpr StringLiteral nodesName = "__talos_aot_schedule_nodes_v1";
+  constexpr StringLiteral nbaRootsName = "__talos_aot_nba_roots_v1";
+  constexpr StringLiteral nbaSitesName = "__talos_aot_nba_sites_v1";
   constexpr StringLiteral nbaDirtyRootsName =
-      "__obelisk_aot_nba_dirty_roots_v1";
+      "__talos_aot_nba_dirty_roots_v1";
   constexpr StringLiteral nbaDirtySummaryName =
-      "__obelisk_aot_nba_dirty_summary_v1";
-  constexpr StringLiteral fanoutName = "__obelisk_aot_static_fanout_v1";
+      "__talos_aot_nba_dirty_summary_v1";
+  constexpr StringLiteral fanoutName = "__talos_aot_static_fanout_v1";
   constexpr StringLiteral actorRootsName =
-      "__obelisk_aot_static_actor_roots_v1";
-  constexpr StringLiteral bindName = "__obelisk_aot_schedule_bind_v1";
-  constexpr StringLiteral runName = "__obelisk_aot_schedule_run_v1";
-  constexpr StringLiteral snapshotName = "__obelisk_aot_schedule_snapshot_v1";
-  constexpr StringLiteral nbaCommitName = "__obelisk_aot_static_nba_commit_v1";
-  constexpr StringLiteral planName = "__obelisk_aot_schedule_plan_v1";
+      "__talos_aot_static_actor_roots_v1";
+  constexpr StringLiteral bindName = "__talos_aot_schedule_bind_v1";
+  constexpr StringLiteral runName = "__talos_aot_schedule_run_v1";
+  constexpr StringLiteral snapshotName = "__talos_aot_schedule_snapshot_v1";
+  constexpr StringLiteral nbaCommitName = "__talos_aot_static_nba_commit_v1";
+  constexpr StringLiteral planName = "__talos_aot_schedule_plan_v1";
 
   builder.setInsertionPointToStart(module.getBody());
   auto state = LLVM::GlobalOp::create(builder, location, stateType, false,
@@ -268,7 +268,7 @@ LogicalResult makeNativeAOTPlanLegacy(
   LLVM::StoreOp::create(builder, location, bindEntry->getArgument(3),
                         actorAddress, 8);
   LLVM::ReturnOp::create(builder, location,
-                         llvmConstant(builder, location, i32, OBELISK_RT_OK));
+                         llvmConstant(builder, location, i32, TALOS_RT_OK));
 
   builder.setInsertionPointToEnd(module.getBody());
   auto run = LLVM::LLVMFuncOp::create(
@@ -282,8 +282,8 @@ LogicalResult makeNativeAOTPlanLegacy(
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
           SymbolRefAttr::get(
-              context, fullyStatic ? "obelisk_rt_v1_scheduler_run_aot_nodes"
-                                   : "obelisk_rt_v1_scheduler_run"),
+              context, fullyStatic ? "talos_rt_v1_scheduler_run_aot_nodes"
+                                   : "talos_rt_v1_scheduler_run"),
           fullyStatic ? ValueRange{runEntry->getArgument(1), nodes,
                                    llvmConstant(builder, location, i32,
                                                 executableNodes.size())}
@@ -300,7 +300,7 @@ LogicalResult makeNativeAOTPlanLegacy(
   Value snapshotStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_snapshot_aot"),
+          SymbolRefAttr::get(context, "talos_rt_v1_scheduler_snapshot_aot"),
           ValueRange{snapshotEntry->getArgument(1),
                      snapshotEntry->getArgument(2)})
           .getResult();
@@ -356,7 +356,7 @@ LogicalResult makeNativeAOTPlanLegacy(
       llvm::any_of(scalarRootsByWord, [&](ArrayRef<uint32_t> roots) {
         return llvm::any_of(roots, [&](uint32_t rootIndex) {
           return llvm::any_of(
-              fanoutEntries, [&](const obelisk_rt_static_fanout_entry &entry) {
+              fanoutEntries, [&](const talos_rt_static_fanout_entry &entry) {
                 return entry.static_state == nbaRoots[rootIndex].static_state;
               });
         });
@@ -381,16 +381,16 @@ LogicalResult makeNativeAOTPlanLegacy(
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
           SymbolRefAttr::get(context,
-                             "obelisk_rt_v1_static_nba_direct_commit_guard"),
+                             "talos_rt_v1_static_nba_direct_commit_guard"),
           ValueRange{nbaCommitEntry->getArgument(1)})
           .getResult();
   Value directEnabled = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::ne, directGuard,
       llvmConstant(builder, location, i32, 0));
   Value stateValue = LLVM::AddressOfOp::create(builder, location, pointer,
-                                               "__obelisk_state_value");
+                                               "__talos_state_value");
   Value stateUnknown = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                 "__obelisk_state_unknown");
+                                                 "__talos_state_unknown");
 
   SmallVector<Block *> wordBlocks(nbaDirtyWordCount);
   for (uint32_t word = 0; word != nbaDirtyWordCount; ++word)
@@ -512,7 +512,7 @@ LogicalResult makeNativeAOTPlanLegacy(
     Block *rootBlock = firstRoot;
     for (auto [position, rootIndex] :
          llvm::enumerate(scalarRootsByWord[word])) {
-      const obelisk_rt_static_nba_root &root = nbaRoots[rootIndex];
+      const talos_rt_static_nba_root &root = nbaRoots[rootIndex];
       uint64_t offset = staticNBAPlan.generatedOffsets[rootIndex];
       StringRef accumulator = staticNBAPlan.generatedAccumulators[rootIndex];
       Block *afterRoot =
@@ -536,13 +536,13 @@ LogicalResult makeNativeAOTPlanLegacy(
           builder, location, i32,
           nbaFieldGEP(
               builder, location, accumulatorBase,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+              offsetof(talos_rt_generated_nba_accumulator_256, valid)),
           4);
       Value region = LLVM::LoadOp::create(
           builder, location, i32,
           nbaFieldGEP(
               builder, location, accumulatorBase,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, exec_region)),
+              offsetof(talos_rt_generated_nba_accumulator_256, exec_region)),
           4);
       Value validRoot = arith::AndIOp::create(
           builder, location, selected,
@@ -561,19 +561,19 @@ LogicalResult makeNativeAOTPlanLegacy(
           builder, location, i64,
           nbaFieldGEP(
               builder, location, accumulatorBase,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, value)),
+              offsetof(talos_rt_generated_nba_accumulator_256, value)),
           8);
       Value stagedUnknown = LLVM::LoadOp::create(
           builder, location, i64,
           nbaFieldGEP(
               builder, location, accumulatorBase,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, unknown)),
+              offsetof(talos_rt_generated_nba_accumulator_256, unknown)),
           8);
       Value writeMask = LLVM::LoadOp::create(
           builder, location, i64,
           nbaFieldGEP(
               builder, location, accumulatorBase,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
+              offsetof(talos_rt_generated_nba_accumulator_256, write_mask)),
           8);
       writeMask = arith::AndIOp::create(
           builder, location, writeMask,
@@ -597,13 +597,13 @@ LogicalResult makeNativeAOTPlanLegacy(
           builder, location, llvmConstant(builder, location, i64, 0),
           nbaFieldGEP(
               builder, location, accumulatorBase,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
+              offsetof(talos_rt_generated_nba_accumulator_256, write_mask)),
           8);
       LLVM::StoreOp::create(
           builder, location, llvmConstant(builder, location, i32, 0),
           nbaFieldGEP(
               builder, location, accumulatorBase,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+              offsetof(talos_rt_generated_nba_accumulator_256, valid)),
           4);
       Value directlyCommitted = LLVM::LoadOp::create(
           builder, location, i64, directlyCommittedByWord[word], 8);
@@ -623,7 +623,7 @@ LogicalResult makeNativeAOTPlanLegacy(
           staticNBAPlan.trackTransients[rootIndex]) {
         Value transientAddress = nbaFieldGEP(
             builder, location, accumulatorBase,
-            offsetof(obelisk_rt_generated_nba_accumulator_256, transient));
+            offsetof(talos_rt_generated_nba_accumulator_256, transient));
         changed = arith::OrIOp::create(
             builder, location, changed,
             arith::AndIOp::create(
@@ -661,7 +661,7 @@ LogicalResult makeNativeAOTPlanLegacy(
         SmallVector<uint64_t> nodes;
       };
       SmallVector<TriggerGroup> groups;
-      for (const obelisk_rt_static_fanout_entry &entry : fanoutEntries) {
+      for (const talos_rt_static_fanout_entry &entry : fanoutEntries) {
         if (entry.static_state != root.static_state ||
             entry.low_bit >= root.bit_width)
           continue;
@@ -721,13 +721,13 @@ LogicalResult makeNativeAOTPlanLegacy(
         for (const TriggerGroup &group : groups) {
           Value observed = changed;
           switch (group.edge) {
-          case OBELISK_RT_WAIT_EDGE_POSEDGE:
+          case TALOS_RT_WAIT_EDGE_POSEDGE:
             observed = posedge;
             break;
-          case OBELISK_RT_WAIT_EDGE_NEGEDGE:
+          case TALOS_RT_WAIT_EDGE_NEGEDGE:
             observed = negedge;
             break;
-          case OBELISK_RT_WAIT_EDGE_BOTH:
+          case TALOS_RT_WAIT_EDGE_BOTH:
             observed =
                 arith::OrIOp::create(builder, location, posedge, negedge);
             break;
@@ -769,7 +769,7 @@ LogicalResult makeNativeAOTPlanLegacy(
     LLVM::CallOp::create(
         builder, location, TypeRange{},
         SymbolRefAttr::get(context,
-                           "obelisk_rt_v1_scheduler_activate_static_nodes"),
+                           "talos_rt_v1_scheduler_activate_static_nodes"),
         ValueRange{nbaCommitEntry->getArgument(1), activatedNodes,
                    llvmConstant(builder, location, i32, activationWordCount)});
   Value dirtyBase;
@@ -798,12 +798,12 @@ LogicalResult makeNativeAOTPlanLegacy(
   LLVM::CallOp::create(
       builder, location, TypeRange{},
       SymbolRefAttr::get(context,
-                         "obelisk_rt_v1_static_nba_account_generated_commits"),
+                         "talos_rt_v1_static_nba_account_generated_commits"),
       ValueRange{nbaCommitEntry->getArgument(1), directCount});
   Value nbaCommitStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_static_nba_commit_roots"),
+          SymbolRefAttr::get(context, "talos_rt_v1_static_nba_commit_roots"),
           ValueRange{nbaCommitEntry->getArgument(1),
                      llvmConstant(builder, location, i32, nbaRoots.size()),
                      nbaCommitEntry->getArgument(2),
@@ -843,40 +843,40 @@ LogicalResult makeNativeAOTPlanLegacy(
             initializerBuilder, location, value,
             llvmConstant(
                 initializerBuilder, location, i32,
-                (fullyStatic ? OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC : 0) |
-                    (rootSlotZero ? OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO
+                (fullyStatic ? TALOS_RT_NATIVE_SCHEDULE_FULLY_STATIC : 0) |
+                    (rootSlotZero ? TALOS_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO
                                   : 0) |
                     (staticControlEnabled
-                         ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL
+                         ? TALOS_RT_NATIVE_SCHEDULE_STATIC_CONTROL
                          : 0) |
                     (staticFanoutEnabled
-                         ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT
+                         ? TALOS_RT_NATIVE_SCHEDULE_STATIC_FANOUT
                          : 0) |
-                    (enableDirectState ? OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE
+                    (enableDirectState ? TALOS_RT_NATIVE_SCHEDULE_DIRECT_STATE
                                        : 0) |
-                    (enableStaticNBA ? OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA
+                    (enableStaticNBA ? TALOS_RT_NATIVE_SCHEDULE_STATIC_NBA
                                      : 0) |
-                    (fullyStatic ? OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS
+                    (fullyStatic ? TALOS_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS
                                  : 0) |
                     (guardedFanoutEnabled
-                         ? OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT
+                         ? TALOS_RT_NATIVE_SCHEDULE_GUARDED_FANOUT
                          : 0) |
                     (guardedSpecializationEnabled
-                         ? OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION
+                         ? TALOS_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION
                          : 0) |
                     (cleanSuperstepEnabled
-                         ? OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP
+                         ? TALOS_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP
                          : 0)),
             NativeSchedulePlanField::Flags);
         value = insertValue(initializerBuilder, location, value,
                             LLVM::AddressOfOp::create(initializerBuilder,
                                                       location, pointer,
-                                                      "__obelisk_state_value"),
+                                                      "__talos_state_value"),
                             NativeSchedulePlanField::StateValue);
         value = insertValue(
             initializerBuilder, location, value,
             LLVM::AddressOfOp::create(initializerBuilder, location, pointer,
-                                      "__obelisk_state_unknown"),
+                                      "__talos_state_unknown"),
             NativeSchedulePlanField::StateUnknown);
         value = insertValue(initializerBuilder, location, value,
                             llvmConstant(initializerBuilder, location, i64,
@@ -965,7 +965,7 @@ LogicalResult makeNativeAOTPlanLegacy(
             guardedSpecializationEnabled
                 ? LLVM::AddressOfOp::create(
                       initializerBuilder, location, pointer,
-                      "__obelisk_static_specialization_fast_v1")
+                      "__talos_static_specialization_fast_v1")
                       .getResult()
                 : LLVM::ZeroOp::create(initializerBuilder, location, pointer)
                       .getResult();
@@ -1006,26 +1006,26 @@ LogicalResult makeNativeAOTPlanLegacy(
                            NativeSchedulePlanField::Reserved2);
       });
   if (fullyStatic)
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run_aot_nodes",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_run_aot_nodes",
                              i32, {pointer, pointer, i32});
   else
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_run", i32,
                              {pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_snapshot_aot", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_snapshot_aot", i32,
                            {pointer, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_commit_root", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_static_nba_commit_root", i32,
                            {pointer, i32, i32, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_commit_roots", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_static_nba_commit_roots", i32,
                            {pointer, i32, i32, pointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_static_nba_direct_commit_guard", i32, {pointer});
+      module, "talos_rt_v1_static_nba_direct_commit_guard", i32, {pointer});
   getOrDeclareLLVMFunction(module,
-                           "obelisk_rt_v1_static_nba_account_generated_commits",
+                           "talos_rt_v1_static_nba_account_generated_commits",
                            LLVM::LLVMVoidType::get(context), {pointer, i32});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_activate_static_nodes",
+      module, "talos_rt_v1_scheduler_activate_static_nodes",
       LLVM::LLVMVoidType::get(context), {pointer, pointer, i32});
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

@@ -9,7 +9,7 @@
 #include <limits>
 #include <utility>
 
-namespace obelisk::runtime {
+namespace talos::runtime {
 
 /// Deterministic binary64-to-binary32 round-to-nearest, ties-to-even. Cell
 /// specialization uses integer payloads so host floating rounding modes cannot
@@ -272,10 +272,10 @@ public:
     return true;
   }
 
-  static bool sample(obelisk_rt_random_state_v1 &state, Float lower,
+  static bool sample(talos_rt_random_state_v1 &state, Float lower,
                      Float upper, uint32_t flags, Float &out) {
-    Float first = flags & OBELISK_RT_REAL_LOWER_OPEN ? nextUp(lower) : lower;
-    Float last = flags & OBELISK_RT_REAL_UPPER_OPEN ? nextDown(upper) : upper;
+    Float first = flags & TALOS_RT_REAL_LOWER_OPEN ? nextUp(lower) : lower;
+    Float last = flags & TALOS_RT_REAL_UPPER_OPEN ? nextDown(upper) : upper;
     if (!finite(first) || !finite(last) || first > last)
       return false;
     if (first == last) {
@@ -316,11 +316,11 @@ public:
   }
 };
 
-static_assert(RealCoordinates<double>::rankBits == OBELISK_RT_REAL64_RANK_BITS);
+static_assert(RealCoordinates<double>::rankBits == TALOS_RT_REAL64_RANK_BITS);
 static_assert(RealCoordinates<double>::rankWords ==
-              OBELISK_RT_REAL64_RANK_WORDS);
-static_assert(RealCoordinates<float>::rankBits == OBELISK_RT_REAL32_RANK_BITS);
+              TALOS_RT_REAL64_RANK_WORDS);
+static_assert(RealCoordinates<float>::rankBits == TALOS_RT_REAL32_RANK_BITS);
 static_assert(RealCoordinates<float>::rankWords ==
-              OBELISK_RT_REAL32_RANK_WORDS);
+              TALOS_RT_REAL32_RANK_WORDS);
 
-} // namespace obelisk::runtime
+} // namespace talos::runtime

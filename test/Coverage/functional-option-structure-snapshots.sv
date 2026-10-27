@@ -1,7 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s --check-prefix=SNAPSHOT
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
 
 // IEEE 19.10 implicitly declares ordinary unpacked structures. Their copies
 // retain all fields and strings, independently of later coverage updates.

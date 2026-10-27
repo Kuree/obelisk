@@ -1,10 +1,10 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Pass/PassManager.h"
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-namespace obelisk {
+#include "talos/Conversion/Passes.h"
+#include "talos/Conversion/SimulationToLLVMCoroutine.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+namespace talos {
 void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager,
                                             bool nativeWords,
                                             bool nativeAggregates) {
@@ -70,11 +70,11 @@ void registerSimulationToLLVMCoroutinePipeline() {
         llvm::cl::init(true)};
   };
   mlir::PassPipelineRegistration<Options>(
-      "convert-obelisk-sim-processes-to-llvm-coroutines",
+      "convert-talos-sim-processes-to-llvm-coroutines",
       "Plan, specialize, and lower native simulation processes",
       [](mlir::OpPassManager &manager, const Options &options) {
         buildSimulationToLLVMCoroutinePipeline(manager, options.nativeWords,
                                                options.nativeAggregates);
       });
 }
-} // namespace obelisk
+} // namespace talos

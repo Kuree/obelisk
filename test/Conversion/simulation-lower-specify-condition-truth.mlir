@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // IEEE 1800-2017 30.4.4.1 uses only a module-path condition's LSB and treats
 // X/Z as true. This hand-authored observer verifies the Clause-30-specific
 // conversion without involving SystemVerilog parsing or runtime lowering.
 
-!logic4 = !obelisk.integral<4, false, true, 3 : 0, logic>
+!logic4 = !talos.integral<4, false, true, 3 : 0, logic>
 
 module {
   simulation.design @specify_condition_truth {
@@ -24,10 +24,10 @@ module {
           simulation.bindings = [
             #simulation.argument_binding<path = "top.condition", argument = 1, kind = direct, copyOut = false>]}
         {
-      obelisk.sv.expression.named_value attributes {
+      talos.sv.expression.named_value attributes {
           node_id = 1 : i64, referenced_path = "top.condition",
           referenced_symbol = @condition, semantic_type = !logic4,
-          obelisk.timing_path_condition_truth} {}
+          talos.timing_path_condition_truth} {}
       %dummy = arith.constant false
       simulation.return %dummy : i1
     }

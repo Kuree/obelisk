@@ -1,5 +1,5 @@
-add_subdirectory(SlangToObelisk)
-add_subdirectory(ObeliskToSimulation)
+add_subdirectory(SlangToTalos)
+add_subdirectory(TalosToSimulation)
 add_subdirectory(SimulationToSchedule)
 add_subdirectory(RuntimeToLLVM)
 add_subdirectory(SimulationToStandard)

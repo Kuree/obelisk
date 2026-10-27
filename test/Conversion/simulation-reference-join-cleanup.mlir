@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s '--pass-pipeline=builtin.module(simulation.design(simulation.func(schedule-specialize-reference-joins,schedule-optimize-native-aggregates)))' | FileCheck %s
+// RUN: talos-opt %s '--pass-pipeline=builtin.module(simulation.design(simulation.func(schedule-specialize-reference-joins,schedule-optimize-native-aggregates)))' | FileCheck %s
 // Array cleanup must preserve the separate storage identities established for
 // native lowering. Aggressive identical-block merging would recreate a ref phi.
 // CHECK-LABEL: simulation.func @preserve_destinations

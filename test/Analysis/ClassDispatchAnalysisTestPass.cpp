@@ -2,7 +2,7 @@
 
 #include "AnalysisTestPasses.h"
 
-#include "obelisk/Analysis/ClassDispatchAnalysis.h"
+#include "talos/Analysis/ClassDispatchAnalysis.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -19,7 +19,7 @@ public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ClassDispatchAnalysisTestPass)
 
   StringRef getArgument() const final {
-    return "test-obelisk-class-dispatch-analysis";
+    return "test-talos-class-dispatch-analysis";
   }
   StringRef getDescription() const final {
     return "inspect sparse hierarchy and shared method-table facts";
@@ -27,8 +27,8 @@ public:
 
   void runOnOperation() final {
     ModuleOp module = getOperation();
-    module.walk([&](obelisk::sim::SimDesignOp design) {
-      obelisk::analysis::ClassDispatchAnalysis dispatch(design);
+    module.walk([&](talos::sim::SimDesignOp design) {
+      talos::analysis::ClassDispatchAnalysis dispatch(design);
       size_t nodes = dispatch.getNumMethodTableNodes();
       if (auto limit = module->getAttrOfType<IntegerAttr>(
               "test.dispatch_table_node_limit")) {
@@ -88,8 +88,8 @@ public:
 };
 } // namespace
 
-namespace obelisk {
+namespace talos {
 void registerClassDispatchAnalysisTestPass() {
   PassRegistration<ClassDispatchAnalysisTestPass>();
 }
-} // namespace obelisk
+} // namespace talos

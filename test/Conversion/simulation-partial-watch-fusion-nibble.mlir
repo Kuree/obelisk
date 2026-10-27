@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // The low result nibble is written inside the fused kernel, so its watch is
 // internal; the high nibble is driven externally and must stay in the wait as
 // an exact 4-bit watch next to the external input.
-// CHECK-LABEL: simulation.func private @__obelisk_region_kernel_0_0(
+// CHECK-LABEL: simulation.func private @__talos_region_kernel_0_0(
 // CHECK: %[[INPUT:.*]] = simulation.context.storage %arg0[0]
 // CHECK-NEXT: %[[RESULT:.*]] = simulation.context.storage %arg0[2]
 // CHECK-NEXT: %[[HIGH:.*]] = simulation.ref.extract %[[RESULT]] from 4 : !simulation.ref<!simulation.logic<8>> -> !simulation.ref<!simulation.logic<4>>

@@ -2,10 +2,10 @@
 
 #include "SimulationDPILowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -22,7 +22,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 bool isVector(const DPIOperandABI &abi) {
@@ -70,14 +70,14 @@ Type cScalarType(MLIRContext *context, const DPIOperandABI &abi) {
 
 uint8_t descriptorKind(const DPIOperandABI &abi) {
   if (isString(abi))
-    return OBELISK_RT_DBREG_STRING;
+    return TALOS_RT_DBREG_STRING;
   if (isAggregate(abi))
-    return OBELISK_RT_DBREG_AGGREGATE;
+    return TALOS_RT_DBREG_AGGREGATE;
   if (abi.category == static_cast<uint32_t>(dpi::ABIKind::ShortReal))
-    return OBELISK_RT_DBREG_REAL32;
+    return TALOS_RT_DBREG_REAL32;
   if (abi.category == static_cast<uint32_t>(dpi::ABIKind::Real))
-    return OBELISK_RT_DBREG_REAL64;
-  return abi.fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS;
+    return TALOS_RT_DBREG_REAL64;
+  return abi.fourState ? TALOS_RT_DBREG_LOGIC : TALOS_RT_DBREG_BITS;
 }
 
 Type planeType(MLIRContext *context, const DPIOperandABI &abi) {
@@ -188,7 +188,7 @@ void writeDescriptor(OpBuilder &builder, Location location, Value base,
   store(0, llvmConstant(builder, location, i8, descriptorKind(abi)), 1);
   store(1,
         llvmConstant(builder, location, i8,
-                     abi.isSigned ? OBELISK_RT_DBREG_SIGNED : 0),
+                     abi.isSigned ? TALOS_RT_DBREG_SIGNED : 0),
         1);
   store(2, llvmConstant(builder, location, i16, 0), 2);
   store(3, llvmConstant(builder, location, i32, abi.width), 4);
@@ -230,8 +230,8 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   Type voidType = LLVM::LLVMVoidType::get(context);
   uint32_t outputCount = spec.abi.size() - spec.inputCount;
   StringRef cIdentifier = spec.cIdentifier.getValue();
-  if (cIdentifier == "main" || cIdentifier.starts_with("obelisk_rt_") ||
-      cIdentifier.starts_with("__obelisk_"))
+  if (cIdentifier == "main" || cIdentifier.starts_with("talos_rt_") ||
+      cIdentifier.starts_with("__talos_"))
     return spec.operation->emitError()
            << "DPI export C identifier '" << cIdentifier
            << "' collides with a reserved generated/runtime symbol";
@@ -349,11 +349,11 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   SmallVector<Value> formalArguments;
   SmallVector<Value> aggregatePlans(spec.abi.size());
   SmallVector<Value> aggregateRootHandles;
-  Value marshallingStatus = llvmConstant(builder, location, i32, OBELISK_RT_OK);
+  Value marshallingStatus = llvmConstant(builder, location, i32, TALOS_RT_OK);
   auto mergeMarshallingStatus = [&](Value next) {
     Value succeeded = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, marshallingStatus,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     marshallingStatus = arith::SelectOp::create(builder, location, succeeded,
                                                 next, marshallingStatus);
   };
@@ -424,7 +424,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
       activeContext =
           LLVM::CallOp::create(
               builder, location, TypeRange{pointer},
-              SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_current_context"),
+              SymbolRefAttr::get(context, "talos_rt_v1_dpi_current_context"),
               ValueRange{})
               .getResult();
     Value handle = entryAlloca(builder, location, pointer, 1, 8);
@@ -433,7 +433,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
             SymbolRefAttr::get(context,
-                               "obelisk_rt_v1_dpi_aggregate_roots_push"),
+                               "talos_rt_v1_dpi_aggregate_roots_push"),
             ValueRange{
                 activeContext, planes.first,
                 llvmConstant(builder, location, i64,
@@ -466,14 +466,14 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
             LLVM::CallOp::create(
                 builder, location, TypeRange{pointer},
                 SymbolRefAttr::get(context,
-                                   "obelisk_rt_v1_dpi_current_context"),
+                                   "talos_rt_v1_dpi_current_context"),
                 ValueRange{})
                 .getResult();
         Value unpackStatus =
             LLVM::CallOp::create(
                 builder, location, TypeRange{i32},
                 SymbolRefAttr::get(context,
-                                   "obelisk_rt_v1_dpi_aggregate_unpack"),
+                                   "talos_rt_v1_dpi_aggregate_unpack"),
                 ValueRange{
                     activeContext, argument,
                     llvmConstant(builder, location, i64, layout.getCSize()),
@@ -506,7 +506,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
         LLVM::CallOp::create(
             builder, location, TypeRange{},
             SymbolRefAttr::get(context,
-                               "obelisk_rt_v1_dpi_export_unpack_vector"),
+                               "talos_rt_v1_dpi_export_unpack_vector"),
             ValueRange{
                 argument, planes.first, planes.second,
                 llvmConstant(builder, location, i32, abi.width),
@@ -592,7 +592,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
 
   auto status = LLVM::CallOp::create(
       builder, location, TypeRange{i32},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_export_call_guarded"),
+      SymbolRefAttr::get(context, "talos_rt_v1_export_call_guarded"),
       ValueRange{marshallingStatus,
                  llvmConstant(builder, location, i32, spec.exportID),
                  llvmConstant(builder, location, i64, spec.abiHash), inputs,
@@ -600,7 +600,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
                  llvmConstant(builder, location, i32, outputCount)});
   Value succeeded = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::eq, status.getResult(),
-      llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      llvmConstant(builder, location, i32, TALOS_RT_OK));
   LLVM::CondBrOp::create(builder, location, succeeded, copy, ValueRange{},
                          cleanup, ValueRange{status.getResult()});
 
@@ -622,13 +622,13 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
           llvmConstant(builder, location, i64, layout.getCSize())};
       StringRef function;
       if (layout.getStringCount() != 0) {
-        function = "obelisk_rt_v1_dpi_aggregate_export_pack";
+        function = "talos_rt_v1_dpi_aggregate_export_pack";
         arguments.append(
             {aggregatePlan(signatureIndex),
              llvmConstant(builder, location, i64, layout.getLeaves().size()),
              llvmConstant(builder, location, i32, outputIndex)});
       } else {
-        function = "obelisk_rt_v1_dpi_aggregate_pack";
+        function = "talos_rt_v1_dpi_aggregate_pack";
         arguments.append(
             {llvmConstant(builder, location, i64, layout.getCSize()),
              aggregatePlan(signatureIndex),
@@ -644,7 +644,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     if (isVector(abi)) {
       LLVM::CallOp::create(
           builder, location, TypeRange{},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_export_pack_vector"),
+          SymbolRefAttr::get(context, "talos_rt_v1_dpi_export_pack_vector"),
           ValueRange{target, outputPlanes[outputIndex].first,
                      outputPlanes[outputIndex].second,
                      llvmConstant(builder, location, i32, abi.width),
@@ -655,7 +655,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
       Value text =
           LLVM::CallOp::create(
               builder, location, TypeRange{pointer},
-              SymbolRefAttr::get(context, "obelisk_rt_v1_export_string"),
+              SymbolRefAttr::get(context, "talos_rt_v1_export_string"),
               llvmConstant(builder, location, i32, outputIndex))
               .getResult();
       LLVM::StoreOp::create(builder, location, text, target, 1);
@@ -721,7 +721,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     Value popStatus = LLVM::CallOp::create(
                           builder, location, TypeRange{i32},
                           SymbolRefAttr::get(
-                              context, "obelisk_rt_v1_dpi_aggregate_roots_pop"),
+                              context, "talos_rt_v1_dpi_aggregate_roots_pop"),
                           ValueRange{activeContext, handle})
                           .getResult();
     mergeMarshallingStatus(popStatus);
@@ -729,7 +729,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   marshallingStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_export_status"),
+          SymbolRefAttr::get(context, "talos_rt_v1_dpi_export_status"),
           ValueRange{marshallingStatus})
           .getResult();
   LLVM::BrOp::create(builder, location, ValueRange{marshallingStatus}, done);
@@ -740,7 +740,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     Value disabled = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, finalStatus,
         llvmConstant(builder, location, i32,
-                     OBELISK_RT_DPI_DISABLE_UNSUPPORTED));
+                     TALOS_RT_DPI_DISABLE_UNSUPPORTED));
     LLVM::ReturnOp::create(
         builder, location,
         arith::SelectOp::create(builder, location, disabled,
@@ -941,7 +941,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
                                                       descriptorType, index, 1),
                                       1),
                  llvmConstant(builder, location, i8,
-                              abi.isSigned ? OBELISK_RT_DBREG_SIGNED : 0));
+                              abi.isSigned ? TALOS_RT_DBREG_SIGNED : 0));
     requireEqual(LLVM::LoadOp::create(builder, location, i16,
                                       descriptorField(builder, location, base,
                                                       descriptorType, index, 2),
@@ -967,7 +967,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
   builder.setInsertionPointToStart(invalid);
   LLVM::ReturnOp::create(
       builder, location,
-      llvmConstant(builder, location, i32, OBELISK_RT_INVALID_ARGUMENT));
+      llvmConstant(builder, location, i32, TALOS_RT_INVALID_ARGUMENT));
 
   builder.setInsertionPointToStart(invoke);
   auto plane = [&](Value base, uint32_t index, bool unknown) {
@@ -978,7 +978,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
   };
   Value statusSlot = entryAlloca(builder, location, i32, 1, 4);
   LLVM::StoreOp::create(builder, location,
-                        llvmConstant(builder, location, i32, OBELISK_RT_OK),
+                        llvmConstant(builder, location, i32, TALOS_RT_OK),
                         statusSlot, 4);
   SmallVector<Value> handleSlots;
   for (uint32_t index = 0; index != spec.inputCount; ++index)
@@ -997,7 +997,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
     thunk.getBody().push_back(failed);
     Value ok = LLVM::ICmpOp::create(
         builder, location, LLVM::ICmpPredicate::eq, status,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     LLVM::CondBrOp::create(builder, location, ok, next, failed);
     builder.setInsertionPointToStart(failed);
     LLVM::StoreOp::create(builder, location, status, statusSlot, 4);
@@ -1048,7 +1048,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
               SymbolRefAttr::get(context,
-                                 "obelisk_rt_v1_dpi_aggregate_state_alloc"),
+                                 "talos_rt_v1_dpi_aggregate_state_alloc"),
               ValueRange{entry->getArgument(0),
                          llvmConstant(builder, location, i64, abi.width),
                          plane(inputs, index, false),
@@ -1065,14 +1065,14 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
       record = LLVM::InsertValueOp::create(
           builder, location, record,
           llvmConstant(builder, location, i32,
-                       OBELISK_RT_MANAGED_ROOT_KIND_STRING),
+                       TALOS_RT_MANAGED_ROOT_KIND_STRING),
           ArrayRef<int64_t>{1});
       LLVM::StoreOp::create(builder, location, record, root, 8);
       allocationStatus =
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
               SymbolRefAttr::get(
-                  context, "obelisk_rt_v1_native_state_alloc_with_typed_roots"),
+                  context, "talos_rt_v1_native_state_alloc_with_typed_roots"),
               ValueRange{
                   entry->getArgument(0),
                   llvmConstant(builder, location, i64, abi.width),
@@ -1083,7 +1083,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
       allocationStatus =
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
-              SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_alloc"),
+              SymbolRefAttr::get(context, "talos_rt_v1_native_state_alloc"),
               ValueRange{entry->getArgument(0),
                          llvmConstant(builder, location, i64, abi.width),
                          plane(inputs, index, false),
@@ -1096,7 +1096,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
     Value retain =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_retain"),
+            SymbolRefAttr::get(context, "talos_rt_v1_native_state_retain"),
             ValueRange{entry->getArgument(0), reference})
             .getResult();
     failToCleanup(retain);
@@ -1126,13 +1126,13 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
   Value taskStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_export_task_run"),
+          SymbolRefAttr::get(context, "talos_rt_v1_dpi_export_task_run"),
           ValueRange{entry->getArgument(0), instance})
           .getResult();
   LLVM::StoreOp::create(builder, location, taskStatus, statusSlot, 4);
   Value completed = LLVM::ICmpOp::create(
       builder, location, LLVM::ICmpPredicate::eq, taskStatus,
-      llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      llvmConstant(builder, location, i32, TALOS_RT_OK));
   LLVM::CondBrOp::create(builder, location, completed, copy, cleanup);
 
   builder.setInsertionPointToStart(copy);
@@ -1142,7 +1142,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
     Value current = LLVM::LoadOp::create(builder, location, i32, statusSlot, 4);
     Value ok = LLVM::ICmpOp::create(
         builder, location, LLVM::ICmpPredicate::eq, current,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     LLVM::StoreOp::create(
         builder, location,
         LLVM::SelectOp::create(builder, location, ok, next, current),
@@ -1159,7 +1159,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
             SymbolRefAttr::get(context,
-                               "obelisk_rt_v1_native_state_load_plane"),
+                               "talos_rt_v1_native_state_load_plane"),
             ValueRange{entry->getArgument(0), valueDestination,
                        llvmConstant(builder, location, i64, 0), reference,
                        llvmConstant(builder, location, i64, abi.width),
@@ -1174,7 +1174,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
               SymbolRefAttr::get(context,
-                                 "obelisk_rt_v1_native_state_load_plane"),
+                                 "talos_rt_v1_native_state_load_plane"),
               ValueRange{entry->getArgument(0), unknownDestination,
                          llvmConstant(builder, location, i64, 0), reference,
                          llvmConstant(builder, location, i64, abi.width),
@@ -1203,7 +1203,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
     Value released =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_release"),
+            SymbolRefAttr::get(context, "talos_rt_v1_native_state_release"),
             ValueRange{entry->getArgument(0), reference,
                        llvmConstant(builder, location, i32, 1)})
             .getResult();
@@ -1277,7 +1277,7 @@ LogicalResult materializeBytecodeTaskThunk(LLVM::LLVMFuncOp thunk,
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
           SymbolRefAttr::get(context,
-                             "obelisk_rt_v1_dpi_export_task_bytecode_run"),
+                             "talos_rt_v1_dpi_export_task_bytecode_run"),
           ValueRange{entry->getArgument(0),
                      llvmConstant(builder, location, i32, spec.exportID),
                      entry->getArgument(1), entry->getArgument(2),
@@ -1375,7 +1375,7 @@ LogicalResult materializeNativeThunk(ModuleOp module, LLVM::LLVMFuncOp thunk,
                                                       descriptorType, index, 1),
                                       1),
                  llvmConstant(builder, location, i8,
-                              abi.isSigned ? OBELISK_RT_DBREG_SIGNED : 0));
+                              abi.isSigned ? TALOS_RT_DBREG_SIGNED : 0));
     requireEqual(LLVM::LoadOp::create(builder, location, i16,
                                       descriptorField(builder, location, base,
                                                       descriptorType, index, 2),
@@ -1401,7 +1401,7 @@ LogicalResult materializeNativeThunk(ModuleOp module, LLVM::LLVMFuncOp thunk,
   builder.setInsertionPointToStart(invalid);
   LLVM::ReturnOp::create(
       builder, location,
-      llvmConstant(builder, location, i32, OBELISK_RT_INVALID_ARGUMENT));
+      llvmConstant(builder, location, i32, TALOS_RT_INVALID_ARGUMENT));
 
   builder.setInsertionPointToStart(invoke);
   auto plane = [&](Value base, uint32_t index, bool unknown) {
@@ -1479,7 +1479,7 @@ LogicalResult materializeNativeThunk(ModuleOp module, LLVM::LLVMFuncOp thunk,
     Value status = resultAt(expectedResults.size());
     Value succeeded = LLVM::ICmpOp::create(
         builder, location, LLVM::ICmpPredicate::eq, status,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     LLVM::CondBrOp::create(builder, location, succeeded, copyResults,
                            bodyFailed);
     builder.setInsertionPointToStart(bodyFailed);
@@ -1550,7 +1550,7 @@ LogicalResult materializeNativeThunk(ModuleOp module, LLVM::LLVMFuncOp thunk,
       eraseDeadPlaneLoad(unknown);
   }
   LLVM::ReturnOp::create(builder, location,
-                         llvmConstant(builder, location, i32, OBELISK_RT_OK));
+                         llvmConstant(builder, location, i32, TALOS_RT_OK));
   bridge.erase();
   return success();
 }
@@ -1562,12 +1562,12 @@ LogicalResult materializeDPIExportWrappers(ModuleOp module) {
     return success();
   SmallVector<sim::SimFuncOp> bridges;
   llvm::StringMap<LLVM::LLVMFuncOp> functions;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         if (dpi::has<dpi::ExportBridge>(function))
           bridges.push_back(function);
       });
-  ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
+  ::talos::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
       module, [&](LLVM::LLVMFuncOp function) {
         functions.try_emplace(function.getSymName(), function);
       });
@@ -1595,49 +1595,49 @@ LogicalResult materializeDPIExportWrappers(ModuleOp module) {
   Type i32 = builder.getI32Type();
   Type voidType = LLVM::LLVMVoidType::get(context);
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_export_call_guarded", i32,
+      module, "talos_rt_v1_export_call_guarded", i32,
       {i32, i32, builder.getI64Type(), pointer, i32, pointer, i32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_export_status", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_export_status", i32,
                            {i32});
   if (needsTask)
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_export_task_run", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_export_task_run", i32,
                              {pointer, pointer});
   if (needsTask)
     getOrDeclareLLVMFunction(
-        module, "obelisk_rt_v1_dpi_export_task_bytecode_run", i32,
+        module, "talos_rt_v1_dpi_export_task_bytecode_run", i32,
         {pointer, i32, pointer, i32, pointer, i32, pointer, pointer, pointer});
   if (needsString)
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_export_string", pointer,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_export_string", pointer,
                              {i32});
   if (needsVector) {
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_export_unpack_vector",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_export_unpack_vector",
                              voidType, {pointer, pointer, pointer, i32, i32});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_export_pack_vector",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_export_pack_vector",
                              voidType, {pointer, pointer, pointer, i32, i32});
   }
   if (needsAggregate) {
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_current_context",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_current_context",
                              pointer, {});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_aggregate_pack", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_aggregate_pack", i32,
                              {pointer, pointer, builder.getI64Type(),
                               builder.getI64Type(), i32, pointer,
                               builder.getI64Type(), builder.getI64Type(),
                               pointer, builder.getI64Type()});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_aggregate_unpack", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_aggregate_unpack", i32,
                              {pointer, pointer, builder.getI64Type(), pointer,
                               builder.getI64Type(), pointer, pointer,
                               builder.getI64Type(), builder.getI64Type(), i32});
     getOrDeclareLLVMFunction(
-        module, "obelisk_rt_v1_dpi_aggregate_roots_push", i32,
+        module, "talos_rt_v1_dpi_aggregate_roots_push", i32,
         {pointer, pointer, builder.getI64Type(), builder.getI64Type(), pointer,
          builder.getI64Type(), pointer});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_aggregate_roots_pop",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_aggregate_roots_pop",
                              i32, {pointer, pointer});
     getOrDeclareLLVMFunction(
-        module, "obelisk_rt_v1_dpi_aggregate_export_pack", i32,
+        module, "talos_rt_v1_dpi_aggregate_export_pack", i32,
         {pointer, pointer, builder.getI64Type(), builder.getI64Type(), i32,
          pointer, builder.getI64Type(), pointer, builder.getI64Type(), i32});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_aggregate_state_alloc",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_aggregate_state_alloc",
                              i32,
                              {pointer, builder.getI64Type(), pointer, pointer,
                               pointer, builder.getI64Type(), pointer});
@@ -1651,7 +1651,7 @@ LogicalResult materializeNativeDPIExportThunks(ModuleOp module) {
   SmallVector<LLVM::LLVMFuncOp> thunks;
   SmallVector<LLVM::LLVMFuncOp> bodies;
   llvm::StringMap<LLVM::LLVMFuncOp> functions;
-  ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
+  ::talos::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
       module, [&](LLVM::LLVMFuncOp function) {
         functions.try_emplace(function.getSymName(), function);
         if (dpi::has<dpi::ExportBridgeSymbol>(function))
@@ -1667,7 +1667,7 @@ LogicalResult materializeNativeDPIExportThunks(ModuleOp module) {
       return failure();
     if (spec->isTask) {
       std::string activationName =
-          (bridgeName.getValue() + ".__obelisk_activate_checked").str();
+          (bridgeName.getValue() + ".__talos_activate_checked").str();
       auto found = functions.find(activationName);
       if (found == functions.end()) {
         if (failed(materializeBytecodeTaskThunk(thunk, *spec)))
@@ -1716,4 +1716,4 @@ LogicalResult materializeNativeDPIExportThunks(ModuleOp module) {
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

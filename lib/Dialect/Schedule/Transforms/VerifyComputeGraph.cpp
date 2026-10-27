@@ -10,10 +10,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Conversion/SimulationToSchedule/ComputeGraph.h"
+#include "talos/Conversion/SimulationToSchedule/ComputeGraph.h"
 
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -23,16 +23,16 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMVERIFYCOMPUTEGRAPHPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMVERIFYCOMPUTEGRAPHPASS
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 
-class ObeliskSimVerifyComputeGraphPass
-    : public impl::ObeliskSimVerifyComputeGraphPassBase<
-          ObeliskSimVerifyComputeGraphPass> {
+class TalosSimVerifyComputeGraphPass
+    : public impl::TalosSimVerifyComputeGraphPassBase<
+          TalosSimVerifyComputeGraphPass> {
 public:
   void runOnOperation() override;
 };
@@ -54,7 +54,7 @@ LogicalResult compareSite(Operation *operation, StringRef what, AttrT actual,
          << what << "; the executable CFG derives " << wanted;
 }
 
-void ObeliskSimVerifyComputeGraphPass::runOnOperation() {
+void TalosSimVerifyComputeGraphPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   auto graph = design.getComputeGraphAttr();
   if (!graph) {
@@ -159,4 +159,4 @@ void ObeliskSimVerifyComputeGraphPass::runOnOperation() {
 }
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

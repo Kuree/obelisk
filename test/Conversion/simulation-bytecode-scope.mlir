@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{prune-native=true vpi=full})' | FileCheck %s --check-prefix=PRUNED
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{vpi=full})' | FileCheck %s --check-prefix=ALL
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{prune-native=true require-bytecode=true vpi=full})' | FileCheck %s --check-prefix=ALL
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{vpi=full},encode-obelisk-sim-to-bytecode{prune-native=true vpi=full})' | FileCheck %s --check-prefix=PRUNED
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph),encode-talos-sim-to-bytecode{prune-native=true vpi=full})' | FileCheck %s --check-prefix=PRUNED
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph),encode-talos-sim-to-bytecode{vpi=full})' | FileCheck %s --check-prefix=ALL
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph),encode-talos-sim-to-bytecode{prune-native=true require-bytecode=true vpi=full})' | FileCheck %s --check-prefix=ALL
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph),encode-talos-sim-to-bytecode{vpi=full},encode-talos-sim-to-bytecode{prune-native=true vpi=full})' | FileCheck %s --check-prefix=PRUNED
 
 // IEEE 1800-2023 4.5, 4.6, 6.8: state metadata survives omission of native
 // bodies, including a native bootstrap excluded from AOT by managed captures.

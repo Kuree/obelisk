@@ -1,13 +1,13 @@
 //===- SimulationReferenceLifetimeLowering.cpp - Native ref ownership ---===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Analysis/LocalStorageAnalysis.h"
-#include "obelisk/Analysis/SSAValueAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
+#include "talos/Analysis/LocalStorageAnalysis.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
 
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -21,10 +21,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMINSTRUMENTREFERENCELIFETIMESPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMINSTRUMENTREFERENCELIFETIMESPASS
+#include "talos/Conversion/Passes.h.inc"
 
 namespace detail {
 namespace {
@@ -78,7 +78,7 @@ void emitNativeStateRelease(OpBuilder &builder, Location location, Value handle,
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   Type i32 = builder.getI32Type();
   Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
+                                                   "__talos_current_context");
   Value context =
       LLVM::LoadOp::create(builder, location, pointer, contextAddress, 8);
   Value owner = arith::ConstantOp::create(
@@ -87,12 +87,12 @@ void emitNativeStateRelease(OpBuilder &builder, Location location, Value handle,
   Value status = LLVM::CallOp::create(
                      builder, location, TypeRange{i32},
                      SymbolRefAttr::get(builder.getContext(),
-                                        "obelisk_rt_v1_native_state_release"),
+                                        "talos_rt_v1_native_state_release"),
                      ValueRange{context, handle, owner})
                      .getResult();
   LLVM::CallOp::create(
       builder, location, TypeRange{},
-      SymbolRefAttr::get(builder.getContext(), "obelisk_rt_v1_scheduler_fail"),
+      SymbolRefAttr::get(builder.getContext(), "talos_rt_v1_scheduler_fail"),
       ValueRange{context, status});
 }
 
@@ -136,7 +136,7 @@ public:
     Value invalid = llvmConstant(rewriter, location, i64, UINT64_MAX);
     LLVM::StoreOp::create(rewriter, location, invalid, outHandle, 8);
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value context =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     SmallVector<sim::ManagedHandleSlot, 2> rootSlots;
@@ -144,7 +144,7 @@ public:
       return failure();
     SmallVector<Value> arguments{
         context, llvmConstant(rewriter, location, i64, *width), value, unknown};
-    StringRef allocation = "obelisk_rt_v1_native_state_alloc";
+    StringRef allocation = "talos_rt_v1_native_state_alloc";
     if (!rootSlots.empty()) {
       Value count = llvmConstant(rewriter, location, i64, rootSlots.size());
       Type slotType = LLVM::LLVMStructType::getLiteral(rewriter.getContext(),
@@ -163,15 +163,15 @@ public:
             rewriter, location, encoded,
             llvmConstant(
                 rewriter, location, i32,
-                root.conditional ? OBELISK_RT_MANAGED_ROOT_SLOT_CANDIDATE : 0),
+                root.conditional ? TALOS_RT_MANAGED_ROOT_SLOT_CANDIDATE : 0),
             2);
         LLVM::StoreOp::create(
             rewriter, location, encoded,
             byteGEP(rewriter, location, slots,
-                    index * sizeof(obelisk_rt_managed_root_slot_v1)),
+                    index * sizeof(talos_rt_managed_root_slot_v1)),
             8);
       }
-      allocation = "obelisk_rt_v1_native_state_alloc_with_typed_roots";
+      allocation = "talos_rt_v1_native_state_alloc_with_typed_roots";
       arguments.push_back(slots);
       arguments.push_back(count);
     }
@@ -399,7 +399,7 @@ LogicalResult
 releaseNativeAutomaticState(ModuleOp module,
                             const ReferenceArgumentMap &referenceArguments) {
   SmallVector<sim::SimFuncOp> functions;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) { functions.push_back(function); });
   for (sim::SimFuncOp function : functions) {
     auto arguments = referenceArguments.find(function.getOperation());
@@ -433,9 +433,9 @@ void populateReferenceLifetimeToLLVMConversionPatterns(
 
 namespace {
 
-class ObeliskSimInstrumentReferenceLifetimesPass
-    : public impl::ObeliskSimInstrumentReferenceLifetimesPassBase<
-          ObeliskSimInstrumentReferenceLifetimesPass> {
+class TalosSimInstrumentReferenceLifetimesPass
+    : public impl::TalosSimInstrumentReferenceLifetimesPassBase<
+          TalosSimInstrumentReferenceLifetimesPass> {
 public:
   void runOnOperation() override {
     if (failed(detail::insertAutomaticOwnerReleases(getOperation())))
@@ -444,4 +444,4 @@ public:
 };
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

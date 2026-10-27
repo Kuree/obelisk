@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-replicate,simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-replicate,simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
-// test-obelisk-replicate expands the writer marked test.replicate into
+// test-talos-replicate expands the writer marked test.replicate into
 // writer0 ... writer63; writer64, the last of the 65 single-bit writers that
 // span two ready words, also observes the old value.
 
@@ -9,9 +9,9 @@
 // A second clock transition exercises reactivation after cached emptiness.
 // Keep fragments separate in this pass-specific test: fusion would hide the
 // multiword runtime boundary. At least 100 nodes ensures it remains covered.
-// PLAN: llvm.mlir.global internal constant @__obelisk_aot_schedule_nodes_v1(
+// PLAN: llvm.mlir.global internal constant @__talos_aot_schedule_nodes_v1(
 // PLAN-SAME: !llvm.array<{{[1-9][0-9][0-9]+}} x struct<(i32, i32, i32)>>
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
+// PLAN: llvm.call @talos_rt_v1_scheduler_run_aot_nodes
 
 !bit = !simulation.logic<1>
 !clockref = !simulation.ref<!bit>

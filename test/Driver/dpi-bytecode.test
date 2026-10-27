@@ -1,5 +1,5 @@
 // RUN: %target_clang %target_pic -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
-// RUN: obelisk --execution-tier=bytecode %S/dpi.sv %t.o -o %t.bytecode
+// RUN: talos --execution-tier=bytecode %S/dpi.sv %t.o -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s --check-prefix=OUTPUT
 
 // OUTPUT: vector-ok

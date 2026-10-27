@@ -1,6 +1,6 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
+// RUN: talos -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval %s -o %t.eval
+// RUN: talos -O3 --vpi=off --native-scheduler=eval %s -o %t.eval
 // RUN: %t.eval | FileCheck %s
 // Packed induction remains known even when the scanned data has X/Z. Its
 // six-bit width must represent the final header value 32 without wrapping.

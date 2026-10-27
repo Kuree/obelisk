@@ -1,12 +1,12 @@
 //===- SimulationVPIAnalysis.cpp - VPI capability policy ----------------===//
 
-#include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/SimulationVPIAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "llvm/Support/ErrorHandling.h"
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 
 SimulationVPIAnalysis SimulationVPIAnalysis::compute(sim::SimDesignOp design) {
   SimulationVPIAnalysis result;
@@ -47,4 +47,4 @@ bool SimulationVPIAnalysis::allowsWrite() const {
   return mode == schedule::ComputeVPIMode::Full;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

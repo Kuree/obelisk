@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension)))' -o %t
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension)))' -o %t
 // RUN: FileCheck %s < %t
-// RUN: obelisk-opt %t --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension)))' | FileCheck %s
+// RUN: talos-opt %t --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension)))' | FileCheck %s
 
 module {
   simulation.design @control_capture {

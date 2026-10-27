@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   coverage.line_point_count = 10 : i64,
@@ -20,11 +20,11 @@ module attributes {
   }
 }
 
-// NATIVE-NOT: llvm.call @obelisk_rt_v1_gc_current_lane
+// NATIVE-NOT: llvm.call @talos_rt_v1_gc_current_lane
 // NATIVE: %[[ENABLED:.*]] = llvm.zext {{.*}} : i1 to i32
 // NATIVE: %[[POINT:.*]] = llvm.mlir.constant(9 : i64) : i64
-// NATIVE: %[[STATUS:.*]] = llvm.call @obelisk_rt_v1_coverage_point_hit({{.*}}, %[[POINT]], %[[ENABLED]]) : (!llvm.ptr, i64, i32) -> i32
+// NATIVE: %[[STATUS:.*]] = llvm.call @talos_rt_v1_coverage_point_hit({{.*}}, %[[POINT]], %[[ENABLED]]) : (!llvm.ptr, i64, i32) -> i32
 // NATIVE: %[[OK:.*]] = llvm.icmp "eq" %[[STATUS]], {{.*}} : i32
 // NATIVE: llvm.cond_br %[[OK]],
-// NATIVE-NOT: llvm.call @obelisk_rt_v1_gc_current_lane
+// NATIVE-NOT: llvm.call @talos_rt_v1_gc_current_lane
 // BYTECODE: intrinsic {{.*}}id=0x00010468 inputs=2 outputs=0 flags=0

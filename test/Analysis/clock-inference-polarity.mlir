@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-clock-inference -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-clock-inference -o /dev/null 2>&1 | FileCheck %s
 
 // IEEE 1800-2023 23.3.3, 10.3.1: a port connection or net declaration
 // assignment is a continuous assignment from its source to the net, and it

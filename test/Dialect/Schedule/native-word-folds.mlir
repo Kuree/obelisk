@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
 
 // Reversing one lane or the same lanes twice keeps every lane in place, and a
 // lane resize to the same width is the identity. An integer, a conversion from

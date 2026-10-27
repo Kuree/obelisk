@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not talos -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
 
 `timescale 1ns / 1ns
 

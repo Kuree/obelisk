@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics -o /dev/null
+// RUN: talos-opt %s --split-input-file --verify-diagnostics -o /dev/null
 // wrong_width: arithmetic must prove a known positive count and exact width.
 #count = #simulation.vpi_type<kind = bit, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>
 #bits4 = #simulation.vpi_type<kind = bit, isSigned = false, isFourState = false, range = [3, 0], children = [], childNames = []>

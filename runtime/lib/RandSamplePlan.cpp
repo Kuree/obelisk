@@ -6,8 +6,8 @@
 #include "RandSolveOrder.h"
 #include "RandSolveWeighted.h"
 #include "RealRandom.h"
-#include "obelisk/Runtime/RandomDomain.h"
-#include "obelisk/Runtime/RandomSamplerPlan.h"
+#include "talos/Runtime/RandomDomain.h"
+#include "talos/Runtime/RandomSamplerPlan.h"
 
 #include <algorithm>
 #include <array>
@@ -19,7 +19,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace obelisk::runtime {
+namespace talos::runtime {
 namespace {
 using random::BooleanCircuit;
 using random::PlanOpcode;
@@ -630,7 +630,7 @@ public:
   /// relation is known to have a solution, so choosing no input needs no
   /// projection; otherwise the projection also decides that.
   SamplerResult choose(const std::vector<bool> &keep,
-                       obelisk_rt_random_state_v1 &state,
+                       talos_rt_random_state_v1 &state,
                        bool satisfiable = false) {
     bool open = false;
     for (size_t input = 0; input != bits.size() && !open; ++input)
@@ -701,7 +701,7 @@ public:
   /// decided with the last of its inputs. A layer chosen from a projection
   /// leaves a satisfiable relation.
   SamplerResult layered(unsigned width, const uint64_t *masks,
-                        size_t layerCount, obelisk_rt_random_state_v1 &state) {
+                        size_t layerCount, talos_rt_random_state_v1 &state) {
     size_t words = (uint64_t(width) + 63) / 64;
     bool satisfiable = false;
     for (size_t layer = 0; layer != layerCount; ++layer) {
@@ -757,7 +757,7 @@ public:
   SamplerResult cyclic(CyclicSampleRequest &request, uint64_t identity,
                        unsigned width, const uint64_t *start,
                        const uint64_t *mutableMask,
-                       obelisk_rt_random_state_v1 &state, uint64_t *output) {
+                       talos_rt_random_state_v1 &state, uint64_t *output) {
     if (request.width == 0 || request.width > 32 || request.offset > width ||
         request.width > width - request.offset)
       return SamplerResult::Invalid;
@@ -812,7 +812,7 @@ public:
       return SamplerResult::Invalid;
     std::vector<uint8_t> snapshot = domain.domainSnapshot();
     uint64_t key = request.key, position = request.position;
-    obelisk_rt_random_state_v1 nextState = state;
+    talos_rt_random_state_v1 nextState = state;
     if (!history.present || history.identity != identity) {
       history = CyclicHistory();
       position = 0;
@@ -838,8 +838,8 @@ public:
       for (uint64_t step = 0; step != steps; ++step) {
         uint64_t next, rank = 0;
         if (previousWidth &&
-            obelisk_rt_v1_random_cycle_next(key, step, previousWidth, &next,
-                                            &rank) != OBELISK_RT_OK)
+            talos_rt_v1_random_cycle_next(key, step, previousWidth, &next,
+                                            &rank) != TALOS_RT_OK)
           return SamplerResult::Invalid;
         if (rank < previousCardinality)
           history.insert(fieldValue(previous.assignment(ModelCount(rank))));
@@ -877,10 +877,10 @@ public:
         uint64_t rank = 0;
         if (permutation) {
           if (position == 0)
-            key = obelisk_rt_v1_random_state_next64(&nextState);
-          if (obelisk_rt_v1_random_cycle_next(key, position, permutation,
+            key = talos_rt_v1_random_state_next64(&nextState);
+          if (talos_rt_v1_random_cycle_next(key, position, permutation,
                                               &position,
-                                              &rank) != OBELISK_RT_OK)
+                                              &rank) != TALOS_RT_OK)
             return false;
           if (rank >= cardinality)
             continue;
@@ -925,13 +925,13 @@ public:
            uint64_t constraintMask, const uint64_t *captures,
            const uint32_t *captureWidths,
            const std::vector<size_t> &captureOffsets, const uint64_t *start,
-           const uint64_t *mutableMask, obelisk_rt_random_state_v1 &state,
+           const uint64_t *mutableMask, talos_rt_random_state_v1 &state,
            const uint64_t *masks, size_t layerCount, uint64_t *output) {
     std::vector<bool> active(groups.size(), false);
     for (size_t index = 0; index != groups.size(); ++index)
       active[index] =
           (groups[index].constraintBlock ==
-               OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 ||
+               TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 ||
            !((constraintMask >> groups[index].constraintBlock) & 1)) &&
           (groups[index].softPriority == UINT32_MAX ||
            (groups[index].softPriority < retainedSoft.size() &&
@@ -988,7 +988,7 @@ public:
     for (size_t input : partInputs)
       remainder = remainder || owner(input) == components.size();
 
-    obelisk_rt_random_state_v1 nextState = state;
+    talos_rt_random_state_v1 nextState = state;
     std::vector<bool> value;
     // Conjuncts are split before restriction; prioritized stages that fix
     // inputs never reach weighted sampling.
@@ -1067,7 +1067,7 @@ public:
       const std::vector<Bits> &expressionWeights, const uint64_t *captures,
       const uint32_t *captureWidths, const std::vector<size_t> &captureOffsets,
       const uint64_t *masks, size_t layerCount,
-      obelisk_rt_random_state_v1 &nextState, std::vector<bool> &value) {
+      talos_rt_random_state_v1 &nextState, std::vector<bool> &value) {
     ModelCounter counter(circuit, bits);
     if (!counter.build(predicate))
       return SamplerResult::Invalid;
@@ -1315,12 +1315,12 @@ public:
   /// an unsatisfiable relation is reported without a separate check.
   SamplerResult ordered(unsigned width, const uint64_t *start,
                         const uint64_t *mutableMask,
-                        obelisk_rt_random_state_v1 &state,
+                        talos_rt_random_state_v1 &state,
                         const uint64_t *masks, size_t layerCount,
                         uint64_t *output) {
     // The unspecified remaining fields retain the ordinary joint distribution
     // conditional on the accepted earlier-layer values.
-    obelisk_rt_random_state_v1 nextState = state;
+    talos_rt_random_state_v1 nextState = state;
     SamplerResult status = layered(width, masks, layerCount, nextState);
     if (status != SamplerResult::Satisfiable)
       return status;
@@ -1337,7 +1337,7 @@ public:
     return SamplerResult::Satisfiable;
   }
 
-  bool projection(const OrderMask &mask, obelisk_rt_random_state_v1 &state,
+  bool projection(const OrderMask &mask, talos_rt_random_state_v1 &state,
                   OrderMask &output) {
     std::vector<bool> keep(bits.size(), false);
     for (size_t bit = 0; bit != bits.size(); ++bit)
@@ -1366,7 +1366,7 @@ public:
               const std::vector<ID> &domains,
               const std::vector<SolveOrderEdge> &edges, const uint64_t *start,
               const uint64_t *mutableMask, size_t wordCount,
-              uint64_t disabledBlocks, obelisk_rt_random_state_v1 &state,
+              uint64_t disabledBlocks, talos_rt_random_state_v1 &state,
               uint64_t *output) {
     OrderMask arguments(wordCount, 0);
     for (const PriorityInput *input : hardInputs)
@@ -1425,7 +1425,7 @@ public:
       if (soft[index] != missing &&
           !stageFor(soft[index], softInputs[index], softStages[index]))
         return SamplerResult::Unavailable;
-    obelisk_rt_random_state_v1 nextState = state;
+    talos_rt_random_state_v1 nextState = state;
     OrderMask assignment(start, start + wordCount);
     for (size_t stage = 0; stage != stages.size(); ++stage) {
       requirements.clear();
@@ -1495,33 +1495,33 @@ SamplerResult sampleRandomPlan(
     const uint64_t *mutableMask, size_t assignmentWords,
     uint64_t constraintMask, const uint64_t *captures,
     const uint32_t *captureWidths, size_t captureCount, uint64_t *assignment,
-    obelisk_rt_random_state_v1 *randomState, const uint64_t *orderedMasks,
+    talos_rt_random_state_v1 *randomState, const uint64_t *orderedMasks,
     size_t orderedLayerCount, CyclicSampleRequest *cyclic) {
-  if (programSize < OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE ||
+  if (programSize < TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE ||
       read32(program + 16) != captureCount ||
-      !(read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN))
+      !(read32(program + 20) & TALOS_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN))
     return SamplerResult::Unavailable;
   random::SamplerPlanView plan;
   if (!random::readSamplerPlan(program, programSize, captureWidths, plan))
     return SamplerResult::Invalid;
   size_t fullProgramSize = programSize;
   programSize = plan.coreSize;
-  bool wide = read16(program + 4) == OBELISK_RT_RANDOM_PROGRAM_VERSION_V2;
-  unsigned header = wide ? OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2
-                         : OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
+  bool wide = read16(program + 4) == TALOS_RT_RANDOM_PROGRAM_VERSION_V2;
+  unsigned header = wide ? TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2
+                         : TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE;
   unsigned width = read32(program + 8), instructions = read32(program + 12);
   unsigned flags = read32(program + 20);
-  bool uniform = (flags & OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM) != 0;
-  bool weighted = (flags & OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) != 0;
+  bool uniform = (flags & TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM) != 0;
+  bool weighted = (flags & TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) != 0;
   bool exact = uniform || weighted;
   bool functionPriority =
-      (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
+      (flags & TALOS_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
   bool dynamicMasks =
-      (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS) != 0;
+      (flags & TALOS_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS) != 0;
   if (assignmentWords != std::max<uint64_t>(1, (uint64_t(width) + 63) / 64) ||
-      ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) && !weighted) ||
+      ((flags & TALOS_RT_RANDOM_PROGRAM_HAS_DIST) && !weighted) ||
       (weighted &&
-       (!(flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) || functionPriority)) ||
+       (!(flags & TALOS_RT_RANDOM_PROGRAM_HAS_DIST) || functionPriority)) ||
       !exact || !randomState || (orderedLayerCount && !orderedMasks))
     return SamplerResult::Unavailable;
   std::vector<size_t> captureOffsets(captureCount);
@@ -1554,7 +1554,7 @@ SamplerResult sampleRandomPlan(
   }
   std::vector<ID> specialized(plan.nodeCount);
   struct RealCell {
-    std::array<uint64_t, OBELISK_RT_REAL64_RANK_WORDS> first{}, last{};
+    std::array<uint64_t, TALOS_RT_REAL64_RANK_WORDS> first{}, last{};
   };
   std::unordered_map<uint64_t, RealCell> realCells;
   auto handle = [&](uint32_t id) { return specialized[id / 2] ^ (id & 1); };
@@ -1626,12 +1626,12 @@ SamplerResult sampleRandomPlan(
   size_t literals = header + size_t(instructions) * 16;
   size_t domainsOffset =
       literals + (wide ? size_t(read32(program + 24)) * 8 : 0);
-  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE)
-    domainsOffset += OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
+  if (flags & TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE)
+    domainsOffset += TALOS_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
                      size_t(read32(program + domainsOffset)) *
                          (wide ? assignmentWords * 16 +
-                                     OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2
-                               : OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE);
+                                     TALOS_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2
+                               : TALOS_RT_RANDOM_SOLVE_EDGE_SIZE);
 
   PriorityInputs sourceInputs;
   if (functionPriority &&
@@ -1664,15 +1664,15 @@ SamplerResult sampleRandomPlan(
   std::vector<WeightedGroup> weightedGroups;
   if (weighted) {
     if (domainsOffset > programSize ||
-        programSize - domainsOffset < OBELISK_RT_RANDOM_DIST_HEADER_SIZE)
+        programSize - domainsOffset < TALOS_RT_RANDOM_DIST_HEADER_SIZE)
       return SamplerResult::Unavailable;
     size_t records = read32(program + domainsOffset + 4);
     if (records >
-        (programSize - domainsOffset - OBELISK_RT_RANDOM_DIST_HEADER_SIZE) /
-            OBELISK_RT_RANDOM_DIST_RECORD_SIZE)
+        (programSize - domainsOffset - TALOS_RT_RANDOM_DIST_HEADER_SIZE) /
+            TALOS_RT_RANDOM_DIST_RECORD_SIZE)
       return SamplerResult::Unavailable;
-    size_t footerSize = OBELISK_RT_RANDOM_DIST_HEADER_SIZE +
-                        records * OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
+    size_t footerSize = TALOS_RT_RANDOM_DIST_HEADER_SIZE +
+                        records * TALOS_RT_RANDOM_DIST_RECORD_SIZE;
     if (!parseWeightedGroups(program + domainsOffset, footerSize, width,
                              captureCount, weightedGroups) ||
         !resolveWeightedIntervals(
@@ -1692,7 +1692,7 @@ SamplerResult sampleRandomPlan(
   std::vector<Bits> expressionTargets(weightedGroups.size());
   for (unsigned index = 0; index != instructions; ++index) {
     const uint8_t *p = program + header + size_t(index) * 16;
-    if (p[0] != OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1)
+    if (p[0] != TALOS_RT_RANDOM_END_DIST_TARGET_BIT_V1)
       continue;
     unsigned operand = read32(p + (wide ? 8 : 4));
     uint64_t auxiliary = wide ? read32(p + 12) : read64(p + 8);
@@ -1748,29 +1748,29 @@ SamplerResult sampleRandomPlan(
       continue;
     unsigned operand = read32(p + (wide ? 8 : 4));
     uint64_t auxiliary = wide ? read32(p + 12) : read64(p + 8);
-    if (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1) {
+    if (opcode == TALOS_RT_RANDOM_END_DIST_WEIGHT_BIT_V1) {
       if (!weighted || operand >= captureCount ||
           auxiliary != expressionWeights[operand].size())
         return SamplerResult::Invalid;
       expressionWeights[operand].push_back(roots[index]);
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1)
+    if (opcode == TALOS_RT_RANDOM_END_DIST_TARGET_BIT_V1)
       continue;
-    if (opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
+    if (opcode == TALOS_RT_RANDOM_END_DIST_GUARD_V1) {
       if (!weighted || operand >= distributionGuards.size() ||
           distributionGuards[operand] != missing)
         return SamplerResult::Invalid;
       distributionGuards[operand] = roots[index];
       continue;
     }
-    bool enabled = operand == OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 ||
+    bool enabled = operand == TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 ||
                    (constraintMask & (uint64_t{1} << operand)) == 0;
     ID predicate = enabled ? roots[index] : 1;
     auto source = sourceInputs.find(index);
     const PriorityInput *input =
         enabled && source != sourceInputs.end() ? &source->second : nullptr;
-    if (opcode == OBELISK_RT_RANDOM_END_HARD_V1) {
+    if (opcode == TALOS_RT_RANDOM_END_HARD_V1) {
       if (functionPriority) {
         priorityHard.push_back(predicate);
         hardInputs.push_back(input);
@@ -1793,7 +1793,7 @@ SamplerResult sampleRandomPlan(
           expressionWeights[item.weightCapture].size() !=
               (captureWidths ? captureWidths[item.weightCapture] : 64))
         return SamplerResult::Invalid;
-  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) {
+  if (flags & TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS) {
     size_t offset = domainsOffset;
     if (offset > programSize || programSize - offset < 8)
       return SamplerResult::Invalid;
@@ -1843,7 +1843,7 @@ SamplerResult sampleRandomPlan(
          ++groupIndex) {
       const WeightedGroup &group = weightedGroups[groupIndex];
       if (group.softPriority != UINT32_MAX ||
-          (group.constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+          (group.constraintBlock != TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
            ((constraintMask >> group.constraintBlock) & 1)))
         continue;
       Bits field(variable.begin() + group.targetOffset,
@@ -1891,7 +1891,7 @@ SamplerResult sampleRandomPlan(
     size_t offset = literals + (wide ? size_t(read32(program + 24)) * 8 : 0);
     uint32_t count = read32(program + offset);
     const uint8_t *cursor =
-        program + offset + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
+        program + offset + TALOS_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
     std::vector<SolveOrderEdge> edges;
     for (uint32_t index = 0; index != count; ++index) {
       SolveOrderEdge edge;
@@ -1903,7 +1903,7 @@ SamplerResult sampleRandomPlan(
       edge.block = read32(cursor);
       edge.functionPriority =
           (read32(cursor + 4) &
-           OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY) != 0;
+           TALOS_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY) != 0;
       cursor += 8;
       if (dynamicMasks && edge.functionPriority) {
         bool live = false;
@@ -1914,7 +1914,7 @@ SamplerResult sampleRandomPlan(
           // an edge whose guarded constraint was eliminated.
           uint32_t block = read32(program + header + size_t(entry.first) * 16 +
                                   (wide ? 8 : 4));
-          if (block != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+          if (block != TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
               ((constraintMask >> block) & 1))
             continue;
           bool before = false, after = false;
@@ -2008,4 +2008,4 @@ SamplerResult sampleRandomPlan(
                    orderedLayerCount, assignment);
 }
 
-} // namespace obelisk::runtime
+} // namespace talos::runtime

@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | diff %t.mlir -
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=VPI --implicit-check-not=__obelisk_eval_group_promotion_
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | diff %t.mlir -
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=full},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=VPI --implicit-check-not=__talos_eval_group_promotion_
 
 // VPI-LABEL: llvm.func @main(
 
@@ -9,32 +9,32 @@
 // separates their group from the four-state producer; X/Z inputs must use the
 // unchanged fallback and later known inputs can establish an independent proof.
 // Runtime O0/O3 and actual required-bytecode execution are checked separately.
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_group_promotion_latched_v1
-// CHECK-LABEL: llvm.func @__obelisk_eval_promotion_invalidate_v1()
-// CHECK: llvm.mlir.addressof @__obelisk_eval_kernel_promotion_latched_v1
+// CHECK-DAG: llvm.mlir.global internal @__talos_eval_group_promotion_latched_v1
+// CHECK-LABEL: llvm.func @__talos_eval_promotion_invalidate_v1()
+// CHECK: llvm.mlir.addressof @__talos_eval_kernel_promotion_latched_v1
 // CHECK: "llvm.intr.memset"
 // The memset's independent operands may be emitted in either order.
-// CHECK-DAG: %[[GROUP_LATCH:.*]] = llvm.mlir.addressof @__obelisk_eval_group_promotion_latched_v1
+// CHECK-DAG: %[[GROUP_LATCH:.*]] = llvm.mlir.addressof @__talos_eval_group_promotion_latched_v1
 // CHECK-DAG: %[[ZERO:.*]] = llvm.mlir.constant(0 : i8)
 // CHECK-DAG: %[[GROUP_COUNT:.*]] = llvm.mlir.constant(1 : i64)
 // CHECK: "llvm.intr.memset"(%[[GROUP_LATCH]], %[[ZERO]], %[[GROUP_COUNT]])
-// CHECK: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
+// CHECK: llvm.mlir.addressof @__talos_eval_promotion_pending_mask_v1
 // CHECK: llvm.mlir.constant(510 : i64)
-// CHECK-LABEL: llvm.func @__obelisk_eval_group_promotion_ready_v1
-// CHECK: llvm.call @__obelisk_eval_group_promotion_scan_v1
-// CHECK-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
+// CHECK-LABEL: llvm.func @__talos_eval_group_promotion_ready_v1
+// CHECK: llvm.call @__talos_eval_group_promotion_scan_v1
+// CHECK-LABEL: llvm.func @__talos_eval_ranked_group_0(
 // CHECK-SAME: schedule.eval.control_flow_dataflow
 // CHECK-SAME: schedule.eval.group_proof_domain = #schedule.group_proof_dependency<domain = 0 : i64, members = [1, 2, 3, 4, 5, 6, 7, 8], ranges = [8, 72]>
 // CHECK-SAME: schedule.eval.unconditional_members = array<i32: 1, 2, 3, 4, 5, 6, 7, 8>
-// CHECK: llvm.call @__obelisk_eval_group_promotion_ready_v1
+// CHECK: llvm.call @__talos_eval_group_promotion_ready_v1
 // CHECK: llvm.cond_br
 // Every member is repeatable: the certified body runs all of them in rank
 // order without reading their pending bits (see
 // simulation-ranked-group-unconditional.mlir for the mixed case).
 // CHECK-NOT: schedule.eval.activation_entry
-// CHECK-NOT: __obelisk_eval_kernel_promotion_ready_v1
-// CHECK-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
-// CHECK: llvm.call @__obelisk_eval_kernel_promotion_ready_v1
+// CHECK-NOT: __talos_eval_kernel_promotion_ready_v1
+// CHECK-LABEL: llvm.func @__talos_eval_ranked_group_0.fallback(
+// CHECK: llvm.call @__talos_eval_kernel_promotion_ready_v1
 
 !ref = !simulation.ref<i1>
 !word = !simulation.logic<8>

@@ -1,6 +1,6 @@
 // Text that does not lex cleanly is still listed to the end, without
 // diagnostics, because the listing describes text rather than a design.
-// RUN: obelisk -dump-tokens %S/Inputs/dump-tokens.bad.sv 2> %t.bad.stderr | FileCheck %s --check-prefix=BAD
+// RUN: talos -dump-tokens %S/Inputs/dump-tokens.bad.sv 2> %t.bad.stderr | FileCheck %s --check-prefix=BAD
 // RUN: test ! -s %t.bad.stderr
 // BAD:      0 5 StringLiteral
 // BAD-NEXT: 6 2 DoubleAt
@@ -11,5 +11,5 @@
 // BAD-NEXT: 18 21 BlockComment
 // BAD-NOT:  {{.}}
 
-// RUN: not obelisk -dump-tokens %t.missing.sv 2>&1 | FileCheck %s --check-prefix=MISSING
-// MISSING: obelisk: error: could not inspect input '{{.*}}missing.sv'
+// RUN: not talos -dump-tokens %t.missing.sv 2>&1 | FileCheck %s --check-prefix=MISSING
+// MISSING: talos: error: could not inspect input '{{.*}}missing.sv'

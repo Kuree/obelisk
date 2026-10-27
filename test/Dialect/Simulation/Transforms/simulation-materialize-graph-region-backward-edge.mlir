@@ -2,7 +2,7 @@
 // puts an internal sensitivity edge backwards. One pass over the members can
 // no longer settle the region, so the fusion must be rejected outright rather
 // than dropping the activation of the earlier member.
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 module {
   simulation.design @region_kernel attributes {
@@ -81,7 +81,7 @@ module {
 
 // The two original activations must survive untouched, and no partially
 // populated kernel may be left behind by the rejected materialization.
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 // CHECK: simulation.func private @first
 // CHECK: simulation.func private @second
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_

@@ -4,18 +4,18 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/SymbolTable.h"
-#include "obelisk/Analysis/GraphAlgorithms.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Analysis/GraphAlgorithms.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
 #include "llvm/ADT/IntEqClasses.h"
 #include "llvm/ADT/MapVector.h"
 
 using namespace mlir;
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_PLANCOMBINATIONALSTATEMENTSPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 enum class ComponentRejection {
@@ -385,7 +385,7 @@ public:
       excluded |= reach(feedsSeed, predecessors, false);
       excluded.reset(seeded);
       if (trace)
-        llvm::errs() << "obelisk statement cohort growth: clock-wakes="
+        llvm::errs() << "talos statement cohort growth: clock-wakes="
                      << clockWakes
                      << " observed=" << blocked.count() - clockWakes
                      << " excluded=" << excluded.count() << '\n';
@@ -523,7 +523,7 @@ public:
         reason = ComponentRejection::OperationBudget;
       if (reason != ComponentRejection::None) {
         if (trace)
-          llvm::errs() << "obelisk statement cohort rejected: members="
+          llvm::errs() << "talos statement cohort rejected: members="
                        << members.size() << " operations=" << cost << " reason="
                        << stringifyComponentRejection(reason, observerReason)
                        << '\n';
@@ -601,7 +601,7 @@ public:
         ++dataflowCount;
       }
       if (trace)
-        llvm::errs() << "obelisk statement cohort planned: members="
+        llvm::errs() << "talos statement cohort planned: members="
                      << members.size() << " operations=" << cost
                      << " dataflow=" << dataflow << '\n';
       // This requests materialization, not permission to assume acyclicity.
@@ -619,7 +619,7 @@ public:
         if (llvm::is_contained(component, members.front()))
           closed += members.size();
       if (closed != component.size() && trace)
-        llvm::errs() << "obelisk statement cohort grown: members="
+        llvm::errs() << "talos statement cohort grown: members="
                      << component.size() << " from=" << closed << '\n';
       if (plan(component) || closed == component.size())
         continue;
@@ -632,7 +632,7 @@ public:
       schedule::set<schedule::metadata::staticBodyFusion>(
           design, ArrayAttr::get(design.getContext(), fusions));
     if (trace)
-      llvm::errs() << "obelisk statement scheduling: eligible="
+      llvm::errs() << "talos statement scheduling: eligible="
                    << candidates.size()
                    << " cohorts=" << closedComponents.size()
                    << " plans=" << fusions.size()
@@ -646,4 +646,4 @@ public:
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

@@ -61,14 +61,14 @@ page.window = page;
 vm.runInNewContext(runnerSource, page);
 for (const source of [...corpus, ...KEYWORDS, ...TYPES]) {
   assert.deepEqual(
-    JSON.parse(JSON.stringify(page.ObeliskRunner.tokenize(source))),
+    JSON.parse(JSON.stringify(page.TalosRunner.tokenize(source))),
     tokenize(source));
 }
-for (const [theme, scope] of [['light', 'obelisk-hl'], ['dark', 'obelisk-hl-dark']]) {
+for (const [theme, scope] of [['light', 'talos-hl'], ['dark', 'talos-hl-dark']]) {
   for (const [kind, color] of Object.entries(PALETTES[theme])) {
     if (kind === 'background' || kind === 'foreground') continue;
     assert.ok(
-      runnerSource.includes(`:where(.${scope}) :where(.obelisk-${kind}) { color: ${color}; }`),
+      runnerSource.includes(`:where(.${scope}) :where(.talos-${kind}) { color: ${color}; }`),
       `runner.js ${theme} ${kind} color should be ${color}`);
   }
 }
@@ -85,7 +85,7 @@ for (const selector of [
 // copy of tokensFromListing() and TYPES; keep the copies identical.
 {
   const report = await readFile(
-    new URL('../../tools/obelisk-cov/CoverageReport.js', import.meta.url), 'utf8');
+    new URL('../../tools/talos-cov/CoverageReport.js', import.meta.url), 'utf8');
   const embed = await readFile(new URL('embed-snippet.js', web), 'utf8');
   const copied = report.split('// BEGIN tokensFromListing (copy of web/embed-snippet.js)\n')[1]
     ?.split('// END tokensFromListing')[0];

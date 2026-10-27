@@ -1,32 +1,32 @@
 set(LLVM_TARGET_DEFINITIONS Options.td)
 tablegen(LLVM Options.inc -gen-opt-parser-defs)
-add_public_tablegen_target(ObeliskDriverOptions)
+add_public_tablegen_target(TalosDriverOptions)
 
-set(OBELISK_RESOURCE_DIR "${CMAKE_BINARY_DIR}/lib/obelisk")
-file(MAKE_DIRECTORY "${OBELISK_RESOURCE_DIR}/include")
+set(TALOS_RESOURCE_DIR "${CMAKE_BINARY_DIR}/lib/talos")
+file(MAKE_DIRECTORY "${TALOS_RESOURCE_DIR}/include")
 configure_file("${PROJECT_SOURCE_DIR}/runtime/include/svdpi.h"
-               "${OBELISK_RESOURCE_DIR}/include/svdpi.h" COPYONLY)
+               "${TALOS_RESOURCE_DIR}/include/svdpi.h" COPYONLY)
 foreach(vpi_header vpi_user.h sv_vpi_user.h vpi_compatibility.h)
   configure_file(
-    "${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800/${vpi_header}"
-    "${OBELISK_RESOURCE_DIR}/include/${vpi_header}" COPYONLY)
+    "${TALOS_SLANG_SOURCE_DIR}/external/ieee1800/${vpi_header}"
+    "${TALOS_RESOURCE_DIR}/include/${vpi_header}" COPYONLY)
 endforeach()
 if(APPLE)
   # Outside Linux and Windows the IEEE header takes its fixed-width types from
   # <sys/types.h>, which on Darwin lacks the unsigned ones VPI applications use.
-  file(READ "${OBELISK_RESOURCE_DIR}/include/vpi_user.h" _obelisk_vpi_user)
-  file(WRITE "${OBELISK_RESOURCE_DIR}/include/vpi_user.h"
-    "#include <stdint.h>\n${_obelisk_vpi_user}")
-  unset(_obelisk_vpi_user)
+  file(READ "${TALOS_RESOURCE_DIR}/include/vpi_user.h" _talos_vpi_user)
+  file(WRITE "${TALOS_RESOURCE_DIR}/include/vpi_user.h"
+    "#include <stdint.h>\n${_talos_vpi_user}")
+  unset(_talos_vpi_user)
 endif()
-file(MAKE_DIRECTORY "${OBELISK_RESOURCE_DIR}/include/obelisk")
+file(MAKE_DIRECTORY "${TALOS_RESOURCE_DIR}/include/talos")
 configure_file(
-  "${PROJECT_SOURCE_DIR}/runtime/include/obelisk/vpi_user_compat.h"
-  "${OBELISK_RESOURCE_DIR}/include/obelisk/vpi_user_compat.h" COPYONLY)
+  "${PROJECT_SOURCE_DIR}/runtime/include/talos/vpi_user_compat.h"
+  "${TALOS_RESOURCE_DIR}/include/talos/vpi_user_compat.h" COPYONLY)
 # Keep the canonical SDK filename while layering prototype-era 2023 constants
 # over the vendored IEEE header. No generated SDK file is checked into source.
-file(APPEND "${OBELISK_RESOURCE_DIR}/include/sv_vpi_user.h"
-  "\n#include \"obelisk/vpi_user_compat.h\"\n")
+file(APPEND "${TALOS_RESOURCE_DIR}/include/sv_vpi_user.h"
+  "\n#include \"talos/vpi_user_compat.h\"\n")
 
 set(LLVM_LINK_COMPONENTS
   Analysis
@@ -53,63 +53,63 @@ set(LLVM_LINK_COMPONENTS
 # a component whose target was omitted.
 #
 # A native build gets both, because the official distribution carries every
-# target. That is what lets a native Obelisk cross-compile a design to wasm.
-set(OBELISK_BACKEND_SOURCES)
-set(OBELISK_NATIVE_INPUTS_SOURCE)
-set(OBELISK_HAS_NATIVE_BACKEND 0)
-set(OBELISK_HAS_HOST_C_RUNTIME 0)
-set(OBELISK_HAS_WASM_BACKEND 0)
+# target. That is what lets a native Talos cross-compile a design to wasm.
+set(TALOS_BACKEND_SOURCES)
+set(TALOS_NATIVE_INPUTS_SOURCE)
+set(TALOS_HAS_NATIVE_BACKEND 0)
+set(TALOS_HAS_HOST_C_RUNTIME 0)
+set(TALOS_HAS_WASM_BACKEND 0)
 
 list(APPEND LLVM_LINK_COMPONENTS
   WebAssemblyCodeGen
   WebAssemblyDesc
   WebAssemblyInfo)
-list(APPEND OBELISK_BACKEND_SOURCES WasmBackend.cpp)
-set(OBELISK_HAS_WASM_BACKEND 1)
+list(APPEND TALOS_BACKEND_SOURCES WasmBackend.cpp)
+set(TALOS_HAS_WASM_BACKEND 1)
 
 if(NOT EMSCRIPTEN)
-  set(Clang_DIR "${OBELISK_LLVM_DIST_DIR}/lib/cmake/clang" CACHE PATH
+  set(Clang_DIR "${TALOS_LLVM_DIST_DIR}/lib/cmake/clang" CACHE PATH
     "Matching Clang CMake package" FORCE)
   find_package(Clang REQUIRED CONFIG NO_DEFAULT_PATH)
-  if(OBELISK_NATIVE_PLATFORM STREQUAL "linux")
+  if(TALOS_NATIVE_PLATFORM STREQUAL "linux")
     list(APPEND LLVM_LINK_COMPONENTS nativecodegen)
-    list(APPEND OBELISK_BACKEND_SOURCES NativeBackend.cpp HostCRuntime.cpp)
-    set(OBELISK_NATIVE_INPUTS_SOURCE NativeInputs.cpp)
-    set(OBELISK_HAS_HOST_C_RUNTIME 1)
-  elseif(OBELISK_NATIVE_PLATFORM STREQUAL "windows")
+    list(APPEND TALOS_BACKEND_SOURCES NativeBackend.cpp HostCRuntime.cpp)
+    set(TALOS_NATIVE_INPUTS_SOURCE NativeInputs.cpp)
+    set(TALOS_HAS_HOST_C_RUNTIME 1)
+  elseif(TALOS_NATIVE_PLATFORM STREQUAL "windows")
     list(APPEND LLVM_LINK_COMPONENTS nativecodegen)
-    list(APPEND OBELISK_BACKEND_SOURCES WindowsBackend.cpp)
-    set(OBELISK_NATIVE_INPUTS_SOURCE NativeInputs.cpp)
-  elseif(OBELISK_NATIVE_PLATFORM STREQUAL "macos")
+    list(APPEND TALOS_BACKEND_SOURCES WindowsBackend.cpp)
+    set(TALOS_NATIVE_INPUTS_SOURCE NativeInputs.cpp)
+  elseif(TALOS_NATIVE_PLATFORM STREQUAL "macos")
     list(APPEND LLVM_LINK_COMPONENTS nativecodegen)
-    list(APPEND OBELISK_BACKEND_SOURCES MacOSBackend.cpp)
-    set(OBELISK_NATIVE_INPUTS_SOURCE NativeInputs.cpp)
+    list(APPEND TALOS_BACKEND_SOURCES MacOSBackend.cpp)
+    set(TALOS_NATIVE_INPUTS_SOURCE NativeInputs.cpp)
   else()
     message(FATAL_ERROR
-      "Native platform '${OBELISK_NATIVE_PLATFORM}' has no registered driver "
+      "Native platform '${TALOS_NATIVE_PLATFORM}' has no registered driver "
       "backend, runtime discovery, and input classifier source set")
   endif()
-  set(OBELISK_HAS_NATIVE_BACKEND 1)
-  set(OBELISK_DEFAULT_TARGET "native")
+  set(TALOS_HAS_NATIVE_BACKEND 1)
+  set(TALOS_DEFAULT_TARGET "native")
 else()
   # A wasm build of the compiler cannot produce native ELF, so its only target
   # is the one it also runs on.
-  set(OBELISK_NATIVE_INPUTS_SOURCE NativeInputs.cpp)
-  set(OBELISK_DEFAULT_TARGET "wasm32")
+  set(TALOS_NATIVE_INPUTS_SOURCE NativeInputs.cpp)
+  set(TALOS_DEFAULT_TARGET "wasm32")
 endif()
 
-set(OBELISK_DRIVER_COMMON_SOURCES
+set(TALOS_DRIVER_COMMON_SOURCES
   driver.cpp
   TargetBackend.cpp
-  ${OBELISK_BACKEND_SOURCES}
-  ${OBELISK_NATIVE_INPUTS_SOURCE}
+  ${TALOS_BACKEND_SOURCES}
+  ${TALOS_NATIVE_INPUTS_SOURCE}
   Options.cpp
 )
 
-function(obelisk_configure_driver target)
+function(talos_configure_driver target)
   add_dependencies(${target}
-    ObeliskDriverOptions
-    obelisk_native_support
+    TalosDriverOptions
+    talos_native_support
   )
   target_include_directories(${target} PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
@@ -117,32 +117,32 @@ function(obelisk_configure_driver target)
     ${PROJECT_SOURCE_DIR}/runtime/include
   )
   target_compile_definitions(${target} PRIVATE
-    OBELISK_VERSION_STRING="${PROJECT_VERSION}"
-    OBELISK_RESOURCE_DIR="${OBELISK_RESOURCE_DIR}"
-    OBELISK_HAS_NATIVE_BACKEND=${OBELISK_HAS_NATIVE_BACKEND}
-    OBELISK_HAS_HOST_C_RUNTIME=${OBELISK_HAS_HOST_C_RUNTIME}
-    OBELISK_HAS_WASM_BACKEND=${OBELISK_HAS_WASM_BACKEND}
-    OBELISK_DEFAULT_TARGET="${OBELISK_DEFAULT_TARGET}"
-    OBELISK_NATIVE_TARGET_TRIPLE="${OBELISK_TARGET_TRIPLE}"
+    TALOS_VERSION_STRING="${PROJECT_VERSION}"
+    TALOS_RESOURCE_DIR="${TALOS_RESOURCE_DIR}"
+    TALOS_HAS_NATIVE_BACKEND=${TALOS_HAS_NATIVE_BACKEND}
+    TALOS_HAS_HOST_C_RUNTIME=${TALOS_HAS_HOST_C_RUNTIME}
+    TALOS_HAS_WASM_BACKEND=${TALOS_HAS_WASM_BACKEND}
+    TALOS_DEFAULT_TARGET="${TALOS_DEFAULT_TARGET}"
+    TALOS_NATIVE_TARGET_TRIPLE="${TALOS_TARGET_TRIPLE}"
   )
   if(APPLE)
     target_compile_definitions(${target} PRIVATE
-      OBELISK_MACOS_DEPLOYMENT_TARGET="${CMAKE_OSX_DEPLOYMENT_TARGET}"
-      OBELISK_MACOS_SDK_VERSION="${OBELISK_MACOS_SDK_VERSION}")
+      TALOS_MACOS_DEPLOYMENT_TARGET="${CMAKE_OSX_DEPLOYMENT_TARGET}"
+      TALOS_MACOS_SDK_VERSION="${TALOS_MACOS_SDK_VERSION}")
   endif()
   llvm_update_compile_flags(${target})
   target_link_libraries(${target} PRIVATE
-    ObeliskFrontend
-    ObeliskIR
-    ObeliskRuntimeIR
-    ObeliskSimulationIR
-    ObeliskSimulationTransforms
-    ObeliskSimulationToBytecode
-    ObeliskSimulationToLLVMCoroutine
-    ObeliskLLVMPasses
-    ObeliskSlangIR
-    ObeliskSlangToObelisk
-    ObeliskToSimulation
+    TalosFrontend
+    TalosIR
+    TalosRuntimeIR
+    TalosSimulationIR
+    TalosSimulationTransforms
+    TalosSimulationToBytecode
+    TalosSimulationToLLVMCoroutine
+    TalosLLVMPasses
+    TalosSlangIR
+    TalosSlangToTalos
+    TalosToSimulation
     MLIRBytecodeWriter
     MLIRIR
     MLIRBuiltinToLLVMIRTranslation
@@ -152,65 +152,65 @@ function(obelisk_configure_driver target)
     MLIRTargetLLVMIRExport
     lldCommon
     lldWasm
-    $<$<STREQUAL:${OBELISK_NATIVE_PLATFORM},linux>:lldELF>
-    $<$<STREQUAL:${OBELISK_NATIVE_PLATFORM},windows>:lldCOFF>
-    $<$<STREQUAL:${OBELISK_NATIVE_PLATFORM},macos>:lldMachO>
+    $<$<STREQUAL:${TALOS_NATIVE_PLATFORM},linux>:lldELF>
+    $<$<STREQUAL:${TALOS_NATIVE_PLATFORM},windows>:lldCOFF>
+    $<$<STREQUAL:${TALOS_NATIVE_PLATFORM},macos>:lldMachO>
   )
   if(NOT EMSCRIPTEN)
     target_link_libraries(${target} PRIVATE clangDriver clangBasic)
   endif()
   if(WIN32)
-    target_link_libraries(${target} PRIVATE "${OBELISK_COMPILER_RT_BUILTINS}")
+    target_link_libraries(${target} PRIVATE "${TALOS_COMPILER_RT_BUILTINS}")
   endif()
   mlir_check_all_link_libraries(${target})
 endfunction()
 
-# obelisk and obelisk-test-driver differ only in main(). Compile the shared
+# talos and talos-test-driver differ only in main(). Compile the shared
 # driver sources once and link the same objects into both executables.
-add_library(obelisk-driver-objects OBJECT ${OBELISK_DRIVER_COMMON_SOURCES})
-obelisk_configure_driver(obelisk-driver-objects)
+add_library(talos-driver-objects OBJECT ${TALOS_DRIVER_COMMON_SOURCES})
+talos_configure_driver(talos-driver-objects)
 
-add_llvm_executable(obelisk
+add_llvm_executable(talos
   PARTIAL_SOURCES_INTENDED
   Main.cpp
 )
-obelisk_configure_driver(obelisk)
-target_link_libraries(obelisk PRIVATE obelisk-driver-objects)
+talos_configure_driver(talos)
+target_link_libraries(talos PRIVATE talos-driver-objects)
 
 if(EMSCRIPTEN)
   # compiler-worker.js loads the compiler as a reusable factory and invokes it
   # repeatedly. Keep Node available as well so test/web/smoke-test.mjs
   # exercises exactly the same artifact outside a browser.
-  target_link_options(obelisk PRIVATE
+  target_link_options(talos PRIVATE
     "-sMODULARIZE=1"
-    "-sEXPORT_NAME=createObeliskModule"
+    "-sEXPORT_NAME=createTalosModule"
     "-sEXPORTED_RUNTIME_METHODS=FS,callMain"
     "-sINVOKE_RUN=0"
     "-sSTACK_SIZE=16777216"
     "-sENVIRONMENT=web,worker,node")
 endif()
 
-if(OBELISK_INCLUDE_TESTS AND OBELISK_NATIVE_PLATFORM STREQUAL "linux")
-  add_llvm_executable(obelisk-host-c-runtime-test EXCLUDE_FROM_ALL
+if(TALOS_INCLUDE_TESTS AND TALOS_NATIVE_PLATFORM STREQUAL "linux")
+  add_llvm_executable(talos-host-c-runtime-test EXCLUDE_FROM_ALL
     PARTIAL_SOURCES_INTENDED
     ${PROJECT_SOURCE_DIR}/test/Support/HostCRuntimeTest.cpp
     HostCRuntime.cpp
   )
-  target_include_directories(obelisk-host-c-runtime-test PRIVATE
+  target_include_directories(talos-host-c-runtime-test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
   )
-  llvm_update_compile_flags(obelisk-host-c-runtime-test)
-  target_link_libraries(obelisk-host-c-runtime-test PRIVATE
+  llvm_update_compile_flags(talos-host-c-runtime-test)
+  target_link_libraries(talos-host-c-runtime-test PRIVATE
     clangDriver
     clangBasic
   )
 endif()
 
-if(OBELISK_INCLUDE_TESTS)
-  add_llvm_executable(obelisk-test-driver EXCLUDE_FROM_ALL
+if(TALOS_INCLUDE_TESTS)
+  add_llvm_executable(talos-test-driver EXCLUDE_FROM_ALL
     PARTIAL_SOURCES_INTENDED
     ${PROJECT_SOURCE_DIR}/test/Support/DriverTestMain.cpp
   )
-  obelisk_configure_driver(obelisk-test-driver)
-  target_link_libraries(obelisk-test-driver PRIVATE obelisk-driver-objects)
+  talos_configure_driver(talos-test-driver)
+  target_link_libraries(talos-test-driver PRIVATE talos-driver-objects)
 endif()

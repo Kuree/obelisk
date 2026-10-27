@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-scoped-integer-ranges -o /dev/null
+// RUN: talos-opt %s --test-talos-scoped-integer-ranges -o /dev/null
 
 // Independent selectors must not accumulate in every later CFG snapshot. The
 // test.scoped_max budget of 16 live facts is half the 32 selectors, so it

@@ -1,8 +1,8 @@
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode 2>&1 | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=aot %s -o %t.o3.aot
+// RUN: talos -O3 --native-scheduler=aot %s -o %t.o3.aot
 // RUN: %t.o3.aot 2>&1 | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=aot \
+// RUN: talos -O3 --native-scheduler=aot \
 // RUN:   --top=system_timing_check_timer_skew_runtime -emit-llvm %s -o - \
 // RUN:   | FileCheck %s --check-prefix=AOT
 
@@ -232,11 +232,11 @@ module system_timing_check_timer_skew_runtime;
   end
 endmodule
 
-// AOT: @__obelisk_aot_schedule_plan_v1
+// AOT: @__talos_aot_schedule_plan_v1
 // Coroutine splitting can place the timer body after scheduler installation.
-// AOT-DAG: call void @obelisk_rt_v1_scheduler_event_replace_after
-// AOT-DAG: call i32 @obelisk_rt_v1_scheduler_install_aot
-// AOT-DAG: call i32 @obelisk_rt_v1_scheduler_run_aot
+// AOT-DAG: call void @talos_rt_v1_scheduler_event_replace_after
+// AOT-DAG: call i32 @talos_rt_v1_scheduler_install_aot
+// AOT-DAG: call i32 @talos_rt_v1_scheduler_run_aot
 // CHECK-DAG: timer-timeskew-expire 1
 // CHECK-DAG: timer-timeskew-equality 0
 // CHECK-DAG: timer-timeskew-stale 0

@@ -1,4 +1,4 @@
-// RUN: not obelisk -c --vpi=off %s -o %t.o 2>&1 | FileCheck %s
+// RUN: not talos -c --vpi=off %s -o %t.o 2>&1 | FileCheck %s
 
 module dpi_signature_conflict_a;
   import "DPI-C" shared_name = function int first(input int value);

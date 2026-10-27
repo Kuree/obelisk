@@ -4,7 +4,7 @@
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 std::optional<LogicalResult>
 Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
@@ -263,4 +263,4 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
   return std::nullopt;
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

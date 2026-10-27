@@ -9,24 +9,24 @@
 #include <sys/wait.h>
 #endif
 
-extern "C" obelisk_rt_status obelisk_rt_v1_system(obelisk_rt_context *context,
-                                                  obelisk_rt_string_v1 command,
+extern "C" talos_rt_status talos_rt_v1_system(talos_rt_context *context,
+                                                  talos_rt_string_v1 command,
                                                   int32_t *outStatus) {
   if (!context || !outStatus)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outStatus = -1;
 
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(command, scratch, &bytes, &size);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(command, scratch, &bytes, &size);
+  if (status != TALOS_RT_OK)
     return status;
 
   return guarded(context, [&] {
     // Do not hold the context lock while the child command runs: $system is a
-    // blocking host operation, and the shell may itself invoke an Obelisk
+    // blocking host operation, and the shell may itself invoke an Talos
     // executable. std::string supplies the terminating NUL required by libc.
     int shellStatus = std::system(std::string(bytes, size).c_str());
 #if defined(_WIN32)
@@ -41,6 +41,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_system(obelisk_rt_context *context,
     else
       *outStatus = shellStatus;
 #endif
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   });
 }

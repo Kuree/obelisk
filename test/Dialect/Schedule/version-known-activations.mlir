@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(schedule-version-known-activations{minimum-benefit=1 checked-reads=true})' | FileCheck %s
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(schedule-version-known-activations{minimum-benefit=1 segment-size=10})' | FileCheck %s --check-prefix=SEGMENTS
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(schedule-version-known-activations{minimum-benefit=1 checked-reads=true})' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(schedule-version-known-activations{minimum-benefit=1 segment-size=10})' | FileCheck %s --check-prefix=SEGMENTS
 
 // One check of the roots the activation reads selects a copy of it. The copy
 // reads those roots' value planes only. The memory element, whose index may

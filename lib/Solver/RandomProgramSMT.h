@@ -1,7 +1,7 @@
 //===- RandomProgramSMT.h - Random constraints as MLIR SMT ----*- C++ -*-===//
 
-#ifndef OBELISK_LIB_SOLVER_RANDOMPROGRAMSMT_H
-#define OBELISK_LIB_SOLVER_RANDOMPROGRAMSMT_H
+#ifndef TALOS_LIB_SOLVER_RANDOMPROGRAMSMT_H
+#define TALOS_LIB_SOLVER_RANDOMPROGRAMSMT_H
 
 #include "mlir/Dialect/SMT/IR/SMTOps.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -12,7 +12,7 @@
 #include <optional>
 #include <vector>
 
-namespace obelisk::solver {
+namespace talos::solver {
 
 struct SMTVariable {
   uint32_t offset;
@@ -100,6 +100,6 @@ struct RandomProgramSMT {
 std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                                                       size_t programSize);
 
-} // namespace obelisk::solver
+} // namespace talos::solver
 
 #endif

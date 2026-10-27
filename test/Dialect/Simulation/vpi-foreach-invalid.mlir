@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -split-input-file -verify-diagnostics -o /dev/null
+// RUN: talos-opt %s -split-input-file -verify-diagnostics -o /dev/null
 #word = #simulation.vpi_type<kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>
 #array = #simulation.vpi_type<kind = unpacked_array, isSigned = false, isFourState = false, range = [1, 0], children = [#simulation.vpi_type<kind = unpacked_array, isSigned = false, isFourState = false, range = [2, 3], children = [#word], childNames = []>], childNames = []>
 module {

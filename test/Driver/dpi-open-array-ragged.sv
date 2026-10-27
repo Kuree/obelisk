@@ -1,8 +1,8 @@
 // RUN: %target_clang %target_pic -c \
 // RUN:   %S/Inputs/dpi_open_array_ragged_impl.c -I%resource_dir/include -o %t.o
-// RUN: %obelisk --target=native -o %t.native %s %t.o
+// RUN: %talos --target=native -o %t.native %s %t.o
 // RUN: not %t.native 2>&1 | FileCheck %s
-// RUN: %obelisk --execution-tier=bytecode -o %t.bytecode %s %t.o
+// RUN: %talos --execution-tier=bytecode -o %t.bytecode %s %t.o
 // RUN: not %t.bytecode 2>&1 | FileCheck %s
 
 module dpi_open_array_ragged;

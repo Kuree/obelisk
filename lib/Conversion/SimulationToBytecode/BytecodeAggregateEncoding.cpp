@@ -2,7 +2,7 @@
 
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
-#include "obelisk/Analysis/NativeStorageLayout.h"
+#include "talos/Analysis/NativeStorageLayout.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -12,7 +12,7 @@
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 namespace {
 
 std::optional<uint64_t> unionPayloadSpan(Type type) {
@@ -127,14 +127,14 @@ LogicalResult Encoder::encodeLogicPower(FunctionPlan &plan,
 LogicalResult Encoder::encodeLogicCompare(FunctionPlan &plan,
                                           sim::SimLogicCompareOp op) {
   static constexpr uint16_t map[] = {
-      OBELISK_RT_DB_CMP_EQ,       OBELISK_RT_DB_CMP_NE,
-      OBELISK_RT_DB_CMP_CASE_EQ,  OBELISK_RT_DB_CMP_CASE_NE,
-      OBELISK_RT_DB_CMP_ULT,      OBELISK_RT_DB_CMP_ULE,
-      OBELISK_RT_DB_CMP_UGT,      OBELISK_RT_DB_CMP_UGE,
-      OBELISK_RT_DB_CMP_SLT,      OBELISK_RT_DB_CMP_SLE,
-      OBELISK_RT_DB_CMP_SGT,      OBELISK_RT_DB_CMP_SGE,
-      OBELISK_RT_DB_CMP_WILD_EQ,  OBELISK_RT_DB_CMP_WILD_NE,
-      OBELISK_RT_DB_CMP_CASEZ_EQ, OBELISK_RT_DB_CMP_CASEXZ_EQ};
+      TALOS_RT_DB_CMP_EQ,       TALOS_RT_DB_CMP_NE,
+      TALOS_RT_DB_CMP_CASE_EQ,  TALOS_RT_DB_CMP_CASE_NE,
+      TALOS_RT_DB_CMP_ULT,      TALOS_RT_DB_CMP_ULE,
+      TALOS_RT_DB_CMP_UGT,      TALOS_RT_DB_CMP_UGE,
+      TALOS_RT_DB_CMP_SLT,      TALOS_RT_DB_CMP_SLE,
+      TALOS_RT_DB_CMP_SGT,      TALOS_RT_DB_CMP_SGE,
+      TALOS_RT_DB_CMP_WILD_EQ,  TALOS_RT_DB_CMP_WILD_NE,
+      TALOS_RT_DB_CMP_CASEZ_EQ, TALOS_RT_DB_CMP_CASEXZ_EQ};
   unsigned kind = static_cast<unsigned>(op.getKind());
   if (kind >= std::size(map))
     return op.emitOpError("invalid comparison kind");
@@ -247,7 +247,7 @@ LogicalResult Encoder::encodeAggregateExtractTo(FunctionPlan &plan,
       return anchor->emitOpError("cannot allocate aggregate bitcast register");
   }
   uint16_t flags =
-      isManagedAggregateWord(layout.kind) ? OBELISK_RT_DB_AGGREGATE_MANAGED : 0;
+      isManagedAggregateWord(layout.kind) ? TALOS_RT_DB_AGGREGATE_MANAGED : 0;
   emit({Extract, flags, extracted, source, dynamicOffset, 0, 0, staticOffset});
   if (extracted != destination)
     emit({Bitcast, 0, destination, extracted});
@@ -317,15 +317,15 @@ FailureOr<uint32_t> Encoder::encodeArrayOffset(FunctionPlan &plan, Type array,
       (sourceLayout->width > 64 &&
        (roundTrip == kInvalidRegister || fits == kInvalidRegister)))
     return failure();
-  emit({Extract, OBELISK_RT_DB_EXTRACT_SIGN_EXTEND, index,
+  emit({Extract, TALOS_RT_DB_EXTRACT_SIGN_EXTEND, index,
         reg(plan, indexValue), kInvalidRegister});
   if (sourceLayout->width > 64) {
     // Narrowing alone would turn an overflowing or high-plane-X index into
     // an apparently valid low 64-bit value. Require the original index to
     // equal a signed round trip through the runtime's i64 coordinate type.
-    emit({Extract, OBELISK_RT_DB_EXTRACT_SIGN_EXTEND, roundTrip, index,
+    emit({Extract, TALOS_RT_DB_EXTRACT_SIGN_EXTEND, roundTrip, index,
           kInvalidRegister});
-    emit({Compare, OBELISK_RT_DB_CMP_EQ, fits, reg(plan, indexValue),
+    emit({Compare, TALOS_RT_DB_CMP_EQ, fits, reg(plan, indexValue),
           roundTrip});
   }
   auto constant = [&](uint32_t destination, const APInt &value) {
@@ -335,12 +335,12 @@ FailureOr<uint32_t> Encoder::encodeArrayOffset(FunctionPlan &plan, Type array,
   constant(leftReg, APInt(64, static_cast<uint64_t>(left), true));
   constant(rightReg, APInt(64, static_cast<uint64_t>(right), true));
   if (left >= right) {
-    emit({Compare, OBELISK_RT_DB_CMP_SLE, lower, index, leftReg});
-    emit({Compare, OBELISK_RT_DB_CMP_SGE, upper, index, rightReg});
+    emit({Compare, TALOS_RT_DB_CMP_SLE, lower, index, leftReg});
+    emit({Compare, TALOS_RT_DB_CMP_SGE, upper, index, rightReg});
     emit({Sub, 0, ordinal, leftReg, index});
   } else {
-    emit({Compare, OBELISK_RT_DB_CMP_SGE, lower, index, leftReg});
-    emit({Compare, OBELISK_RT_DB_CMP_SLE, upper, index, rightReg});
+    emit({Compare, TALOS_RT_DB_CMP_SGE, lower, index, leftReg});
+    emit({Compare, TALOS_RT_DB_CMP_SLE, upper, index, rightReg});
     emit({Sub, 0, ordinal, index, leftReg});
   }
   emit({And, 0, valid, lower, upper});
@@ -353,7 +353,7 @@ FailureOr<uint32_t> Encoder::encodeArrayOffset(FunctionPlan &plan, Type array,
   constant(scalar, APInt(64, *span));
   emit({Mul, 0, offset, ordinal, scalar});
   constant(invalid, APInt(64, *simulationWidth(array)));
-  emit({Select, OBELISK_RT_DB_SELECT_BINARY, offset, offset, invalid, valid});
+  emit({Select, TALOS_RT_DB_SELECT_BINARY, offset, offset, invalid, valid});
   return offset;
 }
 
@@ -377,9 +377,9 @@ LogicalResult Encoder::encodeArrayInsert(FunctionPlan &plan,
   if (replacement == kInvalidRegister)
     return op.emitOpError("array element has no bytecode word representation");
   uint8_t kind = plan.layouts[replacement].kind;
-  uint16_t flags = OBELISK_RT_DB_INSERT_DYNAMIC;
+  uint16_t flags = TALOS_RT_DB_INSERT_DYNAMIC;
   if (isManagedAggregateWord(kind))
-    flags |= OBELISK_RT_DB_AGGREGATE_MANAGED;
+    flags |= TALOS_RT_DB_AGGREGATE_MANAGED;
   else if (kind != Bits && kind != Logic)
     return op.emitOpError("array element has no bytecode word representation");
   // encodeArrayOffset resolves an invalid index to the array's own width, and
@@ -407,7 +407,7 @@ LogicalResult Encoder::encodeUnionConstruct(FunctionPlan &plan,
   if (value == kInvalidRegister)
     return op.emitOpError("union member has no bytecode word representation");
   uint16_t flags = isManagedAggregateWord(plan.layouts[value].kind)
-                       ? OBELISK_RT_DB_AGGREGATE_MANAGED
+                       ? TALOS_RT_DB_AGGREGATE_MANAGED
                        : 0;
   emit({Constant, 0, destination, 0, 0, 0, 0,
         addConstant(plan.layouts[destination], APInt(*width, 0))});
@@ -464,11 +464,11 @@ LogicalResult Encoder::encodeUnionIsActive(FunctionPlan &plan,
   uint32_t expectedTag = temporaryLike(plan, tagType, op.getInput());
   if (tag == kInvalidRegister || expectedTag == kInvalidRegister)
     return failure();
-  emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, tag,
+  emit({Extract, TALOS_RT_DB_EXTRACT_ZERO_EXTEND, tag,
         reg(plan, op.getInput()), kInvalidRegister, 0, 0, *payloadSpan});
   emit({Constant, 0, expectedTag, 0, 0, 0, 0,
         addConstant(plan.layouts[expectedTag], APInt(tagBits, expected))});
-  emit({Compare, OBELISK_RT_DB_CMP_CASE_EQ, reg(plan, op.getResult()), tag,
+  emit({Compare, TALOS_RT_DB_CMP_CASE_EQ, reg(plan, op.getResult()), tag,
         expectedTag});
   return success();
 }
@@ -476,7 +476,7 @@ LogicalResult Encoder::encodeUnionIsActive(FunctionPlan &plan,
 LogicalResult
 Encoder::encodeHandle(FunctionPlan &plan, Value result, uint64_t id,
                       const llvm::DenseMap<uint64_t, uint64_t> &offsets,
-                      obelisk_rt_descriptor_kind kind) {
+                      talos_rt_descriptor_kind kind) {
   auto found = offsets.find(id);
   if (found == offsets.end())
     return result.getDefiningOp()->emitOpError("unknown state descriptor");
@@ -601,4 +601,4 @@ void Encoder::emitFrameTransfer(FunctionPlan &plan, uint16_t opcode,
           kind == 0 ? transferSize : width, offset});
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

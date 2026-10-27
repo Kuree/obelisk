@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s --implicit-check-not='kind = process_order'
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s --implicit-check-not='kind = process_order'
 
 // The old representation stored one startup x initial edge per pair, N*N for
 // N of each. Only the 2N spawn edges remain. Barriers never escape into graph

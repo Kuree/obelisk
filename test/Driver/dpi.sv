@@ -1,7 +1,7 @@
 // RUN: %target_clang %target_pic -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
-// RUN: obelisk %s %t.o -o %t.native
+// RUN: talos %s %t.o -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=OUTPUT
-// RUN: %read_exports %t.native | FileCheck %s --check-prefix=EXPORTS --implicit-check-not=obelisk_rt_v1_
+// RUN: %read_exports %t.native | FileCheck %s --check-prefix=EXPORTS --implicit-check-not=talos_rt_v1_
 
 module dpi_driver;
   import "DPI-C" pure dpi_add = function int add(input int value);

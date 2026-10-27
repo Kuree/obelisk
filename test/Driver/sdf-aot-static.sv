@@ -1,4 +1,4 @@
-// RUN: cd %S && obelisk -O3 --native-scheduler=aot %s -o %t.aot-o3
+// RUN: cd %S && talos -O3 --native-scheduler=aot %s -o %t.aot-o3
 // RUN: %t.aot-o3 | FileCheck %s
 
 `timescale 1ns / 1ns

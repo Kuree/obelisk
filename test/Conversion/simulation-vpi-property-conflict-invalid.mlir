@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=read' 2>&1 | FileCheck %s
+// RUN: not talos-opt %s --encode-talos-sim-to-bytecode='vpi=read' 2>&1 | FileCheck %s
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

@@ -49,7 +49,7 @@ const database = {
 
 globalThis.indexedDB = {
   open(name, version) {
-    assert.equal(name, 'obelisk-playground');
+    assert.equal(name, 'talos-playground');
     assert.equal(version, 1);
     const request = {};
     queueMicrotask(() => {

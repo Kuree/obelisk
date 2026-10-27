@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
 
 // Packed elements belong to one contiguous vector (LRM 7.4.1). A shared word
 // load should remain a shared SSA value, with value extracts. Narrowing a sole

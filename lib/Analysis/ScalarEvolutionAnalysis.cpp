@@ -1,10 +1,10 @@
-#include "obelisk/Analysis/ScalarEvolutionAnalysis.h"
+#include "talos/Analysis/ScalarEvolutionAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Matchers.h"
-#include "obelisk/Analysis/IntegerRangeIPO.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Solver/BitVectorProof.h"
+#include "talos/Analysis/IntegerRangeIPO.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Solver/BitVectorProof.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -18,7 +18,7 @@
 #include <functional>
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 std::optional<unsigned> integerWidth(Value value) {
   auto width = sim::getPackedWidth(value.getType());
@@ -679,4 +679,4 @@ bool ScalarEvolutionAnalysis::proveBounds(
   impl->proofs.push_back({value, lower, upper, std::move(facts), valid});
   return valid;
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

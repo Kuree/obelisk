@@ -1,10 +1,10 @@
 // RUN: %target_clang %target_pic -c \
 // RUN:   %S/Inputs/dpi_caller_impl.c \
 // RUN:   -I%resource_dir/include -o %t.o
-// RUN: obelisk %t.o %S/Inputs/dpi-caller-a.sv \
+// RUN: talos %t.o %S/Inputs/dpi-caller-a.sv \
 // RUN:   %S/Inputs/dpi-caller-b.sv -o %t.native
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk --execution-tier=bytecode %t.o \
+// RUN: talos --execution-tier=bytecode %t.o \
 // RUN:   %S/Inputs/dpi-caller-a.sv %S/Inputs/dpi-caller-b.sv -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 

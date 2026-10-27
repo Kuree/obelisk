@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-propagate-initialized-storage))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-propagate-initialized-storage{vpi=read}))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-propagate-initialized-storage{vpi=full}))' | FileCheck %s --check-prefix=VPI
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-propagate-initialized-storage))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-propagate-initialized-storage{vpi=read}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-propagate-initialized-storage{vpi=full}))' | FileCheck %s --check-prefix=VPI
 
 // Declaration initialization precedes process startup. A whole integer with
 // one constant initializer and no later write can be read as that constant.

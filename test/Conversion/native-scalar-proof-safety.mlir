@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values)))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values)))' -o %t.threaded
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values)))' -o %t.serial
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values)))' -o %t.threaded
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values)))' -o %t.serial
 // RUN: diff %t.threaded %t.serial
 
 module {

@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops)))' | FileCheck %s --check-prefix=RAW
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-loop-size=1000},canonicalize,cse),obelisk-sim-sccp,simulation.func(canonicalize,cse)))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-loop-size=1},canonicalize)))' | FileCheck %s --check-prefix=SMALL
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-unroll-bounded-loops)))' | FileCheck %s --check-prefix=RAW
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-unroll-bounded-loops{maximum-loop-size=1000},canonicalize,cse),talos-sim-sccp,simulation.func(canonicalize,cse)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-unroll-bounded-loops{maximum-loop-size=1},canonicalize)))' | FileCheck %s --check-prefix=SMALL
 
 // IEEE 1800-2023 4.6: "Statements within a begin-end block shall be executed
 // in the order in which they appear". Replication preserves every store and

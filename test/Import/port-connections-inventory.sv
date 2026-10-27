@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s 2>/dev/null | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-obelisk %s 2>/dev/null | FileCheck %s --check-prefix=OBELISK
+// RUN: talos -emit-slang %s 2>/dev/null | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-talos %s 2>/dev/null | FileCheck %s --check-prefix=TALOS
 
 module inventory_leaf(
     input logic defaulted = 1'b1,
@@ -101,8 +101,8 @@ endmodule
 // SLANG-DAG: slang.port.connection attributes {{.*}}formal_path = "port_connections_interface_inventory.generic_child.bus"{{.*}}interface_instance_path = "port_connections_interface_inventory.bus"
 
 // The semantic dialect receives the complete records, including null leaves.
-// OBELISK-DAG: obelisk.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.opened.defaulted"{{.*}}provenance = 5 : i32
-// OBELISK-DAG: obelisk.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.omitted.output_value"{{.*}}provenance = 4 : i32
-// OBELISK-DAG: obelisk.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.uses_default.defaulted"{{.*}}provenance = 6 : i32
-// OBELISK-DAG: obelisk.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.multiport.right"
-// OBELISK-DAG: obelisk.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.multiport.left"
+// TALOS-DAG: talos.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.opened.defaulted"{{.*}}provenance = 5 : i32
+// TALOS-DAG: talos.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.omitted.output_value"{{.*}}provenance = 4 : i32
+// TALOS-DAG: talos.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.uses_default.defaulted"{{.*}}provenance = 6 : i32
+// TALOS-DAG: talos.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.multiport.right"
+// TALOS-DAG: talos.sv.port.connection attributes {{.*}}formal_path = "port_connections_inventory.multiport.left"

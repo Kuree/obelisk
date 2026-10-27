@@ -184,7 +184,7 @@ assert.equal(host.fd_read(99, 0, 0, 0), 8);
 assert.equal(host.path_open(), 52);
 assert.equal(host.fd_close(1), 0);
 
-// A direct-main Obelisk module has no WASI `_start`. This compact fixture
+// A direct-main Talos module has no WASI `_start`. This compact fixture
 // exports memory, malloc, free, and a main that returns the first UTF-8 byte of
 // argv[1], proving runSimulation marshals argv and preserves main's status.
 const directMainModule = new Uint8Array([

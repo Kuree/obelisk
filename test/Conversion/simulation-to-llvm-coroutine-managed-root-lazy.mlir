@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // Under polled collection (`simulation.gc_polled`) an activation registers its
 // managed-root record lazily: each collection point pushes it only when its
@@ -69,22 +69,22 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @root.__obelisk_coro_ramp(
+// CHECK-LABEL: llvm.func @root.__talos_coro_ramp(
 // CHECK: llvm.store %{{.*}}, %[[RECORD:[0-9]+]] {{{.*}}native.managed_root_activation_prologue}
-// CHECK-NOT: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
+// CHECK-NOT: llvm.call @talos_rt_v1_gc_managed_root_range_push
 // CHECK: %[[COOKIE_ADDRESS:.*]] = llvm.getelementptr inbounds %[[RECORD]][24]
 // CHECK-NEXT: %[[COOKIE:.*]] = llvm.load %[[COOKIE_ADDRESS]] {{.*}} -> i64
 // CHECK: llvm.icmp "ne" %[[COOKIE]]
 // CHECK-NEXT: llvm.cond_br %{{.*}}, ^[[JOIN:bb[0-9]+]](%{{.*}} : i32), ^[[PUSH:bb[0-9]+]]
 // CHECK-NEXT: ^[[PUSH]]:
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_push(%{{.*}}, %[[RECORD]],
+// CHECK: llvm.call @talos_rt_v1_gc_managed_root_range_push(%{{.*}}, %[[RECORD]],
 // CHECK-NEXT: llvm.br ^[[JOIN]](
-// CHECK: llvm.call @obelisk_rt_v1_gc_safepoint
+// CHECK: llvm.call @talos_rt_v1_gc_safepoint
 // The pop before the delay runs only for a registered record.
 // CHECK: llvm.getelementptr inbounds %[[RECORD]][24]
 // CHECK: llvm.cond_br %{{.*}}, ^[[POP:bb[0-9]+]], ^[[SUSPEND:bb[0-9]+]]
 // CHECK-NEXT: ^[[POP]]:
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_pop(%{{.*}}, %[[RECORD]])
+// CHECK: llvm.call @talos_rt_v1_gc_managed_root_range_pop(%{{.*}}, %[[RECORD]])
 // CHECK: ^[[SUSPEND]]:
 // CHECK: llvm.intr.coro.suspend
 // Only the resume shim resets the record before rejoining the continuation.
@@ -96,8 +96,8 @@ module attributes {
 // CHECK-LABEL: llvm.func @cold(
 // CHECK: llvm.cond_br %arg1, ^[[POLL:bb[0-9]+]], ^[[DONE:bb[0-9]+]]
 // CHECK-NEXT: ^[[POLL]]:
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
-// CHECK: llvm.call @obelisk_rt_v1_gc_safepoint
+// CHECK: llvm.call @talos_rt_v1_gc_managed_root_range_push
+// CHECK: llvm.call @talos_rt_v1_gc_safepoint
 // CHECK: ^[[DONE]]:
-// CHECK-NOT: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_pop
+// CHECK-NOT: llvm.call @talos_rt_v1_gc_managed_root_range_push
+// CHECK: llvm.call @talos_rt_v1_gc_managed_root_range_pop

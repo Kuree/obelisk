@@ -1,0 +1,9 @@
+// Runtime semantics for ../Conversion/talos-to-simulation-std-randomize-initializer.mlir.
+
+// RUN: talos-opt %S/../Conversion/talos-to-simulation-std-randomize-initializer.mlir '--lower-talos-to-sim=opt-level=0' '--encode-talos-sim-to-bytecode=vpi=off' --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
+// RUN: %t.exe --execution-tier=native --seed=1 | FileCheck %s --check-prefix=RUNTIME
+// RUN: %t.exe --execution-tier=bytecode --seed=1 | FileCheck %s --check-prefix=RUNTIME
+
+// REQUIRES: z3
+// RUNTIME: init 1 7

@@ -1,11 +1,11 @@
 //===- DPIEffectAnalysis.cpp - Design state reachable from DPI calls ------===//
 
-#include "obelisk/Analysis/DPIEffectAnalysis.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Dialect/DPI/DPIDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationResources.h"
+#include "talos/Analysis/DPIEffectAnalysis.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Dialect/DPI/DPIDialect.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationResources.h"
 
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -14,7 +14,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 
 namespace {
 
@@ -128,4 +128,4 @@ bool DPIEffectAnalysis::mayReachDesignThroughExports(
   return call.getIsContext() && !transparentExports;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

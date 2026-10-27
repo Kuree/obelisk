@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(obelisk-host-tools LANGUAGES C CXX)
+project(talos-host-tools LANGUAGES C CXX)
 
 find_package(LLVM REQUIRED CONFIG)
 find_package(MLIR REQUIRED CONFIG)
@@ -10,27 +10,27 @@ include(HandleLLVMOptions)
 
 include_directories(${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
 
-get_filename_component(OBELISK_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../.."
+get_filename_component(TALOS_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../.."
   ABSOLUTE)
-set(OBELISK_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated" CACHE PATH
+set(TALOS_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated" CACHE PATH
   "Output tree shared with target builds")
 
 set(LLVM_LINK_COMPONENTS TableGen)
-add_llvm_executable(obelisk-tblgen DISABLE_LLVM_LINK_LLVM_DYLIB
-  "${OBELISK_SOURCE_DIR}/utils/obelisk-tblgen/obelisk-tblgen.cpp")
-llvm_update_compile_flags(obelisk-tblgen)
-target_link_libraries(obelisk-tblgen PRIVATE MLIRTblgenLib)
-set_target_properties(obelisk-tblgen PROPERTIES
+add_llvm_executable(talos-tblgen DISABLE_LLVM_LINK_LLVM_DYLIB
+  "${TALOS_SOURCE_DIR}/utils/talos-tblgen/talos-tblgen.cpp")
+llvm_update_compile_flags(talos-tblgen)
+target_link_libraries(talos-tblgen PRIVATE MLIRTblgenLib)
+set_target_properties(talos-tblgen PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-set(_obelisk_generated_files)
-function(obelisk_add_generated_file relative_output)
+set(_talos_generated_files)
+function(talos_add_generated_file relative_output)
   cmake_parse_arguments(ARG "" "TOOL;INPUT" "ARGS;DEPENDS" ${ARGN})
   if(NOT ARG_TOOL OR NOT ARG_INPUT)
     message(FATAL_ERROR
-      "obelisk_add_generated_file requires TOOL and INPUT")
+      "talos_add_generated_file requires TOOL and INPUT")
   endif()
-  set(output "${OBELISK_GENERATED_DIR}/${relative_output}")
+  set(output "${TALOS_GENERATED_DIR}/${relative_output}")
   get_filename_component(output_directory "${output}" DIRECTORY)
   add_custom_command(
     OUTPUT "${output}"
@@ -41,10 +41,10 @@ function(obelisk_add_generated_file relative_output)
     DEPFILE "${output}.d"
     VERBATIM
     COMMENT "Generating ${relative_output}")
-  set_property(GLOBAL APPEND PROPERTY OBELISK_HOST_GENERATED_FILES "${output}")
+  set_property(GLOBAL APPEND PROPERTY TALOS_HOST_GENERATED_FILES "${output}")
 endfunction()
 
-function(obelisk_register_generated_file)
+function(talos_register_generated_file)
   cmake_parse_arguments(ARG "" "NAME;OUTPUT;TOOL;INPUT"
     "ARGS;DEPENDS;INCLUDE_DIRS" ${ARGN})
   if(ARG_UNPARSED_ARGUMENTS OR ARG_KEYWORDS_MISSING_VALUES OR
@@ -52,32 +52,32 @@ function(obelisk_register_generated_file)
     message(FATAL_ERROR
       "invalid generated-file manifest entry ${ARG_NAME}")
   endif()
-  get_property(registered_names GLOBAL PROPERTY OBELISK_GENERATED_NAMES)
-  get_property(registered_outputs GLOBAL PROPERTY OBELISK_GENERATED_OUTPUTS)
+  get_property(registered_names GLOBAL PROPERTY TALOS_GENERATED_NAMES)
+  get_property(registered_outputs GLOBAL PROPERTY TALOS_GENERATED_OUTPUTS)
   if(ARG_NAME IN_LIST registered_names OR ARG_OUTPUT IN_LIST registered_outputs)
     message(FATAL_ERROR
       "duplicate generated-file NAME or OUTPUT for ${ARG_NAME}")
   endif()
-  set_property(GLOBAL APPEND PROPERTY OBELISK_GENERATED_NAMES "${ARG_NAME}")
-  set_property(GLOBAL APPEND PROPERTY OBELISK_GENERATED_OUTPUTS "${ARG_OUTPUT}")
+  set_property(GLOBAL APPEND PROPERTY TALOS_GENERATED_NAMES "${ARG_NAME}")
+  set_property(GLOBAL APPEND PROPERTY TALOS_GENERATED_OUTPUTS "${ARG_OUTPUT}")
   set(depends)
   foreach(dependency IN LISTS ARG_DEPENDS)
-    list(APPEND depends "${OBELISK_SOURCE_DIR}/${dependency}")
+    list(APPEND depends "${TALOS_SOURCE_DIR}/${dependency}")
   endforeach()
   set(include_args)
   foreach(include_dir IN LISTS ARG_INCLUDE_DIRS)
-    list(APPEND include_args -I "${OBELISK_SOURCE_DIR}/${include_dir}")
+    list(APPEND include_args -I "${TALOS_SOURCE_DIR}/${include_dir}")
   endforeach()
-  obelisk_add_generated_file("${ARG_OUTPUT}"
+  talos_add_generated_file("${ARG_OUTPUT}"
     TOOL "${ARG_TOOL}"
-    INPUT "${OBELISK_SOURCE_DIR}/${ARG_INPUT}"
+    INPUT "${TALOS_SOURCE_DIR}/${ARG_INPUT}"
     ARGS ${ARG_ARGS} ${include_args}
     DEPENDS ${depends})
 endfunction()
 
-include("${OBELISK_SOURCE_DIR}/cmake/ObeliskGeneratedFiles.cmake")
+include("${TALOS_SOURCE_DIR}/cmake/TalosGeneratedFiles.cmake")
 
-get_property(_obelisk_generated_files GLOBAL
-  PROPERTY OBELISK_HOST_GENERATED_FILES)
-add_custom_target(obelisk-generated-files ALL
-  DEPENDS ${_obelisk_generated_files})
+get_property(_talos_generated_files GLOBAL
+  PROPERTY TALOS_HOST_GENERATED_FILES)
+add_custom_target(talos-generated-files ALL
+  DEPENDS ${_talos_generated_files})

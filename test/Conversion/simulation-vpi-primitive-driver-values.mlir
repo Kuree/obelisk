@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s -o /dev/null
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
-// RUN: env OBELISK_TEST_INPUT=%s %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.PrimitiveDriverValues
+// RUN: talos-opt %s -o /dev/null
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+// RUN: env TALOS_TEST_INPUT=%s %obj_root/test/talos-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.PrimitiveDriverValues
 // LLVM-NOT: simulation.vpi_definition.bind
 // LLVM-NOT: simulation.vpi_terminal_driver.bind
 // LLVM: llvm.func

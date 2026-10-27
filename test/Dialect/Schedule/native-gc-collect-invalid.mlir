@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -split-input-file -verify-diagnostics
+// RUN: talos-opt %s -split-input-file -verify-diagnostics
 
 // A periodic collection point records both its clock and its period.
 llvm.func @clock_without_period(%ctx: !llvm.ptr) -> i32 {

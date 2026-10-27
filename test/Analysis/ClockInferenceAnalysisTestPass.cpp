@@ -4,8 +4,8 @@
 #include "AnalysisTestPasses.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
-#include "obelisk/Analysis/ClockInferenceAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/ClockInferenceAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
 
@@ -15,19 +15,19 @@ class ClockInferenceAnalysisTestPass
                          OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ClockInferenceAnalysisTestPass)
-  StringRef getArgument() const final { return "test-obelisk-clock-inference"; }
+  StringRef getArgument() const final { return "test-talos-clock-inference"; }
   StringRef getDescription() const final {
     return "print inferred clock domains";
   }
   void runOnOperation() final {
-    using namespace obelisk::analysis;
+    using namespace talos::analysis;
     auto layout = NativeStateLayoutAnalysis::compute(getOperation());
     if (failed(layout)) {
       signalPassFailure();
       return;
     }
     SmallVector<PeriodicClockSeed> seeds;
-    getOperation().walk([&](obelisk::sim::SimFuncOp function) {
+    getOperation().walk([&](talos::sim::SimFuncOp function) {
       auto storage = function->getAttrOfType<IntegerAttr>("test.clock_storage");
       auto period =
           function->getAttrOfType<IntegerAttr>("test.clock_half_period");
@@ -58,11 +58,11 @@ public:
   }
 
   static void printFact(StringRef kind, uint64_t descriptor, uint64_t offset,
-                        const obelisk::analysis::NativeStateLayoutAnalysis
+                        const talos::analysis::NativeStateLayoutAnalysis
                             &layout,
-                        const obelisk::analysis::ClockInferenceAnalysis
+                        const talos::analysis::ClockInferenceAnalysis
                             &inference) {
-    using namespace obelisk::analysis;
+    using namespace talos::analysis;
     {
       auto bound = llvm::find_if(layout.bounds, [&](const auto &bound) {
         return bound.offset == offset;
@@ -105,6 +105,6 @@ public:
 };
 } // namespace
 
-void obelisk::registerClockInferenceAnalysisTestPass() {
+void talos::registerClockInferenceAnalysisTestPass() {
   PassRegistration<ClockInferenceAnalysisTestPass>();
 }

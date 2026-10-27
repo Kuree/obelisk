@@ -1,4 +1,4 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: not %t 2> %t.err | FileCheck %s
 // RUN: FileCheck %s --check-prefix=ERROR < %t.err
 

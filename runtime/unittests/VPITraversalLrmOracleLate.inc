@@ -3956,4 +3956,4 @@ add("37.52", S({vpiCaseProperty}), vpiCasePropertyItem, Mode::Iterate,
 add("37.85", S({vpiGenScope}), vpiNetTypedef, Mode::Iterate,
     S({vpiNettypeDecl}), Order::None);
 // Hand-maintained GoogleTest oracle for IEEE 1800-2023 clauses 37.51-37.85.
-// This is test source, not an obelisk-tblgen output or build artifact.
+// This is test source, not an talos-tblgen output or build artifact.

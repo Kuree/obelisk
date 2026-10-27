@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
+// RUN: talos-opt %s --talos-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=SSA < %t.mlir
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{schedule.native.max_inline_ops = 1 : i64}"' --obelisk-materialize-native-eval-groups | FileCheck %s --check-prefix=BUDGET --implicit-check-not=group_children --implicit-check-not=dataflow_executor --implicit-check-not=dataflow_candidate
+// RUN: talos-opt %s '--test-talos-set-module-attributes=attrs="{schedule.native.max_inline_ops = 1 : i64}"' --talos-materialize-native-eval-groups | FileCheck %s --check-prefix=BUDGET --implicit-check-not=group_children --implicit-check-not=dataflow_executor --implicit-check-not=dataflow_candidate
 
 // Runtime behavior is checked in ../Runtime/simulation-native-group-hierarchy.test.
 
@@ -39,9 +39,9 @@
 // BUDGET: llvm.func @group()
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
-  llvm.mlir.global internal @__obelisk_state_value(dense<0> : tensor<3xi8>) : !llvm.array<3 x i8>
+  llvm.mlir.global internal @__talos_state_value(dense<0> : tensor<3xi8>) : !llvm.array<3 x i8>
   llvm.mlir.global internal @ready(dense<15> : tensor<1xi64>) : !llvm.array<1 x i64>
-  llvm.mlir.global internal @__obelisk_eval_promotion_pending_mask_v1(dense<2> : tensor<1xi64>) : !llvm.array<1 x i64>
+  llvm.mlir.global internal @__talos_eval_promotion_pending_mask_v1(dense<2> : tensor<1xi64>) : !llvm.array<1 x i64>
   llvm.mlir.global internal @slow0(0 : i32) : i32
   llvm.mlir.global internal @slow2(0 : i32) : i32
   llvm.mlir.global internal @observed(0 : i32) : i32
@@ -52,7 +52,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     %one32 = llvm.mlir.constant(1 : i32) : i32
     %count = llvm.add %old_count, %one32 : i32
     llvm.store %count, %counter : i32, !llvm.ptr
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %destination = llvm.getelementptr %base[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %old = llvm.load %base : !llvm.ptr -> i8
     %one = llvm.mlir.constant(1 : i8) : i8
@@ -66,7 +66,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     %one32 = llvm.mlir.constant(1 : i32) : i32
     %count = llvm.add %old_count, %one32 : i32
     llvm.store %count, %counter : i32, !llvm.ptr
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %destination = llvm.getelementptr %base[2] : (!llvm.ptr) -> !llvm.ptr, i8
     %old = llvm.load %base : !llvm.ptr -> i8
     %one = llvm.mlir.constant(1 : i8) : i8
@@ -89,7 +89,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     %enabled = llvm.load %flag : !llvm.ptr -> i1
     llvm.cond_br %enabled, ^mutate, ^done
   ^mutate:
-    %proof = llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1 : !llvm.ptr
+    %proof = llvm.mlir.addressof @__talos_eval_promotion_pending_mask_v1 : !llvm.ptr
     %bit2 = llvm.mlir.constant(4 : i64) : i64
     llvm.store %bit2, %proof : i64, !llvm.ptr
     %forward = llvm.or %again, %bit2 : i64
@@ -122,7 +122,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   ^execute3:
     %remaining3 = llvm.and %pending3, %clear3 : i64
     llvm.store %remaining3, %ready : i64, !llvm.ptr
-    %base3 = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base3 = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %destination3 = llvm.getelementptr %base3[1] : (!llvm.ptr) -> !llvm.ptr, i8
     %old3 = llvm.load %base3 : !llvm.ptr -> i8
     %one3 = llvm.mlir.constant(1 : i8) : i8
@@ -168,7 +168,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   ^execute0:
     %remaining0 = llvm.and %pending0, %clear0 : i64
     llvm.store %remaining0, %ready : i64, !llvm.ptr
-    %base0 = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base0 = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %destination0 = llvm.getelementptr %base0[0] : (!llvm.ptr) -> !llvm.ptr, i8
     %old0 = llvm.load %base0 : !llvm.ptr -> i8
     %one0 = llvm.mlir.constant(1 : i8) : i8
@@ -185,7 +185,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   ^execute3:
     %remaining3 = llvm.and %pending3, %clear3 : i64
     llvm.store %remaining3, %ready : i64, !llvm.ptr
-    %base3 = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base3 = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %destination3 = llvm.getelementptr %base3[1] : (!llvm.ptr) -> !llvm.ptr, i8
     %old3 = llvm.load %base3 : !llvm.ptr -> i8
     %one3 = llvm.mlir.constant(1 : i8) : i8
@@ -214,7 +214,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   ^execute2:
     %remaining2 = llvm.and %pending2, %clear2 : i64
     llvm.store %remaining2, %ready : i64, !llvm.ptr
-    %base2 = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base2 = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %destination2 = llvm.getelementptr %base2[2] : (!llvm.ptr) -> !llvm.ptr, i8
     %old2 = llvm.load %base2 : !llvm.ptr -> i8
     %one2 = llvm.mlir.constant(1 : i8) : i8
@@ -225,11 +225,11 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.return
   }
   llvm.func @main() -> i32 {
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %out = llvm.getelementptr %base[2] : (!llvm.ptr) -> !llvm.ptr, i8
     %middle = llvm.getelementptr %base[1] : (!llvm.ptr) -> !llvm.ptr, i8
     %ready = llvm.mlir.addressof @ready : !llvm.ptr
-    %proof = llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1 : !llvm.ptr
+    %proof = llvm.mlir.addressof @__talos_eval_promotion_pending_mask_v1 : !llvm.ptr
     %slow0 = llvm.mlir.addressof @slow0 : !llvm.ptr
     %slow2 = llvm.mlir.addressof @slow2 : !llvm.ptr
     %observed = llvm.mlir.addressof @observed : !llvm.ptr

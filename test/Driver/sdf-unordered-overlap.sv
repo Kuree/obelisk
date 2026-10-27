@@ -1,4 +1,4 @@
-// RUN: cd %S && not obelisk -emit-slang %s -o %t.mlir 2>&1 | FileCheck %s
+// RUN: cd %S && not talos -emit-slang %s -o %t.mlir 2>&1 | FileCheck %s
 
 `timescale 1ns / 1ns
 

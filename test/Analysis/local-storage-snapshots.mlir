@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --allow-unregistered-dialect --test-obelisk-local-storage -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --allow-unregistered-dialect --test-talos-local-storage -o /dev/null 2>&1 | FileCheck %s
 // Must-version availability, including backedge conflicts, recursive region
 // interfaces, private alias families, opaque effects, and dead paths.
 module {

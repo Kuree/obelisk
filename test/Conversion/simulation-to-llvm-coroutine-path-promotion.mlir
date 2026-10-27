@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s
 
 // A path-sensitive promotion probe must not make a runtime checkpoint leaf
@@ -157,11 +157,11 @@ module attributes {
 }
 
 // CHECK: module attributes {{.*}}schedule.eval.generated
-// CHECK-LABEL: llvm.func @guarded_blocking.__obelisk_eval_body_0.__obelisk_path_known
+// CHECK-LABEL: llvm.func @guarded_blocking.__talos_eval_body_0.__talos_path_known
 // CHECK-NOT: llvm.store
 // CHECK-NOT: llvm.call
 // CHECK: {{^  \}$}}
-// CHECK-LABEL: llvm.func @guarded_blocking.__obelisk_eval_body_0.__obelisk_checkpoint_path
+// CHECK-LABEL: llvm.func @guarded_blocking.__talos_eval_body_0.__talos_checkpoint_path
 // CHECK-NOT: llvm.store
 // CHECK-NOT: llvm.call
 // CHECK: {{^  \}$}}

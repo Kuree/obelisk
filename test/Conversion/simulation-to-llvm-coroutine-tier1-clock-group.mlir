@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --implicit-check-not=schedule.eval.tier2_convergence
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.closed_executable}"' > %t.closed.mlir
-// RUN: obelisk-opt %t.closed.mlir --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.lowered.mlir
-// RUN: FileCheck %s --check-prefix=REUSE --implicit-check-not='llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state(' < %t.lowered.mlir
+// RUN: talos-opt %s '--test-talos-set-module-attributes=attrs="{native.closed_executable}"' > %t.closed.mlir
+// RUN: talos-opt %t.closed.mlir --convert-talos-sim-processes-to-llvm-coroutines -o %t.lowered.mlir
+// RUN: FileCheck %s --check-prefix=REUSE --implicit-check-not='llvm.func @__talos_direct_fragment_1_1.__talos_execute.two_state(' < %t.lowered.mlir
 // RUN: FileCheck %s --check-prefix=RETAIN < %t.lowered.mlir
-// RUN: obelisk-opt %t.closed.mlir --mlir-disable-threading --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.serial.mlir
+// RUN: talos-opt %t.closed.mlir --mlir-disable-threading --convert-talos-sim-processes-to-llvm-coroutines -o %t.serial.mlir
 // RUN: diff %t.lowered.mlir %t.serial.mlir
-// RUN: obelisk-translate --mlir-to-llvmir %t.lowered.mlir | opt -passes=verify -disable-output
+// RUN: talos-translate --mlir-to-llvmir %t.lowered.mlir | opt -passes=verify -disable-output
 
 // This fixture is already at the coroutine-conversion boundary: its compute
 // graph, static state plan, superstep, and three-tier schedule are explicit.
@@ -19,7 +19,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     simulation.code_unit.decl 1 in 0 root_initializer hierarchy "tier1_clock_group.root"
     simulation.code_unit.decl 2 in 0 always hierarchy "tier1_clock_group.update"
     simulation.code_unit.decl 3 in 0 always hierarchy "tier1_clock_group.clock"
-    simulation.code_unit.decl 4 in 0 function hierarchy "tier1_clock_group.update.__obelisk_eval_body_0" debug "generated native eval body" {internal}
+    simulation.code_unit.decl 4 in 0 function hierarchy "tier1_clock_group.update.__talos_eval_body_0" debug "generated native eval body" {internal}
     simulation.storage.decl 0 in 0 : !simulation.logic<1> design
     simulation.storage.decl 1 in 0 : !simulation.logic<32> design
     simulation.func @root(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {code_unit_id = 1 : i64, domain = 0 : i32, entry_kind = 0 : i32, home_region = 2 : i32} {
@@ -29,7 +29,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       %3 = simulation.spawn @clock(%arg0, %0) : !simulation.context, !simulation.ref<!simulation.logic<1>> -> !simulation.process
       simulation.return
     }
-    simulation.func @update(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<32>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 2 : i64, domain = 0 : i32, entry_kind = 3 : i32, home_region = 2 : i32, schedule.eval.body = @update.__obelisk_eval_body_0, schedule.native.region_body} {
+    simulation.func @update(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<32>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 2 : i64, domain = 0 : i32, entry_kind = 3 : i32, home_region = 2 : i32, schedule.eval.body = @update.__talos_eval_body_0, schedule.native.region_body} {
       cf.br ^bb1
     ^bb1:  // 2 preds: ^bb0, ^bb2
       simulation.suspend.change %arg1 to ^bb2 {site = #schedule.continuation<id = 1>} : !simulation.ref<!simulation.logic<1>>
@@ -39,7 +39,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.ref.store %1 to %arg2 : !simulation.logic<32>, !simulation.ref<!simulation.logic<32>>
       cf.br ^bb1
     }
-    simulation.func private @update.__obelisk_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<32>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 4 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 1 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 2 : i64, continuation = 1 : i32>]} {
+    simulation.func private @update.__talos_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<32>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 4 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 1 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 2 : i64, continuation = 1 : i32>]} {
       %0 = simulation.ref.load %arg2 : !simulation.ref<!simulation.logic<32>> -> !simulation.logic<32>
       %1 = simulation.logic.unary bit_not %0 : (!simulation.logic<32>) -> !simulation.logic<32>
       simulation.ref.store %1 to %arg2 : !simulation.logic<32>, !simulation.ref<!simulation.logic<32>>
@@ -80,35 +80,35 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // RETAIN-LABEL: llvm.func @address_wrapper(
 // RETAIN-SAME: attributes {schedule.eval.two_state_wrapper}
 // RETAIN-LABEL: llvm.func @wrapper_users(
-// RETAIN: llvm.call @mixed_wrapper.__obelisk_trusted(
+// RETAIN: llvm.call @mixed_wrapper.__talos_trusted(
 // RETAIN: llvm.call @mixed_wrapper(
-// RETAIN: llvm.call @address_wrapper.__obelisk_trusted(
+// RETAIN: llvm.call @address_wrapper.__talos_trusted(
 // RETAIN: llvm.mlir.addressof @address_wrapper
-// REUSE-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state.__obelisk_trusted(
+// REUSE-LABEL: llvm.func @__talos_direct_fragment_1_1.__talos_execute.two_state.__talos_trusted(
 // REUSE-SAME: schedule.eval.trusted_two_state_closure
 // REUSE-NOT: llvm.load
-// REUSE: llvm.call @update.__obelisk_eval_body_0.__obelisk_two_state_0
+// REUSE: llvm.call @update.__talos_eval_body_0.__talos_two_state_0
 // REUSE: llvm.return
 
 // One clock-sensitive activation owns the group. The shared dispatcher
 // selects either value-domain executor without entering the runtime.
-// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute(
+// CHECK-LABEL: llvm.func @__talos_direct_fragment_1_1.__talos_execute(
 // CHECK-SAME: attributes {passthrough = ["alwaysinline"], schedule.eval.infallible}
-// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state(
+// CHECK-LABEL: llvm.func @__talos_direct_fragment_1_1.__talos_execute.two_state(
 // CHECK-SAME: attributes {passthrough = ["alwaysinline"], schedule.eval.infallible, schedule.eval.two_state_wrapper}
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
-// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute(
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// CHECK-NOT: llvm.call @talos_rt_
+// CHECK: llvm.mlir.addressof @__talos_eval_promotion_pending_mask_v1
+// CHECK: llvm.call @__talos_direct_fragment_1_1.__talos_execute(
 // The proven call's trivial trusted wrapper is inlined: the dispatcher calls
 // the selected two-state body directly.
-// CHECK: llvm.call @update.__obelisk_eval_body_0.__obelisk_two_state_0(%arg1) {schedule.eval.direct_call}
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK: llvm.call @update.__talos_eval_body_0.__talos_two_state_0(%arg1) {schedule.eval.direct_call}
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
 // The selected call carries the owner proof; no enclosing controller variant
 // is required to preserve a direct two-state computation edge.
-// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state.__obelisk_trusted(
+// CHECK-LABEL: llvm.func @__talos_direct_fragment_1_1.__talos_execute.two_state.__talos_trusted(
 // CHECK-SAME: schedule.eval.trusted_two_state_closure
 // CHECK-NOT: llvm.call %
-// CHECK: llvm.call @update.__obelisk_eval_body_0.__obelisk_two_state_0
+// CHECK: llvm.call @update.__talos_eval_body_0.__talos_two_state_0
 // CHECK: llvm.return

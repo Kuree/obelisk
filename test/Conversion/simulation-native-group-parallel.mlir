@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --allow-unregistered-dialect --split-input-file --mlir-disable-threading --obelisk-materialize-native-eval-groups -o %t.serial.mlir
-// RUN: obelisk-opt %s --allow-unregistered-dialect --split-input-file --obelisk-materialize-native-eval-groups -o %t.parallel.mlir
+// RUN: talos-opt %s --allow-unregistered-dialect --split-input-file --mlir-disable-threading --talos-materialize-native-eval-groups -o %t.serial.mlir
+// RUN: talos-opt %s --allow-unregistered-dialect --split-input-file --talos-materialize-native-eval-groups -o %t.parallel.mlir
 // RUN: diff -u %t.serial.mlir %t.parallel.mlir
 // RUN: FileCheck %s < %t.parallel.mlir
 
@@ -49,9 +49,9 @@ module attributes {schedule.native.max_inline_ops = 4 : i64} {
 // The preceding candidate must replace its body before @original's turn.
 // Its untouched slow body, including the call, becomes @original.fallback.
 module {
-  llvm.mlir.global internal @__obelisk_state_value(dense<0> : tensor<1xi8>) : !llvm.array<1 x i8>
+  llvm.mlir.global internal @__talos_state_value(dense<0> : tensor<1xi8>) : !llvm.array<1 x i8>
   llvm.mlir.global internal @ready(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
-  llvm.mlir.global internal @__obelisk_eval_promotion_pending_mask_v1(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
+  llvm.mlir.global internal @__talos_eval_promotion_pending_mask_v1(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
   llvm.func @leaf() attributes {schedule.eval.infallible} {
     llvm.return
   }
@@ -59,7 +59,7 @@ module {
   // CHECK: llvm.call @leaf()
   // CHECK: llvm.return
   llvm.func @candidate() attributes {schedule.eval.ranked_members = array<i32: 0>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @original} {
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %one = llvm.mlir.constant(1 : i8) : i8
     llvm.store %one, %base : i8, !llvm.ptr
     llvm.return

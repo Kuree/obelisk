@@ -30,18 +30,18 @@
 #include "../../../Conversion/SimulationToSchedule/NativePipeline.h"
 #include "../../Simulation/SimulationVerifiers.h"
 #include "KnownCasts.h"
-#include "obelisk/Analysis/HandleDataflowAnalysis.h"
-#include "obelisk/Analysis/KnownVersioningAnalysis.h"
-#include "obelisk/Analysis/LocalUnknownAnalysis.h"
-#include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationTypes.h"
+#include "talos/Analysis/HandleDataflowAnalysis.h"
+#include "talos/Analysis/KnownVersioningAnalysis.h"
+#include "talos/Analysis/LocalUnknownAnalysis.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationTypes.h"
 
 #include "mlir/Analysis/CFGLoopInfo.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -56,9 +56,9 @@
 #include "llvm/Support/GenericIteratedDominanceFrontier.h"
 
 using namespace mlir;
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_VERSIONKNOWNACTIVATIONSPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 using analysis::LocalUnknownAnalysis;
@@ -1047,7 +1047,7 @@ public:
     if (diagnostics && versioned) {
       std::string text;
       llvm::raw_string_ostream os(text);
-      os << "obelisk known activation: " << function.getSymName()
+      os << "talos known activation: " << function.getSymName()
          << " segments=" << versioned << '/' << results.size()
          << " checks=" << versioner.transfers << " benefit=" << benefit
          << " gate-roots=" << roots << " casts=" << versioner.knownCasts
@@ -1105,4 +1105,4 @@ public:
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

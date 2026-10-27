@@ -4,10 +4,10 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Runtime/Runtime.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -18,21 +18,21 @@
 #include <vector>
 
 TEST(GeneratedDesignDatabase, SourceOnlyExpressions) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
-  obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_VERSION;
+  talos_rt_execution_descriptor_v1 execution{};
+  execution.version = TALOS_RT_VERSION;
   execution.flags = encoded->executionFlags;
   execution.bytecode = encoded->bytecode.data();
   execution.bytecode_size = encoded->bytecode.size();
@@ -41,8 +41,8 @@ TEST(GeneratedDesignDatabase, SourceOnlyExpressions) {
   execution.state_bit_count = encoded->stateBitCount;
   for (unsigned byte = 0; byte != 8; ++byte)
     execution.checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  using namespace obelisk::reflection;
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  using namespace talos::reflection;
   const auto &image = encoded->designDatabase;
   HeaderView header(image.data());
   SemanticDirectoryView directory(image.data() + header.getReserved());
@@ -78,8 +78,8 @@ TEST(GeneratedDesignDatabase, SourceOnlyExpressions) {
     HeaderWriter(bytes.data()).setChecksum(hash);
     auto invalid = execution;
     invalid.design_database = bytes.data();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&invalid),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&invalid),
+              TALOS_RT_INVALID_DESIGN);
   };
   ASSERT_NE(literalNode, UINT32_MAX);
   rejects([&](auto &bytes) {
@@ -102,14 +102,14 @@ TEST(GeneratedDesignDatabase, SourceOnlyExpressions) {
     writer.setCode(33);
     writer.setSemanticTypeIndex(literal.getSemanticTypeIndex());
   });
-  obelisk_rt_context *raw = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &raw),
-            OBELISK_RT_OK);
-  std::unique_ptr<obelisk_rt_context, decltype(&obelisk_rt_v1_context_destroy)>
-      runtime(raw, obelisk_rt_v1_context_destroy);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(raw, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(raw), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(raw), OBELISK_RT_OK);
+  talos_rt_context *raw = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &raw),
+            TALOS_RT_OK);
+  std::unique_ptr<talos_rt_context, decltype(&talos_rt_v1_context_destroy)>
+      runtime(raw, talos_rt_v1_context_destroy);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(raw, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(raw), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(raw), TALOS_RT_OK);
   std::vector<vpiHandle> handles;
   auto keep = [&](vpiHandle handle) {
     if (handle)

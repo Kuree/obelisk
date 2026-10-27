@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics -o /dev/null
+// RUN: talos-opt %s --split-input-file --verify-diagnostics -o /dev/null
 
 module {
   simulation.design @mixed_owner_cycle {

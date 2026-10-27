@@ -1,4 +1,4 @@
-// RUN: obelisk --top=required_parameter_root_xfail -emit-obelisk %s -o /dev/null
+// RUN: talos --top=required_parameter_root_xfail -emit-talos %s -o /dev/null
 
 // A module whose parameter has no default is legal to declare and can only be
 // instantiated with an override (IEEE 1800-2017 6.20.1). With an explicit

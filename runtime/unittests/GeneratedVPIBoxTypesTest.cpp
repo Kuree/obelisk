@@ -5,9 +5,9 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
 #include "gtest/gtest.h"
 #include <algorithm>
 #include <array>
@@ -16,26 +16,26 @@
 #include <vector>
 
 namespace {
-using namespace obelisk::reflection;
+using namespace talos::reflection;
 
 TEST(GeneratedDesignDatabase, BoxTypeLayouts) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -52,10 +52,10 @@ TEST(GeneratedDesignDatabase, BoxTypeLayouts) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
 
   // Execute the encoded binding instruction, then inspect the published box.
   // Metadata-only encoding cannot detect a missing bytecode dispatch case.
@@ -63,37 +63,37 @@ TEST(GeneratedDesignDatabase, BoxTypeLayouts) {
       std::find_if(encoded->functions.begin(), encoded->functions.end(),
                    [](const auto &f) { return f.symbol == "initial"; });
   ASSERT_NE(initial, encoded->functions.end());
-  obelisk_rt_design_bytecode_entry_v1 entry{&execution, initial->index, 0};
+  talos_rt_design_bytecode_entry_v1 entry{&execution, initial->index, 0};
   uint64_t scratchSize = 0, scratchAlignment = 0;
-  ASSERT_EQ(obelisk_rt_validate_design_bytecode(entry, runtime, &scratchSize,
+  ASSERT_EQ(talos_rt_validate_design_bytecode(entry, runtime, &scratchSize,
                                                 &scratchAlignment),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_LE(scratchAlignment, alignof(uint64_t));
   std::vector<uint64_t> frame((scratchSize + 7) / 8);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_execute_design_bytecode(entry, runtime, frame.data(),
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_execute_design_bytecode(entry, runtime, frame.data(),
                                                frame.size() * 8, 0, scratchSize,
                                                0, 0, &action),
-            OBELISK_RT_OK);
-  ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
-  obelisk_rt_design_cursor_v1 output{};
+            TALOS_RT_OK);
+  ASSERT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
+  talos_rt_design_cursor_v1 output{};
   constexpr char outputName[] = "top.box";
-  ASSERT_EQ(obelisk_rt_cached_design_lookup(
+  ASSERT_EQ(talos_rt_cached_design_lookup(
                 runtime, reinterpret_cast<const uint8_t *>(outputName),
                 sizeof(outputName) - 1, &output),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(runtime, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
   uint64_t boxWord = 0, boxID = 0;
-  ASSERT_EQ(obelisk_rt_v1_design_read(runtime, output, &boxWord, nullptr, 64),
-            OBELISK_RT_OK);
-  const obelisk_rt_element_type_v1 *element = nullptr;
+  ASSERT_EQ(talos_rt_v1_design_read(runtime, output, &boxWord, nullptr, 64),
+            TALOS_RT_OK);
+  const talos_rt_element_type_v1 *element = nullptr;
   std::vector<uint8_t> planes;
   ASSERT_EQ(
-      obelisk_rt_box_snapshot(obelisk_rt_object_from_managed_word(boxWord),
+      talos_rt_box_snapshot(talos_rt_object_from_managed_word(boxWord),
                               &boxID, &element, planes),
-      OBELISK_RT_OK);
+      TALOS_RT_OK);
   EXPECT_EQ(boxID, 7u);
   ASSERT_NE(element, nullptr);
   EXPECT_EQ(element->bit_width, 32u);
@@ -101,39 +101,39 @@ TEST(GeneratedDesignDatabase, BoxTypeLayouts) {
   int32_t value = 0;
   std::memcpy(&value, planes.data(), sizeof(value));
   EXPECT_EQ(value, -42);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
 
   VPIBoxTypeBinding signedType{}, unsignedType{}, enumType{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_box_type(runtime, 7, &signedType),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_cached_vpi_box_type(runtime, 8, &unsignedType),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_cached_vpi_box_type(runtime, 9, &enumType),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_cached_vpi_box_type(runtime, 7, &signedType),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_cached_vpi_box_type(runtime, 8, &unsignedType),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_cached_vpi_box_type(runtime, 9, &enumType),
+            TALOS_RT_OK);
   EXPECT_EQ(signedType.physical.offset, unsignedType.physical.offset);
   EXPECT_EQ(signedType.physical.offset, enumType.physical.offset);
   EXPECT_NE(signedType.semantic.offset, unsignedType.semantic.offset);
-  obelisk_rt_design_semantic_type_info_v1 enumInfo{};
-  ASSERT_EQ(obelisk_rt_cached_design_semantic_type_info(
+  talos_rt_design_semantic_type_info_v1 enumInfo{};
+  ASSERT_EQ(talos_rt_cached_design_semantic_type_info(
                 runtime, enumType.semantic, &enumInfo),
-            OBELISK_RT_OK);
-  EXPECT_EQ(enumInfo.kind, OBELISK_RT_DESIGN_SEMANTIC_ENUM);
-  obelisk_rt_design_cursor_v1 physical{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_value_element_type(
+            TALOS_RT_OK);
+  EXPECT_EQ(enumInfo.kind, TALOS_RT_DESIGN_SEMANTIC_ENUM);
+  talos_rt_design_cursor_v1 physical{};
+  ASSERT_EQ(talos_rt_cached_vpi_value_element_type(
                 runtime, enumType.layout, enumType.semantic, &physical),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(physical.offset, enumType.physical.offset);
-  obelisk_rt_design_semantic_type_edge_v1 enumBase{};
-  ASSERT_EQ(obelisk_rt_cached_design_semantic_type_edge(
+  talos_rt_design_semantic_type_edge_v1 enumBase{};
+  ASSERT_EQ(talos_rt_cached_design_semantic_type_edge(
                 runtime, enumType.semantic, 0, &enumBase),
-            OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_cached_vpi_value_element_type(runtime, enumType.layout,
+            TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_cached_vpi_value_element_type(runtime, enumType.layout,
                                                      enumBase.child, &physical),
-            OBELISK_RT_EOF);
-  EXPECT_EQ(obelisk_rt_cached_vpi_box_type(runtime, 10, &enumType),
-            OBELISK_RT_EOF);
-  obelisk_rt_v1_context_destroy(runtime);
+            TALOS_RT_EOF);
+  EXPECT_EQ(talos_rt_cached_vpi_box_type(runtime, 10, &enumType),
+            TALOS_RT_EOF);
+  talos_rt_v1_context_destroy(runtime);
 
   HeaderView header(encoded->designDatabase.data());
   SemanticDirectoryView directory(encoded->designDatabase.data() +
@@ -159,8 +159,8 @@ TEST(GeneratedDesignDatabase, BoxTypeLayouts) {
     HeaderWriter(image.data()).setChecksum(hash);
     execution.design_database = image.data();
     execution.design_database_size = image.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&execution),
+              TALOS_RT_INVALID_DESIGN);
   };
   ASSERT_EQ(ValueElementBindingView(encoded->designDatabase.data() + rows)
                 .getOwnerKind(),

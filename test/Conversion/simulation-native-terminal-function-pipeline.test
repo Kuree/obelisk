@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %S/simulation-native-group-state-boundary.mlir --obelisk-materialize-native-eval-groups --mlir-disable-threading --mlir-print-ir-after-all -o /dev/null 2>&1 | FileCheck %s --check-prefix=GROUP
-// RUN: obelisk-opt %S/simulation-native-partitions.mlir --obelisk-sim-plan-native-partitions --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-disable-threading --mlir-print-ir-after-all -o /dev/null 2>&1 | FileCheck %s --check-prefix=PARTITION
+// RUN: talos-opt %S/simulation-native-group-state-boundary.mlir --talos-materialize-native-eval-groups --mlir-disable-threading --mlir-print-ir-after-all -o /dev/null 2>&1 | FileCheck %s --check-prefix=GROUP
+// RUN: talos-opt %S/simulation-native-partitions.mlir --talos-sim-plan-native-partitions --convert-talos-sim-processes-to-llvm-coroutines --mlir-disable-threading --mlir-print-ir-after-all -o /dev/null 2>&1 | FileCheck %s --check-prefix=PARTITION
 
 // Local group promotion runs on the function whose body it rewrites.
 // GROUP: IR Dump After {{.*}}PromoteNativeGroupFunctionPass (promote-native-group-function)
@@ -9,5 +9,5 @@
 // publishes into its stable result slot, so finalization follows on that body.
 // PARTITION: IR Dump After {{.*}}InventoryNativeFunctionSymbolsPass (inventory-native-function-symbols)
 // PARTITION-NEXT: llvm.func{{( internal)?}} [[FUNCTION:@[^(]+]](
-// PARTITION: IR Dump After {{.*}}NativeFunctionFinalizationPass (obelisk-native-finalize-function)
+// PARTITION: IR Dump After {{.*}}NativeFunctionFinalizationPass (talos-native-finalize-function)
 // PARTITION-NEXT: llvm.func{{( internal)?}} [[FUNCTION]](

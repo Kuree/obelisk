@@ -1,8 +1,8 @@
-// RUN: obelisk -O0 --vpi=read -emit-sim %s -o %t.mlir
+// RUN: talos -O0 --vpi=read -emit-sim %s -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk -O3 %s -o %t.native
+// RUN: talos -O3 %s -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=OUTPUT
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s --check-prefix=OUTPUT
 
 // IEEE 1800-2023 23.3.3.2, 23.3.3.3, 23.3.3.7.

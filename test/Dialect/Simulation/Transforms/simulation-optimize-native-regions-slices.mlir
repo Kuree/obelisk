@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --obelisk-sim-optimize-native-regions | FileCheck %s
+// RUN: talos-opt %s --split-input-file --talos-sim-optimize-native-regions | FileCheck %s
 
 // Fixed disjoint views may forward independently; overlapping/dynamic views
 // and transient observers must retain the original NBA staging sequence.

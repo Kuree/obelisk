@@ -1,19 +1,19 @@
 // RUN: %split-file %s %t
-// RUN: obelisk-opt %t/narrow-assignment.mlir \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %t/narrow-assignment.mlir \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NARROW
-// RUN: obelisk-opt %t/wide-assignment.mlir \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %t/wide-assignment.mlir \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=WIDE
 
 // NARROW-LABEL: llvm.func @solve(
 // NARROW: %[[CAPTURE_WIDTH:.*]] = llvm.mlir.constant(64 : i32)
 // NARROW: llvm.store %[[CAPTURE_WIDTH]],
-// NARROW: llvm.call @obelisk_rt_v1_random_solve_wide_modes_state
+// NARROW: llvm.call @talos_rt_v1_random_solve_wide_modes_state
 // NARROW: llvm.trunc {{.*}} : i64 to i8
 
 // WIDE-LABEL: llvm.func @solve(
-// WIDE: llvm.call @obelisk_rt_v1_random_solve_wide_modes_state
+// WIDE: llvm.call @talos_rt_v1_random_solve_wide_modes_state
 // WIDE: llvm.zext {{.*}} : i64 to i128
 
 //--- narrow-assignment.mlir

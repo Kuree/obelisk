@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // An inout $random seed is elaborated with an implicit conversion to the
 // system function's `int` argument type. The conversion must not hide the
@@ -6,8 +6,8 @@
 // the legacy distribution algorithm and its next seed to be stored back;
 // $random must not perturb the separate process-local $urandom stream.
 
-!integer = !obelisk.integral<32, true, true, 31 : 0, integer>
-!int = !obelisk.integral<32, true, false, 31 : 0, int>
+!integer = !talos.integral<32, true, true, 31 : 0, integer>
+!int = !talos.integral<32, true, false, 31 : 0, int>
 
 module {
   simulation.design @random_seed {
@@ -54,19 +54,19 @@ module {
           ],
           code_unit_id = 9940001 : i64
         } {
-      obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 1 : i64} {
+        talos.sv.expression.assignment attributes {
             assignment_kind = 0 : i32, is_signed = true, node_id = 2 : i64,
             semantic_type = !integer} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               is_signed = true, node_id = 3 : i64,
               referenced_path = "top.value", referenced_symbol = @value,
               semantic_type = !integer} {
           }
-          obelisk.sv.expression.conversion attributes {
+          talos.sv.expression.conversion attributes {
               is_implicit = true, is_signed = true, node_id = 4 : i64,
               semantic_type = !integer} {
-            obelisk.sv.expression.call attributes {
+            talos.sv.expression.call attributes {
                 argument_count = 1 : i64, callee_name = "$random",
                 constraint_restrictions = [], defaulted_arguments = array<i64: 0>,
                 has_inline_constraints = false, has_iterator_expression = false,
@@ -74,10 +74,10 @@ module {
                 is_signed = true, is_super_class = false, is_system_call = true,
                 node_id = 5 : i64, semantic_type = !int,
                 subroutine_kind = 0 : i32} {
-              obelisk.sv.expression.conversion attributes {
+              talos.sv.expression.conversion attributes {
                   is_implicit = true, is_signed = true, node_id = 6 : i64,
                   semantic_type = !int} {
-                obelisk.sv.expression.named_value attributes {
+                talos.sv.expression.named_value attributes {
                     is_signed = true, node_id = 7 : i64,
                     referenced_path = "top.seed", referenced_symbol = @seed,
                     semantic_type = !integer} {
@@ -87,20 +87,20 @@ module {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 8 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 8 : i64} {
+        talos.sv.expression.assignment attributes {
             assignment_kind = 0 : i32, is_signed = true, node_id = 9 : i64,
             semantic_type = !integer} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               is_signed = true, node_id = 10 : i64,
               referenced_path = "top.default_value",
               referenced_symbol = @default_value,
               semantic_type = !integer} {
           }
-          obelisk.sv.expression.conversion attributes {
+          talos.sv.expression.conversion attributes {
               is_implicit = true, is_signed = true, node_id = 11 : i64,
               semantic_type = !integer} {
-            obelisk.sv.expression.call attributes {
+            talos.sv.expression.call attributes {
                 argument_count = 0 : i64, callee_name = "$random",
                 constraint_restrictions = [], defaulted_arguments = array<i64>,
                 has_inline_constraints = false, has_iterator_expression = false,

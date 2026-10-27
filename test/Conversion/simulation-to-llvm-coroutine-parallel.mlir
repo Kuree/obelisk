@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines > %t.threaded
-// RUN: obelisk-opt %s --mlir-disable-threading --convert-obelisk-sim-processes-to-llvm-coroutines > %t.serial
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines > %t.threaded
+// RUN: talos-opt %s --mlir-disable-threading --convert-talos-sim-processes-to-llvm-coroutines > %t.serial
 // RUN: diff %t.threaded %t.serial
 // RUN: FileCheck %s < %t.threaded
 // RUN: FileCheck %s --check-prefix=CALLS < %t.threaded
@@ -10,7 +10,7 @@ module attributes {
 } {
   // Reserve the first managed-literal symbol to exercise collision-free
   // serial name inventory before parallel body conversion.
-  llvm.mlir.global internal constant @__obelisk_string_literal.0("occupied")
+  llvm.mlir.global internal constant @__talos_string_literal.0("occupied")
 
   simulation.design @parallel_native {
     simulation.scope.decl 0
@@ -1135,8 +1135,8 @@ module attributes {
   }
 }
 
-// CHECK: llvm.mlir.global internal constant @__obelisk_string_literal.1("hello")
-// CHECK: llvm.mlir.global internal constant @__obelisk_string_literal.0("occupied")
+// CHECK: llvm.mlir.global internal constant @__talos_string_literal.1("hello")
+// CHECK: llvm.mlir.global internal constant @__talos_string_literal.0("occupied")
 // CHECK-COUNT-65: llvm.func @packed_
 // CHECK-COUNT-65: llvm.func @worker_
 // CALLS-COUNT-64: llvm.call @worker_64()

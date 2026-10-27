@@ -1,5 +1,5 @@
 // Execute the self-checking program of ../Conversion/simulation-native-eval-pending-finish.mlir.
 
-// RUN: obelisk-opt %S/../Conversion/simulation-native-eval-pending-finish.mlir --finalize-native-llvm | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %S/../Conversion/simulation-native-eval-pending-finish.mlir --finalize-native-llvm | talos-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang %t.o %S/Inputs/native-eval-pending-finish.c -o %t.exe
 // RUN: %t.exe

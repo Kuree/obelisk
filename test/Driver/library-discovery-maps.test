@@ -1,14 +1,14 @@
 // Map includes and all paths within them are relative to the containing map.
 // The included library also contributes its private include directory.
-// RUN: obelisk -emit-slang --libmap %S/Inputs/library/discovery/maps/root.map %S/Inputs/library/discovery/map_top.sv | FileCheck %s --check-prefix=MAP-INCLUDE
-// RUN: not obelisk -emit-slang --single-unit --libmap %S/Inputs/library/discovery/maps/macro.map %S/Inputs/library/discovery/macro_top.sv 2>&1 | FileCheck %s --check-prefix=MAP-MACRO-ISOLATED
-// RUN: obelisk -emit-slang --single-unit --libraries-inherit-macros --libmap %S/Inputs/library/discovery/maps/macro.map %S/Inputs/library/discovery/macro_top.sv | FileCheck %s --check-prefix=MAP-MACRO-INHERITED
-// RUN: obelisk -emit-slang --libmap %S/Inputs/library/discovery/maps/hierarchical.map %S/Inputs/library/discovery/map_top.sv | FileCheck %s --check-prefix=MAP-INCLUDE
-// RUN: env L14_LIBRARY_SOURCE=%S/Inputs/library/discovery obelisk -emit-slang --libmap %S/Inputs/library/discovery/maps/environment.map %S/Inputs/library/discovery/top.sv | FileCheck %s --check-prefix=FIRST-MAP
-// RUN: obelisk -emit-slang --libmap %S/Inputs/library/discovery/maps/specificity.map %S/Inputs/library/discovery/map_top.sv | FileCheck %s --check-prefix=MAP-INCLUDE
+// RUN: talos -emit-slang --libmap %S/Inputs/library/discovery/maps/root.map %S/Inputs/library/discovery/map_top.sv | FileCheck %s --check-prefix=MAP-INCLUDE
+// RUN: not talos -emit-slang --single-unit --libmap %S/Inputs/library/discovery/maps/macro.map %S/Inputs/library/discovery/macro_top.sv 2>&1 | FileCheck %s --check-prefix=MAP-MACRO-ISOLATED
+// RUN: talos -emit-slang --single-unit --libraries-inherit-macros --libmap %S/Inputs/library/discovery/maps/macro.map %S/Inputs/library/discovery/macro_top.sv | FileCheck %s --check-prefix=MAP-MACRO-INHERITED
+// RUN: talos -emit-slang --libmap %S/Inputs/library/discovery/maps/hierarchical.map %S/Inputs/library/discovery/map_top.sv | FileCheck %s --check-prefix=MAP-INCLUDE
+// RUN: env L14_LIBRARY_SOURCE=%S/Inputs/library/discovery talos -emit-slang --libmap %S/Inputs/library/discovery/maps/environment.map %S/Inputs/library/discovery/top.sv | FileCheck %s --check-prefix=FIRST-MAP
+// RUN: talos -emit-slang --libmap %S/Inputs/library/discovery/maps/specificity.map %S/Inputs/library/discovery/map_top.sv | FileCheck %s --check-prefix=MAP-INCLUDE
 
 // Command files are expanded before option parsing, including plus spellings.
-// RUN: cd %S/Inputs/library/discovery && obelisk -emit-slang -f library.f | FileCheck %s --check-prefix=FIRST-EXT
+// RUN: cd %S/Inputs/library/discovery && talos -emit-slang -f library.f | FileCheck %s --check-prefix=FIRST-EXT
 
 // FIRST-EXT: hierarchical_name = "library_top.choice.first_extension"
 // MAP-INCLUDE: !slang.packed_array<6 : 0 x

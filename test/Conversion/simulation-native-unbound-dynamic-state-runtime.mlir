@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
 
 // Runtime behavior is checked in ../Runtime/simulation-native-unbound-dynamic-state-runtime.test.
 
@@ -8,8 +8,8 @@
 // plane starts as X and is not authoritative in this configuration.
 //
 // LLVM-LABEL: llvm.func @read_and_rewrite_z
-// LLVM-COUNT-2: llvm.call @obelisk_rt_v1_native_state_load_plane
-// LLVM-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_plane
+// LLVM-COUNT-2: llvm.call @talos_rt_v1_native_state_load_plane
+// LLVM-COUNT-2: llvm.call @talos_rt_v1_native_state_store_plane
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -26,7 +26,7 @@ module attributes {
     simulation.code_unit.decl 2 in 0 initial hierarchy "top.check"
     simulation.code_unit.decl 3 in 0 function hierarchy "top.read_and_rewrite_z"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %driver = simulation.context.driver %ctx[0] :

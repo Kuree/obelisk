@@ -1,6 +1,6 @@
 # SystemVerilog assertion conformance
 
-This document tracks Obelisk against the assertion facilities in IEEE Std
+This document tracks Talos against the assertion facilities in IEEE Std
 1800-2023.  It deliberately distinguishes three levels of support:
 
 - **Executable** means the construct has LRM-oriented simulation semantics in
@@ -11,7 +11,7 @@ This document tracks Obelisk against the assertion facilities in IEEE Std
   preferred to an approximation with different scheduling, sampling, vacuity,
   or endpoint semantics.
 
-Obelisk does **not** currently implement the full SVA language. Passing UVM or
+Talos does **not** currently implement the full SVA language. Passing UVM or
 the pinned sv-tests corpus demonstrates the executable subset those suites
 exercise; it is not a claim of complete IEEE 1800 assertion conformance.
 
@@ -81,7 +81,7 @@ properties or run a temporal interpreter.
 Z3 is an optional compiler dependency used by constrained-random planning and
 bounded-SVA trace minimization. SVA lowering uses it only to
 remove equivalent generated Boolean work; a direct conservative monitor is
-emitted when `OBELISK_ENABLE_Z3=OFF` or a proof is unavailable.
+emitted when `TALOS_ENABLE_Z3=OFF` or a proof is unavailable.
 Randomization uses compiler Z3 to generate Boolean sampling plans. Target
 runtimes contain no Z3 dependency; temporal monitors do not call a solver.
 An unavailable SVA proof must only select a
@@ -93,5 +93,5 @@ An item moves to **Executable** only when tests cover its syntax, four-state
 sampling, overlapping attempts, vacuity/end-of-simulation behavior where
 applicable, cancellation and assertion controls, region ordering, and native /
 bytecode behavior at both O0 and O3.  Full SVA support additionally requires a
-green `OBELISK_ENABLE_Z3=OFF` build and regression suite; compiler-side solver
+green `TALOS_ENABLE_Z3=OFF` build and regression suite; compiler-side solver
 tests are supplementary rather than a correctness dependency.

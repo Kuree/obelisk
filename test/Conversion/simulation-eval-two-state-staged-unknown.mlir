@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --implicit-check-not=__obelisk_path_known
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --implicit-check-not=__talos_path_known
 
 // IEEE 1800-2023 10.4.2, 4.4.2.4: an NBA updates its target with exactly the
 // computed value. `join`'s two-state copy is entered with every input known,
@@ -10,9 +10,9 @@
 // `'x` literal directly: the same staging test covers it, so its owner needs
 // no per-activation path-known predicate.
 
-// CHECK-LABEL: llvm.func @join.__obelisk_eval_body_0.__obelisk_two_state_0(
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
-// CHECK-NOT: __obelisk_eval_step_four_state
+// CHECK-LABEL: llvm.func @join.__talos_eval_body_0.__talos_two_state_0(
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_0
+// CHECK-NOT: __talos_eval_step_four_state
 // CHECK: ^[[JOIN:bb[0-9]+]](%{{.*}}: i6, %[[UNKNOWN:.*]]: i6):
 // CHECK: %[[WIDE:.*]] = llvm.zext %[[UNKNOWN]] : i6 to i64
 // CHECK: %[[STAGED:.*]] = llvm.icmp "ne" %[[WIDE]], %{{.*}} : i64
@@ -20,9 +20,9 @@
 // CHECK-NEXT: ^[[MARK]]:
 // The store's independent operands may be emitted in either order.
 // CHECK-DAG: %[[ONE:.*]] = llvm.mlir.constant(1 : i8)
-// CHECK-DAG: %[[FALLBACK:.*]] = llvm.mlir.addressof @__obelisk_eval_step_four_state_fallback_v1
+// CHECK-DAG: %[[FALLBACK:.*]] = llvm.mlir.addressof @__talos_eval_step_four_state_fallback_v1
 // CHECK-NEXT: llvm.store %[[ONE]], %[[FALLBACK]]
-// CHECK-NEXT: %[[ROOTS:.*]] = llvm.mlir.addressof @__obelisk_eval_step_four_state_nba_roots_v1
+// CHECK-NEXT: %[[ROOTS:.*]] = llvm.mlir.addressof @__talos_eval_step_four_state_nba_roots_v1
 // CHECK-NEXT: %[[WORD:.*]] = llvm.getelementptr %[[ROOTS]][0]
 // CHECK-NEXT: %[[OLD:.*]] = llvm.load %[[WORD]]
 // CHECK-NEXT: %[[BIT:.*]] = llvm.mlir.constant(2 : i64)
@@ -30,13 +30,13 @@
 // CHECK-NEXT: llvm.store %[[NEW]], %[[WORD]]
 // CHECK-NEXT: llvm.br ^[[STAGE]]
 // CHECK-NEXT: ^[[STAGE]]:
-// CHECK-NOT: __obelisk_eval_step_four_state
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_1
-// CHECK-NOT: __obelisk_eval_step_four_state
+// CHECK-NOT: __talos_eval_step_four_state
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_1
+// CHECK-NOT: __talos_eval_step_four_state
 // CHECK: {{^  }}}
-// CHECK-LABEL: llvm.func @literal.__obelisk_eval_body_0.__obelisk_two_state_0(
-// CHECK: llvm.mlir.addressof @__obelisk_eval_step_four_state_fallback_v1
-// CHECK: llvm.mlir.addressof @__obelisk_eval_step_four_state_nba_roots_v1
+// CHECK-LABEL: llvm.func @literal.__talos_eval_body_0.__talos_two_state_0(
+// CHECK: llvm.mlir.addressof @__talos_eval_step_four_state_fallback_v1
+// CHECK: llvm.mlir.addressof @__talos_eval_step_four_state_nba_roots_v1
 
 !clk = !simulation.ref<i1>
 !l6 = !simulation.logic<6>

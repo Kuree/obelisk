@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --test-obelisk-activation-regions='functions=fused,middle order=true' -o %t.analyzed 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s --test-talos-activation-regions='functions=fused,middle order=true' -o %t.analyzed 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion))' -o %t.fused
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion))' -o %t.fused
 // RUN: FileCheck %s --check-prefix=FUSE < %t.fused
-// RUN: obelisk-opt %t.fused --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o /dev/null
+// RUN: talos-opt %t.fused --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' -o /dev/null
 // Typed original-owner provenance preserves each process's source order without
 // inventing a C -> A relation because those independent processes were fused.
 // SSA edges and physical memory dependencies still require A -> B -> C.
@@ -139,15 +139,15 @@ module {
 }
 
 // FUSE-LABEL: simulation.design @separate
-// FUSE: simulation.spawn @__obelisk_region_kernel_
-// FUSE-LABEL: simulation.func private @__obelisk_region_kernel_
+// FUSE: simulation.spawn @__talos_region_kernel_
+// FUSE-LABEL: simulation.func private @__talos_region_kernel_
 // FUSE-SAME: schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 1 : i64, continuation = 1 : i32>, #schedule.source_owner<codeUnit = 2 : i64, continuation = 2 : i32>, #schedule.source_owner<codeUnit = 3 : i64,
 // Statement order stays cyclic in @same and @incomplete. Without an outside
 // observer of their writes, both still run once in data-dependence order
 // (IEEE 1800-2023 4.3).
 // FUSE-LABEL: simulation.design @same
 // FUSE-NOT: simulation.spawn @fused
-// FUSE: simulation.spawn @__obelisk_region_kernel_
+// FUSE: simulation.spawn @__talos_region_kernel_
 // FUSE-LABEL: simulation.design @incomplete
 // FUSE-NOT: simulation.spawn @fused
-// FUSE: simulation.spawn @__obelisk_region_kernel_
+// FUSE: simulation.spawn @__talos_region_kernel_

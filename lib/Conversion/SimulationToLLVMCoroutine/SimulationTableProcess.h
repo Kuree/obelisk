@@ -1,18 +1,18 @@
 //===- SimulationTableProcess.h - Table process admission and lowering ----===//
-#ifndef OBELISK_SIMULATIONTABLEPROCESS_H
-#define OBELISK_SIMULATIONTABLEPROCESS_H
+#ifndef TALOS_SIMULATIONTABLEPROCESS_H
+#define TALOS_SIMULATIONTABLEPROCESS_H
 
-#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/SimulationProcessFrameAnalysis.h"
+#include "talos/Runtime/Runtime.h"
 #include "llvm/ADT/SmallVector.h"
 #include <optional>
 
-namespace obelisk::detail {
+namespace talos::detail {
 struct NativeTableWait {
   uint32_t continuation, actionFlags;
   uint64_t frameOffset, frameSize;
   uint32_t kind, flags;
-  llvm::SmallVector<obelisk_rt_table_watch_v1> watches;
+  llvm::SmallVector<talos_rt_table_watch_v1> watches;
 };
 struct NativeTableProcess {
   llvm::SmallVector<NativeTableWait> waits;
@@ -25,5 +25,5 @@ void materializeTableProcess(PreparedSuspendableProcess &process);
 /// Declares the runtime entry shared by every table process. Call it once per
 /// module, not per process: the declaration check scans the whole module.
 void declareTableProcessRuntimeABI(mlir::ModuleOp module);
-} // namespace obelisk::detail
+} // namespace talos::detail
 #endif

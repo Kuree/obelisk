@@ -1,4 +1,4 @@
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
+// RUN: talos -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
 // RUN: %t.auto | FileCheck %s
 

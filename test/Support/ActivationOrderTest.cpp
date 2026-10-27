@@ -1,10 +1,10 @@
-#include "obelisk/Runtime/ActivationOrder.h"
+#include "talos/Runtime/ActivationOrder.h"
 #include "gtest/gtest.h"
 
 #include <numeric>
 #include <random>
 
-using obelisk::runtime::ActivationOrder;
+using talos::runtime::ActivationOrder;
 using Edge = std::pair<uint32_t, uint32_t>;
 
 TEST(ActivationOrder, EmptyAndInvalidGraphs) {

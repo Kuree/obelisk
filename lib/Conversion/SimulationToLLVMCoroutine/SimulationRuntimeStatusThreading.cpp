@@ -1,11 +1,11 @@
 //===- SimulationRuntimeStatusThreading.cpp - Thread runtime statuses ---===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -18,10 +18,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMTHREADRUNTIMESTATUSESPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMTHREADRUNTIMESTATUSESPASS
+#include "talos/Conversion/Passes.h.inc"
 
 namespace detail {
 
@@ -56,7 +56,7 @@ struct RuntimeStatusInputs {
         // Control lowering has already turned the enqueue into its ABI call.
         if (auto call = dyn_cast<LLVM::CallOp>(operation))
           hasCheck |= call.getCallee() && call.getCallee()->starts_with(
-                                              "obelisk_rt_v1_deferred_enqueue");
+                                              "talos_rt_v1_deferred_enqueue");
         if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
           calls.push_back(call);
           if (sim::SimFuncOp callee =
@@ -257,9 +257,9 @@ LogicalResult threadRuntimeStatuses(ModuleOp module, AnalysisManager manager) {
 
 namespace {
 
-class ObeliskSimThreadRuntimeStatusesPass
-    : public impl::ObeliskSimThreadRuntimeStatusesPassBase<
-          ObeliskSimThreadRuntimeStatusesPass> {
+class TalosSimThreadRuntimeStatusesPass
+    : public impl::TalosSimThreadRuntimeStatusesPassBase<
+          TalosSimThreadRuntimeStatusesPass> {
 public:
   void runOnOperation() override {
     if (failed(detail::threadRuntimeStatuses(getOperation(),
@@ -269,4 +269,4 @@ public:
 };
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

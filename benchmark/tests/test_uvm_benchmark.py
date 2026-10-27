@@ -7,7 +7,7 @@ from unittest import mock
 
 
 RUNNER_PATH = Path(__file__).resolve().parents[1] / "uvm" / "run.py"
-SPEC = importlib.util.spec_from_file_location("obelisk_uvm_benchmark", RUNNER_PATH)
+SPEC = importlib.util.spec_from_file_location("talos_uvm_benchmark", RUNNER_PATH)
 assert SPEC is not None and SPEC.loader is not None
 uvm_benchmark = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(uvm_benchmark)

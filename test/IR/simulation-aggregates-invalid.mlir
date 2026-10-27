@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 // expected-error @+1 {{aggregate field ordinals must be dense and ordered}}
 func.func private @bad_ordinal(%arg: !simulation.unpacked_struct<[#simulation.field<name = "a", type = i8, ordinal = 1, packedOffset = 0>]>)

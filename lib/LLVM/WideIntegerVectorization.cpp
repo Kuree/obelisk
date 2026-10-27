@@ -1,6 +1,6 @@
 //===- WideIntegerVectorization.cpp - Bound wide shift vectorization ------===//
 
-#include "obelisk/LLVM/WideIntegerVectorization.h"
+#include "talos/LLVM/WideIntegerVectorization.h"
 
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Constants.h"
@@ -9,7 +9,7 @@
 
 using namespace llvm;
 
-namespace obelisk {
+namespace talos {
 
 PreservedAnalyses LimitWideIntegerVectorizationPass::run(
     Function &function, FunctionAnalysisManager &analyses) {
@@ -36,4 +36,4 @@ PreservedAnalyses LimitWideIntegerVectorizationPass::run(
   return PreservedAnalyses::all();
 }
 
-} // namespace obelisk
+} // namespace talos

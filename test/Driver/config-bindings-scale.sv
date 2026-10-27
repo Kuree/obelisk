@@ -1,8 +1,8 @@
 // Instance arrays exercise per-element provenance without expanding source.
 // The same fixture is used for compile/report scaling measurements.
-// RUN: obelisk -emit-bindings --top=scale -D COUNT=4 %s \
+// RUN: talos -emit-bindings --top=scale -D COUNT=4 %s \
 // RUN:   | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk -emit-bindings --top=scale -D COUNT=12 %s \
+// RUN: talos -emit-bindings --top=scale -D COUNT=12 %s \
 // RUN:   | FileCheck %s --check-prefix=ORDER
 
 `ifndef COUNT

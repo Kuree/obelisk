@@ -1,4 +1,4 @@
-# Verify that the selected slang release's AST dispatch surface matches Obelisk's
+# Verify that the selected slang release's AST dispatch surface matches Talos's
 # checked-in exhaustive inventory. This deliberately parses ASTVisitor.h rather
 # than a documentation list: adding, removing, or renaming an upstream concrete
 # dispatch case must stop the build.
@@ -6,13 +6,13 @@
 if(NOT DEFINED SLANG_AST_VISITOR OR NOT EXISTS "${SLANG_AST_VISITOR}")
   message(FATAL_ERROR "SLANG_AST_VISITOR does not name ASTVisitor.h")
 endif()
-if(NOT DEFINED OBELISK_AST_INVENTORY OR
-   NOT EXISTS "${OBELISK_AST_INVENTORY}")
-  message(FATAL_ERROR "OBELISK_AST_INVENTORY does not name SlangASTNodes.def")
+if(NOT DEFINED TALOS_AST_INVENTORY OR
+   NOT EXISTS "${TALOS_AST_INVENTORY}")
+  message(FATAL_ERROR "TALOS_AST_INVENTORY does not name SlangASTNodes.def")
 endif()
 
 file(READ "${SLANG_AST_VISITOR}" visitor)
-file(READ "${OBELISK_AST_INVENTORY}" inventory)
+file(READ "${TALOS_AST_INVENTORY}" inventory)
 
 # Invalid symbol, statement, and expression sentinels are diagnosed before
 # emission and have explicit importer overloads that fail. They are not
@@ -74,16 +74,16 @@ if(NOT visitor_count EQUAL 220)
   message(FATAL_ERROR
     "Selected slang AST inventory changed: expected 220 semantic cases but "
     "ASTVisitor.h contains ${visitor_count}. Update the Slang dialect, "
-    "importer overloads, Obelisk operations, conversion patterns, and tests.")
+    "importer overloads, Talos operations, conversion patterns, and tests.")
 endif()
 if(NOT inventory_count EQUAL 220)
   message(FATAL_ERROR
-    "Obelisk SlangASTNodes.def must contain 220 entries; found "
+    "Talos SlangASTNodes.def must contain 220 entries; found "
     "${inventory_count}")
 endif()
 if(NOT visitor_cases STREQUAL inventory_cases)
   message(FATAL_ERROR
-    "Slang AST dispatch and Obelisk inventory differ.\n"
+    "Slang AST dispatch and Talos inventory differ.\n"
     "slang:   ${visitor_cases}\n"
-    "obelisk: ${inventory_cases}")
+    "talos: ${inventory_cases}")
 endif()

@@ -1,9 +1,9 @@
 # RUN: %coverage-fixture %t.duplicate.obcov 30 duplicate-run 1 cross-duplicate-instance 1 1 0 shared
-# RUN: obelisk-cov report --format=json %t.duplicate.obcov | FileCheck %s --check-prefix=DUPLICATE
+# RUN: talos-cov report --format=json %t.duplicate.obcov | FileCheck %s --check-prefix=DUPLICATE
 # RUN: %coverage-fixture %t.wide.obcov 11 cross-wide 1 cross-wide
-# RUN: obelisk-cov report --format=json %t.wide.obcov | FileCheck %s --check-prefix=WIDE
+# RUN: talos-cov report --format=json %t.wide.obcov | FileCheck %s --check-prefix=WIDE
 # RUN: %coverage-fixture %t.deep.obcov 17 cross-deep 1 cross-deep 1 1
-# RUN: obelisk-cov report --format=text %t.deep.obcov | FileCheck %s --check-prefix=DEEP
+# RUN: talos-cov report --format=text %t.deep.obcov | FileCheck %s --check-prefix=DEEP
 
 # One run that appears as two instances of the same group adds its counters
 # per instance: a bin already at the 64-bit maximum saturates and carries the

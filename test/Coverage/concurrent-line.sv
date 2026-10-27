@@ -20,9 +20,9 @@ endmodule
 // (IEEE 1800-2023 16.14.3): the cover on the clock that never ticks is a line
 // point that stays at zero and the one on the ticking clock counts 3 attempts.
 // A restrict statement (16.14.4) is not a coverable line.
-// RUN: %obelisk --std=1800-2023 -O0 --native-scheduler=generic --coverage=line %s -o %t
+// RUN: %talos --std=1800-2023 -O0 --native-scheduler=generic --coverage=line %s -o %t
 // RUN: %t --coverage-output=%t.obcov
-// RUN: obelisk-cov report --format=lcov %t.obcov | FileCheck %s
+// RUN: talos-cov report --format=lcov %t.obcov | FileCheck %s
 
 // CHECK: DA:5,0
 // CHECK: DA:6,3

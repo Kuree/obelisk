@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -canonicalize | FileCheck %s
+// RUN: talos-opt %s -canonicalize | FileCheck %s
 
 // IEEE 1800-2023 11.4.6, 11.4.10, 11.4.12, and 11.5.1.
 module {

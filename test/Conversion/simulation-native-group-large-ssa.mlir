@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-replicate,simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-replicate,simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
-// test-obelisk-replicate expands link# into the 69 links that continue step1
+// test-talos-replicate expands link# into the 69 links that continue step1
 // into a 70-member chain (storage 1 ... 70); the checker observes the first.
 
-// PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
+// PLAN-LABEL: llvm.func @__talos_eval_ranked_group_0(
 // PLAN-SAME: schedule.eval.ranked_members = array<i32: 0, 1, {{.*}}62, 63, 64, 65, 66, 67, 68, 69>
-// PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
+// PLAN-LABEL: llvm.func @__talos_eval_ranked_group_0.fallback(
 // PLAN-SAME: schedule.eval.ssa_ready_words = 3 : i64
 
 !ref = !simulation.ref<i1>

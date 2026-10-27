@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PULSE < %t.llvm.mlir
 
 // step1 publishes 255 and then restores the old value before step2 runs.
 // The restore ORs its change bits into the pending activation set and the
 // ingress update ORs that set in, so the pulse's activation is never cleared.
-// PULSE-LABEL: llvm.func @step1.__obelisk_eval_body_0(
+// PULSE-LABEL: llvm.func @step1.__talos_eval_body_0(
 // PULSE: %[[PULSE_READY:.*]] = llvm.select %{{.*}}, %{{.*}}, %{{.*}} : i1, i64
 // PULSE: llvm.br ^[[JOIN:bb[0-9]+]](%{{.*}}, %[[PULSE_READY]] : i64, i64)
 // PULSE: ^[[JOIN]](%{{.*}}: i64, %[[PENDING:.*]]: i64):
@@ -15,10 +15,10 @@
 // PULSE: %[[KEPT:.*]] = llvm.and %[[INGRESS]], %{{.*}} : i64
 // PULSE: %[[NEXT:.*]] = llvm.or %[[KEPT]], %{{.*}} : i64
 // PULSE: llvm.store %[[NEXT]], %{{.*}} : i64, !llvm.ptr
-// PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
+// PLAN-LABEL: llvm.func @__talos_eval_ranked_group_0(
 // PLAN-SAME: schedule.eval.ranked_members = array<i32: 1, 2, 3, 4>
-// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// PLAN: llvm.call @__obelisk_eval_ranked_group_0
+// PLAN-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// PLAN: llvm.call @__talos_eval_ranked_group_0
 
 !ref = !simulation.ref<i1>
 !vref = !simulation.ref<i8>

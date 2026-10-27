@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
 
 // LRM 7.4.5: "Writing to an array with an invalid index shall perform no
 // operation". Static views require a known in-range source index. Their

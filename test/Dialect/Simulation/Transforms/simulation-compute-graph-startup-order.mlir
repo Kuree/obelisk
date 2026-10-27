@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-plan-static-superstep))' | FileCheck %s --check-prefix=SUPERSTEP
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{workers=2},obelisk-sim-verify-compute-graph,obelisk-sim-plan-static-superstep{missed-remarks=true}))' > %t.workers 2> %t.workers-remarks
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-plan-static-superstep))' | FileCheck %s --check-prefix=SUPERSTEP
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{workers=2},talos-sim-verify-compute-graph,talos-sim-plan-static-superstep{missed-remarks=true}))' > %t.workers 2> %t.workers-remarks
 // RUN: FileCheck %s --check-prefix=NO-SUPERSTEP < %t.workers
 // RUN: FileCheck %s --check-prefix=WORKER-REMARK < %t.workers-remarks
 

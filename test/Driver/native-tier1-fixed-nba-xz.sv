@@ -1,6 +1,6 @@
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.diag
+// RUN: talos -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: talos -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.diag
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.eval.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.eval.out
@@ -43,7 +43,7 @@ endmodule
 // OUTPUT-NEXT: xz 6 xx
 // OUTPUT-NEXT: xz 7 1f
 // OUTPUT-NEXT: xz 8 20
-// DIAG: obelisk-signal-diagnostics
+// DIAG: talos-signal-diagnostics
 // DIAG-SAME: aot_fallbacks=0
 // DIAG-SAME: aot_checkpoints=0
 // DIAG-SAME: eval_dispatches=0

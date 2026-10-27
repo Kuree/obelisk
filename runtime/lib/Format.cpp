@@ -1,4 +1,4 @@
-//===- Format.cpp - Obelisk runtime formatting and display ----------------===//
+//===- Format.cpp - Talos runtime formatting and display ----------------===//
 
 #include "DesignBytecodeNets.h"
 #include "RuntimeInternal.h"
@@ -54,86 +54,86 @@ uint64_t finalWordMask(uint64_t width) {
   return lowMask(static_cast<unsigned>(width % 64));
 }
 
-bool getLogicView(const obelisk_rt_arg_v1 &argument, LogicView &view) {
-  if (argument.kind == OBELISK_RT_ARG_LOGIC) {
+bool getLogicView(const talos_rt_arg_v1 &argument, LogicView &view) {
+  if (argument.kind == TALOS_RT_ARG_LOGIC) {
     if (argument.size == 0 ||
         argument.size > std::numeric_limits<uint32_t>::max() || !argument.data)
       return false;
-    view = {argument.size, (argument.flags & OBELISK_RT_ARG_SIGNED) != 0,
+    view = {argument.size, (argument.flags & TALOS_RT_ARG_SIGNED) != 0,
             static_cast<const uint64_t *>(argument.data), argument.unknown};
     return true;
   }
-  if (argument.kind == OBELISK_RT_ARG_TIME) {
+  if (argument.kind == TALOS_RT_ARG_TIME) {
     if (!argument.data)
       return false;
     view = {64, false, static_cast<const uint64_t *>(argument.data), nullptr};
     return true;
   }
-  if (argument.kind == OBELISK_RT_ARG_ENUM) {
+  if (argument.kind == TALOS_RT_ARG_ENUM) {
     if (argument.size != 0 || argument.unknown || !argument.data ||
-        (argument.flags & ~OBELISK_RT_ARG_SIGNED) != 0)
+        (argument.flags & ~TALOS_RT_ARG_SIGNED) != 0)
       return false;
     const auto *enumeration =
-        static_cast<const obelisk_rt_enum_arg_v1 *>(argument.data);
+        static_cast<const talos_rt_enum_arg_v1 *>(argument.data);
     if (enumeration->width == 0 ||
         enumeration->width > std::numeric_limits<uint32_t>::max() ||
         !enumeration->value || enumeration->reserved != 0 ||
         enumeration->flags != argument.flags)
       return false;
     view = {enumeration->width,
-            (enumeration->flags & OBELISK_RT_ARG_SIGNED) != 0,
+            (enumeration->flags & TALOS_RT_ARG_SIGNED) != 0,
             enumeration->value, enumeration->unknown};
     return true;
   }
-  if (argument.kind == OBELISK_RT_ARG_NET) {
+  if (argument.kind == TALOS_RT_ARG_NET) {
     if (argument.size != 0 || argument.unknown || !argument.data ||
-        (argument.flags & ~OBELISK_RT_ARG_SIGNED) != 0)
+        (argument.flags & ~TALOS_RT_ARG_SIGNED) != 0)
       return false;
-    const auto *net = static_cast<const obelisk_rt_net_arg_v1 *>(argument.data);
+    const auto *net = static_cast<const talos_rt_net_arg_v1 *>(argument.data);
     if (net->width == 0 || net->width > std::numeric_limits<uint32_t>::max() ||
         !net->value || net->native_state > 1 || net->flags != argument.flags)
       return false;
-    view = {net->width, (net->flags & OBELISK_RT_ARG_SIGNED) != 0, net->value,
+    view = {net->width, (net->flags & TALOS_RT_ARG_SIGNED) != 0, net->value,
             net->unknown};
     return true;
   }
   return false;
 }
 
-bool getEnumName(const obelisk_rt_arg_v1 &argument, char scratch[8],
+bool getEnumName(const talos_rt_arg_v1 &argument, char scratch[8],
                  const char *&data, uint64_t &size) {
   data = "";
   size = 0;
   LogicView ignored;
-  if (argument.kind != OBELISK_RT_ARG_ENUM || !getLogicView(argument, ignored))
+  if (argument.kind != TALOS_RT_ARG_ENUM || !getLogicView(argument, ignored))
     return false;
   const auto *enumeration =
-      static_cast<const obelisk_rt_enum_arg_v1 *>(argument.data);
-  return obelisk_rt_v1_string_view(enumeration->name, scratch, &data, &size) ==
-         OBELISK_RT_OK;
+      static_cast<const talos_rt_enum_arg_v1 *>(argument.data);
+  return talos_rt_v1_string_view(enumeration->name, scratch, &data, &size) ==
+         TALOS_RT_OK;
 }
 
-bool getStringBytes(const obelisk_rt_arg_v1 &argument, char scratch[8],
+bool getStringBytes(const talos_rt_arg_v1 &argument, char scratch[8],
                     const char *&data, uint64_t &size) {
   data = "";
   size = 0;
-  if (argument.kind == OBELISK_RT_ARG_STRING) {
+  if (argument.kind == TALOS_RT_ARG_STRING) {
     if (!validBytes(argument.data, argument.size))
       return false;
     data = argument.data ? static_cast<const char *>(argument.data) : "";
     size = argument.size;
     return true;
   }
-  if (argument.kind != OBELISK_RT_ARG_MANAGED_STRING || argument.size != 0 ||
+  if (argument.kind != TALOS_RT_ARG_MANAGED_STRING || argument.size != 0 ||
       !argument.data)
     return false;
-  obelisk_rt_string_v1 string = 0;
+  talos_rt_string_v1 string = 0;
   std::memcpy(&string, argument.data, sizeof(string));
-  return obelisk_rt_v1_string_view(string, scratch, &data, &size) ==
-         OBELISK_RT_OK;
+  return talos_rt_v1_string_view(string, scratch, &data, &size) ==
+         TALOS_RT_OK;
 }
 
-bool getStringLogicView(const obelisk_rt_arg_v1 &argument,
+bool getStringLogicView(const talos_rt_arg_v1 &argument,
                         std::vector<uint64_t> &storage, LogicView &view) {
   char scratch[8];
   const char *bytes = nullptr;
@@ -372,7 +372,7 @@ uint32_t defaultDecimalWidth(const LogicView &view) {
       std::min<uint64_t>(width, std::numeric_limits<uint32_t>::max()));
 }
 
-obelisk_rt_status formatDecimal(std::string &output, const LogicView &view,
+talos_rt_status formatDecimal(std::string &output, const LogicView &view,
                                 const FormatOptions &options,
                                 uint64_t multiplier = 1) {
   std::string field;
@@ -382,10 +382,10 @@ obelisk_rt_status formatDecimal(std::string &output, const LogicView &view,
     field = knownDecimal(view, multiplier);
   uint32_t width = options.width.value_or(defaultDecimalWidth(view));
   applyPadding(output, std::move(field), width, options.left, ' ');
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status formatInteger(std::string &output, const LogicView &view,
+talos_rt_status formatInteger(std::string &output, const LogicView &view,
                                 char specifier, const FormatOptions &options) {
   char spec =
       static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
@@ -399,7 +399,7 @@ obelisk_rt_status formatInteger(std::string &output, const LogicView &view,
       options.width.value_or(static_cast<uint32_t>(std::min<uint64_t>(
           defaultWidth64, std::numeric_limits<uint32_t>::max())));
   applyPadding(output, std::move(field), width, options.left, '0');
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 std::string logicToString(const LogicView &view, bool trimLeadingNulls) {
@@ -428,14 +428,14 @@ std::string logicToString(const LogicView &view, bool trimLeadingNulls) {
   return result;
 }
 
-obelisk_rt_status formatStringValue(std::string &output, std::string field,
+talos_rt_status formatStringValue(std::string &output, std::string field,
                                     const FormatOptions &options) {
   uint32_t width = options.width.value_or(0);
   applyPadding(output, std::move(field), width, options.left, ' ');
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status formatFloat(std::string &output, double value, char specifier,
+talos_rt_status formatFloat(std::string &output, double value, char specifier,
                               const FormatOptions &options) {
   std::string format = "%";
   if (options.left)
@@ -451,16 +451,16 @@ obelisk_rt_status formatFloat(std::string &output, double value, char specifier,
   format.push_back(specifier);
   int required = std::snprintf(nullptr, 0, format.c_str(), value);
   if (required < 0)
-    return OBELISK_RT_FORMAT_ERROR;
+    return TALOS_RT_FORMAT_ERROR;
   size_t offset = output.size();
   output.resize(offset + static_cast<size_t>(required) + 1);
   int written =
       std::snprintf(output.data() + offset, static_cast<size_t>(required) + 1,
                     format.c_str(), value);
   if (written != required)
-    return OBELISK_RT_FORMAT_ERROR;
+    return TALOS_RT_FORMAT_ERROR;
   output.pop_back();
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 double logicToDouble(const LogicView &view) {
@@ -484,11 +484,11 @@ double logicToDouble(const LogicView &view) {
   return static_cast<double>(negative ? -value : value);
 }
 
-obelisk_rt_status appendRaw(std::string &output, const LogicView &view,
+talos_rt_status appendRaw(std::string &output, const LogicView &view,
                             bool fourState) {
   uint64_t chunks = (view.width + 31) / 32;
   if (chunks > std::numeric_limits<size_t>::max() / (fourState ? 8 : 4))
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
   for (uint64_t chunk = 0; chunk < chunks; ++chunk) {
     uint32_t value = 0;
     uint32_t unknown = 0;
@@ -506,7 +506,7 @@ obelisk_rt_status appendRaw(std::string &output, const LogicView &view,
     if (fourState)
       output.append(reinterpret_cast<const char *>(&unknown), sizeof(unknown));
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 } // namespace
@@ -516,7 +516,7 @@ obelisk_rt_status appendRaw(std::string &output, const LogicView &view,
 // and 21.2.1 makes that the default decimal format of $display -- unpadded
 // here, matching the compact spelling the clause's own examples use for
 // pattern elements.
-std::string obelisk_rt_pattern_integer_text(uint64_t width, bool isSigned,
+std::string talos_rt_pattern_integer_text(uint64_t width, bool isSigned,
                                             const uint64_t *value,
                                             const uint64_t *unknown) {
   LogicView view;
@@ -531,10 +531,10 @@ std::string obelisk_rt_pattern_integer_text(uint64_t width, bool isSigned,
 
 namespace {
 
-std::string scalarPattern(const obelisk_rt_arg_v1 &argument) {
+std::string scalarPattern(const talos_rt_arg_v1 &argument) {
   LogicView view;
   if (getLogicView(argument, view))
-    return obelisk_rt_pattern_integer_text(view.width, view.isSigned,
+    return talos_rt_pattern_integer_text(view.width, view.isSigned,
                                            view.value, view.unknown);
   char scratch[8];
   const char *bytes = nullptr;
@@ -542,7 +542,7 @@ std::string scalarPattern(const obelisk_rt_arg_v1 &argument) {
   if (getStringBytes(argument, scratch, bytes, size) &&
       size <= std::numeric_limits<size_t>::max())
     return std::string(bytes, static_cast<size_t>(size));
-  if (argument.kind == OBELISK_RT_ARG_REAL && argument.data) {
+  if (argument.kind == TALOS_RT_ARG_REAL && argument.data) {
     char buffer[64];
     int length = std::snprintf(buffer, sizeof(buffer), "%g",
                                *static_cast<const double *>(argument.data));
@@ -552,7 +552,7 @@ std::string scalarPattern(const obelisk_rt_arg_v1 &argument) {
   return {};
 }
 
-TimeOverride snapshotTimeFormat(obelisk_rt_context *context) {
+TimeOverride snapshotTimeFormat(talos_rt_context *context) {
   TimeOverride result;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   if (!context->timeFormat.active)
@@ -568,7 +568,7 @@ TimeOverride snapshotTimeFormat(obelisk_rt_context *context) {
 // Render a time in the units $timeformat selected. `ticks` counts design
 // precision units, whose own magnitude comes from the format environment, so
 // the two exponents give the factor between them.
-obelisk_rt_status formatOverriddenTime(std::string &output, long double ticks,
+talos_rt_status formatOverriddenTime(std::string &output, long double ticks,
                                        int32_t precisionExponent,
                                        const TimeOverride &timeFormat,
                                        uint32_t width) {
@@ -580,51 +580,51 @@ obelisk_rt_status formatOverriddenTime(std::string &output, long double ticks,
       std::snprintf(buffer, sizeof(buffer), "%.*Lf",
                     static_cast<int>(timeFormat.fractionDigits), scaled);
   if (length < 0 || static_cast<size_t>(length) >= sizeof(buffer))
-    return OBELISK_RT_ARGUMENT_MISMATCH;
+    return TALOS_RT_ARGUMENT_MISMATCH;
   std::string rendered(buffer, static_cast<size_t>(length));
   rendered += timeFormat.suffix;
   // IEEE gives the minimum width for the whole field, suffix included.
   if (rendered.size() < width)
     output.append(width - rendered.size(), ' ');
   output += rendered;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status getManagedContainer(const obelisk_rt_arg_v1 &argument,
-                                      obelisk_rt_object_v1 *&container) {
+talos_rt_status getManagedContainer(const talos_rt_arg_v1 &argument,
+                                      talos_rt_object_v1 *&container) {
   if (argument.size != 0 || !argument.data || argument.unknown)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_managed_word_v1 word = 0;
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_managed_word_v1 word = 0;
   std::memcpy(&word, argument.data, sizeof(word));
-  container = obelisk_rt_object_from_managed_word(word);
-  if (word != obelisk_rt_managed_word_from_object(container))
-    return OBELISK_RT_INVALID_HANDLE;
-  return OBELISK_RT_OK;
+  container = talos_rt_object_from_managed_word(word);
+  if (word != talos_rt_managed_word_from_object(container))
+    return TALOS_RT_INVALID_HANDLE;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status formatArgument(obelisk_rt_context *context,
+talos_rt_status formatArgument(talos_rt_context *context,
                                  std::string &output,
-                                 const obelisk_rt_arg_v1 &argument,
+                                 const talos_rt_arg_v1 &argument,
                                  char specifier, const FormatOptions &options,
-                                 const obelisk_rt_format_env_v1 *environment,
+                                 const talos_rt_format_env_v1 *environment,
                                  const TimeOverride &timeFormat) {
-  if ((argument.flags & OBELISK_RT_ARG_REAL_TIME) != 0 &&
-      argument.kind != OBELISK_RT_ARG_REAL)
-    return OBELISK_RT_INVALID_ARGUMENT;
+  if ((argument.flags & TALOS_RT_ARG_REAL_TIME) != 0 &&
+      argument.kind != TALOS_RT_ARG_REAL)
+    return TALOS_RT_INVALID_ARGUMENT;
   char spec =
       static_cast<char>(std::tolower(static_cast<unsigned char>(specifier)));
-  if (argument.kind == OBELISK_RT_ARG_RAW_AGGREGATE) {
+  if (argument.kind == TALOS_RT_ARG_RAW_AGGREGATE) {
     if (argument.flags != 0 || argument.size != 0 || argument.unknown ||
         !argument.data)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     const auto *aggregate =
-        static_cast<const obelisk_rt_raw_aggregate_arg_v1 *>(argument.data);
-    const obelisk_rt_string_v1 *selected = &aggregate->pattern;
+        static_cast<const talos_rt_raw_aggregate_arg_v1 *>(argument.data);
+    const talos_rt_string_v1 *selected = &aggregate->pattern;
     if (spec == 'u')
       selected = &aggregate->two_state;
     else if (spec == 'z')
       selected = &aggregate->four_state;
-    obelisk_rt_arg_v1 stringArgument{OBELISK_RT_ARG_MANAGED_STRING, 0, 0,
+    talos_rt_arg_v1 stringArgument{TALOS_RT_ARG_MANAGED_STRING, 0, 0,
                                      selected, nullptr};
     // The compiler has already emitted each scalar raw record independently;
     // copying the selected managed string preserves that padding and keeps a
@@ -636,9 +636,9 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
       uint64_t size = 0;
       if (!getStringBytes(stringArgument, scratch, bytes, size) ||
           size > std::numeric_limits<size_t>::max())
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       output.append(bytes, static_cast<size_t>(size));
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     return formatArgument(context, output, stringArgument, specifier, options,
                           environment, timeFormat);
@@ -653,25 +653,25 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
   case 'x':
     if (!getLogicView(argument, view) &&
         !getStringLogicView(argument, stringLogic, view)) {
-      if (argument.kind != OBELISK_RT_ARG_REAL || !argument.data)
-        return OBELISK_RT_ARGUMENT_MISMATCH;
+      if (argument.kind != TALOS_RT_ARG_REAL || !argument.data)
+        return TALOS_RT_ARGUMENT_MISMATCH;
       double real = *static_cast<const double *>(argument.data);
       // A rounded infinity or NaN has no integral rendering. Name it instead
       // of failing the format, which would discard the whole output.
       if (std::isnan(real)) {
         output += "nan";
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       if (std::isinf(real)) {
         output += real < 0 ? "-inf" : "inf";
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       long double rounded = std::round(static_cast<long double>(real));
       if (rounded <
               static_cast<long double>(std::numeric_limits<int64_t>::min()) ||
           rounded >
               static_cast<long double>(std::numeric_limits<int64_t>::max()))
-        return OBELISK_RT_ARGUMENT_MISMATCH;
+        return TALOS_RT_ARGUMENT_MISMATCH;
       uint64_t integer = static_cast<uint64_t>(static_cast<int64_t>(rounded));
       view = LogicView{64, true, &integer, nullptr};
       // IEEE 1800-2017 21.2.1.3 takes the default field width from the size
@@ -686,18 +686,18 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
     return formatInteger(output, view, spec, options);
   case 'v': {
     uint16_t strengths = 0;
-    if (argument.kind == OBELISK_RT_ARG_NET) {
+    if (argument.kind == TALOS_RT_ARG_NET) {
       if (!context || !getLogicView(argument, view) || view.width != 1)
-        return OBELISK_RT_ARGUMENT_MISMATCH;
+        return TALOS_RT_ARGUMENT_MISMATCH;
       const auto *net =
-          static_cast<const obelisk_rt_net_arg_v1 *>(argument.data);
-      obelisk_rt_status status = obelisk_rt_design_net_strength(
+          static_cast<const talos_rt_net_arg_v1 *>(argument.data);
+      talos_rt_status status = talos_rt_design_net_strength(
           context, net->handle, &strengths, net->native_state != 0);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
     } else {
       if (!getLogicView(argument, view) || view.width != 1)
-        return OBELISK_RT_ARGUMENT_MISMATCH;
+        return TALOS_RT_ARGUMENT_MISMATCH;
       if (!unknownBit(view, 0))
         strengths = uint16_t{1} << (valueBit(view, 0) ? 7 + 6 : 7 - 6);
       else if (valueBit(view, 0))
@@ -705,36 +705,36 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
       else
         strengths = static_cast<uint16_t>(((uint16_t{1} << 13) - 1) << 1);
     }
-    std::string rendered = obelisk_rt_format_strength_range(strengths);
+    std::string rendered = talos_rt_format_strength_range(strengths);
     if (rendered.empty())
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     output += rendered;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   case 'c': {
     if (!getLogicView(argument, view) &&
         !getStringLogicView(argument, stringLogic, view))
-      return OBELISK_RT_ARGUMENT_MISMATCH;
+      return TALOS_RT_ARGUMENT_MISMATCH;
     uint8_t character = 0;
     for (unsigned bit = 0; bit < 8 && bit < view.width; ++bit)
       if (!unknownBit(view, bit) && valueBit(view, bit))
         character |= static_cast<uint8_t>(1u << bit);
     output.push_back(static_cast<char>(character));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   case 's':
-    if (argument.kind == OBELISK_RT_ARG_ENUM) {
+    if (argument.kind == TALOS_RT_ARG_ENUM) {
       char scratch[8];
       const char *bytes = nullptr;
       uint64_t size = 0;
       if (!getEnumName(argument, scratch, bytes, size) ||
           size > std::numeric_limits<size_t>::max())
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       if (size != 0)
         return formatStringValue(
             output, std::string(bytes, static_cast<size_t>(size)), options);
       if (!getLogicView(argument, view))
-        return OBELISK_RT_ARGUMENT_MISMATCH;
+        return TALOS_RT_ARGUMENT_MISMATCH;
       std::string numeric;
       if (std::optional<char> symbol = decimalUnknown(view))
         numeric.assign(1, *symbol);
@@ -744,26 +744,26 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
     }
     // IEEE 1800-2023 21.2.1.7 also takes an unpacked array of byte, such as
     // a dynamic array or queue.
-    if (argument.kind == OBELISK_RT_ARG_MANAGED_CONTAINER) {
-      obelisk_rt_object_v1 *container = nullptr;
-      if (obelisk_rt_status status = getManagedContainer(argument, container);
-          status != OBELISK_RT_OK)
+    if (argument.kind == TALOS_RT_ARG_MANAGED_CONTAINER) {
+      talos_rt_object_v1 *container = nullptr;
+      if (talos_rt_status status = getManagedContainer(argument, container);
+          status != TALOS_RT_OK)
         return status;
       std::string text;
-      if (obelisk_rt_status status =
-              obelisk_rt_container_byte_text(container, text);
-          status != OBELISK_RT_OK)
+      if (talos_rt_status status =
+              talos_rt_container_byte_text(container, text);
+          status != TALOS_RT_OK)
         return status;
       return formatStringValue(output, std::move(text), options);
     }
-    if (argument.kind == OBELISK_RT_ARG_STRING ||
-        argument.kind == OBELISK_RT_ARG_MANAGED_STRING) {
+    if (argument.kind == TALOS_RT_ARG_STRING ||
+        argument.kind == TALOS_RT_ARG_MANAGED_STRING) {
       char scratch[8];
       const char *bytes = nullptr;
       uint64_t size = 0;
       if (!getStringBytes(argument, scratch, bytes, size) ||
           size > std::numeric_limits<size_t>::max())
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       std::string_view source(bytes, static_cast<size_t>(size));
       if (options.zero) {
         size_t first = source.find_first_not_of('\0');
@@ -775,19 +775,19 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
       return formatStringValue(output, std::move(field), options);
     }
     if (!getLogicView(argument, view))
-      return OBELISK_RT_ARGUMENT_MISMATCH;
+      return TALOS_RT_ARGUMENT_MISMATCH;
     return formatStringValue(output, logicToString(view, options.zero),
                              options);
   case 'e':
   case 'f':
   case 'g': {
     double value;
-    if (argument.kind == OBELISK_RT_ARG_REAL && argument.data)
+    if (argument.kind == TALOS_RT_ARG_REAL && argument.data)
       value = *static_cast<const double *>(argument.data);
     else if (getLogicView(argument, view))
       value = logicToDouble(view);
     else
-      return OBELISK_RT_ARGUMENT_MISMATCH;
+      return TALOS_RT_ARGUMENT_MISMATCH;
     return formatFloat(output, value, specifier, options);
   }
   case 't': {
@@ -803,7 +803,7 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
     // rendering, so those keep the default path's x-fill.
     if (timeFormat.active) {
       std::optional<long double> ticks;
-      if (argument.kind == OBELISK_RT_ARG_REAL && argument.data) {
+      if (argument.kind == TALOS_RT_ARG_REAL && argument.data) {
         double value = *static_cast<const double *>(argument.data);
         if (std::isfinite(value))
           ticks = static_cast<long double>(value) *
@@ -817,24 +817,24 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
             output, *ticks, environment ? environment->time_precision : 0,
             timeFormat, options.width.value_or(timeFormat.width));
     }
-    obelisk_rt_status status;
-    if (argument.kind == OBELISK_RT_ARG_REAL && argument.data) {
+    talos_rt_status status;
+    if (argument.kind == TALOS_RT_ARG_REAL && argument.data) {
       double value = *static_cast<const double *>(argument.data);
       long double scaled = static_cast<long double>(value) *
                            static_cast<long double>(multiplier);
       if (!std::isfinite(value) || scaled < 0 ||
           scaled >
               static_cast<long double>(std::numeric_limits<uint64_t>::max()))
-        return OBELISK_RT_ARGUMENT_MISMATCH;
+        return TALOS_RT_ARGUMENT_MISMATCH;
       uint64_t rounded = static_cast<uint64_t>(std::round(scaled));
       LogicView realTime{64, false, &rounded, nullptr};
       status = formatDecimal(output, realTime, timeOptions);
     } else {
       if (!getLogicView(argument, view))
-        return OBELISK_RT_ARGUMENT_MISMATCH;
+        return TALOS_RT_ARGUMENT_MISMATCH;
       status = formatDecimal(output, view, timeOptions, multiplier);
     }
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     if (environment &&
         validBytes(environment->time_suffix, environment->time_suffix_size) &&
@@ -842,62 +842,62 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
       output.append(environment->time_suffix,
                     static_cast<size_t>(environment->time_suffix_size));
     else if (environment && environment->time_suffix_size != 0)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    return OBELISK_RT_OK;
+      return TALOS_RT_INVALID_ARGUMENT;
+    return TALOS_RT_OK;
   }
   case 'u':
   case 'z':
     if (!getLogicView(argument, view))
-      return OBELISK_RT_ARGUMENT_MISMATCH;
+      return TALOS_RT_ARGUMENT_MISMATCH;
     return appendRaw(output, view, spec == 'z');
   case 'p': {
-    if (argument.kind == OBELISK_RT_ARG_ENUM) {
+    if (argument.kind == TALOS_RT_ARG_ENUM) {
       char scratch[8];
       const char *bytes = nullptr;
       uint64_t size = 0;
       if (!getEnumName(argument, scratch, bytes, size) ||
           size > std::numeric_limits<size_t>::max())
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       if (size != 0)
         return formatStringValue(
             output, std::string(bytes, static_cast<size_t>(size)), options);
     }
-    if (argument.kind == OBELISK_RT_ARG_MANAGED_CONTAINER) {
-      obelisk_rt_object_v1 *container = nullptr;
-      if (obelisk_rt_status status = getManagedContainer(argument, container);
-          status != OBELISK_RT_OK)
+    if (argument.kind == TALOS_RT_ARG_MANAGED_CONTAINER) {
+      talos_rt_object_v1 *container = nullptr;
+      if (talos_rt_status status = getManagedContainer(argument, container);
+          status != TALOS_RT_OK)
         return status;
       std::string value;
-      obelisk_rt_status status =
-          obelisk_rt_container_pattern(container, value, 0);
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status =
+          talos_rt_container_pattern(container, value, 0);
+      if (status != TALOS_RT_OK)
         return status;
       return formatStringValue(output, std::move(value), options);
     }
-    if (argument.kind == OBELISK_RT_ARG_MANAGED_OBJECT) {
+    if (argument.kind == TALOS_RT_ARG_MANAGED_OBJECT) {
       if (argument.size != 0 || !argument.data || argument.unknown)
-        return OBELISK_RT_INVALID_ARGUMENT;
-      obelisk_rt_managed_word_v1 word = 0;
+        return TALOS_RT_INVALID_ARGUMENT;
+      talos_rt_managed_word_v1 word = 0;
       std::memcpy(&word, argument.data, sizeof(word));
-      obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word);
-      if (word != obelisk_rt_managed_word_from_object(object))
-        return OBELISK_RT_INVALID_HANDLE;
+      talos_rt_object_v1 *object = talos_rt_object_from_managed_word(word);
+      if (word != talos_rt_managed_word_from_object(object))
+        return TALOS_RT_INVALID_HANDLE;
       if (!object)
         return formatStringValue(output, "null", options);
-      if (obelisk_rt_managed_object_kind(object) != OBELISK_RT_MANAGED_CLASS)
-        return OBELISK_RT_INVALID_HANDLE;
-      uint64_t identity = obelisk_rt_v1_object_id(object);
+      if (talos_rt_managed_object_kind(object) != TALOS_RT_MANAGED_CLASS)
+        return TALOS_RT_INVALID_HANDLE;
+      uint64_t identity = talos_rt_v1_object_id(object);
       if (identity == 0)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       // IEEE 1800-2017 leaves non-null handle rendering implementation
       // dependent. Use the stable object identity, not a host address, so
       // output remains deterministic across native and bytecode execution.
       std::string value = "class@" + std::to_string(identity);
       return formatStringValue(output, std::move(value), options);
     }
-    if (argument.kind == OBELISK_RT_ARG_VIRTUAL_INTERFACE) {
+    if (argument.kind == TALOS_RT_ARG_VIRTUAL_INTERFACE) {
       if (argument.size != 0 || !argument.data || argument.unknown)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       uint64_t identity = 0;
       std::memcpy(&identity, argument.data, sizeof(identity));
       if (identity == 0)
@@ -908,9 +908,9 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
       std::string value = "virtual_interface@" + std::to_string(identity);
       return formatStringValue(output, std::move(value), options);
     }
-    if (argument.kind == OBELISK_RT_ARG_PROCESS) {
+    if (argument.kind == TALOS_RT_ARG_PROCESS) {
       if (argument.size != 0 || !argument.data || argument.unknown)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       uint64_t identity = 0;
       std::memcpy(&identity, argument.data, sizeof(identity));
       if (identity == 0)
@@ -921,13 +921,13 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
       return formatStringValue(output, std::move(value), options);
     }
     std::string value = scalarPattern(argument);
-    if (value.empty() && argument.kind != OBELISK_RT_ARG_STRING &&
-        argument.kind != OBELISK_RT_ARG_MANAGED_STRING)
-      return OBELISK_RT_ARGUMENT_MISMATCH;
+    if (value.empty() && argument.kind != TALOS_RT_ARG_STRING &&
+        argument.kind != TALOS_RT_ARG_MANAGED_STRING)
+      return TALOS_RT_ARGUMENT_MISMATCH;
     return formatStringValue(output, std::move(value), options);
   }
   default:
-    return OBELISK_RT_FORMAT_ERROR;
+    return TALOS_RT_FORMAT_ERROR;
   }
 }
 
@@ -948,11 +948,11 @@ bool parseUnsigned(std::string_view format, size_t &position,
   return true;
 }
 
-obelisk_rt_status
-formatSequence(obelisk_rt_context *context, std::string &output,
-               std::string_view format, const obelisk_rt_arg_v1 *arguments,
+talos_rt_status
+formatSequence(talos_rt_context *context, std::string &output,
+               std::string_view format, const talos_rt_arg_v1 *arguments,
                uint64_t argumentCount, uint64_t &argumentIndex,
-               const obelisk_rt_format_env_v1 *environment,
+               const talos_rt_format_env_v1 *environment,
                const TimeOverride &timeFormat, std::string &error,
                std::vector<std::string> *warnings = nullptr) {
   for (size_t position = 0; position < format.size();) {
@@ -985,7 +985,7 @@ formatSequence(obelisk_rt_context *context, std::string &output,
       uint32_t width;
       if (!parseUnsigned(format, position, width)) {
         error = "format width is too large";
-        return OBELISK_RT_FORMAT_ERROR;
+        return TALOS_RT_FORMAT_ERROR;
       }
       options.width = width;
     }
@@ -996,7 +996,7 @@ formatSequence(obelisk_rt_context *context, std::string &output,
           format[position] <= '9') {
         if (!parseUnsigned(format, position, precision)) {
           error = "format precision is too large";
-          return OBELISK_RT_FORMAT_ERROR;
+          return TALOS_RT_FORMAT_ERROR;
         }
       }
       options.precision = precision;
@@ -1004,7 +1004,7 @@ formatSequence(obelisk_rt_context *context, std::string &output,
     if (position == format.size()) {
       error =
           "missing format specifier at byte " + std::to_string(formatOffset);
-      return OBELISK_RT_FORMAT_ERROR;
+      return TALOS_RT_FORMAT_ERROR;
     }
 
     char specifier = format[position++];
@@ -1020,15 +1020,15 @@ formatSequence(obelisk_rt_context *context, std::string &output,
     if (!recognized) {
       error =
           "unknown format specifier at byte " + std::to_string(formatOffset);
-      return OBELISK_RT_FORMAT_ERROR;
+      return TALOS_RT_FORMAT_ERROR;
     }
     if ((options.width || options.left) && !widthAllowed && spec != 'p') {
       error = "field width is not allowed for this format specifier";
-      return OBELISK_RT_FORMAT_ERROR;
+      return TALOS_RT_FORMAT_ERROR;
     }
     if (options.precision && !floating) {
       error = "precision is only allowed for floating-point formats";
-      return OBELISK_RT_FORMAT_ERROR;
+      return TALOS_RT_FORMAT_ERROR;
     }
     if ((integer || spec == 't') && options.zero) {
       // IEEE 1800-2017 21.2.1.3 spells a field width as a plain decimal
@@ -1054,7 +1054,7 @@ formatSequence(obelisk_rt_context *context, std::string &output,
       if (!validBytes(data, size) ||
           size > std::numeric_limits<size_t>::max()) {
         error = "invalid formatting environment";
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       }
       if (data)
         output.append(data, static_cast<size_t>(size));
@@ -1064,7 +1064,7 @@ formatSequence(obelisk_rt_context *context, std::string &output,
     if (argumentIndex >= argumentCount) {
       if (!warnings) {
         error = "not enough arguments for format string";
-        return OBELISK_RT_ARGUMENT_MISMATCH;
+        return TALOS_RT_ARGUMENT_MISMATCH;
       }
       warnings->push_back("not enough arguments for format string");
       output.push_back('<');
@@ -1072,41 +1072,41 @@ formatSequence(obelisk_rt_context *context, std::string &output,
       output.push_back('>');
       continue;
     }
-    obelisk_rt_status status =
+    talos_rt_status status =
         formatArgument(context, output, arguments[argumentIndex++], specifier,
                        options, environment, timeFormat);
-    if (status != OBELISK_RT_OK) {
-      error = status == OBELISK_RT_ARGUMENT_MISMATCH
+    if (status != TALOS_RT_OK) {
+      error = status == TALOS_RT_ARGUMENT_MISMATCH
                   ? "argument type does not match format specifier"
                   : "failed to format argument";
       return status;
     }
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-char defaultSpecifier(const obelisk_rt_arg_v1 &argument,
-                      obelisk_rt_radix radix) {
+char defaultSpecifier(const talos_rt_arg_v1 &argument,
+                      talos_rt_radix radix) {
   switch (argument.kind) {
-  case OBELISK_RT_ARG_LOGIC:
-  case OBELISK_RT_ARG_TIME:
-  case OBELISK_RT_ARG_ENUM:
-  case OBELISK_RT_ARG_NET:
-    return radix == OBELISK_RT_RADIX_BINARY  ? 'b'
-           : radix == OBELISK_RT_RADIX_OCTAL ? 'o'
-           : radix == OBELISK_RT_RADIX_HEX   ? 'h'
+  case TALOS_RT_ARG_LOGIC:
+  case TALOS_RT_ARG_TIME:
+  case TALOS_RT_ARG_ENUM:
+  case TALOS_RT_ARG_NET:
+    return radix == TALOS_RT_RADIX_BINARY  ? 'b'
+           : radix == TALOS_RT_RADIX_OCTAL ? 'o'
+           : radix == TALOS_RT_RADIX_HEX   ? 'h'
                                              : 'd';
-  case OBELISK_RT_ARG_STRING:
-  case OBELISK_RT_ARG_MANAGED_STRING:
-  case OBELISK_RT_ARG_RAW_AGGREGATE:
+  case TALOS_RT_ARG_STRING:
+  case TALOS_RT_ARG_MANAGED_STRING:
+  case TALOS_RT_ARG_RAW_AGGREGATE:
     return 's';
-  case OBELISK_RT_ARG_REAL:
+  case TALOS_RT_ARG_REAL:
     return 'f';
-  case OBELISK_RT_ARG_MANAGED_CONTAINER:
+  case TALOS_RT_ARG_MANAGED_CONTAINER:
     return 'p';
-  case OBELISK_RT_ARG_MANAGED_OBJECT:
-  case OBELISK_RT_ARG_VIRTUAL_INTERFACE:
-  case OBELISK_RT_ARG_PROCESS:
+  case TALOS_RT_ARG_MANAGED_OBJECT:
+  case TALOS_RT_ARG_VIRTUAL_INTERFACE:
+  case TALOS_RT_ARG_PROCESS:
     return 'p';
   default:
     return 0;
@@ -1114,7 +1114,7 @@ char defaultSpecifier(const obelisk_rt_arg_v1 &argument,
 }
 
 std::optional<uint32_t>
-realtimeFractionDigits(const obelisk_rt_format_env_v1 *environment) {
+realtimeFractionDigits(const talos_rt_format_env_v1 *environment) {
   if (!environment || environment->time_multiplier == 0)
     return std::nullopt;
   uint64_t multiplier = environment->time_multiplier;
@@ -1128,50 +1128,50 @@ realtimeFractionDigits(const obelisk_rt_format_env_v1 *environment) {
   return digits;
 }
 
-obelisk_rt_status
-buildDisplay(obelisk_rt_context *context, std::string &output,
-             obelisk_rt_radix radix, const obelisk_rt_arg_v1 *items,
-             uint64_t itemCount, const obelisk_rt_format_env_v1 *environment,
+talos_rt_status
+buildDisplay(talos_rt_context *context, std::string &output,
+             talos_rt_radix radix, const talos_rt_arg_v1 *items,
+             uint64_t itemCount, const talos_rt_format_env_v1 *environment,
              const TimeOverride &timeFormat, std::string &error,
              std::vector<std::string> &warnings) {
-  if (radix != OBELISK_RT_RADIX_BINARY && radix != OBELISK_RT_RADIX_OCTAL &&
-      radix != OBELISK_RT_RADIX_DECIMAL && radix != OBELISK_RT_RADIX_HEX) {
+  if (radix != TALOS_RT_RADIX_BINARY && radix != TALOS_RT_RADIX_OCTAL &&
+      radix != TALOS_RT_RADIX_DECIMAL && radix != TALOS_RT_RADIX_HEX) {
     error = "invalid default display radix";
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   }
   uint64_t index = 0;
   while (index < itemCount) {
-    const obelisk_rt_arg_v1 &item = items[index++];
+    const talos_rt_arg_v1 &item = items[index++];
     constexpr uint32_t validFlags =
-        OBELISK_RT_ARG_SIGNED | OBELISK_RT_ARG_FORMAT_STRING |
-        OBELISK_RT_ARG_DESIGNATED_FORMAT | OBELISK_RT_ARG_REAL_TIME;
+        TALOS_RT_ARG_SIGNED | TALOS_RT_ARG_FORMAT_STRING |
+        TALOS_RT_ARG_DESIGNATED_FORMAT | TALOS_RT_ARG_REAL_TIME;
     if ((item.flags & ~validFlags) != 0 ||
-        ((item.flags & OBELISK_RT_ARG_DESIGNATED_FORMAT) != 0 &&
-         ((item.flags & OBELISK_RT_ARG_FORMAT_STRING) == 0 || index != 1)) ||
-        ((item.flags & OBELISK_RT_ARG_REAL_TIME) != 0 &&
-         item.kind != OBELISK_RT_ARG_REAL)) {
+        ((item.flags & TALOS_RT_ARG_DESIGNATED_FORMAT) != 0 &&
+         ((item.flags & TALOS_RT_ARG_FORMAT_STRING) == 0 || index != 1)) ||
+        ((item.flags & TALOS_RT_ARG_REAL_TIME) != 0 &&
+         item.kind != TALOS_RT_ARG_REAL)) {
       error = "invalid display item flags";
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     }
-    if (item.kind == OBELISK_RT_ARG_EMPTY) {
+    if (item.kind == TALOS_RT_ARG_EMPTY) {
       output.push_back(' ');
       continue;
     }
-    if ((item.flags & OBELISK_RT_ARG_FORMAT_STRING) != 0) {
+    if ((item.flags & TALOS_RT_ARG_FORMAT_STRING) != 0) {
       char scratch[8];
       const char *bytes = nullptr;
       uint64_t size = 0;
-      if ((item.kind != OBELISK_RT_ARG_STRING &&
-           item.kind != OBELISK_RT_ARG_MANAGED_STRING) ||
+      if ((item.kind != TALOS_RT_ARG_STRING &&
+           item.kind != TALOS_RT_ARG_MANAGED_STRING) ||
           !getStringBytes(item, scratch, bytes, size) ||
           size > std::numeric_limits<size_t>::max()) {
         error = "format-string display item is not a valid string";
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       }
-      obelisk_rt_status status = formatSequence(
+      talos_rt_status status = formatSequence(
           context, output, std::string_view(bytes, static_cast<size_t>(size)),
           items, itemCount, index, environment, timeFormat, error, &warnings);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       // IEEE 1800-2017 21.2.1: arguments left after a format string are
       // ordinary output-list items and use the task's default radix. A
@@ -1179,17 +1179,17 @@ buildDisplay(obelisk_rt_context *context, std::string &output,
       // does not discard the remaining list once its substitutions end.
       continue;
     }
-    if ((item.flags & OBELISK_RT_ARG_REAL_TIME) != 0) {
+    if ((item.flags & TALOS_RT_ARG_REAL_TIME) != 0) {
       std::optional<uint32_t> digits = realtimeFractionDigits(environment);
       if (!digits) {
         error = "invalid realtime display scale";
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       }
       FormatOptions options;
       options.precision = *digits;
-      obelisk_rt_status status = formatArgument(
+      talos_rt_status status = formatArgument(
           context, output, item, 'f', options, environment, timeFormat);
-      if (status != OBELISK_RT_OK) {
+      if (status != TALOS_RT_OK) {
         error = "failed to format realtime display item";
         return status;
       }
@@ -1198,19 +1198,19 @@ buildDisplay(obelisk_rt_context *context, std::string &output,
     char specifier = defaultSpecifier(item, radix);
     if (!specifier) {
       error = "display item has no default scalar format";
-      return OBELISK_RT_ARGUMENT_MISMATCH;
+      return TALOS_RT_ARGUMENT_MISMATCH;
     }
-    obelisk_rt_status status = formatArgument(context, output, item, specifier,
+    talos_rt_status status = formatArgument(context, output, item, specifier,
                                               {}, environment, timeFormat);
-    if (status != OBELISK_RT_OK) {
+    if (status != TALOS_RT_OK) {
       error = "failed to format display item";
       return status;
     }
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-void reportFormatWarnings(obelisk_rt_context *context,
+void reportFormatWarnings(talos_rt_context *context,
                           const std::vector<std::string> &warnings) {
   if (warnings.empty())
     return;
@@ -1221,16 +1221,16 @@ void reportFormatWarnings(obelisk_rt_context *context,
 
 } // namespace
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_format(obelisk_rt_context *context, const char *format,
-                     uint64_t formatSize, const obelisk_rt_arg_v1 *arguments,
+extern "C" talos_rt_status
+talos_rt_v1_format(talos_rt_context *context, const char *format,
+                     uint64_t formatSize, const talos_rt_arg_v1 *arguments,
                      uint64_t argumentCount,
-                     const obelisk_rt_format_env_v1 *environment,
-                     obelisk_rt_buffer_v1 *outBuffer) {
+                     const talos_rt_format_env_v1 *environment,
+                     talos_rt_buffer_v1 *outBuffer) {
   if (!context || !outBuffer || !validBytes(format, formatSize) ||
       (argumentCount != 0 && !arguments) ||
       formatSize > std::numeric_limits<size_t>::max())
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   outBuffer->data = nullptr;
   outBuffer->size = 0;
   return guarded(context, [&] {
@@ -1238,14 +1238,14 @@ obelisk_rt_v1_format(obelisk_rt_context *context, const char *format,
     std::string error;
     uint64_t index = 0;
     TimeOverride timeFormat = snapshotTimeFormat(context);
-    obelisk_rt_status status = formatSequence(
+    talos_rt_status status = formatSequence(
         context, output, std::string_view(format ? format : "", formatSize),
         arguments, argumentCount, index, environment, timeFormat, error);
-    if (status == OBELISK_RT_OK && index != argumentCount) {
-      status = OBELISK_RT_ARGUMENT_MISMATCH;
+    if (status == TALOS_RT_OK && index != argumentCount) {
+      status = TALOS_RT_ARGUMENT_MISMATCH;
       error = "too many arguments for format string";
     }
-    if (status != OBELISK_RT_OK) {
+    if (status != TALOS_RT_OK) {
       setLastError(context, std::move(error));
       return status;
     }
@@ -1253,15 +1253,15 @@ obelisk_rt_v1_format(obelisk_rt_context *context, const char *format,
   });
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_time_format(obelisk_rt_context *context, int32_t units,
+extern "C" talos_rt_status
+talos_rt_v1_time_format(talos_rt_context *context, int32_t units,
                           uint32_t fractionDigits, const char *suffix,
                           uint64_t suffixSize, uint32_t width) {
   // The buffer %t renders through is fixed, so a precision that could not fit
   // is rejected rather than silently truncated.
   if (!context || !validBytes(suffix, suffixSize) || fractionDigits > 128 ||
       suffixSize > std::numeric_limits<size_t>::max())
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     std::string text(suffix ? suffix : "", static_cast<size_t>(suffixSize));
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -1270,11 +1270,11 @@ obelisk_rt_v1_time_format(obelisk_rt_context *context, int32_t units,
     context->timeFormat.fractionDigits = fractionDigits;
     context->timeFormat.width = width;
     context->timeFormat.suffix = std::move(text);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   });
 }
 
-extern "C" double obelisk_rt_v1_time_scan_scale(obelisk_rt_context *context,
+extern "C" double talos_rt_v1_time_scan_scale(talos_rt_context *context,
                                                 double value,
                                                 uint64_t timeMultiplier,
                                                 int32_t timePrecision) {
@@ -1283,14 +1283,14 @@ extern "C" double obelisk_rt_v1_time_scan_scale(obelisk_rt_context *context,
 
   int32_t units = timePrecision;
   uint32_t fractionDigits = 0;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->timeFormat.active) {
       units = context->timeFormat.units;
       fractionDigits = context->timeFormat.fractionDigits;
     }
   }
-  OBELISK_RT_CATCH_ALL { return value; }
+  TALOS_RT_CATCH_ALL { return value; }
 
   // Table 21-8 first rounds in the unit and decimal precision selected by
   // $timeformat, then returns the value in the invoking scope's time unit.
@@ -1307,55 +1307,55 @@ extern "C" double obelisk_rt_v1_time_scan_scale(obelisk_rt_context *context,
                              static_cast<long double>(timeMultiplier));
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_string_output_format(
-    obelisk_rt_context *context, obelisk_rt_radix defaultRadix,
-    const obelisk_rt_arg_v1 *items, uint64_t itemCount,
-    const obelisk_rt_format_env_v1 *environment,
-    obelisk_rt_string_v1 *outString) {
+extern "C" talos_rt_status talos_rt_v1_string_output_format(
+    talos_rt_context *context, talos_rt_radix defaultRadix,
+    const talos_rt_arg_v1 *items, uint64_t itemCount,
+    const talos_rt_format_env_v1 *environment,
+    talos_rt_string_v1 *outString) {
   if (!context || !outString || (itemCount != 0 && !items))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outString = 0;
   return guarded(context, [&] {
     std::string output;
     std::string error;
     std::vector<std::string> warnings;
     TimeOverride timeFormat = snapshotTimeFormat(context);
-    obelisk_rt_status status =
+    talos_rt_status status =
         buildDisplay(context, output, defaultRadix, items, itemCount,
                      environment, timeFormat, error, warnings);
-    if (status != OBELISK_RT_OK) {
+    if (status != TALOS_RT_OK) {
       setLastError(context, std::move(error));
       return status;
     }
     reportFormatWarnings(context, warnings);
-    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
     if (!lane)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    return obelisk_rt_v1_string_create(lane, output.data(), output.size(),
+      return TALOS_RT_INVALID_LIFECYCLE;
+    return talos_rt_v1_string_create(lane, output.data(), output.size(),
                                        outString);
   });
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_eval_display(
-    obelisk_rt_context *context, uint32_t descriptor, uint32_t appendNewline,
-    obelisk_rt_radix defaultRadix, const obelisk_rt_arg_v1 *items,
-    uint64_t itemCount, const obelisk_rt_format_env_v1 *environment) {
+extern "C" talos_rt_status talos_rt_v1_eval_display(
+    talos_rt_context *context, uint32_t descriptor, uint32_t appendNewline,
+    talos_rt_radix defaultRadix, const talos_rt_arg_v1 *items,
+    uint64_t itemCount, const talos_rt_format_env_v1 *environment) {
   if (!context || (descriptor != 1 && descriptor != 0x80000002u) ||
       (itemCount != 0 && !items))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   for (uint64_t i = 0; i != itemCount; ++i)
-    if (items[i].kind != OBELISK_RT_ARG_LOGIC &&
-        items[i].kind != OBELISK_RT_ARG_STRING &&
-        items[i].kind != OBELISK_RT_ARG_REAL &&
-        items[i].kind != OBELISK_RT_ARG_EMPTY)
-      return OBELISK_RT_INVALID_ARGUMENT;
+    if (items[i].kind != TALOS_RT_ARG_LOGIC &&
+        items[i].kind != TALOS_RT_ARG_STRING &&
+        items[i].kind != TALOS_RT_ARG_REAL &&
+        items[i].kind != TALOS_RT_ARG_EMPTY)
+      return TALOS_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     std::string output, error;
     std::vector<std::string> warnings;
-    obelisk_rt_status status =
+    talos_rt_status status =
         buildDisplay(context, output, defaultRadix, items, itemCount,
                      environment, snapshotTimeFormat(context), error, warnings);
-    if (status != OBELISK_RT_OK) {
+    if (status != TALOS_RT_OK) {
       setLastError(context, std::move(error));
       return status;
     }
@@ -1368,13 +1368,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_eval_display(
   });
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
-                      uint32_t appendNewline, obelisk_rt_radix defaultRadix,
-                      const obelisk_rt_arg_v1 *items, uint64_t itemCount,
-                      const obelisk_rt_format_env_v1 *environment) {
+extern "C" talos_rt_status
+talos_rt_v1_display(talos_rt_context *context, uint32_t descriptor,
+                      uint32_t appendNewline, talos_rt_radix defaultRadix,
+                      const talos_rt_arg_v1 *items, uint64_t itemCount,
+                      const talos_rt_format_env_v1 *environment) {
   if (!context || (itemCount != 0 && !items))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -1384,16 +1384,16 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
       if (!context->monitorEnabled && context->activeLogicalProcessToken != 0 &&
           context->activeLogicalProcessToken ==
               context->monitorLogicalProcessToken)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
     }
     std::string output;
     std::string error;
     std::vector<std::string> warnings;
     TimeOverride timeFormat = snapshotTimeFormat(context);
-    obelisk_rt_status status =
+    talos_rt_status status =
         buildDisplay(context, output, defaultRadix, items, itemCount,
                      environment, timeFormat, error, warnings);
-    if (status != OBELISK_RT_OK) {
+    if (status != TALOS_RT_OK) {
       setLastError(context, std::move(error));
       return status;
     }
@@ -1403,7 +1403,7 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
     // An MCD with no selected bits writes nowhere. Formatting and argument
     // evaluation still occur, but the void display task succeeds.
     if (descriptor == 0)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     bool monitorReport = context->activeLogicalProcessToken != 0 &&
                          context->activeLogicalProcessToken ==
@@ -1414,30 +1414,30 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
       // compared against.
       std::string report = output;
       if (std::any_of(items, items + itemCount,
-                      [](const obelisk_rt_arg_v1 &item) {
-                        return item.kind == OBELISK_RT_ARG_TIME;
+                      [](const talos_rt_arg_v1 &item) {
+                        return item.kind == TALOS_RT_ARG_TIME;
                       })) {
         static const uint64_t frozenTime = 0;
-        std::vector<obelisk_rt_arg_v1> untimed(items, items + itemCount);
-        for (obelisk_rt_arg_v1 &item : untimed)
-          if (item.kind == OBELISK_RT_ARG_TIME)
+        std::vector<talos_rt_arg_v1> untimed(items, items + itemCount);
+        for (talos_rt_arg_v1 &item : untimed)
+          if (item.kind == TALOS_RT_ARG_TIME)
             item.data = &frozenTime;
         std::string keyError;
         std::vector<std::string> keyWarnings;
         std::string keyed;
         if (buildDisplay(context, keyed, defaultRadix, untimed.data(),
                          untimed.size(), environment, timeFormat, keyError,
-                         keyWarnings) == OBELISK_RT_OK)
+                         keyWarnings) == TALOS_RT_OK)
           report = std::move(keyed);
       }
       if (context->monitorReported && context->monitorReport == report)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       context->monitorReport = std::move(report);
       context->monitorReported = true;
     }
-    obelisk_rt_status written = writeUnlocked(
+    talos_rt_status written = writeUnlocked(
         context, descriptor, output.data(), output.size(), nullptr);
-    if (written != OBELISK_RT_INVALID_HANDLE)
+    if (written != TALOS_RT_INVALID_HANDLE)
       return written;
     if (monitorReport) {
       // IEEE 1800-2017 21.3.5: closing a channel disables the $fmonitor
@@ -1446,13 +1446,13 @@ obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
       context->monitorLogicalProcessToken = 0;
       context->monitorReported = false;
       context->monitorReport.clear();
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     // 21.3.4 leaves an output task on a channel that is not open undefined.
     // Report it and carry on: failing the display would end the simulation
     // without saying why.
     std::fprintf(stderr, "warning: output descriptor %u is not open\n",
                  descriptor);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   });
 }

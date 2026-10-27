@@ -1,6 +1,6 @@
 //===- NativeDialect.cpp - Native backend metadata ------------------------===//
 
-#include "obelisk/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Native/NativeDialect.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -9,17 +9,17 @@
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
-using namespace obelisk::native;
+using namespace talos::native;
 
-#include "obelisk/Dialect/Native/NativeDialect.cpp.inc"
+#include "talos/Dialect/Native/NativeDialect.cpp.inc"
 
 #define GET_ATTRDEF_CLASSES
-#include "obelisk/Dialect/Native/NativeAttrs.cpp.inc"
+#include "talos/Dialect/Native/NativeAttrs.cpp.inc"
 
 void NativeDialect::initialize() {
   addAttributes<
 #define GET_ATTRDEF_LIST
-#include "obelisk/Dialect/Native/NativeAttrs.cpp.inc"
+#include "talos/Dialect/Native/NativeAttrs.cpp.inc"
       >();
 }
 

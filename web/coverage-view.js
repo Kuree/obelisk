@@ -1,4 +1,4 @@
-// The Coverage view: the self-contained HTML report obelisk-cov wrote for the
+// The Coverage view: the self-contained HTML report talos-cov wrote for the
 // latest run with coverage, shown as is. The page runs in the sandboxed frame
 // from a blob: URL, so it can run its own scripts but never reach this page.
 

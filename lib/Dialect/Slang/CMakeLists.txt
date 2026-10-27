@@ -1,4 +1,4 @@
-add_mlir_library(ObeliskSlangIR
+add_mlir_library(TalosSlangIR
   SlangDialect.cpp
   SlangOpDefs0.cpp
   SlangOpDefs1.cpp
@@ -6,8 +6,8 @@ add_mlir_library(ObeliskSlangIR
   SlangOpDefs3.cpp
 
   DEPENDS
-  ObeliskCoverageAttrsIncGen
-  ObeliskCoverageDialectIncGen
+  TalosCoverageAttrsIncGen
+  TalosCoverageDialectIncGen
   SlangDialectIncGen
   SlangEnumsIncGen
   SlangTypesIncGen

@@ -1,6 +1,6 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t
+// RUN: talos -O0 --vpi=off --native-scheduler=generic %s -o %t
 // RUN: %t | FileCheck %s --check-prefix=OUTPUT
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic -emit-llvm %s | FileCheck %s --check-prefix=LLVM
+// RUN: talos -O0 --vpi=off --native-scheduler=generic -emit-llvm %s | FileCheck %s --check-prefix=LLVM
 
 module native_net_declaration_delay;
   logic source;
@@ -20,5 +20,5 @@ endmodule
 
 // A pure native/generic build still embeds the canonical design image used by
 // delayed-net resolution and binds the native planes to that image.
-// LLVM: @__obelisk_bytecode_image_v1
-// LLVM: call i32 @obelisk_rt_v1_native_state_sync
+// LLVM: @__talos_bytecode_image_v1
+// LLVM: call i32 @talos_rt_v1_native_state_sync

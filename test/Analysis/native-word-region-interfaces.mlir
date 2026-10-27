@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-region-value-dependencies -o %t.analyzed 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s --test-talos-region-value-dependencies -o %t.analyzed 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
 
 // A native word region exposes its execute-once control flow and captures to
@@ -18,7 +18,7 @@ func.func @word_body(%output: !simulation.ref<i8>, %a: i8, %b: i8) {
 
 // Generic sparse range propagation must enter all reachable CFG blocks in
 // the region. This does not turn its inner CFG into multiple region entries.
-// RUN: obelisk-opt %s --test-obelisk-integer-interfaces -o /dev/null 2>&1 | FileCheck %s --check-prefix=RANGE
+// RUN: talos-opt %s --test-talos-integer-interfaces -o /dev/null 2>&1 | FileCheck %s --check-prefix=RANGE
 func.func @word_cfg(%condition: i1, %input: !simulation.logic<8>, %control: !simulation.logic<1>, %output: !simulation.ref<i32>) {
   schedule.word.region 32 {
     cf.cond_br %condition, ^left, ^right

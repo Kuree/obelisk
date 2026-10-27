@@ -1,5 +1,5 @@
-// RUN: env OBELISK_TEST_INPUT=%s \
-// RUN:   %obj_root/test/obelisk-design-database-dump-test \
+// RUN: env TALOS_TEST_INPUT=%s \
+// RUN:   %obj_root/test/talos-design-database-dump-test \
 // RUN:   --gtest_filter=GeneratedDesignDatabase.InterModPathQueries
 
 module attributes {

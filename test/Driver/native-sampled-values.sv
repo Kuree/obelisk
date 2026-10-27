@@ -1,11 +1,11 @@
-// RUN: obelisk --std=1800-2023 -O0 --vpi=read --execution-tier=bytecode %s -o %t.o0.bytecode
+// RUN: talos --std=1800-2023 -O0 --vpi=read --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: %t.o0.bytecode | FileCheck %s
-// RUN: obelisk --std=1800-2023 -O3 %s -o %t.o3.native
+// RUN: talos --std=1800-2023 -O3 %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot -DAOT %s -o %t.o3.aot
+// RUN: talos --std=1800-2023 -O3 --native-scheduler=aot -DAOT %s -o %t.o3.aot
 // RUN: %t.o3.aot | FileCheck %s
-// RUN: obelisk --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=SIM
-// RUN: obelisk --std=1800-2023 -O0 -emit-llvm %s | FileCheck %s --check-prefix=LLVM-FLAG
+// RUN: talos --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=SIM
+// RUN: talos --std=1800-2023 -O0 -emit-llvm %s | FileCheck %s --check-prefix=LLVM-FLAG
 
 // The $past gate qualifies its sampler's clock edge (IEEE 1800-2023
 // 16.9.3), a conditional wait that native AOT scheduling does not admit.
@@ -90,7 +90,7 @@ endmodule
 // SIM: simulation.assert.sampled_read
 // SIM: simulation.assert.clocked_sample_update
 // SIM: simulation.assert.clocked_sample_read
-// LLVM-FLAG: @__obelisk_execution_descriptor_v1 = constant
+// LLVM-FLAG: @__talos_execution_descriptor_v1 = constant
 // LLVM-FLAG-SAME: { i32 1, i32 1056, i64 120,
-// LLVM-FLAG-SAME: { i32 1, i32 72, ptr @__obelisk_sampled_ranges_v1, i64 1,
-// LLVM-FLAG: @__obelisk_sampled_ranges_v1 = internal constant [1 x { i64, i64, i64 }] [{ i64, i64, i64 } { i64 8, i64 0, i64 1 }]
+// LLVM-FLAG-SAME: { i32 1, i32 72, ptr @__talos_sampled_ranges_v1, i64 1,
+// LLVM-FLAG: @__talos_sampled_ranges_v1 = internal constant [1 x { i64, i64, i64 }] [{ i64, i64, i64 } { i64 8, i64 0, i64 1 }]

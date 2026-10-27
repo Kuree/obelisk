@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-values-to-standard \
+// RUN: talos-opt %s --convert-talos-sim-values-to-standard \
 // RUN:   | FileCheck %s --implicit-check-not=!simulation.logic \
 // RUN:       --implicit-check-not=unrealized_conversion_cast \
 // RUN:       --implicit-check-not=test.value

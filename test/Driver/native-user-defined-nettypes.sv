@@ -1,9 +1,9 @@
 // XFAIL: *
 // Slang v11 does not accept package-qualified user-defined nettypes here.
-// RUN: obelisk -O3 %s -o %t.native
+// RUN: talos -O3 %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
 
 // IEEE 1800-2017 6.6.7 and 6.7.3: user-defined nettypes are atomic,

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops,canonicalize,cse)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-unroll-bounded-loops,canonicalize,cse)))' | FileCheck %s
 
 // Candidate cleanup must use the same CFG normalization as the production
 // canonicalizer. Merging these side-effecting blocks through a reference phi

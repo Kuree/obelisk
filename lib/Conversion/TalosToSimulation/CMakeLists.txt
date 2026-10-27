@@ -1,0 +1,71 @@
+if(TALOS_ENABLE_Z3)
+  add_compile_definitions(TALOS_ENABLE_Z3=1)
+endif()
+
+add_mlir_library(TalosToSimulation
+  Finalize.cpp
+  LowerUnit.cpp
+  LowerUnitArrayQuerySystemCalls.cpp
+  LowerUnitCalls.cpp
+  LowerUnitConditionals.cpp
+  LowerUnitConcurrent.cpp
+  LowerUnitContainers.cpp
+  LowerUnitControlFlow.cpp
+  LowerUnitCovergroups.cpp
+  LowerUnitDisplaySystemCalls.cpp
+  LowerUnitDumpSystemCalls.cpp
+  LowerUnitExpressions.cpp
+  LowerUnitFileSystemCalls.cpp
+  LowerUnitLValues.cpp
+  LowerUnitOperators.cpp
+  LowerUnitPlusargSystemCalls.cpp
+  LowerUnitPlaSystemCalls.cpp
+  LowerUnitRealConversionSystemCalls.cpp
+  LowerUnitRandomize.cpp
+  RandomArithmetic.cpp
+  LowerUnitRealMathSystemCalls.cpp
+  LowerUnitScanSystemCalls.cpp
+  LowerUnitSystemCalls.cpp
+  LowerUnitTiming.cpp
+  LowerUnitTimingChecks.cpp
+  MaterializeClockedSamples.cpp
+  PrepareCoverage.cpp
+  PrepareCaptures.cpp
+  PrepareLocals.cpp
+  PrepareExpressions.cpp
+  Prepare.cpp
+  PrepareDeclarations.cpp
+  PrepareNetTopology.cpp
+  PrepareRandomFunctions.cpp
+  PrepareRandomIteration.cpp
+  PrepareRandomTemplates.cpp
+  PrepareStatements.cpp
+  PrepareInterfaceDispatch.cpp
+  PrepareTopology.cpp
+  PrepareUnits.cpp
+  PrepareValidation.cpp
+  SemanticUtils.cpp
+  UnitLoweringInputs.cpp
+
+  DEPENDS
+  TalosConversionPassIncGen
+  TalosSimulationOpsIncGen
+
+  LINK_LIBS PUBLIC
+  TalosIR
+  TalosCoverage
+  TalosSimulationAnalysis
+  TalosSimulationIR
+  TalosSimulationTransforms
+  TalosSolver
+  MLIRAnalysis
+  MLIRArithDialect
+  MLIRControlFlowDialect
+  MLIRIR
+  MLIRPass
+  MLIRTransforms
+)
+
+target_include_directories(TalosToSimulation PRIVATE
+  "${PROJECT_SOURCE_DIR}/runtime/include"
+)

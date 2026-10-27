@@ -1,6 +1,6 @@
 //===- CoverageDialect.cpp - Coverage metadata ----------------------------===//
 
-#include "obelisk/Dialect/Coverage/CoverageDialect.h"
+#include "talos/Dialect/Coverage/CoverageDialect.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -9,17 +9,17 @@
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
-using namespace obelisk::cov;
+using namespace talos::cov;
 
-#include "obelisk/Dialect/Coverage/CoverageDialect.cpp.inc"
+#include "talos/Dialect/Coverage/CoverageDialect.cpp.inc"
 
 #define GET_ATTRDEF_CLASSES
-#include "obelisk/Dialect/Coverage/CoverageAttrs.cpp.inc"
+#include "talos/Dialect/Coverage/CoverageAttrs.cpp.inc"
 
 void CoverageDialect::initialize() {
   addAttributes<
 #define GET_ATTRDEF_LIST
-#include "obelisk/Dialect/Coverage/CoverageAttrs.cpp.inc"
+#include "talos/Dialect/Coverage/CoverageAttrs.cpp.inc"
       >();
 }
 

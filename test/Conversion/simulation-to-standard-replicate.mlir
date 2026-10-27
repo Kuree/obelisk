@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-values-to-standard \
+// RUN: talos-opt %s --convert-talos-sim-values-to-standard \
 // RUN:   | FileCheck %s --check-prefix=SHIFT \
 // RUN:       --implicit-check-not=!simulation.logic \
 // RUN:       --implicit-check-not=unrealized_conversion_cast
-// RUN: obelisk-opt %s --convert-obelisk-sim-values-to-standard \
+// RUN: talos-opt %s --convert-talos-sim-values-to-standard \
 // RUN:   | FileCheck %s --check-prefix=OR
 
 // Replication uses binary doubling. A count of 1024 therefore needs ten

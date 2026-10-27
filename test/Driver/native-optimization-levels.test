@@ -1,10 +1,10 @@
 // REQUIRES: native-elf
 // Every optimization level runs native.sv to the same output, and -O0 still
 // garbage-collects unused runtime sections.
-// RUN: obelisk %S/native.sv -o %t.exe
+// RUN: talos %S/native.sv -o %t.exe
 // RUN: %t.exe > %t.exe.out
-// RUN: obelisk -O0 --compile-threads=1 %S/native.sv -o %t.o0.exe
-// RUN: llvm-readelf --symbols %t.o0.exe | FileCheck %S/native.sv --check-prefix=GC-SECTIONS --implicit-check-not=obelisk_rt_v1_queue_create --implicit-check-not=obelisk_rt_v1_vpi_startup
+// RUN: talos -O0 --compile-threads=1 %S/native.sv -o %t.o0.exe
+// RUN: llvm-readelf --symbols %t.o0.exe | FileCheck %S/native.sv --check-prefix=GC-SECTIONS --implicit-check-not=talos_rt_v1_queue_create --implicit-check-not=talos_rt_v1_vpi_startup
 // RUN: %t.o0.exe | diff -u %t.exe.out -
-// RUN: obelisk -O3 --compile-threads=4 %S/native.sv -o %t.o3.t4.exe
+// RUN: talos -O3 --compile-threads=4 %S/native.sv -o %t.o3.t4.exe
 // RUN: %t.o3.t4.exe | diff -u %t.exe.out -

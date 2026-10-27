@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=publications=true slice-order=true slice-root=3' -o %t.analyzed 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s '--test-talos-activation-regions=publications=true slice-order=true slice-root=3' -o %t.analyzed 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
 // LRM 4.6: a later private load observes the preceding selected store.
 // Neither target is canonical storage, so the store must remain a private

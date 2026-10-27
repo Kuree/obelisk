@@ -1,23 +1,23 @@
 #include "../../../Conversion/SimulationToSchedule/NativePipeline.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/SymbolTable.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationDialect.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 
 using namespace mlir;
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_PLANNATIVETRANSFERSPASS
 #define GEN_PASS_DEF_SHARENATIVETRANSFERSPASS
 #define GEN_PASS_DEF_PREPARENATIVETRANSFERKERNELSPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 namespace {
 using Pipeline = detail::NativePipelineAnalysis;
 
@@ -152,7 +152,7 @@ class ShareNativeTransfersPass final
       builder.setInsertionPointToEnd(module.getBody());
       auto kernel = schedule::TransferKernelOp::create(
           builder, prototype.getLoc(),
-          "__obelisk_transfer_kernel_" + std::to_string(ordinal++),
+          "__talos_transfer_kernel_" + std::to_string(ordinal++),
           prototype.getSignature(), prototype.getSource(),
           prototype.getDestination(), prototype.getCaptureOffsets());
       symbols.insert(kernel);
@@ -276,10 +276,10 @@ class PrepareNativeTransferKernelsPass final
              0,
              wait.waitOffset,
              wait.waitSize,
-             OBELISK_RT_SUSPEND_CHANGE,
+             TALOS_RT_SUSPEND_CHANGE,
              0,
              {{uint64_t(offsets[kernel.getSource()]),
-               OBELISK_RT_WAIT_EDGE_CHANGE,
+               TALOS_RT_WAIT_EDGE_CHANGE,
                uint32_t(*analysis::getSimulationStorageBitWidth(element))}}});
         schedule::set<schedule::Field::NativeContinuation>(
             wait.operation, builder.getI32IntegerAttr(wait.continuationID));
@@ -295,4 +295,4 @@ class PrepareNativeTransferKernelsPass final
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

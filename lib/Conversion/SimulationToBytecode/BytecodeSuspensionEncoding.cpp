@@ -1,24 +1,24 @@
 //===- BytecodeSuspensionEncoding.cpp - Suspension instruction selection -===//
 
 #include "BytecodeEncoder.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 static uint32_t directSignalWaitFlags(Operation *operation) {
   bool suppressActiveSelf =
-      (::obelisk::schedule::has<schedule::metadata::topLevelWildcardWait>(
+      (::talos::schedule::has<schedule::metadata::topLevelWildcardWait>(
            operation) ||
-       ::obelisk::schedule::has<schedule::metadata::proceduralEventWait>(
+       ::talos::schedule::has<schedule::metadata::proceduralEventWait>(
            operation)) &&
-      !::obelisk::schedule::has<schedule::metadata::repeatingAlwaysWait>(
+      !::talos::schedule::has<schedule::metadata::repeatingAlwaysWait>(
           operation);
-  return suppressActiveSelf ? OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF
-                            : OBELISK_RT_WAIT_FLAGS_NONE;
+  return suppressActiveSelf ? TALOS_RT_WAIT_SUPPRESS_ACTIVE_SELF
+                            : TALOS_RT_WAIT_FLAGS_NONE;
 }
 
 std::optional<LogicalResult>
@@ -107,39 +107,39 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
   if (auto suspend = dyn_cast<sim::SimSuspendDelayOp>(operation))
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_DELAY, OBELISK_RT_WAIT_FLAGS_NONE, {},
+                      TALOS_RT_SUSPEND_DELAY, TALOS_RT_WAIT_FLAGS_NONE, {},
                       {}, suspend.getDelay());
   if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(operation)) {
-    uint32_t edge = OBELISK_RT_WAIT_EDGE_CHANGE;
+    uint32_t edge = TALOS_RT_WAIT_EDGE_CHANGE;
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_CHANGE,
+                      TALOS_RT_SUSPEND_CHANGE,
                       directSignalWaitFlags(suspend.getOperation()),
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getWatched()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendLevelOp>(operation)) {
-    uint32_t edge = OBELISK_RT_WAIT_EDGE_CHANGE;
+    uint32_t edge = TALOS_RT_WAIT_EDGE_CHANGE;
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_CHANGE, OBELISK_RT_WAIT_LEVEL_TRUE,
+                      TALOS_RT_SUSPEND_CHANGE, TALOS_RT_WAIT_LEVEL_TRUE,
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getWatched()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendEdgeOp>(operation)) {
     uint32_t edge = static_cast<uint32_t>(suspend.getEdge());
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_EDGE,
+                      TALOS_RT_SUSPEND_EDGE,
                       directSignalWaitFlags(suspend.getOperation()),
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getWatched()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendEdgeIffOp>(operation)) {
     SmallVector<uint32_t> edges{static_cast<uint32_t>(suspend.getEdge()),
-                                OBELISK_RT_WAIT_EDGE_NONE};
+                                TALOS_RT_WAIT_EDGE_NONE};
     SmallVector<Value> watched{suspend.getWatched(), suspend.getCondition()};
     return encodeWait(
         plan, suspend.getOperation(), suspend.getContinuationOperands(),
-        OBELISK_RT_SUSPEND_EDGE,
-        OBELISK_RT_WAIT_EDGE_IFF |
+        TALOS_RT_SUSPEND_EDGE,
+        TALOS_RT_WAIT_EDGE_IFF |
             directSignalWaitFlags(suspend.getOperation()),
         edges, watched);
   }
@@ -150,7 +150,7 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
     SmallVector<Value> watched(suspend.getWatched());
     return encodeWait(
         plan, suspend.getOperation(), suspend.getContinuationOperands(),
-        OBELISK_RT_SUSPEND_EDGE, directSignalWaitFlags(suspend.getOperation()),
+        TALOS_RT_SUSPEND_EDGE, directSignalWaitFlags(suspend.getOperation()),
         edges, watched);
   }
   if (auto suspend = dyn_cast<sim::SimSuspendClockSetOp>(operation)) {
@@ -168,84 +168,84 @@ Encoder::encodeSuspensionOperation(FunctionPlan &plan, Operation *operation) {
       hasObserverCondition |= observer;
       edges.push_back(
           observer
-              ? OBELISK_RT_WAIT_CONDITION_OBSERVER + predicate
-              : (predicates ? OBELISK_RT_WAIT_CONDITION_PREDICATE + predicate
-                            : OBELISK_RT_WAIT_EDGE_NONE));
+              ? TALOS_RT_WAIT_CONDITION_OBSERVER + predicate
+              : (predicates ? TALOS_RT_WAIT_CONDITION_PREDICATE + predicate
+                            : TALOS_RT_WAIT_EDGE_NONE));
     }
     uint64_t conditionMask = 0;
     for (auto [index, condition] :
          llvm::enumerate(suspend.getConditionIndices()))
       if (condition >= 0)
         conditionMask |= uint64_t{1} << index;
-    uint32_t flags = OBELISK_RT_WAIT_CLOCK_OCCURRENCE;
+    uint32_t flags = TALOS_RT_WAIT_CLOCK_OCCURRENCE;
     if (suspend->hasAttr("slot_final"))
-      flags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL;
+      flags |= TALOS_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL;
     if (hasObserverCondition)
-      flags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS;
+      flags |= TALOS_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS;
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_EDGE, flags, edges, watched, Value{},
+                      TALOS_RT_SUSPEND_EDGE, flags, edges, watched, Value{},
                       suspend.getOccurrenceSite(), conditionMask);
   }
   if (auto suspend = dyn_cast<sim::SimSuspendEventOp>(operation)) {
-    uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
+    uint32_t edge = TALOS_RT_WAIT_EDGE_NONE;
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_EVENT, OBELISK_RT_WAIT_FLAGS_NONE,
+                      TALOS_RT_SUSPEND_EVENT, TALOS_RT_WAIT_FLAGS_NONE,
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getEvent()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendEventOrderOp>(operation)) {
     SmallVector<uint32_t> edges(suspend.getEvents().size(),
-                                OBELISK_RT_WAIT_EDGE_NONE);
+                                TALOS_RT_WAIT_EDGE_NONE);
     SmallVector<Value> events(suspend.getEvents());
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_EVENT_ORDER,
-                      OBELISK_RT_WAIT_FLAGS_NONE, edges, events);
+                      TALOS_RT_SUSPEND_EVENT_ORDER,
+                      TALOS_RT_WAIT_FLAGS_NONE, edges, events);
   }
   if (auto suspend = dyn_cast<sim::SimSuspendMailboxOp>(operation)) {
-    uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
+    uint32_t edge = TALOS_RT_WAIT_EDGE_NONE;
     return encodeWait(
         plan, suspend.getOperation(), suspend.getContinuationOperands(),
-        OBELISK_RT_SUSPEND_MAILBOX, static_cast<uint32_t>(suspend.getKind()),
+        TALOS_RT_SUSPEND_MAILBOX, static_cast<uint32_t>(suspend.getKind()),
         ArrayRef<uint32_t>(&edge, 1), {suspend.getMailbox()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendSemaphoreOp>(operation)) {
-    uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
+    uint32_t edge = TALOS_RT_WAIT_EDGE_NONE;
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_SEMAPHORE, OBELISK_RT_WAIT_FLAGS_NONE,
+                      TALOS_RT_SUSPEND_SEMAPHORE, TALOS_RT_WAIT_FLAGS_NONE,
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getSemaphore()},
                       suspend.getKeys());
   }
   if (auto suspend = dyn_cast<sim::SimSuspendForeverOp>(operation))
     return encodeWait(
         plan, suspend.getOperation(), suspend.getContinuationOperands(),
-        OBELISK_RT_SUSPEND_FOREVER, OBELISK_RT_WAIT_FLAGS_NONE, {}, {});
+        TALOS_RT_SUSPEND_FOREVER, TALOS_RT_WAIT_FLAGS_NONE, {}, {});
   if (auto suspend = dyn_cast<sim::SimSuspendAwaitOp>(operation)) {
-    uint32_t edge = OBELISK_RT_WAIT_EDGE_NONE;
+    uint32_t edge = TALOS_RT_WAIT_EDGE_NONE;
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_AWAIT, OBELISK_RT_WAIT_FLAGS_NONE,
+                      TALOS_RT_SUSPEND_AWAIT, TALOS_RT_WAIT_FLAGS_NONE,
                       ArrayRef<uint32_t>(&edge, 1), {suspend.getProcess()});
   }
   if (auto suspend = dyn_cast<sim::SimSuspendJoinOp>(operation)) {
     SmallVector<uint32_t> edges(suspend.getProcesses().size(),
-                                OBELISK_RT_WAIT_EDGE_NONE);
+                                TALOS_RT_WAIT_EDGE_NONE);
     SmallVector<Value> processes(suspend.getProcesses());
     return encodeWait(plan, suspend.getOperation(),
                       suspend.getContinuationOperands(),
-                      OBELISK_RT_SUSPEND_JOIN,
-                      static_cast<obelisk_rt_wait_flags>(suspend.getKind()),
+                      TALOS_RT_SUSPEND_JOIN,
+                      static_cast<talos_rt_wait_flags>(suspend.getKind()),
                       edges, processes);
   }
   if (auto suspend = dyn_cast<sim::SimSuspendChildrenOp>(operation))
     return encodeWait(
         plan, suspend.getOperation(), suspend.getContinuationOperands(),
-        OBELISK_RT_SUSPEND_CHILDREN, OBELISK_RT_WAIT_FLAGS_NONE, {}, {});
+        TALOS_RT_SUSPEND_CHILDREN, TALOS_RT_WAIT_FLAGS_NONE, {}, {});
   if (auto suspend = dyn_cast<sim::SimSuspendObserveOp>(operation))
     return encodeObserverWait(plan, suspend);
   return std::nullopt;
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

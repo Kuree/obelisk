@@ -1,6 +1,6 @@
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
+// RUN: talos -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.auto > %t.auto.out
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.auto.out
@@ -8,7 +8,7 @@
 
 // X separates update events. The edge and value-change observers must be
 // scheduled as the generic scheduler schedules them, even when the final bit
-// is 0. Obelisk performs every scheduled NBA before the processes they wake
+// is 0. Talos performs every scheduled NBA before the processes they wake
 // run, one of the orders IEEE 1800-2017 4.5 permits, so each observer wakes at
 // most once per slot: the x -> 1 posedge after 0 -> x finds `edges` not yet
 // waiting again.

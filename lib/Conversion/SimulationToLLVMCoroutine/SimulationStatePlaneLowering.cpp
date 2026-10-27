@@ -1,15 +1,15 @@
 //===- SimulationStatePlaneLowering.cpp - Native state planes --------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -21,7 +21,7 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
 namespace detail {
 
@@ -33,7 +33,7 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   Type i64 = builder.getI64Type();
   Value address = LLVM::AddressOfOp::create(builder, location, pointer,
-                                            "__obelisk_current_context");
+                                            "__talos_current_context");
   Value context = LLVM::LoadOp::create(builder, location, pointer, address, 8);
   if (directRange && width <= 64) {
     auto scalar = [&](Value value) -> Value {
@@ -87,12 +87,12 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
   auto transition = LLVM::CallOp::create(
       builder, location, TypeRange{},
       SymbolRefAttr::get(builder.getContext(),
-                         "obelisk_rt_v1_scheduler_signal_transition"),
+                         "talos_rt_v1_scheduler_signal_transition"),
       ValueRange{context, handle, llvmConstant(builder, location, i64, width),
                  save(oldValue), save(oldUnknown), save(newValue),
                  save(newUnknown)});
   if (sourceOwner)
-    ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(transition,
+    ::talos::schedule::set<schedule::metadata::evalSourceOwner>(transition,
                                                                   sourceOwner);
   // The runtime consumes the transition before returning.
   for (Value storage : temporaries)
@@ -106,9 +106,9 @@ resolveDirectStaticStateRange(Value handle, unsigned width,
   std::optional<uint64_t> value = resolveCFGConstantInteger(handle);
   if (!value)
     return std::nullopt;
-  obelisk_rt_stable_handle_v1 decoded{};
-  if (!obelisk_rt_stable_handle_decode(*value, &decoded) ||
-      decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset < 0)
+  talos_rt_stable_handle_v1 decoded{};
+  if (!talos_rt_stable_handle_decode(*value, &decoded) ||
+      decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC || decoded.offset < 0)
     return std::nullopt;
   bool direct = layout->directHandles.contains(decoded.id);
   bool guarded = layout->guardedHandles.contains(decoded.id);
@@ -188,7 +188,7 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
     }
     auto offset = root.getDefiningOp<LLVM::CallOp>();
     if (!offset || !offset.getCallee() ||
-        *offset.getCallee() != "obelisk_rt_v1_native_handle_offset" ||
+        *offset.getCallee() != "talos_rt_v1_native_handle_offset" ||
         offset.getArgOperands().size() != 2)
       break;
     amounts.push_back(offset.getArgOperands()[1]);
@@ -197,9 +197,9 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
   if (amounts.empty() || (guards.empty() && (!access || !access->inBounds)))
     return std::nullopt;
   std::optional<uint64_t> base = resolveCFGConstantInteger(root);
-  obelisk_rt_stable_handle_v1 decoded{};
-  if (!base || !obelisk_rt_stable_handle_decode(*base, &decoded) ||
-      decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset < 0)
+  talos_rt_stable_handle_v1 decoded{};
+  if (!base || !talos_rt_stable_handle_decode(*base, &decoded) ||
+      decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC || decoded.offset < 0)
     return std::nullopt;
   bool direct = layout->directHandles.contains(decoded.id);
   bool guarded = layout->guardedHandles.contains(decoded.id);
@@ -279,7 +279,7 @@ resolveDirectDynamicStateRange(Value handle, unsigned width,
 }
 
 // Canonical planes own an eight-byte guard after their logical extent (see
-// materializeNativeStatePlanes and obelisk_rt_v1_native_state_initialize).
+// materializeNativeStatePlanes and talos_rt_v1_native_state_initialize).
 // A contained or clamped window may therefore use one native scalar access,
 // including at the last byte. At most seven extra bytes are touched, and the
 // logical value/mask still excludes every neighboring bit and guard byte.
@@ -344,8 +344,8 @@ Value loadDynamicPackedWindow(ConversionPatternRewriter &rewriter,
                : LLVM::TruncOp::create(rewriter, location, resultType, shifted)
                      .getResult();
   };
-  if (globalName == "__obelisk_state_value" ||
-      globalName == "__obelisk_state_unknown")
+  if (globalName == "__talos_state_value" ||
+      globalName == "__talos_state_unknown")
     if (unsigned nativeWidth =
             getNativePackedWindowWidth(resultType.getWidth()))
       return loadSpan(nativeWidth);
@@ -624,7 +624,7 @@ DirectPackedPlane loadDirectPackedPlane(OpBuilder &builder, Location location,
   IntegerType spanType = builder.getIntegerType(byteCount * 8);
   Value base =
       LLVM::AddressOfOp::create(builder, location, pointer, globalName);
-  if (globalName.starts_with("__obelisk_continuous_"))
+  if (globalName.starts_with("__talos_continuous_"))
     base = LLVM::LoadOp::create(builder, location, pointer, base, 8);
   Value address = LLVM::GEPOp::create(
       builder, location, pointer, i8, base,
@@ -856,19 +856,19 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
         LLVM::AddressOfOp::create(rewriter, location, pointer, globalName);
     Value out = beginTemporary(rewriter, location, resultType, 1);
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value context =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     LLVM::CallOp::create(
         rewriter, location, TypeRange{i32},
         SymbolRefAttr::get(rewriter.getContext(),
-                           "obelisk_rt_v1_native_state_load_plane"),
+                           "talos_rt_v1_native_state_load_plane"),
         ValueRange{
             context, base, llvmConstant(rewriter, location, i64, stateBitCount),
             handle,
             llvmConstant(rewriter, location, i64, resultType.getWidth()),
             llvmConstant(rewriter, location, i32,
-                         globalName == "__obelisk_state_unknown" ? 1 : 0),
+                         globalName == "__talos_state_unknown" ? 1 : 0),
             llvmConstant(rewriter, location, i32, unknownFallback ? 1 : 0),
             out});
     Value loaded = LLVM::LoadOp::create(rewriter, location, resultType, out, 1);
@@ -894,7 +894,7 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
                         : staticSpecializationGuard(
                               rewriter, location,
                               range ? range->staticID : dynamicRange->staticID,
-                              OBELISK_RT_STATIC_ROOT_READ);
+                              TALOS_RT_STATIC_ROOT_READ);
   markLikelyTrue(cf::CondBranchOp::create(rewriter, location, useDirect,
                                           directBlock, ValueRange{},
                                           genericBlock, ValueRange{}));
@@ -937,18 +937,18 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
     // Keep the actual contribution even when no writer is attached. These
     // pointers bind the runtime's own retained planes, so a later force,
     // deposit, or release needs neither reconstruction nor a shadow import.
-    StringRef retained = globalName == "__obelisk_state_unknown"
-                             ? "__obelisk_continuous_unknown"
-                             : "__obelisk_continuous_value";
+    StringRef retained = globalName == "__talos_state_unknown"
+                             ? "__talos_continuous_unknown"
+                             : "__talos_continuous_value";
     storeDirectPackedPlane(rewriter, location, input, retained, range->offset,
                            false, range->containerWidth, range->accessUnit);
-    if (globalName == "__obelisk_state_value") {
+    if (globalName == "__talos_state_value") {
       Value mask = arith::ConstantOp::create(
           rewriter, location, inputType,
           rewriter.getIntegerAttr(inputType,
                                   APInt::getAllOnes(inputType.getWidth())));
       storeDirectPackedPlane(rewriter, location, mask,
-                             "__obelisk_continuous_mask", range->offset, false,
+                             "__talos_continuous_mask", range->offset, false,
                              range->containerWidth, range->accessUnit);
     }
     return storeDirectPackedPlane(rewriter, location, input, globalName,
@@ -977,20 +977,20 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
     LLVM::StoreOp::create(rewriter, location,
                           llvmConstant(rewriter, location, i8, 0), changed, 1);
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value context =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     LLVM::CallOp::create(
         rewriter, location, TypeRange{i32},
         SymbolRefAttr::get(
             rewriter.getContext(),
-            continuous ? "obelisk_rt_v1_native_state_store_continuous_plane"
-                       : "obelisk_rt_v1_native_state_store_plane"),
+            continuous ? "talos_rt_v1_native_state_store_continuous_plane"
+                       : "talos_rt_v1_native_state_store_plane"),
         ValueRange{
             context, base, llvmConstant(rewriter, location, i64, stateBitCount),
             handle, llvmConstant(rewriter, location, i64, inputType.getWidth()),
             llvmConstant(rewriter, location, i32,
-                         globalName == "__obelisk_state_unknown" ? 1 : 0),
+                         globalName == "__talos_state_unknown" ? 1 : 0),
             in, changed});
     Value changedByte =
         LLVM::LoadOp::create(rewriter, location, i8, changed, 1);
@@ -1019,7 +1019,7 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
       guardedPermission
           ? guardedPermission
           : staticSpecializationGuard(rewriter, location, range->staticID,
-                                      OBELISK_RT_STATIC_ROOT_WRITE);
+                                      TALOS_RT_STATIC_ROOT_WRITE);
   markLikelyTrue(cf::CondBranchOp::create(rewriter, location, useDirect,
                                           directBlock, ValueRange{},
                                           genericBlock, ValueRange{}));
@@ -1214,7 +1214,7 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
         // The clipped mask preserves every bit outside the root, including
         // neighboring bits in the first and last byte. Retain that proof for
         // promotion bookkeeping even though the byte address is dynamic.
-        if (plane == "__obelisk_state_unknown")
+        if (plane == "__talos_state_unknown")
           schedule::set<schedule::Field::EvalUnknownWriteRange>(
               write,
               rewriter.getDenseI64ArrayAttr(
@@ -1256,17 +1256,17 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
       rewriter.setInsertionPointToStart(join);
       return std::pair<Value, Value>{old, updated};
     };
-    auto [oldValue, newValue] = store("__obelisk_state_value", value);
+    auto [oldValue, newValue] = store("__talos_state_value", value);
     Value oldUnknown = llvmConstant(rewriter, location, inputType, 0);
     Value newUnknown = oldUnknown;
     if (!twoState)
       std::tie(oldUnknown, newUnknown) =
-          store("__obelisk_state_unknown", unknown);
+          store("__talos_state_unknown", unknown);
     if (needsNotification) {
       Value context = LLVM::LoadOp::create(
           rewriter, location, pointer,
           LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                    "__obelisk_current_context"),
+                                    "__talos_current_context"),
           8);
       for (unsigned low = 0; low < inputType.getWidth(); low += 64) {
         unsigned width = std::min(64u, inputType.getWidth() - low);
@@ -1360,22 +1360,22 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
                : LLVM::TruncOp::create(rewriter, location, rootType, merged)
                      .getResult();
   };
-  Value oldValue = load("__obelisk_state_value");
+  Value oldValue = load("__talos_state_value");
   Value newValue = merge(oldValue, value);
   Value oldUnknown = twoState ? llvmConstant(rewriter, location, rootType, 0)
-                              : load("__obelisk_state_unknown");
+                              : load("__talos_state_unknown");
   Value newUnknown = twoState ? oldUnknown : merge(oldUnknown, unknown);
-  storeDirectPackedPlane(rewriter, location, newValue, "__obelisk_state_value",
+  storeDirectPackedPlane(rewriter, location, newValue, "__talos_state_value",
                          range->rootOffset, false, range->containerWidth);
   if (!twoState)
     storeDirectPackedPlane(rewriter, location, newUnknown,
-                           "__obelisk_state_unknown", range->rootOffset, false,
+                           "__talos_state_unknown", range->rootOffset, false,
                            range->containerWidth);
   if (needsNotification) {
     Value rootHandle =
         llvmConstant(rewriter, location, i64,
-                     obelisk_rt_stable_handle_encode(
-                         OBELISK_RT_STABLE_HANDLE_STATIC, range->staticID, 0));
+                     talos_rt_stable_handle_encode(
+                         TALOS_RT_STABLE_HANDLE_STATIC, range->staticID, 0));
     notifySignal(rewriter, location, rootHandle, range->rootWidth, oldValue,
                  oldUnknown, newValue, newUnknown,
                  DirectStaticStateRange{range->rootOffset, 0, range->staticID,
@@ -1387,4 +1387,4 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
 
 } // namespace detail
 
-} // namespace obelisk
+} // namespace talos

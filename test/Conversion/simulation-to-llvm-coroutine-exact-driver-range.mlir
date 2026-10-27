@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines --cse | FileCheck %s --implicit-check-not="#schedule.source_owner"
+// RUN: talos-opt %s --split-input-file \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines --cse | FileCheck %s --implicit-check-not="#schedule.source_owner"
 
 // A statically selected slice which exactly equals the declaration's driven
 // range resolves only that logical bit. The resolver still expands a
@@ -35,12 +35,12 @@ module attributes {
 
 // Ownership is consumed by publication proofs before final LLVM export.
 // CHECK-LABEL: llvm.func @exact_slice
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK-DAG: %[[O0:.*]] = llvm.mlir.constant(2 : i64) : i64
 // CHECK-DAG: %[[W0:.*]] = llvm.mlir.constant(1 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[O0]], %[[W0]],
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[O0]], %[[W0]],
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 
 // -----
 
@@ -75,12 +75,12 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @mismatched_slice
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK-DAG: %[[O0:.*]] = llvm.mlir.constant(2 : i64) : i64
 // CHECK-DAG: %[[W0:.*]] = llvm.mlir.constant(1 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[O0]], %[[W0]],
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[O0]], %[[W0]],
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 
 // -----
 
@@ -126,13 +126,13 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @ambiguous_join
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK-DAG: %[[O0:.*]] = llvm.mlir.constant(0 : i64) : i64
 // CHECK-DAG: %[[W0:.*]] = llvm.mlir.constant(4 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[O0]], %[[W0]],
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[O0]], %[[W0]],
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[O0]], %[[W0]],
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[O0]], %[[W0]],
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 
 // -----
 
@@ -176,9 +176,9 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @identical_join
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK-DAG: %[[O0:.*]] = llvm.mlir.constant(2 : i64) : i64
 // CHECK-DAG: %[[W0:.*]] = llvm.mlir.constant(1 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[O0]], %[[W0]],
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[O0]], %[[W0]],
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition

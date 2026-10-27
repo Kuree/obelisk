@@ -1,7 +1,7 @@
 //===- CoverageIndex.h - bounded-depth indexes for the portable codec -----===//
 
-#ifndef OBELISK_LIB_COVERAGE_COVERAGEINDEX_H
-#define OBELISK_LIB_COVERAGE_COVERAGEINDEX_H
+#ifndef TALOS_LIB_COVERAGE_COVERAGEINDEX_H
+#define TALOS_LIB_COVERAGE_COVERAGEINDEX_H
 
 #include <algorithm>
 #include <array>
@@ -17,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-namespace obelisk::coverage::detail {
+namespace talos::coverage::detail {
 
 // Prefix-free, order-preserving keys. Integers are big endian; signed keys
 // flip their sign bit. Strings and vectors have explicit element/end markers.
@@ -714,6 +714,6 @@ void sortByKey(Iterator begin, Iterator end, GetKey getKey) {
   std::move(sorted.begin(), sorted.end(), begin);
 }
 
-} // namespace obelisk::coverage::detail
+} // namespace talos::coverage::detail
 
 #endif

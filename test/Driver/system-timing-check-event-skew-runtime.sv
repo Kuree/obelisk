@@ -1,9 +1,9 @@
-// RUN: obelisk -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: talos -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode 2>&1 | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=aot %s -o %t.o3.aot
+// RUN: talos -O3 --native-scheduler=aot %s -o %t.o3.aot
 // RUN: %t.o3.aot 2>&1 | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=aot --top=event_skew_checks \
+// RUN: talos -O3 --native-scheduler=aot --top=event_skew_checks \
 // RUN:   -emit-llvm %s -o - | FileCheck %s --check-prefix=AOT
 
 `timescale 1ns / 1ps
@@ -205,11 +205,11 @@ endmodule
 // SIM: timing_check_kind = 9 : i32
 // SIM-NOT: timing_check_table
 // SIM-NOT: timing_check_timer
-// AOT: @__obelisk_aot_schedule_plan_v1
+// AOT: @__talos_aot_schedule_plan_v1
 // Coroutine splitting can place the observer body after scheduler installation.
-// AOT-DAG: call i64 @obelisk_rt_v1_clock_occurrence_consume
-// AOT-DAG: call i32 @obelisk_rt_v1_scheduler_install_aot
-// AOT-DAG: call i32 @obelisk_rt_v1_scheduler_run_aot
+// AOT-DAG: call i64 @talos_rt_v1_clock_occurrence_consume
+// AOT-DAG: call i32 @talos_rt_v1_scheduler_install_aot
+// AOT-DAG: call i32 @talos_rt_v1_scheduler_run_aot
 // CHECK-DAG: timeskew-unarmed 0
 // CHECK-DAG: timeskew-endpoint 0
 // CHECK-DAG: timeskew-first-late 1

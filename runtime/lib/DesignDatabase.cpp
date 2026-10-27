@@ -4,10 +4,10 @@
 #include "ProcessShared.h"
 #include "RuntimeInternal.h"
 #include "VPIExpressionValue.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
-#include "obelisk/Runtime/DescriptorMap.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Reflection/VPIObjectModel.h"
+#include "talos/Runtime/DescriptorMap.h"
+#include "talos/Runtime/StableHash.h"
 
 #include <algorithm>
 #include <array>
@@ -26,120 +26,120 @@
 
 namespace {
 
-using DatabaseHeader = obelisk_rt_design_database_header_v1;
+using DatabaseHeader = talos_rt_design_database_header_v1;
 
-constexpr char kMagic[] = OBELISK_RT_DESIGN_DATABASE_MAGIC;
+constexpr char kMagic[] = TALOS_RT_DESIGN_DATABASE_MAGIC;
 static_assert(sizeof(kMagic) == sizeof(DatabaseHeader::magic));
-constexpr uint64_t kHeaderSize = OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE;
+constexpr uint64_t kHeaderSize = TALOS_RT_DESIGN_DATABASE_HEADER_SIZE;
 constexpr uint64_t kScopeSize = 64;
 constexpr uint64_t kObjectSize = 96;
 constexpr uint64_t kTypeSize = 80;
 constexpr uint64_t kIndexSize = 24;
 constexpr uint64_t kStatementSize = 40;
 constexpr uint64_t kStaticObjectSize =
-    obelisk::reflection::StaticObjectLayout.size;
+    talos::reflection::StaticObjectLayout.size;
 constexpr uint64_t kStatementSiteSize = 16;
-constexpr uint64_t kRelationSize = obelisk::reflection::RelationLayout.size;
+constexpr uint64_t kRelationSize = talos::reflection::RelationLayout.size;
 constexpr uint64_t kSemanticTypeSize =
-    obelisk::reflection::SemanticTypeLayout.size;
+    talos::reflection::SemanticTypeLayout.size;
 constexpr uint64_t kSemanticTypeEdgeSize =
-    obelisk::reflection::SemanticTypeEdgeLayout.size;
+    talos::reflection::SemanticTypeEdgeLayout.size;
 constexpr uint64_t kSemanticRootBindingSize =
-    obelisk::reflection::SemanticRootBindingLayout.size;
+    talos::reflection::SemanticRootBindingLayout.size;
 constexpr uint64_t kClassTypeBindingSize =
-    obelisk::reflection::ClassTypeBindingLayout.size;
+    talos::reflection::ClassTypeBindingLayout.size;
 constexpr uint64_t kSemanticClassBindingSize =
-    obelisk::reflection::SemanticClassBindingLayout.size;
+    talos::reflection::SemanticClassBindingLayout.size;
 constexpr uint64_t kClassMemberBindingSize =
-    obelisk::reflection::ClassMemberBindingLayout.size;
+    talos::reflection::ClassMemberBindingLayout.size;
 constexpr uint64_t kThreadOriginBindingSize =
-    obelisk::reflection::ThreadOriginBindingLayout.size;
+    talos::reflection::ThreadOriginBindingLayout.size;
 constexpr uint64_t kCallSiteBindingSize =
-    obelisk::reflection::CallSiteBindingLayout.size;
+    talos::reflection::CallSiteBindingLayout.size;
 constexpr uint64_t kFrameLocalBindingSize =
-    obelisk::reflection::FrameLocalBindingLayout.size;
+    talos::reflection::FrameLocalBindingLayout.size;
 constexpr uint64_t kCallDispatchBindingSize =
-    obelisk::reflection::CallDispatchBindingLayout.size;
+    talos::reflection::CallDispatchBindingLayout.size;
 constexpr uint64_t kClassDispatchMethodBindingSize =
-    obelisk::reflection::ClassDispatchMethodBindingLayout.size;
+    talos::reflection::ClassDispatchMethodBindingLayout.size;
 constexpr uint64_t kClassDispatchParentBindingSize =
-    obelisk::reflection::ClassDispatchParentBindingLayout.size;
+    talos::reflection::ClassDispatchParentBindingLayout.size;
 constexpr uint64_t kInterfaceCallableSize =
-    obelisk::reflection::InterfaceCallableLayout.size;
+    talos::reflection::InterfaceCallableLayout.size;
 constexpr uint64_t kInterfaceInstanceSize =
-    obelisk::reflection::InterfaceInstanceLayout.size;
+    talos::reflection::InterfaceInstanceLayout.size;
 constexpr uint64_t kInterfaceCallableBindingSize =
-    obelisk::reflection::InterfaceCallableBindingLayout.size;
+    talos::reflection::InterfaceCallableBindingLayout.size;
 constexpr uint64_t kInterfaceCallBindingSize =
-    obelisk::reflection::InterfaceCallBindingLayout.size;
+    talos::reflection::InterfaceCallBindingLayout.size;
 constexpr uint64_t kCallableSignatureBindingSize =
-    obelisk::reflection::CallableSignatureBindingLayout.size;
+    talos::reflection::CallableSignatureBindingLayout.size;
 constexpr uint64_t kCodeUnitScopeBindingSize =
-    obelisk::reflection::CodeUnitScopeBindingLayout.size;
+    talos::reflection::CodeUnitScopeBindingLayout.size;
 constexpr uint64_t kInitializerBindingSize =
-    obelisk::reflection::InitializerBindingLayout.size;
+    talos::reflection::InitializerBindingLayout.size;
 constexpr uint64_t kExpressionRootBindingSize =
-    obelisk::reflection::ExpressionRootBindingLayout.size;
+    talos::reflection::ExpressionRootBindingLayout.size;
 constexpr uint64_t kExpressionTemplateSize =
-    obelisk::reflection::ExpressionTemplateLayout.size;
+    talos::reflection::ExpressionTemplateLayout.size;
 constexpr uint64_t kExpressionNodeSize =
-    obelisk::reflection::ExpressionNodeLayout.size;
+    talos::reflection::ExpressionNodeLayout.size;
 constexpr uint64_t kExpressionOperandSize =
-    obelisk::reflection::ExpressionOperandLayout.size;
+    talos::reflection::ExpressionOperandLayout.size;
 constexpr uint64_t kExpressionLeafSize =
-    obelisk::reflection::ExpressionLeafLayout.size;
+    talos::reflection::ExpressionLeafLayout.size;
 constexpr uint64_t kExpressionBoundMemberSize =
-    obelisk::reflection::ExpressionBoundMemberLayout.size;
+    talos::reflection::ExpressionBoundMemberLayout.size;
 constexpr uint64_t kExpressionLeafShapeSize =
-    obelisk::reflection::ExpressionLeafShapeLayout.size;
+    talos::reflection::ExpressionLeafShapeLayout.size;
 constexpr uint64_t kTerminalDriverBindingSize =
-    obelisk::reflection::TerminalDriverBindingLayout.size;
+    talos::reflection::TerminalDriverBindingLayout.size;
 
 constexpr uint64_t kEventBindingSize =
-    obelisk::reflection::EventBindingLayout.size;
+    talos::reflection::EventBindingLayout.size;
 constexpr uint64_t kEventArrayStorageBindingSize =
-    obelisk::reflection::EventArrayStorageBindingLayout.size;
+    talos::reflection::EventArrayStorageBindingLayout.size;
 constexpr uint64_t kModportBindingSize =
-    obelisk::reflection::ModportBindingLayout.size;
+    talos::reflection::ModportBindingLayout.size;
 constexpr uint64_t kBoxTypeBindingSize =
-    obelisk::reflection::BoxTypeBindingLayout.size;
+    talos::reflection::BoxTypeBindingLayout.size;
 constexpr uint64_t kValueElementBindingSize =
-    obelisk::reflection::ValueElementBindingLayout.size;
+    talos::reflection::ValueElementBindingLayout.size;
 constexpr uint64_t kMailboxElementBindingSize =
-    obelisk::reflection::MailboxElementBindingLayout.size;
+    talos::reflection::MailboxElementBindingLayout.size;
 constexpr uint64_t kRelationIndexSize =
-    obelisk::reflection::RelationIndexLayout.size;
+    talos::reflection::RelationIndexLayout.size;
 constexpr uint64_t kRelationIndexDimensionSize =
-    obelisk::reflection::RelationIndexDimensionLayout.size;
+    talos::reflection::RelationIndexDimensionLayout.size;
 constexpr uint64_t kRelationIndexKeySize =
-    obelisk::reflection::RelationIndexKeyLayout.size;
+    talos::reflection::RelationIndexKeyLayout.size;
 constexpr uint64_t kRelationIndexMemberSize =
-    obelisk::reflection::RelationIndexMemberLayout.size;
+    talos::reflection::RelationIndexMemberLayout.size;
 constexpr uint64_t kFixedPropertySize =
-    obelisk::reflection::FixedPropertyLayout.size;
+    talos::reflection::FixedPropertyLayout.size;
 constexpr uint64_t kFrozenValueSize =
-    obelisk::reflection::FrozenValueLayout.size;
+    talos::reflection::FrozenValueLayout.size;
 constexpr uint64_t kFrozenValueBindingSize =
-    obelisk::reflection::FrozenValueBindingLayout.size;
+    talos::reflection::FrozenValueBindingLayout.size;
 constexpr uint64_t kResolvedNetRunSize =
-    obelisk::reflection::ResolvedNetRunLayout.size;
+    talos::reflection::ResolvedNetRunLayout.size;
 constexpr uint64_t kNetDelayRunSize =
-    obelisk::reflection::NetDelayRunLayout.size;
-constexpr uint64_t kDefinitionSize = obelisk::reflection::DefinitionLayout.size;
+    talos::reflection::NetDelayRunLayout.size;
+constexpr uint64_t kDefinitionSize = talos::reflection::DefinitionLayout.size;
 constexpr uint64_t kDefinitionBindingSize =
-    obelisk::reflection::DefinitionBindingLayout.size;
+    talos::reflection::DefinitionBindingLayout.size;
 constexpr uint64_t kDefinitionMemberSize =
-    obelisk::reflection::DefinitionMemberLayout.size;
+    talos::reflection::DefinitionMemberLayout.size;
 constexpr uint64_t kDefinitionMemberRelationSize =
-    obelisk::reflection::DefinitionMemberRelationLayout.size;
+    talos::reflection::DefinitionMemberRelationLayout.size;
 constexpr uint64_t kDefinitionMemberRelationTargetSize =
-    obelisk::reflection::DefinitionMemberRelationTargetLayout.size;
+    talos::reflection::DefinitionMemberRelationTargetLayout.size;
 constexpr uint64_t kDefinitionSpecializationSize =
-    obelisk::reflection::DefinitionSpecializationLayout.size;
+    talos::reflection::DefinitionSpecializationLayout.size;
 constexpr uint64_t kDefinitionSpecializationBindingSize =
-    obelisk::reflection::DefinitionSpecializationBindingLayout.size;
+    talos::reflection::DefinitionSpecializationBindingLayout.size;
 constexpr uint64_t kDefinitionParameterValueSize =
-    obelisk::reflection::DefinitionParameterValueLayout.size;
+    talos::reflection::DefinitionParameterValueLayout.size;
 constexpr uint16_t kDefinitionParameterLocal = UINT16_C(1) << 8;
 constexpr uint16_t kDefinitionParameterRange = UINT16_C(1) << 9;
 constexpr uint16_t kDefinitionParameterDefaultUnavailable = UINT16_C(1) << 10;
@@ -149,13 +149,13 @@ constexpr uint16_t kDefinitionAssignmentType = 2;
 constexpr uint16_t kDefinitionAssignmentDefault = 4;
 
 constexpr uint64_t kDefinitionMemberEndpointSize =
-    obelisk::reflection::DefinitionMemberEndpointLayout.size;
+    talos::reflection::DefinitionMemberEndpointLayout.size;
 constexpr uint64_t kDefinitionMemberInstanceRelationSize =
-    obelisk::reflection::DefinitionMemberInstanceRelationLayout.size;
+    talos::reflection::DefinitionMemberInstanceRelationLayout.size;
 constexpr uint64_t kDefinitionMemberInstanceRelationTargetSize =
-    obelisk::reflection::DefinitionMemberInstanceRelationTargetLayout.size;
+    talos::reflection::DefinitionMemberInstanceRelationTargetLayout.size;
 constexpr uint64_t kDefinitionMemberInstanceRelationInverseSize =
-    obelisk::reflection::DefinitionMemberInstanceRelationInverseLayout.size;
+    talos::reflection::DefinitionMemberInstanceRelationInverseLayout.size;
 
 // Physical image offsets occupy the 00 prefix. The other prefixes provide
 // allocation-free cursors and relation tokens for per-instance views of
@@ -199,48 +199,48 @@ uint32_t read32(const uint8_t *data) {
 
 uint32_t recordKind(const uint8_t *record) {
   return static_cast<uint32_t>(
-      obelisk::reflection::unpackRecordKind(read32(record)));
+      talos::reflection::unpackRecordKind(read32(record)));
 }
 
 uint32_t recordVPIKind(const uint8_t *record) {
-  return obelisk::reflection::unpackRecordKindPayload(read32(record));
+  return talos::reflection::unpackRecordKindPayload(read32(record));
 }
 
 bool recordKindSupportsVPI(uint32_t physicalKind, uint32_t vpiKind) {
   if (vpiKind == 0)
-    return physicalKind == OBELISK_RT_DESIGN_RECORD_DRIVER;
-  const auto *descriptor = obelisk::reflection::findVPIObjectKind(vpiKind);
+    return physicalKind == TALOS_RT_DESIGN_RECORD_DRIVER;
+  const auto *descriptor = talos::reflection::findVPIObjectKind(vpiKind);
   if (!descriptor ||
-      descriptor->role != obelisk::reflection::VPIObjectRole::Concrete)
+      descriptor->role != talos::reflection::VPIObjectRole::Concrete)
     return false;
-  auto hasFamily = [&](obelisk::reflection::VPIObjectFamily family) {
+  auto hasFamily = [&](talos::reflection::VPIObjectFamily family) {
     return (descriptor->families &
-            obelisk::reflection::vpiFamilyMask(family)) != 0;
+            talos::reflection::vpiFamilyMask(family)) != 0;
   };
-  using VPIKind = obelisk::reflection::VPIObjectKind;
+  using VPIKind = talos::reflection::VPIObjectKind;
   switch (physicalKind) {
-  case OBELISK_RT_DESIGN_RECORD_SCOPE:
-    return hasFamily(obelisk::reflection::VPIObjectFamily::Scope);
-  case OBELISK_RT_DESIGN_RECORD_STORAGE:
-    return hasFamily(obelisk::reflection::VPIObjectFamily::Variable);
-  case OBELISK_RT_DESIGN_RECORD_NET:
-    return hasFamily(obelisk::reflection::VPIObjectFamily::Net);
-  case OBELISK_RT_DESIGN_RECORD_DRIVER:
+  case TALOS_RT_DESIGN_RECORD_SCOPE:
+    return hasFamily(talos::reflection::VPIObjectFamily::Scope);
+  case TALOS_RT_DESIGN_RECORD_STORAGE:
+    return hasFamily(talos::reflection::VPIObjectFamily::Variable);
+  case TALOS_RT_DESIGN_RECORD_NET:
+    return hasFamily(talos::reflection::VPIObjectFamily::Net);
+  case TALOS_RT_DESIGN_RECORD_DRIVER:
     return false;
-  case OBELISK_RT_DESIGN_RECORD_PROCESS:
+  case TALOS_RT_DESIGN_RECORD_PROCESS:
     return vpiKind == static_cast<uint16_t>(VPIKind::Initial) ||
            vpiKind == static_cast<uint16_t>(VPIKind::Final) ||
            vpiKind == static_cast<uint16_t>(VPIKind::Always) ||
            vpiKind == static_cast<uint16_t>(VPIKind::Task);
-  case OBELISK_RT_DESIGN_RECORD_FUNCTION:
+  case TALOS_RT_DESIGN_RECORD_FUNCTION:
     return vpiKind == static_cast<uint16_t>(VPIKind::Function);
-  case OBELISK_RT_DESIGN_RECORD_PORT:
+  case TALOS_RT_DESIGN_RECORD_PORT:
     return vpiKind == static_cast<uint16_t>(VPIKind::Port);
-  case OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT:
-    return obelisk::reflection::vpiObjectSetContains(
-               obelisk::reflection::VPIObjectSetID::StaticImageObjects, vpiKind) ||
-           obelisk::reflection::vpiObjectSetContains(
-               obelisk::reflection::VPIObjectSetID::DataVariableObjects, vpiKind);
+  case TALOS_RT_DESIGN_RECORD_STATIC_OBJECT:
+    return talos::reflection::vpiObjectSetContains(
+               talos::reflection::VPIObjectSetID::StaticImageObjects, vpiKind) ||
+           talos::reflection::vpiObjectSetContains(
+               talos::reflection::VPIObjectSetID::DataVariableObjects, vpiKind);
   default:
     return false;
   }
@@ -278,28 +278,28 @@ bool rangesDisjoint(uint64_t leftOffset, uint64_t leftCount,
 uint64_t nameHash(const uint8_t *name, uint64_t size);
 
 uint64_t checksum(const uint8_t *data, uint64_t size) {
-  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
+  uint64_t hash = TALOS_STABLE_HASH_OFFSET_BASIS;
   for (uint64_t index = 0; index != size; ++index) {
     // The checksum field is treated as zero while hashing.
     uint8_t byte = index >= 32 && index < 40 ? 0 : data[index];
-    hash = obelisk_stable_hash_append_byte(hash, byte);
+    hash = talos_stable_hash_append_byte(hash, byte);
   }
   return hash;
 }
 
 using Database = DesignDatabaseCache;
 
-bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
+bool parseHeader(const talos_rt_execution_descriptor_v1 *execution,
                  Database &database) {
-  if (!execution || execution->version != OBELISK_RT_VERSION ||
-      (execution->flags & OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE) == 0 ||
+  if (!execution || execution->version != TALOS_RT_VERSION ||
+      (execution->flags & TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE) == 0 ||
       !execution->design_database ||
       execution->design_database_size < kHeaderSize)
     return false;
   const uint8_t *data = execution->design_database;
   if (std::memcmp(data + offsetof(DatabaseHeader, magic), kMagic,
                   sizeof(kMagic)) != 0 ||
-      read32(data + offsetof(DatabaseHeader, version)) != OBELISK_RT_VERSION ||
+      read32(data + offsetof(DatabaseHeader, version)) != TALOS_RT_VERSION ||
       read32(data + offsetof(DatabaseHeader, header_size)) != kHeaderSize ||
       read64(data + offsetof(DatabaseHeader, image_size)) !=
           execution->design_database_size ||
@@ -382,7 +382,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t frozenValuePayloadOffset = 0, frozenValuePayloadSize = 0;
   if (semanticDirectory != 0) {
     if (!validRange(semanticDirectory, 1,
-                    obelisk::reflection::SemanticDirectoryLayout.size,
+                    talos::reflection::SemanticDirectoryLayout.size,
                     execution->design_database_size))
       return false;
     const uint8_t *directory = data + semanticDirectory;
@@ -438,7 +438,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     frozenValueBindingCount = read64(directory + 376);
     frozenValuePayloadOffset = read64(directory + 384);
     frozenValuePayloadSize = read64(directory + 392);
-    obelisk::reflection::SemanticDirectoryView reader(directory);
+    talos::reflection::SemanticDirectoryView reader(directory);
     classTypeBindingOffset = reader.getClassTypeBindingOffset();
     classTypeBindingCount = reader.getClassTypeBindingCount();
     semanticClassBindingOffset = reader.getSemanticClassBindingOffset();
@@ -770,23 +770,23 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     };
     for (const Section &section : sections)
       if (!rangesDisjoint(semanticDirectory, 1,
-                          obelisk::reflection::SemanticDirectoryLayout.size,
+                          talos::reflection::SemanticDirectoryLayout.size,
                           section.offset, section.count, section.stride))
         return false;
   }
   uint32_t supportedProfile =
-      OBELISK_RT_DESIGN_PROFILE_READ | OBELISK_RT_DESIGN_PROFILE_WRITE;
+      TALOS_RT_DESIGN_PROFILE_READ | TALOS_RT_DESIGN_PROFILE_WRITE;
   if ((database.profile & ~supportedProfile) != 0 ||
-      (database.profile & OBELISK_RT_DESIGN_PROFILE_READ) == 0 ||
-      ((database.profile & OBELISK_RT_DESIGN_PROFILE_WRITE) != 0 &&
-       (database.profile & OBELISK_RT_DESIGN_PROFILE_READ) == 0) ||
-      ((database.profile & OBELISK_RT_DESIGN_PROFILE_READ) != 0) !=
-          ((execution->flags & (OBELISK_RT_EXECUTION_VPI_READ |
-                                OBELISK_RT_EXECUTION_WAVEFORM_METADATA)) !=
+      (database.profile & TALOS_RT_DESIGN_PROFILE_READ) == 0 ||
+      ((database.profile & TALOS_RT_DESIGN_PROFILE_WRITE) != 0 &&
+       (database.profile & TALOS_RT_DESIGN_PROFILE_READ) == 0) ||
+      ((database.profile & TALOS_RT_DESIGN_PROFILE_READ) != 0) !=
+          ((execution->flags & (TALOS_RT_EXECUTION_VPI_READ |
+                                TALOS_RT_EXECUTION_WAVEFORM_METADATA)) !=
            0) ||
-      ((database.profile & OBELISK_RT_DESIGN_PROFILE_WRITE) != 0) !=
-          ((execution->flags & OBELISK_RT_EXECUTION_VPI_WRITE) != 0) ||
-      ((execution->flags & OBELISK_RT_EXECUTION_VPI_READ) == 0 &&
+      ((database.profile & TALOS_RT_DESIGN_PROFILE_WRITE) != 0) !=
+          ((execution->flags & TALOS_RT_EXECUTION_VPI_WRITE) != 0) ||
+      ((execution->flags & TALOS_RT_EXECUTION_VPI_READ) == 0 &&
        (semanticDirectory != 0 || database.statementCount != 0 ||
         database.statementSiteCount != 0 || database.relationCount != 0 ||
         database.semanticTypeCount != 0 ||
@@ -1538,7 +1538,7 @@ bool isStaticObjectOffset(const Database &database, uint64_t offset) {
 }
 
 bool effectiveStatementScope(const Database &database, uint32_t sourceIndex,
-                             obelisk::reflection::TableKind &targetTable,
+                             talos::reflection::TableKind &targetTable,
                              uint32_t &targetIndex) {
   if (sourceIndex >= database.statementCount)
     return false;
@@ -1550,8 +1550,8 @@ bool effectiveStatementScope(const Database &database, uint32_t sourceIndex,
       return false;
     const uint8_t *record =
         database.data + database.statements + uint64_t{parent} * kStatementSize;
-    if ((read16(record + 38) & OBELISK_RT_DESIGN_STATEMENT_SCOPE) != 0) {
-      targetTable = obelisk::reflection::TableKind::Statement;
+    if ((read16(record + 38) & TALOS_RT_DESIGN_STATEMENT_SCOPE) != 0) {
+      targetTable = talos::reflection::TableKind::Statement;
       targetIndex = parent;
       return true;
     }
@@ -1565,11 +1565,11 @@ bool effectiveStatementScope(const Database &database, uint32_t sourceIndex,
     const uint8_t *record =
         database.data + database.objects + uint64_t{owner} * kObjectSize;
     const auto *kind =
-        obelisk::reflection::findVPIObjectKind(recordVPIKind(record));
+        talos::reflection::findVPIObjectKind(recordVPIKind(record));
     if (kind && (kind->families &
-                 obelisk::reflection::vpiFamilyMask(
-                     obelisk::reflection::VPIObjectFamily::Scope)) != 0) {
-      targetTable = obelisk::reflection::TableKind::Object;
+                 talos::reflection::vpiFamilyMask(
+                     talos::reflection::VPIObjectFamily::Scope)) != 0) {
+      targetTable = talos::reflection::TableKind::Object;
       targetIndex = owner;
       return true;
     }
@@ -1578,47 +1578,47 @@ bool effectiveStatementScope(const Database &database, uint32_t sourceIndex,
   uint32_t scope = read32(source + 12);
   if (scope >= database.scopeCount)
     return false;
-  targetTable = obelisk::reflection::TableKind::Scope;
+  targetTable = talos::reflection::TableKind::Scope;
   targetIndex = scope;
   return true;
 }
 
 uint64_t tableOffset(const Database &database,
-                     obelisk::reflection::TableKind table, uint32_t index) {
+                     talos::reflection::TableKind table, uint32_t index) {
   switch (table) {
-  case obelisk::reflection::TableKind::Scope:
+  case talos::reflection::TableKind::Scope:
     return database.scopes + uint64_t{index} * kScopeSize;
-  case obelisk::reflection::TableKind::Object:
+  case talos::reflection::TableKind::Object:
     return database.objects + uint64_t{index} * kObjectSize;
-  case obelisk::reflection::TableKind::Statement:
+  case talos::reflection::TableKind::Statement:
     return database.statements + uint64_t{index} * kStatementSize;
-  case obelisk::reflection::TableKind::StaticObject:
+  case talos::reflection::TableKind::StaticObject:
     return database.staticObjects + uint64_t{index} * kStaticObjectSize;
   }
   return 0;
 }
 
 bool relationSourceForCursor(const Database &database, uint64_t offset,
-                             obelisk::reflection::TableKind &table,
+                             talos::reflection::TableKind &table,
                              uint32_t &index) {
   if (isScopeOffset(database, offset)) {
-    table = obelisk::reflection::TableKind::Scope;
+    table = talos::reflection::TableKind::Scope;
     index = static_cast<uint32_t>((offset - database.scopes) / kScopeSize);
     return true;
   }
   if (isObjectOffset(database, offset)) {
-    table = obelisk::reflection::TableKind::Object;
+    table = talos::reflection::TableKind::Object;
     index = static_cast<uint32_t>((offset - database.objects) / kObjectSize);
     return true;
   }
   if (isStatementOffset(database, offset)) {
-    table = obelisk::reflection::TableKind::Statement;
+    table = talos::reflection::TableKind::Statement;
     index =
         static_cast<uint32_t>((offset - database.statements) / kStatementSize);
     return true;
   }
   if (isStaticObjectOffset(database, offset)) {
-    table = obelisk::reflection::TableKind::StaticObject;
+    table = talos::reflection::TableKind::StaticObject;
     index = static_cast<uint32_t>((offset - database.staticObjects) /
                                   kStaticObjectSize);
     return true;
@@ -1630,8 +1630,8 @@ bool findDefinitionBinding(const Database &database, uint32_t scopeIndex,
                            uint32_t &definition, uint32_t &specialization,
                            uint32_t *bindingIndex = nullptr) {
   uint32_t packedSource = 0;
-  if (!obelisk::reflection::tryPackTableIndex(
-          obelisk::reflection::TableKind::Scope, scopeIndex, packedSource))
+  if (!talos::reflection::tryPackTableIndex(
+          talos::reflection::TableKind::Scope, scopeIndex, packedSource))
     return false;
   uint64_t low = 0;
   uint64_t high = database.definitionBindingCount;
@@ -1659,10 +1659,10 @@ bool findDefinitionBinding(const Database &database, uint32_t scopeIndex,
 
 bool definitionAssignment(const uint8_t *member) {
   return read16(member + 16) ==
-         uint32_t(obelisk::reflection::VPIObjectKind::ParamAssign);
+         uint32_t(talos::reflection::VPIObjectKind::ParamAssign);
 }
 uint32_t definitionSourceKind(const uint8_t *member) {
-  using Kind = obelisk::reflection::VPIObjectKind;
+  using Kind = talos::reflection::VPIObjectKind;
   return definitionAssignment(member)
              ? uint32_t(read16(member + 18) & kDefinitionAssignmentType
                             ? Kind::TypeParameter
@@ -1670,13 +1670,13 @@ uint32_t definitionSourceKind(const uint8_t *member) {
              : read16(member + 16);
 }
 uint16_t definitionSourceSelector(const uint8_t *member) {
-  using Rel = obelisk::reflection::VPIRelationKind;
+  using Rel = talos::reflection::VPIRelationKind;
   return uint16_t(definitionAssignment(member) ? Rel::RhsRel : Rel::ExprRel);
 }
 
 bool isDefinitionMemberInventory(
-    const obelisk::reflection::VPITraversalDescriptor &edge) {
-  using namespace obelisk::reflection;
+    const talos::reflection::VPITraversalDescriptor &edge) {
+  using namespace talos::reflection;
   return edge.automaticRelation == VPIAutomaticRelation::DefinitionMember ||
          (edge.mode == VPITraversalMode::Iterate &&
           edge.automaticRelation == VPIAutomaticRelation::DirectChild &&
@@ -1697,7 +1697,7 @@ uint32_t definitionEndpointCount(const Database &database,
                             uint64_t{first + index} * kDefinitionMemberSize;
     result += definitionAssignment(member) ||
               read16(member + 16) ==
-                  uint32_t(obelisk::reflection::VPIObjectKind::IODecl);
+                  uint32_t(talos::reflection::VPIObjectKind::IODecl);
   }
   return result;
 }
@@ -1719,10 +1719,10 @@ bool virtualMemberForCursor(const Database &database, uint64_t offset,
   const uint8_t *binding = database.data + database.definitionBindings +
                            uint64_t{bindingIndex} * kDefinitionBindingSize;
   uint32_t packedSource = read32(binding);
-  if (obelisk::reflection::unpackTableIndexKind(packedSource) !=
-      obelisk::reflection::TableKind::Scope)
+  if (talos::reflection::unpackTableIndexKind(packedSource) !=
+      talos::reflection::TableKind::Scope)
     return false;
-  scopeIndex = obelisk::reflection::unpackTableIndex(packedSource);
+  scopeIndex = talos::reflection::unpackTableIndex(packedSource);
   uint32_t definitionIndex = read32(binding + 4);
   uint32_t specializationIndex = read32(binding + 8);
   if (scopeIndex >= database.scopeCount ||
@@ -1738,7 +1738,7 @@ bool virtualMemberForCursor(const Database &database, uint64_t offset,
            uint64_t{memberIndex} * kDefinitionMemberSize;
   if (refObject &&
       (read16(member + 16) !=
-           static_cast<uint16_t>(obelisk::reflection::VPIObjectKind::IODecl) ||
+           static_cast<uint16_t>(talos::reflection::VPIObjectKind::IODecl) ||
        read16(member + 18) != kVPIIODirectionRef))
     return false;
   if (outBindingIndex)
@@ -1798,11 +1798,11 @@ bool semanticBitWidth(const Database &database, uint32_t semanticType,
   uint32_t encoded = read32(semantic);
   uint32_t kind = encoded & UINT32_C(0xff);
   if (bitWidth == 0 &&
-      (kind == OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL ||
-       kind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
-       kind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
-       kind == OBELISK_RT_DESIGN_SEMANTIC_REG ||
-       (encoded & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0)) {
+      (kind == TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL ||
+       kind == TALOS_RT_DESIGN_SEMANTIC_BIT ||
+       kind == TALOS_RT_DESIGN_SEMANTIC_LOGIC ||
+       kind == TALOS_RT_DESIGN_SEMANTIC_REG ||
+       (encoded & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0)) {
     int64_t left = readI64(semantic + 32);
     int64_t right = readI64(semantic + 40);
     uint64_t distance =
@@ -1814,21 +1814,21 @@ bool semanticBitWidth(const Database &database, uint32_t semanticType,
   }
   if (bitWidth == 0)
     switch (kind) {
-    case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
+    case TALOS_RT_DESIGN_SEMANTIC_BYTE:
       bitWidth = 8;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
       bitWidth = 16;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
-    case OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL:
+    case TALOS_RT_DESIGN_SEMANTIC_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
+    case TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL:
       bitWidth = 32;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_TIME:
-    case OBELISK_RT_DESIGN_SEMANTIC_REAL:
-    case OBELISK_RT_DESIGN_SEMANTIC_REALTIME:
+    case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_TIME:
+    case TALOS_RT_DESIGN_SEMANTIC_REAL:
+    case TALOS_RT_DESIGN_SEMANTIC_REALTIME:
       bitWidth = 64;
       break;
     default:
@@ -1837,7 +1837,7 @@ bool semanticBitWidth(const Database &database, uint32_t semanticType,
   return true;
 }
 
-obelisk_rt_status semanticPackedBitWidth(const Database &database,
+talos_rt_status semanticPackedBitWidth(const Database &database,
                                          uint32_t index, uint64_t *outWidth) {
   uint64_t multiplier = 1;
   // The image validator has already established an acyclic semantic graph.
@@ -1848,23 +1848,23 @@ obelisk_rt_status semanticPackedBitWidth(const Database &database,
                             uint64_t{index} * kSemanticTypeSize;
     const uint32_t kind = read32(record) & UINT32_C(0xff);
     // An unpacked dimension's range is its element count, not a packed width.
-    if (kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY)
-      return OBELISK_RT_EOF;
+    if (kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY)
+      return TALOS_RT_EOF;
     uint64_t width = 0;
     if (!semanticBitWidth(database, index, width))
-      return OBELISK_RT_INVALID_DESIGN;
-    if (kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
-        kind != OBELISK_RT_DESIGN_SEMANTIC_ENUM) {
+      return TALOS_RT_INVALID_DESIGN;
+    if (kind != TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
+        kind != TALOS_RT_DESIGN_SEMANTIC_ENUM) {
       if (width == 0)
-        return OBELISK_RT_EOF;
+        return TALOS_RT_EOF;
       if (multiplier > UINT64_MAX / width)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       *outWidth = multiplier * width;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
-    if (kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY) {
+    if (kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY) {
       if (width == 0 || multiplier > UINT64_MAX / width)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       multiplier *= width;
     }
     const uint8_t *edge = database.data + database.semanticTypeEdges +
@@ -1875,9 +1875,9 @@ obelisk_rt_status semanticPackedBitWidth(const Database &database,
 
 bool packedObjectReferenceOffset(const Database &database, uint32_t packed,
                                  uint64_t &offset) {
-  using obelisk::reflection::TableKind;
-  const TableKind table = obelisk::reflection::unpackTableIndexKind(packed);
-  const uint32_t index = obelisk::reflection::unpackTableIndex(packed);
+  using talos::reflection::TableKind;
+  const TableKind table = talos::reflection::unpackTableIndexKind(packed);
+  const uint32_t index = talos::reflection::unpackTableIndex(packed);
   switch (table) {
   case TableKind::Object:
     if (index >= database.objectCount)
@@ -1900,9 +1900,9 @@ bool packedObjectReferenceOffset(const Database &database, uint32_t packed,
 // procedural scope statement; they are not restricted to object tables.
 bool packedFrameLocalScopeOffset(const Database &database, uint32_t packed,
                                  uint64_t &offset) {
-  using obelisk::reflection::TableKind;
-  const uint32_t index = obelisk::reflection::unpackTableIndex(packed);
-  switch (obelisk::reflection::unpackTableIndexKind(packed)) {
+  using talos::reflection::TableKind;
+  const uint32_t index = talos::reflection::unpackTableIndex(packed);
+  switch (talos::reflection::unpackTableIndexKind(packed)) {
   case TableKind::Object:
   case TableKind::StaticObject:
     return packedObjectReferenceOffset(database, packed, offset);
@@ -1918,12 +1918,12 @@ bool packedFrameLocalScopeOffset(const Database &database, uint32_t packed,
 
 bool packedObjectReferenceForCursor(const Database &database, uint64_t offset,
                                     uint32_t &packed) {
-  obelisk::reflection::TableKind table;
+  talos::reflection::TableKind table;
   uint32_t index = 0;
   if (!relationSourceForCursor(database, offset, table, index) ||
-      (table != obelisk::reflection::TableKind::Object &&
-       table != obelisk::reflection::TableKind::StaticObject) ||
-      !obelisk::reflection::tryPackTableIndex(table, index, packed) ||
+      (table != talos::reflection::TableKind::Object &&
+       table != talos::reflection::TableKind::StaticObject) ||
+      !talos::reflection::tryPackTableIndex(table, index, packed) ||
       packed == UINT32_MAX)
     return false;
   return true;
@@ -2020,16 +2020,16 @@ bool findFrozenValue(const Database &database, uint32_t packedObject,
   return frozenValueAt(database, read32(binding + 4), value);
 }
 
-obelisk::reflection::RelationView relationAt(const Database &database,
+talos::reflection::RelationView relationAt(const Database &database,
                                              uint64_t index) {
-  return obelisk::reflection::RelationView(database.data + database.relations +
+  return talos::reflection::RelationView(database.data + database.relations +
                                            index * kRelationSize);
 }
 
-bool relationKeyLess(const obelisk::reflection::RelationView &relation,
-                     obelisk::reflection::TableKind table, uint32_t sourceIndex,
+bool relationKeyLess(const talos::reflection::RelationView &relation,
+                     talos::reflection::TableKind table, uint32_t sourceIndex,
                      uint16_t selector, bool iterate) {
-  auto relationTable = obelisk::reflection::unpackRelationSourceTable(
+  auto relationTable = talos::reflection::unpackRelationSourceTable(
       relation.getSourceKindAndTable());
   if (relationTable != table)
     return static_cast<uint8_t>(relationTable) < static_cast<uint8_t>(table);
@@ -2037,14 +2037,14 @@ bool relationKeyLess(const obelisk::reflection::RelationView &relation,
     return relation.getSourceIndex() < sourceIndex;
   if (relation.getSelector() != selector)
     return relation.getSelector() < selector;
-  return obelisk::reflection::relationSourceIsIterate(
+  return talos::reflection::relationSourceIsIterate(
              relation.getSourceKindAndTable()) < iterate;
 }
 
-bool relationKeyAtMost(const obelisk::reflection::RelationView &relation,
-                       obelisk::reflection::TableKind table,
+bool relationKeyAtMost(const talos::reflection::RelationView &relation,
+                       talos::reflection::TableKind table,
                        uint32_t sourceIndex, uint16_t selector, bool iterate) {
-  auto relationTable = obelisk::reflection::unpackRelationSourceTable(
+  auto relationTable = talos::reflection::unpackRelationSourceTable(
       relation.getSourceKindAndTable());
   if (relationTable != table)
     return static_cast<uint8_t>(relationTable) < static_cast<uint8_t>(table);
@@ -2052,12 +2052,12 @@ bool relationKeyAtMost(const obelisk::reflection::RelationView &relation,
     return relation.getSourceIndex() < sourceIndex;
   if (relation.getSelector() != selector)
     return relation.getSelector() < selector;
-  return obelisk::reflection::relationSourceIsIterate(
+  return talos::reflection::relationSourceIsIterate(
              relation.getSourceKindAndTable()) <= iterate;
 }
 
 uint64_t lowerBoundRelation(const Database &database,
-                            obelisk::reflection::TableKind table,
+                            talos::reflection::TableKind table,
                             uint32_t sourceIndex, uint16_t selector,
                             bool iterate) {
   uint64_t low = 0;
@@ -2074,7 +2074,7 @@ uint64_t lowerBoundRelation(const Database &database,
 }
 
 uint64_t upperBoundRelation(const Database &database, uint64_t low,
-                            obelisk::reflection::TableKind table,
+                            talos::reflection::TableKind table,
                             uint32_t sourceIndex, uint16_t selector,
                             bool iterate) {
   uint64_t high = database.relationCount;
@@ -2089,14 +2089,14 @@ uint64_t upperBoundRelation(const Database &database, uint64_t low,
   return low;
 }
 
-bool relationMatches(const obelisk::reflection::RelationView &relation,
-                     obelisk::reflection::TableKind table, uint32_t sourceIndex,
+bool relationMatches(const talos::reflection::RelationView &relation,
+                     talos::reflection::TableKind table, uint32_t sourceIndex,
                      uint16_t selector, bool iterate) {
-  return obelisk::reflection::unpackRelationSourceTable(
+  return talos::reflection::unpackRelationSourceTable(
              relation.getSourceKindAndTable()) == table &&
          relation.getSourceIndex() == sourceIndex &&
          relation.getSelector() == selector &&
-         obelisk::reflection::relationSourceIsIterate(
+         talos::reflection::relationSourceIsIterate(
              relation.getSourceKindAndTable()) == iterate;
 }
 
@@ -2104,35 +2104,35 @@ bool relationMatches(const obelisk::reflection::RelationView &relation,
 // common case has no stored vpiSimNet edge and therefore remains the source
 // object itself. Only collapsed aliases pay one relation-table binary search
 // on this cold VPI/debugger path.
-obelisk_rt_status simulatedNetObjectIndex(const Database &database,
+talos_rt_status simulatedNetObjectIndex(const Database &database,
                                           uint32_t sourceIndex,
                                           uint32_t &targetIndex) {
   if (sourceIndex >= database.objectCount)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   targetIndex = sourceIndex;
   constexpr uint16_t selector =
-      static_cast<uint16_t>(obelisk::reflection::VPIRelationKind::SimNetRel);
+      static_cast<uint16_t>(talos::reflection::VPIRelationKind::SimNetRel);
   uint64_t index =
-      lowerBoundRelation(database, obelisk::reflection::TableKind::Object,
+      lowerBoundRelation(database, talos::reflection::TableKind::Object,
                          sourceIndex, selector, false);
   if (index == database.relationCount)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   auto relation = relationAt(database, index);
-  if (!relationMatches(relation, obelisk::reflection::TableKind::Object,
+  if (!relationMatches(relation, talos::reflection::TableKind::Object,
                        sourceIndex, selector, false))
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   uint32_t packedTarget = relation.getTargetIndexAndTable();
-  if (obelisk::reflection::unpackTableIndexKind(packedTarget) !=
-      obelisk::reflection::TableKind::Object)
-    return OBELISK_RT_INVALID_DESIGN;
-  uint32_t candidate = obelisk::reflection::unpackTableIndex(packedTarget);
+  if (talos::reflection::unpackTableIndexKind(packedTarget) !=
+      talos::reflection::TableKind::Object)
+    return TALOS_RT_INVALID_DESIGN;
+  uint32_t candidate = talos::reflection::unpackTableIndex(packedTarget);
   if (candidate >= database.objectCount ||
       recordKind(database.data + database.objects +
                  uint64_t{candidate} * kObjectSize) !=
-          OBELISK_RT_DESIGN_RECORD_NET)
-    return OBELISK_RT_INVALID_DESIGN;
+          TALOS_RT_DESIGN_RECORD_NET)
+    return TALOS_RT_INVALID_DESIGN;
   targetIndex = candidate;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 bool getRecord(const Database &database, uint64_t offset,
@@ -2143,14 +2143,14 @@ bool getRecord(const Database &database, uint64_t offset,
   record = database.data + offset;
   kind = recordKind(record);
   if (isScopeOffset(database, offset))
-    return kind == OBELISK_RT_DESIGN_RECORD_SCOPE;
+    return kind == TALOS_RT_DESIGN_RECORD_SCOPE;
   if (isTypeOffset(database, offset))
-    return kind == OBELISK_RT_DESIGN_RECORD_TYPE;
-  return (kind >= OBELISK_RT_DESIGN_RECORD_STORAGE &&
-          kind <= OBELISK_RT_DESIGN_RECORD_PROCESS) ||
-         kind == OBELISK_RT_DESIGN_RECORD_FUNCTION ||
-         kind == OBELISK_RT_DESIGN_RECORD_PORT ||
-         kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
+    return kind == TALOS_RT_DESIGN_RECORD_TYPE;
+  return (kind >= TALOS_RT_DESIGN_RECORD_STORAGE &&
+          kind <= TALOS_RT_DESIGN_RECORD_PROCESS) ||
+         kind == TALOS_RT_DESIGN_RECORD_FUNCTION ||
+         kind == TALOS_RT_DESIGN_RECORD_PORT ||
+         kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT;
 }
 
 bool getString(const Database &database, uint64_t offset,
@@ -2191,19 +2191,19 @@ bool rangeExtent(const uint8_t *record, uint64_t &extent) {
 }
 
 uint64_t nextOffset(const uint8_t *record, uint32_t kind) {
-  return read64(record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 32 : 24));
+  return read64(record + (kind == TALOS_RT_DESIGN_RECORD_SCOPE ? 32 : 24));
 }
 
 constexpr uint32_t kPortIdentityCaps =
-    OBELISK_RT_DESIGN_CAP_PORT_INPUT | OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
-    OBELISK_RT_DESIGN_CAP_PORT_REF | OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
+    TALOS_RT_DESIGN_CAP_PORT_INPUT | TALOS_RT_DESIGN_CAP_PORT_OUTPUT |
+    TALOS_RT_DESIGN_CAP_PORT_REF | TALOS_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
 
 bool isWholePortConnection(const uint8_t *port, const uint8_t *canonical) {
   uint32_t canonicalKind = recordKind(canonical);
-  if (recordKind(port) != OBELISK_RT_DESIGN_RECORD_PORT ||
-      (read32(port + 4) & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) == 0 ||
-      (canonicalKind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
-       canonicalKind != OBELISK_RT_DESIGN_RECORD_NET) ||
+  if (recordKind(port) != TALOS_RT_DESIGN_RECORD_PORT ||
+      (read32(port + 4) & TALOS_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) == 0 ||
+      (canonicalKind != TALOS_RT_DESIGN_RECORD_STORAGE &&
+       canonicalKind != TALOS_RT_DESIGN_RECORD_NET) ||
       read64(port + 16) != read64(canonical + 16) ||
       read64(port + 48) != read64(canonical + 48) ||
       read64(port + 56) != read64(canonical + 56) ||
@@ -2222,8 +2222,8 @@ bool isWholePortConnection(const uint8_t *port, const uint8_t *canonical) {
 // Persistent maps share inherited tables, matching ClassDispatchAnalysis and
 // the managed runtime without expanding a transitive-closure matrix.
 bool validateClassCallDispatch(const Database &database) {
-  using namespace obelisk::reflection;
-  using MethodMap = obelisk::runtime::DescriptorMap<uint32_t>;
+  using namespace talos::reflection;
+  using MethodMap = talos::runtime::DescriptorMap<uint32_t>;
   struct Class {
     uint64_t id;
     uint32_t flags, base = UINT32_MAX;
@@ -2318,8 +2318,8 @@ bool validateClassCallDispatch(const Database &database) {
       const uint8_t *unit = database.data + database.objects +
                             uint64_t{row.getCodeUnitIndex()} * kObjectSize;
       bool task = (row.getFlags() & 1) != 0;
-      if (recordKind(unit) != (task ? OBELISK_RT_DESIGN_RECORD_PROCESS
-                                    : OBELISK_RT_DESIGN_RECORD_FUNCTION) ||
+      if (recordKind(unit) != (task ? TALOS_RT_DESIGN_RECORD_PROCESS
+                                    : TALOS_RT_DESIGN_RECORD_FUNCTION) ||
           recordVPIKind(unit) !=
               static_cast<uint32_t>(task ? VPIObjectKind::Task
                                          : VPIObjectKind::Function))
@@ -2481,14 +2481,14 @@ bool validateClassCallDispatch(const Database &database) {
 
 bool findCallableSource(const Database &database, uint32_t codeUnitObjectIndex,
                         uint32_t &packedSource, uint64_t &sourceOffset) {
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   if (codeUnitObjectIndex >= database.objectCount)
     return false;
   const uint64_t offset =
       database.objects + uint64_t{codeUnitObjectIndex} * kObjectSize;
   const uint8_t *unit = database.data + offset;
-  if (recordKind(unit) != OBELISK_RT_DESIGN_RECORD_PROCESS &&
-      recordKind(unit) != OBELISK_RT_DESIGN_RECORD_FUNCTION)
+  if (recordKind(unit) != TALOS_RT_DESIGN_RECORD_PROCESS &&
+      recordKind(unit) != TALOS_RT_DESIGN_RECORD_FUNCTION)
     return false;
   const uint32_t kind = recordVPIKind(unit);
   if (kind == static_cast<uint32_t>(VPIObjectKind::Task) ||
@@ -2521,7 +2521,7 @@ bool findCallableSource(const Database &database, uint32_t codeUnitObjectIndex,
 
 bool findInitializerSource(const Database &database, uint64_t codeUnitID,
                            uint32_t &source) {
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   uint64_t low = 0, high = database.initializerBindingCount;
   while (low < high) {
     uint64_t middle = low + (high - low) / 2;
@@ -2543,7 +2543,7 @@ bool findInitializerSource(const Database &database, uint64_t codeUnitID,
 }
 
 uint32_t initializerSourceScope(const Database &database, uint32_t source) {
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   auto table = unpackTableIndexKind(source);
   auto index = unpackTableIndex(source);
   auto selector = static_cast<uint32_t>(VPIRelationKind::ScopeRel);
@@ -2560,13 +2560,13 @@ uint32_t initializerSourceScope(const Database &database, uint32_t source) {
 bool validateInitializers(const Database &database) {
   if (!database.initializerBindingCount)
     return true;
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   std::unordered_map<uint64_t, uint32_t> units;
   for (uint32_t index = 0; index != database.objectCount; ++index) {
     const uint8_t *object =
         database.data + database.objects + uint64_t{index} * kObjectSize;
-    if (recordKind(object) == OBELISK_RT_DESIGN_RECORD_FUNCTION ||
-        recordKind(object) == OBELISK_RT_DESIGN_RECORD_PROCESS)
+    if (recordKind(object) == TALOS_RT_DESIGN_RECORD_FUNCTION ||
+        recordKind(object) == TALOS_RT_DESIGN_RECORD_PROCESS)
       if (!units.emplace(read64(object + 8), index).second)
         return false;
   }
@@ -2622,9 +2622,9 @@ bool validateInitializers(const Database &database) {
       return false;
     const uint8_t *unit = database.data + database.objects +
                           uint64_t{unitIndex->second} * kObjectSize;
-    if (recordKind(unit) != OBELISK_RT_DESIGN_RECORD_FUNCTION ||
+    if (recordKind(unit) != TALOS_RT_DESIGN_RECORD_FUNCTION ||
         recordVPIKind(unit) ||
-        !(read32(unit + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL))
+        !(read32(unit + 4) & TALOS_RT_DESIGN_CAP_INTERNAL))
       return false;
     if (auto canonical = canonicalStorage.find(source);
         canonical != canonicalStorage.end())
@@ -2632,7 +2632,7 @@ bool validateInitializers(const Database &database) {
         return false;
     if (isStaticObjectOffset(database, offset) ||
         recordKind(database.data + offset) !=
-            OBELISK_RT_DESIGN_RECORD_STORAGE ||
+            TALOS_RT_DESIGN_RECORD_STORAGE ||
         read64(database.data + offset + 16) != read64(unit + 16))
       return false;
     previous = row.getCodeUnitID();
@@ -2643,13 +2643,13 @@ bool validateInitializers(const Database &database) {
 bool validateCodeUnitScopes(
     const Database &database,
     const std::unordered_map<uint32_t, std::string_view> &fixedNames) {
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   std::unordered_map<uint64_t, uint32_t> units;
   for (uint32_t index = 0; index != database.objectCount; ++index) {
     const uint8_t *unit =
         database.data + database.objects + uint64_t{index} * kObjectSize;
-    if (recordKind(unit) == OBELISK_RT_DESIGN_RECORD_PROCESS ||
-        recordKind(unit) == OBELISK_RT_DESIGN_RECORD_FUNCTION)
+    if (recordKind(unit) == TALOS_RT_DESIGN_RECORD_PROCESS ||
+        recordKind(unit) == TALOS_RT_DESIGN_RECORD_FUNCTION)
       if (!units.emplace(read64(unit + 8), index).second)
         return false;
   }
@@ -2673,13 +2673,13 @@ bool validateCodeUnitScopes(
     const uint8_t *target = database.data + sourceOffset;
     bool compact = isStaticObjectOffset(database, sourceOffset);
     if (recordVPIKind(unit) ||
-        !(read32(unit + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL) ||
+        !(read32(unit + 4) & TALOS_RT_DESIGN_CAP_INTERNAL) ||
         (!compact &&
-         recordKind(target) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT))
+         recordKind(target) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT))
       return false;
     const uint32_t kind = objectReferenceVPIKind(database, sourceOffset);
     const bool functionABI =
-        recordKind(unit) == OBELISK_RT_DESIGN_RECORD_FUNCTION;
+        recordKind(unit) == TALOS_RT_DESIGN_RECORD_FUNCTION;
     if (row.getFlags() && !functionABI)
       return false;
     if (kind != static_cast<uint32_t>(functionABI && !row.getFlags()
@@ -2710,7 +2710,7 @@ bool validateCodeUnitScopes(
 bool validateInterfaceCallDispatch(
     const Database &database,
     const std::unordered_map<uint32_t, std::string_view> &fixedNames) {
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   auto memberAt = [&](uint32_t index) {
     return InterfaceCallableView(database.data + database.interfaceCallables +
                                  uint64_t{index} * kInterfaceCallableSize);
@@ -2728,7 +2728,7 @@ bool validateInterfaceCallDispatch(
                               uint64_t{root} * kSemanticTypeSize;
     std::string_view modport;
     return (read32(semantic) & UINT32_C(0xff)) ==
-               OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE &&
+               TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE &&
            read32(semantic + 12) == UINT32_MAX &&
            read32(semantic + 16) == packed &&
            getString(database, database.strings + read32(semantic + 24),
@@ -2925,18 +2925,18 @@ bool validateInterfaceCallDispatch(
 }
 
 constexpr uint32_t lexicalInheritanceFlags =
-    OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC |
-    OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE |
-    OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS |
-    OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS |
-    OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT |
-    OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT |
-    OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS;
+    TALOS_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC |
+    TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE |
+    TALOS_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS |
+    TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS |
+    TALOS_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT |
+    TALOS_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT |
+    TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS;
 
 bool validateLexicalInheritance(
     const Database &database,
     const std::unordered_map<uint32_t, std::string_view> &fixedNames) {
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   using Kind = VPIObjectKind;
   using Rel = VPIRelationKind;
   constexpr uint32_t missing = UINT32_MAX;
@@ -2958,7 +2958,7 @@ bool validateLexicalInheritance(
     return isStaticObjectOffset(database, offset)
                ? uint32_t{read16(database.data + offset + 30)}
            : recordKind(database.data + offset) ==
-                   OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT
+                   TALOS_RT_DESIGN_RECORD_STATIC_OBJECT
                ? read32(database.data + offset + 4)
                : 0u;
   };
@@ -3020,7 +3020,7 @@ bool validateLexicalInheritance(
   for (uint32_t index = 0; index != database.objectCount; ++index) {
     const uint8_t *object =
         database.data + database.objects + uint64_t{index} * kObjectSize;
-    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT)
+    if (recordKind(object) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT)
       continue;
     uint32_t packed = relationEndpoint(TableKind::Object, index);
     uint32_t caps = read32(object + 4), kind = recordVPIKind(object);
@@ -3036,10 +3036,10 @@ bool validateLexicalInheritance(
     uint32_t semantic = 0;
     if (findSemanticRootBinding(database, packed, semantic))
       return false;
-    if (caps & OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC) {
+    if (caps & TALOS_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC) {
       if (kind != static_cast<uint32_t>(Kind::ClassTypespec) ||
-          (caps & ~(OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC |
-                    OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS)) != 0)
+          (caps & ~(TALOS_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC |
+                    TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS)) != 0)
         return false;
       auto name = fixedNames.find(packed);
       std::string_view recordName;
@@ -3049,22 +3049,22 @@ bool validateLexicalInheritance(
         return false;
       types.insert(packed);
     } else if (caps &
-               (OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT |
-                OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT)) {
+               (TALOS_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT |
+                TALOS_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT)) {
       bool originalDefault =
-          caps & OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT;
+          caps & TALOS_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT;
       uint32_t allowed =
           originalDefault
-              ? OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT
-              : OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT |
-                    OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS;
+              ? TALOS_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT
+              : TALOS_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT |
+                    TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS;
       if (kind != static_cast<uint32_t>(Kind::ParamAssign) || (caps & ~allowed))
         return false;
       assignments.insert(packed);
     } else if (kind != static_cast<uint32_t>(Kind::Extends) ||
                (caps &
-                ~(OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE |
-                  OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS)) !=
+                ~(TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE |
+                  TALOS_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS)) !=
                    0) {
       return false;
     }
@@ -3076,8 +3076,8 @@ bool validateLexicalInheritance(
     if ((types.count(source) && read16(property + 4) != 2) ||
         (assignments.count(source) && read16(property + 4) != 21) ||
         (capsFor(source) &
-         (OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE |
-          OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS)))
+         (TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE |
+          TALOS_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS)))
       return false;
   }
   for (uint64_t index = 0; index != database.relationCount; ++index) {
@@ -3141,11 +3141,11 @@ bool validateLexicalInheritance(
       return false;
     uint32_t base = handle(clause, static_cast<uint32_t>(Kind::ClassTypespec));
     bool unavailable =
-        capsFor(clause) & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE;
+        capsFor(clause) & TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE;
     if (unavailable ? base != missing : base == missing)
       return false;
     if ((capsFor(clause) &
-         OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS) &&
+         TALOS_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS) &&
         !iterate(clause, static_cast<uint32_t>(Rel::ArgumentRel)).empty())
       return false;
   }
@@ -3172,7 +3172,7 @@ bool validateLexicalInheritance(
     formals.erase(
         std::remove_if(formals.begin(), formals.end(), isLocalParameter),
         formals.end());
-    if (capsFor(type) & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS) {
+    if (capsFor(type) & TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS) {
       if (!actuals.empty())
         return false;
     } else {
@@ -3188,13 +3188,13 @@ bool validateLexicalInheritance(
         uint32_t actual = actuals[index];
         uint32_t rhs = handle(actual, static_cast<uint32_t>(Rel::RhsRel));
         uint32_t caps = capsFor(actual);
-        if (caps & OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT) {
+        if (caps & TALOS_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT) {
           if (rhs !=
               handle(formals[index], static_cast<uint32_t>(Rel::ExprRel)))
             return false;
           continue;
         }
-        if (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS) {
+        if (caps & TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS) {
           if (rhs != missing)
             return false;
           continue;
@@ -3215,7 +3215,7 @@ bool validateLexicalInheritance(
         } else if (typeActual) {
           if (!vpiObjectSetContains(VPIObjectSetID::ConcreteTypespecObjects,
                                     rhsKind) ||
-              (capsFor(rhs) & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) ||
+              (capsFor(rhs) & TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC) ||
               !isUnnamed(rhs) || scopeFor(rhs) != scopeFor(actual) ||
               !actualTypeOwners.emplace(rhs, actual).second)
             return false;
@@ -3289,7 +3289,7 @@ const uint8_t *expressionRoot(const Database &database, uint32_t index) {
 }
 bool isConcreteTypeDefault(const uint8_t *root) {
   return (read16(root + 14) &
-          obelisk::reflection::expressionRootConcreteTypeDefault) != 0;
+          talos::reflection::expressionRootConcreteTypeDefault) != 0;
 }
 const uint8_t *expressionTemplate(const Database &database,
                                   const uint8_t *root) {
@@ -3312,7 +3312,7 @@ const uint8_t *expressionNode(const Database &database, const uint8_t *recipe,
 }
 bool isDefinitionDefault(const uint8_t *root) {
   return (read16(root + 14) &
-          obelisk::reflection::expressionRootDefinitionMember) != 0;
+          talos::reflection::expressionRootDefinitionMember) != 0;
 }
 // The node pools have globally unique source occurrences. A default cursor
 // combines that occurrence with the querying instance binding, without an
@@ -3378,7 +3378,7 @@ bool expressionContext(const Database &database, const uint8_t *root,
                        uint32_t &scope, uint32_t *outKind = nullptr,
                        uint64_t *outOwner = nullptr,
                        uint32_t defaultBinding = UINT32_MAX) {
-  using obelisk::reflection::TableKind;
+  using talos::reflection::TableKind;
   if (isDefinitionDefault(root)) {
     uint32_t memberIndex = 0;
     const uint8_t *member = nullptr;
@@ -3394,10 +3394,10 @@ bool expressionContext(const Database &database, const uint8_t *root,
     return true;
   }
   uint32_t packed = read32(root),
-           index = obelisk::reflection::unpackTableIndex(packed);
+           index = talos::reflection::unpackTableIndex(packed);
   uint64_t offset = 0;
   uint32_t kind = 0;
-  switch (obelisk::reflection::unpackTableIndexKind(packed)) {
+  switch (talos::reflection::unpackTableIndexKind(packed)) {
   case TableKind::Statement:
     if (index >= database.statementCount)
       return false;
@@ -3428,9 +3428,9 @@ bool expressionContext(const Database &database, const uint8_t *root,
   }
   if (scope >= database.scopeCount)
     return false;
-  if (kind == uint32_t(obelisk::reflection::VPIObjectKind::Port) &&
+  if (kind == uint32_t(talos::reflection::VPIObjectKind::Port) &&
       read16(root + 12) ==
-          uint32_t(obelisk::reflection::VPIRelationKind::HighConnRel)) {
+          uint32_t(talos::reflection::VPIRelationKind::HighConnRel)) {
     uint64_t parent = read64(database.data + database.scopes +
                              uint64_t{scope} * kScopeSize + 16);
     if (!isScopeOffset(database, parent))
@@ -3451,7 +3451,7 @@ bool expressionUseOwner(const Database &database, const uint8_t *root,
   uint32_t scope = 0;
   if (!expressionContext(database, root, scope, &kind, &offset))
     return false;
-  using Kind = obelisk::reflection::VPIObjectKind;
+  using Kind = talos::reflection::VPIObjectKind;
   if (kind != uint32_t(Kind::CaseItem))
     return true;
   if (!isStatementOffset(database, offset))
@@ -3475,7 +3475,7 @@ bool enclosingInstance(const Database &database, uint32_t scope,
   if (scope >= database.scopeCount)
     return false;
   offset = database.scopes + uint64_t{scope} * kScopeSize;
-  using Kind = obelisk::reflection::VPIObjectKind;
+  using Kind = talos::reflection::VPIObjectKind;
   for (;;) {
     kind = recordVPIKind(database.data + offset);
     if (kind == uint32_t(Kind::Module) ||
@@ -3508,9 +3508,9 @@ bool expressionLeaf(const Database &database, const uint8_t *root,
   uint32_t tag = encoded >> 30, payload = encoded & ((UINT32_C(1) << 30) - 1);
   if (tag == 1 || tag == 3) {
     uint32_t packed = 0;
-    if (!obelisk::reflection::tryPackTableIndex(
-            tag == 1 ? obelisk::reflection::TableKind::Object
-                     : obelisk::reflection::TableKind::StaticObject,
+    if (!talos::reflection::tryPackTableIndex(
+            tag == 1 ? talos::reflection::TableKind::Object
+                     : talos::reflection::TableKind::StaticObject,
             payload, packed) ||
         !packedObjectReferenceOffset(database, packed, out.cursor) ||
         !findSemanticRootBinding(database, packed, out.semantic))
@@ -3548,13 +3548,13 @@ bool expressionLeaf(const Database &database, const uint8_t *root,
 bool expressionIntegral(const Database &database, uint32_t semantic,
                         uint64_t &width, uint32_t &flags) {
   if (semantic >= database.semanticTypeCount ||
-      semanticPackedBitWidth(database, semantic, &width) != OBELISK_RT_OK ||
+      semanticPackedBitWidth(database, semantic, &width) != TALOS_RT_OK ||
       !width)
     return false;
   flags = read32(database.data + database.semanticTypes +
                  uint64_t{semantic} * kSemanticTypeSize);
   uint32_t kind = flags & UINT32_C(0xff);
-  while (kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY) {
+  while (kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY) {
     const uint8_t *record = database.data + database.semanticTypes +
                             uint64_t{semantic} * kSemanticTypeSize;
     const uint8_t *edge = database.data + database.semanticTypeEdges +
@@ -3565,16 +3565,16 @@ bool expressionIntegral(const Database &database, uint32_t semantic,
            UINT32_C(0xff);
   }
   switch (kind) {
-  case OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
-  case OBELISK_RT_DESIGN_SEMANTIC_BIT:
-  case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
-  case OBELISK_RT_DESIGN_SEMANTIC_REG:
-  case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
-  case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
-  case OBELISK_RT_DESIGN_SEMANTIC_INT:
-  case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
-  case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
-  case OBELISK_RT_DESIGN_SEMANTIC_TIME:
+  case TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
+  case TALOS_RT_DESIGN_SEMANTIC_BIT:
+  case TALOS_RT_DESIGN_SEMANTIC_LOGIC:
+  case TALOS_RT_DESIGN_SEMANTIC_REG:
+  case TALOS_RT_DESIGN_SEMANTIC_BYTE:
+  case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
+  case TALOS_RT_DESIGN_SEMANTIC_INT:
+  case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
+  case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
+  case TALOS_RT_DESIGN_SEMANTIC_TIME:
     return true;
   default:
     return false;
@@ -3597,7 +3597,7 @@ bool expressionFrozen(const Database &database, uint32_t index,
 // indices remain constant even when they do not currently denote an object.
 bool expressionOperandIsConstant(const Database &database, const uint8_t *root,
                                  const uint8_t *recipe, uint32_t operand) {
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<uint32_t> pending{operand};
     while (!pending.empty()) {
       uint32_t current = pending.back();
@@ -3607,13 +3607,13 @@ bool expressionOperandIsConstant(const Database &database, const uint8_t *root,
         if (!expressionLeaf(database, root,
                             current & ~kExpressionOperandLeafFlag, leaf) ||
             (leaf.kind !=
-                 uint32_t(obelisk::reflection::VPIObjectKind::Parameter) &&
+                 uint32_t(talos::reflection::VPIObjectKind::Parameter) &&
              leaf.kind !=
-                 uint32_t(obelisk::reflection::VPIObjectKind::SpecParam) &&
+                 uint32_t(talos::reflection::VPIObjectKind::SpecParam) &&
              leaf.kind !=
-                 uint32_t(obelisk::reflection::VPIObjectKind::Constant) &&
+                 uint32_t(talos::reflection::VPIObjectKind::Constant) &&
              leaf.kind !=
-                 uint32_t(obelisk::reflection::VPIObjectKind::EnumConst)))
+                 uint32_t(talos::reflection::VPIObjectKind::EnumConst)))
           return false;
         continue;
       }
@@ -3621,13 +3621,13 @@ bool expressionOperandIsConstant(const Database &database, const uint8_t *root,
       if (!expression)
         return false;
       auto kind =
-          static_cast<obelisk::reflection::VPIObjectKind>(read16(expression));
-      if (kind == obelisk::reflection::VPIObjectKind::Constant)
+          static_cast<talos::reflection::VPIObjectKind>(read16(expression));
+      if (kind == talos::reflection::VPIObjectKind::Constant)
         continue;
-      if ((kind != obelisk::reflection::VPIObjectKind::Operation &&
-           kind != obelisk::reflection::VPIObjectKind::PartSelect &&
-           kind != obelisk::reflection::VPIObjectKind::IndexedPartSelect &&
-           !obelisk::reflection::isVPIBitSelection(uint32_t(kind))) ||
+      if ((kind != talos::reflection::VPIObjectKind::Operation &&
+           kind != talos::reflection::VPIObjectKind::PartSelect &&
+           kind != talos::reflection::VPIObjectKind::IndexedPartSelect &&
+           !talos::reflection::isVPIBitSelection(uint32_t(kind))) ||
           read32(expression + 4) == UINT32_MAX)
         return false;
       uint64_t first = uint64_t{read32(recipe + 12)} + read32(expression + 8);
@@ -3637,15 +3637,15 @@ bool expressionOperandIsConstant(const Database &database, const uint8_t *root,
     }
     return true;
   }
-  OBELISK_RT_CATCH_ALL { return false; }
+  TALOS_RT_CATCH_ALL { return false; }
 }
 
 bool expressionKnownInteger(const Database &database, const uint8_t *root,
                             const uint8_t *recipe, uint32_t operand,
                             int64_t &result) {
-  using Kind = obelisk::reflection::VPIObjectKind;
-  using Shape = obelisk::reflection::VPIIntegralExpressionShape;
-  using obelisk::designbytecode::Logic;
+  using Kind = talos::reflection::VPIObjectKind;
+  using Shape = talos::reflection::VPIIntegralExpressionShape;
+  using talos::designbytecode::Logic;
   struct Constant {
     Logic value;
     Shape shape;
@@ -3695,13 +3695,13 @@ bool expressionKnownInteger(const Database &database, const uint8_t *root,
           return false;
       } else if (read16(node) == uint16_t(Kind::Operation)) {
         code = read16(node + 2);
-        auto descriptor = obelisk::reflection::findVPISourceOperator(code);
+        auto descriptor = talos::reflection::findVPISourceOperator(code);
         bool concatenation = code == 33 || code == 34;
         if (concatenation
                 ? read32(node + 12) < (code == 34 ? 2u : 1u)
                 : (!descriptor || read32(node + 12) != descriptor->arity ||
-                   obelisk::reflection::integralOperatorRule(code) ==
-                       obelisk::reflection::VPIIntegralOperatorRule::
+                   talos::reflection::integralOperatorRule(code) ==
+                       talos::reflection::VPIIntegralOperatorRule::
                            Unsupported))
           return false;
       } else
@@ -3712,19 +3712,19 @@ bool expressionKnownInteger(const Database &database, const uint8_t *root,
     if (!expressionIntegral(database, semantic, width, flags) ||
         width > UINT32_MAX)
       return false;
-    Shape shape{width, bool(flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED),
-                bool(flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE), code};
+    Shape shape{width, bool(flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED),
+                bool(flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE), code};
     if (!code) {
       uint64_t bytes = (width + 7) / 8;
       if (frozen.bitWidth != width || frozen.payloadSize != bytes * 2 ||
-          bool(frozen.kindAndFlags & obelisk::reflection::frozenValueSigned) !=
+          bool(frozen.kindAndFlags & talos::reflection::frozenValueSigned) !=
               shape.isSigned ||
           bool(frozen.kindAndFlags &
-               obelisk::reflection::frozenValueFourState) != shape.fourState)
+               talos::reflection::frozenValueFourState) != shape.fourState)
         return false;
       Logic value{static_cast<uint32_t>(width), shape.fourState, {}, {}};
-      value.value.assign(obelisk::designbytecode::limbCount(width), 0);
-      value.unknown.assign(obelisk::designbytecode::limbCount(width), 0);
+      value.value.assign(talos::designbytecode::limbCount(width), 0);
+      value.unknown.assign(talos::designbytecode::limbCount(width), 0);
       for (uint64_t byte = 0; byte != bytes; ++byte) {
         value.value[byte / 8] |= uint64_t{frozen.payload[byte]}
                                  << (byte % 8 * 8);
@@ -3763,7 +3763,7 @@ bool expressionKnownInteger(const Database &database, const uint8_t *root,
         inputs.push_back(found->second.value);
         shapes.push_back(found->second.shape);
       }
-      auto joined = obelisk::vpiexpression::evaluateConcatenation(
+      auto joined = talos::vpiexpression::evaluateConcatenation(
           code, shape, inputs.data(), shapes.data(), count);
       if (!joined)
         return false;
@@ -3781,22 +3781,22 @@ bool expressionKnownInteger(const Database &database, const uint8_t *root,
       inputs[child] = found->second.value;
       shapes[child] = found->second.shape;
     }
-    if (!obelisk::reflection::validVPIIntegralOperator(code, shape,
+    if (!talos::reflection::validVPIIntegralOperator(code, shape,
                                                        shapes.data(), count))
       return false;
-    values.emplace(current, Constant{obelisk::vpiexpression::evaluate(
+    values.emplace(current, Constant{talos::vpiexpression::evaluate(
                                          code, shape, inputs, shapes),
                                      shape});
   }
   auto found = values.find(operand);
   if (found == values.end() ||
-      obelisk::designbytecode::anyUnknown(found->second.value))
+      talos::designbytecode::anyUnknown(found->second.value))
     return false;
   const auto &value = found->second.value;
   bool negative = found->second.shape.isSigned &&
-                  obelisk::designbytecode::bit(value.value, value.width - 1);
+                  talos::designbytecode::bit(value.value, value.width - 1);
   for (uint64_t bit = 64; bit < value.width; ++bit)
-    if (obelisk::designbytecode::bit(value.value, bit) != negative)
+    if (talos::designbytecode::bit(value.value, bit) != negative)
       return false;
   uint64_t raw = value.value[0];
   if (value.width < 64 && negative)
@@ -3854,29 +3854,29 @@ bool originalBuiltinTypeDefault(const Database &database, uint32_t index,
       read32(type + 16) != UINT32_MAX || read32(type + 20) || read32(type + 24))
     return false;
   uint32_t kind = encoded & UINT32_C(0xff);
-  if ((kind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
-       kind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
-       kind == OBELISK_RT_DESIGN_SEMANTIC_REG) &&
+  if ((kind == TALOS_RT_DESIGN_SEMANTIC_BIT ||
+       kind == TALOS_RT_DESIGN_SEMANTIC_LOGIC ||
+       kind == TALOS_RT_DESIGN_SEMANTIC_REG) &&
       (readI64(type + 32) != 0 || readI64(type + 40) != 0))
     return false;
   switch (kind) {
-  case OBELISK_RT_DESIGN_SEMANTIC_BIT:
-  case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
-  case OBELISK_RT_DESIGN_SEMANTIC_REG:
-  case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
-  case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
-  case OBELISK_RT_DESIGN_SEMANTIC_INT:
-  case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
-  case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
-  case OBELISK_RT_DESIGN_SEMANTIC_TIME:
-  case OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL:
-  case OBELISK_RT_DESIGN_SEMANTIC_REAL:
-  case OBELISK_RT_DESIGN_SEMANTIC_REALTIME:
-  case OBELISK_RT_DESIGN_SEMANTIC_STRING:
-  case OBELISK_RT_DESIGN_SEMANTIC_CHANDLE:
-  case OBELISK_RT_DESIGN_SEMANTIC_VOID:
-    publicKind = (encoded & OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
-                 OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
+  case TALOS_RT_DESIGN_SEMANTIC_BIT:
+  case TALOS_RT_DESIGN_SEMANTIC_LOGIC:
+  case TALOS_RT_DESIGN_SEMANTIC_REG:
+  case TALOS_RT_DESIGN_SEMANTIC_BYTE:
+  case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
+  case TALOS_RT_DESIGN_SEMANTIC_INT:
+  case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
+  case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
+  case TALOS_RT_DESIGN_SEMANTIC_TIME:
+  case TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL:
+  case TALOS_RT_DESIGN_SEMANTIC_REAL:
+  case TALOS_RT_DESIGN_SEMANTIC_REALTIME:
+  case TALOS_RT_DESIGN_SEMANTIC_STRING:
+  case TALOS_RT_DESIGN_SEMANTIC_CHANDLE:
+  case TALOS_RT_DESIGN_SEMANTIC_VOID:
+    publicKind = (encoded & TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
+                 TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
     return true;
   default:
     return false;
@@ -3885,9 +3885,9 @@ bool originalBuiltinTypeDefault(const Database &database, uint32_t index,
 
 bool validateExpressions(const Database &database,
                          std::vector<uint8_t> &frozenReferenced) {
-  using Kind = obelisk::reflection::VPIObjectKind;
-  using Rel = obelisk::reflection::VPIRelationKind;
-  using Mode = obelisk::reflection::VPITraversalMode;
+  using Kind = talos::reflection::VPIObjectKind;
+  using Rel = talos::reflection::VPIRelationKind;
+  using Mode = talos::reflection::VPITraversalMode;
   std::vector<uint8_t> templatesUsed(database.expressionTemplateCount, 0);
   std::vector<uint8_t> leavesUsed(database.expressionLeafCount, 0);
   std::vector<uint8_t> boundUsed(database.expressionBoundMemberCount, 0);
@@ -4006,24 +4006,24 @@ bool validateExpressions(const Database &database,
       uint16_t code = read16(node + 2);
       if (definitionDefault && kind != Kind::Constant &&
           (kind != Kind::Operation || !sourceOnly ||
-           (!obelisk::reflection::findVPISourceOperator(code) && code != 33 &&
+           (!talos::reflection::findVPISourceOperator(code) && code != 33 &&
             code != 34)))
         return false;
       if (sourceOnly) {
         if (kind != Kind::Operation || read32(node + 28) != UINT32_MAX ||
-            !obelisk::reflection::validVPISourceOnlyArity(code, size))
+            !talos::reflection::validVPISourceOnlyArity(code, size))
           return false;
       } else if (kind == Kind::Constant) {
         VPIFrozenValue frozen{};
         uint32_t value = read32(node + 28);
         if (size || code != 7 || !expressionFrozen(database, value, frozen) ||
             frozen.bitWidth != width ||
-            bool(flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) !=
+            bool(flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) !=
                 bool(frozen.kindAndFlags &
-                     obelisk::reflection::frozenValueSigned) ||
-            bool(flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) !=
+                     talos::reflection::frozenValueSigned) ||
+            bool(flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) !=
                 bool(frozen.kindAndFlags &
-                     obelisk::reflection::frozenValueFourState))
+                     talos::reflection::frozenValueFourState))
           return false;
         frozenReferenced[value] = 1;
       } else {
@@ -4032,18 +4032,18 @@ bool validateExpressions(const Database &database,
         if (kind == Kind::Operation) {
           if (code == 33 || code == 34) {
             if (size < (code == 34 ? 2u : 1u) ||
-                (flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED))
+                (flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED))
               return false;
           } else {
-            auto descriptor = obelisk::reflection::findVPISourceOperator(code);
+            auto descriptor = talos::reflection::findVPISourceOperator(code);
             if (!descriptor || size != descriptor->arity ||
-                obelisk::reflection::integralOperatorRule(code) ==
-                    obelisk::reflection::VPIIntegralOperatorRule::Unsupported)
+                talos::reflection::integralOperatorRule(code) ==
+                    talos::reflection::VPIIntegralOperatorRule::Unsupported)
               return false;
           }
-        } else if (flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED)
+        } else if (flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED)
           return false;
-        else if (obelisk::reflection::isVPIBitSelection(uint32_t(kind))) {
+        else if (talos::reflection::isVPIBitSelection(uint32_t(kind))) {
           if (code || size != 2 || width != 1)
             return false;
         } else if (kind == Kind::PartSelect) {
@@ -4100,17 +4100,17 @@ bool validateExpressions(const Database &database,
         uint32_t selector =
             kind == Kind::Operation ? uint32_t(Rel::OperandRel)
             : child == 0            ? uint32_t(Rel::ParentRel)
-            : obelisk::reflection::isVPIBitSelection(uint32_t(kind))
+            : talos::reflection::isVPIBitSelection(uint32_t(kind))
                 ? uint32_t(Rel::IndexRel)
             : child == 1
                 ? uint32_t(kind == Kind::PartSelect ? Rel::LeftRangeRel
                                                     : Rel::BaseExprRel)
                 : uint32_t(kind == Kind::PartSelect ? Rel::RightRangeRel
                                                     : Rel::WidthExprRel);
-        const auto *edge = obelisk::reflection::findVPITraversal(
+        const auto *edge = talos::reflection::findVPITraversal(
             uint32_t(kind), selector,
             kind == Kind::Operation ? Mode::Iterate : Mode::Handle);
-        if (!edge || !obelisk::reflection::vpiObjectSetContains(edge->targets,
+        if (!edge || !talos::reflection::vpiObjectSetContains(edge->targets,
                                                                 childKind))
           return false;
       }
@@ -4156,8 +4156,8 @@ bool validateExpressions(const Database &database,
     bool definitionDefault = isDefinitionDefault(root);
     bool concreteType = isConcreteTypeDefault(root);
     uint16_t mode = read16(root + 14) &
-                    ~(obelisk::reflection::expressionRootDefinitionMember |
-                      obelisk::reflection::expressionRootConcreteTypeDefault);
+                    ~(talos::reflection::expressionRootDefinitionMember |
+                      talos::reflection::expressionRootConcreteTypeDefault);
     bool iterate = mode == uint16_t(Mode::Iterate);
     uint32_t ownerDefinition = UINT32_MAX;
     if (definitionDefault) {
@@ -4196,11 +4196,11 @@ bool validateExpressions(const Database &database,
          read16(root + 12) != uint16_t(Rel::ExprRel)))
       return false;
     previous = key;
-    const auto *edge = obelisk::reflection::findVPITraversal(
+    const auto *edge = talos::reflection::findVPITraversal(
         ownerKind, read16(root + 12), iterate ? Mode::Iterate : Mode::Handle);
     if (!edge || edge->statementContainment ||
         edge->automaticRelation !=
-            obelisk::reflection::VPIAutomaticRelation::None)
+            talos::reflection::VPIAutomaticRelation::None)
       return false;
     if (concreteType) {
       uint32_t publicKind = 0;
@@ -4212,7 +4212,7 @@ bool validateExpressions(const Database &database,
                                    kDefinitionMemberSize) !=
               uint32_t(Kind::TypeParameter) ||
           !originalBuiltinTypeDefault(database, read32(root + 4), publicKind) ||
-          !obelisk::reflection::vpiObjectSetContains(edge->targets,
+          !talos::reflection::vpiObjectSetContains(edge->targets,
                                                      publicKind) ||
           (file == UINT32_MAX
                ? line != 0
@@ -4228,13 +4228,13 @@ bool validateExpressions(const Database &database,
             uint32_t(Kind::TypeParameter) &&
         recipe)
       return false;
-    auto table = obelisk::reflection::unpackTableIndexKind(read32(root));
+    auto table = talos::reflection::unpackTableIndexKind(read32(root));
     if (!definitionDefault &&
-        table != obelisk::reflection::TableKind::Statement &&
+        table != talos::reflection::TableKind::Statement &&
         ownerKind != uint32_t(Kind::Port) &&
         ownerKind != uint32_t(Kind::PrimTerm) && !callArgument)
       return false;
-    uint32_t ownerIndex = obelisk::reflection::unpackTableIndex(read32(root));
+    uint32_t ownerIndex = talos::reflection::unpackTableIndex(read32(root));
     uint64_t physical = lowerBoundRelation(database, table, ownerIndex,
                                            read16(root + 12), iterate);
     if (!definitionDefault && physical < database.relationCount &&
@@ -4299,13 +4299,13 @@ bool validateExpressions(const Database &database,
                                    kExpressionLeafShapeSize;
         if (leaf.semantic != read32(shape) || leaf.kind != read16(shape + 4))
           return false;
-      } else if (!obelisk::reflection::vpiObjectSetContains(edge->targets,
+      } else if (!talos::reflection::vpiObjectSetContains(edge->targets,
                                                             leaf.kind))
         return false;
     }
     if (!recipe)
       continue;
-    if (!obelisk::reflection::vpiObjectSetContains(
+    if (!talos::reflection::vpiObjectSetContains(
             edge->targets, read16(expressionNode(database, recipe, 0))))
       return false;
     for (uint32_t ordinal = 0; ordinal != read32(recipe + 8); ++ordinal) {
@@ -4342,7 +4342,7 @@ bool validateExpressions(const Database &database,
       if (kind == Kind::Operation) {
         uint32_t code = read16(node + 2);
         if (code != 33 && code != 34) {
-          std::array<obelisk::reflection::VPIIntegralExpressionShape, 3>
+          std::array<talos::reflection::VPIIntegralExpressionShape, 3>
               shapes{};
           uint32_t count = read32(node + 12);
           if (count > shapes.size())
@@ -4360,14 +4360,14 @@ bool validateExpressions(const Database &database,
                 childCode = read16(childNode + 2);
             }
             shapes[child] = {
-                bits, bool(typeFlags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED),
-                bool(typeFlags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE),
+                bits, bool(typeFlags & TALOS_RT_DESIGN_SEMANTIC_SIGNED),
+                bool(typeFlags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE),
                 childCode};
           }
-          if (!obelisk::reflection::validVPIIntegralOperator(
+          if (!talos::reflection::validVPIIntegralOperator(
                   code,
-                  {width, bool(flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED),
-                   bool(flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE)},
+                  {width, bool(flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED),
+                   bool(flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE)},
                   shapes.data(), count))
             return false;
           continue;
@@ -4386,7 +4386,7 @@ bool validateExpressions(const Database &database,
           if (!typeAt(child, bits, typeFlags) || bits > UINT64_MAX - sum)
             return false;
           sum += bits;
-          fourState |= (typeFlags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
+          fourState |= (typeFlags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
         }
         if (sum > UINT64_MAX / uint64_t(multiplier) ||
             sum * uint64_t(multiplier) != width)
@@ -4397,7 +4397,7 @@ bool validateExpressions(const Database &database,
         if (!typeAt(0, bits, typeFlags, &semantic))
           return false;
         if ((typeFlags & UINT32_C(0xff)) ==
-            OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY) {
+            TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY) {
           const uint8_t *parent = database.data + database.semanticTypes +
                                   uint64_t{semantic} * kSemanticTypeSize;
           const uint8_t *edge =
@@ -4405,12 +4405,12 @@ bool validateExpressions(const Database &database,
               uint64_t{read32(parent + 4)} * kSemanticTypeEdgeSize;
           uint64_t stride = 0;
           if (semanticPackedBitWidth(database, read32(edge), &stride) !=
-                  OBELISK_RT_OK ||
+                  TALOS_RT_OK ||
               stride != 1)
             return false;
         }
-        fourState = (typeFlags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
-        if (obelisk::reflection::isVPIBitSelection(uint32_t(kind))) {
+        fourState = (typeFlags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
+        if (talos::reflection::isVPIBitSelection(uint32_t(kind))) {
           uint32_t parent = operandAt(0), parentKind = 0;
           if (parent & kExpressionOperandLeafFlag) {
             const uint8_t *shape = database.data +
@@ -4422,9 +4422,9 @@ bool validateExpressions(const Database &database,
           } else
             parentKind = read16(expressionNode(database, recipe, parent));
           if (width != 1 ||
-              obelisk::reflection::vpiScalarBitSelectionKind(parentKind) !=
+              talos::reflection::vpiScalarBitSelectionKind(parentKind) !=
                   uint32_t(kind) ||
-              fourState != bool(flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE))
+              fourState != bool(flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE))
             return false;
           continue;
         }
@@ -4456,7 +4456,7 @@ bool validateExpressions(const Database &database,
             return false;
         }
       }
-      if (fourState != bool(flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE))
+      if (fourState != bool(flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE))
         return false;
     }
   }
@@ -4480,28 +4480,28 @@ bool validateDatabaseImpl(const Database &database) {
   if (database.scopeCount == 0 || !isScopeOffset(database, database.root))
     return false;
   std::array<std::unordered_set<uint64_t>,
-             OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT + 1>
+             TALOS_RT_DESIGN_RECORD_STATIC_OBJECT + 1>
       stableIDs;
   constexpr uint32_t parameterSourceFlags =
-      OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER |
-      OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER |
-      OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT;
+      TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER |
+      TALOS_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER |
+      TALOS_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT;
   auto validParameterSourceFlags = [](uint32_t kind, uint32_t caps) {
-    using Kind = obelisk::reflection::VPIObjectKind;
-    if ((caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0 &&
+    using Kind = talos::reflection::VPIObjectKind;
+    if ((caps & TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0 &&
         (kind != static_cast<uint32_t>(Kind::TypeParameter) ||
-         (caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0))
+         (caps & TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0))
       return false;
-    if ((caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0 &&
+    if ((caps & TALOS_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0 &&
         (kind != static_cast<uint32_t>(Kind::Parameter) ||
-         (caps & OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) != 0))
+         (caps & TALOS_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) != 0))
       return false;
-    return (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) == 0 ||
+    return (caps & TALOS_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) == 0 ||
            kind == static_cast<uint32_t>(Kind::Parameter) ||
            kind == static_cast<uint32_t>(Kind::TypeParameter);
   };
   auto isSourceExpressionKind = [](uint32_t kind) {
-    using Kind = obelisk::reflection::VPIObjectKind;
+    using Kind = talos::reflection::VPIObjectKind;
     return kind == static_cast<uint32_t>(Kind::Constant) ||
            kind == static_cast<uint32_t>(Kind::Operation);
   };
@@ -4536,52 +4536,52 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *record;
     uint32_t kind;
     if (!getRecord(database, offset, record, kind) ||
-        kind == OBELISK_RT_DESIGN_RECORD_TYPE)
+        kind == TALOS_RT_DESIGN_RECORD_TYPE)
       return false;
     uint32_t caps = read32(record + 4);
     uint32_t intrinsicKind = recordVPIKind(record);
-    bool internal = (caps & OBELISK_RT_DESIGN_CAP_INTERNAL) != 0;
-    using VPIKind = obelisk::reflection::VPIObjectKind;
+    bool internal = (caps & TALOS_RT_DESIGN_CAP_INTERNAL) != 0;
+    using VPIKind = talos::reflection::VPIObjectKind;
     bool lexicalAnchor =
-        (caps & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0 &&
-        (kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
-         kind == OBELISK_RT_DESIGN_RECORD_FUNCTION ||
-         kind == OBELISK_RT_DESIGN_RECORD_STORAGE ||
-         (kind == OBELISK_RT_DESIGN_RECORD_NET &&
+        (caps & TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0 &&
+        (kind == TALOS_RT_DESIGN_RECORD_PROCESS ||
+         kind == TALOS_RT_DESIGN_RECORD_FUNCTION ||
+         kind == TALOS_RT_DESIGN_RECORD_STORAGE ||
+         (kind == TALOS_RT_DESIGN_RECORD_NET &&
           intrinsicKind == static_cast<uint32_t>(VPIKind::InterconnectNet)));
     bool explicitParameterRange =
-        kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
         intrinsicKind == static_cast<uint32_t>(VPIKind::Parameter) &&
-        (caps & OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) != 0;
+        (caps & TALOS_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) != 0;
     bool mayOmitIntrinsic =
-        (kind == OBELISK_RT_DESIGN_RECORD_SCOPE && offset == database.root) ||
-        kind == OBELISK_RT_DESIGN_RECORD_DRIVER ||
-        (internal && (kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
-                      kind == OBELISK_RT_DESIGN_RECORD_FUNCTION));
+        (kind == TALOS_RT_DESIGN_RECORD_SCOPE && offset == database.root) ||
+        kind == TALOS_RT_DESIGN_RECORD_DRIVER ||
+        (internal && (kind == TALOS_RT_DESIGN_RECORD_PROCESS ||
+                      kind == TALOS_RT_DESIGN_RECORD_FUNCTION));
     if ((intrinsicKind == 0
              ? !mayOmitIntrinsic
              : internal || !recordKindSupportsVPI(kind, intrinsicKind)))
       return false;
     uint32_t supportedCaps =
-        OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_WRITE |
-        OBELISK_RT_DESIGN_CAP_ITERATE | OBELISK_RT_DESIGN_CAP_PORT_INPUT |
-        OBELISK_RT_DESIGN_CAP_PORT_OUTPUT | OBELISK_RT_DESIGN_CAP_INTERNAL |
-        OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE |
-        OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC |
-        OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR |
-        OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
+        TALOS_RT_DESIGN_CAP_READ | TALOS_RT_DESIGN_CAP_WRITE |
+        TALOS_RT_DESIGN_CAP_ITERATE | TALOS_RT_DESIGN_CAP_PORT_INPUT |
+        TALOS_RT_DESIGN_CAP_PORT_OUTPUT | TALOS_RT_DESIGN_CAP_INTERNAL |
+        TALOS_RT_DESIGN_CAP_PORT_WHOLE_SOURCE |
+        TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC |
+        TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR |
+        TALOS_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
     if ((caps & ~supportedCaps) != 0 ||
-        ((caps & OBELISK_RT_DESIGN_CAP_WRITE) != 0 &&
-         (database.profile & OBELISK_RT_DESIGN_PROFILE_WRITE) == 0))
+        ((caps & TALOS_RT_DESIGN_CAP_WRITE) != 0 &&
+         (database.profile & TALOS_RT_DESIGN_PROFILE_WRITE) == 0))
       return false;
-    if ((caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0 && !lexicalAnchor &&
-        !explicitParameterRange && kind != OBELISK_RT_DESIGN_RECORD_PORT) {
+    if ((caps & TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0 && !lexicalAnchor &&
+        !explicitParameterRange && kind != TALOS_RT_DESIGN_RECORD_PORT) {
       const auto *descriptor =
-          obelisk::reflection::findVPIObjectKind(intrinsicKind);
-      if (kind != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT || !descriptor ||
+          talos::reflection::findVPIObjectKind(intrinsicKind);
+      if (kind != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT || !descriptor ||
           (descriptor->families &
-           obelisk::reflection::vpiFamilyMask(
-               obelisk::reflection::VPIObjectFamily::Typespec)) == 0)
+           talos::reflection::vpiFamilyMask(
+               talos::reflection::VPIObjectFamily::Typespec)) == 0)
         return false;
     }
     uint64_t stableID = read64(record + 8);
@@ -4590,30 +4590,30 @@ bool validateDatabaseImpl(const Database &database) {
     std::string_view name;
     uint64_t nameOffset = read64(record + 40);
     bool unnamedTypespec =
-        kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
-        (caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0 &&
-        obelisk::reflection::vpiObjectSetContains(
-            obelisk::reflection::VPIObjectSetID::ConcreteTypespecObjects,
+        kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        (caps & TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0 &&
+        talos::reflection::vpiObjectSetContains(
+            talos::reflection::VPIObjectSetID::ConcreteTypespecObjects,
             intrinsicKind);
-    bool sourceExpression = kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+    bool sourceExpression = kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
                             isSourceExpressionKind(intrinsicKind);
     bool unnamedInheritance =
-        kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
         (intrinsicKind == static_cast<uint32_t>(VPIKind::Extends) ||
          (intrinsicKind == static_cast<uint32_t>(VPIKind::ParamAssign) &&
           (caps &
-           (OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT |
-            OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT))));
+           (TALOS_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT |
+            TALOS_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT))));
     bool primitiveTerminal =
-        kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
         intrinsicKind == static_cast<uint32_t>(VPIKind::PrimTerm);
     if (!getString(database, nameOffset, name) ||
         (sourceExpression || primitiveTerminal
              ? !name.empty()
              : name.empty() && !unnamedTypespec && !unnamedInheritance))
       return false;
-    if (kind == OBELISK_RT_DESIGN_RECORD_SCOPE) {
-      if (caps != OBELISK_RT_DESIGN_CAP_ITERATE ||
+    if (kind == TALOS_RT_DESIGN_RECORD_SCOPE) {
+      if (caps != TALOS_RT_DESIGN_CAP_ITERATE ||
           !validSource(database, read64(record + 48), read64(record + 56)))
         return false;
       uint64_t parent = read64(record + 16);
@@ -4628,7 +4628,7 @@ bool validateDatabaseImpl(const Database &database) {
         const uint8_t *childRecord;
         uint32_t childKind;
         if (!getRecord(database, child, childRecord, childKind) ||
-            childKind == OBELISK_RT_DESIGN_RECORD_TYPE ||
+            childKind == TALOS_RT_DESIGN_RECORD_TYPE ||
             read64(childRecord + 16) != offset)
           return false;
         pending.push_back(child);
@@ -4639,24 +4639,24 @@ bool validateDatabaseImpl(const Database &database) {
       if (!isScopeOffset(database, read64(record + 16)) ||
           !validSource(database, read64(record + 32), read64(record + 88)))
         return false;
-      if (kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT) {
+      if (kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT) {
         const auto *indexed =
-            obelisk::reflection::findVPIIndexedAccess(intrinsicKind);
+            talos::reflection::findVPIIndexedAccess(intrinsicKind);
         bool relationIndexed =
-            (caps & (OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
-                     OBELISK_RT_DESIGN_CAP_FRAME_LOCAL)) == 0 &&
+            (caps & (TALOS_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
+                     TALOS_RT_DESIGN_CAP_FRAME_LOCAL)) == 0 &&
             indexed &&
             indexed->accessKind ==
-                obelisk::reflection::VPIIndexedAccessKind::RelationElement;
-        using VPIKind = obelisk::reflection::VPIObjectKind;
+                talos::reflection::VPIIndexedAccessKind::RelationElement;
+        using VPIKind = talos::reflection::VPIObjectKind;
         bool scalarPrimitive =
             intrinsicKind == static_cast<uint32_t>(VPIKind::Gate) ||
             intrinsicKind == static_cast<uint32_t>(VPIKind::Switch) ||
             intrinsicKind == static_cast<uint32_t>(VPIKind::Udp);
-        if ((caps & ~(OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC |
-                      OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
-                      OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
-                      OBELISK_RT_DESIGN_CAP_FRAME_LOCAL |
+        if ((caps & ~(TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC |
+                      TALOS_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
+                      TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
+                      TALOS_RT_DESIGN_CAP_FRAME_LOCAL |
                       lexicalInheritanceFlags | parameterSourceFlags)) != 0 ||
             !validParameterSourceFlags(intrinsicKind, caps) ||
             read64(record + 80) != 0 ||
@@ -4664,7 +4664,7 @@ bool validateDatabaseImpl(const Database &database) {
                  ? relationIndexed
                        ? intrinsicKind !=
                                  static_cast<uint32_t>(
-                                     obelisk::reflection::VPIObjectKind::
+                                     talos::reflection::VPIObjectKind::
                                          GenScopeArray) &&
                              read64(record + 56) == 0
                    : scalarPrimitive
@@ -4682,62 +4682,62 @@ bool validateDatabaseImpl(const Database &database) {
                        read64(database.data + typeOffset + 8) !=
                            read64(record + 56)))
           return false;
-      } else if (kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
-                 kind == OBELISK_RT_DESIGN_RECORD_FUNCTION) {
-        if ((caps & ~(OBELISK_RT_DESIGN_CAP_INTERNAL |
-                      OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR)) != 0 ||
+      } else if (kind == TALOS_RT_DESIGN_RECORD_PROCESS ||
+                 kind == TALOS_RT_DESIGN_RECORD_FUNCTION) {
+        if ((caps & ~(TALOS_RT_DESIGN_CAP_INTERNAL |
+                      TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR)) != 0 ||
             (internal && lexicalAnchor) || typeOffset != 0 ||
             read64(record + 56) != 0 || read64(record + 64) != 0 ||
             read64(record + 72) != 0 || read64(record + 80) != 0)
           return false;
-      } else if (internal || (caps & OBELISK_RT_DESIGN_CAP_READ) == 0 ||
+      } else if (internal || (caps & TALOS_RT_DESIGN_CAP_READ) == 0 ||
                  (caps &
-                  ~(OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_WRITE |
-                    OBELISK_RT_DESIGN_CAP_PORT_INPUT |
-                    OBELISK_RT_DESIGN_CAP_PORT_OUTPUT |
-                    OBELISK_RT_DESIGN_CAP_PORT_REF |
-                    OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE |
-                    OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR |
-                    OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK)) != 0 ||
+                  ~(TALOS_RT_DESIGN_CAP_READ | TALOS_RT_DESIGN_CAP_WRITE |
+                    TALOS_RT_DESIGN_CAP_PORT_INPUT |
+                    TALOS_RT_DESIGN_CAP_PORT_OUTPUT |
+                    TALOS_RT_DESIGN_CAP_PORT_REF |
+                    TALOS_RT_DESIGN_CAP_PORT_WHOLE_SOURCE |
+                    TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR |
+                    TALOS_RT_DESIGN_CAP_PORT_ORDINAL_MASK)) != 0 ||
                  !isTypeOffset(database, typeOffset) ||
                  read64(record + 56) == 0 ||
                  read64(database.data + typeOffset + 8) !=
                      read64(record + 56)) {
         return false;
       }
-      uint32_t portCaps = caps & (OBELISK_RT_DESIGN_CAP_PORT_INPUT |
-                                  OBELISK_RT_DESIGN_CAP_PORT_OUTPUT);
-      uint32_t ordinalCaps = caps & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
+      uint32_t portCaps = caps & (TALOS_RT_DESIGN_CAP_PORT_INPUT |
+                                  TALOS_RT_DESIGN_CAP_PORT_OUTPUT);
+      uint32_t ordinalCaps = caps & TALOS_RT_DESIGN_CAP_PORT_ORDINAL_MASK;
       bool wholePortSource =
-          (caps & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) != 0;
-      bool refPort = (caps & OBELISK_RT_DESIGN_CAP_PORT_REF) != 0;
-      if (wholePortSource && kind != OBELISK_RT_DESIGN_RECORD_PORT)
+          (caps & TALOS_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) != 0;
+      bool refPort = (caps & TALOS_RT_DESIGN_CAP_PORT_REF) != 0;
+      if (wholePortSource && kind != TALOS_RT_DESIGN_RECORD_PORT)
         return false;
-      if (kind == OBELISK_RT_DESIGN_RECORD_PORT) {
+      if (kind == TALOS_RT_DESIGN_RECORD_PORT) {
         if (portCaps == 0 ||
-            (refPort && portCaps != (OBELISK_RT_DESIGN_CAP_PORT_INPUT |
-                                     OBELISK_RT_DESIGN_CAP_PORT_OUTPUT)) ||
-            caps != (OBELISK_RT_DESIGN_CAP_READ | portCaps | ordinalCaps |
-                     (caps & OBELISK_RT_DESIGN_CAP_PORT_REF) |
-                     (caps & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE)))
+            (refPort && portCaps != (TALOS_RT_DESIGN_CAP_PORT_INPUT |
+                                     TALOS_RT_DESIGN_CAP_PORT_OUTPUT)) ||
+            caps != (TALOS_RT_DESIGN_CAP_READ | portCaps | ordinalCaps |
+                     (caps & TALOS_RT_DESIGN_CAP_PORT_REF) |
+                     (caps & TALOS_RT_DESIGN_CAP_PORT_WHOLE_SOURCE)))
           return false;
-      } else if (portCaps != 0 && kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
-                 kind != OBELISK_RT_DESIGN_RECORD_NET) {
+      } else if (portCaps != 0 && kind != TALOS_RT_DESIGN_RECORD_STORAGE &&
+                 kind != TALOS_RT_DESIGN_RECORD_NET) {
         return false;
       } else if (portCaps == 0 &&
                  (ordinalCaps &
-                  ~(kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT
+                  ~(kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT
                         ? parameterSourceFlags |
-                              OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
-                              OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
-                              OBELISK_RT_DESIGN_CAP_FRAME_LOCAL |
+                              TALOS_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
+                              TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
+                              TALOS_RT_DESIGN_CAP_FRAME_LOCAL |
                               lexicalInheritanceFlags
                         : 0u)) != 0) {
         return false;
       }
       uint64_t stateOffset = read64(record + 80);
       uint64_t width = read64(record + 56);
-      if (kind != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+      if (kind != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
           (stateOffset > database.stateBitCount ||
            width > database.stateBitCount - stateOffset))
         return false;
@@ -4759,12 +4759,12 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *record =
         database.data + database.fixedProperties + index * kFixedPropertySize;
     uint32_t packedSource = read32(record);
-    auto table = obelisk::reflection::unpackTableIndexKind(packedSource);
-    uint32_t sourceIndex = obelisk::reflection::unpackTableIndex(packedSource);
+    auto table = talos::reflection::unpackTableIndexKind(packedSource);
+    uint32_t sourceIndex = talos::reflection::unpackTableIndex(packedSource);
     uint16_t selector = read16(record + 4);
     uint16_t kindAndFlags = read16(record + 6);
     uint64_t payload = read64(record + 8);
-    if (!obelisk::reflection::isValidTableKind(table) ||
+    if (!talos::reflection::isValidTableKind(table) ||
         (havePreviousFixedProperty &&
          std::tie(packedSource, selector) <=
              std::tie(previousFixedSource, previousFixedSelector)))
@@ -4775,23 +4775,23 @@ bool validateDatabaseImpl(const Database &database) {
 
     uint32_t exactKind = 0;
     switch (table) {
-    case obelisk::reflection::TableKind::Scope:
+    case talos::reflection::TableKind::Scope:
       if (sourceIndex >= database.scopeCount)
         return false;
       exactKind = recordVPIKind(database.data + database.scopes +
                                 uint64_t{sourceIndex} * kScopeSize);
       break;
-    case obelisk::reflection::TableKind::Object:
+    case talos::reflection::TableKind::Object:
       if (sourceIndex >= database.objectCount)
         return false;
       exactKind = recordVPIKind(database.data + database.objects +
                                 uint64_t{sourceIndex} * kObjectSize);
       if (recordKind(database.data + database.objects +
                      uint64_t{sourceIndex} * kObjectSize) ==
-              OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+              TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
           (read32(database.data + database.objects +
                   uint64_t{sourceIndex} * kObjectSize + 4) &
-           OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS) != 0) {
+           TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS) != 0) {
         // This typespec inherits the parameter's public kind, but is not a
         // parameter declaration. Only its exact source name is a fixed fact.
         if (selector != 2)
@@ -4802,13 +4802,13 @@ bool validateDatabaseImpl(const Database &database) {
         namedUnresolvedAliases.insert(packedSource);
       }
       break;
-    case obelisk::reflection::TableKind::Statement:
+    case talos::reflection::TableKind::Statement:
       if (sourceIndex >= database.statementCount)
         return false;
       exactKind = read16(database.data + database.statements +
                          uint64_t{sourceIndex} * kStatementSize + 36);
       break;
-    case obelisk::reflection::TableKind::StaticObject:
+    case talos::reflection::TableKind::StaticObject:
       if (sourceIndex >= database.staticObjectCount)
         return false;
       exactKind = read16(database.data + database.staticObjects +
@@ -4816,25 +4816,25 @@ bool validateDatabaseImpl(const Database &database) {
       break;
     }
     const auto *descriptor =
-        obelisk::reflection::findVPIProperty(exactKind, selector);
+        talos::reflection::findVPIProperty(exactKind, selector);
     if (!descriptor ||
         (descriptor->realization !=
-             obelisk::reflection::VPIPropertyRealization::FixedImage &&
+             talos::reflection::VPIPropertyRealization::FixedImage &&
          descriptor->realization !=
-             obelisk::reflection::VPIPropertyRealization::DefinitionImage &&
+             talos::reflection::VPIPropertyRealization::DefinitionImage &&
          descriptor->realization !=
-             obelisk::reflection::VPIPropertyRealization::OptionalImage) ||
+             talos::reflection::VPIPropertyRealization::OptionalImage) ||
         kindAndFlags != static_cast<uint16_t>(descriptor->valueKind))
       return false;
-    if (table == obelisk::reflection::TableKind::Object && selector == 50 &&
+    if (table == talos::reflection::TableKind::Object && selector == 50 &&
         (read32(database.data + database.objects +
                 uint64_t{sourceIndex} * kObjectSize + 4) &
-         OBELISK_RT_DESIGN_CAP_FRAME_LOCAL)) {
+         TALOS_RT_DESIGN_CAP_FRAME_LOCAL)) {
       if (payload != 1)
         return false;
       automaticFrameLocals.insert(packedSource);
     }
-    using ValueKind = obelisk::reflection::VPIPropertyValueKind;
+    using ValueKind = talos::reflection::VPIPropertyValueKind;
     switch (descriptor->valueKind) {
     case ValueKind::Boolean:
       // Optional source facts retain explicit false; ordinary FixedImage
@@ -4842,15 +4842,15 @@ bool validateDatabaseImpl(const Database &database) {
       if (payload > 1 ||
           (payload == 0 &&
            descriptor->realization !=
-               obelisk::reflection::VPIPropertyRealization::OptionalImage))
+               talos::reflection::VPIPropertyRealization::OptionalImage))
         return false;
       break;
     case ValueKind::Integer:
       if (payload != static_cast<uint64_t>(
                          static_cast<int64_t>(static_cast<int32_t>(payload))))
         return false;
-      if (obelisk::reflection::hasVPIIntegerPropertyDomain(selector) &&
-          !obelisk::reflection::findVPIIntegerPropertyValue(
+      if (talos::reflection::hasVPIIntegerPropertyDomain(selector) &&
+          !talos::reflection::findVPIIntegerPropertyValue(
               selector, static_cast<uint32_t>(payload)))
         return false;
       break;
@@ -4866,7 +4866,7 @@ bool validateDatabaseImpl(const Database &database) {
       break;
     }
     }
-    if (exactKind == uint32_t(obelisk::reflection::VPIObjectKind::Function) &&
+    if (exactKind == uint32_t(talos::reflection::VPIObjectKind::Function) &&
         selector == 4) {
       if (payload != 0)
         return false;
@@ -4875,28 +4875,28 @@ bool validateDatabaseImpl(const Database &database) {
     if (selector == 33)
       primitiveTypes.emplace(packedSource, static_cast<uint32_t>(payload));
     if (exactKind == static_cast<uint32_t>(
-                         obelisk::reflection::VPIObjectKind::PrimTerm) &&
+                         talos::reflection::VPIObjectKind::PrimTerm) &&
         selector == 20) {
       if (payload < 1 || payload > 3)
         return false;
       terminalDirections.emplace(packedSource, static_cast<uint32_t>(payload));
     }
-    if (table == obelisk::reflection::TableKind::StaticObject &&
+    if (table == talos::reflection::TableKind::StaticObject &&
         exactKind == static_cast<uint32_t>(
-                         obelisk::reflection::VPIObjectKind::Operation) &&
+                         talos::reflection::VPIObjectKind::Operation) &&
         selector == 39) {
       if (payload != 36)
         return false;
       foreachNullProperties.insert(packedSource);
     }
-    if (table == obelisk::reflection::TableKind::Object &&
+    if (table == talos::reflection::TableKind::Object &&
         recordKind(database.data + database.objects +
                    uint64_t{sourceIndex} * kObjectSize) ==
-            OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT) {
-      using Kind = obelisk::reflection::VPIObjectKind;
+            TALOS_RT_DESIGN_RECORD_STATIC_OBJECT) {
+      using Kind = talos::reflection::VPIObjectKind;
       if (exactKind == static_cast<uint32_t>(Kind::Operation) &&
           selector == 39) {
-        if (payload == 67 || !obelisk::reflection::findVPISourceOperator(
+        if (payload == 67 || !talos::reflection::findVPISourceOperator(
                                  static_cast<uint32_t>(payload)))
           return false;
         sourceExpressionOperators.emplace(packedSource,
@@ -4910,7 +4910,7 @@ bool validateDatabaseImpl(const Database &database) {
       }
     }
     if (exactKind == static_cast<uint32_t>(
-                         obelisk::reflection::VPIObjectKind::Parameter) &&
+                         talos::reflection::VPIObjectKind::Parameter) &&
         selector == 2) {
       std::string_view name;
       if (!getString(database, payload, name) || name.empty())
@@ -4918,7 +4918,7 @@ bool validateDatabaseImpl(const Database &database) {
       namedParameters.insert(packedSource);
     }
     if (selector == 74) {
-      if (table == obelisk::reflection::TableKind::Statement)
+      if (table == talos::reflection::TableKind::Statement)
         protectedStatements[sourceIndex] = true;
     } else if (selector == 15) {
       std::string_view file;
@@ -4932,7 +4932,7 @@ bool validateDatabaseImpl(const Database &database) {
   for (uint32_t index = 0; index != database.statementCount; ++index) {
     bool protectedFlag = (read16(database.data + database.statements +
                                  uint64_t{index} * kStatementSize + 38) &
-                          OBELISK_RT_DESIGN_STATEMENT_PROTECTED) != 0;
+                          TALOS_RT_DESIGN_STATEMENT_PROTECTED) != 0;
     if (database.fixedProperties != 0 &&
         protectedFlag != protectedStatements[index])
       return false;
@@ -4959,12 +4959,12 @@ bool validateDatabaseImpl(const Database &database) {
     uint64_t width = read64(object + 56);
     uint32_t exactKind = recordVPIKind(object);
     const auto *descriptor =
-        obelisk::reflection::findVPIProperty(exactKind, 61);
-    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_NET || !descriptor ||
+        talos::reflection::findVPIProperty(exactKind, 61);
+    if (recordKind(object) != TALOS_RT_DESIGN_RECORD_NET || !descriptor ||
         descriptor->realization !=
-            obelisk::reflection::VPIPropertyRealization::IndexedImage ||
+            talos::reflection::VPIPropertyRealization::IndexedImage ||
         firstBit > width || bitCount > width - firstBit ||
-        !obelisk::reflection::findVPIIntegerPropertyValue(61, netType))
+        !talos::reflection::findVPIIntegerPropertyValue(61, netType))
       return false;
     if (havePreviousResolvedRun) {
       if (objectIndex < previousResolvedObject ||
@@ -5003,7 +5003,7 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *object =
         database.data + database.objects + uint64_t{objectIndex} * kObjectSize;
     uint64_t width = read64(object + 56);
-    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_NET ||
+    if (recordKind(object) != TALOS_RT_DESIGN_RECORD_NET ||
         firstBit > width || bitCount > width - firstBit)
       return false;
     if (havePreviousDelayRun &&
@@ -5028,12 +5028,12 @@ bool validateDatabaseImpl(const Database &database) {
     uint64_t firstChild = read64(record + 40);
     uint64_t childCount = read64(record + 48);
     uint64_t extent = 0;
-    if (read32(record) != OBELISK_RT_DESIGN_RECORD_TYPE ||
-        typeKind < OBELISK_RT_DESIGN_TYPE_SCALAR ||
-        typeKind > OBELISK_RT_DESIGN_TYPE_FIELD ||
+    if (read32(record) != TALOS_RT_DESIGN_RECORD_TYPE ||
+        typeKind < TALOS_RT_DESIGN_TYPE_SCALAR ||
+        typeKind > TALOS_RT_DESIGN_TYPE_FIELD ||
         (flags &
-         ~(OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_SIGNED |
-           OBELISK_RT_DESIGN_TYPE_PACKED | OBELISK_RT_DESIGN_TYPE_TAGGED)) !=
+         ~(TALOS_RT_DESIGN_TYPE_FOUR_STATE | TALOS_RT_DESIGN_TYPE_SIGNED |
+           TALOS_RT_DESIGN_TYPE_PACKED | TALOS_RT_DESIGN_TYPE_TAGGED)) !=
             0 ||
         width == 0)
       return false;
@@ -5048,18 +5048,18 @@ bool validateDatabaseImpl(const Database &database) {
           !isTypeOffset(database, firstChild + (childCount - 1) * kTypeSize))))
       return false;
     switch (typeKind) {
-    case OBELISK_RT_DESIGN_TYPE_SCALAR:
+    case TALOS_RT_DESIGN_TYPE_SCALAR:
       if (hasElement || hasChildren || read64(record + 56) != 0 ||
           read64(record + 64) != 0 ||
-          (flags & OBELISK_RT_DESIGN_TYPE_TAGGED) != 0 ||
+          (flags & TALOS_RT_DESIGN_TYPE_TAGGED) != 0 ||
           !rangeExtent(record, extent) || extent != width)
         return false;
       break;
-    case OBELISK_RT_DESIGN_TYPE_ARRAY:
+    case TALOS_RT_DESIGN_TYPE_ARRAY:
       if (!hasElement || hasChildren || read64(record + 56) != 0 ||
           read64(record + 64) != 0 ||
-          (flags & (OBELISK_RT_DESIGN_TYPE_SIGNED |
-                    OBELISK_RT_DESIGN_TYPE_TAGGED)) != 0 ||
+          (flags & (TALOS_RT_DESIGN_TYPE_SIGNED |
+                    TALOS_RT_DESIGN_TYPE_TAGGED)) != 0 ||
           !rangeExtent(record, extent))
         return false;
       {
@@ -5067,47 +5067,47 @@ bool validateDatabaseImpl(const Database &database) {
         uint64_t elementWidth = read64(elementRecord + 8);
         uint32_t elementKind = read32(elementRecord + 4) & UINT32_C(0xff);
         uint32_t elementFlags = read32(elementRecord + 4) >> 8;
-        if (elementKind == OBELISK_RT_DESIGN_TYPE_FIELD || elementWidth == 0 ||
+        if (elementKind == TALOS_RT_DESIGN_TYPE_FIELD || elementWidth == 0 ||
             extent == 0 || width % extent != 0 ||
             elementWidth > width / extent ||
-            ((flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0 &&
+            ((flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0 &&
              elementWidth != width / extent) ||
-            ((flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0) !=
-                ((elementFlags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0))
+            ((flags & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0) !=
+                ((elementFlags & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0))
           return false;
       }
       break;
-    case OBELISK_RT_DESIGN_TYPE_STRUCT:
+    case TALOS_RT_DESIGN_TYPE_STRUCT:
       if (hasElement || !hasChildren || read64(record + 56) != 0 ||
           read64(record + 64) != 0 ||
-          (flags & (OBELISK_RT_DESIGN_TYPE_SIGNED |
-                    OBELISK_RT_DESIGN_TYPE_TAGGED)) != 0 ||
+          (flags & (TALOS_RT_DESIGN_TYPE_SIGNED |
+                    TALOS_RT_DESIGN_TYPE_TAGGED)) != 0 ||
           !rangeExtent(record, extent) || extent != width)
         return false;
       break;
-    case OBELISK_RT_DESIGN_TYPE_UNION:
+    case TALOS_RT_DESIGN_TYPE_UNION:
       if (hasElement || !hasChildren || read64(record + 64) != 0 ||
-          (flags & OBELISK_RT_DESIGN_TYPE_SIGNED) != 0 ||
-          (((flags & OBELISK_RT_DESIGN_TYPE_TAGGED) != 0) !=
+          (flags & TALOS_RT_DESIGN_TYPE_SIGNED) != 0 ||
+          (((flags & TALOS_RT_DESIGN_TYPE_TAGGED) != 0) !=
            (read64(record + 56) != 0)) ||
           !rangeExtent(record, extent) || extent != width)
         return false;
       break;
-    case OBELISK_RT_DESIGN_TYPE_FIELD:
+    case TALOS_RT_DESIGN_TYPE_FIELD:
       if (!hasElement || hasChildren ||
           (flags &
-           (OBELISK_RT_DESIGN_TYPE_SIGNED | OBELISK_RT_DESIGN_TYPE_PACKED |
-            OBELISK_RT_DESIGN_TYPE_TAGGED)) != 0 ||
+           (TALOS_RT_DESIGN_TYPE_SIGNED | TALOS_RT_DESIGN_TYPE_PACKED |
+            TALOS_RT_DESIGN_TYPE_TAGGED)) != 0 ||
           !rangeExtent(record, extent) || extent != width)
         return false;
       {
         const uint8_t *elementRecord = database.data + element;
         uint32_t elementKind = read32(elementRecord + 4) & UINT32_C(0xff);
         uint32_t elementFlags = read32(elementRecord + 4) >> 8;
-        if (elementKind == OBELISK_RT_DESIGN_TYPE_FIELD ||
+        if (elementKind == TALOS_RT_DESIGN_TYPE_FIELD ||
             read64(elementRecord + 8) != width ||
-            ((flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0) !=
-                ((elementFlags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0))
+            ((flags & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0) !=
+                ((elementFlags & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0))
           return false;
       }
       break;
@@ -5121,17 +5121,17 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *record = database.data + database.types + index * kTypeSize;
     uint32_t encoded = read32(record + 4);
     uint32_t kind = encoded & UINT32_C(0xff);
-    if (kind != OBELISK_RT_DESIGN_TYPE_STRUCT &&
-        kind != OBELISK_RT_DESIGN_TYPE_UNION)
+    if (kind != TALOS_RT_DESIGN_TYPE_STRUCT &&
+        kind != TALOS_RT_DESIGN_TYPE_UNION)
       continue;
     uint32_t flags = encoded >> 8;
     uint64_t width = read64(record + 8);
     uint64_t firstChild = read64(record + 40);
     uint64_t childCount = read64(record + 48);
     const bool disjointTaggedUnion =
-        kind == OBELISK_RT_DESIGN_TYPE_UNION &&
-        (flags & OBELISK_RT_DESIGN_TYPE_PACKED) == 0 &&
-        (flags & OBELISK_RT_DESIGN_TYPE_TAGGED) != 0;
+        kind == TALOS_RT_DESIGN_TYPE_UNION &&
+        (flags & TALOS_RT_DESIGN_TYPE_PACKED) == 0 &&
+        (flags & TALOS_RT_DESIGN_TYPE_TAGGED) != 0;
     uint64_t sum = 0, maximum = 0;
     bool fourState = false;
     std::vector<std::pair<uint64_t, uint64_t>> packedRanges;
@@ -5141,18 +5141,18 @@ bool validateDatabaseImpl(const Database &database) {
       uint64_t fieldWidth = read64(field + 8);
       uint64_t packedOffset = read64(field + 64);
       fourState |=
-          ((read32(field + 4) >> 8) & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+          ((read32(field + 4) >> 8) & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0;
       if (fieldWidth > UINT64_MAX - sum)
         return false;
       sum += fieldWidth;
       maximum = std::max(maximum, fieldWidth);
-      if (kind == OBELISK_RT_DESIGN_TYPE_STRUCT || disjointTaggedUnion ||
-          (flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0) {
+      if (kind == TALOS_RT_DESIGN_TYPE_STRUCT || disjointTaggedUnion ||
+          (flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0) {
         uint64_t tagBits = read64(record + 56);
-        if (kind == OBELISK_RT_DESIGN_TYPE_UNION && tagBits > width)
+        if (kind == TALOS_RT_DESIGN_TYPE_UNION && tagBits > width)
           return false;
         uint64_t payloadWidth =
-            kind == OBELISK_RT_DESIGN_TYPE_UNION ? width - tagBits : width;
+            kind == TALOS_RT_DESIGN_TYPE_UNION ? width - tagBits : width;
         if (packedOffset > payloadWidth ||
             fieldWidth > payloadWidth - packedOffset)
           return false;
@@ -5161,13 +5161,13 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       }
     }
-    if (((flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0) != fourState)
+    if (((flags & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0) != fourState)
       return false;
-    if (kind == OBELISK_RT_DESIGN_TYPE_STRUCT || disjointTaggedUnion) {
+    if (kind == TALOS_RT_DESIGN_TYPE_STRUCT || disjointTaggedUnion) {
       // Unpacked storage may contain alignment and tail padding, notably
       // around string handles and real fields in covergroup options. Only
       // packed structs require contiguous bits (IEEE 1800-2023 7.2/7.2.1).
-      bool packed = (flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0;
+      bool packed = (flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0;
       if (packed && sum != width)
         return false;
       std::sort(packedRanges.begin(), packedRanges.end());
@@ -5182,7 +5182,7 @@ bool validateDatabaseImpl(const Database &database) {
     } else {
       uint64_t tagBits = read64(record + 56);
       if (maximum > UINT64_MAX - tagBits || maximum + tagBits > width ||
-          ((flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0 &&
+          ((flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0 &&
            maximum + tagBits != width))
         return false;
     }
@@ -5220,7 +5220,7 @@ bool validateDatabaseImpl(const Database &database) {
         uint64_t childOffset = firstChild + ordinal * kTypeSize;
         const uint8_t *childRecord = database.data + childOffset;
         if ((read32(childRecord + 4) & UINT32_C(0xff)) !=
-                OBELISK_RT_DESIGN_TYPE_FIELD ||
+                TALOS_RT_DESIGN_TYPE_FIELD ||
             read64(childRecord + 56) != ordinal)
           return false;
         worklist.push_back({childOffset, false});
@@ -5235,16 +5235,16 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *record =
         database.data + database.objects + index * kObjectSize;
     uint32_t kind = recordKind(record);
-    if (kind != OBELISK_RT_DESIGN_RECORD_PROCESS &&
-        kind != OBELISK_RT_DESIGN_RECORD_FUNCTION &&
-        !(kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+    if (kind != TALOS_RT_DESIGN_RECORD_PROCESS &&
+        kind != TALOS_RT_DESIGN_RECORD_FUNCTION &&
+        !(kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
           read64(record + 48) == 0) &&
         !visitType(read64(record + 48)))
       return false;
   }
   for (uint64_t index = 0; index != database.mailboxElementBindingCount;
        ++index) {
-    obelisk::reflection::MailboxElementBindingView binding(
+    talos::reflection::MailboxElementBindingView binding(
         database.data + database.mailboxElementBindings +
         index * kMailboxElementBindingSize);
     if (binding.getPhysicalTypeIndex() >= database.typeCount ||
@@ -5253,7 +5253,7 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
   }
   for (uint64_t index = 0; index != database.boxTypeBindingCount; ++index) {
-    obelisk::reflection::BoxTypeBindingView binding(
+    talos::reflection::BoxTypeBindingView binding(
         database.data + database.boxTypeBindings + index * kBoxTypeBindingSize);
     if (binding.getPhysicalTypeIndex() >= database.typeCount ||
         !visitType(database.types +
@@ -5262,7 +5262,7 @@ bool validateDatabaseImpl(const Database &database) {
   }
   for (uint64_t index = 0; index != database.valueElementBindingCount;
        ++index) {
-    obelisk::reflection::ValueElementBindingView binding(
+    talos::reflection::ValueElementBindingView binding(
         database.data + database.valueElementBindings +
         index * kValueElementBindingSize);
     if (binding.getPhysicalTypeIndex() >= database.typeCount ||
@@ -5303,22 +5303,22 @@ bool validateDatabaseImpl(const Database &database) {
         semanticType >= database.semanticTypeCount)
       return false;
     previousSemanticRootSource = packedSource;
-    const auto table = obelisk::reflection::unpackTableIndexKind(packedSource);
+    const auto table = talos::reflection::unpackTableIndexKind(packedSource);
     const uint32_t sourceIndex =
-        obelisk::reflection::unpackTableIndex(packedSource);
-    if (table == obelisk::reflection::TableKind::Object)
+        talos::reflection::unpackTableIndex(packedSource);
+    if (table == talos::reflection::TableKind::Object)
       objectSemanticRoots[sourceIndex] = true;
     else
       staticObjectSemanticRoots[sourceIndex] = true;
   }
 
-  const uint32_t semanticFlagMask = OBELISK_RT_DESIGN_SEMANTIC_SIGNED |
-                                    OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
-                                    OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
-                                    OBELISK_RT_DESIGN_SEMANTIC_TAGGED |
-                                    OBELISK_RT_DESIGN_SEMANTIC_SOFT |
-                                    OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX |
-                                    OBELISK_RT_DESIGN_SEMANTIC_PROJECTED;
+  const uint32_t semanticFlagMask = TALOS_RT_DESIGN_SEMANTIC_SIGNED |
+                                    TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE |
+                                    TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE |
+                                    TALOS_RT_DESIGN_SEMANTIC_TAGGED |
+                                    TALOS_RT_DESIGN_SEMANTIC_SOFT |
+                                    TALOS_RT_DESIGN_SEMANTIC_WILDCARD_INDEX |
+                                    TALOS_RT_DESIGN_SEMANTIC_PROJECTED;
   std::vector<uint8_t> semanticState(database.semanticTypeCount, 0);
   for (uint32_t index = 0; index != database.semanticTypeCount; ++index) {
     const uint8_t *type = database.data + database.semanticTypes +
@@ -5327,8 +5327,8 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t kind = encoded & UINT32_C(0xff);
     uint32_t flags = encoded & semanticFlagMask;
     uint32_t publicVPIKind =
-        (encoded & OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
-        OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
+        (encoded & TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
+        TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
     uint32_t firstEdge = read32(type + 4);
     uint32_t edgeCount = read32(type + 8);
     uint32_t aliasObject = read32(type + 12);
@@ -5341,31 +5341,31 @@ bool validateDatabaseImpl(const Database &database) {
     uint64_t bitWidth = read64(type + 48);
     uint64_t tagBits = read64(type + 56);
     std::string_view semanticText;
-    bool ranged = kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
-                  kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
-                  ((kind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
-                    kind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
-                    kind == OBELISK_RT_DESIGN_SEMANTIC_REG) &&
+    bool ranged = kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+                  kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+                  ((kind == TALOS_RT_DESIGN_SEMANTIC_BIT ||
+                    kind == TALOS_RT_DESIGN_SEMANTIC_LOGIC ||
+                    kind == TALOS_RT_DESIGN_SEMANTIC_REG) &&
                    rangeLeft != rangeRight);
-    bool aggregate = kind >= OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT &&
-                     kind <= OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION;
+    bool aggregate = kind >= TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT &&
+                     kind <= TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION;
     const auto *publicKind =
-        obelisk::reflection::findVPIObjectKind(publicVPIKind);
+        talos::reflection::findVPIObjectKind(publicVPIKind);
     bool internalUntypedShape =
         publicVPIKind == 0 &&
-        (kind == OBELISK_RT_DESIGN_SEMANTIC_UNTYPED ||
-         kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
-         kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY);
-    if (kind > OBELISK_RT_DESIGN_SEMANTIC_PROPERTY ||
+        (kind == TALOS_RT_DESIGN_SEMANTIC_UNTYPED ||
+         kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+         kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY);
+    if (kind > TALOS_RT_DESIGN_SEMANTIC_PROPERTY ||
         (!internalUntypedShape &&
          (!publicKind ||
-          publicKind->role != obelisk::reflection::VPIObjectRole::Concrete ||
+          publicKind->role != talos::reflection::VPIObjectRole::Concrete ||
           (publicKind->families &
-           obelisk::reflection::vpiFamilyMask(
-               obelisk::reflection::VPIObjectFamily::Typespec)) == 0)) ||
+           talos::reflection::vpiFamilyMask(
+               talos::reflection::VPIObjectFamily::Typespec)) == 0)) ||
         (encoded & ~(UINT32_C(0xff) | semanticFlagMask |
-                     OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK)) != 0 ||
-        ((flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0) != ranged ||
+                     TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK)) != 0 ||
+        ((flags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0) != ranged ||
         firstEdge > database.semanticTypeEdgeCount ||
         edgeCount > database.semanticTypeEdgeCount - firstEdge ||
         (name != 0 && !getRelativeString(name, semanticText)) ||
@@ -5375,18 +5375,18 @@ bool validateDatabaseImpl(const Database &database) {
       uint64_t targetOffset = 0;
       if (!packedObjectReferenceOffset(database, identityTarget,
                                        targetOffset) ||
-          (kind != OBELISK_RT_DESIGN_SEMANTIC_CLASS &&
-           kind != OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE))
+          (kind != TALOS_RT_DESIGN_SEMANTIC_CLASS &&
+           kind != TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE))
         return false;
       uint32_t expectedTarget =
-          kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS
+          kind == TALOS_RT_DESIGN_SEMANTIC_CLASS
               ? static_cast<uint32_t>(
-                    obelisk::reflection::VPIObjectKind::ClassDefn)
+                    talos::reflection::VPIObjectKind::ClassDefn)
               : static_cast<uint32_t>(
-                    obelisk::reflection::VPIObjectKind::InterfaceTypespec);
+                    talos::reflection::VPIObjectKind::InterfaceTypespec);
       if (objectReferenceVPIKind(database, targetOffset) != expectedTarget)
         return false;
-      if (kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
+      if (kind == TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
         uint32_t targetRoot = UINT32_MAX;
         if (!findSemanticRootBinding(database, identityTarget, targetRoot) ||
             targetRoot >= database.semanticTypeCount)
@@ -5396,82 +5396,82 @@ bool validateDatabaseImpl(const Database &database) {
         uint32_t canonicalEncoded = read32(canonical);
         if ((canonicalEncoded & UINT32_C(0xff)) != kind ||
             (canonicalEncoded &
-             OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) !=
-                (encoded & OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) ||
+             TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) !=
+                (encoded & TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) ||
             read32(canonical + 12) != UINT32_MAX ||
             read32(canonical + 16) != identityTarget ||
             read32(canonical + 20) != name || read32(canonical + 24) != modport)
           return false;
       }
-    } else if (kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS ||
-               kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
+    } else if (kind == TALOS_RT_DESIGN_SEMANTIC_CLASS ||
+               kind == TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE) {
       return false;
     }
     if ((modport != 0) !=
-        (kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE))
+        (kind == TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE))
       return false;
-    bool tagged = (flags & OBELISK_RT_DESIGN_SEMANTIC_TAGGED) != 0;
-    bool soft = (flags & OBELISK_RT_DESIGN_SEMANTIC_SOFT) != 0;
-    bool isSigned = (flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
-    bool isFourState = (flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
-    if ((flags & OBELISK_RT_DESIGN_SEMANTIC_PROJECTED) && !isFourState)
+    bool tagged = (flags & TALOS_RT_DESIGN_SEMANTIC_TAGGED) != 0;
+    bool soft = (flags & TALOS_RT_DESIGN_SEMANTIC_SOFT) != 0;
+    bool isSigned = (flags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) != 0;
+    bool isFourState = (flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
+    if ((flags & TALOS_RT_DESIGN_SEMANTIC_PROJECTED) && !isFourState)
       return false;
-    bool packedAggregate = kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
-                           kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
-    bool unionType = kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION ||
-                     kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION;
+    bool packedAggregate = kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+                           kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION;
+    bool unionType = kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION ||
+                     kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION;
     if ((tagged && !unionType) ||
         (soft &&
-         (kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION || !tagged)) ||
+         (kind != TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION || !tagged)) ||
         (!tagged && tagBits != 0) || (packedAggregate && bitWidth == 0) ||
         (aggregate && !packedAggregate &&
          (bitWidth != 0 || isSigned || soft)) ||
         (!aggregate && (tagged || soft || bitWidth != 0 || tagBits != 0)) ||
-        (kind != OBELISK_RT_DESIGN_SEMANTIC_QUEUE && queueBound != 0))
+        (kind != TALOS_RT_DESIGN_SEMANTIC_QUEUE && queueBound != 0))
       return false;
-    if ((flags & OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX) != 0 &&
-        kind != OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY)
+    if ((flags & TALOS_RT_DESIGN_SEMANTIC_WILDCARD_INDEX) != 0 &&
+        kind != TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY)
       return false;
     if (aliasObject != UINT32_MAX) {
       uint64_t aliasOffset = 0;
       if (!packedObjectReferenceOffset(database, aliasObject, aliasOffset))
         return false;
       const uint8_t *alias = database.data + aliasOffset;
-      const auto *aliasKind = obelisk::reflection::findVPIObjectKind(
+      const auto *aliasKind = talos::reflection::findVPIObjectKind(
           objectReferenceVPIKind(database, aliasOffset));
       bool namedTypespec =
           isStaticObjectOffset(database, aliasOffset)
               ? read32(alias + 16) != 0
-              : recordKind(alias) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+              : recordKind(alias) == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
                     (read32(alias + 4) &
-                     OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0;
+                     TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0;
       if (!namedTypespec ||
           objectReferenceVPIKind(database, aliasOffset) != publicVPIKind ||
           !aliasKind ||
           (aliasKind->families &
-           obelisk::reflection::vpiFamilyMask(
-               obelisk::reflection::VPIObjectFamily::Typespec)) == 0)
+           talos::reflection::vpiFamilyMask(
+               talos::reflection::VPIObjectFamily::Typespec)) == 0)
         return false;
     }
     uint32_t expectedEdges = 0;
     switch (kind) {
-    case OBELISK_RT_DESIGN_SEMANTIC_ENUM:
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_OPEN_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_QUEUE:
-    case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_OPEN_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_MAILBOX:
+    case TALOS_RT_DESIGN_SEMANTIC_ENUM:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_OPEN_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_QUEUE:
+    case TALOS_RT_DESIGN_SEMANTIC_UNPACKED_OPEN_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_MAILBOX:
       expectedEdges = 1;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY:
       expectedEdges = 2;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
-    case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT:
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION:
-    case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
+    case TALOS_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION:
+    case TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION:
       if (edgeCount == 0)
         return false;
       expectedEdges = edgeCount;
@@ -5492,18 +5492,18 @@ bool validateDatabaseImpl(const Database &database) {
       uint32_t edgeFlags = roleAndFlags >> 8;
       uint32_t edgeOrdinal = read32(edge + 8);
       uint32_t edgeName = read32(edge + 12);
-      uint32_t expectedRole = OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT;
-      if (kind == OBELISK_RT_DESIGN_SEMANTIC_ENUM)
-        expectedRole = OBELISK_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE;
-      else if (kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY && ordinal == 0)
-        expectedRole = OBELISK_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX;
+      uint32_t expectedRole = TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT;
+      if (kind == TALOS_RT_DESIGN_SEMANTIC_ENUM)
+        expectedRole = TALOS_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE;
+      else if (kind == TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY && ordinal == 0)
+        expectedRole = TALOS_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX;
       else if (aggregate)
-        expectedRole = OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER;
+        expectedRole = TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER;
       std::string_view text;
       if (child >= database.semanticTypeCount || role != expectedRole ||
           (aggregate
-               ? edgeFlags < OBELISK_RT_DESIGN_SEMANTIC_EDGE_NOT_RANDOM ||
-                     edgeFlags > OBELISK_RT_DESIGN_SEMANTIC_EDGE_RANDOM_CYCLIC
+               ? edgeFlags < TALOS_RT_DESIGN_SEMANTIC_EDGE_NOT_RANDOM ||
+                     edgeFlags > TALOS_RT_DESIGN_SEMANTIC_EDGE_RANDOM_CYCLIC
                : edgeFlags != 0) ||
           edgeOrdinal != ordinal ||
           (aggregate ? !getRelativeString(edgeName, text) : edgeName != 0) ||
@@ -5516,21 +5516,21 @@ bool validateDatabaseImpl(const Database &database) {
                                    uint64_t{child} * kSemanticTypeSize) &
                             semanticFlagMask;
       childFourState |=
-          (childFlags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
-      if (kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY && ordinal == 0 &&
-          (((flags & OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX) != 0) !=
-           (childKind == OBELISK_RT_DESIGN_SEMANTIC_UNTYPED)))
+          (childFlags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
+      if (kind == TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY && ordinal == 0 &&
+          (((flags & TALOS_RT_DESIGN_SEMANTIC_WILDCARD_INDEX) != 0) !=
+           (childKind == TALOS_RT_DESIGN_SEMANTIC_UNTYPED)))
         return false;
-      if (kind == OBELISK_RT_DESIGN_SEMANTIC_ENUM &&
-          ((flags ^ childFlags) & (OBELISK_RT_DESIGN_SEMANTIC_SIGNED |
-                                   OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE)) != 0)
+      if (kind == TALOS_RT_DESIGN_SEMANTIC_ENUM &&
+          ((flags ^ childFlags) & (TALOS_RT_DESIGN_SEMANTIC_SIGNED |
+                                   TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE)) != 0)
         return false;
-      if ((kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
-           kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY) &&
-          (((flags ^ childFlags) & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) !=
+      if ((kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+           kind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY) &&
+          (((flags ^ childFlags) & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) !=
                0 ||
-           (kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY
-                ? ((flags ^ childFlags) & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) !=
+           (kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY
+                ? ((flags ^ childFlags) & TALOS_RT_DESIGN_SEMANTIC_SIGNED) !=
                       0
                 : isSigned)))
         return false;
@@ -5538,31 +5538,31 @@ bool validateDatabaseImpl(const Database &database) {
     if (aggregate && childFourState != isFourState)
       return false;
     switch (kind) {
-    case OBELISK_RT_DESIGN_SEMANTIC_BIT:
-    case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
-    case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_BIT:
+    case TALOS_RT_DESIGN_SEMANTIC_BYTE:
+    case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
       if (isFourState)
         return false;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
-    case OBELISK_RT_DESIGN_SEMANTIC_REG:
-    case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
+    case TALOS_RT_DESIGN_SEMANTIC_LOGIC:
+    case TALOS_RT_DESIGN_SEMANTIC_REG:
+    case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
       if (!isFourState)
         return false;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_TIME:
+    case TALOS_RT_DESIGN_SEMANTIC_TIME:
       if (isSigned || !isFourState)
         return false;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_UNKNOWN:
-    case OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
+    case TALOS_RT_DESIGN_SEMANTIC_UNKNOWN:
+    case TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
       break;
     default:
-      if (!aggregate && kind != OBELISK_RT_DESIGN_SEMANTIC_ENUM &&
-          kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
-          kind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY &&
+      if (!aggregate && kind != TALOS_RT_DESIGN_SEMANTIC_ENUM &&
+          kind != TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
+          kind != TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY &&
           (isSigned || isFourState))
         return false;
       break;
@@ -5572,43 +5572,43 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *object =
         database.data + database.objects + uint64_t{index} * kObjectSize;
     const auto *kind =
-        obelisk::reflection::findVPIObjectKind(recordVPIKind(object));
+        talos::reflection::findVPIObjectKind(recordVPIKind(object));
     bool typespec =
         kind && (kind->families &
-                 obelisk::reflection::vpiFamilyMask(
-                     obelisk::reflection::VPIObjectFamily::Typespec)) != 0;
-    uint32_t caps = recordKind(object) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT
+                 talos::reflection::vpiFamilyMask(
+                     talos::reflection::VPIObjectFamily::Typespec)) != 0;
+    uint32_t caps = recordKind(object) == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT
                         ? read32(object + 4)
                         : 0;
     bool unresolved =
-        (caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0;
+        (caps & TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0;
     bool unresolvedAlias =
-        (caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS) != 0;
-    bool lexicalClass = caps & OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC;
+        (caps & TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS) != 0;
+    bool lexicalClass = caps & TALOS_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC;
     if (typespec && ((unresolved || unresolvedAlias || lexicalClass)
                          ? objectSemanticRoots[index]
                          : !objectSemanticRoots[index]))
       return false;
     uint32_t packed =
-        (static_cast<uint32_t>(obelisk::reflection::TableKind::Object) << 30) |
+        (static_cast<uint32_t>(talos::reflection::TableKind::Object) << 30) |
         index;
     if (unresolvedAlias) {
       if (recordVPIKind(object) !=
               static_cast<uint32_t>(
-                  obelisk::reflection::VPIObjectKind::TypeParameter) ||
-          caps != (OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
-                   OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) ||
+                  talos::reflection::VPIObjectKind::TypeParameter) ||
+          caps != (TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
+                   TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC) ||
           read64(object + 48) != 0 || objectSemanticRoots[index] ||
           !namedUnresolvedAliases.count(packed))
         return false;
       unresolvedTypeAliases.insert(packed);
     }
-    if ((caps & OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY) != 0) {
-      using Kind = obelisk::reflection::VPIObjectKind;
-      if (caps != OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY ||
+    if ((caps & TALOS_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY) != 0) {
+      using Kind = talos::reflection::VPIObjectKind;
+      if (caps != TALOS_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY ||
           !objectSemanticRoots[index] || read64(object + 48) != 0 ||
-          (!obelisk::reflection::vpiObjectSetContains(
-               obelisk::reflection::VPIObjectSetID::DataVariableObjects,
+          (!talos::reflection::vpiObjectSetContains(
+               talos::reflection::VPIObjectSetID::DataVariableObjects,
                recordVPIKind(object)) &&
            recordVPIKind(object) != static_cast<uint32_t>(Kind::NamedEvent) &&
            recordVPIKind(object) !=
@@ -5616,89 +5616,89 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       sourceClassProperties.insert(packed);
     }
-    if ((caps & OBELISK_RT_DESIGN_CAP_FRAME_LOCAL) != 0) {
-      const auto *automatics = obelisk::reflection::findVPITraversal(
-          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Frame),
+    if ((caps & TALOS_RT_DESIGN_CAP_FRAME_LOCAL) != 0) {
+      const auto *automatics = talos::reflection::findVPITraversal(
+          static_cast<uint32_t>(talos::reflection::VPIObjectKind::Frame),
           static_cast<uint32_t>(
-              obelisk::reflection::VPIRelationKind::AutomaticsRel),
-          obelisk::reflection::VPITraversalMode::Iterate);
-      if (caps != OBELISK_RT_DESIGN_CAP_FRAME_LOCAL ||
+              talos::reflection::VPIRelationKind::AutomaticsRel),
+          talos::reflection::VPITraversalMode::Iterate);
+      if (caps != TALOS_RT_DESIGN_CAP_FRAME_LOCAL ||
           !objectSemanticRoots[index] ||
           !isTypeOffset(database, read64(object + 48)) || !automatics ||
-          !obelisk::reflection::vpiObjectSetContains(automatics->targets,
+          !talos::reflection::vpiObjectSetContains(automatics->targets,
                                                      recordVPIKind(object)))
         return false;
-      if (obelisk::reflection::findVPIProperty(recordVPIKind(object), 50) &&
+      if (talos::reflection::findVPIProperty(recordVPIKind(object), 50) &&
           !automaticFrameLocals.count(packed))
         return false;
       frameLocals.insert(packed);
     }
     if (unresolved)
       unresolvedTypeParameters.insert(packed);
-    if ((caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0) {
+    if ((caps & TALOS_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0) {
       if (objectSemanticRoots[index])
         return false;
       unresolvedValueParameters.insert(packed);
     }
     if (recordVPIKind(object) ==
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::PrimTerm)) {
-      if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::PrimTerm)) {
+      if (recordKind(object) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
           caps || objectSemanticRoots[index] || read64(object + 48) ||
           read64(object + 56) || read64(object + 64) || read64(object + 72) ||
           read64(object + 80) || !terminalDirections.count(packed))
         return false;
       primitiveTerminals.insert(packed);
     }
-    if (recordKind(object) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+    if (recordKind(object) == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
         isSourceExpressionKind(recordVPIKind(object))) {
       bool constant =
           recordVPIKind(object) ==
-          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Constant);
+          static_cast<uint32_t>(talos::reflection::VPIObjectKind::Constant);
       if (constant != objectSemanticRoots[index] || read32(object + 4) != 0 ||
           (constant && sourceExpressionConstants.count(packed) == 0) ||
           (recordVPIKind(object) ==
                static_cast<uint32_t>(
-                   obelisk::reflection::VPIObjectKind::Operation) &&
+                   talos::reflection::VPIObjectKind::Operation) &&
            sourceExpressionOperators.count(packed) == 0))
         return false;
       sourceExpressionObjects.insert(packed);
     }
-    if ((caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) != 0)
+    if ((caps & TALOS_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) != 0)
       unavailableParameterDefaults.insert(packed);
   }
   for (uint32_t index = 0; index != database.staticObjectCount; ++index) {
     const uint8_t *object = database.data + database.staticObjects +
                             uint64_t{index} * kStaticObjectSize;
     const auto *kind =
-        obelisk::reflection::findVPIObjectKind(read16(object + 28));
+        talos::reflection::findVPIObjectKind(read16(object + 28));
     bool typespec =
         kind && (kind->families &
-                 obelisk::reflection::vpiFamilyMask(
-                     obelisk::reflection::VPIObjectFamily::Typespec)) != 0;
+                 talos::reflection::vpiFamilyMask(
+                     talos::reflection::VPIObjectFamily::Typespec)) != 0;
     uint32_t caps = read16(object + 30);
     bool unresolved =
-        (caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0;
+        (caps & TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0;
     if ((caps &
-         (OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
-          OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
-          OBELISK_RT_DESIGN_CAP_FRAME_LOCAL | lexicalInheritanceFlags)) != 0 ||
+         (TALOS_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
+          TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
+          TALOS_RT_DESIGN_CAP_FRAME_LOCAL | lexicalInheritanceFlags)) != 0 ||
         !validParameterSourceFlags(read16(object + 28), caps) ||
         (typespec && (unresolved ? staticObjectSemanticRoots[index]
                                  : !staticObjectSemanticRoots[index])))
       return false;
     uint32_t packed =
-        (static_cast<uint32_t>(obelisk::reflection::TableKind::StaticObject)
+        (static_cast<uint32_t>(talos::reflection::TableKind::StaticObject)
          << 30) |
         index;
     if (unresolved)
       unresolvedTypeParameters.insert(packed);
-    if ((caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0) {
+    if ((caps & TALOS_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0) {
       if (staticObjectSemanticRoots[index])
         return false;
       unresolvedValueParameters.insert(packed);
     }
     if (read16(object + 28) ==
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::PrimTerm)) {
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::PrimTerm)) {
       if (caps || staticObjectSemanticRoots[index] || read32(object + 16) ||
           !terminalDirections.count(packed))
         return false;
@@ -5708,7 +5708,7 @@ bool validateDatabaseImpl(const Database &database) {
     // unique source owner and absence of outgoing operands are proved below.
     bool foreachNull =
         read16(object + 28) ==
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Operation);
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::Operation);
     if (foreachNull) {
       if (caps || staticObjectSemanticRoots[index] || read32(object + 16) ||
           !foreachNullProperties.count(packed))
@@ -5716,11 +5716,11 @@ bool validateDatabaseImpl(const Database &database) {
       foreachNulls.insert(packed);
     }
     if ((!foreachNull && isSourceExpressionKind(read16(object + 28))) ||
-        obelisk::reflection::vpiObjectSetContains(
-            obelisk::reflection::VPIObjectSetID::TaskFunctionCallObjects,
+        talos::reflection::vpiObjectSetContains(
+            talos::reflection::VPIObjectSetID::TaskFunctionCallObjects,
             read16(object + 28)))
       return false;
-    if ((caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) != 0)
+    if ((caps & TALOS_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) != 0)
       unavailableParameterDefaults.insert(packed);
   }
   struct SemanticWorkItem {
@@ -5729,43 +5729,43 @@ bool validateDatabaseImpl(const Database &database) {
   };
   auto expectedPublicKind = [](uint32_t kind, uint32_t flags,
                                uint32_t elementKind) -> uint32_t {
-    using VPIKind = obelisk::reflection::VPIObjectKind;
+    using VPIKind = talos::reflection::VPIObjectKind;
     switch (kind) {
-    case OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
+    case TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
       return static_cast<uint32_t>(
-          (flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0
+          (flags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0
               ? VPIKind::LogicTypespec
               : VPIKind::BitTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_BIT:
+    case TALOS_RT_DESIGN_SEMANTIC_BIT:
       return static_cast<uint32_t>(VPIKind::BitTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
-    case OBELISK_RT_DESIGN_SEMANTIC_REG:
+    case TALOS_RT_DESIGN_SEMANTIC_LOGIC:
+    case TALOS_RT_DESIGN_SEMANTIC_REG:
       return static_cast<uint32_t>(VPIKind::LogicTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
+    case TALOS_RT_DESIGN_SEMANTIC_BYTE:
       return static_cast<uint32_t>(VPIKind::ByteTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
       return static_cast<uint32_t>(VPIKind::ShortIntTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_INT:
       return static_cast<uint32_t>(VPIKind::IntTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
       return static_cast<uint32_t>(VPIKind::LongIntTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
+    case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
       return static_cast<uint32_t>(VPIKind::IntegerTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_ENUM:
+    case TALOS_RT_DESIGN_SEMANTIC_ENUM:
       return static_cast<uint32_t>(VPIKind::EnumTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_TIME:
+    case TALOS_RT_DESIGN_SEMANTIC_TIME:
       return static_cast<uint32_t>(VPIKind::TimeTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL:
+    case TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL:
       return static_cast<uint32_t>(VPIKind::ShortRealTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_REAL:
-    case OBELISK_RT_DESIGN_SEMANTIC_REALTIME:
+    case TALOS_RT_DESIGN_SEMANTIC_REAL:
+    case TALOS_RT_DESIGN_SEMANTIC_REALTIME:
       return static_cast<uint32_t>(VPIKind::RealTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_STRING:
+    case TALOS_RT_DESIGN_SEMANTIC_STRING:
       return static_cast<uint32_t>(VPIKind::StringTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_CHANDLE:
+    case TALOS_RT_DESIGN_SEMANTIC_CHANDLE:
       return static_cast<uint32_t>(VPIKind::ChandleTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_OPEN_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_OPEN_ARRAY:
       return elementKind == static_cast<uint32_t>(VPIKind::EnumTypespec) ||
                      elementKind ==
                          static_cast<uint32_t>(VPIKind::StructTypespec) ||
@@ -5775,34 +5775,34 @@ bool validateDatabaseImpl(const Database &database) {
                          static_cast<uint32_t>(VPIKind::PackedArrayTypespec)
                  ? static_cast<uint32_t>(VPIKind::PackedArrayTypespec)
                  : elementKind;
-    case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_QUEUE:
-    case OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_OPEN_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_QUEUE:
+    case TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_UNPACKED_OPEN_ARRAY:
       return static_cast<uint32_t>(VPIKind::ArrayTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
-    case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
+    case TALOS_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT:
       return static_cast<uint32_t>(VPIKind::StructTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION:
-    case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION:
+    case TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION:
       return static_cast<uint32_t>(VPIKind::UnionTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_CLASS:
-    case OBELISK_RT_DESIGN_SEMANTIC_PROCESS:
-    case OBELISK_RT_DESIGN_SEMANTIC_MAILBOX:
-    case OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE:
+    case TALOS_RT_DESIGN_SEMANTIC_CLASS:
+    case TALOS_RT_DESIGN_SEMANTIC_PROCESS:
+    case TALOS_RT_DESIGN_SEMANTIC_MAILBOX:
+    case TALOS_RT_DESIGN_SEMANTIC_SEMAPHORE:
       return static_cast<uint32_t>(VPIKind::ClassTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE:
+    case TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE:
       return static_cast<uint32_t>(VPIKind::InterfaceTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_EVENT:
+    case TALOS_RT_DESIGN_SEMANTIC_EVENT:
       return static_cast<uint32_t>(VPIKind::EventTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_VOID:
+    case TALOS_RT_DESIGN_SEMANTIC_VOID:
       return static_cast<uint32_t>(VPIKind::VoidTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_SEQUENCE:
+    case TALOS_RT_DESIGN_SEMANTIC_SEQUENCE:
       return static_cast<uint32_t>(VPIKind::SequenceTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_PROPERTY:
+    case TALOS_RT_DESIGN_SEMANTIC_PROPERTY:
       return static_cast<uint32_t>(VPIKind::PropertyTypespec);
-    case OBELISK_RT_DESIGN_SEMANTIC_UNTYPED:
+    case TALOS_RT_DESIGN_SEMANTIC_UNTYPED:
       return 0;
     default:
       return 0;
@@ -5823,20 +5823,20 @@ bool validateDatabaseImpl(const Database &database) {
         uint32_t kind = encoded & UINT32_C(0xff);
         uint32_t flags = encoded & semanticFlagMask;
         uint32_t elementKind = 0;
-        if (kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
-            kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_OPEN_ARRAY) {
+        if (kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+            kind == TALOS_RT_DESIGN_SEMANTIC_PACKED_OPEN_ARRAY) {
           uint32_t firstEdge = read32(type + 4);
           const uint8_t *edge = database.data + database.semanticTypeEdges +
                                 uint64_t{firstEdge} * kSemanticTypeEdgeSize;
           const uint8_t *element = database.data + database.semanticTypes +
                                    uint64_t{read32(edge)} * kSemanticTypeSize;
           elementKind = (read32(element) &
-                         OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
-                        OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
+                         TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
+                        TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
         }
         uint32_t actual =
-            (encoded & OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
-            OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
+            (encoded & TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
+            TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
         if (actual != expectedPublicKind(kind, flags, elementKind))
           return false;
         semanticState[item.index] = 2;
@@ -5866,10 +5866,10 @@ bool validateDatabaseImpl(const Database &database) {
   // vpiRightRange. Validate the compact and promoted full-record forms here,
   // after the root-binding and semantic graphs are known to be well formed.
   auto hasValidExplicitParameterRange =
-      [&](obelisk::reflection::TableKind table, uint32_t index) {
+      [&](talos::reflection::TableKind table, uint32_t index) {
         uint32_t packedSource = 0;
         uint32_t semanticRoot = 0;
-        if (!obelisk::reflection::tryPackTableIndex(table, index,
+        if (!talos::reflection::tryPackTableIndex(table, index,
                                                     packedSource) ||
             !findSemanticRootBinding(database, packedSource, semanticRoot))
           return false;
@@ -5877,19 +5877,19 @@ bool validateDatabaseImpl(const Database &database) {
                                   uint64_t{semanticRoot} * kSemanticTypeSize;
         uint32_t encoded = read32(semantic);
         return (encoded & UINT32_C(0xff)) ==
-                   OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
-               (encoded & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
+                   TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
+               (encoded & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
       };
   for (uint32_t index = 0; index != database.objectCount; ++index) {
     const uint8_t *object =
         database.data + database.objects + uint64_t{index} * kObjectSize;
-    if (recordKind(object) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+    if (recordKind(object) == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
         recordVPIKind(object) ==
             static_cast<uint32_t>(
-                obelisk::reflection::VPIObjectKind::Parameter) &&
-        (read32(object + 4) & OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) !=
+                talos::reflection::VPIObjectKind::Parameter) &&
+        (read32(object + 4) & TALOS_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) !=
             0 &&
-        !hasValidExplicitParameterRange(obelisk::reflection::TableKind::Object,
+        !hasValidExplicitParameterRange(talos::reflection::TableKind::Object,
                                         index))
       return false;
   }
@@ -5897,9 +5897,9 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *object = database.data + database.staticObjects +
                             uint64_t{index} * kStaticObjectSize;
     if ((read16(object + 30) &
-         OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) != 0 &&
+         TALOS_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE) != 0 &&
         !hasValidExplicitParameterRange(
-            obelisk::reflection::TableKind::StaticObject, index))
+            talos::reflection::TableKind::StaticObject, index))
       return false;
   }
 
@@ -5918,16 +5918,16 @@ bool validateDatabaseImpl(const Database &database) {
       const uint8_t *semantic = database.data + database.semanticTypes +
                                 uint64_t{root} * kSemanticTypeSize;
       uint32_t rootKind = (read32(semantic) &
-                           OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
-                          OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
+                           TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
+                          TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
       uint32_t expected = 0;
-      if (const auto *mapping = obelisk::reflection::findVPIIndexedTypeResult(
-              obelisk::reflection::VPIIndexedAccessKind::VariableElement,
+      if (const auto *mapping = talos::reflection::findVPIIndexedTypeResult(
+              talos::reflection::VPIIndexedAccessKind::VariableElement,
               rootKind))
         expected = mapping->resultType;
       bool eventArray = false;
       while ((read32(semantic) & UINT32_C(0xff)) ==
-             OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY) {
+             TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY) {
         eventArray = true;
         const uint8_t *edge =
             database.data + database.semanticTypeEdges +
@@ -5936,10 +5936,10 @@ bool validateDatabaseImpl(const Database &database) {
                    uint64_t{read32(edge)} * kSemanticTypeSize;
       }
       if ((read32(semantic) & UINT32_C(0xff)) ==
-          OBELISK_RT_DESIGN_SEMANTIC_EVENT)
+          TALOS_RT_DESIGN_SEMANTIC_EVENT)
         expected = static_cast<uint32_t>(
-            eventArray ? obelisk::reflection::VPIObjectKind::NamedEventArray
-                       : obelisk::reflection::VPIObjectKind::NamedEvent);
+            eventArray ? talos::reflection::VPIObjectKind::NamedEventArray
+                       : talos::reflection::VPIObjectKind::NamedEvent);
       if (!expected ||
           expected != objectReferenceVPIKind(database, objectOffset))
         return false;
@@ -5947,14 +5947,14 @@ bool validateDatabaseImpl(const Database &database) {
     // A type parameter is itself a typespec while unresolved (37.25), but
     // its elaborated semantic root describes its effective type (37.28).
     // Only concrete typespec declarations share their root's exact kind.
-    if (!obelisk::reflection::vpiObjectSetContains(
-            obelisk::reflection::VPIObjectSetID::ConcreteTypespecObjects,
+    if (!talos::reflection::vpiObjectSetContains(
+            talos::reflection::VPIObjectSetID::ConcreteTypespecObjects,
             objectReferenceVPIKind(database, objectOffset)))
       continue;
     uint32_t rootKind = (read32(database.data + database.semanticTypes +
                                 uint64_t{root} * kSemanticTypeSize) &
-                         OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
-                        OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
+                         TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
+                        TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
     if (rootKind != objectReferenceVPIKind(database, objectOffset))
       return false;
   }
@@ -5966,7 +5966,7 @@ bool validateDatabaseImpl(const Database &database) {
   std::unordered_map<uint64_t, uint32_t> canonicalClassTypes;
   uint64_t previousClassID = 0;
   for (uint64_t index = 0; index != database.classTypeBindingCount; ++index) {
-    obelisk::reflection::ClassTypeBindingView binding(
+    talos::reflection::ClassTypeBindingView binding(
         database.data + database.classTypeBindings +
         index * kClassTypeBindingSize);
     uint64_t classID = binding.getClassID();
@@ -5977,14 +5977,14 @@ bool validateDatabaseImpl(const Database &database) {
         !packedObjectReferenceOffset(database, packed, targetOffset) ||
         objectReferenceVPIKind(database, targetOffset) !=
             static_cast<uint32_t>(
-                obelisk::reflection::VPIObjectKind::ClassTypespec) ||
+                talos::reflection::VPIObjectKind::ClassTypespec) ||
         !findSemanticRootBinding(database, packed, root) ||
         root >= database.semanticTypeCount ||
         !canonicalClassRoots.emplace(packed, root).second)
       return false;
     const uint8_t *type = database.data + database.semanticTypes +
                           uint64_t{root} * kSemanticTypeSize;
-    if ((read32(type) & UINT32_C(0xff)) != OBELISK_RT_DESIGN_SEMANTIC_CLASS ||
+    if ((read32(type) & UINT32_C(0xff)) != TALOS_RT_DESIGN_SEMANTIC_CLASS ||
         read32(type + 12) != UINT32_MAX)
       return false;
     previousClassID = classID;
@@ -5997,14 +5997,14 @@ bool validateDatabaseImpl(const Database &database) {
            uint64_t{index} * kSemanticTypeSize;
   };
   auto isBuiltinClassKind = [](uint32_t kind) {
-    return kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX ||
-           kind == OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE ||
-           kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS;
+    return kind == TALOS_RT_DESIGN_SEMANTIC_MAILBOX ||
+           kind == TALOS_RT_DESIGN_SEMANTIC_SEMAPHORE ||
+           kind == TALOS_RT_DESIGN_SEMANTIC_PROCESS;
   };
   uint32_t previousClassSemantic = 0;
   for (uint64_t index = 0; index != database.semanticClassBindingCount;
        ++index) {
-    obelisk::reflection::SemanticClassBindingView binding(
+    talos::reflection::SemanticClassBindingView binding(
         database.data + database.semanticClassBindings +
         index * kSemanticClassBindingSize);
     uint32_t semantic = binding.getSemanticType();
@@ -6019,7 +6019,7 @@ bool validateDatabaseImpl(const Database &database) {
       if (!packedObjectReferenceOffset(database, packedTarget, targetOffset) ||
           objectReferenceVPIKind(database, targetOffset) !=
               static_cast<uint32_t>(
-                  obelisk::reflection::VPIObjectKind::ClassTypespec) ||
+                  talos::reflection::VPIObjectKind::ClassTypespec) ||
           !findSemanticRootBinding(database, packedTarget, root) ||
           root >= database.semanticTypeCount ||
           !isBuiltinClassKind(read32(semanticRecord(root)) & UINT32_C(0xff)) ||
@@ -6032,7 +6032,7 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t kind = read32(type) & UINT32_C(0xff);
     if (kind != (read32(canonical) & UINT32_C(0xff)) ||
         (!isBuiltinClassKind(kind) &&
-         (kind != OBELISK_RT_DESIGN_SEMANTIC_CLASS ||
+         (kind != TALOS_RT_DESIGN_SEMANTIC_CLASS ||
           read32(type + 16) != read32(canonical + 16))))
       return false;
     if (semantic == target->second)
@@ -6079,7 +6079,7 @@ bool validateDatabaseImpl(const Database &database) {
         continue;
       }
       uint32_t classTarget = UINT32_MAX;
-      if ((read32(type) & UINT32_C(0xff)) == OBELISK_RT_DESIGN_SEMANTIC_CLASS) {
+      if ((read32(type) & UINT32_C(0xff)) == TALOS_RT_DESIGN_SEMANTIC_CLASS) {
         auto binding = semanticClassTargets.find(index);
         if (binding == semanticClassTargets.end())
           return false;
@@ -6174,8 +6174,8 @@ bool validateDatabaseImpl(const Database &database) {
     for (uint32_t index = 0; index != database.objectCount; ++index) {
       const uint8_t *object =
           database.data + database.objects + uint64_t{index} * kObjectSize;
-      if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_PROCESS &&
-          recordKind(object) != OBELISK_RT_DESIGN_RECORD_FUNCTION)
+      if (recordKind(object) != TALOS_RT_DESIGN_RECORD_PROCESS &&
+          recordKind(object) != TALOS_RT_DESIGN_RECORD_FUNCTION)
         continue;
       auto [entry, inserted] =
           localCodeUnits.emplace(read64(object + 8), index);
@@ -6187,7 +6187,7 @@ bool validateDatabaseImpl(const Database &database) {
   std::unordered_map<uint32_t, std::unordered_set<std::string_view>> localNames;
   uint64_t previousLocalID = 0;
   for (uint64_t index = 0; index != database.frameLocalBindingCount; ++index) {
-    obelisk::reflection::FrameLocalBindingView binding(
+    talos::reflection::FrameLocalBindingView binding(
         database.data + database.frameLocalBindings +
         index * kFrameLocalBindingSize);
     const uint32_t objectIndex = binding.getObjectIndex();
@@ -6204,8 +6204,8 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *codeUnit = database.data + database.objects +
                               uint64_t{codeUnitIndex} * kObjectSize;
     uint32_t packed = 0;
-    if (!obelisk::reflection::tryPackTableIndex(
-            obelisk::reflection::TableKind::Object, objectIndex, packed) ||
+    if (!talos::reflection::tryPackTableIndex(
+            talos::reflection::TableKind::Object, objectIndex, packed) ||
         !frameLocals.count(packed) ||
         !frameLocalOwners.emplace(packed, scope).second ||
         read64(object + 16) != read64(codeUnit + 16))
@@ -6214,9 +6214,9 @@ bool validateDatabaseImpl(const Database &database) {
     if (uniqueUnit == localCodeUnits.end() ||
         uniqueUnit->second != codeUnitIndex)
       return false;
-    using obelisk::reflection::TableKind;
-    const uint32_t scopeIndex = obelisk::reflection::unpackTableIndex(scope);
-    switch (obelisk::reflection::unpackTableIndexKind(scope)) {
+    using talos::reflection::TableKind;
+    const uint32_t scopeIndex = talos::reflection::unpackTableIndex(scope);
+    switch (talos::reflection::unpackTableIndexKind(scope)) {
     case TableKind::Object:
     case TableKind::StaticObject: {
       uint32_t source = 0;
@@ -6232,7 +6232,7 @@ bool validateDatabaseImpl(const Database &database) {
       const uint8_t *statement = database.data + database.statements +
                                  uint64_t{scopeIndex} * kStatementSize;
       if (read32(statement + 8) != codeUnitIndex ||
-          !(read16(statement + 38) & OBELISK_RT_DESIGN_STATEMENT_SCOPE))
+          !(read16(statement + 38) & TALOS_RT_DESIGN_STATEMENT_SCOPE))
         return false;
       break;
     }
@@ -6255,7 +6255,7 @@ bool validateDatabaseImpl(const Database &database) {
   // Each value layout owns a complete pairing between one semantic value
   // graph and exact normalized storage. Legacy mailbox rows share the proof,
   // but never overlap a common-owner group.
-  using LayoutOwnerKind = obelisk::reflection::ValueLayoutOwnerKind;
+  using LayoutOwnerKind = talos::reflection::ValueLayoutOwnerKind;
   struct ValueLayout {
     uint32_t root = UINT32_MAX;
     uint32_t physicalRoot = UINT32_MAX;
@@ -6272,7 +6272,7 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
     const uint8_t *mailbox = semanticRecord(canonical->second);
     if ((read32(mailbox) & UINT32_C(0xff)) !=
-        OBELISK_RT_DESIGN_SEMANTIC_MAILBOX)
+        TALOS_RT_DESIGN_SEMANTIC_MAILBOX)
       return false;
     root = read32(database.data + database.semanticTypeEdges +
                   uint64_t{read32(mailbox + 4)} * kSemanticTypeEdgeSize);
@@ -6280,7 +6280,7 @@ bool validateDatabaseImpl(const Database &database) {
   };
   std::unordered_set<uint32_t> classFieldLayoutOwners;
   for (uint64_t index = 0; index != database.classMemberBindingCount; ++index) {
-    obelisk::reflection::ClassMemberBindingView binding(
+    talos::reflection::ClassMemberBindingView binding(
         database.data + database.classMemberBindings +
         index * kClassMemberBindingSize);
     if ((binding.getFlags() & 2) == 0)
@@ -6295,8 +6295,8 @@ bool validateDatabaseImpl(const Database &database) {
         !findSemanticRootBinding(database, owner, layout.root))
       return false;
     const uint8_t *record = database.data + offset;
-    if (recordKind(record) != OBELISK_RT_DESIGN_RECORD_STORAGE &&
-        !(recordKind(record) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+    if (recordKind(record) != TALOS_RT_DESIGN_RECORD_STORAGE &&
+        !(recordKind(record) == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
           (classFieldLayoutOwners.count(owner) || frameLocals.count(owner))))
       return false;
     const uint64_t physical = read64(record + 48);
@@ -6308,7 +6308,7 @@ bool validateDatabaseImpl(const Database &database) {
   };
   uint64_t previousBoxID = 0;
   for (uint64_t index = 0; index != database.boxTypeBindingCount; ++index) {
-    obelisk::reflection::BoxTypeBindingView binding(
+    talos::reflection::BoxTypeBindingView binding(
         database.data + database.boxTypeBindings + index * kBoxTypeBindingSize);
     if (binding.getID() == 0 || binding.getID() > INT64_MAX ||
         binding.getID() <= previousBoxID ||
@@ -6324,7 +6324,7 @@ bool validateDatabaseImpl(const Database &database) {
   uint64_t previousMailboxElement = 0;
   for (uint64_t index = 0; index != database.mailboxElementBindingCount;
        ++index) {
-    obelisk::reflection::MailboxElementBindingView binding(
+    talos::reflection::MailboxElementBindingView binding(
         database.data + database.mailboxElementBindings +
         index * kMailboxElementBindingSize);
     const uint32_t owner = binding.getTypespecIndexAndTable();
@@ -6344,11 +6344,11 @@ bool validateDatabaseImpl(const Database &database) {
   std::tuple<uint32_t, uint32_t, uint32_t> previousValueElement{};
   for (uint64_t index = 0; index != database.valueElementBindingCount;
        ++index) {
-    obelisk::reflection::ValueElementBindingView binding(
+    talos::reflection::ValueElementBindingView binding(
         database.data + database.valueElementBindings +
         index * kValueElementBindingSize);
     const uint32_t encodedKind = binding.getOwnerKind();
-    if (!obelisk::reflection::isValidValueLayoutOwnerKind(
+    if (!talos::reflection::isValidValueLayoutOwnerKind(
             static_cast<LayoutOwnerKind>(encodedKind)))
       return false;
     const auto kind = static_cast<LayoutOwnerKind>(encodedKind);
@@ -6387,7 +6387,7 @@ bool validateDatabaseImpl(const Database &database) {
       // Enumeration constants use their total packed width. Executable enum
       // storage can scalarize a composite source base; it has no layout view.
       if (layout.legacy && (read32(semanticRecord(semanticIndex)) &
-                            UINT32_C(0xff)) == OBELISK_RT_DESIGN_SEMANTIC_ENUM)
+                            UINT32_C(0xff)) == TALOS_RT_DESIGN_SEMANTIC_ENUM)
         continue;
       if (!visited.insert(semanticIndex).second)
         continue;
@@ -6401,12 +6401,12 @@ bool validateDatabaseImpl(const Database &database) {
       const uint32_t physicalKind = read32(physical + 4) & UINT32_C(0xff);
       const uint32_t physicalFlags = read32(physical + 4) >> 8;
       const bool fourState =
-          (read32(semantic) & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0 &&
-          (read32(semantic) & OBELISK_RT_DESIGN_SEMANTIC_PROJECTED) == 0;
+          (read32(semantic) & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0 &&
+          (read32(semantic) & TALOS_RT_DESIGN_SEMANTIC_PROJECTED) == 0;
       const bool physicalFourState =
-          (physicalFlags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+          (physicalFlags & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0;
       const bool physicalPacked =
-          (physicalFlags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0;
+          (physicalFlags & TALOS_RT_DESIGN_TYPE_PACKED) != 0;
       const uint32_t first = read32(semantic + 4);
       const uint32_t count = read32(semantic + 8);
       auto childEdge = [&](uint32_t ordinal) {
@@ -6417,89 +6417,89 @@ bool validateDatabaseImpl(const Database &database) {
         const uint32_t childIndex = read32(childEdge(ordinal));
         const uint8_t *childSemantic = semanticRecord(childIndex);
         if (layout.legacy && (read32(childSemantic) & UINT32_C(0xff)) ==
-                                 OBELISK_RT_DESIGN_SEMANTIC_ENUM) {
+                                 TALOS_RT_DESIGN_SEMANTIC_ENUM) {
           uint64_t width = 0;
           const uint8_t *childPhysical = database.data + offset;
           const uint32_t flags = read32(childPhysical + 4) >> 8;
           return semanticPackedBitWidth(database, childIndex, &width) ==
-                     OBELISK_RT_OK &&
+                     TALOS_RT_OK &&
                  read64(childPhysical + 8) == width &&
-                 (flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0 &&
-                 ((flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0) ==
+                 (flags & TALOS_RT_DESIGN_TYPE_PACKED) != 0 &&
+                 ((flags & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0) ==
                      ((read32(childSemantic) &
-                       OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0 &&
+                       TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0 &&
                       (read32(childSemantic) &
-                       OBELISK_RT_DESIGN_SEMANTIC_PROJECTED) == 0);
+                       TALOS_RT_DESIGN_SEMANTIC_PROJECTED) == 0);
         }
         auto child = layouts.find(childIndex);
         return child != layouts.end() &&
                offset == database.types + uint64_t{child->second} * kTypeSize;
       };
       for (uint32_t ordinal = 0;
-           semanticKind != OBELISK_RT_DESIGN_SEMANTIC_ENUM && ordinal != count;
+           semanticKind != TALOS_RT_DESIGN_SEMANTIC_ENUM && ordinal != count;
            ++ordinal) {
         // Integral associative keys similarly normalize to the runtime lookup
         // domain. Their copied values use descriptor width, never field layout.
         const uint32_t childKind =
             read32(semanticRecord(read32(childEdge(ordinal)))) & UINT32_C(0xff);
         const bool integral =
-            (childKind >= OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL &&
-             childKind <= OBELISK_RT_DESIGN_SEMANTIC_TIME) ||
-            childKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
-            childKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
-            childKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
-        if (childKind == OBELISK_RT_DESIGN_SEMANTIC_VOID) {
-          if ((semanticKind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION &&
-               semanticKind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION) ||
-              (read32(semantic) & OBELISK_RT_DESIGN_SEMANTIC_TAGGED) == 0)
+            (childKind >= TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL &&
+             childKind <= TALOS_RT_DESIGN_SEMANTIC_TIME) ||
+            childKind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+            childKind == TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+            childKind == TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION;
+        if (childKind == TALOS_RT_DESIGN_SEMANTIC_VOID) {
+          if ((semanticKind != TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION &&
+               semanticKind != TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION) ||
+              (read32(semantic) & TALOS_RT_DESIGN_SEMANTIC_TAGGED) == 0)
             return false;
           voidMembers.insert(read32(childEdge(ordinal)));
         }
         uint64_t keyWidth = 0;
-        if (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY &&
+        if (semanticKind == TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY &&
             ordinal == 0 && integral &&
             semanticPackedBitWidth(database, read32(childEdge(ordinal)),
-                                   &keyWidth) == OBELISK_RT_OK)
+                                   &keyWidth) == TALOS_RT_OK)
           continue;
         work.push_back(read32(childEdge(ordinal)));
       }
       switch (semanticKind) {
-      case OBELISK_RT_DESIGN_SEMANTIC_ENUM: {
+      case TALOS_RT_DESIGN_SEMANTIC_ENUM: {
         uint64_t width = 0;
         if (!physicalPacked || physicalFourState != fourState ||
             semanticPackedBitWidth(database, semanticIndex, &width) !=
-                OBELISK_RT_OK ||
+                TALOS_RT_OK ||
             width == 0 || read64(physical + 8) != width)
           return false;
         break;
       }
-      case OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
-      case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY:
-        if (physicalKind != OBELISK_RT_DESIGN_TYPE_ARRAY ||
+      case TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
+      case TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY:
+        if (physicalKind != TALOS_RT_DESIGN_TYPE_ARRAY ||
             physicalPacked !=
-                (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY) ||
+                (semanticKind == TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY) ||
             physicalFourState != fourState ||
             readI64(physical + 16) != readI64(semantic + 32) ||
             readI64(physical + 24) != readI64(semantic + 40) ||
             !matchesChildPhysical(0, read64(physical + 32)))
           return false;
         break;
-      case OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
-      case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT:
-      case OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION:
-      case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION: {
+      case TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
+      case TALOS_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT:
+      case TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION:
+      case TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION: {
         const bool packed =
-            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
-            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
+            semanticKind == TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+            semanticKind == TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION;
         const bool isUnion =
-            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION ||
-            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION;
+            semanticKind == TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION ||
+            semanticKind == TALOS_RT_DESIGN_SEMANTIC_UNPACKED_UNION;
         const bool tagged =
-            (read32(semantic) & OBELISK_RT_DESIGN_SEMANTIC_TAGGED) != 0;
-        if (physicalKind != (isUnion ? OBELISK_RT_DESIGN_TYPE_UNION
-                                     : OBELISK_RT_DESIGN_TYPE_STRUCT) ||
+            (read32(semantic) & TALOS_RT_DESIGN_SEMANTIC_TAGGED) != 0;
+        if (physicalKind != (isUnion ? TALOS_RT_DESIGN_TYPE_UNION
+                                     : TALOS_RT_DESIGN_TYPE_STRUCT) ||
             physicalPacked != packed || physicalFourState != fourState ||
-            ((physicalFlags & OBELISK_RT_DESIGN_TYPE_TAGGED) != 0) != tagged ||
+            ((physicalFlags & TALOS_RT_DESIGN_TYPE_TAGGED) != 0) != tagged ||
             read64(physical + 56) != read64(semantic + 56) ||
             read64(physical + 48) != count ||
             (packed && read64(physical + 8) != read64(semantic + 48)))
@@ -6518,51 +6518,51 @@ bool validateDatabaseImpl(const Database &database) {
         }
         break;
       }
-      case OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
-      case OBELISK_RT_DESIGN_SEMANTIC_BIT:
-      case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
-      case OBELISK_RT_DESIGN_SEMANTIC_REG:
-      case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
-      case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
-      case OBELISK_RT_DESIGN_SEMANTIC_INT:
-      case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
-      case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
-      case OBELISK_RT_DESIGN_SEMANTIC_TIME:
-      case OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL:
-      case OBELISK_RT_DESIGN_SEMANTIC_REAL:
-      case OBELISK_RT_DESIGN_SEMANTIC_REALTIME: {
+      case TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
+      case TALOS_RT_DESIGN_SEMANTIC_BIT:
+      case TALOS_RT_DESIGN_SEMANTIC_LOGIC:
+      case TALOS_RT_DESIGN_SEMANTIC_REG:
+      case TALOS_RT_DESIGN_SEMANTIC_BYTE:
+      case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
+      case TALOS_RT_DESIGN_SEMANTIC_INT:
+      case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
+      case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
+      case TALOS_RT_DESIGN_SEMANTIC_TIME:
+      case TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL:
+      case TALOS_RT_DESIGN_SEMANTIC_REAL:
+      case TALOS_RT_DESIGN_SEMANTIC_REALTIME: {
         const bool real =
-            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL ||
-            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_REAL ||
-            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_REALTIME;
+            semanticKind == TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL ||
+            semanticKind == TALOS_RT_DESIGN_SEMANTIC_REAL ||
+            semanticKind == TALOS_RT_DESIGN_SEMANTIC_REALTIME;
         uint64_t width = 0;
-        if (physicalKind != OBELISK_RT_DESIGN_TYPE_SCALAR ||
+        if (physicalKind != TALOS_RT_DESIGN_TYPE_SCALAR ||
             physicalPacked == real || physicalFourState != fourState ||
             !semanticBitWidth(database, semanticIndex, width) || width == 0 ||
             read64(physical + 8) != width)
           return false;
         break;
       }
-      case OBELISK_RT_DESIGN_SEMANTIC_VOID:
+      case TALOS_RT_DESIGN_SEMANTIC_VOID:
         if (voidMembers.count(semanticIndex) == 0 ||
-            physicalKind != OBELISK_RT_DESIGN_TYPE_SCALAR || !physicalPacked ||
+            physicalKind != TALOS_RT_DESIGN_TYPE_SCALAR || !physicalPacked ||
             physicalFourState || read64(physical + 8) != 1)
           return false;
         break;
-      case OBELISK_RT_DESIGN_SEMANTIC_STRING:
-      case OBELISK_RT_DESIGN_SEMANTIC_CHANDLE:
-      case OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY:
-      case OBELISK_RT_DESIGN_SEMANTIC_QUEUE:
-      case OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY:
-      case OBELISK_RT_DESIGN_SEMANTIC_CLASS:
-      case OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE:
-      case OBELISK_RT_DESIGN_SEMANTIC_EVENT:
-      case OBELISK_RT_DESIGN_SEMANTIC_PROCESS:
-      case OBELISK_RT_DESIGN_SEMANTIC_COVERGROUP:
-      case OBELISK_RT_DESIGN_SEMANTIC_MAILBOX:
-      case OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE:
-      case OBELISK_RT_DESIGN_SEMANTIC_UNTYPED:
-        if (physicalKind != OBELISK_RT_DESIGN_TYPE_SCALAR || physicalPacked ||
+      case TALOS_RT_DESIGN_SEMANTIC_STRING:
+      case TALOS_RT_DESIGN_SEMANTIC_CHANDLE:
+      case TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY:
+      case TALOS_RT_DESIGN_SEMANTIC_QUEUE:
+      case TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY:
+      case TALOS_RT_DESIGN_SEMANTIC_CLASS:
+      case TALOS_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE:
+      case TALOS_RT_DESIGN_SEMANTIC_EVENT:
+      case TALOS_RT_DESIGN_SEMANTIC_PROCESS:
+      case TALOS_RT_DESIGN_SEMANTIC_COVERGROUP:
+      case TALOS_RT_DESIGN_SEMANTIC_MAILBOX:
+      case TALOS_RT_DESIGN_SEMANTIC_SEMAPHORE:
+      case TALOS_RT_DESIGN_SEMANTIC_UNTYPED:
+        if (physicalKind != TALOS_RT_DESIGN_TYPE_SCALAR || physicalPacked ||
             physicalFourState || read64(physical + 8) != 64)
           return false;
         break;
@@ -6582,7 +6582,7 @@ bool validateDatabaseImpl(const Database &database) {
   std::unordered_set<uint32_t> boundEvents;
   uint32_t previousEvent = 0;
   for (uint64_t index = 0; index != database.eventBindingCount; ++index) {
-    obelisk::reflection::EventBindingView binding(
+    talos::reflection::EventBindingView binding(
         database.data + database.eventBindings + index * kEventBindingSize);
     uint32_t event = binding.getEventIndexAndTable();
     uint64_t offset = 0;
@@ -6591,13 +6591,13 @@ bool validateDatabaseImpl(const Database &database) {
         !packedObjectReferenceOffset(database, event, offset) ||
         objectReferenceVPIKind(database, offset) !=
             static_cast<uint32_t>(
-                obelisk::reflection::VPIObjectKind::NamedEvent))
+                talos::reflection::VPIObjectKind::NamedEvent))
       return false;
     // Static anchors have no state storage, class receiver, or mutable cell.
     if (!isStaticObjectOffset(database, offset) &&
         (!isObjectOffset(database, offset) ||
          recordKind(database.data + offset) !=
-             OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT))
+             TALOS_RT_DESIGN_RECORD_STATIC_OBJECT))
       return false;
     boundEvents.insert(event);
     previousEvent = event;
@@ -6609,7 +6609,7 @@ bool validateDatabaseImpl(const Database &database) {
       modportNames;
   uint32_t previousModport = 0;
   for (uint64_t index = 0; index != database.modportBindingCount; ++index) {
-    obelisk::reflection::ModportBindingView binding(
+    talos::reflection::ModportBindingView binding(
         database.data + database.modportBindings + index * kModportBindingSize);
     uint32_t modport = binding.getModportIndexAndTable();
     uint32_t scope = binding.getScopeIndex();
@@ -6620,21 +6620,21 @@ bool validateDatabaseImpl(const Database &database) {
         !packedObjectReferenceOffset(database, modport, offset) ||
         objectReferenceVPIKind(database, offset) !=
             static_cast<uint32_t>(
-                obelisk::reflection::VPIObjectKind::Modport) ||
+                talos::reflection::VPIObjectKind::Modport) ||
         !getRelativeString(binding.getName(), name) || name.empty() ||
         database.data[database.strings + binding.getName() - 1] != 0 ||
         !modportNames[scope].insert(name).second)
       return false;
     uint64_t scopeOffset = database.scopes + uint64_t{scope} * kScopeSize;
     if (recordVPIKind(database.data + scopeOffset) !=
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Interface))
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::Interface))
       return false;
     if (isStaticObjectOffset(database, offset)) {
       if (read32(database.data + offset + 8) != scope)
         return false;
     } else if (!isObjectOffset(database, offset) ||
                recordKind(database.data + offset) !=
-                   OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+                   TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
                read64(database.data + offset + 16) != scopeOffset) {
       return false;
     }
@@ -6642,21 +6642,21 @@ bool validateDatabaseImpl(const Database &database) {
     boundModports.insert(modport);
     modportParents.insert((uint64_t{scope} << 32) | modport);
   }
-  auto modportHasBinding = [&](obelisk::reflection::TableKind table,
+  auto modportHasBinding = [&](talos::reflection::TableKind table,
                                uint32_t index, uint32_t kind) {
     uint32_t packed = 0;
     return kind != static_cast<uint32_t>(
-                       obelisk::reflection::VPIObjectKind::Modport) ||
-           (obelisk::reflection::tryPackTableIndex(table, index, packed) &&
+                       talos::reflection::VPIObjectKind::Modport) ||
+           (talos::reflection::tryPackTableIndex(table, index, packed) &&
             boundModports.count(packed) != 0);
   };
   for (uint32_t index = 0; index != database.objectCount; ++index)
-    if (!modportHasBinding(obelisk::reflection::TableKind::Object, index,
+    if (!modportHasBinding(talos::reflection::TableKind::Object, index,
                            recordVPIKind(database.data + database.objects +
                                          uint64_t{index} * kObjectSize)))
       return false;
   for (uint32_t index = 0; index != database.staticObjectCount; ++index)
-    if (!modportHasBinding(obelisk::reflection::TableKind::StaticObject, index,
+    if (!modportHasBinding(talos::reflection::TableKind::StaticObject, index,
                            read16(database.data + database.staticObjects +
                                   uint64_t{index} * kStaticObjectSize + 28)))
       return false;
@@ -6669,20 +6669,20 @@ bool validateDatabaseImpl(const Database &database) {
   uint32_t previousEventArray = 0;
   for (uint64_t index = 0; index != database.eventArrayStorageBindingCount;
        ++index) {
-    obelisk::reflection::EventArrayStorageBindingView binding(
+    talos::reflection::EventArrayStorageBindingView binding(
         database.data + database.eventArrayStorageBindings +
         index * kEventArrayStorageBindingSize);
     const uint32_t array = binding.getArrayIndexAndTable();
     uint64_t arrayOffset = 0;
     if ((index && array <= previousEventArray) ||
-        obelisk::reflection::unpackTableIndexKind(array) !=
-            obelisk::reflection::TableKind::Object ||
+        talos::reflection::unpackTableIndexKind(array) !=
+            talos::reflection::TableKind::Object ||
         !packedObjectReferenceOffset(database, array, arrayOffset) ||
         recordKind(database.data + arrayOffset) !=
-            OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+            TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
         objectReferenceVPIKind(database, arrayOffset) !=
             static_cast<uint32_t>(
-                obelisk::reflection::VPIObjectKind::NamedEventArray) ||
+                talos::reflection::VPIObjectKind::NamedEventArray) ||
         read64(database.data + arrayOffset + 48) != 0 ||
         binding.getStorageIndex() >= database.objectCount)
       return false;
@@ -6691,10 +6691,10 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *storage = database.data + storageOffset;
     // The private backing retains its physical array classification. The
     // public declaration above carries the named-event-array identity.
-    if (recordKind(storage) != OBELISK_RT_DESIGN_RECORD_STORAGE ||
+    if (recordKind(storage) != TALOS_RT_DESIGN_RECORD_STORAGE ||
         recordVPIKind(storage) !=
             static_cast<uint32_t>(
-                obelisk::reflection::VPIObjectKind::ArrayVar) ||
+                talos::reflection::VPIObjectKind::ArrayVar) ||
         read64(storage + 16) != read64(database.data + arrayOffset + 16) ||
         !isTypeOffset(database, read64(storage + 48)) ||
         !eventBackingStorage.insert(storageOffset).second)
@@ -6708,7 +6708,7 @@ bool validateDatabaseImpl(const Database &database) {
   std::unordered_set<uint64_t> classMemberParents;
   uint32_t previousMember = 0;
   for (uint64_t index = 0; index != database.classMemberBindingCount; ++index) {
-    obelisk::reflection::ClassMemberBindingView binding(
+    talos::reflection::ClassMemberBindingView binding(
         database.data + database.classMemberBindings +
         index * kClassMemberBindingSize);
     uint32_t member = binding.getMemberIndexAndTable();
@@ -6731,10 +6731,10 @@ bool validateDatabaseImpl(const Database &database) {
     if (owner != canonical->second && owner != read32(classType + 16))
       return false;
     uint32_t kind = objectReferenceVPIKind(database, memberOffset);
-    const auto *scopeEdge = obelisk::reflection::findVPITraversal(
-        kind, static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::ScopeRel),
-        obelisk::reflection::VPITraversalMode::Handle);
-    if (scopeEdge && obelisk::reflection::vpiObjectSetContains(
+    const auto *scopeEdge = talos::reflection::findVPITraversal(
+        kind, static_cast<uint32_t>(talos::reflection::VPIRelationKind::ScopeRel),
+        talos::reflection::VPITraversalMode::Handle);
+    if (scopeEdge && talos::reflection::vpiObjectSetContains(
                          scopeEdge->targets,
                          objectReferenceVPIKind(database, ownerOffset)))
       classMemberParents.insert((uint64_t{owner} << 32) | member);
@@ -6743,22 +6743,22 @@ bool validateDatabaseImpl(const Database &database) {
     bool hasStorage = binding.getStorageIndexAndTable() != UINT32_MAX;
     bool hasEvent = binding.getEventID() != UINT64_MAX;
     if (isMethod) {
-      if ((kind != static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Task) &&
-           kind != static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Function)) ||
+      if ((kind != static_cast<uint32_t>(talos::reflection::VPIObjectKind::Task) &&
+           kind != static_cast<uint32_t>(talos::reflection::VPIObjectKind::Function)) ||
           hasStorage || hasEvent || binding.getByteOffset() != UINT64_MAX)
         return false;
       continue;
     }
     uint32_t semanticRoot = UINT32_MAX;
-    bool dataVariable = obelisk::reflection::vpiObjectSetContains(
-        obelisk::reflection::VPIObjectSetID::DataVariableObjects, kind);
+    bool dataVariable = talos::reflection::vpiObjectSetContains(
+        talos::reflection::VPIObjectSetID::DataVariableObjects, kind);
     bool namedEvent = kind == static_cast<uint32_t>(
-                                 obelisk::reflection::VPIObjectKind::NamedEvent);
+                                 talos::reflection::VPIObjectKind::NamedEvent);
     bool namedEventArray = kind == static_cast<uint32_t>(
-                                      obelisk::reflection::VPIObjectKind::NamedEventArray);
+                                      talos::reflection::VPIObjectKind::NamedEventArray);
     if ((!dataVariable && !namedEvent && !namedEventArray) ||
         !isObjectOffset(database, memberOffset) ||
-        recordKind(database.data + memberOffset) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+        recordKind(database.data + memberOffset) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
         read64(database.data + memberOffset + 48) == 0 ||
         !findSemanticRootBinding(database, member, semanticRoot) ||
         (isStatic ? binding.getByteOffset() != UINT64_MAX || hasStorage == hasEvent
@@ -6771,7 +6771,7 @@ bool validateDatabaseImpl(const Database &database) {
       if (!packedObjectReferenceOffset(database, binding.getStorageIndexAndTable(),
                                        storageOffset) ||
           !isObjectOffset(database, storageOffset) ||
-          recordKind(database.data + storageOffset) != OBELISK_RT_DESIGN_RECORD_STORAGE ||
+          recordKind(database.data + storageOffset) != TALOS_RT_DESIGN_RECORD_STORAGE ||
           read64(database.data + storageOffset + 48) !=
               read64(database.data + memberOffset + 48))
         return false;
@@ -6790,22 +6790,22 @@ bool validateDatabaseImpl(const Database &database) {
   for (uint32_t index = 0; index != database.objectCount; ++index) {
     uint64_t offset = database.objects + uint64_t{index} * kObjectSize;
     const uint8_t *object = database.data + offset;
-    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STORAGE)
+    if (recordKind(object) != TALOS_RT_DESIGN_RECORD_STORAGE)
       continue;
     bool marked =
-        (read32(object + 4) & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0;
+        (read32(object + 4) & TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0;
     bool delegated =
         classBackingStorage.count(offset) || eventBackingStorage.count(offset);
     if (delegated && !marked)
       return false;
     if (marked && !delegated) {
       uint32_t packed = 0;
-      if ((read32(object + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL) ||
-          !obelisk::reflection::vpiObjectSetContains(
-              obelisk::reflection::VPIObjectSetID::DataVariableObjects,
+      if ((read32(object + 4) & TALOS_RT_DESIGN_CAP_INTERNAL) ||
+          !talos::reflection::vpiObjectSetContains(
+              talos::reflection::VPIObjectSetID::DataVariableObjects,
               recordVPIKind(object)) ||
-          !obelisk::reflection::tryPackTableIndex(
-              obelisk::reflection::TableKind::Object, index, packed))
+          !talos::reflection::tryPackTableIndex(
+              talos::reflection::TableKind::Object, index, packed))
         return false;
       proceduralStaticStorage.insert(packed);
     }
@@ -6817,17 +6817,17 @@ bool validateDatabaseImpl(const Database &database) {
   for (uint32_t index = 0; index != database.objectCount; ++index) {
     const uint8_t *object = database.data + database.objects +
                             uint64_t{index} * kObjectSize;
-    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
-        !obelisk::reflection::vpiObjectSetContains(
-            obelisk::reflection::VPIObjectSetID::DataVariableObjects,
+    if (recordKind(object) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
+        !talos::reflection::vpiObjectSetContains(
+            talos::reflection::VPIObjectSetID::DataVariableObjects,
             recordVPIKind(object)) ||
-        obelisk::reflection::vpiObjectSetContains(
-            obelisk::reflection::VPIObjectSetID::StaticImageObjects,
+        talos::reflection::vpiObjectSetContains(
+            talos::reflection::VPIObjectSetID::StaticImageObjects,
             recordVPIKind(object)))
       continue;
     uint32_t packed = 0;
-    if (!obelisk::reflection::tryPackTableIndex(
-            obelisk::reflection::TableKind::Object, index, packed) ||
+    if (!talos::reflection::tryPackTableIndex(
+            talos::reflection::TableKind::Object, index, packed) ||
         (!boundClassFields.count(packed) &&
          !sourceClassProperties.count(packed) && !frameLocals.count(packed)))
       return false;
@@ -6847,12 +6847,12 @@ bool validateDatabaseImpl(const Database &database) {
     uint64_t payloadOffset = read64(record + 16);
     uint64_t payloadSize = read64(record + 24);
     if (reserved != 0 ||
-        (kindAndFlags & obelisk::reflection::frozenValueKindMask) !=
+        (kindAndFlags & talos::reflection::frozenValueKindMask) !=
             static_cast<uint32_t>(
-                obelisk::reflection::FrozenValueKind::Packed) ||
-        (kindAndFlags & ~(obelisk::reflection::frozenValueKindMask |
-                          obelisk::reflection::frozenValueSigned |
-                          obelisk::reflection::frozenValueFourState)) != 0 ||
+                talos::reflection::FrozenValueKind::Packed) ||
+        (kindAndFlags & ~(talos::reflection::frozenValueKindMask |
+                          talos::reflection::frozenValueSigned |
+                          talos::reflection::frozenValueFourState)) != 0 ||
         bitWidth == 0 || bitWidth > UINT64_MAX - 7)
       return false;
     uint64_t planeBytes = (bitWidth + 7) / 8;
@@ -6868,7 +6868,7 @@ bool validateDatabaseImpl(const Database &database) {
     for (uint64_t byte = 0; byte != planeBytes; ++byte)
       anyUnknown |= payload[planeBytes + byte] != 0;
     bool fourState =
-        (kindAndFlags & obelisk::reflection::frozenValueFourState) != 0;
+        (kindAndFlags & talos::reflection::frozenValueFourState) != 0;
     if (anyUnknown && !fourState)
       return false;
     unsigned tail = static_cast<unsigned>(bitWidth % 8);
@@ -6908,10 +6908,10 @@ bool validateDatabaseImpl(const Database &database) {
         !packedObjectReferenceOffset(database, packedSource, objectOffset) ||
         (objectReferenceVPIKind(database, objectOffset) !=
              static_cast<uint32_t>(
-                 obelisk::reflection::VPIObjectKind::Parameter) &&
+                 talos::reflection::VPIObjectKind::Parameter) &&
          objectReferenceVPIKind(database, objectOffset) !=
              static_cast<uint32_t>(
-                 obelisk::reflection::VPIObjectKind::EnumConst) &&
+                 talos::reflection::VPIObjectKind::EnumConst) &&
          sourceExpressionConstants.count(packedSource) == 0) ||
         unresolvedValueParameters.count(packedSource) != 0 ||
         valueIndex >= database.frozenValueCount)
@@ -6929,9 +6929,9 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t semanticFlags = read32(semantic);
     bool isEnum =
         objectReferenceVPIKind(database, objectOffset) ==
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::EnumConst);
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::EnumConst);
     if (isEnum) {
-      if ((semanticFlags & UINT32_C(0xff)) != OBELISK_RT_DESIGN_SEMANTIC_ENUM)
+      if ((semanticFlags & UINT32_C(0xff)) != TALOS_RT_DESIGN_SEMANTIC_ENUM)
         return false;
       frozenEnumConstants.insert(packedSource);
     }
@@ -6939,16 +6939,16 @@ bool validateDatabaseImpl(const Database &database) {
       if (read32(semantic + 8) != 0 || read32(semantic + 12) != UINT32_MAX)
         return false;
       switch (semanticFlags & UINT32_C(0xff)) {
-      case OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
-      case OBELISK_RT_DESIGN_SEMANTIC_BIT:
-      case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
-      case OBELISK_RT_DESIGN_SEMANTIC_REG:
-      case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
-      case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
-      case OBELISK_RT_DESIGN_SEMANTIC_INT:
-      case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
-      case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
-      case OBELISK_RT_DESIGN_SEMANTIC_TIME:
+      case TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
+      case TALOS_RT_DESIGN_SEMANTIC_BIT:
+      case TALOS_RT_DESIGN_SEMANTIC_LOGIC:
+      case TALOS_RT_DESIGN_SEMANTIC_REG:
+      case TALOS_RT_DESIGN_SEMANTIC_BYTE:
+      case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
+      case TALOS_RT_DESIGN_SEMANTIC_INT:
+      case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
+      case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
+      case TALOS_RT_DESIGN_SEMANTIC_TIME:
         break;
       default:
         return false;
@@ -6956,13 +6956,13 @@ bool validateDatabaseImpl(const Database &database) {
     }
     uint64_t semanticWidth = 0;
     if ((isEnum ? semanticPackedBitWidth(database, semanticRoot,
-                                         &semanticWidth) != OBELISK_RT_OK
+                                         &semanticWidth) != TALOS_RT_OK
                 : !semanticBitWidth(database, semanticRoot, semanticWidth)) ||
         semanticWidth != read64(record + 8) ||
-        ((semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0) !=
-            ((kindAndFlags & obelisk::reflection::frozenValueSigned) != 0) ||
-        ((semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0) !=
-            ((kindAndFlags & obelisk::reflection::frozenValueFourState) != 0))
+        ((semanticFlags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) != 0) !=
+            ((kindAndFlags & talos::reflection::frozenValueSigned) != 0) ||
+        ((semanticFlags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0) !=
+            ((kindAndFlags & talos::reflection::frozenValueFourState) != 0))
       return false;
   }
   for (uint32_t index = 0; index != database.staticObjectCount; ++index) {
@@ -6970,18 +6970,18 @@ bool validateDatabaseImpl(const Database &database) {
                             uint64_t{index} * kStaticObjectSize;
     if (read16(object + 28) ==
             static_cast<uint32_t>(
-                obelisk::reflection::VPIObjectKind::PrimTerm) ||
+                talos::reflection::VPIObjectKind::PrimTerm) ||
         read16(object + 28) ==
             static_cast<uint32_t>(
-                obelisk::reflection::VPIObjectKind::Operation) ||
-        !obelisk::reflection::findVPIValuePolicy(read16(object + 28)) ||
+                talos::reflection::VPIObjectKind::Operation) ||
+        !talos::reflection::findVPIValuePolicy(read16(object + 28)) ||
         (read16(object + 30) &
-         OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0)
+         TALOS_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0)
       continue;
     uint32_t packedSource = 0;
     VPIFrozenValue value{};
-    if (!obelisk::reflection::tryPackTableIndex(
-            obelisk::reflection::TableKind::StaticObject, index,
+    if (!talos::reflection::tryPackTableIndex(
+            talos::reflection::TableKind::StaticObject, index,
             packedSource) ||
         !findFrozenValue(database, packedSource, value))
       return false;
@@ -6989,17 +6989,17 @@ bool validateDatabaseImpl(const Database &database) {
   for (uint32_t index = 0; index != database.objectCount; ++index) {
     const uint8_t *object =
         database.data + database.objects + uint64_t{index} * kObjectSize;
-    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+    if (recordKind(object) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
         recordVPIKind(object) !=
             static_cast<uint32_t>(
-                obelisk::reflection::VPIObjectKind::Parameter) ||
+                talos::reflection::VPIObjectKind::Parameter) ||
         (read32(object + 4) &
-         OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0)
+         TALOS_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0)
       continue;
     uint32_t packed = 0;
     VPIFrozenValue value{};
-    if (!obelisk::reflection::tryPackTableIndex(
-            obelisk::reflection::TableKind::Object, index, packed) ||
+    if (!talos::reflection::tryPackTableIndex(
+            talos::reflection::TableKind::Object, index, packed) ||
         !findFrozenValue(database, packed, value))
       return false;
   }
@@ -7027,32 +7027,32 @@ bool validateDatabaseImpl(const Database &database) {
     if (id == 0 || (index != 0 && id <= previousStatementID) ||
         scopeIndex >= database.scopeCount ||
         (parentIndex != UINT32_MAX && parentIndex >= database.statementCount) ||
-        (flags & ~(OBELISK_RT_DESIGN_STATEMENT_PROTECTED |
-                   OBELISK_RT_DESIGN_STATEMENT_SCOPE)) != 0)
+        (flags & ~(TALOS_RT_DESIGN_STATEMENT_PROTECTED |
+                   TALOS_RT_DESIGN_STATEMENT_SCOPE)) != 0)
       return false;
     previousStatementID = id;
-    const auto *kind = obelisk::reflection::findVPIObjectKind(vpiKind);
-    if (!kind || kind->role != obelisk::reflection::VPIObjectRole::Concrete ||
+    const auto *kind = talos::reflection::findVPIObjectKind(vpiKind);
+    if (!kind || kind->role != talos::reflection::VPIObjectRole::Concrete ||
         (kind->families &
-         obelisk::reflection::vpiFamilyMask(
-             obelisk::reflection::VPIObjectFamily::Statement)) == 0)
+         talos::reflection::vpiFamilyMask(
+             talos::reflection::VPIObjectFamily::Statement)) == 0)
       return false;
     bool scopeOwned =
         (kind->families &
-         obelisk::reflection::vpiFamilyMask(
-             obelisk::reflection::VPIObjectFamily::ScopeOwnedStatement)) != 0;
+         talos::reflection::vpiFamilyMask(
+             talos::reflection::VPIObjectFamily::ScopeOwnedStatement)) != 0;
     if (scopeOwned != (ownerIndex == UINT32_MAX))
       return false;
     bool scopeCapable = (kind->families &
-                         obelisk::reflection::vpiFamilyMask(
-                             obelisk::reflection::VPIObjectFamily::Scope)) != 0;
-    bool isScope = (flags & OBELISK_RT_DESIGN_STATEMENT_SCOPE) != 0;
+                         talos::reflection::vpiFamilyMask(
+                             talos::reflection::VPIObjectFamily::Scope)) != 0;
+    bool isScope = (flags & TALOS_RT_DESIGN_STATEMENT_SCOPE) != 0;
     std::string_view kindName(kind->apiName);
     bool namedScope = kindName == "vpiNamedBegin" || kindName == "vpiNamedFork";
     bool requiresScope =
         namedScope ||
         vpiKind == static_cast<uint16_t>(
-                       obelisk::reflection::VPIObjectKind::ForeachStmt);
+                       talos::reflection::VPIObjectKind::ForeachStmt);
     if ((isScope && !scopeCapable) || (requiresScope && !isScope))
       return false;
     if (!scopeOwned) {
@@ -7061,8 +7061,8 @@ bool validateDatabaseImpl(const Database &database) {
       const uint8_t *owner =
           database.data + database.objects + uint64_t{ownerIndex} * kObjectSize;
       uint32_t ownerKind = recordKind(owner);
-      if (ownerKind != OBELISK_RT_DESIGN_RECORD_PROCESS &&
-          ownerKind != OBELISK_RT_DESIGN_RECORD_FUNCTION)
+      if (ownerKind != TALOS_RT_DESIGN_RECORD_PROCESS &&
+          ownerKind != TALOS_RT_DESIGN_RECORD_FUNCTION)
         return false;
       if (read64(owner + 16) !=
           database.scopes + uint64_t{scopeIndex} * kScopeSize)
@@ -7081,9 +7081,9 @@ bool validateDatabaseImpl(const Database &database) {
     bool loopScope =
         isScope &&
         (vpiKind ==
-             static_cast<uint16_t>(obelisk::reflection::VPIObjectKind::For) ||
+             static_cast<uint16_t>(talos::reflection::VPIObjectKind::For) ||
          vpiKind == static_cast<uint16_t>(
-                        obelisk::reflection::VPIObjectKind::ForeachStmt));
+                        talos::reflection::VPIObjectKind::ForeachStmt));
     if ((named && name == 0) ||
         (name != 0 && ((!named && !loopScope) || text.empty())))
       return false;
@@ -7098,21 +7098,21 @@ bool validateDatabaseImpl(const Database &database) {
     for (uint64_t index = 0; index != database.objectCount; ++index) {
       const uint64_t offset = database.objects + index * kObjectSize;
       const uint8_t *record = database.data + offset;
-      if (recordKind(record) != OBELISK_RT_DESIGN_RECORD_PROCESS &&
-          recordKind(record) != OBELISK_RT_DESIGN_RECORD_FUNCTION)
+      if (recordKind(record) != TALOS_RT_DESIGN_RECORD_PROCESS &&
+          recordKind(record) != TALOS_RT_DESIGN_RECORD_FUNCTION)
         continue;
       auto [entry, inserted] = codeUnits.emplace(read64(record + 8), offset);
       if (!inserted)
         entry->second = 0;
     }
-    const auto *originEdge = obelisk::reflection::findVPITraversal(
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Thread),
-        static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::OriginRel),
-        obelisk::reflection::VPITraversalMode::Handle);
+    const auto *originEdge = talos::reflection::findVPITraversal(
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::Thread),
+        static_cast<uint32_t>(talos::reflection::VPIRelationKind::OriginRel),
+        talos::reflection::VPITraversalMode::Handle);
     uint64_t previous = 0;
     for (uint64_t index = 0; index != database.threadOriginBindingCount;
          ++index) {
-      obelisk::reflection::ThreadOriginBindingView binding(
+      talos::reflection::ThreadOriginBindingView binding(
           database.data + database.threadOriginBindings +
           index * kThreadOriginBindingSize);
       const uint64_t codeUnitID = binding.getCodeUnitID();
@@ -7132,16 +7132,16 @@ bool validateDatabaseImpl(const Database &database) {
               database.scopes + uint64_t{read32(statement + 12)} * kScopeSize ||
           (codeUnit->second !=
                database.objects + uint64_t{owner} * kObjectSize &&
-           !(read32(record + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL)) ||
+           !(read32(record + 4) & TALOS_RT_DESIGN_CAP_INTERNAL)) ||
           !originEdge ||
-          !obelisk::reflection::vpiObjectSetContains(originEdge->targets,
+          !talos::reflection::vpiObjectSetContains(originEdge->targets,
                                                      read16(statement + 36)))
         return false;
       previous = codeUnitID;
     }
     previous = 0;
     for (uint64_t index = 0; index != database.callSiteBindingCount; ++index) {
-      obelisk::reflection::CallSiteBindingView binding(
+      talos::reflection::CallSiteBindingView binding(
           database.data + database.callSiteBindings +
           index * kCallSiteBindingSize);
       uint64_t id = binding.getID();
@@ -7159,10 +7159,10 @@ bool validateDatabaseImpl(const Database &database) {
       auto found = codeUnits.find(read64(codeUnit + 8));
       if (found == codeUnits.end() || found->second != ownerOffset)
         return false;
-      using obelisk::reflection::TableKind;
-      uint32_t target = obelisk::reflection::unpackTableIndex(packed);
+      using talos::reflection::TableKind;
+      uint32_t target = talos::reflection::unpackTableIndex(packed);
       uint32_t kind = 0;
-      switch (obelisk::reflection::unpackTableIndexKind(packed)) {
+      switch (talos::reflection::unpackTableIndexKind(packed)) {
       case TableKind::Statement: {
         if (target >= database.statementCount)
           return false;
@@ -7178,7 +7178,7 @@ bool validateDatabaseImpl(const Database &database) {
           return false;
         const uint8_t *object =
             database.data + database.objects + uint64_t{target} * kObjectSize;
-        if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+        if (recordKind(object) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
             read64(object + 16) != read64(codeUnit + 16) ||
             read64(object + 48) || read64(object + 56) || read64(object + 80))
           return false;
@@ -7188,7 +7188,7 @@ bool validateDatabaseImpl(const Database &database) {
       default:
         return false;
       }
-      using Kind = obelisk::reflection::VPIObjectKind;
+      using Kind = talos::reflection::VPIObjectKind;
       switch (static_cast<Kind>(kind)) {
       case Kind::TaskCall:
       case Kind::FuncCall:
@@ -7208,7 +7208,7 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       uint32_t initializer = 0;
       if (findInitializerSource(database, read64(codeUnit + 8), initializer) &&
-          obelisk::reflection::unpackTableIndexKind(packed) ==
+          talos::reflection::unpackTableIndexKind(packed) ==
               TableKind::Statement)
         return false;
       callOwners.emplace(packed, owner);
@@ -7220,14 +7220,14 @@ bool validateDatabaseImpl(const Database &database) {
   for (uint32_t index = 0; index != database.objectCount; ++index) {
     const uint8_t *object =
         database.data + database.objects + uint64_t{index} * kObjectSize;
-    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
-        !obelisk::reflection::vpiObjectSetContains(
-            obelisk::reflection::VPIObjectSetID::TaskFunctionCallObjects,
+    if (recordKind(object) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
+        !talos::reflection::vpiObjectSetContains(
+            talos::reflection::VPIObjectSetID::TaskFunctionCallObjects,
             recordVPIKind(object)))
       continue;
     uint32_t packed = 0;
-    if (!obelisk::reflection::tryPackTableIndex(
-            obelisk::reflection::TableKind::Object, index, packed))
+    if (!talos::reflection::tryPackTableIndex(
+            talos::reflection::TableKind::Object, index, packed))
       return false;
     if (callObjects.count(packed) == 0)
       return false;
@@ -7285,8 +7285,8 @@ bool validateDatabaseImpl(const Database &database) {
     uint16_t flags = read16(object + 30);
     uint16_t supportedFlags = parameterSourceFlags;
     if (vpiKind ==
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Parameter))
-      supportedFlags |= OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE;
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::Parameter))
+      supportedFlags |= TALOS_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE;
     if ((index != 0 && id <= previousStaticObjectID) ||
         (scopeIndex != UINT32_MAX && scopeIndex >= database.scopeCount) ||
         (flags & ~supportedFlags) != 0 ||
@@ -7295,10 +7295,10 @@ bool validateDatabaseImpl(const Database &database) {
         (sourceFile != 0 && (line == 0 || column == 0)))
       return false;
     previousStaticObjectID = id;
-    const auto *kind = obelisk::reflection::findVPIObjectKind(vpiKind);
+    const auto *kind = talos::reflection::findVPIObjectKind(vpiKind);
     if (!kind ||
-        !obelisk::reflection::hasVPIObjectRepresentation(
-            vpiKind, obelisk::reflection::VPIObjectRepresentation::StaticImage))
+        !talos::reflection::hasVPIObjectRepresentation(
+            vpiKind, talos::reflection::VPIObjectRepresentation::StaticImage))
       return false;
     std::string_view text;
     if ((sourceFile != 0 && !getRelativeString(sourceFile, text)) ||
@@ -7323,11 +7323,11 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t memberCount = read32(definition + 20);
     uint32_t firstRelation = read32(definition + 24);
     uint32_t relationCount = read32(definition + 28);
-    using Kind = obelisk::reflection::VPIObjectKind;
+    using Kind = talos::reflection::VPIObjectKind;
     bool primitive = kind == static_cast<uint16_t>(Kind::Gate) ||
                      kind == static_cast<uint16_t>(Kind::Switch);
     const auto *primitiveType =
-        primitive ? obelisk::reflection::findVPIBuiltinPrimitive(flags)
+        primitive ? talos::reflection::findVPIBuiltinPrimitive(flags)
                   : nullptr;
     if ((primitive ? !primitiveType || primitiveType->objectKind != kind ||
                          file != 0 || line != 0 || memberCount != 0 ||
@@ -7362,9 +7362,9 @@ bool validateDatabaseImpl(const Database &database) {
       uint16_t memberKind = read16(member + 16);
       uint16_t memberFlags = read16(member + 18);
       const auto *descriptor =
-          obelisk::reflection::findVPIObjectKind(memberKind);
+          talos::reflection::findVPIObjectKind(memberKind);
       if (!descriptor ||
-          descriptor->role != obelisk::reflection::VPIObjectRole::Concrete ||
+          descriptor->role != talos::reflection::VPIObjectRole::Concrete ||
           (memberKind == uint32_t(Kind::ParamAssign) ? memberName != 0
                                                      : memberName == 0) ||
           memberLine > INT32_MAX ||
@@ -7413,8 +7413,8 @@ bool validateDatabaseImpl(const Database &database) {
       uint16_t relationFlags = read16(relation + 2);
       uint32_t firstTarget = read32(relation + 4);
       uint32_t targetCount = read32(relation + 8);
-      auto *edge = obelisk::reflection::findVPITraversal(
-          kind, selector, obelisk::reflection::VPITraversalMode::Iterate);
+      auto *edge = talos::reflection::findVPITraversal(
+          kind, selector, talos::reflection::VPITraversalMode::Iterate);
       if (relationFlags != 0 || targetCount == 0 ||
           (ordinal != 0 && selector <= previousSelector) ||
           firstTarget != nextDefinitionMemberRelationTarget ||
@@ -7430,7 +7430,7 @@ bool validateDatabaseImpl(const Database &database) {
         const uint8_t *member =
             database.data + database.definitionMembers +
             uint64_t{firstMember + memberOrdinal} * kDefinitionMemberSize;
-        expectedCount += obelisk::reflection::vpiObjectSetContains(
+        expectedCount += talos::reflection::vpiObjectSetContains(
             edge->targets, read16(member + 16));
       }
       if (targetCount != expectedCount)
@@ -7449,19 +7449,19 @@ bool validateDatabaseImpl(const Database &database) {
           return false;
         const uint8_t *member = database.data + database.definitionMembers +
                                 uint64_t{memberIndex} * kDefinitionMemberSize;
-        if (!obelisk::reflection::vpiObjectSetContains(edge->targets,
+        if (!talos::reflection::vpiObjectSetContains(edge->targets,
                                                        read16(member + 16)))
           return false;
         previousTarget = memberIndex;
       }
       nextDefinitionMemberRelationTarget += targetCount;
     }
-    for (const auto &edge : obelisk::reflection::vpiTraversals) {
+    for (const auto &edge : talos::reflection::vpiTraversals) {
       if (edge.sourceType != kind || !isDefinitionMemberInventory(edge))
         continue;
       bool expected = false, found = false;
       for (uint32_t ordinal = 0; ordinal != memberCount; ++ordinal)
-        expected |= obelisk::reflection::vpiObjectSetContains(
+        expected |= talos::reflection::vpiObjectSetContains(
             edge.targets,
             read16(database.data + database.definitionMembers +
                    uint64_t{firstMember + ordinal} * kDefinitionMemberSize +
@@ -7541,7 +7541,7 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *member = database.data + database.definitionMembers +
                             uint64_t{read32(binding)} * kDefinitionMemberSize;
     if (read16(member + 16) !=
-        static_cast<uint16_t>(obelisk::reflection::VPIObjectKind::Parameter))
+        static_cast<uint16_t>(talos::reflection::VPIObjectKind::Parameter))
       continue;
     if (nextParameterValue == database.definitionParameterValueCount)
       return false;
@@ -7558,24 +7558,24 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t semanticFlags = read32(semantic);
     if ((read16(member + 18) & (UINT16_C(1) << 9)) &&
         ((semanticFlags & UINT32_C(0xff)) !=
-             OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
-         !(semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE)))
+             TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+         !(semanticFlags & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE)))
       return false;
     switch (semanticFlags & UINT32_C(0xff)) {
-    case OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
-    case OBELISK_RT_DESIGN_SEMANTIC_BIT:
-    case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
-    case OBELISK_RT_DESIGN_SEMANTIC_REG:
-    case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
-    case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
-    case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
-    case OBELISK_RT_DESIGN_SEMANTIC_TIME:
-    case OBELISK_RT_DESIGN_SEMANTIC_ENUM:
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION:
+    case TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
+    case TALOS_RT_DESIGN_SEMANTIC_BIT:
+    case TALOS_RT_DESIGN_SEMANTIC_LOGIC:
+    case TALOS_RT_DESIGN_SEMANTIC_REG:
+    case TALOS_RT_DESIGN_SEMANTIC_BYTE:
+    case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
+    case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
+    case TALOS_RT_DESIGN_SEMANTIC_TIME:
+    case TALOS_RT_DESIGN_SEMANTIC_ENUM:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_UNION:
       break;
     default:
       return false;
@@ -7584,12 +7584,12 @@ bool validateDatabaseImpl(const Database &database) {
                            uint64_t{valueIndex} * kFrozenValueSize;
     uint64_t width = 0;
     if (semanticPackedBitWidth(database, semanticIndex, &width) !=
-            OBELISK_RT_OK ||
+            TALOS_RT_OK ||
         width != read64(value + 8) ||
-        ((semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0) !=
-            ((read32(value) & obelisk::reflection::frozenValueSigned) != 0) ||
-        ((semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0) !=
-            ((read32(value) & obelisk::reflection::frozenValueFourState) != 0))
+        ((semanticFlags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) != 0) !=
+            ((read32(value) & talos::reflection::frozenValueSigned) != 0) ||
+        ((semanticFlags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0) !=
+            ((read32(value) & talos::reflection::frozenValueFourState) != 0))
       return false;
     frozenValueReferenced[valueIndex] = 1;
   }
@@ -7610,12 +7610,12 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t definitionIndex = read32(binding + 4);
     uint32_t specializationIndex = read32(binding + 8);
     uint32_t firstMemberEndpoint = read32(binding + 12);
-    auto table = obelisk::reflection::unpackTableIndexKind(packedSource);
-    uint32_t sourceIndex = obelisk::reflection::unpackTableIndex(packedSource);
+    auto table = talos::reflection::unpackTableIndexKind(packedSource);
+    uint32_t sourceIndex = talos::reflection::unpackTableIndex(packedSource);
     if ((index != 0 && packedSource <= previousDefinitionSource) ||
-        (table == obelisk::reflection::TableKind::Scope
+        (table == talos::reflection::TableKind::Scope
              ? sourceIndex >= database.scopeCount
-             : table != obelisk::reflection::TableKind::Object ||
+             : table != talos::reflection::TableKind::Object ||
                    sourceIndex >= database.objectCount) ||
         definitionIndex >= database.definitionCount ||
         firstMemberEndpoint != nextDefinitionMemberEndpoint ||
@@ -7623,19 +7623,19 @@ bool validateDatabaseImpl(const Database &database) {
          specializationIndex >= database.definitionSpecializationCount))
       return false;
     previousDefinitionSource = packedSource;
-    bool primitive = table == obelisk::reflection::TableKind::Object;
+    bool primitive = table == talos::reflection::TableKind::Object;
     const uint8_t *source =
         database.data + (primitive ? database.objects : database.scopes) +
         uint64_t{sourceIndex} * (primitive ? kObjectSize : kScopeSize);
     const uint8_t *definition = database.data + database.definitions +
                                 uint64_t{definitionIndex} * kDefinitionSize;
     if (primitive &&
-        (recordKind(source) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+        (recordKind(source) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
          (recordVPIKind(source) !=
-              static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Gate) &&
+              static_cast<uint32_t>(talos::reflection::VPIObjectKind::Gate) &&
           recordVPIKind(source) !=
               static_cast<uint32_t>(
-                  obelisk::reflection::VPIObjectKind::Switch)) ||
+                  talos::reflection::VPIObjectKind::Switch)) ||
          specializationIndex != UINT32_MAX))
       return false;
     uint32_t memberCount = read32(definition + 20);
@@ -7663,14 +7663,14 @@ bool validateDatabaseImpl(const Database &database) {
       if (read32(specialization) != definitionIndex)
         return false;
     }
-    const auto *exprEdge = obelisk::reflection::findVPITraversal(
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::IODecl),
-        static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::ExprRel),
-        obelisk::reflection::VPITraversalMode::Handle);
-    const auto *refActualEdge = obelisk::reflection::findVPITraversal(
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::RefObj),
-        static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::ActualRel),
-        obelisk::reflection::VPITraversalMode::Handle);
+    const auto *exprEdge = talos::reflection::findVPITraversal(
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::IODecl),
+        static_cast<uint32_t>(talos::reflection::VPIRelationKind::ExprRel),
+        talos::reflection::VPITraversalMode::Handle);
+    const auto *refActualEdge = talos::reflection::findVPITraversal(
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::RefObj),
+        static_cast<uint32_t>(talos::reflection::VPIRelationKind::ActualRel),
+        talos::reflection::VPITraversalMode::Handle);
     uint32_t endpointOrdinal = 0;
     std::unordered_set<uint32_t> assignmentTargets;
     for (uint32_t ordinal = 0; ordinal != memberCount; ++ordinal) {
@@ -7679,7 +7679,7 @@ bool validateDatabaseImpl(const Database &database) {
           uint64_t{read32(definition + 16) + ordinal} * kDefinitionMemberSize;
       if (!definitionAssignment(member) &&
           read16(member + 16) !=
-              static_cast<uint16_t>(obelisk::reflection::VPIObjectKind::IODecl))
+              static_cast<uint16_t>(talos::reflection::VPIObjectKind::IODecl))
         continue;
       const uint8_t *endpoint =
           database.data + database.definitionMemberEndpoints +
@@ -7710,28 +7710,28 @@ bool validateDatabaseImpl(const Database &database) {
       if (packedTarget == UINT32_MAX)
         continue;
       auto targetTable =
-          obelisk::reflection::unpackTableIndexKind(packedTarget);
+          talos::reflection::unpackTableIndexKind(packedTarget);
       uint64_t targetOffset = 0;
-      if (!exprEdge || targetTable != obelisk::reflection::TableKind::Object ||
+      if (!exprEdge || targetTable != talos::reflection::TableKind::Object ||
           !packedObjectReferenceOffset(database, packedTarget, targetOffset))
         return false;
       const uint8_t *target = database.data + targetOffset;
       uint32_t targetRecordKind = recordKind(target);
-      if (targetRecordKind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
-          targetRecordKind != OBELISK_RT_DESIGN_RECORD_NET)
+      if (targetRecordKind != TALOS_RT_DESIGN_RECORD_STORAGE &&
+          targetRecordKind != TALOS_RT_DESIGN_RECORD_NET)
         return false;
       uint32_t targetType = recordVPIKind(target);
       uint16_t direction = read16(member + 18);
       if (direction == kVPIIODirectionRef) {
         uint32_t memberSemanticType = 0;
         uint64_t memberBitWidth = 0;
-        if (targetRecordKind != OBELISK_RT_DESIGN_RECORD_STORAGE ||
+        if (targetRecordKind != TALOS_RT_DESIGN_RECORD_STORAGE ||
             !refActualEdge ||
-            !obelisk::reflection::vpiObjectSetContains(
+            !talos::reflection::vpiObjectSetContains(
                 exprEdge->targets,
                 static_cast<uint32_t>(
-                    obelisk::reflection::VPIObjectKind::RefObj)) ||
-            !obelisk::reflection::vpiObjectSetContains(refActualEdge->targets,
+                    talos::reflection::VPIObjectKind::RefObj)) ||
+            !talos::reflection::vpiObjectSetContains(refActualEdge->targets,
                                                        targetType) ||
             !findDefinitionMemberSemanticRoot(database, specializationIndex,
                                               read32(definition + 16) + ordinal,
@@ -7739,7 +7739,7 @@ bool validateDatabaseImpl(const Database &database) {
             !semanticBitWidth(database, memberSemanticType, memberBitWidth) ||
             (memberBitWidth != 0 && read64(target + 56) != memberBitWidth))
           return false;
-      } else if (!obelisk::reflection::vpiObjectSetContains(exprEdge->targets,
+      } else if (!talos::reflection::vpiObjectSetContains(exprEdge->targets,
                                                             targetType)) {
         return false;
       }
@@ -7750,7 +7750,7 @@ bool validateDatabaseImpl(const Database &database) {
       bool virtualInterface =
           targetType ==
           static_cast<uint32_t>(
-              obelisk::reflection::VPIObjectKind::VirtualInterfaceVar);
+              talos::reflection::VPIObjectKind::VirtualInterfaceVar);
       if (virtualInterface ? direction != 0 && direction != kVPIIODirectionRef
                            : (direction < 1 || direction > 3) &&
                                  direction != kVPIIODirectionRef)
@@ -7823,9 +7823,9 @@ bool validateDatabaseImpl(const Database &database) {
                              uint64_t{bindingIndex} * kDefinitionBindingSize;
     uint32_t packedSource = read32(binding);
     uint32_t sourceScopeIndex =
-        obelisk::reflection::unpackTableIndex(packedSource);
-    if (obelisk::reflection::unpackTableIndexKind(packedSource) !=
-            obelisk::reflection::TableKind::Scope ||
+        talos::reflection::unpackTableIndex(packedSource);
+    if (talos::reflection::unpackTableIndexKind(packedSource) !=
+            talos::reflection::TableKind::Scope ||
         sourceScopeIndex >= database.scopeCount)
       return false;
     uint64_t sourceScopeOffset =
@@ -7851,15 +7851,15 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
     const uint8_t *member = database.data + database.definitionMembers +
                             uint64_t{memberIndex} * kDefinitionMemberSize;
-    const auto *edge = obelisk::reflection::findVPITraversal(
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::RefObj),
+    const auto *edge = talos::reflection::findVPITraversal(
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::RefObj),
         selector,
-        modeAndFlags == 0 ? obelisk::reflection::VPITraversalMode::Handle
-                          : obelisk::reflection::VPITraversalMode::Iterate);
+        modeAndFlags == 0 ? talos::reflection::VPITraversalMode::Handle
+                          : talos::reflection::VPITraversalMode::Iterate);
     if (read16(member + 16) !=
-            static_cast<uint16_t>(obelisk::reflection::VPIObjectKind::IODecl) ||
+            static_cast<uint16_t>(talos::reflection::VPIObjectKind::IODecl) ||
         read16(member + 18) != kVPIIODirectionRef || !edge ||
-        edge->automaticRelation != obelisk::reflection::VPIAutomaticRelation::
+        edge->automaticRelation != talos::reflection::VPIAutomaticRelation::
                                        DefinitionMemberInstanceRelation)
       return false;
     memberInstanceTargets.clear();
@@ -7871,25 +7871,25 @@ bool validateDatabaseImpl(const Database &database) {
                                   kDefinitionMemberInstanceRelationTargetSize;
       uint32_t packedTarget = read32(target);
       uint64_t targetOffset = 0;
-      if (obelisk::reflection::unpackTableIndexKind(packedTarget) !=
-              obelisk::reflection::TableKind::Object ||
+      if (talos::reflection::unpackTableIndexKind(packedTarget) !=
+              talos::reflection::TableKind::Object ||
           !packedObjectReferenceOffset(database, packedTarget, targetOffset))
         return false;
       const uint8_t *object = database.data + targetOffset;
-      if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_PORT ||
+      if (recordKind(object) != TALOS_RT_DESIGN_RECORD_PORT ||
           recordVPIKind(object) !=
-              static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Port) ||
-          !obelisk::reflection::vpiObjectSetContains(edge->targets,
+              static_cast<uint32_t>(talos::reflection::VPIObjectKind::Port) ||
+          !talos::reflection::vpiObjectSetContains(edge->targets,
                                                      recordVPIKind(object)))
         return false;
       uint64_t targetScopeOffset = read64(object + 16);
       if (selector ==
-          static_cast<uint16_t>(obelisk::reflection::VPIObjectKind::Port)) {
+          static_cast<uint16_t>(talos::reflection::VPIObjectKind::Port)) {
         if (targetScopeOffset != sourceScopeOffset)
           return false;
       } else if (selector ==
                  static_cast<uint16_t>(
-                     obelisk::reflection::VPIRelationKind::PortInstRel)) {
+                     talos::reflection::VPIRelationKind::PortInstRel)) {
         if (targetScopeOffset == sourceScopeOffset)
           return false;
         bool descendant = false;
@@ -7967,20 +7967,20 @@ bool validateDatabaseImpl(const Database &database) {
         uint64_t{low} * kDefinitionMemberInstanceRelationSize;
     uint32_t first = read32(relation + 12);
     uint16_t reverseSelector = read16(relation + 8);
-    const auto *reverseEdge = obelisk::reflection::findVPITraversal(
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::RefObj),
-        reverseSelector, obelisk::reflection::VPITraversalMode::Iterate);
+    const auto *reverseEdge = talos::reflection::findVPITraversal(
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::RefObj),
+        reverseSelector, talos::reflection::VPITraversalMode::Iterate);
     uint32_t forwardSelector = reverseEdge ? reverseEdge->inverseSelector : 0;
-    const auto *forwardEdge = obelisk::reflection::findVPITraversal(
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Port),
-        forwardSelector, obelisk::reflection::VPITraversalMode::Handle);
+    const auto *forwardEdge = talos::reflection::findVPITraversal(
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::Port),
+        forwardSelector, talos::reflection::VPITraversalMode::Handle);
     uint64_t connectionKey = (uint64_t{packedPort} << 16) | forwardSelector;
     if (targetIndex < first || forwardSelector == 0 ||
         forwardSelector > UINT16_MAX || !forwardEdge ||
-        !obelisk::reflection::vpiObjectSetContains(
+        !talos::reflection::vpiObjectSetContains(
             forwardEdge->targets,
             static_cast<uint32_t>(
-                obelisk::reflection::VPIObjectKind::RefObj)) ||
+                talos::reflection::VPIObjectKind::RefObj)) ||
         !inverseConnectionKeys.insert(connectionKey).second)
       return false;
     inverseTargets[targetIndex] = 1;
@@ -8003,8 +8003,8 @@ bool validateDatabaseImpl(const Database &database) {
                                uint64_t{statementIndex} * kStatementSize;
     uint16_t kind = read16(statement + 36);
     auto callbackPhase =
-        static_cast<obelisk::reflection::VPIStatementCallbackPhase>(phase);
-    if (!obelisk::reflection::isVPIStatementCallbackPhase(kind,
+        static_cast<talos::reflection::VPIStatementCallbackPhase>(phase);
+    if (!talos::reflection::isVPIStatementCallbackPhase(kind,
                                                           callbackPhase) ||
         phase >= 8 || (siteMasks[statementIndex] & (uint8_t{1} << phase)) != 0)
       return false;
@@ -8014,7 +8014,7 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *statement =
         database.data + database.statements + uint64_t{index} * kStatementSize;
     const auto *callback =
-        obelisk::reflection::findVPIStatementCallback(read16(statement + 36));
+        talos::reflection::findVPIStatementCallback(read16(statement + 36));
     uint8_t expectedMask = callback ? callback->phaseMask : 0;
     if (siteMasks[index] != expectedMask)
       return false;
@@ -8038,8 +8038,8 @@ bool validateDatabaseImpl(const Database &database) {
         const uint8_t *record =
             database.data + database.objects + uint64_t{index} * kObjectSize;
         uint32_t kind = recordKind(record);
-        if (kind == OBELISK_RT_DESIGN_RECORD_STORAGE ||
-            kind == OBELISK_RT_DESIGN_RECORD_NET)
+        if (kind == TALOS_RT_DESIGN_RECORD_STORAGE ||
+            kind == TALOS_RT_DESIGN_RECORD_NET)
           connectionObjects->emplace_back(portConnectionIdentity(record),
                                           index);
       }
@@ -8076,7 +8076,7 @@ bool validateDatabaseImpl(const Database &database) {
   uint32_t previousOrdinal = 0;
   uint16_t currentSourceKind = 0;
   uint32_t expectedOrdinal = 0;
-  const obelisk::reflection::VPITraversalDescriptor *automaticEdge = nullptr;
+  const talos::reflection::VPITraversalDescriptor *automaticEdge = nullptr;
   uint64_t automaticChildCursor = 0;
   std::unordered_set<uint64_t> staticLexicalChildren;
   std::unordered_set<uint64_t> staticLexicalParents;
@@ -8102,7 +8102,7 @@ bool validateDatabaseImpl(const Database &database) {
   std::vector<uint32_t> staticSuccessorCount(database.staticObjectCount, 0);
   std::vector<uint32_t> staticSuccessors;
   std::vector<bool> reachableStatic(database.staticObjectCount, false);
-  auto relationEndpoint = [](obelisk::reflection::TableKind table,
+  auto relationEndpoint = [](talos::reflection::TableKind table,
                              uint32_t index) {
     return (static_cast<uint32_t>(table) << 30) | index;
   };
@@ -8117,17 +8117,17 @@ bool validateDatabaseImpl(const Database &database) {
       const uint8_t *record;
       uint32_t kind;
       if (!getRecord(database, cursor, record, kind) ||
-          kind == OBELISK_RT_DESIGN_RECORD_TYPE)
+          kind == TALOS_RT_DESIGN_RECORD_TYPE)
         return uint64_t{0};
       uint64_t current = cursor;
       cursor = nextOffset(record, kind);
       // Static records are physically chained below a scope only to make the
       // pointer-free image reachable. Their generated relations carry the
       // actual lexical owner and declaration order.
-      if (kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
-          (read32(record + 4) & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0)
+      if (kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
+          (read32(record + 4) & TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0)
         continue;
-      if (obelisk::reflection::vpiObjectSetContains(automaticEdge->targets,
+      if (talos::reflection::vpiObjectSetContains(automaticEdge->targets,
                                                     recordVPIKind(record)))
         return current;
     }
@@ -8136,29 +8136,29 @@ bool validateDatabaseImpl(const Database &database) {
   auto automaticGroupComplete = [&] {
     return !automaticEdge ||
            automaticEdge->automaticRelation !=
-               obelisk::reflection::VPIAutomaticRelation::DirectChild ||
+               talos::reflection::VPIAutomaticRelation::DirectChild ||
            nextAutomaticChild(automaticChildCursor) == 0;
   };
   for (uint64_t index = 0; index != database.relationCount; ++index) {
     const uint8_t *bytes =
         database.data + database.relations + index * kRelationSize;
-    obelisk::reflection::RelationView relation(bytes);
+    talos::reflection::RelationView relation(bytes);
     uint32_t sourceIndex = relation.getSourceIndex();
     uint32_t packedTarget = relation.getTargetIndexAndTable();
-    auto targetTable = obelisk::reflection::unpackTableIndexKind(packedTarget);
-    uint32_t targetIndex = obelisk::reflection::unpackTableIndex(packedTarget);
+    auto targetTable = talos::reflection::unpackTableIndexKind(packedTarget);
+    uint32_t targetIndex = talos::reflection::unpackTableIndex(packedTarget);
     uint32_t ordinal = relation.getOrdinal();
     uint16_t selector = relation.getSelector();
     uint16_t packedSource = relation.getSourceKindAndTable();
     auto sourceTable =
-        obelisk::reflection::unpackRelationSourceTable(packedSource);
-    bool iterate = obelisk::reflection::relationSourceIsIterate(packedSource);
-    if (!obelisk::reflection::isValidTableKind(sourceTable) ||
-        !obelisk::reflection::isValidTableKind(targetTable))
+        talos::reflection::unpackRelationSourceTable(packedSource);
+    bool iterate = talos::reflection::relationSourceIsIterate(packedSource);
+    if (!talos::reflection::isValidTableKind(sourceTable) ||
+        !talos::reflection::isValidTableKind(targetTable))
       return false;
     uint8_t table = static_cast<uint8_t>(sourceTable);
     uint16_t sourceKind =
-        obelisk::reflection::unpackRelationSourceKind(packedSource);
+        talos::reflection::unpackRelationSourceKind(packedSource);
     if (havePreviousRelation &&
         std::tie(table, sourceIndex, selector, iterate, ordinal) <=
             std::tie(previousTable, previousSource, previousSelector,
@@ -8185,33 +8185,33 @@ bool validateDatabaseImpl(const Database &database) {
 
     const uint8_t *sourceRecord = nullptr;
     const auto *sourceDescriptor =
-        obelisk::reflection::findVPIObjectKind(sourceKind);
+        talos::reflection::findVPIObjectKind(sourceKind);
     bool rootSource = sourceKind == 0;
     if (!rootSource &&
         (!sourceDescriptor || sourceDescriptor->role !=
-                                  obelisk::reflection::VPIObjectRole::Concrete))
+                                  talos::reflection::VPIObjectRole::Concrete))
       return false;
     switch (sourceTable) {
-    case obelisk::reflection::TableKind::Scope:
+    case talos::reflection::TableKind::Scope:
       if (sourceIndex >= database.scopeCount ||
           (!rootSource &&
            (sourceDescriptor->families &
-            obelisk::reflection::vpiFamilyMask(
-                obelisk::reflection::VPIObjectFamily::Scope)) == 0))
+            talos::reflection::vpiFamilyMask(
+                talos::reflection::VPIObjectFamily::Scope)) == 0))
         return false;
       sourceRecord =
           database.data + database.scopes + uint64_t{sourceIndex} * kScopeSize;
       if (rootSource && sourceRecord != database.data + database.root)
         return false;
       break;
-    case obelisk::reflection::TableKind::Object: {
+    case talos::reflection::TableKind::Object: {
       if (rootSource || sourceIndex >= database.objectCount)
         return false;
       sourceRecord = database.data + database.objects +
                      uint64_t{sourceIndex} * kObjectSize;
       break;
     }
-    case obelisk::reflection::TableKind::Statement:
+    case talos::reflection::TableKind::Statement:
       if (rootSource || sourceIndex >= database.statementCount)
         return false;
       sourceRecord = database.data + database.statements +
@@ -8219,7 +8219,7 @@ bool validateDatabaseImpl(const Database &database) {
       if (read16(sourceRecord + 36) != sourceKind)
         return false;
       break;
-    case obelisk::reflection::TableKind::StaticObject:
+    case talos::reflection::TableKind::StaticObject:
       if (rootSource || sourceIndex >= database.staticObjectCount)
         return false;
       sourceRecord = database.data + database.staticObjects +
@@ -8228,8 +8228,8 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       break;
     }
-    if (sourceTable != obelisk::reflection::TableKind::Statement &&
-        sourceTable != obelisk::reflection::TableKind::StaticObject) {
+    if (sourceTable != talos::reflection::TableKind::Statement &&
+        sourceTable != talos::reflection::TableKind::StaticObject) {
       uint32_t intrinsicKind = recordVPIKind(sourceRecord);
       if (intrinsicKind != sourceKind)
         return false;
@@ -8238,28 +8238,28 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *target = nullptr;
     uint32_t targetKind = 0;
     switch (targetTable) {
-    case obelisk::reflection::TableKind::Scope:
+    case talos::reflection::TableKind::Scope:
       if (targetIndex >= database.scopeCount)
         return false;
       target =
           database.data + database.scopes + uint64_t{targetIndex} * kScopeSize;
       targetKind = recordVPIKind(target);
       break;
-    case obelisk::reflection::TableKind::Object:
+    case talos::reflection::TableKind::Object:
       if (targetIndex >= database.objectCount)
         return false;
       target = database.data + database.objects +
                uint64_t{targetIndex} * kObjectSize;
       targetKind = recordVPIKind(target);
       break;
-    case obelisk::reflection::TableKind::Statement:
+    case talos::reflection::TableKind::Statement:
       if (targetIndex >= database.statementCount)
         return false;
       target = database.data + database.statements +
                uint64_t{targetIndex} * kStatementSize;
       targetKind = read16(target + 36);
       break;
-    case obelisk::reflection::TableKind::StaticObject:
+    case talos::reflection::TableKind::StaticObject:
       if (targetIndex >= database.staticObjectCount)
         return false;
       target = database.data + database.staticObjects +
@@ -8267,12 +8267,12 @@ bool validateDatabaseImpl(const Database &database) {
       targetKind = read16(target + 28);
       break;
     }
-    auto mode = iterate ? obelisk::reflection::VPITraversalMode::Iterate
-                        : obelisk::reflection::VPITraversalMode::Handle;
+    auto mode = iterate ? talos::reflection::VPITraversalMode::Iterate
+                        : talos::reflection::VPITraversalMode::Handle;
     const auto *edge =
-        obelisk::reflection::findVPITraversal(sourceKind, selector, mode);
+        talos::reflection::findVPITraversal(sourceKind, selector, mode);
     if (!edge ||
-        !obelisk::reflection::vpiObjectSetContains(edge->targets, targetKind) ||
+        !talos::reflection::vpiObjectSetContains(edge->targets, targetKind) ||
         ordinal != expectedOrdinal || (!iterate && ordinal != 0))
       return false;
     ++expectedOrdinal;
@@ -8280,22 +8280,22 @@ bool validateDatabaseImpl(const Database &database) {
     // independent source identity is encoded by its intrinsic inventory edge.
     if (iterate &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIRelationKind::TypedefRel)) {
+                        talos::reflection::VPIRelationKind::TypedefRel)) {
       const uint64_t targetOffset =
           static_cast<uint64_t>(target - database.data);
       uint32_t packedOwner = 0;
-      if (!obelisk::reflection::tryPackTableIndex(sourceTable, sourceIndex,
+      if (!talos::reflection::tryPackTableIndex(sourceTable, sourceIndex,
                                                   packedOwner))
         return false;
       auto [owner, inserted] = typedefOwners.emplace(targetOffset, packedOwner);
       if (!inserted && owner->second != packedOwner)
         multipleTypedefOwners.insert(targetOffset);
-      if (sourceTable == obelisk::reflection::TableKind::Statement) {
-        if (!(read16(sourceRecord + 38) & OBELISK_RT_DESIGN_STATEMENT_SCOPE) ||
+      if (sourceTable == talos::reflection::TableKind::Statement) {
+        if (!(read16(sourceRecord + 38) & TALOS_RT_DESIGN_STATEMENT_SCOPE) ||
             read32(sourceRecord + 8) == UINT32_MAX ||
-            targetTable != obelisk::reflection::TableKind::Object ||
-            recordKind(target) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
-            !(read32(target + 4) & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) ||
+            targetTable != talos::reflection::TableKind::Object ||
+            recordKind(target) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
+            !(read32(target + 4) & TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC) ||
             read64(target + 16) !=
                 database.scopes +
                     uint64_t{read32(sourceRecord + 12)} * kScopeSize)
@@ -8304,20 +8304,20 @@ bool validateDatabaseImpl(const Database &database) {
             static_cast<uint64_t>(target - database.data));
       }
       uint32_t packedTarget = 0;
-      if (obelisk::reflection::tryPackTableIndex(targetTable, targetIndex,
+      if (talos::reflection::tryPackTableIndex(targetTable, targetIndex,
                                                  packedTarget) &&
           canonicalBuiltinObjects.count(packedTarget))
         return false;
     }
     uint32_t sourceReference = 0;
-    if (!obelisk::reflection::tryPackTableIndex(sourceTable, sourceIndex,
+    if (!talos::reflection::tryPackTableIndex(sourceTable, sourceIndex,
                                                 sourceReference))
       return false;
     if (!iterate &&
         sourceKind == static_cast<uint32_t>(
-                          obelisk::reflection::VPIObjectKind::EnumConst) &&
+                          talos::reflection::VPIObjectKind::EnumConst) &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIObjectKind::EnumTypespec) &&
+                        talos::reflection::VPIObjectKind::EnumTypespec) &&
         frozenEnumConstants.count(sourceReference)) {
       uint32_t sourceRoot = 0, targetRoot = 0;
       if (!findSemanticRootBinding(database, sourceReference, sourceRoot) ||
@@ -8328,15 +8328,15 @@ bool validateDatabaseImpl(const Database &database) {
     }
     if (iterate &&
         sourceKind == static_cast<uint32_t>(
-                          obelisk::reflection::VPIObjectKind::EnumTypespec) &&
+                          talos::reflection::VPIObjectKind::EnumTypespec) &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIObjectKind::EnumConst) &&
+                        talos::reflection::VPIObjectKind::EnumConst) &&
         frozenEnumConstants.count(packedTarget)) {
       if (!frozenEnumInventories.emplace(packedTarget, sourceReference).second)
         return false;
     }
-    if (targetTable == obelisk::reflection::TableKind::StaticObject) {
-      if (sourceTable == obelisk::reflection::TableKind::StaticObject) {
+    if (targetTable == talos::reflection::TableKind::StaticObject) {
+      if (sourceTable == talos::reflection::TableKind::StaticObject) {
         if (firstStaticSuccessor[sourceIndex] == UINT32_MAX)
           firstStaticSuccessor[sourceIndex] =
               static_cast<uint32_t>(staticSuccessors.size());
@@ -8349,29 +8349,29 @@ bool validateDatabaseImpl(const Database &database) {
 
     auto relationBacked = [](const uint8_t *record) {
       uint32_t kind = recordKind(record);
-      return kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
-             (read32(record + 4) & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0;
+      return kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
+             (read32(record + 4) & TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0;
     };
     bool relationBackedTarget =
-        targetTable == obelisk::reflection::TableKind::StaticObject ||
-        (targetTable == obelisk::reflection::TableKind::Object &&
+        targetTable == talos::reflection::TableKind::StaticObject ||
+        (targetTable == talos::reflection::TableKind::Object &&
          relationBacked(target));
     bool classParameterInventory =
         iterate &&
         sourceKind == static_cast<uint32_t>(
-                          obelisk::reflection::VPIObjectKind::ClassTypespec) &&
+                          talos::reflection::VPIObjectKind::ClassTypespec) &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIObjectKind::Parameter);
+                        talos::reflection::VPIObjectKind::Parameter);
     bool lexicalParameterReference =
         classParameterInventory &&
-        sourceTable == obelisk::reflection::TableKind::Object &&
+        sourceTable == talos::reflection::TableKind::Object &&
         (read32(sourceRecord + 4) &
-         OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC) != 0;
+         TALOS_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC) != 0;
     bool lexicalForward =
         !lexicalParameterReference &&
         (selector == targetKind || classParameterInventory ||
          edge->automaticRelation ==
-             obelisk::reflection::VPIAutomaticRelation::DirectChild);
+             talos::reflection::VPIAutomaticRelation::DirectChild);
     // Relation-backed lexical containment is independent of the physical
     // record chain. Pair each real declaration edge with the generated
     // reverse vpiScope relation so malformed images cannot disagree by query
@@ -8379,15 +8379,15 @@ bool validateDatabaseImpl(const Database &database) {
     // declaration edges even though they also target a class definition.
     if (iterate && !rootSource && relationBackedTarget && lexicalForward) {
       bool hasMatchingParent = std::any_of(
-          std::begin(obelisk::reflection::vpiTraversals),
-          std::end(obelisk::reflection::vpiTraversals),
-          [&](const obelisk::reflection::VPITraversalDescriptor &parentEdge) {
+          std::begin(talos::reflection::vpiTraversals),
+          std::end(talos::reflection::vpiTraversals),
+          [&](const talos::reflection::VPITraversalDescriptor &parentEdge) {
             return parentEdge.sourceType == targetKind &&
                    parentEdge.mode ==
-                       obelisk::reflection::VPITraversalMode::Handle &&
+                       talos::reflection::VPITraversalMode::Handle &&
                    parentEdge.automaticRelation ==
-                       obelisk::reflection::VPIAutomaticRelation::ParentScope &&
-                   obelisk::reflection::vpiObjectSetContains(parentEdge.targets,
+                       talos::reflection::VPIAutomaticRelation::ParentScope &&
+                   talos::reflection::vpiObjectSetContains(parentEdge.targets,
                                                              sourceKind);
           });
       if (hasMatchingParent)
@@ -8397,10 +8397,10 @@ bool validateDatabaseImpl(const Database &database) {
 
     uint32_t sourceEndpoint = relationEndpoint(sourceTable, sourceIndex);
     if (!iterate &&
-        selector == uint32_t(obelisk::reflection::VPIRelationKind::ReturnRel)) {
-      if (sourceTable != obelisk::reflection::TableKind::Object ||
-          recordKind(sourceRecord) != OBELISK_RT_DESIGN_RECORD_FUNCTION ||
-          (read32(sourceRecord + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL) ||
+        selector == uint32_t(talos::reflection::VPIRelationKind::ReturnRel)) {
+      if (sourceTable != talos::reflection::TableKind::Object ||
+          recordKind(sourceRecord) != TALOS_RT_DESIGN_RECORD_FUNCTION ||
+          (read32(sourceRecord + 4) & TALOS_RT_DESIGN_CAP_INTERNAL) ||
           voidFunctions.count(sourceEndpoint) ||
           (!frameLocals.count(packedTarget) &&
            !proceduralStaticStorage.count(packedTarget)) ||
@@ -8413,13 +8413,13 @@ bool validateDatabaseImpl(const Database &database) {
     if (unresolvedTypeAliases.count(packedTarget)) {
       if (iterate &&
           selector == static_cast<uint32_t>(
-                          obelisk::reflection::VPIObjectKind::Parameter))
+                          talos::reflection::VPIObjectKind::Parameter))
         return false;
       if (iterate &&
           selector == static_cast<uint32_t>(
-                          obelisk::reflection::VPIRelationKind::TypedefRel)) {
+                          talos::reflection::VPIRelationKind::TypedefRel)) {
         if (sourceKind != static_cast<uint32_t>(
-                              obelisk::reflection::VPIObjectKind::ClassDefn) ||
+                              talos::reflection::VPIObjectKind::ClassDefn) ||
             !unresolvedAliasOwners.emplace(packedTarget, sourceEndpoint).second)
           return false;
       }
@@ -8429,7 +8429,7 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       if (selector ==
           static_cast<uint32_t>(
-              obelisk::reflection::VPIRelationKind::TypedefAliasRel)) {
+              talos::reflection::VPIRelationKind::TypedefAliasRel)) {
         if ((!unresolvedTypeAliases.count(packedTarget) &&
              !unresolvedTypeParameters.count(packedTarget)) ||
             !unresolvedAliasTargets.emplace(sourceEndpoint, packedTarget)
@@ -8437,13 +8437,13 @@ bool validateDatabaseImpl(const Database &database) {
           return false;
       } else if (selector ==
                  static_cast<uint32_t>(
-                     obelisk::reflection::VPIRelationKind::ScopeRel)) {
+                     talos::reflection::VPIRelationKind::ScopeRel)) {
         uint64_t ownerScope =
-            targetTable == obelisk::reflection::TableKind::StaticObject
+            targetTable == talos::reflection::TableKind::StaticObject
                 ? database.scopes + uint64_t{read32(target + 8)} * kScopeSize
                 : read64(target + 16);
         if (targetKind != static_cast<uint32_t>(
-                              obelisk::reflection::VPIObjectKind::ClassDefn) ||
+                              talos::reflection::VPIObjectKind::ClassDefn) ||
             read64(sourceRecord + 16) != ownerScope ||
             !unresolvedAliasScopes.emplace(sourceEndpoint, packedTarget).second)
           return false;
@@ -8455,10 +8455,10 @@ bool validateDatabaseImpl(const Database &database) {
     if (iterate &&
         (lexicalForward ||
          selector == static_cast<uint32_t>(
-                         obelisk::reflection::VPIRelationKind::VariablesRel)) &&
+                         talos::reflection::VPIRelationKind::VariablesRel)) &&
         sourceClassProperties.count(packedTarget)) {
       if (sourceKind !=
-          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::ClassDefn))
+          static_cast<uint32_t>(talos::reflection::VPIObjectKind::ClassDefn))
         return false;
       auto [entry, inserted] =
           sourceClassPropertyOwners.emplace(packedTarget, sourceEndpoint);
@@ -8468,7 +8468,7 @@ bool validateDatabaseImpl(const Database &database) {
     if (iterate &&
         (lexicalForward ||
          selector == static_cast<uint32_t>(
-                         obelisk::reflection::VPIRelationKind::VariablesRel)) &&
+                         talos::reflection::VPIRelationKind::VariablesRel)) &&
         proceduralStaticStorage.count(packedTarget)) {
       auto [owner, inserted] =
           proceduralStaticOwners.emplace(packedTarget, sourceEndpoint);
@@ -8477,35 +8477,35 @@ bool validateDatabaseImpl(const Database &database) {
     }
     if (!iterate && proceduralStaticStorage.count(sourceEndpoint) &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIRelationKind::ScopeRel)) {
+                        talos::reflection::VPIRelationKind::ScopeRel)) {
       uint64_t physicalScope = 0;
-      if (targetTable == obelisk::reflection::TableKind::Statement) {
-        if (!(read16(target + 38) & OBELISK_RT_DESIGN_STATEMENT_SCOPE) ||
+      if (targetTable == talos::reflection::TableKind::Statement) {
+        if (!(read16(target + 38) & TALOS_RT_DESIGN_STATEMENT_SCOPE) ||
             read32(target + 8) >= database.objectCount)
           return false;
         const uint8_t *unit = database.data + database.objects +
                               uint64_t{read32(target + 8)} * kObjectSize;
-        if ((recordKind(unit) != OBELISK_RT_DESIGN_RECORD_PROCESS &&
-             recordKind(unit) != OBELISK_RT_DESIGN_RECORD_FUNCTION) ||
-            (read32(unit + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL))
+        if ((recordKind(unit) != TALOS_RT_DESIGN_RECORD_PROCESS &&
+             recordKind(unit) != TALOS_RT_DESIGN_RECORD_FUNCTION) ||
+            (read32(unit + 4) & TALOS_RT_DESIGN_CAP_INTERNAL))
           return false;
         physicalScope =
             database.scopes + uint64_t{read32(target + 12)} * kScopeSize;
-      } else if (targetTable == obelisk::reflection::TableKind::Object &&
-                 (recordKind(target) == OBELISK_RT_DESIGN_RECORD_PROCESS ||
-                  recordKind(target) == OBELISK_RT_DESIGN_RECORD_FUNCTION) &&
+      } else if (targetTable == talos::reflection::TableKind::Object &&
+                 (recordKind(target) == TALOS_RT_DESIGN_RECORD_PROCESS ||
+                  recordKind(target) == TALOS_RT_DESIGN_RECORD_FUNCTION) &&
                  (targetKind == static_cast<uint32_t>(
-                                    obelisk::reflection::VPIObjectKind::Task) ||
+                                    talos::reflection::VPIObjectKind::Task) ||
                   targetKind ==
                       static_cast<uint32_t>(
-                          obelisk::reflection::VPIObjectKind::Function))) {
+                          talos::reflection::VPIObjectKind::Function))) {
         physicalScope = read64(target + 16);
       } else {
         return false;
       }
       auto name = fixedNames.find(sourceEndpoint);
-      if ((targetTable == obelisk::reflection::TableKind::Object &&
-           (read32(target + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL)) ||
+      if ((targetTable == talos::reflection::TableKind::Object &&
+           (read32(target + 4) & TALOS_RT_DESIGN_CAP_INTERNAL)) ||
           read64(sourceRecord + 16) != physicalScope ||
           name == fixedNames.end() || name->second.empty() ||
           !localNames[packedTarget].insert(name->second).second ||
@@ -8513,13 +8513,13 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
     }
     const bool foreachOwner =
-        sourceTable == obelisk::reflection::TableKind::Statement &&
+        sourceTable == talos::reflection::TableKind::Statement &&
         sourceKind == static_cast<uint32_t>(
-                          obelisk::reflection::VPIObjectKind::ForeachStmt);
+                          talos::reflection::VPIObjectKind::ForeachStmt);
     const bool foreachIndex =
         foreachOwner && iterate &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIRelationKind::LoopVarsRel);
+                        talos::reflection::VPIRelationKind::LoopVarsRel);
     if (foreachNulls.count(sourceEndpoint))
       return false;
     if (foreachNulls.count(packedTarget)) {
@@ -8529,7 +8529,7 @@ bool validateDatabaseImpl(const Database &database) {
     }
     if (foreachOwner && iterate &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIRelationKind::VariablesRel)) {
+                        talos::reflection::VPIRelationKind::VariablesRel)) {
       if (ordinal ||
           !foreachCollections.emplace(sourceEndpoint, packedTarget).second)
         return false;
@@ -8539,7 +8539,7 @@ bool validateDatabaseImpl(const Database &database) {
       if (!foreachNulls.count(packedTarget) &&
           (!frameLocals.count(packedTarget) ||
            targetKind != static_cast<uint32_t>(
-                             obelisk::reflection::VPIObjectKind::IntVar) ||
+                             talos::reflection::VPIObjectKind::IntVar) ||
            !foreachIndexLocals.insert(packedTarget).second))
         return false;
     }
@@ -8548,7 +8548,7 @@ bool validateDatabaseImpl(const Database &database) {
          (!foreachOwner &&
           selector ==
               static_cast<uint32_t>(
-                  obelisk::reflection::VPIRelationKind::VariablesRel))) &&
+                  talos::reflection::VPIRelationKind::VariablesRel))) &&
         frameLocals.count(packedTarget)) {
       if (frameLocalOwners.at(packedTarget) != sourceEndpoint)
         return false;
@@ -8556,22 +8556,22 @@ bool validateDatabaseImpl(const Database &database) {
     }
     if (!iterate && frameLocals.count(sourceEndpoint) &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIRelationKind::ScopeRel)) {
+                        talos::reflection::VPIRelationKind::ScopeRel)) {
       if (frameLocalOwners.at(sourceEndpoint) != packedTarget)
         return false;
       frameLocalReverse.insert(sourceEndpoint);
     }
     if (!iterate && sourceClassProperties.count(sourceEndpoint) &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIRelationKind::ScopeRel)) {
+                        talos::reflection::VPIRelationKind::ScopeRel)) {
       if (targetKind !=
-          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::ClassDefn))
+          static_cast<uint32_t>(talos::reflection::VPIObjectKind::ClassDefn))
         return false;
       sourceClassPropertyScopes.emplace(sourceEndpoint, packedTarget);
     }
     if (!iterate &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIRelationKind::ScopeRel)) {
+                        talos::reflection::VPIRelationKind::ScopeRel)) {
       auto callOwner = callOwners.find(sourceEndpoint);
       if (callOwner != callOwners.end()) {
         const uint8_t *owner = database.data + database.objects +
@@ -8582,13 +8582,13 @@ bool validateDatabaseImpl(const Database &database) {
             return false;
         } else
           switch (targetTable) {
-          case obelisk::reflection::TableKind::Statement:
+          case talos::reflection::TableKind::Statement:
             if (read32(target + 8) != callOwner->second ||
-                !(read16(target + 38) & OBELISK_RT_DESIGN_STATEMENT_SCOPE))
+                !(read16(target + 38) & TALOS_RT_DESIGN_STATEMENT_SCOPE))
               return false;
             break;
-          case obelisk::reflection::TableKind::Object:
-          case obelisk::reflection::TableKind::StaticObject: {
+          case talos::reflection::TableKind::Object:
+          case talos::reflection::TableKind::StaticObject: {
             uint32_t source = 0;
             uint64_t sourceOffset = 0;
             if (!findCallableSource(database, callOwner->second, source,
@@ -8597,9 +8597,9 @@ bool validateDatabaseImpl(const Database &database) {
               return false;
             break;
           }
-          case obelisk::reflection::TableKind::Scope: {
+          case talos::reflection::TableKind::Scope: {
             const auto *ownerKind =
-                obelisk::reflection::findVPIObjectKind(recordVPIKind(owner));
+                talos::reflection::findVPIObjectKind(recordVPIKind(owner));
             uint32_t source = 0;
             uint64_t sourceOffset = 0;
             if (findCallableSource(database, callOwner->second, source,
@@ -8607,8 +8607,8 @@ bool validateDatabaseImpl(const Database &database) {
                 read64(owner + 16) != uint64_t(target - database.data) ||
                 (ownerKind &&
                  (ownerKind->families &
-                  obelisk::reflection::vpiFamilyMask(
-                      obelisk::reflection::VPIObjectFamily::Scope))))
+                  talos::reflection::vpiFamilyMask(
+                      talos::reflection::VPIObjectFamily::Scope))))
               return false;
             break;
           }
@@ -8618,33 +8618,33 @@ bool validateDatabaseImpl(const Database &database) {
     }
     if (!iterate &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIRelationKind::ExprRel) &&
+                        talos::reflection::VPIRelationKind::ExprRel) &&
         unavailableParameterDefaults.count(sourceEndpoint) != 0)
       return false;
     if (iterate && !lexicalParameterReference &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIObjectKind::Parameter) &&
+                        talos::reflection::VPIObjectKind::Parameter) &&
         targetKind == static_cast<uint32_t>(
-                          obelisk::reflection::VPIObjectKind::Parameter)) {
+                          talos::reflection::VPIObjectKind::Parameter)) {
       if (!parameterPositions
                .emplace(packedTarget, std::make_pair(sourceEndpoint, ordinal))
                .second)
         return false;
     }
     auto primitiveKind = [](uint32_t kind) {
-      using K = obelisk::reflection::VPIObjectKind;
+      using K = talos::reflection::VPIObjectKind;
       return kind == static_cast<uint32_t>(K::Gate) ||
              kind == static_cast<uint32_t>(K::Switch) ||
              kind == static_cast<uint32_t>(K::Udp);
     };
     if (iterate && primitiveKind(sourceKind) &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIObjectKind::PrimTerm)) {
+                        talos::reflection::VPIObjectKind::PrimTerm)) {
       if (!primitiveTerminals.count(packedTarget) ||
-          sourceTable != obelisk::reflection::TableKind::Object ||
-          recordKind(sourceRecord) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+          sourceTable != talos::reflection::TableKind::Object ||
+          recordKind(sourceRecord) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
           read64(sourceRecord + 16) !=
-              (targetTable == obelisk::reflection::TableKind::StaticObject
+              (targetTable == talos::reflection::TableKind::StaticObject
                    ? database.scopes + uint64_t{read32(target + 8)} * kScopeSize
                    : read64(target + 16)) ||
           ordinal > INT32_MAX ||
@@ -8653,11 +8653,11 @@ bool validateDatabaseImpl(const Database &database) {
     }
     if (!iterate && primitiveTerminals.count(sourceEndpoint) &&
         selector == static_cast<uint32_t>(
-                        obelisk::reflection::VPIRelationKind::PrimitiveRel)) {
+                        talos::reflection::VPIRelationKind::PrimitiveRel)) {
       if (!primitiveKind(targetKind) ||
-          targetTable != obelisk::reflection::TableKind::Object ||
-          recordKind(target) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
-          (sourceTable == obelisk::reflection::TableKind::StaticObject
+          targetTable != talos::reflection::TableKind::Object ||
+          recordKind(target) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
+          (sourceTable == talos::reflection::TableKind::StaticObject
                ? database.scopes +
                      uint64_t{read32(sourceRecord + 8)} * kScopeSize
                : read64(sourceRecord + 16)) != read64(target + 16) ||
@@ -8666,14 +8666,14 @@ bool validateDatabaseImpl(const Database &database) {
     }
     bool sourceExpression = sourceExpressionObjects.count(sourceEndpoint) != 0;
     bool targetExpression = sourceExpressionObjects.count(packedTarget) != 0;
-    using Kind = obelisk::reflection::VPIObjectKind;
-    using Relation = obelisk::reflection::VPIRelationKind;
+    using Kind = talos::reflection::VPIObjectKind;
+    using Relation = talos::reflection::VPIRelationKind;
     bool explicitClassAssignment =
         sourceKind == static_cast<uint32_t>(Kind::ParamAssign) &&
-        sourceTable == obelisk::reflection::TableKind::Object &&
-        recordKind(sourceRecord) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        sourceTable == talos::reflection::TableKind::Object &&
+        recordKind(sourceRecord) == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
         (read32(sourceRecord + 4) &
-         OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT);
+         TALOS_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT);
     if (explicitClassAssignment) {
       explicitClassAssignments.insert(sourceEndpoint);
       if (!iterate && selector == static_cast<uint32_t>(Relation::ScopeRel))
@@ -8681,17 +8681,17 @@ bool validateDatabaseImpl(const Database &database) {
     }
     if (!iterate && selector == static_cast<uint32_t>(Relation::ScopeRel) &&
         sourceKind == static_cast<uint32_t>(Kind::ClassTypespec) &&
-        sourceTable == obelisk::reflection::TableKind::Object &&
+        sourceTable == talos::reflection::TableKind::Object &&
         (read32(sourceRecord + 4) &
-         OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC))
+         TALOS_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC))
       lexicalClassScopes.emplace(sourceEndpoint, packedTarget);
     bool sharedClassDefault =
         !iterate && selector == static_cast<uint32_t>(Relation::RhsRel) &&
         sourceKind == static_cast<uint32_t>(Kind::ParamAssign) &&
-        sourceTable == obelisk::reflection::TableKind::Object &&
-        recordKind(sourceRecord) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        sourceTable == talos::reflection::TableKind::Object &&
+        recordKind(sourceRecord) == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
         (read32(sourceRecord + 4) &
-         OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT);
+         TALOS_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT);
     if (targetExpression && !sharedClassDefault) {
       bool defaultRoot = !iterate &&
                          selector == static_cast<uint32_t>(Relation::ExprRel) &&
@@ -8706,7 +8706,7 @@ bool validateDatabaseImpl(const Database &database) {
           !expressionParents.emplace(packedTarget, sourceEndpoint).second)
         return false;
       uint64_t ownerScope =
-          sourceTable == obelisk::reflection::TableKind::StaticObject
+          sourceTable == talos::reflection::TableKind::StaticObject
               ? database.scopes +
                     uint64_t{read32(sourceRecord + 8)} * kScopeSize
               : read64(sourceRecord + 16);
@@ -8732,14 +8732,14 @@ bool validateDatabaseImpl(const Database &database) {
          unresolvedValueParameters.count(sourceEndpoint) != 0) &&
         !iterate) {
       if (selector == static_cast<uint32_t>(
-                          obelisk::reflection::VPIObjectKind::Typespec) &&
+                          talos::reflection::VPIObjectKind::Typespec) &&
           (unresolvedValueParameters.count(sourceEndpoint) != 0 ||
            packedTarget != sourceEndpoint))
         return false;
       if (selector == static_cast<uint32_t>(
-                          obelisk::reflection::VPIRelationKind::ScopeRel)) {
+                          talos::reflection::VPIRelationKind::ScopeRel)) {
         if (targetKind != static_cast<uint32_t>(
-                              obelisk::reflection::VPIObjectKind::ClassDefn))
+                              talos::reflection::VPIObjectKind::ClassDefn))
           return false;
         unresolvedParameterParents.emplace(
             sourceEndpoint, lexicalPair(packedTarget, sourceEndpoint));
@@ -8754,8 +8754,8 @@ bool validateDatabaseImpl(const Database &database) {
       automaticEdge = edge;
       automaticChildCursor =
           edge->automaticRelation ==
-                      obelisk::reflection::VPIAutomaticRelation::DirectChild &&
-                  sourceTable == obelisk::reflection::TableKind::Scope
+                      talos::reflection::VPIAutomaticRelation::DirectChild &&
+                  sourceTable == talos::reflection::TableKind::Scope
               ? read64(sourceRecord + 24)
               : 0;
     } else if (automaticEdge != edge) {
@@ -8770,9 +8770,9 @@ bool validateDatabaseImpl(const Database &database) {
             selector))
       return false;
     switch (edge->automaticRelation) {
-    case obelisk::reflection::VPIAutomaticRelation::None:
+    case talos::reflection::VPIAutomaticRelation::None:
       break;
-    case obelisk::reflection::VPIAutomaticRelation::DirectChild:
+    case talos::reflection::VPIAutomaticRelation::DirectChild:
       if (relationBackedTarget) {
         break;
       }
@@ -8782,11 +8782,11 @@ bool validateDatabaseImpl(const Database &database) {
       // generate scope's vpiInternalScope relation. Check their common
       // enclosing scope instead of requiring a physical scope-table source.
       if (sourceKind == static_cast<uint32_t>(
-                            obelisk::reflection::VPIObjectKind::GenScope) &&
-          targetTable == obelisk::reflection::TableKind::Scope &&
-          sourceTable != obelisk::reflection::TableKind::Scope) {
+                            talos::reflection::VPIObjectKind::GenScope) &&
+          targetTable == talos::reflection::TableKind::Scope &&
+          sourceTable != talos::reflection::TableKind::Scope) {
         uint64_t enclosingScope =
-            sourceTable == obelisk::reflection::TableKind::StaticObject
+            sourceTable == talos::reflection::TableKind::StaticObject
                 ? database.scopes +
                       uint64_t{read32(sourceRecord + 8)} * kScopeSize
                 : read64(sourceRecord + 16);
@@ -8794,32 +8794,32 @@ bool validateDatabaseImpl(const Database &database) {
           return false;
         break;
       }
-      if (sourceTable != obelisk::reflection::TableKind::Scope ||
-          targetTable == obelisk::reflection::TableKind::Statement ||
+      if (sourceTable != talos::reflection::TableKind::Scope ||
+          targetTable == talos::reflection::TableKind::Statement ||
           read64(target + 16) != sourceOffset ||
           nextAutomaticChild(automaticChildCursor) != targetOffset)
         return false;
       break;
-    case obelisk::reflection::VPIAutomaticRelation::ParentScope:
-      if (sourceTable == obelisk::reflection::TableKind::Scope &&
+    case talos::reflection::VPIAutomaticRelation::ParentScope:
+      if (sourceTable == talos::reflection::TableKind::Scope &&
           selector == uint32_t(Kind::Module)) {
         uint64_t parent = read64(sourceRecord + 16), expected = 0;
         uint32_t expectedKind = 0;
-        if (targetTable != obelisk::reflection::TableKind::Scope ||
+        if (targetTable != talos::reflection::TableKind::Scope ||
             !isScopeOffset(database, parent) ||
             !enclosingInstance(database,
                                (parent - database.scopes) / kScopeSize, true,
                                expected, expectedKind) ||
             targetOffset != expected)
           return false;
-      } else if (sourceTable == obelisk::reflection::TableKind::Statement) {
-        obelisk::reflection::TableKind expectedTable;
+      } else if (sourceTable == talos::reflection::TableKind::Statement) {
+        talos::reflection::TableKind expectedTable;
         uint32_t expectedIndex = 0;
         if (!effectiveStatementScope(database, sourceIndex, expectedTable,
                                      expectedIndex) ||
             targetTable != expectedTable || targetIndex != expectedIndex)
           return false;
-      } else if (sourceTable == obelisk::reflection::TableKind::Object &&
+      } else if (sourceTable == talos::reflection::TableKind::Object &&
                  relationBacked(sourceRecord)) {
         // The relation itself is the canonical lexical owner. The physical
         // scope field only keeps this immutable record reachable and may name
@@ -8830,39 +8830,39 @@ bool validateDatabaseImpl(const Database &database) {
         // declaration. The validated specialization owner keeps this
         // executable view reachable without a second name-index entry.
         if ((read32(sourceRecord + 4) &
-             OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0 &&
+             TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0 &&
             (sourceKind == static_cast<uint32_t>(
-                               obelisk::reflection::VPIObjectKind::Task) ||
+                               talos::reflection::VPIObjectKind::Task) ||
              sourceKind == static_cast<uint32_t>(
-                               obelisk::reflection::VPIObjectKind::Function)) &&
+                               talos::reflection::VPIObjectKind::Function)) &&
             canonicalClassRoots.count(packedTarget) != 0)
           canonicalMethodObjects.insert(sourceOffset);
-      } else if (sourceTable == obelisk::reflection::TableKind::StaticObject) {
+      } else if (sourceTable == talos::reflection::TableKind::StaticObject) {
         staticLexicalParents.insert(lexicalPair(
             packedTarget, relationEndpoint(sourceTable, sourceIndex)));
-      } else if (targetTable != obelisk::reflection::TableKind::Scope ||
+      } else if (targetTable != talos::reflection::TableKind::Scope ||
                  read64(sourceRecord + 16) != targetOffset) {
         return false;
       }
       break;
-    case obelisk::reflection::VPIAutomaticRelation::DirectPortConnection:
-      if (sourceTable != obelisk::reflection::TableKind::Object ||
-          targetTable != obelisk::reflection::TableKind::Object ||
+    case talos::reflection::VPIAutomaticRelation::DirectPortConnection:
+      if (sourceTable != talos::reflection::TableKind::Object ||
+          targetTable != talos::reflection::TableKind::Object ||
           !isWholePortConnection(sourceRecord, target) ||
           !hasUniqueConnectionTarget(sourceRecord, targetIndex))
         return false;
       break;
-    case obelisk::reflection::VPIAutomaticRelation::IndexedContainer:
+    case talos::reflection::VPIAutomaticRelation::IndexedContainer:
       // The relation-index member table below is the canonical bidirectional
       // proof that this selected object belongs to the target array.
-      if (targetTable != obelisk::reflection::TableKind::Object ||
+      if (targetTable != talos::reflection::TableKind::Object ||
           !relationBacked(target))
         return false;
       break;
-    case obelisk::reflection::VPIAutomaticRelation::DefinitionMember:
-    case obelisk::reflection::VPIAutomaticRelation::DefinitionMemberParent:
-    case obelisk::reflection::VPIAutomaticRelation::DefinitionMemberExpr:
-    case obelisk::reflection::VPIAutomaticRelation::
+    case talos::reflection::VPIAutomaticRelation::DefinitionMember:
+    case talos::reflection::VPIAutomaticRelation::DefinitionMemberParent:
+    case talos::reflection::VPIAutomaticRelation::DefinitionMemberExpr:
+    case talos::reflection::VPIAutomaticRelation::
         DefinitionMemberInstanceRelation:
       // These edges are reconstructed from the compact definition tables and
       // must not also appear in the per-instance general relation table.
@@ -8871,7 +8871,7 @@ bool validateDatabaseImpl(const Database &database) {
 
     if (!edge->statementContainment)
       continue;
-    if (targetTable != obelisk::reflection::TableKind::Statement)
+    if (targetTable != talos::reflection::TableKind::Statement)
       return false;
     IncomingRelation &incoming = incomingRelations[targetIndex];
     uint8_t modeBit = iterate ? 2 : 1;
@@ -8895,12 +8895,12 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t targetScope = read32(target + 12);
     uint32_t targetParent = read32(target + 16);
     switch (sourceTable) {
-    case obelisk::reflection::TableKind::Scope:
+    case talos::reflection::TableKind::Scope:
       if (targetOwner != UINT32_MAX || targetParent != UINT32_MAX ||
           targetScope != sourceIndex)
         return false;
       break;
-    case obelisk::reflection::TableKind::Object: {
+    case talos::reflection::TableKind::Object: {
       uint64_t sourceScope = read64(sourceRecord + 16);
       uint32_t sourceScopeIndex =
           static_cast<uint32_t>((sourceScope - database.scopes) / kScopeSize);
@@ -8908,24 +8908,24 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       if (targetOwner == UINT32_MAX) {
         const auto *sourceDescriptor =
-            obelisk::reflection::findVPIObjectKind(sourceKind);
+            talos::reflection::findVPIObjectKind(sourceKind);
         if (!sourceDescriptor ||
             (sourceDescriptor->families &
-             obelisk::reflection::vpiFamilyMask(
-                 obelisk::reflection::VPIObjectFamily::Scope)) == 0)
+             talos::reflection::vpiFamilyMask(
+                 talos::reflection::VPIObjectFamily::Scope)) == 0)
           return false;
       } else if (targetOwner != sourceIndex) {
         return false;
       }
       break;
     }
-    case obelisk::reflection::TableKind::Statement:
+    case talos::reflection::TableKind::Statement:
       if (targetParent != sourceIndex ||
           targetOwner != read32(sourceRecord + 8) ||
           targetScope != read32(sourceRecord + 12))
         return false;
       break;
-    case obelisk::reflection::TableKind::StaticObject: {
+    case talos::reflection::TableKind::StaticObject: {
       uint32_t sourceScope = read32(sourceRecord + 8);
       if (sourceScope >= database.scopeCount || targetOwner != UINT32_MAX ||
           targetParent != UINT32_MAX || targetScope != sourceScope)
@@ -8994,11 +8994,11 @@ bool validateDatabaseImpl(const Database &database) {
       const uint8_t *semantic = database.data + database.semanticTypes +
                                 uint64_t{semanticIndex} * kSemanticTypeSize;
       uint32_t kind = read32(semantic) & UINT32_C(0xff);
-      if (kind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY &&
-          kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY)
+      if (kind != TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY &&
+          kind != TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY)
         break;
       if (read32(semantic + 8) != 1 ||
-          !(read32(semantic) & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE))
+          !(read32(semantic) & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE))
         return false;
       ++dimensions;
       const uint8_t *child =
@@ -9018,12 +9018,12 @@ bool validateDatabaseImpl(const Database &database) {
         !packedFrameLocalScopeOffset(database, frameLocalOwners.at(local),
                                      scopeOffset))
       return false;
-    const auto *scopeEdge = obelisk::reflection::findVPITraversal(
+    const auto *scopeEdge = talos::reflection::findVPITraversal(
         objectReferenceVPIKind(database, localOffset),
-        static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::ScopeRel),
-        obelisk::reflection::VPITraversalMode::Handle);
+        static_cast<uint32_t>(talos::reflection::VPIRelationKind::ScopeRel),
+        talos::reflection::VPITraversalMode::Handle);
     if (scopeEdge &&
-        obelisk::reflection::vpiObjectSetContains(
+        talos::reflection::vpiObjectSetContains(
             scopeEdge->targets,
             isStatementOffset(database, scopeOffset)
                 ? read16(database.data + scopeOffset + 36)
@@ -9040,14 +9040,14 @@ bool validateDatabaseImpl(const Database &database) {
     uint64_t offset = 0;
     if (!packedObjectReferenceOffset(database, property, offset))
       return false;
-    const auto *scopeEdge = obelisk::reflection::findVPITraversal(
+    const auto *scopeEdge = talos::reflection::findVPITraversal(
         objectReferenceVPIKind(database, offset),
-        static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::ScopeRel),
-        obelisk::reflection::VPITraversalMode::Handle);
-    if (scopeEdge && obelisk::reflection::vpiObjectSetContains(
+        static_cast<uint32_t>(talos::reflection::VPIRelationKind::ScopeRel),
+        talos::reflection::VPITraversalMode::Handle);
+    if (scopeEdge && talos::reflection::vpiObjectSetContains(
                          scopeEdge->targets,
                          static_cast<uint32_t>(
-                             obelisk::reflection::VPIObjectKind::ClassDefn))) {
+                             talos::reflection::VPIObjectKind::ClassDefn))) {
       auto scope = sourceClassPropertyScopes.find(property);
       if (scope == sourceClassPropertyScopes.end() ||
           scope->second != owner->second)
@@ -9075,7 +9075,7 @@ bool validateDatabaseImpl(const Database &database) {
   uint32_t previousTerminal = 0;
   for (uint64_t index = 0; index != database.terminalDriverBindingCount;
        ++index) {
-    obelisk::reflection::TerminalDriverBindingView binding(
+    talos::reflection::TerminalDriverBindingView binding(
         database.data + database.terminalDriverBindings +
         index * kTerminalDriverBindingSize);
     uint32_t terminal = binding.getTerminalIndexAndTable();
@@ -9088,7 +9088,7 @@ bool validateDatabaseImpl(const Database &database) {
     if (!packedObjectReferenceOffset(database, terminalOwners.at(terminal),
                                      primitiveOffset))
       return false;
-    using Kind = obelisk::reflection::VPIObjectKind;
+    using Kind = talos::reflection::VPIObjectKind;
     uint32_t kind = objectReferenceVPIKind(database, primitiveOffset);
     if (kind != uint32_t(Kind::Gate) && kind != uint32_t(Kind::Udp))
       return false;
@@ -9099,7 +9099,7 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       primitiveType = retained->second;
       const auto *descriptor =
-          obelisk::reflection::findVPIBuiltinPrimitive(primitiveType);
+          talos::reflection::findVPIBuiltinPrimitive(primitiveType);
       if (!descriptor || descriptor->objectKind != uint32_t(Kind::Gate))
         return false;
     }
@@ -9113,14 +9113,14 @@ bool validateDatabaseImpl(const Database &database) {
       const uint8_t *record =
           database.data + database.objects + uint64_t{object} * kObjectSize;
       uint64_t type = read64(record + 48);
-      if (recordKind(record) != OBELISK_RT_DESIGN_RECORD_DRIVER ||
+      if (recordKind(record) != TALOS_RT_DESIGN_RECORD_DRIVER ||
           read64(record + 16) != scope || !isTypeOffset(database, type) ||
           binding.getBitOffset() >= read64(record + 56))
         return nullptr;
       const uint8_t *physical = database.data + type;
       uint32_t encodedType = read32(physical + 4);
-      if ((encodedType & UINT32_C(0xff)) != OBELISK_RT_DESIGN_TYPE_SCALAR &&
-          !((encodedType >> 8) & OBELISK_RT_DESIGN_TYPE_PACKED))
+      if ((encodedType & UINT32_C(0xff)) != TALOS_RT_DESIGN_TYPE_SCALAR &&
+          !((encodedType >> 8) & TALOS_RT_DESIGN_TYPE_PACKED))
         return nullptr;
       return record;
     };
@@ -9208,7 +9208,7 @@ bool validateDatabaseImpl(const Database &database) {
   }
   for (const auto &[expression, operation] : sourceExpressionOperators) {
     const auto *descriptor =
-        obelisk::reflection::findVPISourceOperator(operation);
+        talos::reflection::findVPISourceOperator(operation);
     if (!descriptor || expressionOperandCounts[expression] != descriptor->arity)
       return false;
   }
@@ -9284,8 +9284,8 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *object =
         database.data + database.objects + uint64_t{objectIndex} * kObjectSize;
     uint32_t vpiKind = recordVPIKind(object);
-    const auto *access = obelisk::reflection::findVPIIndexedAccess(vpiKind);
-    using VPIKind = obelisk::reflection::VPIObjectKind;
+    const auto *access = talos::reflection::findVPIIndexedAccess(vpiKind);
+    using VPIKind = talos::reflection::VPIObjectKind;
     bool primitiveArray =
         vpiKind == static_cast<uint32_t>(VPIKind::GateArray) ||
         vpiKind == static_cast<uint32_t>(VPIKind::SwitchArray) ||
@@ -9294,11 +9294,11 @@ bool validateDatabaseImpl(const Database &database) {
     bool sparse = flags == 1;
     bool generateArray =
         vpiKind == static_cast<uint32_t>(VPIKind::GenScopeArray);
-    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+    if (recordKind(object) != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
         read64(object + 48) != 0 || (!sparse && elementCount == 0) ||
         elementCount > UINT32_MAX || !access ||
         access->accessKind !=
-            obelisk::reflection::VPIIndexedAccessKind::RelationElement ||
+            talos::reflection::VPIIndexedAccessKind::RelationElement ||
         (flags != 0 && !sparse))
       return false;
     if (sparse != generateArray)
@@ -9307,18 +9307,18 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
 
     uint64_t firstRelation = lowerBoundRelation(
-        database, obelisk::reflection::TableKind::Object, objectIndex,
+        database, talos::reflection::TableKind::Object, objectIndex,
         static_cast<uint16_t>(access->relationSelector), true);
     bool hasRelation =
         firstRelation != database.relationCount &&
         relationMatches(relationAt(database, firstRelation),
-                        obelisk::reflection::TableKind::Object, objectIndex,
+                        talos::reflection::TableKind::Object, objectIndex,
                         static_cast<uint16_t>(access->relationSelector), true);
     if ((elementCount == 0 && hasRelation) ||
         (elementCount != 0 &&
          (!hasRelation ||
           upperBoundRelation(
-              database, firstRelation, obelisk::reflection::TableKind::Object,
+              database, firstRelation, talos::reflection::TableKind::Object,
               objectIndex, static_cast<uint16_t>(access->relationSelector),
               true) -
                   firstRelation !=
@@ -9372,8 +9372,8 @@ bool validateDatabaseImpl(const Database &database) {
         firstKey != UINT32_MAX || firstOrdinalKey != UINT32_MAX)
       return false;
     uint32_t packedArray = 0;
-    if (!obelisk::reflection::tryPackTableIndex(
-            obelisk::reflection::TableKind::Object, objectIndex, packedArray))
+    if (!talos::reflection::tryPackTableIndex(
+            talos::reflection::TableKind::Object, objectIndex, packedArray))
       return false;
     auto eventStorage = eventArrayStorage.find(packedArray);
     uint64_t eventPhysical = 0;
@@ -9411,12 +9411,12 @@ bool validateDatabaseImpl(const Database &database) {
         const uint8_t *physical = database.data + eventPhysical;
         const uint8_t *semantic = semanticRecord(eventSemantic);
         const uint8_t *stored = semanticRecord(storageSemantic);
-        if (read32(physical + 4) != OBELISK_RT_DESIGN_TYPE_ARRAY ||
+        if (read32(physical + 4) != TALOS_RT_DESIGN_TYPE_ARRAY ||
             readI64(physical + 16) != left || readI64(physical + 24) != right ||
             (read32(semantic) & UINT32_C(0xff)) !=
-                OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+                TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
             (read32(stored) & UINT32_C(0xff)) !=
-                OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+                TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
             readI64(semantic + 32) != left || readI64(semantic + 40) != right ||
             readI64(stored + 32) != left || readI64(stored + 40) != right)
           return false;
@@ -9438,12 +9438,12 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
     if (eventStorage != eventArrayStorage.end()) {
       const uint8_t *physical = database.data + eventPhysical;
-      if (read32(physical + 4) != OBELISK_RT_DESIGN_TYPE_SCALAR ||
+      if (read32(physical + 4) != TALOS_RT_DESIGN_TYPE_SCALAR ||
           read64(physical + 8) != 64 ||
           (read32(semanticRecord(eventSemantic)) & UINT32_C(0xff)) !=
-              OBELISK_RT_DESIGN_SEMANTIC_EVENT ||
+              TALOS_RT_DESIGN_SEMANTIC_EVENT ||
           (read32(semanticRecord(storageSemantic)) & UINT32_C(0xff)) !=
-              OBELISK_RT_DESIGN_SEMANTIC_EVENT)
+              TALOS_RT_DESIGN_SEMANTIC_EVENT)
         return false;
     }
   }
@@ -9453,26 +9453,26 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *object =
         database.data + database.objects + uint64_t{index} * kObjectSize;
     const auto *access =
-        obelisk::reflection::findVPIIndexedAccess(recordVPIKind(object));
+        talos::reflection::findVPIIndexedAccess(recordVPIKind(object));
     // A typed class event array uses its field's physical array shape and
     // receiver binding. Lexical event arrays instead own relation-index
     // members; the two representations cannot describe the same object.
     bool classEventArray =
         recordVPIKind(object) == static_cast<uint32_t>(
-                                    obelisk::reflection::VPIObjectKind::
+                                    talos::reflection::VPIObjectKind::
                                         NamedEventArray) &&
         boundClassFields.count(relationEndpoint(
-            obelisk::reflection::TableKind::Object, index)) != 0;
+            talos::reflection::TableKind::Object, index)) != 0;
     bool requiresIndex =
-        recordKind(object) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        recordKind(object) == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
         !classEventArray &&
         !sourceClassProperties.count(
-            relationEndpoint(obelisk::reflection::TableKind::Object, index)) &&
+            relationEndpoint(talos::reflection::TableKind::Object, index)) &&
         !frameLocals.count(
-            relationEndpoint(obelisk::reflection::TableKind::Object, index)) &&
+            relationEndpoint(talos::reflection::TableKind::Object, index)) &&
         access &&
         access->accessKind ==
-            obelisk::reflection::VPIIndexedAccessKind::RelationElement;
+            talos::reflection::VPIIndexedAccessKind::RelationElement;
     if (requiresIndex != relationIndexedObjects[index])
       return false;
   }
@@ -9503,11 +9503,11 @@ bool validateDatabaseImpl(const Database &database) {
         relationIndex >= database.relationIndexCount)
       return false;
     previousMemberTarget = packedTarget;
-    auto targetTable = obelisk::reflection::unpackTableIndexKind(packedTarget);
-    uint32_t targetIndex = obelisk::reflection::unpackTableIndex(packedTarget);
-    if ((targetTable == obelisk::reflection::TableKind::Scope
+    auto targetTable = talos::reflection::unpackTableIndexKind(packedTarget);
+    uint32_t targetIndex = talos::reflection::unpackTableIndex(packedTarget);
+    if ((targetTable == talos::reflection::TableKind::Scope
              ? targetIndex >= database.scopeCount
-         : targetTable == obelisk::reflection::TableKind::Object
+         : targetTable == talos::reflection::TableKind::Object
              ? targetIndex >= database.objectCount
              : true))
       return false;
@@ -9521,40 +9521,40 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t sourceKind = recordVPIKind(source);
     uint32_t targetKind = recordVPIKind(
         database.data +
-        (targetTable == obelisk::reflection::TableKind::Scope
+        (targetTable == talos::reflection::TableKind::Scope
              ? database.scopes + uint64_t{targetIndex} * kScopeSize
              : database.objects + uint64_t{targetIndex} * kObjectSize));
-    const auto *access = obelisk::reflection::findVPIIndexedAccess(sourceKind);
+    const auto *access = talos::reflection::findVPIIndexedAccess(sourceKind);
     if (ordinal >= elementCount || !access)
       return false;
     uint64_t firstRelation = lowerBoundRelation(
-        database, obelisk::reflection::TableKind::Object, sourceIndex,
+        database, talos::reflection::TableKind::Object, sourceIndex,
         static_cast<uint16_t>(access->relationSelector), true);
     if (firstRelation >= database.relationCount ||
         relationAt(database, firstRelation + ordinal)
                 .getTargetIndexAndTable() != packedTarget)
       return false;
     uint32_t packedArray = 0;
-    if (!obelisk::reflection::tryPackTableIndex(
-            obelisk::reflection::TableKind::Object, sourceIndex, packedArray))
+    if (!talos::reflection::tryPackTableIndex(
+            talos::reflection::TableKind::Object, sourceIndex, packedArray))
       return false;
     if (eventArrayStorage.count(packedArray) != 0 &&
         boundEvents.count(packedTarget) != 0)
       return false;
     auto firstEdge = std::lower_bound(
-        std::begin(obelisk::reflection::vpiTraversals),
-        std::end(obelisk::reflection::vpiTraversals), targetKind,
-        [](const obelisk::reflection::VPITraversalDescriptor &edge,
+        std::begin(talos::reflection::vpiTraversals),
+        std::end(talos::reflection::vpiTraversals), targetKind,
+        [](const talos::reflection::VPITraversalDescriptor &edge,
            uint32_t kind) { return edge.sourceType < kind; });
     for (auto edgeIterator = firstEdge;
-         edgeIterator != std::end(obelisk::reflection::vpiTraversals) &&
+         edgeIterator != std::end(talos::reflection::vpiTraversals) &&
          edgeIterator->sourceType == targetKind;
          ++edgeIterator) {
       const auto &edge = *edgeIterator;
-      if (edge.mode != obelisk::reflection::VPITraversalMode::Handle ||
+      if (edge.mode != talos::reflection::VPITraversalMode::Handle ||
           edge.automaticRelation !=
-              obelisk::reflection::VPIAutomaticRelation::IndexedContainer ||
-          !obelisk::reflection::vpiObjectSetContains(edge.targets, sourceKind))
+              talos::reflection::VPIAutomaticRelation::IndexedContainer ||
+          !talos::reflection::vpiObjectSetContains(edge.targets, sourceKind))
         continue;
       uint64_t reverse =
           lowerBoundRelation(database, targetTable, targetIndex,
@@ -9592,11 +9592,11 @@ bool validateDatabaseImpl(const Database &database) {
     } else {
       uint32_t kind = 0;
       if (!getRecord(database, recordOffset, record, kind) ||
-          kind == OBELISK_RT_DESIGN_RECORD_TYPE)
+          kind == TALOS_RT_DESIGN_RECORD_TYPE)
         return false;
       recordName = read64(record + 40);
-      if (kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
-          (read32(record + 4) & OBELISK_RT_DESIGN_CAP_FRAME_LOCAL))
+      if (kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
+          (read32(record + 4) & TALOS_RT_DESIGN_CAP_FRAME_LOCAL))
         return false;
     }
     if (hash != nameHash(reinterpret_cast<const uint8_t *>(name.data()),
@@ -9648,36 +9648,36 @@ bool validateDatabaseImpl(const Database &database) {
   if (std::find(reachableStatic.begin(), reachableStatic.end(), false) !=
       reachableStatic.end())
     return false;
-  const obelisk::reflection::VPITraversalDescriptor *portConnectionEdge =
+  const talos::reflection::VPITraversalDescriptor *portConnectionEdge =
       nullptr;
-  for (const auto &edge : obelisk::reflection::vpiTraversals) {
+  for (const auto &edge : talos::reflection::vpiTraversals) {
     if (edge.sourceType !=
-            static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Port) ||
+            static_cast<uint32_t>(talos::reflection::VPIObjectKind::Port) ||
         edge.automaticRelation !=
-            obelisk::reflection::VPIAutomaticRelation::DirectPortConnection)
+            talos::reflection::VPIAutomaticRelation::DirectPortConnection)
       continue;
     if (portConnectionEdge)
       return false;
     portConnectionEdge = &edge;
   }
   if (!portConnectionEdge ||
-      portConnectionEdge->mode != obelisk::reflection::VPITraversalMode::Handle)
+      portConnectionEdge->mode != talos::reflection::VPITraversalMode::Handle)
     return false;
   auto lowConnectionTarget = [&](uint32_t sourceIndex, uint32_t &targetIndex) {
     uint64_t relationIndex = lowerBoundRelation(
-        database, obelisk::reflection::TableKind::Object, sourceIndex,
+        database, talos::reflection::TableKind::Object, sourceIndex,
         static_cast<uint16_t>(portConnectionEdge->selector), false);
     if (relationIndex == database.relationCount)
       return false;
     auto relation = relationAt(database, relationIndex);
     if (!relationMatches(
-            relation, obelisk::reflection::TableKind::Object, sourceIndex,
+            relation, talos::reflection::TableKind::Object, sourceIndex,
             static_cast<uint16_t>(portConnectionEdge->selector), false) ||
-        obelisk::reflection::unpackTableIndexKind(
+        talos::reflection::unpackTableIndexKind(
             relation.getTargetIndexAndTable()) !=
-            obelisk::reflection::TableKind::Object)
+            talos::reflection::TableKind::Object)
       return false;
-    targetIndex = obelisk::reflection::unpackTableIndex(
+    targetIndex = talos::reflection::unpackTableIndex(
         relation.getTargetIndexAndTable());
     return true;
   };
@@ -9695,22 +9695,22 @@ bool validateDatabaseImpl(const Database &database) {
     const uint8_t *port = database.data + offset;
     bool indexed = indexedRecords.find(offset) != indexedRecords.end();
     uint64_t refLowConnectionKey =
-        (uint64_t{relationEndpoint(obelisk::reflection::TableKind::Object,
+        (uint64_t{relationEndpoint(talos::reflection::TableKind::Object,
                                    static_cast<uint32_t>(index))}
          << 16) |
-        static_cast<uint16_t>(obelisk::reflection::VPIRelationKind::LowConnRel);
+        static_cast<uint16_t>(talos::reflection::VPIRelationKind::LowConnRel);
     bool hasRefLowConnection =
         inverseConnectionKeys.find(refLowConnectionKey) !=
         inverseConnectionKeys.end();
     uint32_t caps = read32(port + 4);
-    bool isRefPort = (caps & OBELISK_RT_DESIGN_CAP_PORT_REF) != 0;
-    if (recordKind(port) == OBELISK_RT_DESIGN_RECORD_PORT &&
+    bool isRefPort = (caps & TALOS_RT_DESIGN_CAP_PORT_REF) != 0;
+    if (recordKind(port) == TALOS_RT_DESIGN_RECORD_PORT &&
         (isRefPort != hasRefLowConnection ||
-         (isRefPort && (caps & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) != 0)))
+         (isRefPort && (caps & TALOS_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) != 0)))
       return false;
     if (indexed) {
-      if (recordKind(port) == OBELISK_RT_DESIGN_RECORD_PORT &&
-          (read32(port + 4) & OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) != 0 &&
+      if (recordKind(port) == TALOS_RT_DESIGN_RECORD_PORT &&
+          (read32(port + 4) & TALOS_RT_DESIGN_CAP_PORT_WHOLE_SOURCE) != 0 &&
           !hasRefLowConnection) {
         uint32_t targetIndex = 0;
         if (!lowConnectionTarget(static_cast<uint32_t>(index), targetIndex))
@@ -9726,15 +9726,15 @@ bool validateDatabaseImpl(const Database &database) {
     // storage must not create a second name-index identity. Statement-owned
     // typedefs likewise use their exact lexical scope; unnamed blocks may
     // share their enclosing function's display hierarchy.
-    if ((caps & OBELISK_RT_DESIGN_CAP_INTERNAL) != 0 ||
+    if ((caps & TALOS_RT_DESIGN_CAP_INTERNAL) != 0 ||
         classBackingStorage.count(offset) != 0 ||
         eventBackingStorage.count(offset) != 0 ||
         canonicalMethodObjects.count(offset) != 0 ||
         statementTypedefObjects.count(offset) != 0 ||
-        (recordKind(port) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
-         (caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0))
+        (recordKind(port) == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT &&
+         (caps & TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0))
       continue;
-    if (recordKind(port) != OBELISK_RT_DESIGN_RECORD_PORT)
+    if (recordKind(port) != TALOS_RT_DESIGN_RECORD_PORT)
       return false;
     auto canonicalName = indexedNames.find(read64(port + 40));
     if (canonicalName == indexedNames.end() ||
@@ -9763,39 +9763,39 @@ bool validateDatabaseImpl(const Database &database) {
 // Reflection entry points have a C ABI. Keep allocator failures and malformed
 // graph corner cases from unwinding through callers that cannot catch C++
 // exceptions; design_validate retains its explicit outer guard as well.
-obelisk_rt_status validateDatabase(const Database &database) noexcept {
-  OBELISK_RT_TRY {
-    return validateDatabaseImpl(database) ? OBELISK_RT_OK
-                                          : OBELISK_RT_INVALID_DESIGN;
+talos_rt_status validateDatabase(const Database &database) noexcept {
+  TALOS_RT_TRY {
+    return validateDatabaseImpl(database) ? TALOS_RT_OK
+                                          : TALOS_RT_INVALID_DESIGN;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
 uint64_t nameHash(const uint8_t *name, uint64_t size) {
-  return obelisk_stable_hash(name, size);
+  return talos_stable_hash(name, size);
 }
 
 uint32_t descriptorKind(uint32_t recordKind) {
   switch (recordKind) {
-  case OBELISK_RT_DESIGN_RECORD_SCOPE:
-    return OBELISK_RT_DESCRIPTOR_SCOPE;
-  case OBELISK_RT_DESIGN_RECORD_STORAGE:
-    return OBELISK_RT_DESCRIPTOR_STORAGE;
-  case OBELISK_RT_DESIGN_RECORD_NET:
-    return OBELISK_RT_DESCRIPTOR_NET;
-  case OBELISK_RT_DESIGN_RECORD_DRIVER:
-    return OBELISK_RT_DESCRIPTOR_DRIVER;
-  case OBELISK_RT_DESIGN_RECORD_PROCESS:
-    return OBELISK_RT_DESCRIPTOR_PROCESS;
-  case OBELISK_RT_DESIGN_RECORD_FUNCTION:
-    return OBELISK_RT_DESCRIPTOR_FUNCTION;
-  case OBELISK_RT_DESIGN_RECORD_PORT:
-    return OBELISK_RT_DESCRIPTOR_PORT;
-  case OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT:
-    return OBELISK_RT_DESCRIPTOR_INVALID;
+  case TALOS_RT_DESIGN_RECORD_SCOPE:
+    return TALOS_RT_DESCRIPTOR_SCOPE;
+  case TALOS_RT_DESIGN_RECORD_STORAGE:
+    return TALOS_RT_DESCRIPTOR_STORAGE;
+  case TALOS_RT_DESIGN_RECORD_NET:
+    return TALOS_RT_DESCRIPTOR_NET;
+  case TALOS_RT_DESIGN_RECORD_DRIVER:
+    return TALOS_RT_DESCRIPTOR_DRIVER;
+  case TALOS_RT_DESIGN_RECORD_PROCESS:
+    return TALOS_RT_DESCRIPTOR_PROCESS;
+  case TALOS_RT_DESIGN_RECORD_FUNCTION:
+    return TALOS_RT_DESCRIPTOR_FUNCTION;
+  case TALOS_RT_DESIGN_RECORD_PORT:
+    return TALOS_RT_DESCRIPTOR_PORT;
+  case TALOS_RT_DESIGN_RECORD_STATIC_OBJECT:
+    return TALOS_RT_DESCRIPTOR_INVALID;
   default:
-    return OBELISK_RT_DESCRIPTOR_INVALID;
+    return TALOS_RT_DESCRIPTOR_INVALID;
   }
 }
 
@@ -9803,15 +9803,15 @@ uint32_t transitionEdges(bool oldValue, bool oldUnknown, bool newValue,
                          bool newUnknown) {
   if (oldValue == newValue && oldUnknown == newUnknown)
     return 0;
-  uint32_t result = OBELISK_RT_SIGNAL_CHANGE;
+  uint32_t result = TALOS_RT_SIGNAL_CHANGE;
   bool oldZero = !oldUnknown && !oldValue;
   bool oldOne = !oldUnknown && oldValue;
   bool newZero = !newUnknown && !newValue;
   bool newOne = !newUnknown && newValue;
   if ((oldZero && !newZero) || (oldUnknown && newOne))
-    result |= OBELISK_RT_SIGNAL_POSEDGE;
+    result |= TALOS_RT_SIGNAL_POSEDGE;
   if ((oldOne && !newOne) || (oldUnknown && newZero))
-    result |= OBELISK_RT_SIGNAL_NEGEDGE;
+    result |= TALOS_RT_SIGNAL_NEGEDGE;
   return result;
 }
 
@@ -9826,7 +9826,7 @@ struct RegisteredDatabase {
 // image are alive, and remove the final reference during context destruction.
 struct DatabaseRegistry {
   std::mutex mutex;
-  std::unordered_map<const obelisk_rt_execution_descriptor_v1 *,
+  std::unordered_map<const talos_rt_execution_descriptor_v1 *,
                      RegisteredDatabase>
       databases;
 };
@@ -9838,7 +9838,7 @@ DatabaseRegistry &databaseRegistry() {
 
 bool matchesExecution(
     const Database &database,
-    const obelisk_rt_execution_descriptor_v1 *execution) noexcept {
+    const talos_rt_execution_descriptor_v1 *execution) noexcept {
   return execution && database.validated &&
          database.data == execution->design_database &&
          database.size == execution->design_database_size &&
@@ -9999,7 +9999,7 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.validated == right.validated;
 }
 
-bool registeredDatabase(const obelisk_rt_execution_descriptor_v1 *execution,
+bool registeredDatabase(const talos_rt_execution_descriptor_v1 *execution,
                         Database &database) {
   if (!execution)
     return false;
@@ -10013,41 +10013,41 @@ bool registeredDatabase(const obelisk_rt_execution_descriptor_v1 *execution,
   return true;
 }
 
-obelisk_rt_status
-loadValidatedDatabase(const obelisk_rt_execution_descriptor_v1 *execution,
+talos_rt_status
+loadValidatedDatabase(const talos_rt_execution_descriptor_v1 *execution,
                       Database &database) noexcept {
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     if (registeredDatabase(execution, database))
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
   if (!parseHeader(execution, database))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   return validateDatabase(database);
 }
 
-obelisk_rt_status mapInvalidDatabase(obelisk_rt_status status,
-                                     obelisk_rt_status invalidStatus) noexcept {
-  return status == OBELISK_RT_INVALID_DESIGN ? invalidStatus : status;
+talos_rt_status mapInvalidDatabase(talos_rt_status status,
+                                     talos_rt_status invalidStatus) noexcept {
+  return status == TALOS_RT_INVALID_DESIGN ? invalidStatus : status;
 }
 
-const Database *cachedDatabase(const obelisk_rt_context *context) {
+const Database *cachedDatabase(const talos_rt_context *context) {
   if (!context ||
       !matchesExecution(context->designDatabase, context->execution))
     return nullptr;
   return &context->designDatabase;
 }
 
-obelisk_rt_status designRoot(const Database &database,
-                             obelisk_rt_design_cursor_v1 *outCursor) {
+talos_rt_status designRoot(const Database &database,
+                             talos_rt_design_cursor_v1 *outCursor) {
   outCursor->offset = database.root;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designParent(const Database &database,
-                               obelisk_rt_design_cursor_v1 cursor,
-                               obelisk_rt_design_cursor_v1 *outCursor) {
+talos_rt_status designParent(const Database &database,
+                               talos_rt_design_cursor_v1 cursor,
+                               talos_rt_design_cursor_v1 *outCursor) {
   uint32_t expressionRootIndex = 0, expressionOrdinal = 0,
            defaultBinding = UINT32_MAX;
   const uint8_t *root = nullptr, *recipe = nullptr, *node = nullptr;
@@ -10057,9 +10057,9 @@ obelisk_rt_status designParent(const Database &database,
     uint32_t scope = 0;
     if (!expressionContext(database, root, scope, nullptr, nullptr,
                            defaultBinding))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     outCursor->offset = database.scopes + uint64_t{scope} * kScopeSize;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
   uint32_t scopeIndex = 0;
@@ -10070,79 +10070,79 @@ obelisk_rt_status designParent(const Database &database,
                              member, nullptr, nullptr, &refObject)) {
     if (refObject) {
       *outCursor = {};
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     }
     outCursor->offset = database.scopes + uint64_t{scopeIndex} * kScopeSize;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (isStaticObjectOffset(database, cursor.offset)) {
     uint32_t scope = read32(database.data + cursor.offset + 8);
     if (scope == UINT32_MAX) {
       *outCursor = {};
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     }
     outCursor->offset = database.scopes + uint64_t{scope} * kScopeSize;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   const uint8_t *record;
   uint32_t kind;
   if (!getRecord(database, cursor.offset, record, kind) ||
-      (kind != OBELISK_RT_DESIGN_RECORD_SCOPE &&
+      (kind != TALOS_RT_DESIGN_RECORD_SCOPE &&
        !isObjectOffset(database, cursor.offset)))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   outCursor->offset = read64(record + 16);
-  return outCursor->offset == 0 ? OBELISK_RT_EOF : OBELISK_RT_OK;
+  return outCursor->offset == 0 ? TALOS_RT_EOF : TALOS_RT_OK;
 }
 
-obelisk_rt_status designChild(const Database &database,
-                              obelisk_rt_design_cursor_v1 cursor,
-                              obelisk_rt_design_cursor_v1 *outCursor) {
+talos_rt_status designChild(const Database &database,
+                              talos_rt_design_cursor_v1 cursor,
+                              talos_rt_design_cursor_v1 *outCursor) {
   const uint8_t *record;
   uint32_t kind;
   if (!getRecord(database, cursor.offset, record, kind) ||
-      kind != OBELISK_RT_DESIGN_RECORD_SCOPE)
-    return OBELISK_RT_INVALID_HANDLE;
+      kind != TALOS_RT_DESIGN_RECORD_SCOPE)
+    return TALOS_RT_INVALID_HANDLE;
   outCursor->offset = read64(record + 24);
-  return outCursor->offset == 0 ? OBELISK_RT_EOF : OBELISK_RT_OK;
+  return outCursor->offset == 0 ? TALOS_RT_EOF : TALOS_RT_OK;
 }
 
-obelisk_rt_status designChildAt(const Database &database,
-                                obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status designChildAt(const Database &database,
+                                talos_rt_design_cursor_v1 cursor,
                                 uint64_t index,
-                                obelisk_rt_design_cursor_v1 *outCursor) {
+                                talos_rt_design_cursor_v1 *outCursor) {
   const uint8_t *record;
   uint32_t kind;
   if (!getRecord(database, cursor.offset, record, kind) ||
-      kind != OBELISK_RT_DESIGN_RECORD_SCOPE)
-    return OBELISK_RT_INVALID_HANDLE;
+      kind != TALOS_RT_DESIGN_RECORD_SCOPE)
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t child = read64(record + 24);
   for (uint64_t ordinal = 0; ordinal != index && child != 0; ++ordinal) {
     const uint8_t *childRecord;
     uint32_t childKind;
     if (!getRecord(database, child, childRecord, childKind) ||
-        childKind == OBELISK_RT_DESIGN_RECORD_TYPE)
-      return OBELISK_RT_INVALID_DESIGN;
+        childKind == TALOS_RT_DESIGN_RECORD_TYPE)
+      return TALOS_RT_INVALID_DESIGN;
     child = nextOffset(childRecord, childKind);
   }
   outCursor->offset = child;
-  return child == 0 ? OBELISK_RT_EOF : OBELISK_RT_OK;
+  return child == 0 ? TALOS_RT_EOF : TALOS_RT_OK;
 }
 
-obelisk_rt_status designSibling(const Database &database,
-                                obelisk_rt_design_cursor_v1 cursor,
-                                obelisk_rt_design_cursor_v1 *outCursor) {
+talos_rt_status designSibling(const Database &database,
+                                talos_rt_design_cursor_v1 cursor,
+                                talos_rt_design_cursor_v1 *outCursor) {
   const uint8_t *record;
   uint32_t kind;
   if (!getRecord(database, cursor.offset, record, kind) ||
-      kind == OBELISK_RT_DESIGN_RECORD_TYPE)
-    return OBELISK_RT_INVALID_HANDLE;
+      kind == TALOS_RT_DESIGN_RECORD_TYPE)
+    return TALOS_RT_INVALID_HANDLE;
   outCursor->offset = nextOffset(record, kind);
-  return outCursor->offset == 0 ? OBELISK_RT_EOF : OBELISK_RT_OK;
+  return outCursor->offset == 0 ? TALOS_RT_EOF : TALOS_RT_OK;
 }
 
-obelisk_rt_status designLookup(const Database &database, const uint8_t *name,
+talos_rt_status designLookup(const Database &database, const uint8_t *name,
                                uint64_t nameSize,
-                               obelisk_rt_design_cursor_v1 *outCursor) {
+                               talos_rt_design_cursor_v1 *outCursor) {
   uint64_t wantedHash = nameHash(name, nameSize);
   uint64_t low = 0, high = database.indexCount;
   while (low != high) {
@@ -10160,11 +10160,11 @@ obelisk_rt_status designLookup(const Database &database, const uint8_t *name,
       break;
     std::string_view candidate;
     if (!getString(database, read64(entry + 8), candidate))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (candidate.size() == nameSize &&
         (nameSize == 0 || std::memcmp(candidate.data(), name, nameSize) == 0)) {
       outCursor->offset = read64(entry + 16);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
   }
   // Shared declarations do not duplicate full hierarchical strings or index
@@ -10173,12 +10173,12 @@ obelisk_rt_status designLookup(const Database &database, const uint8_t *name,
     const uint8_t *binding = database.data + database.definitionBindings +
                              uint64_t{index} * kDefinitionBindingSize;
     uint32_t packed = read32(binding);
-    if (obelisk::reflection::unpackTableIndexKind(packed) !=
-        obelisk::reflection::TableKind::Scope)
+    if (talos::reflection::unpackTableIndexKind(packed) !=
+        talos::reflection::TableKind::Scope)
       continue;
     const uint8_t *scope =
         database.data + database.scopes +
-        uint64_t{obelisk::reflection::unpackTableIndex(packed)} * kScopeSize;
+        uint64_t{talos::reflection::unpackTableIndex(packed)} * kScopeSize;
     std::string_view prefix;
     if (!getString(database, read64(scope + 40), prefix) ||
         nameSize <= prefix.size() || name[prefix.size()] != '.' ||
@@ -10190,39 +10190,39 @@ obelisk_rt_status designLookup(const Database &database, const uint8_t *name,
       uint32_t memberIndex = read32(definition + 16) + ordinal;
       const uint8_t *member = database.data + database.definitionMembers +
                               uint64_t{memberIndex} * kDefinitionMemberSize;
-      using Kind = obelisk::reflection::VPIObjectKind;
+      using Kind = talos::reflection::VPIObjectKind;
       if (read16(member + 16) != static_cast<uint16_t>(Kind::Parameter) &&
           read16(member + 16) != static_cast<uint16_t>(Kind::TypeParameter))
         continue;
       std::string_view local;
       if (!getString(database, database.strings + read32(member), local))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       if (local.size() == nameSize - prefix.size() - 1 &&
           std::memcmp(local.data(), name + prefix.size() + 1, local.size()) ==
               0) {
         outCursor->offset = virtualToken(kVirtualMemberTag, index, memberIndex);
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
     }
   }
   outCursor->offset = 0;
-  return OBELISK_RT_INVALID_HANDLE;
+  return TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status designInfo(const Database &database,
-                             obelisk_rt_design_cursor_v1 cursor,
-                             obelisk_rt_design_info_v1 *outInfo) {
+talos_rt_status designInfo(const Database &database,
+                             talos_rt_design_cursor_v1 cursor,
+                             talos_rt_design_info_v1 *outInfo) {
   uint32_t expressionRootIndex = 0, expressionOrdinal = 0;
   const uint8_t *root = nullptr, *recipe = nullptr, *node = nullptr;
   if (expressionForCursor(database, cursor.offset, expressionRootIndex,
                           expressionOrdinal, root, recipe, node)) {
     *outInfo = {};
-    outInfo->kind = OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
+    outInfo->kind = TALOS_RT_DESIGN_RECORD_STATIC_OBJECT;
     if (read32(node + 4) != UINT32_MAX &&
         semanticPackedBitWidth(database, read32(node + 4),
-                               &outInfo->bit_width) != OBELISK_RT_OK)
-      return OBELISK_RT_INVALID_DESIGN;
-    return OBELISK_RT_OK;
+                               &outInfo->bit_width) != TALOS_RT_OK)
+      return TALOS_RT_INVALID_DESIGN;
+    return TALOS_RT_OK;
   }
 
   uint32_t scopeIndex = 0;
@@ -10236,28 +10236,28 @@ obelisk_rt_status designInfo(const Database &database,
     *outInfo = {};
     uint16_t exactKind =
         refObject
-            ? static_cast<uint16_t>(obelisk::reflection::VPIObjectKind::RefObj)
+            ? static_cast<uint16_t>(talos::reflection::VPIObjectKind::RefObj)
             : read16(member + 16);
     outInfo->kind = exactKind == static_cast<uint16_t>(
-                                     obelisk::reflection::VPIObjectKind::IODecl)
-                        ? OBELISK_RT_DESIGN_RECORD_PORT
-                        : OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
+                                     talos::reflection::VPIObjectKind::IODecl)
+                        ? TALOS_RT_DESIGN_RECORD_PORT
+                        : TALOS_RT_DESIGN_RECORD_STATIC_OBJECT;
     if (!refObject &&
         exactKind ==
-            static_cast<uint16_t>(obelisk::reflection::VPIObjectKind::IODecl)) {
+            static_cast<uint16_t>(talos::reflection::VPIObjectKind::IODecl)) {
       uint16_t direction = read16(member + 18);
       outInfo->capabilities = static_cast<uint32_t>(direction)
-                              << OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT;
+                              << TALOS_RT_DESIGN_CAP_IO_DIRECTION_SHIFT;
       switch (direction) {
       case 1:
-        outInfo->capabilities |= OBELISK_RT_DESIGN_CAP_PORT_INPUT;
+        outInfo->capabilities |= TALOS_RT_DESIGN_CAP_PORT_INPUT;
         break;
       case 2:
-        outInfo->capabilities |= OBELISK_RT_DESIGN_CAP_PORT_OUTPUT;
+        outInfo->capabilities |= TALOS_RT_DESIGN_CAP_PORT_OUTPUT;
         break;
       case 3:
-        outInfo->capabilities |= OBELISK_RT_DESIGN_CAP_PORT_INPUT |
-                                 OBELISK_RT_DESIGN_CAP_PORT_OUTPUT;
+        outInfo->capabilities |= TALOS_RT_DESIGN_CAP_PORT_INPUT |
+                                 TALOS_RT_DESIGN_CAP_PORT_OUTPUT;
         break;
       default:
         break;
@@ -10265,20 +10265,20 @@ obelisk_rt_status designInfo(const Database &database,
     }
     if (!refObject &&
         (exactKind == static_cast<uint16_t>(
-                          obelisk::reflection::VPIObjectKind::Parameter) ||
+                          talos::reflection::VPIObjectKind::Parameter) ||
          exactKind == static_cast<uint16_t>(
-                          obelisk::reflection::VPIObjectKind::TypeParameter))) {
+                          talos::reflection::VPIObjectKind::TypeParameter))) {
       uint16_t flags = read16(member + 18);
       if (flags & kDefinitionParameterRange)
-        outInfo->capabilities |= OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE;
+        outInfo->capabilities |= TALOS_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE;
       if (flags & kDefinitionParameterDefaultUnavailable)
         outInfo->capabilities |=
-            OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT;
+            TALOS_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT;
     }
     if (!refObject && definitionAssignment(member) &&
         (read16(member + 18) & kDefinitionParameterDefaultUnavailable))
       outInfo->capabilities |=
-          OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS;
+          TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS;
     uint32_t semanticType = 0;
     if (findDefinitionMemberSemanticRoot(database, specializationIndex,
                                          memberIndex, semanticType)) {
@@ -10290,10 +10290,10 @@ obelisk_rt_status designInfo(const Database &database,
       uint32_t encodedSemantic = read32(semantic);
       uint32_t semanticKind = encodedSemantic & UINT32_C(0xff);
       if (outInfo->bit_width == 0 &&
-          (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
-           semanticKind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
-           semanticKind == OBELISK_RT_DESIGN_SEMANTIC_REG ||
-           (encodedSemantic & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0)) {
+          (semanticKind == TALOS_RT_DESIGN_SEMANTIC_BIT ||
+           semanticKind == TALOS_RT_DESIGN_SEMANTIC_LOGIC ||
+           semanticKind == TALOS_RT_DESIGN_SEMANTIC_REG ||
+           (encodedSemantic & TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0)) {
         uint64_t distance =
             outInfo->range_left >= outInfo->range_right
                 ? static_cast<uint64_t>(outInfo->range_left) -
@@ -10305,66 +10305,66 @@ obelisk_rt_status designInfo(const Database &database,
       }
       if (outInfo->bit_width == 0)
         switch (semanticKind) {
-        case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
+        case TALOS_RT_DESIGN_SEMANTIC_BYTE:
           outInfo->bit_width = 8;
           break;
-        case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
+        case TALOS_RT_DESIGN_SEMANTIC_SHORT_INT:
           outInfo->bit_width = 16;
           break;
-        case OBELISK_RT_DESIGN_SEMANTIC_INT:
-        case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
-        case OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL:
+        case TALOS_RT_DESIGN_SEMANTIC_INT:
+        case TALOS_RT_DESIGN_SEMANTIC_INTEGER:
+        case TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL:
           outInfo->bit_width = 32;
           break;
-        case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
-        case OBELISK_RT_DESIGN_SEMANTIC_TIME:
-        case OBELISK_RT_DESIGN_SEMANTIC_REAL:
-        case OBELISK_RT_DESIGN_SEMANTIC_REALTIME:
+        case TALOS_RT_DESIGN_SEMANTIC_LONG_INT:
+        case TALOS_RT_DESIGN_SEMANTIC_TIME:
+        case TALOS_RT_DESIGN_SEMANTIC_REAL:
+        case TALOS_RT_DESIGN_SEMANTIC_REALTIME:
           outInfo->bit_width = 64;
           break;
         default:
           break;
         }
     }
-    outInfo->handle = {OBELISK_RT_DESCRIPTOR_INVALID, 0, cursor.offset};
-    return OBELISK_RT_OK;
+    outInfo->handle = {TALOS_RT_DESCRIPTOR_INVALID, 0, cursor.offset};
+    return TALOS_RT_OK;
   }
   if (isStaticObjectOffset(database, cursor.offset)) {
     const uint8_t *record = database.data + cursor.offset;
     *outInfo = {};
-    outInfo->kind = OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
+    outInfo->kind = TALOS_RT_DESIGN_RECORD_STATIC_OBJECT;
     outInfo->capabilities = read16(record + 30);
     uint16_t exactKind = read16(record + 28);
-    const auto *descriptor = obelisk::reflection::findVPIObjectKind(exactKind);
+    const auto *descriptor = talos::reflection::findVPIObjectKind(exactKind);
     if (read32(record + 16) != 0 && descriptor &&
         (descriptor->families &
-         obelisk::reflection::vpiFamilyMask(
-             obelisk::reflection::VPIObjectFamily::Typespec)) != 0)
-      outInfo->capabilities |= OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC;
-    outInfo->handle = {OBELISK_RT_DESCRIPTOR_INVALID, 0, read64(record)};
+         talos::reflection::vpiFamilyMask(
+             talos::reflection::VPIObjectFamily::Typespec)) != 0)
+      outInfo->capabilities |= TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC;
+    outInfo->handle = {TALOS_RT_DESCRIPTOR_INVALID, 0, read64(record)};
     uint32_t packedSource = 0;
     VPIFrozenValue frozen{};
     if (packedObjectReferenceForCursor(database, cursor.offset, packedSource) &&
         findFrozenValue(database, packedSource, frozen))
       outInfo->bit_width = frozen.bitWidth;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   const uint8_t *record;
   uint32_t kind;
   if (!getRecord(database, cursor.offset, record, kind) ||
-      kind == OBELISK_RT_DESIGN_RECORD_TYPE)
-    return OBELISK_RT_INVALID_HANDLE;
+      kind == TALOS_RT_DESIGN_RECORD_TYPE)
+    return TALOS_RT_INVALID_HANDLE;
   *outInfo = {};
   outInfo->kind = kind;
   outInfo->capabilities = read32(record + 4);
   outInfo->handle = {descriptorKind(kind), 0, read64(record + 8)};
-  if (kind != OBELISK_RT_DESIGN_RECORD_SCOPE) {
+  if (kind != TALOS_RT_DESIGN_RECORD_SCOPE) {
     outInfo->type_offset = read64(record + 48);
     outInfo->bit_width = read64(record + 56);
     outInfo->range_left = readI64(record + 64);
     outInfo->range_right = readI64(record + 72);
   }
-  if (kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT) {
+  if (kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT) {
     // Class-owned parameters use full records to retain their distinct
     // lexical and specialization identities, with the same frozen value
     // metadata as compact parameters and no executable storage type.
@@ -10374,17 +10374,17 @@ obelisk_rt_status designInfo(const Database &database,
         findFrozenValue(database, packedSource, frozen))
       outInfo->bit_width = frozen.bitWidth;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designTypeInfo(const Database &database,
-                                 obelisk_rt_design_cursor_v1 cursor,
-                                 obelisk_rt_design_type_info_v1 *outInfo) {
+talos_rt_status designTypeInfo(const Database &database,
+                                 talos_rt_design_cursor_v1 cursor,
+                                 talos_rt_design_type_info_v1 *outInfo) {
   const uint8_t *record;
   uint32_t recordKind;
   if (!getRecord(database, cursor.offset, record, recordKind) ||
-      recordKind != OBELISK_RT_DESIGN_RECORD_TYPE)
-    return OBELISK_RT_INVALID_HANDLE;
+      recordKind != TALOS_RT_DESIGN_RECORD_TYPE)
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t encoded = read32(record + 4);
   *outInfo = {};
   outInfo->kind = encoded & UINT32_C(0xff);
@@ -10395,40 +10395,40 @@ obelisk_rt_status designTypeInfo(const Database &database,
   outInfo->element_type.offset = read64(record + 32);
   outInfo->first_child.offset = read64(record + 40);
   outInfo->child_count = read64(record + 48);
-  if (outInfo->kind == OBELISK_RT_DESIGN_TYPE_FIELD)
+  if (outInfo->kind == TALOS_RT_DESIGN_TYPE_FIELD)
     outInfo->ordinal = read64(record + 56);
-  if (outInfo->kind == OBELISK_RT_DESIGN_TYPE_UNION)
+  if (outInfo->kind == TALOS_RT_DESIGN_TYPE_UNION)
     outInfo->tag_bits = read64(record + 56);
   outInfo->packed_offset = read64(record + 64);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designTypeChild(const Database &database,
-                                  obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status designTypeChild(const Database &database,
+                                  talos_rt_design_cursor_v1 cursor,
                                   uint64_t index,
-                                  obelisk_rt_design_cursor_v1 *outCursor) {
+                                  talos_rt_design_cursor_v1 *outCursor) {
   const uint8_t *record;
   uint32_t recordKind;
   if (!getRecord(database, cursor.offset, record, recordKind) ||
-      recordKind != OBELISK_RT_DESIGN_RECORD_TYPE)
-    return OBELISK_RT_INVALID_HANDLE;
+      recordKind != TALOS_RT_DESIGN_RECORD_TYPE)
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t count = read64(record + 48);
   if (index >= count) {
     outCursor->offset = 0;
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   }
   uint64_t child = read64(record + 40) + index * kTypeSize;
   if (!isTypeOffset(database, child) ||
       (read32(database.data + child + 4) & UINT32_C(0xff)) !=
-          OBELISK_RT_DESIGN_TYPE_FIELD)
-    return OBELISK_RT_INVALID_DESIGN;
+          TALOS_RT_DESIGN_TYPE_FIELD)
+    return TALOS_RT_INVALID_DESIGN;
   outCursor->offset = child;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designSemanticRoot(const Database &database,
-                                     obelisk_rt_design_cursor_v1 object,
-                                     obelisk_rt_design_cursor_v1 *outCursor) {
+talos_rt_status designSemanticRoot(const Database &database,
+                                     talos_rt_design_cursor_v1 object,
+                                     talos_rt_design_cursor_v1 *outCursor) {
   uint32_t expressionRootIndex = 0, expressionOrdinal = 0;
   const uint8_t *expressionRootRecord = nullptr, *recipe = nullptr,
                 *node = nullptr;
@@ -10437,10 +10437,10 @@ obelisk_rt_status designSemanticRoot(const Database &database,
                           node)) {
     if (read32(node + 4) == UINT32_MAX) {
       *outCursor = {};
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     }
     outCursor->offset = uint64_t{read32(node + 4)} + 1;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
   uint32_t scopeIndex = 0;
@@ -10453,52 +10453,52 @@ obelisk_rt_status designSemanticRoot(const Database &database,
     if (!findDefinitionMemberSemanticRoot(database, specializationIndex,
                                           memberIndex, root)) {
       outCursor->offset = 0;
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     }
     outCursor->offset = uint64_t{root} + 1;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   uint32_t packedObject = 0;
   if (!packedObjectReferenceForCursor(database, object.offset, packedObject))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t root = UINT32_MAX;
   if (!findSemanticRootBinding(database, packedObject, root)) {
     outCursor->offset = 0;
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   }
   if (root >= database.semanticTypeCount)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   outCursor->offset = uint64_t{root} + 1;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
+talos_rt_status
 designSemanticTypeInfo(const Database &database,
-                       obelisk_rt_design_cursor_v1 cursor,
-                       obelisk_rt_design_semantic_type_info_v1 *outInfo) {
+                       talos_rt_design_cursor_v1 cursor,
+                       talos_rt_design_semantic_type_info_v1 *outInfo) {
   if (cursor.offset == 0 || cursor.offset > database.semanticTypeCount)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   const uint8_t *record = database.data + database.semanticTypes +
                           (cursor.offset - 1) * kSemanticTypeSize;
   uint32_t encoded = read32(record);
   *outInfo = {};
   outInfo->kind = encoded & UINT32_C(0xff);
-  outInfo->flags = encoded & (OBELISK_RT_DESIGN_SEMANTIC_SIGNED |
-                              OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
-                              OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
-                              OBELISK_RT_DESIGN_SEMANTIC_TAGGED |
-                              OBELISK_RT_DESIGN_SEMANTIC_SOFT |
-                              OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX |
-                              OBELISK_RT_DESIGN_SEMANTIC_PROJECTED);
+  outInfo->flags = encoded & (TALOS_RT_DESIGN_SEMANTIC_SIGNED |
+                              TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE |
+                              TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE |
+                              TALOS_RT_DESIGN_SEMANTIC_TAGGED |
+                              TALOS_RT_DESIGN_SEMANTIC_SOFT |
+                              TALOS_RT_DESIGN_SEMANTIC_WILDCARD_INDEX |
+                              TALOS_RT_DESIGN_SEMANTIC_PROJECTED);
   outInfo->public_vpi_kind =
-      (encoded & OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
-      OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
+      (encoded & TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
+      TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
   outInfo->first_edge = read32(record + 4);
   outInfo->edge_count = read32(record + 8);
   uint32_t aliasObject = read32(record + 12);
   uint32_t identityTarget = read32(record + 16);
   auto setObjectReference = [&](uint32_t packed,
-                                obelisk_rt_design_cursor_v1 &result) {
+                                talos_rt_design_cursor_v1 &result) {
     if (packed == UINT32_MAX) {
       result.offset = 0;
       return true;
@@ -10507,7 +10507,7 @@ designSemanticTypeInfo(const Database &database,
   };
   if (!setObjectReference(aliasObject, outInfo->alias_object) ||
       !setObjectReference(identityTarget, outInfo->identity_target))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   auto setString = [&](uint32_t relative, const uint8_t *&data,
                        uint64_t &size) {
     if (relative == 0) {
@@ -10524,27 +10524,27 @@ designSemanticTypeInfo(const Database &database,
   };
   if (!setString(read32(record + 20), outInfo->name, outInfo->name_size) ||
       !setString(read32(record + 24), outInfo->modport, outInfo->modport_size))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   outInfo->queue_bound = read32(record + 28);
   outInfo->range_left = readI64(record + 32);
   outInfo->range_right = readI64(record + 40);
   outInfo->bit_width = read64(record + 48);
   outInfo->tag_bits = read64(record + 56);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
+talos_rt_status
 designSemanticTypeEdge(const Database &database,
-                       obelisk_rt_design_cursor_v1 cursor, uint64_t index,
-                       obelisk_rt_design_semantic_type_edge_v1 *outEdge) {
+                       talos_rt_design_cursor_v1 cursor, uint64_t index,
+                       talos_rt_design_semantic_type_edge_v1 *outEdge) {
   if (cursor.offset == 0 || cursor.offset > database.semanticTypeCount)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   const uint8_t *type = database.data + database.semanticTypes +
                         (cursor.offset - 1) * kSemanticTypeSize;
   uint32_t first = read32(type + 4);
   uint32_t count = read32(type + 8);
   if (index >= count)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   const uint8_t *edge =
       database.data + database.semanticTypeEdges +
       uint64_t{first + static_cast<uint32_t>(index)} * kSemanticTypeEdgeSize;
@@ -10558,16 +10558,16 @@ designSemanticTypeEdge(const Database &database,
   if (name != 0) {
     std::string_view text;
     if (!getString(database, database.strings + name, text))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     outEdge->name = reinterpret_cast<const uint8_t *>(text.data());
     outEdge->name_size = text.size();
   }
   outEdge->packed_offset = read64(edge + 16);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designName(const Database &database,
-                             obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status designName(const Database &database,
+                             talos_rt_design_cursor_v1 cursor,
                              const uint8_t **outData, uint64_t *outSize) {
   uint32_t scopeIndex = 0;
   uint32_t memberIndex = 0;
@@ -10577,10 +10577,10 @@ obelisk_rt_status designName(const Database &database,
     std::string_view name;
     if (read32(member) &&
         !getString(database, database.strings + read32(member), name))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     *outData = reinterpret_cast<const uint8_t *>(name.data());
     *outSize = name.size();
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (isStatementOffset(database, cursor.offset)) {
     const uint8_t *statement = database.data + cursor.offset;
@@ -10588,28 +10588,28 @@ obelisk_rt_status designName(const Database &database,
     if (relative == 0) {
       *outData = nullptr;
       *outSize = 0;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     std::string_view name;
     if (!getString(database, database.strings + relative, name))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     *outData = reinterpret_cast<const uint8_t *>(name.data());
     *outSize = name.size();
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (isStaticObjectOffset(database, cursor.offset)) {
     uint32_t relative = read32(database.data + cursor.offset + 16);
     if (relative == 0) {
       *outData = nullptr;
       *outSize = 0;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     std::string_view name;
     if (!getString(database, database.strings + relative, name))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     *outData = reinterpret_cast<const uint8_t *>(name.data());
     *outSize = name.size();
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   const uint8_t *record;
   uint32_t kind;
@@ -10617,23 +10617,23 @@ obelisk_rt_status designName(const Database &database,
   if (!getRecord(database, cursor.offset, record, kind) ||
       !getString(
           database,
-          read64(record + (kind == OBELISK_RT_DESIGN_RECORD_TYPE ? 72 : 40)),
+          read64(record + (kind == TALOS_RT_DESIGN_RECORD_TYPE ? 72 : 40)),
           name))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   *outData = reinterpret_cast<const uint8_t *>(name.data());
   *outSize = name.size();
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designVPIType(const Database &database,
-                                obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status designVPIType(const Database &database,
+                                talos_rt_design_cursor_v1 cursor,
                                 uint32_t *outType) {
   uint32_t expressionRootIndex = 0, expressionOrdinal = 0;
   const uint8_t *root = nullptr, *recipe = nullptr, *node = nullptr;
   if (expressionForCursor(database, cursor.offset, expressionRootIndex,
                           expressionOrdinal, root, recipe, node)) {
     *outType = read16(node);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
   uint32_t scopeIndex = 0;
@@ -10644,116 +10644,116 @@ obelisk_rt_status designVPIType(const Database &database,
                              member, nullptr, nullptr, &refObject)) {
     *outType =
         refObject
-            ? static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::RefObj)
+            ? static_cast<uint32_t>(talos::reflection::VPIObjectKind::RefObj)
             : read16(member + 16);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (isStatementOffset(database, cursor.offset)) {
     *outType = read16(database.data + cursor.offset + 36);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (isStaticObjectOffset(database, cursor.offset)) {
     *outType = read16(database.data + cursor.offset + 28);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (!isScopeOffset(database, cursor.offset) &&
       !isObjectOffset(database, cursor.offset))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   *outType = recordVPIKind(database.data + cursor.offset);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designVPIFixedProperty(const Database &database,
-                                         obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status designVPIFixedProperty(const Database &database,
+                                         talos_rt_design_cursor_v1 cursor,
                                          uint32_t selector,
                                          VPIFixedPropertyValue *outValue) {
   *outValue = {};
   if (selector > UINT16_MAX)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   uint32_t expressionRootIndex = 0, expressionOrdinal = 0;
   const uint8_t *root = nullptr, *recipe = nullptr, *node = nullptr;
   if (expressionForCursor(database, cursor.offset, expressionRootIndex,
                           expressionOrdinal, root, recipe, node)) {
-    if (!obelisk::reflection::findVPIProperty(read16(node), selector))
-      return OBELISK_RT_EOF;
+    if (!talos::reflection::findVPIProperty(read16(node), selector))
+      return TALOS_RT_EOF;
     if ((selector == 39 &&
          read16(node) ==
-             uint32_t(obelisk::reflection::VPIObjectKind::Operation)) ||
+             uint32_t(talos::reflection::VPIObjectKind::Operation)) ||
         (selector == 40 &&
          read16(node) ==
-             uint32_t(obelisk::reflection::VPIObjectKind::Constant)) ||
+             uint32_t(talos::reflection::VPIObjectKind::Constant)) ||
         (selector == 72 &&
          read16(node) ==
-             uint32_t(obelisk::reflection::VPIObjectKind::IndexedPartSelect))) {
+             uint32_t(talos::reflection::VPIObjectKind::IndexedPartSelect))) {
       outValue->kind =
-          uint8_t(obelisk::reflection::VPIPropertyValueKind::Integer);
+          uint8_t(talos::reflection::VPIPropertyValueKind::Integer);
       outValue->payload = read16(node + 2);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (selector == 6 && read32(node + 20)) {
       outValue->kind =
-          uint8_t(obelisk::reflection::VPIPropertyValueKind::Integer);
+          uint8_t(talos::reflection::VPIPropertyValueKind::Integer);
       outValue->payload = read32(node + 20);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (selector == 5 && read32(node + 16) != UINT32_MAX) {
       std::string_view value;
       if (!getString(database, database.strings + read32(node + 16), value))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       outValue->kind =
-          uint8_t(obelisk::reflection::VPIPropertyValueKind::String);
+          uint8_t(talos::reflection::VPIPropertyValueKind::String);
       outValue->stringData = reinterpret_cast<const uint8_t *>(value.data());
       outValue->stringSize = value.size();
       outValue->payload = database.strings + read32(node + 16);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   }
   uint32_t virtualScope = 0;
   uint32_t virtualMember = 0;
   const uint8_t *member = nullptr;
   if (virtualMemberForCursor(database, cursor.offset, virtualScope,
                              virtualMember, member)) {
-    using Kind = obelisk::reflection::VPIObjectKind;
+    using Kind = talos::reflection::VPIObjectKind;
     bool parameter =
         read16(member + 16) == static_cast<uint16_t>(Kind::Parameter) ||
         read16(member + 16) == static_cast<uint16_t>(Kind::TypeParameter);
     if (definitionAssignment(member) && selector == 21 /* vpiConnByName */) {
       outValue->kind =
-          uint8_t(obelisk::reflection::VPIPropertyValueKind::Boolean);
+          uint8_t(talos::reflection::VPIPropertyValueKind::Boolean);
       outValue->payload =
           (read16(member + 18) & kDefinitionAssignmentNamed) != 0;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (!parameter)
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     if (selector == 2 /* vpiName */) {
       std::string_view name;
       if (!getString(database, database.strings + read32(member), name))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       outValue->kind = static_cast<uint8_t>(
-          obelisk::reflection::VPIPropertyValueKind::String);
+          talos::reflection::VPIPropertyValueKind::String);
       outValue->payload = database.strings + read32(member);
       outValue->stringData = reinterpret_cast<const uint8_t *>(name.data());
       outValue->stringSize = name.size();
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (selector == 70 /* vpiLocalParam */) {
       outValue->kind = static_cast<uint8_t>(
-          obelisk::reflection::VPIPropertyValueKind::Boolean);
+          talos::reflection::VPIPropertyValueKind::Boolean);
       outValue->payload =
           (read16(member + 18) & kDefinitionParameterLocal) != 0;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   }
-  obelisk::reflection::TableKind table;
+  talos::reflection::TableKind table;
   uint32_t sourceIndex = 0;
   if (!relationSourceForCursor(database, cursor.offset, table, sourceIndex))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t packedSource = 0;
-  if (!obelisk::reflection::tryPackTableIndex(table, sourceIndex, packedSource))
-    return OBELISK_RT_INVALID_HANDLE;
+  if (!talos::reflection::tryPackTableIndex(table, sourceIndex, packedSource))
+    return TALOS_RT_INVALID_HANDLE;
 
   // Definition-backed properties are the common path for elaborated module,
   // interface, program, and built-in primitive instances. Validated images
@@ -10777,39 +10777,39 @@ obelisk_rt_status designVPIFixedProperty(const Database &database,
       if (read32(binding) == packedSource) {
         uint32_t definitionIndex = read32(binding + 4);
         if (definitionIndex >= database.definitionCount)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         const uint8_t *definition = database.data + database.definitions +
                                     uint64_t{definitionIndex} * kDefinitionSize;
         if (selector == 33) {
           uint16_t primitiveType = read16(definition + 2);
           if (primitiveType == 0)
-            return OBELISK_RT_EOF;
+            return TALOS_RT_EOF;
           outValue->kind = static_cast<uint8_t>(
-              obelisk::reflection::VPIPropertyValueKind::Integer);
+              talos::reflection::VPIPropertyValueKind::Integer);
           outValue->payload = primitiveType;
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
         }
         if (selector == 16) {
           uint32_t line = read32(definition + 12);
           if (line == 0)
-            return OBELISK_RT_EOF;
+            return TALOS_RT_EOF;
           outValue->kind = static_cast<uint8_t>(
-              obelisk::reflection::VPIPropertyValueKind::Integer);
+              talos::reflection::VPIPropertyValueKind::Integer);
           outValue->payload = line;
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
         }
         uint32_t relative = read32(definition + (selector == 9 ? 4 : 8));
         if (relative == 0)
-          return OBELISK_RT_EOF;
+          return TALOS_RT_EOF;
         outValue->kind = static_cast<uint8_t>(
-            obelisk::reflection::VPIPropertyValueKind::String);
+            talos::reflection::VPIPropertyValueKind::String);
         outValue->payload = database.strings + relative;
         std::string_view value;
         if (!getString(database, outValue->payload, value))
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         outValue->stringData = reinterpret_cast<const uint8_t *>(value.data());
         outValue->stringSize = value.size();
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
     }
   }
@@ -10838,14 +10838,14 @@ obelisk_rt_status designVPIFixedProperty(const Database &database,
       outValue->payload = read64(record + 8);
       if (outValue->kind ==
           static_cast<uint8_t>(
-              obelisk::reflection::VPIPropertyValueKind::String)) {
+              talos::reflection::VPIPropertyValueKind::String)) {
         std::string_view value;
         if (!getString(database, outValue->payload, value))
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         outValue->stringData = reinterpret_cast<const uint8_t *>(value.data());
         outValue->stringSize = value.size();
       }
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
   }
 
@@ -10853,56 +10853,56 @@ obelisk_rt_status designVPIFixedProperty(const Database &database,
   // overrides above take precedence; gate defaults reuse the shared subtype.
   if (selector == 31 || selector == 32) {
     uint32_t kind = 0;
-    if (designVPIType(database, cursor, &kind) != OBELISK_RT_OK)
-      return OBELISK_RT_INVALID_HANDLE;
+    if (designVPIType(database, cursor, &kind) != TALOS_RT_OK)
+      return TALOS_RT_INVALID_HANDLE;
     uint32_t strength = 0;
-    using Kind = obelisk::reflection::VPIObjectKind;
+    using Kind = talos::reflection::VPIObjectKind;
     if (kind == static_cast<uint32_t>(Kind::ContAssign))
       strength = 64;
     else if (kind == static_cast<uint32_t>(Kind::Gate)) {
       VPIFixedPropertyValue primitive{};
       auto status = designVPIFixedProperty(database, cursor, 33, &primitive);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
-      const auto *subtype = obelisk::reflection::findVPIBuiltinPrimitive(
+      const auto *subtype = talos::reflection::findVPIBuiltinPrimitive(
           static_cast<uint32_t>(primitive.payload));
       if (subtype && subtype->objectKind == kind)
         strength = subtype->defaultDriveStrength;
     }
     if (strength) {
       outValue->kind = static_cast<uint8_t>(
-          obelisk::reflection::VPIPropertyValueKind::Integer);
+          talos::reflection::VPIPropertyValueKind::Integer);
       outValue->payload = strength;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
   }
 
-  return OBELISK_RT_EOF;
+  return TALOS_RT_EOF;
 }
 
-obelisk_rt_status designVPIResolvedNetType(const Database &database,
-                                           obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status designVPIResolvedNetType(const Database &database,
+                                           talos_rt_design_cursor_v1 cursor,
                                            uint64_t bitOffset,
                                            uint64_t bitWidth,
                                            uint32_t *outType) {
   if (!isObjectOffset(database, cursor.offset) || bitWidth == 0)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t objectIndex =
       static_cast<uint32_t>((cursor.offset - database.objects) / kObjectSize);
   const uint8_t *object = database.data + cursor.offset;
   uint64_t width = read64(object + 56);
-  if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_NET || bitOffset > width ||
+  if (recordKind(object) != TALOS_RT_DESIGN_RECORD_NET || bitOffset > width ||
       bitWidth > width - bitOffset)
-    return OBELISK_RT_INVALID_HANDLE;
-  obelisk_rt_status simulated =
+    return TALOS_RT_INVALID_HANDLE;
+  talos_rt_status simulated =
       simulatedNetObjectIndex(database, objectIndex, objectIndex);
-  if (simulated != OBELISK_RT_OK)
+  if (simulated != TALOS_RT_OK)
     return simulated;
   object =
       database.data + database.objects + uint64_t{objectIndex} * kObjectSize;
   uint64_t simulatedWidth = read64(object + 56);
   if (bitOffset > simulatedWidth || bitWidth > simulatedWidth - bitOffset)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
 
   // Find the last run whose start is not after the selected first bit.
   uint64_t low = 0;
@@ -10920,7 +10920,7 @@ obelisk_rt_status designVPIResolvedNetType(const Database &database,
       high = middle;
   }
   if (low == 0)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   uint64_t index = low - 1;
   uint64_t selectedEnd = bitOffset + bitWidth;
   uint64_t covered = bitOffset;
@@ -10934,39 +10934,39 @@ obelisk_rt_status designVPIResolvedNetType(const Database &database,
     uint64_t runEnd = runFirst + read64(run + 16);
     if (runObject != objectIndex || runFirst > covered || runEnd <= covered ||
         (selectedType != 0 && runType != selectedType))
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     selectedType = runType;
     covered = std::min(selectedEnd, runEnd);
     ++index;
   }
   if (covered != selectedEnd || selectedType == 0)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   *outType = selectedType;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designVPINetDelay(const Database &database,
-                                    obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status designVPINetDelay(const Database &database,
+                                    talos_rt_design_cursor_v1 cursor,
                                     uint64_t bitOffset, uint64_t bitWidth,
                                     VPINetDelayValue *outDelay) {
   if (!isObjectOffset(database, cursor.offset) || bitWidth == 0)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t objectIndex =
       static_cast<uint32_t>((cursor.offset - database.objects) / kObjectSize);
   const uint8_t *object = database.data + cursor.offset;
   uint64_t width = read64(object + 56);
-  if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_NET || bitOffset > width ||
+  if (recordKind(object) != TALOS_RT_DESIGN_RECORD_NET || bitOffset > width ||
       bitWidth > width - bitOffset)
-    return OBELISK_RT_INVALID_HANDLE;
-  obelisk_rt_status simulated =
+    return TALOS_RT_INVALID_HANDLE;
+  talos_rt_status simulated =
       simulatedNetObjectIndex(database, objectIndex, objectIndex);
-  if (simulated != OBELISK_RT_OK)
+  if (simulated != TALOS_RT_OK)
     return simulated;
   object =
       database.data + database.objects + uint64_t{objectIndex} * kObjectSize;
   uint64_t simulatedWidth = read64(object + 56);
   if (bitOffset > simulatedWidth || bitWidth > simulatedWidth - bitOffset)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
 
   uint64_t low = 0;
   uint64_t high = database.netDelayRunCount;
@@ -11015,28 +11015,28 @@ obelisk_rt_status designVPINetDelay(const Database &database,
     // A gap is an explicit zero-delay region.
     if (runFirst > covered) {
       if (selected.rise != 0 || selected.fall != 0 || selected.third != 0)
-        return OBELISK_RT_EOF;
+        return TALOS_RT_EOF;
       covered = runFirst;
     }
     if (selected.rise != delay.rise || selected.fall != delay.fall ||
         selected.third != delay.third)
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     covered = std::min(selectedEnd, runEnd);
     ++index;
   }
   if (covered != selectedEnd &&
       (selected.rise != 0 || selected.fall != 0 || selected.third != 0))
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   *outDelay = selected;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designVPIRelationIndex(const Database &database,
-                                         obelisk_rt_design_cursor_v1 source,
+talos_rt_status designVPIRelationIndex(const Database &database,
+                                         talos_rt_design_cursor_v1 source,
                                          VPIRelationIndexInfo *outInfo) {
   *outInfo = {};
   if (!isObjectOffset(database, source.offset))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t objectIndex =
       static_cast<uint32_t>((source.offset - database.objects) / kObjectSize);
   uint32_t low = 0;
@@ -11051,11 +11051,11 @@ obelisk_rt_status designVPIRelationIndex(const Database &database,
       high = middle;
   }
   if (low == database.relationIndexCount)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   const uint8_t *record = database.data + database.relationIndices +
                           uint64_t{low} * kRelationIndexSize;
   if (read32(record) != objectIndex)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   uint64_t elementCount = read64(database.data + database.objects +
                                  uint64_t{objectIndex} * kObjectSize + 56);
   outInfo->firstDimension = read32(record + 4);
@@ -11064,31 +11064,31 @@ obelisk_rt_status designVPIRelationIndex(const Database &database,
   outInfo->firstKey = read32(record + 12);
   outInfo->firstOrdinalKey = read32(record + 16);
   outInfo->elementCount = static_cast<uint32_t>(elementCount);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designVPIRelationIndexDimension(
+talos_rt_status designVPIRelationIndexDimension(
     const Database &database, const VPIRelationIndexInfo &info,
     uint32_t dimension, int64_t *outLeft, int64_t *outRight) {
   if (info.sparse || dimension >= info.dimensionCount ||
       info.firstDimension > database.relationIndexDimensionCount ||
       dimension >= database.relationIndexDimensionCount - info.firstDimension)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   const uint8_t *record =
       database.data + database.relationIndexDimensions +
       uint64_t{info.firstDimension + dimension} * kRelationIndexDimensionSize;
   *outLeft = readI64(record);
   *outRight = readI64(record + 8);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designVPIRelationIndexKey(const Database &database,
+talos_rt_status designVPIRelationIndexKey(const Database &database,
                                             const VPIRelationIndexInfo &info,
                                             int64_t index,
                                             uint32_t *outOrdinal) {
   if (!info.sparse || info.firstKey > database.relationIndexKeyCount ||
       info.elementCount > database.relationIndexKeyCount - info.firstKey)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t low = 0;
   uint32_t high = info.elementCount;
   while (low != high) {
@@ -11102,46 +11102,46 @@ obelisk_rt_status designVPIRelationIndexKey(const Database &database,
       high = middle;
   }
   if (low == info.elementCount)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   const uint8_t *record = database.data + database.relationIndexKeys +
                           uint64_t{info.firstKey + low} * kRelationIndexKeySize;
   if (readI64(record) != index)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   *outOrdinal = read32(record + 8);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
+talos_rt_status
 designVPIRelationIndexOrdinalKey(const Database &database,
                                  const VPIRelationIndexInfo &info,
                                  uint32_t ordinal, int64_t *outIndex) {
   if (!info.sparse || ordinal >= info.elementCount ||
       info.firstOrdinalKey > database.relationIndexKeyCount ||
       info.elementCount > database.relationIndexKeyCount - info.firstOrdinalKey)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   const uint8_t *record =
       database.data + database.relationIndexKeys +
       uint64_t{info.firstOrdinalKey + ordinal} * kRelationIndexKeySize;
   if (read32(record + 8) != ordinal)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   *outIndex = readI64(record);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designVPIArrayMember(const Database &database,
-                                       obelisk_rt_design_cursor_v1 member,
+talos_rt_status designVPIArrayMember(const Database &database,
+                                       talos_rt_design_cursor_v1 member,
                                        VPIArrayMemberInfo *outInfo) {
   *outInfo = {};
-  obelisk::reflection::TableKind targetTable;
+  talos::reflection::TableKind targetTable;
   uint32_t targetIndex = 0;
   if (!relationSourceForCursor(database, member.offset, targetTable,
                                targetIndex) ||
-      targetTable == obelisk::reflection::TableKind::Statement)
-    return OBELISK_RT_INVALID_HANDLE;
+      targetTable == talos::reflection::TableKind::Statement)
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t packedTarget = 0;
-  if (!obelisk::reflection::tryPackTableIndex(targetTable, targetIndex,
+  if (!talos::reflection::tryPackTableIndex(targetTable, targetIndex,
                                               packedTarget))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t low = 0;
   uint32_t high = static_cast<uint32_t>(database.relationIndexMemberCount);
   while (low != high) {
@@ -11154,11 +11154,11 @@ obelisk_rt_status designVPIArrayMember(const Database &database,
       high = middle;
   }
   if (low == database.relationIndexMemberCount)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   const uint8_t *record = database.data + database.relationIndexMembers +
                           uint64_t{low} * kRelationIndexMemberSize;
   if (read32(record) != packedTarget)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   uint32_t relationIndex = read32(record + 4);
   const uint8_t *indexRecord = database.data + database.relationIndices +
                                uint64_t{relationIndex} * kRelationIndexSize;
@@ -11222,9 +11222,9 @@ bool findDefinitionMemberInstanceInverse(const Database &database,
         database.data + database.definitionMemberInstanceRelations +
         uint64_t{relationLow} * kDefinitionMemberInstanceRelationSize;
     uint16_t reverseSelector = read16(relation + 8);
-    const auto *reverseEdge = obelisk::reflection::findVPITraversal(
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::RefObj),
-        reverseSelector, obelisk::reflection::VPITraversalMode::Iterate);
+    const auto *reverseEdge = talos::reflection::findVPITraversal(
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::RefObj),
+        reverseSelector, talos::reflection::VPITraversalMode::Iterate);
     if (!reverseEdge || reverseEdge->inverseSelector != forwardSelector)
       continue;
     uint32_t memberAndFlags = read32(relation + 4);
@@ -11237,23 +11237,23 @@ bool findDefinitionMemberInstanceInverse(const Database &database,
   return false;
 }
 
-obelisk_rt_status designVPIRelationRange(const Database &database,
-                                         obelisk_rt_design_cursor_v1 source,
+talos_rt_status designVPIRelationRange(const Database &database,
+                                         talos_rt_design_cursor_v1 source,
                                          uint32_t selector, bool iterate,
                                          VPIRelationRange *outRange) {
   *outRange = {};
   if (selector > UINT16_MAX)
-    return OBELISK_RT_EOF;
-  auto mode = iterate ? obelisk::reflection::VPITraversalMode::Iterate
-                      : obelisk::reflection::VPITraversalMode::Handle;
+    return TALOS_RT_EOF;
+  auto mode = iterate ? talos::reflection::VPITraversalMode::Iterate
+                      : talos::reflection::VPITraversalMode::Handle;
   uint32_t expressionRootIndex = 0, expressionOrdinal = 0,
            defaultBinding = UINT32_MAX;
   const uint8_t *root = nullptr, *recipe = nullptr, *node = nullptr;
   if (expressionForCursor(database, source.offset, expressionRootIndex,
                           expressionOrdinal, root, recipe, node,
                           &defaultBinding)) {
-    using Kind = obelisk::reflection::VPIObjectKind;
-    using Rel = obelisk::reflection::VPIRelationKind;
+    using Kind = talos::reflection::VPIObjectKind;
+    using Rel = talos::reflection::VPIRelationKind;
     Kind kind = static_cast<Kind>(read16(node));
     if (!iterate && (selector == uint32_t(Kind::Module) ||
                      selector == uint32_t(Rel::InstanceRel))) {
@@ -11262,7 +11262,7 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
       bool module = selector == uint32_t(Kind::Module);
       if (!expressionInstance(database, root, module, instance, instanceKind,
                               defaultBinding))
-        return OBELISK_RT_EOF;
+        return TALOS_RT_EOF;
       outRange->first =
           defaultBinding == UINT32_MAX
               ? virtualToken(kVirtualMemberTag, expressionRootIndex,
@@ -11272,19 +11272,19 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
                              module ? kDefaultModuleRelation
                                     : kDefaultInstanceRelation);
       outRange->count = 1;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (!iterate && selector == uint32_t(Rel::ScopeRel) &&
-        obelisk::reflection::isVPIBitSelection(uint32_t(kind)) &&
-        obelisk::reflection::findVPITraversal(uint32_t(kind), selector, mode)) {
+        talos::reflection::isVPIBitSelection(uint32_t(kind)) &&
+        talos::reflection::findVPITraversal(uint32_t(kind), selector, mode)) {
       uint64_t first = uint64_t{read32(recipe + 12)} + read32(node + 8);
       uint32_t parent = read32(database.data + database.expressionOperands +
                                first * kExpressionOperandSize);
-      obelisk_rt_design_cursor_v1 declaration{};
+      talos_rt_design_cursor_v1 declaration{};
       uint32_t parentKind = 0;
       if (!expressionOperandTarget(database, expressionRootIndex, parent,
                                    declaration.offset, parentKind))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       return designVPIRelationRange(database, declaration, selector, false,
                                     outRange);
     }
@@ -11293,9 +11293,9 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
         kind == Kind::Operation) {
       child = 0;
       count = read32(node + 12);
-    } else if (obelisk::reflection::isVPIBitSelection(uint32_t(kind))) {
+    } else if (talos::reflection::isVPIBitSelection(uint32_t(kind))) {
       const auto *edge =
-          obelisk::reflection::findVPITraversal(uint32_t(kind), selector, mode);
+          talos::reflection::findVPITraversal(uint32_t(kind), selector, mode);
       if (edge && selector == uint32_t(Rel::ParentRel) && !iterate)
         child = 0;
       else if (edge && selector == uint32_t(Rel::IndexRel))
@@ -11312,7 +11312,7 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
         child = 2;
     }
     if (child == UINT32_MAX)
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     uint32_t operand = read32(recipe + 12) + read32(node + 8) + child;
     outRange->first =
         defaultBinding == UINT32_MAX
@@ -11320,7 +11320,7 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
             : virtualToken(kVirtualMemberTag, defaultBinding,
                            kExpressionCursorFlag | operand);
     outRange->count = count;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   uint32_t virtualScope = 0;
   uint32_t virtualMember = 0;
@@ -11332,56 +11332,56 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
                              &virtualRefObject)) {
     uint32_t sourceType =
         virtualRefObject
-            ? static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::RefObj)
+            ? static_cast<uint32_t>(talos::reflection::VPIObjectKind::RefObj)
             : read16(member + 16);
     const auto *edge =
-        obelisk::reflection::findVPITraversal(sourceType, selector, mode);
+        talos::reflection::findVPITraversal(sourceType, selector, mode);
     if (!edge)
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     if (!virtualRefObject && !iterate &&
         (sourceType == static_cast<uint32_t>(
-                           obelisk::reflection::VPIObjectKind::Parameter) ||
+                           talos::reflection::VPIObjectKind::Parameter) ||
          sourceType == static_cast<uint32_t>(
-                           obelisk::reflection::VPIObjectKind::TypeParameter) ||
+                           talos::reflection::VPIObjectKind::TypeParameter) ||
          sourceType ==
-             uint32_t(obelisk::reflection::VPIObjectKind::ParamAssign)) &&
+             uint32_t(talos::reflection::VPIObjectKind::ParamAssign)) &&
         (selector == static_cast<uint32_t>(
-                         obelisk::reflection::VPIRelationKind::ScopeRel) ||
+                         talos::reflection::VPIRelationKind::ScopeRel) ||
          selector == static_cast<uint32_t>(
-                         obelisk::reflection::VPIObjectKind::Module) ||
+                         talos::reflection::VPIObjectKind::Module) ||
          selector == static_cast<uint32_t>(
-                         obelisk::reflection::VPIRelationKind::InstanceRel))) {
-      if (selector == uint32_t(obelisk::reflection::VPIObjectKind::Module)) {
+                         talos::reflection::VPIRelationKind::InstanceRel))) {
+      if (selector == uint32_t(talos::reflection::VPIObjectKind::Module)) {
         uint64_t offset = 0;
         uint32_t kind = 0;
         if (!enclosingInstance(database, virtualScope, true, offset, kind))
-          return OBELISK_RT_EOF;
+          return TALOS_RT_EOF;
         outRange->first = virtualToken(kVirtualMemberTag, virtualBinding,
                                        kDefaultModuleRelation);
         outRange->count = 1;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       uint32_t scopeKind = recordVPIKind(database.data + database.scopes +
                                          uint64_t{virtualScope} * kScopeSize);
-      if (!obelisk::reflection::vpiObjectSetContains(edge->targets, scopeKind))
-        return OBELISK_RT_EOF;
+      if (!talos::reflection::vpiObjectSetContains(edge->targets, scopeKind))
+        return TALOS_RT_EOF;
       outRange->first = virtualToken(kVirtualReverseRelationTag, virtualBinding,
                                      virtualMember);
       outRange->count = 1;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (!virtualRefObject && !iterate &&
         (sourceType ==
-             uint32_t(obelisk::reflection::VPIObjectKind::Parameter) ||
+             uint32_t(talos::reflection::VPIObjectKind::Parameter) ||
          sourceType ==
-             uint32_t(obelisk::reflection::VPIObjectKind::TypeParameter) ||
+             uint32_t(talos::reflection::VPIObjectKind::TypeParameter) ||
          sourceType ==
-             uint32_t(obelisk::reflection::VPIObjectKind::ParamAssign)) &&
+             uint32_t(talos::reflection::VPIObjectKind::ParamAssign)) &&
         selector == definitionSourceSelector(member)) {
       uint32_t low = 0, high = database.expressionRootBindingCount;
       auto wanted = std::make_tuple(
           virtualMember, uint16_t(selector),
-          obelisk::reflection::expressionRootDefinitionMember, uint32_t{0});
+          talos::reflection::expressionRootDefinitionMember, uint32_t{0});
       while (low != high) {
         uint32_t middle = low + (high - low) / 2;
         const uint8_t *candidate = expressionRoot(database, middle);
@@ -11397,16 +11397,16 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
       if (!candidate || read32(candidate) != virtualMember ||
           read16(candidate + 12) != selector ||
           !isDefinitionDefault(candidate) || isConcreteTypeDefault(candidate))
-        return OBELISK_RT_EOF;
+        return TALOS_RT_EOF;
       // Upper zero is reserved for CaseItem groups. Binding+1 keeps their
       // root-group tokens disjoint from contextual default root tokens.
       outRange->first = virtualToken(kVirtualMemberTag, virtualBinding + 1,
                                      kExpressionRootGroupFlag | low);
       outRange->count = 1;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (virtualRefObject) {
-      if (edge->automaticRelation == obelisk::reflection::VPIAutomaticRelation::
+      if (edge->automaticRelation == talos::reflection::VPIAutomaticRelation::
                                          DefinitionMemberInstanceRelation) {
         uint32_t memberAndFlags = kVirtualRefObjectFlag | virtualMember;
         uint16_t compactSelector = static_cast<uint16_t>(selector);
@@ -11430,7 +11430,7 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
             high = middle;
         }
         if (low == database.definitionMemberInstanceRelationCount)
-          return OBELISK_RT_EOF;
+          return TALOS_RT_EOF;
         const uint8_t *relation =
             database.data + database.definitionMemberInstanceRelations +
             uint64_t{low} * kDefinitionMemberInstanceRelationSize;
@@ -11438,62 +11438,62 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
             read32(relation + 4) != memberAndFlags ||
             read16(relation + 8) != compactSelector ||
             read16(relation + 10) != compactMode)
-          return OBELISK_RT_EOF;
+          return TALOS_RT_EOF;
         outRange->first = virtualToken(
             kVirtualForwardRelationTag, virtualBinding,
             kVirtualInstanceRelationTargetFlag | read32(relation + 12));
         outRange->count = read32(relation + 16);
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       if (edge->automaticRelation ==
-          obelisk::reflection::VPIAutomaticRelation::DefinitionMemberParent) {
+          talos::reflection::VPIAutomaticRelation::DefinitionMemberParent) {
         outRange->first = virtualToken(kVirtualReverseRelationTag,
                                        virtualBinding, virtualMember);
         outRange->count = 1;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       if (edge->automaticRelation !=
-          obelisk::reflection::VPIAutomaticRelation::DefinitionMemberExpr)
-        return OBELISK_RT_EOF;
+          talos::reflection::VPIAutomaticRelation::DefinitionMemberExpr)
+        return TALOS_RT_EOF;
     }
     if (edge->automaticRelation ==
-        obelisk::reflection::VPIAutomaticRelation::DefinitionMemberParent) {
+        talos::reflection::VPIAutomaticRelation::DefinitionMemberParent) {
       outRange->first = virtualToken(kVirtualReverseRelationTag, virtualBinding,
                                      virtualMember);
       outRange->count = 1;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     bool assignmentLhs =
         !virtualRefObject && definitionAssignment(member) &&
-        selector == uint32_t(obelisk::reflection::VPIRelationKind::LhsRel) &&
+        selector == uint32_t(talos::reflection::VPIRelationKind::LhsRel) &&
         !iterate;
     if (!virtualRefObject && !assignmentLhs &&
         edge->automaticRelation !=
-            obelisk::reflection::VPIAutomaticRelation::DefinitionMemberExpr)
-      return OBELISK_RT_EOF;
+            talos::reflection::VPIAutomaticRelation::DefinitionMemberExpr)
+      return TALOS_RT_EOF;
     const uint8_t *binding = database.data + database.definitionBindings +
                              uint64_t{virtualBinding} * kDefinitionBindingSize;
     uint32_t definitionIndex = read32(binding + 4);
     if (definitionIndex >= database.definitionCount)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const uint8_t *definition = database.data + database.definitions +
                                 uint64_t{definitionIndex} * kDefinitionSize;
     uint32_t firstMember = read32(definition + 16);
     uint32_t memberCount = read32(definition + 20);
     if (virtualMember < firstMember ||
         virtualMember - firstMember >= memberCount)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint32_t endpointIndex =
         read32(binding + 12) +
         definitionEndpointCount(database, definition,
                                 virtualMember - firstMember);
     if (endpointIndex >= database.definitionMemberEndpointCount)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const uint8_t *endpoint =
         database.data + database.definitionMemberEndpoints +
         uint64_t{endpointIndex} * kDefinitionMemberEndpointSize;
     if (read32(endpoint) == UINT32_MAX)
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     uint32_t relationPayload = kVirtualEndpointRelationFlag | endpointIndex;
     if (!virtualRefObject && !assignmentLhs &&
         read16(member + 18) == kVPIIODirectionRef)
@@ -11501,29 +11501,29 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
     outRange->first = virtualToken(kVirtualReverseRelationTag, virtualBinding,
                                    relationPayload);
     outRange->count = 1;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  obelisk::reflection::TableKind table;
+  talos::reflection::TableKind table;
   uint32_t sourceIndex = 0;
   if (!relationSourceForCursor(database, source.offset, table, sourceIndex))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint16_t compactSelector = static_cast<uint16_t>(selector);
 
-  if (!iterate && table == obelisk::reflection::TableKind::Object &&
+  if (!iterate && table == talos::reflection::TableKind::Object &&
       (compactSelector ==
            static_cast<uint16_t>(
-               obelisk::reflection::VPIRelationKind::LowConnRel) ||
+               talos::reflection::VPIRelationKind::LowConnRel) ||
        compactSelector ==
            static_cast<uint16_t>(
-               obelisk::reflection::VPIRelationKind::HighConnRel))) {
+               talos::reflection::VPIRelationKind::HighConnRel))) {
     const uint8_t *record =
         database.data + database.objects + uint64_t{sourceIndex} * kObjectSize;
     uint32_t packedPort = 0;
     uint32_t bindingIndex = 0;
     uint32_t memberIndex = 0;
     if (recordVPIKind(record) ==
-            static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Port) &&
-        obelisk::reflection::tryPackTableIndex(table, sourceIndex,
+            static_cast<uint32_t>(talos::reflection::VPIObjectKind::Port) &&
+        talos::reflection::tryPackTableIndex(table, sourceIndex,
                                                packedPort) &&
         findDefinitionMemberInstanceInverse(
             database, packedPort, compactSelector, bindingIndex, memberIndex)) {
@@ -11531,14 +11531,14 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
           virtualToken(kVirtualReverseRelationTag, bindingIndex,
                        kVirtualRefObjectRelationFlag | memberIndex);
       outRange->count = 1;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
   }
 
-  if (table == obelisk::reflection::TableKind::Scope) {
+  if (table == talos::reflection::TableKind::Scope) {
     uint16_t sourceType = static_cast<uint16_t>(recordVPIKind(
         database.data + database.scopes + uint64_t{sourceIndex} * kScopeSize));
-    const auto *edge = obelisk::reflection::findVPITraversal(
+    const auto *edge = talos::reflection::findVPITraversal(
         sourceType, compactSelector, mode);
     if (edge && isDefinitionMemberInventory(*edge)) {
       uint32_t definitionIndex = 0;
@@ -11573,13 +11573,13 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
       outRange->first = virtualToken(kVirtualForwardRelationTag, bindingIndex,
                                      read32(relation + 4));
       outRange->count = read32(relation + 8);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
   }
 
 physicalRelations: {
   uint32_t packed = 0;
-  if (obelisk::reflection::tryPackTableIndex(table, sourceIndex, packed)) {
+  if (talos::reflection::tryPackTableIndex(table, sourceIndex, packed)) {
     uint32_t low = 0, high = database.expressionRootBindingCount;
     auto wanted = std::make_tuple(packed, uint16_t(selector), uint16_t(mode));
     auto group = [&](const uint8_t *root) {
@@ -11604,33 +11604,33 @@ physicalRelations: {
                                            kExpressionRootGroupFlag | low)
                             : virtualToken(kVirtualMemberTag, low, UINT32_MAX);
       outRange->count = end - low;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
   }
 }
   uint64_t first = lowerBoundRelation(database, table, sourceIndex,
                                       compactSelector, iterate);
   if (first == database.relationCount)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   auto relation = relationAt(database, first);
   if (!relationMatches(relation, table, sourceIndex, compactSelector, iterate))
-    return OBELISK_RT_EOF;
-  uint16_t sourceType = obelisk::reflection::unpackRelationSourceKind(
+    return TALOS_RT_EOF;
+  uint16_t sourceType = talos::reflection::unpackRelationSourceKind(
       relation.getSourceKindAndTable());
   const auto *edge =
-      obelisk::reflection::findVPITraversal(sourceType, selector, mode);
+      talos::reflection::findVPITraversal(sourceType, selector, mode);
   if (!edge)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   uint64_t end = upperBoundRelation(database, first, table, sourceIndex,
                                     compactSelector, iterate);
   outRange->first = first;
   outRange->count = iterate ? end - first : 1;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
+talos_rt_status
 designVPIRelationTarget(const Database &database, uint64_t relationIndex,
-                        obelisk_rt_design_cursor_v1 *outCursor,
+                        talos_rt_design_cursor_v1 *outCursor,
                         uint32_t *outType, bool *outStatement) {
   uint32_t bindingIndex = 0;
   uint32_t payload = 0;
@@ -11640,20 +11640,20 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
     if (payload == kDefaultInstanceRelation ||
         payload == kDefaultModuleRelation) {
       if (bindingIndex >= database.definitionBindingCount)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       const uint8_t *binding = database.data + database.definitionBindings +
                                uint64_t{bindingIndex} * kDefinitionBindingSize;
       uint32_t packed = read32(binding),
-               scope = obelisk::reflection::unpackTableIndex(packed);
-      if (obelisk::reflection::unpackTableIndexKind(packed) !=
-              obelisk::reflection::TableKind::Scope ||
+               scope = talos::reflection::unpackTableIndex(packed);
+      if (talos::reflection::unpackTableIndexKind(packed) !=
+              talos::reflection::TableKind::Scope ||
           scope >= database.scopeCount)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       if (!enclosingInstance(database, scope, payload == kDefaultModuleRelation,
                              outCursor->offset, *outType))
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       *outStatement = false;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if ((payload & kExpressionPayloadDomainMask) == kExpressionCursorFlag) {
       defaultBinding = bindingIndex;
@@ -11672,7 +11672,7 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
         break;
       }
       if (!found)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       payload = position;
     }
     if ((payload & kExpressionPayloadDomainMask) == kExpressionRootGroupFlag) {
@@ -11683,19 +11683,19 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
       if (!groupRoot ||
           (defaultBinding == UINT32_MAX ? read16(groupRoot + 14) != 1
                                         : !isDefinitionDefault(groupRoot)))
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       payload = UINT32_MAX;
     }
     const uint8_t *root = expressionRoot(database, bindingIndex);
     const uint8_t *recipe = root ? expressionTemplate(database, root) : nullptr;
     if (!root || (isDefinitionDefault(root) != (defaultBinding != UINT32_MAX)))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (payload == kExpressionUseOwnerRelation) {
       if (!expressionUseOwner(database, root, *outType, outCursor->offset))
-        return OBELISK_RT_INVALID_HANDLE;
-      *outStatement = obelisk::reflection::unpackTableIndexKind(read32(root)) ==
-                      obelisk::reflection::TableKind::Statement;
-      return OBELISK_RT_OK;
+        return TALOS_RT_INVALID_HANDLE;
+      *outStatement = talos::reflection::unpackTableIndexKind(read32(root)) ==
+                      talos::reflection::TableKind::Statement;
+      return TALOS_RT_OK;
     }
     if (payload == kExpressionInstanceRelation ||
         payload == kExpressionModuleRelation) {
@@ -11703,22 +11703,22 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
       return expressionInstance(database, root,
                                 payload == kExpressionModuleRelation,
                                 outCursor->offset, *outType)
-                 ? OBELISK_RT_OK
-                 : OBELISK_RT_INVALID_HANDLE;
+                 ? TALOS_RT_OK
+                 : TALOS_RT_INVALID_HANDLE;
     }
     uint32_t operand = recipe ? 0 : kExpressionOperandLeafFlag;
     if (payload != UINT32_MAX) {
       if (!recipe || payload < read32(recipe + 12) ||
           uint64_t{payload} - read32(recipe + 12) >= read32(recipe + 16))
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       operand = read32(database.data + database.expressionOperands +
                        uint64_t{payload} * kExpressionOperandSize);
     }
     *outStatement = false;
     return expressionOperandTarget(database, bindingIndex, operand,
                                    outCursor->offset, *outType, defaultBinding)
-               ? OBELISK_RT_OK
-               : OBELISK_RT_INVALID_HANDLE;
+               ? TALOS_RT_OK
+               : TALOS_RT_INVALID_HANDLE;
   }
   if (decodeVirtualToken(relationIndex, kVirtualForwardRelationTag,
                          bindingIndex, payload)) {
@@ -11726,24 +11726,24 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
       uint32_t targetIndex = payload & ~kVirtualInstanceRelationTargetFlag;
       if (bindingIndex >= database.definitionBindingCount ||
           targetIndex >= database.definitionMemberInstanceRelationTargetCount)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       const uint8_t *target =
           database.data + database.definitionMemberInstanceRelationTargets +
           uint64_t{targetIndex} * kDefinitionMemberInstanceRelationTargetSize;
       uint32_t packedTarget = read32(target);
       if (!packedObjectReferenceOffset(database, packedTarget,
                                        outCursor->offset))
-        return OBELISK_RT_INVALID_DESIGN;
-      auto table = obelisk::reflection::unpackTableIndexKind(packedTarget);
-      *outStatement = table == obelisk::reflection::TableKind::Statement;
+        return TALOS_RT_INVALID_DESIGN;
+      auto table = talos::reflection::unpackTableIndexKind(packedTarget);
+      *outStatement = table == talos::reflection::TableKind::Statement;
       *outType = *outStatement
                      ? read16(database.data + outCursor->offset + 36)
                      : recordVPIKind(database.data + outCursor->offset);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (bindingIndex >= database.definitionBindingCount ||
         payload >= database.definitionMemberRelationTargetCount)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     const uint8_t *target =
         database.data + database.definitionMemberRelationTargets +
         uint64_t{payload} * kDefinitionMemberRelationTargetSize;
@@ -11755,11 +11755,11 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
         virtualToken(kVirtualMemberTag, bindingIndex, memberIndex);
     if (!virtualMemberForCursor(database, cursor, scopeIndex, checkedMember,
                                 member))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     outCursor->offset = cursor;
     *outType = read16(member + 16);
     *outStatement = false;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (decodeVirtualToken(relationIndex, kVirtualReverseRelationTag,
                          bindingIndex, payload)) {
@@ -11767,7 +11767,7 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
       uint32_t endpointIndex = payload & ~kVirtualEndpointRelationFlag;
       if (bindingIndex >= database.definitionBindingCount ||
           endpointIndex >= database.definitionMemberEndpointCount)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       const uint8_t *endpoint =
           database.data + database.definitionMemberEndpoints +
           uint64_t{endpointIndex} * kDefinitionMemberEndpointSize;
@@ -11776,7 +11776,7 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
                                uint64_t{bindingIndex} * kDefinitionBindingSize;
       uint32_t definitionIndex = read32(binding + 4);
       if (definitionIndex >= database.definitionCount)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       const uint8_t *definition = database.data + database.definitions +
                                   uint64_t{definitionIndex} * kDefinitionSize;
       uint32_t slot = read32(binding + 12);
@@ -11788,7 +11788,7 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
             uint64_t{read32(definition + 16) + ordinal} * kDefinitionMemberSize;
         if (!definitionAssignment(candidate) &&
             read16(candidate + 16) !=
-                uint32_t(obelisk::reflection::VPIObjectKind::IODecl))
+                uint32_t(talos::reflection::VPIObjectKind::IODecl))
           continue;
         if (slot++ == endpointIndex) {
           endpointMember = candidate;
@@ -11796,10 +11796,10 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
         }
       }
       if (!endpointMember)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       if (definitionAssignment(endpointMember)) {
         if (packedTarget >= database.expressionBoundMemberCount)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         const uint8_t *pair =
             database.data + database.expressionBoundMembers +
             uint64_t{packedTarget} * kExpressionBoundMemberSize;
@@ -11807,18 +11807,18 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
             virtualToken(kVirtualMemberTag, read32(pair), read32(pair + 4));
         *outType = definitionSourceKind(endpointMember);
         *outStatement = false;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       if (packedTarget == UINT32_MAX ||
           !packedObjectReferenceOffset(database, packedTarget,
                                        outCursor->offset))
-        return OBELISK_RT_INVALID_DESIGN;
-      auto table = obelisk::reflection::unpackTableIndexKind(packedTarget);
-      *outStatement = table == obelisk::reflection::TableKind::Statement;
+        return TALOS_RT_INVALID_DESIGN;
+      auto table = talos::reflection::unpackTableIndexKind(packedTarget);
+      *outStatement = table == talos::reflection::TableKind::Statement;
       *outType = *outStatement
                      ? read16(database.data + outCursor->offset + 36)
                      : recordVPIKind(database.data + outCursor->offset);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if ((payload & kVirtualRefObjectRelationFlag) != 0) {
       uint32_t memberIndex = payload & ~kVirtualRefObjectRelationFlag;
@@ -11831,14 +11831,14 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
                                   member) ||
           read16(member + 16) !=
               static_cast<uint16_t>(
-                  obelisk::reflection::VPIObjectKind::IODecl) ||
+                  talos::reflection::VPIObjectKind::IODecl) ||
           read16(member + 18) != kVPIIODirectionRef)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       outCursor->offset = cursor;
       *outType =
-          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::RefObj);
+          static_cast<uint32_t>(talos::reflection::VPIObjectKind::RefObj);
       *outStatement = false;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     const uint8_t *member = nullptr;
     uint32_t scopeIndex = 0;
@@ -11846,186 +11846,186 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
     uint64_t cursor = virtualToken(kVirtualMemberTag, bindingIndex, payload);
     if (!virtualMemberForCursor(database, cursor, scopeIndex, checkedMember,
                                 member))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     outCursor->offset = database.scopes + uint64_t{scopeIndex} * kScopeSize;
     *outType = recordVPIKind(database.data + outCursor->offset);
     *outStatement = false;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (relationIndex >= database.relationCount)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   auto relation = relationAt(database, relationIndex);
   uint32_t packedTarget = relation.getTargetIndexAndTable();
-  auto table = obelisk::reflection::unpackTableIndexKind(packedTarget);
-  uint32_t target = obelisk::reflection::unpackTableIndex(packedTarget);
+  auto table = talos::reflection::unpackTableIndexKind(packedTarget);
+  uint32_t target = talos::reflection::unpackTableIndex(packedTarget);
   *outStatement = false;
   switch (table) {
-  case obelisk::reflection::TableKind::Scope:
+  case talos::reflection::TableKind::Scope:
     if (target >= database.scopeCount)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     outCursor->offset = database.scopes + uint64_t{target} * kScopeSize;
     *outType = recordVPIKind(database.data + outCursor->offset);
-    return OBELISK_RT_OK;
-  case obelisk::reflection::TableKind::Object:
+    return TALOS_RT_OK;
+  case talos::reflection::TableKind::Object:
     if (target >= database.objectCount)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     outCursor->offset = database.objects + uint64_t{target} * kObjectSize;
     *outType = recordVPIKind(database.data + outCursor->offset);
-    return OBELISK_RT_OK;
-  case obelisk::reflection::TableKind::Statement:
+    return TALOS_RT_OK;
+  case talos::reflection::TableKind::Statement:
     if (target >= database.statementCount)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     outCursor->offset = database.statements + uint64_t{target} * kStatementSize;
     *outType = read16(database.data + outCursor->offset + 36);
     *outStatement = true;
-    return OBELISK_RT_OK;
-  case obelisk::reflection::TableKind::StaticObject:
+    return TALOS_RT_OK;
+  case talos::reflection::TableKind::StaticObject:
     if (target >= database.staticObjectCount)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     outCursor->offset =
         database.staticObjects + uint64_t{target} * kStaticObjectSize;
     *outType = read16(database.data + outCursor->offset + 28);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   // The database validator rejects reserved table tags before publication.
-  return OBELISK_RT_INVALID_DESIGN;
+  return TALOS_RT_INVALID_DESIGN;
 }
 
-obelisk_rt_status
+talos_rt_status
 designVPIStatementScope(const Database &database,
-                        obelisk_rt_design_cursor_v1 statement,
-                        obelisk_rt_design_cursor_v1 *outScope) {
+                        talos_rt_design_cursor_v1 statement,
+                        talos_rt_design_cursor_v1 *outScope) {
   if (!isStatementOffset(database, statement.offset))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t scope = read32(database.data + statement.offset + 12);
   if (scope >= database.scopeCount)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   outScope->offset = database.scopes + uint64_t{scope} * kScopeSize;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designVPIStatementEnclosingScope(
-    const Database &database, obelisk_rt_design_cursor_v1 statement,
-    obelisk_rt_design_cursor_v1 *outScope, bool *outStatement) {
+talos_rt_status designVPIStatementEnclosingScope(
+    const Database &database, talos_rt_design_cursor_v1 statement,
+    talos_rt_design_cursor_v1 *outScope, bool *outStatement) {
   if (!isStatementOffset(database, statement.offset))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t sourceIndex = static_cast<uint32_t>(
       (statement.offset - database.statements) / kStatementSize);
-  obelisk::reflection::TableKind targetTable;
+  talos::reflection::TableKind targetTable;
   uint32_t targetIndex = 0;
   if (!effectiveStatementScope(database, sourceIndex, targetTable, targetIndex))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   outScope->offset = tableOffset(database, targetTable, targetIndex);
-  *outStatement = targetTable == obelisk::reflection::TableKind::Statement;
-  return OBELISK_RT_OK;
+  *outStatement = targetTable == talos::reflection::TableKind::Statement;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
+talos_rt_status
 designVPIStatementParent(const Database &database,
-                         obelisk_rt_design_cursor_v1 statement,
-                         obelisk_rt_design_cursor_v1 *outParent) {
+                         talos_rt_design_cursor_v1 statement,
+                         talos_rt_design_cursor_v1 *outParent) {
   if (!isStatementOffset(database, statement.offset))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t parent = read32(database.data + statement.offset + 16);
   if (parent == UINT32_MAX) {
     *outParent = {};
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   }
   if (parent >= database.statementCount)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   outParent->offset = database.statements + uint64_t{parent} * kStatementSize;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
+talos_rt_status
 designVPIStatementOwner(const Database &database,
-                        obelisk_rt_design_cursor_v1 statement,
-                        obelisk_rt_design_cursor_v1 *outOwner) {
+                        talos_rt_design_cursor_v1 statement,
+                        talos_rt_design_cursor_v1 *outOwner) {
   if (!isStatementOffset(database, statement.offset))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t owner = read32(database.data + statement.offset + 8);
   if (owner == UINT32_MAX) {
     *outOwner = {};
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   }
   if (owner >= database.objectCount)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   outOwner->offset = database.objects + uint64_t{owner} * kObjectSize;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
+talos_rt_status
 designVPIStatementIsScope(const Database &database,
-                          obelisk_rt_design_cursor_v1 statement,
+                          talos_rt_design_cursor_v1 statement,
                           bool *outIsScope) {
   if (!isStatementOffset(database, statement.offset))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   *outIsScope = (read16(database.data + statement.offset + 38) &
-                 OBELISK_RT_DESIGN_STATEMENT_SCOPE) != 0;
-  return OBELISK_RT_OK;
+                 TALOS_RT_DESIGN_STATEMENT_SCOPE) != 0;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
+talos_rt_status
 designVPIStatementIsProtected(const Database &database,
-                              obelisk_rt_design_cursor_v1 statement,
+                              talos_rt_design_cursor_v1 statement,
                               bool *outIsProtected) {
   if (!isStatementOffset(database, statement.offset))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   *outIsProtected = (read16(database.data + statement.offset + 38) &
-                     OBELISK_RT_DESIGN_STATEMENT_PROTECTED) != 0;
-  return OBELISK_RT_OK;
+                     TALOS_RT_DESIGN_STATEMENT_PROTECTED) != 0;
+  return TALOS_RT_OK;
 }
 
 } // namespace
 
-obelisk_rt_status obelisk_rt_initialize_design_database(
-    const obelisk_rt_execution_descriptor_v1 *execution,
+talos_rt_status talos_rt_initialize_design_database(
+    const talos_rt_execution_descriptor_v1 *execution,
     DesignDatabaseCache &cache) noexcept {
   if (!execution)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     Database database;
-    obelisk_rt_status status = loadValidatedDatabase(execution, database);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = loadValidatedDatabase(execution, database);
+    if (status != TALOS_RT_OK)
       return status;
     database.validated = true;
     cache = database;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-obelisk_rt_status obelisk_rt_register_design_database(
-    const obelisk_rt_execution_descriptor_v1 *execution,
+talos_rt_status talos_rt_register_design_database(
+    const talos_rt_execution_descriptor_v1 *execution,
     const DesignDatabaseCache &cache) noexcept {
   if (!matchesExecution(cache, execution))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     DatabaseRegistry &registry = databaseRegistry();
     std::lock_guard<std::mutex> lock(registry.mutex);
     auto [entry, inserted] = registry.databases.try_emplace(execution);
     if (inserted)
       entry->second.database = cache;
     else if (!sameDatabase(entry->second.database, cache))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (entry->second.contextCount == std::numeric_limits<size_t>::max()) {
       if (inserted)
         registry.databases.erase(entry);
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
     ++entry->second.contextCount;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-void obelisk_rt_unregister_design_database(
-    const obelisk_rt_execution_descriptor_v1 *execution) noexcept {
+void talos_rt_unregister_design_database(
+    const talos_rt_execution_descriptor_v1 *execution) noexcept {
   if (!execution)
     return;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     DatabaseRegistry &registry = databaseRegistry();
     std::lock_guard<std::mutex> lock(registry.mutex);
     auto found = registry.databases.find(execution);
@@ -12037,161 +12037,161 @@ void obelisk_rt_unregister_design_database(
     }
     registry.databases.erase(found);
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     // Context teardown cannot recover from a registry synchronization failure.
   }
 }
 
-obelisk_rt_status
-obelisk_rt_cached_design_root(const obelisk_rt_context *context,
-                              obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+talos_rt_status
+talos_rt_cached_design_root(const talos_rt_context *context,
+                              talos_rt_design_cursor_v1 *outCursor) noexcept {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designRoot(*database, outCursor)
-                  : OBELISK_RT_INVALID_DESIGN;
+                  : TALOS_RT_INVALID_DESIGN;
 }
 
-obelisk_rt_status obelisk_rt_cached_design_parent(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+talos_rt_status talos_rt_cached_design_parent(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_cursor_v1 *outCursor) noexcept {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designParent(*database, cursor, outCursor)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_design_child(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+talos_rt_status talos_rt_cached_design_child(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_cursor_v1 *outCursor) noexcept {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designChild(*database, cursor, outCursor)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_design_child_at(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    uint64_t index, obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+talos_rt_status talos_rt_cached_design_child_at(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    uint64_t index, talos_rt_design_cursor_v1 *outCursor) noexcept {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designChildAt(*database, cursor, index, outCursor)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_design_sibling(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+talos_rt_status talos_rt_cached_design_sibling(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_cursor_v1 *outCursor) noexcept {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designSibling(*database, cursor, outCursor)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_design_lookup(
-    const obelisk_rt_context *context, const uint8_t *name, uint64_t nameSize,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+talos_rt_status talos_rt_cached_design_lookup(
+    const talos_rt_context *context, const uint8_t *name, uint64_t nameSize,
+    talos_rt_design_cursor_v1 *outCursor) noexcept {
   if (!outCursor || (nameSize != 0 && !name))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designLookup(*database, name, nameSize, outCursor)
-                  : OBELISK_RT_INVALID_DESIGN;
+                  : TALOS_RT_INVALID_DESIGN;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_design_info(const obelisk_rt_context *context,
-                              obelisk_rt_design_cursor_v1 cursor,
-                              obelisk_rt_design_info_v1 *outInfo) noexcept {
+talos_rt_status
+talos_rt_cached_design_info(const talos_rt_context *context,
+                              talos_rt_design_cursor_v1 cursor,
+                              talos_rt_design_info_v1 *outInfo) noexcept {
   if (!outInfo)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designInfo(*database, cursor, outInfo)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_design_type_info(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_type_info_v1 *outInfo) noexcept {
+talos_rt_status talos_rt_cached_design_type_info(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_type_info_v1 *outInfo) noexcept {
   if (!outInfo)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designTypeInfo(*database, cursor, outInfo)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_design_type_child(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    uint64_t index, obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+talos_rt_status talos_rt_cached_design_type_child(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    uint64_t index, talos_rt_design_cursor_v1 *outCursor) noexcept {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designTypeChild(*database, cursor, index, outCursor)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_design_semantic_root(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 object,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+talos_rt_status talos_rt_cached_design_semantic_root(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 object,
+    talos_rt_design_cursor_v1 *outCursor) noexcept {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designSemanticRoot(*database, object, outCursor)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_scope(const obelisk_rt_context *context, uint64_t scopeID,
-                            obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+talos_rt_status
+talos_rt_cached_vpi_scope(const talos_rt_context *context, uint64_t scopeID,
+                            talos_rt_design_cursor_v1 *outCursor) noexcept {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outCursor = {};
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   if (scopeID == 0)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   // Validation guarantees unique scope IDs, but deliberately permits any
   // physical table order. Do not binary-search compiler-specific ordering.
   for (uint64_t index = 0; index != database->scopeCount; ++index) {
     uint64_t offset = database->scopes + index * kScopeSize;
-    obelisk::reflection::ScopeView scope(database->data + offset);
+    talos::reflection::ScopeView scope(database->data + offset);
     if (scope.getID() == scopeID) {
       outCursor->offset = offset;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
   }
-  return OBELISK_RT_EOF;
+  return TALOS_RT_EOF;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 event,
+talos_rt_status talos_rt_cached_vpi_event_array_cell(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 event,
     VPIEventCellBinding *outBinding) noexcept {
   if (!outBinding)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outBinding = {};
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   VPIArrayMemberInfo member{};
   auto status = designVPIArrayMember(*database, event, &member);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   if (member.arrayType !=
       static_cast<uint32_t>(
-          obelisk::reflection::VPIObjectKind::NamedEventArray))
-    return OBELISK_RT_EOF;
+          talos::reflection::VPIObjectKind::NamedEventArray))
+    return TALOS_RT_EOF;
   uint32_t packedArray = 0;
   if (!packedObjectReferenceForCursor(*database, member.array.offset,
                                       packedArray))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   uint64_t low = 0, high = database->eventArrayStorageBindingCount;
   while (low < high) {
     uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::EventArrayStorageBindingView binding(
+    talos::reflection::EventArrayStorageBindingView binding(
         database->data + database->eventArrayStorageBindings +
         middle * kEventArrayStorageBindingSize);
     if (binding.getArrayIndexAndTable() < packedArray)
@@ -12200,12 +12200,12 @@ obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
       high = middle;
   }
   if (low == database->eventArrayStorageBindingCount)
-    return OBELISK_RT_EOF;
-  obelisk::reflection::EventArrayStorageBindingView binding(
+    return TALOS_RT_EOF;
+  talos::reflection::EventArrayStorageBindingView binding(
       database->data + database->eventArrayStorageBindings +
       low * kEventArrayStorageBindingSize);
   if (binding.getArrayIndexAndTable() != packedArray)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   const uint64_t storage =
       database->objects + uint64_t{binding.getStorageIndex()} * kObjectSize;
   uint64_t physical = read64(database->data + storage + 48);
@@ -12218,10 +12218,10 @@ obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
     // Validation ties the physical ranges and dimension count to the public
     // relation-index inventory, and proves each stride contains its child.
     if (!rangeExtent(type, extent) || !extent || remaining % extent)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     remaining /= extent;
     if (!remaining)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     uint64_t coordinate = ordinal / remaining;
     ordinal %= remaining;
     bitOffset += coordinate * (read64(type + 8) / extent);
@@ -12229,12 +12229,12 @@ obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
   }
   outBinding->storage.offset = storage;
   outBinding->bitOffset = bitOffset;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 namespace {
 void decodeFrameLocalBinding(const Database &database,
-                             obelisk::reflection::FrameLocalBindingView binding,
+                             talos::reflection::FrameLocalBindingView binding,
                              VPIFrameLocalBinding &result) noexcept {
   result.id = binding.getID();
   result.declaration.offset =
@@ -12248,20 +12248,20 @@ void decodeFrameLocalBinding(const Database &database,
 }
 } // namespace
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_frame_local(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_frame_local(const talos_rt_context *context,
                                   uint64_t id,
                                   VPIFrameLocalBinding *outBinding) noexcept {
   if (!outBinding)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outBinding = {};
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t low = 0, high = database->frameLocalBindingCount;
   while (low < high) {
     const uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::FrameLocalBindingView binding(
+    talos::reflection::FrameLocalBindingView binding(
         database->data + database->frameLocalBindings +
         middle * kFrameLocalBindingSize);
     if (binding.getID() < id)
@@ -12270,34 +12270,34 @@ obelisk_rt_cached_vpi_frame_local(const obelisk_rt_context *context,
       high = middle;
   }
   if (low == database->frameLocalBindingCount)
-    return OBELISK_RT_EOF;
-  obelisk::reflection::FrameLocalBindingView binding(
+    return TALOS_RT_EOF;
+  talos::reflection::FrameLocalBindingView binding(
       database->data + database->frameLocalBindings +
       low * kFrameLocalBindingSize);
   if (binding.getID() != id)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   decodeFrameLocalBinding(*database, binding, *outBinding);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_frame_locals(
-    const obelisk_rt_context *context, uint64_t lexicalCodeUnitID,
-    obelisk_rt_design_cursor_v1 scope,
+talos_rt_status talos_rt_cached_vpi_frame_locals(
+    const talos_rt_context *context, uint64_t lexicalCodeUnitID,
+    talos_rt_design_cursor_v1 scope,
     std::vector<VPIFrameLocalBinding> &outBindings) noexcept {
   outBindings.clear();
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
-  obelisk::reflection::TableKind table;
+    return TALOS_RT_INVALID_HANDLE;
+  talos::reflection::TableKind table;
   uint32_t index = 0, packed = 0;
   if (!relationSourceForCursor(*database, scope.offset, table, index) ||
-      !obelisk::reflection::tryPackTableIndex(table, index, packed))
-    return OBELISK_RT_INVALID_HANDLE;
-  OBELISK_RT_TRY {
+      !talos::reflection::tryPackTableIndex(table, index, packed))
+    return TALOS_RT_INVALID_HANDLE;
+  TALOS_RT_TRY {
     std::vector<VPIFrameLocalBinding> bindings;
     for (uint64_t index = 0; index != database->frameLocalBindingCount;
          ++index) {
-      obelisk::reflection::FrameLocalBindingView binding(
+      talos::reflection::FrameLocalBindingView binding(
           database->data + database->frameLocalBindings +
           index * kFrameLocalBindingSize);
       if (binding.getScopeIndexAndTable() != packed)
@@ -12312,24 +12312,24 @@ obelisk_rt_status obelisk_rt_cached_vpi_frame_locals(
                 return left.ordinal < right.ordinal;
               });
     outBindings = std::move(bindings);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_statement(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_statement(const talos_rt_context *context,
                                 uint64_t statementID,
-                                obelisk_rt_design_cursor_v1 *outCursor,
+                                talos_rt_design_cursor_v1 *outCursor,
                                 uint64_t *outOwnerCodeUnitID) noexcept {
   if (!outCursor || !outOwnerCodeUnitID)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outCursor = {};
   *outOwnerCodeUnitID = 0;
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t low = 0, high = database->statementCount;
   while (low < high) {
     uint64_t middle = low + (high - low) / 2;
@@ -12341,53 +12341,53 @@ obelisk_rt_cached_vpi_statement(const obelisk_rt_context *context,
       high = middle;
   }
   if (low == database->statementCount)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   const uint64_t offset = database->statements + low * kStatementSize;
   const uint8_t *statement = database->data + offset;
   if (read64(statement) != statementID)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   uint32_t owner = read32(statement + 8);
   if (owner != UINT32_MAX)
     *outOwnerCodeUnitID = read64(database->data + database->objects +
                                  uint64_t{owner} * kObjectSize + 8);
   outCursor->offset = offset;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_initializer(
-    const obelisk_rt_context *context, uint64_t codeUnitID,
-    obelisk_rt_design_cursor_v1 *outSource) noexcept {
+talos_rt_status talos_rt_cached_vpi_initializer(
+    const talos_rt_context *context, uint64_t codeUnitID,
+    talos_rt_design_cursor_v1 *outSource) noexcept {
   if (!outSource)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outSource = {};
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t source = 0;
   if (!findInitializerSource(*database, codeUnitID, source))
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   return packedObjectReferenceOffset(*database, source, outSource->offset)
-             ? OBELISK_RT_OK
-             : OBELISK_RT_INVALID_DESIGN;
+             ? TALOS_RT_OK
+             : TALOS_RT_INVALID_DESIGN;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_call(const obelisk_rt_context *context, uint64_t callID,
-                           obelisk_rt_design_cursor_v1 *outCursor,
+talos_rt_status
+talos_rt_cached_vpi_call(const talos_rt_context *context, uint64_t callID,
+                           talos_rt_design_cursor_v1 *outCursor,
                            uint64_t *outOwnerCodeUnitID,
                            bool *outIsStatement) noexcept {
   if (!outCursor || !outOwnerCodeUnitID || !outIsStatement)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outCursor = {};
   *outOwnerCodeUnitID = 0;
   *outIsStatement = false;
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t low = 0, high = database->callSiteBindingCount;
   while (low < high) {
     uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::CallSiteBindingView binding(
+    talos::reflection::CallSiteBindingView binding(
         database->data + database->callSiteBindings +
         middle * kCallSiteBindingSize);
     if (binding.getID() < callID)
@@ -12396,82 +12396,82 @@ obelisk_rt_cached_vpi_call(const obelisk_rt_context *context, uint64_t callID,
       high = middle;
   }
   if (low == database->callSiteBindingCount)
-    return OBELISK_RT_EOF;
-  obelisk::reflection::CallSiteBindingView binding(
+    return TALOS_RT_EOF;
+  talos::reflection::CallSiteBindingView binding(
       database->data + database->callSiteBindings + low * kCallSiteBindingSize);
   if (binding.getID() != callID)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   uint32_t packed = binding.getObjectIndexAndTable();
-  uint32_t index = obelisk::reflection::unpackTableIndex(packed);
-  *outIsStatement = obelisk::reflection::unpackTableIndexKind(packed) ==
-                    obelisk::reflection::TableKind::Statement;
+  uint32_t index = talos::reflection::unpackTableIndex(packed);
+  *outIsStatement = talos::reflection::unpackTableIndexKind(packed) ==
+                    talos::reflection::TableKind::Statement;
   outCursor->offset =
       *outIsStatement ? database->statements + uint64_t{index} * kStatementSize
                       : database->objects + uint64_t{index} * kObjectSize;
   *outOwnerCodeUnitID =
       read64(database->data + database->objects +
              uint64_t{binding.getOwnerCodeUnitIndex()} * kObjectSize + 8);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_code_unit_transport(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_code_unit_transport(const talos_rt_context *context,
                                           uint64_t codeUnitID,
                                           bool *outIsTask) noexcept {
   if (!outIsTask)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outIsTask = false;
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   for (uint64_t index = 0; index != database->objectCount; ++index) {
     const uint8_t *object =
         database->data + database->objects + index * kObjectSize;
     const uint32_t kind = recordKind(object);
-    if ((kind != OBELISK_RT_DESIGN_RECORD_PROCESS &&
-         kind != OBELISK_RT_DESIGN_RECORD_FUNCTION) ||
+    if ((kind != TALOS_RT_DESIGN_RECORD_PROCESS &&
+         kind != TALOS_RT_DESIGN_RECORD_FUNCTION) ||
         read64(object + 8) != codeUnitID)
       continue;
     uint32_t packedSource = 0;
     uint64_t sourceOffset = 0;
     if (!findCallableSource(*database, static_cast<uint32_t>(index),
                             packedSource, sourceOffset))
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     // The validated mapping proves TaskViaFunction explicitly. The physical
     // record decides scheduler handoff; source identity still controls the
     // independent call-target proof and the public Frame scope.
-    *outIsTask = kind == OBELISK_RT_DESIGN_RECORD_PROCESS;
-    return OBELISK_RT_OK;
+    *outIsTask = kind == TALOS_RT_DESIGN_RECORD_PROCESS;
+    return TALOS_RT_OK;
   }
-  return OBELISK_RT_EOF;
+  return TALOS_RT_EOF;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_code_unit_scope(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_code_unit_scope(const talos_rt_context *context,
                                       uint64_t codeUnitID,
-                                      obelisk_rt_design_cursor_v1 *outCursor,
+                                      talos_rt_design_cursor_v1 *outCursor,
                                       uint64_t *outLexicalCodeUnitID) noexcept {
   if (!outCursor || !outLexicalCodeUnitID)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outCursor = {};
   *outLexicalCodeUnitID = 0;
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t found = 0;
   for (uint64_t index = 0; index != database->objectCount; ++index) {
     const uint64_t offset = database->objects + index * kObjectSize;
     const uint8_t *object = database->data + offset;
-    if ((recordKind(object) != OBELISK_RT_DESIGN_RECORD_PROCESS &&
-         recordKind(object) != OBELISK_RT_DESIGN_RECORD_FUNCTION) ||
+    if ((recordKind(object) != TALOS_RT_DESIGN_RECORD_PROCESS &&
+         recordKind(object) != TALOS_RT_DESIGN_RECORD_FUNCTION) ||
         read64(object + 8) != codeUnitID)
       continue;
     if (found)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     found = offset;
   }
   if (!found)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   const uint8_t *object = database->data + found;
   uint32_t packedSource = 0;
   uint64_t sourceOffset = 0;
@@ -12481,49 +12481,49 @@ obelisk_rt_cached_vpi_code_unit_scope(const obelisk_rt_context *context,
           packedSource, sourceOffset)) {
     outCursor->offset = sourceOffset;
     *outLexicalCodeUnitID = codeUnitID;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  if (read32(object + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL) {
-    obelisk_rt_design_cursor_v1 origin{};
+  if (read32(object + 4) & TALOS_RT_DESIGN_CAP_INTERNAL) {
+    talos_rt_design_cursor_v1 origin{};
     auto status =
-        obelisk_rt_cached_vpi_thread_origin(context, codeUnitID, &origin);
-    if (status != OBELISK_RT_OK)
+        talos_rt_cached_vpi_thread_origin(context, codeUnitID, &origin);
+    if (status != TALOS_RT_OK)
       return status;
     const uint8_t *statement = database->data + origin.offset;
     uint32_t owner = read32(statement + 8);
     if (owner == UINT32_MAX)
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     const uint8_t *lexicalOwner =
         database->data + database->objects + uint64_t{owner} * kObjectSize;
     bool isStatement = false;
-    status = obelisk_rt_cached_vpi_statement_enclosing_scope(
+    status = talos_rt_cached_vpi_statement_enclosing_scope(
         context, origin, outCursor, &isStatement);
-    if (status == OBELISK_RT_OK)
+    if (status == TALOS_RT_OK)
       *outLexicalCodeUnitID = read64(lexicalOwner + 8);
     return status;
   }
   const auto *kind =
-      obelisk::reflection::findVPIObjectKind(recordVPIKind(object));
+      talos::reflection::findVPIObjectKind(recordVPIKind(object));
   outCursor->offset = kind && (kind->families &
-                               obelisk::reflection::vpiFamilyMask(
-                                   obelisk::reflection::VPIObjectFamily::Scope))
+                               talos::reflection::vpiFamilyMask(
+                                   talos::reflection::VPIObjectFamily::Scope))
                           ? found
                           : read64(object + 16);
   *outLexicalCodeUnitID = codeUnitID;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_call_target(const talos_rt_context *context,
                                   uint64_t callID,
                                   uint64_t calleeCodeUnitID) noexcept {
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t low = 0, high = database->callSiteBindingCount;
   while (low < high) {
     uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::CallSiteBindingView binding(
+    talos::reflection::CallSiteBindingView binding(
         database->data + database->callSiteBindings +
         middle * kCallSiteBindingSize);
     if (binding.getID() < callID)
@@ -12532,21 +12532,21 @@ obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
       high = middle;
   }
   if (low == database->callSiteBindingCount)
-    return OBELISK_RT_EOF;
-  obelisk::reflection::CallSiteBindingView binding(
+    return TALOS_RT_EOF;
+  talos::reflection::CallSiteBindingView binding(
       database->data + database->callSiteBindings + low * kCallSiteBindingSize);
   if (binding.getID() != callID)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   if (binding.getFlags() & 2) {
     // A positive target row has already passed complete dispatch recomputation.
     // The zero row describes the source contract and is never an activation.
     if (!calleeCodeUnitID)
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     uint64_t first = 0, last = database->callDispatchBindingCount;
     const auto key = std::pair(callID, calleeCodeUnitID);
     while (first < last) {
       uint64_t middle = first + (last - first) / 2;
-      obelisk::reflection::CallDispatchBindingView row(
+      talos::reflection::CallDispatchBindingView row(
           database->data + database->callDispatchBindings +
           middle * kCallDispatchBindingSize);
       if (std::pair(row.getCallID(), row.getCodeUnitID()) < key)
@@ -12555,21 +12555,21 @@ obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
         last = middle;
     }
     if (first == database->callDispatchBindingCount)
-      return OBELISK_RT_EOF;
-    obelisk::reflection::CallDispatchBindingView row(
+      return TALOS_RT_EOF;
+    talos::reflection::CallDispatchBindingView row(
         database->data + database->callDispatchBindings +
         first * kCallDispatchBindingSize);
     return std::pair(row.getCallID(), row.getCodeUnitID()) == key
-               ? OBELISK_RT_OK
-               : OBELISK_RT_EOF;
+               ? TALOS_RT_OK
+               : TALOS_RT_EOF;
   }
   if (binding.getFlags() & 4) {
     if (!calleeCodeUnitID)
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     uint64_t first = 0, last = database->interfaceCallBindingCount;
     while (first < last) {
       uint64_t middle = first + (last - first) / 2;
-      obelisk::reflection::InterfaceCallBindingView contract(
+      talos::reflection::InterfaceCallBindingView contract(
           database->data + database->interfaceCallBindings +
           middle * kInterfaceCallBindingSize);
       if (contract.getCallID() < callID)
@@ -12578,18 +12578,18 @@ obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
         last = middle;
     }
     if (first == database->interfaceCallBindingCount)
-      return OBELISK_RT_EOF;
-    obelisk::reflection::InterfaceCallBindingView contract(
+      return TALOS_RT_EOF;
+    talos::reflection::InterfaceCallBindingView contract(
         database->data + database->interfaceCallBindings +
         first * kInterfaceCallBindingSize);
     if (contract.getCallID() != callID)
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     const uint32_t member = contract.getMemberIndex();
     first = 0;
     last = database->interfaceCallableBindingCount;
     while (first < last) {
       uint64_t middle = first + (last - first) / 2;
-      obelisk::reflection::InterfaceCallableBindingView implementation(
+      talos::reflection::InterfaceCallableBindingView implementation(
           database->data + database->interfaceCallableBindings +
           middle * kInterfaceCallableBindingSize);
       if (implementation.getMemberIndex() < member)
@@ -12600,7 +12600,7 @@ obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
     // Rows have been proved complete for this exact nominal member. Provider
     // identities may be shared by multiple interface instances.
     for (; first != database->interfaceCallableBindingCount; ++first) {
-      obelisk::reflection::InterfaceCallableBindingView implementation(
+      talos::reflection::InterfaceCallableBindingView implementation(
           database->data + database->interfaceCallableBindings +
           first * kInterfaceCallableBindingSize);
       if (implementation.getMemberIndex() != member)
@@ -12609,24 +12609,24 @@ obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
           database->data + database->objects +
           uint64_t{implementation.getImplementationIndex()} * kObjectSize;
       if (read64(unit + 8) == calleeCodeUnitID)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
     }
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   }
   if (binding.getFlags() & 1)
-    return OBELISK_RT_EOF;
-  obelisk_rt_design_cursor_v1 call{};
+    return TALOS_RT_EOF;
+  talos_rt_design_cursor_v1 call{};
   uint64_t owner = 0;
   bool statement = false;
   auto status =
-      obelisk_rt_cached_vpi_call(context, callID, &call, &owner, &statement);
-  if (status != OBELISK_RT_OK)
+      talos_rt_cached_vpi_call(context, callID, &call, &owner, &statement);
+  if (status != TALOS_RT_OK)
     return status;
   uint32_t kind = 0;
-  status = obelisk_rt_cached_vpi_type(context, call, &kind);
-  if (status != OBELISK_RT_OK)
+  status = talos_rt_cached_vpi_type(context, call, &kind);
+  if (status != TALOS_RT_OK)
     return status;
-  using Kind = obelisk::reflection::VPIObjectKind;
+  using Kind = talos::reflection::VPIObjectKind;
   uint32_t selector;
   if (kind == static_cast<uint32_t>(Kind::TaskCall) ||
       kind == static_cast<uint32_t>(Kind::MethodTaskCall))
@@ -12635,140 +12635,140 @@ obelisk_rt_cached_vpi_call_target(const obelisk_rt_context *context,
            kind == static_cast<uint32_t>(Kind::MethodFuncCall))
     selector = static_cast<uint32_t>(Kind::Function);
   else
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   VPIRelationRange range{};
-  status = obelisk_rt_cached_vpi_relation_range(context, call, selector, false,
+  status = talos_rt_cached_vpi_relation_range(context, call, selector, false,
                                                 &range);
-  if (status != OBELISK_RT_OK || !range.count)
-    return status == OBELISK_RT_OK ? OBELISK_RT_EOF : status;
-  obelisk_rt_design_cursor_v1 target{};
+  if (status != TALOS_RT_OK || !range.count)
+    return status == TALOS_RT_OK ? TALOS_RT_EOF : status;
+  talos_rt_design_cursor_v1 target{};
   uint32_t targetKind = 0;
-  status = obelisk_rt_cached_vpi_relation_target(context, range.first, &target,
+  status = talos_rt_cached_vpi_relation_target(context, range.first, &target,
                                                  &targetKind, &statement);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   if (statement)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   for (uint32_t index = 0; index != database->objectCount; ++index) {
     const uint8_t *unit =
         database->data + database->objects + uint64_t{index} * kObjectSize;
-    if ((recordKind(unit) != OBELISK_RT_DESIGN_RECORD_PROCESS &&
-         recordKind(unit) != OBELISK_RT_DESIGN_RECORD_FUNCTION) ||
+    if ((recordKind(unit) != TALOS_RT_DESIGN_RECORD_PROCESS &&
+         recordKind(unit) != TALOS_RT_DESIGN_RECORD_FUNCTION) ||
         read64(unit + 8) != calleeCodeUnitID)
       continue;
     uint32_t packed = 0;
     uint64_t source = 0;
     return findCallableSource(*database, index, packed, source) &&
                    source == target.offset
-               ? OBELISK_RT_OK
-               : OBELISK_RT_EOF;
+               ? TALOS_RT_OK
+               : TALOS_RT_EOF;
   }
-  return OBELISK_RT_EOF;
+  return TALOS_RT_EOF;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_net_resolution(
-    const obelisk_rt_context *context, uint64_t netID,
-    obelisk_rt_design_cursor_v1 *outNet,
-    obelisk_rt_design_cursor_v1 *outFunction) noexcept {
+talos_rt_status talos_rt_cached_vpi_net_resolution(
+    const talos_rt_context *context, uint64_t netID,
+    talos_rt_design_cursor_v1 *outNet,
+    talos_rt_design_cursor_v1 *outFunction) noexcept {
   if (!outNet || !outFunction)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outNet = {};
   *outFunction = {};
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
-  obelisk_rt_design_cursor_v1 net{};
+    return TALOS_RT_INVALID_HANDLE;
+  talos_rt_design_cursor_v1 net{};
   for (uint64_t index = 0; index != database->objectCount; ++index) {
     uint64_t offset = database->objects + index * kObjectSize;
     const uint8_t *object = database->data + offset;
-    if (recordKind(object) == OBELISK_RT_DESIGN_RECORD_NET &&
+    if (recordKind(object) == TALOS_RT_DESIGN_RECORD_NET &&
         read64(object + 8) == netID) {
-      const auto *origin = obelisk::reflection::findVPITraversal(
-          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Frame),
+      const auto *origin = talos::reflection::findVPITraversal(
+          static_cast<uint32_t>(talos::reflection::VPIObjectKind::Frame),
           static_cast<uint32_t>(
-              obelisk::reflection::VPIRelationKind::OriginRel),
-          obelisk::reflection::VPITraversalMode::Handle);
-      if (!origin || !obelisk::reflection::vpiObjectSetContains(
+              talos::reflection::VPIRelationKind::OriginRel),
+          talos::reflection::VPITraversalMode::Handle);
+      if (!origin || !talos::reflection::vpiObjectSetContains(
                          origin->targets, recordVPIKind(object)))
-        return OBELISK_RT_EOF;
+        return TALOS_RT_EOF;
       net.offset = offset;
       break;
     }
   }
   if (!net.offset)
-    return OBELISK_RT_EOF;
-  auto target = [&](obelisk_rt_design_cursor_v1 source, uint32_t selector,
-                    uint32_t expected, obelisk_rt_design_cursor_v1 &result) {
+    return TALOS_RT_EOF;
+  auto target = [&](talos_rt_design_cursor_v1 source, uint32_t selector,
+                    uint32_t expected, talos_rt_design_cursor_v1 &result) {
     VPIRelationRange range{};
-    auto status = obelisk_rt_cached_vpi_relation_range(context, source,
+    auto status = talos_rt_cached_vpi_relation_range(context, source,
                                                        selector, false, &range);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     if (range.count != 1)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     uint32_t kind = 0;
     bool statement = false;
-    status = obelisk_rt_cached_vpi_relation_target(context, range.first,
+    status = talos_rt_cached_vpi_relation_target(context, range.first,
                                                    &result, &kind, &statement);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
-    return !statement && kind == expected ? OBELISK_RT_OK : OBELISK_RT_EOF;
+    return !statement && kind == expected ? TALOS_RT_OK : TALOS_RT_EOF;
   };
-  using Kind = obelisk::reflection::VPIObjectKind;
-  obelisk_rt_design_cursor_v1 nettype{}, function{};
+  using Kind = talos::reflection::VPIObjectKind;
+  talos_rt_design_cursor_v1 nettype{}, function{};
   auto status = target(net, static_cast<uint32_t>(Kind::Typespec),
                        static_cast<uint32_t>(Kind::NettypeDecl), nettype);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   status = target(
       nettype,
-      static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::WithRel),
+      static_cast<uint32_t>(talos::reflection::VPIRelationKind::WithRel),
       static_cast<uint32_t>(Kind::Function), function);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   *outNet = net;
   *outFunction = function;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_resolution_target(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_resolution_target(const talos_rt_context *context,
                                         uint64_t netID,
                                         uint64_t calleeCodeUnitID) noexcept {
-  obelisk_rt_design_cursor_v1 net{}, function{};
+  talos_rt_design_cursor_v1 net{}, function{};
   auto status =
-      obelisk_rt_cached_vpi_net_resolution(context, netID, &net, &function);
-  if (status != OBELISK_RT_OK)
+      talos_rt_cached_vpi_net_resolution(context, netID, &net, &function);
+  if (status != TALOS_RT_OK)
     return status;
   const Database *database = cachedDatabase(context);
   for (uint32_t index = 0; index != database->objectCount; ++index) {
     const uint8_t *unit =
         database->data + database->objects + uint64_t{index} * kObjectSize;
-    if (recordKind(unit) != OBELISK_RT_DESIGN_RECORD_FUNCTION ||
+    if (recordKind(unit) != TALOS_RT_DESIGN_RECORD_FUNCTION ||
         read64(unit + 8) != calleeCodeUnitID)
       continue;
     uint32_t packed = 0;
     uint64_t source = 0;
     return findCallableSource(*database, index, packed, source) &&
                    source == function.offset
-               ? OBELISK_RT_OK
-               : OBELISK_RT_EOF;
+               ? TALOS_RT_OK
+               : TALOS_RT_EOF;
   }
-  return OBELISK_RT_EOF;
+  return TALOS_RT_EOF;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_export_target(const obelisk_rt_context *context,
+talos_rt_status
+talos_rt_cached_vpi_export_target(const talos_rt_context *context,
                                     uint64_t codeUnitID, uint64_t scopeID,
                                     bool isTask) noexcept {
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   for (uint32_t index = 0; index != database->objectCount; ++index) {
     const uint8_t *unit =
         database->data + database->objects + uint64_t{index} * kObjectSize;
-    if (recordKind(unit) != (isTask ? OBELISK_RT_DESIGN_RECORD_PROCESS
-                                    : OBELISK_RT_DESIGN_RECORD_FUNCTION) ||
+    if (recordKind(unit) != (isTask ? TALOS_RT_DESIGN_RECORD_PROCESS
+                                    : TALOS_RT_DESIGN_RECORD_FUNCTION) ||
         read64(unit + 8) != codeUnitID)
       continue;
     uint32_t packed = 0;
@@ -12776,109 +12776,109 @@ obelisk_rt_cached_vpi_export_target(const obelisk_rt_context *context,
     if (!findCallableSource(*database, index, packed, source) ||
         objectReferenceVPIKind(*database, source) !=
             static_cast<uint32_t>(
-                isTask ? obelisk::reflection::VPIObjectKind::Task
-                       : obelisk::reflection::VPIObjectKind::Function))
-      return OBELISK_RT_EOF;
+                isTask ? talos::reflection::VPIObjectKind::Task
+                       : talos::reflection::VPIObjectKind::Function))
+      return TALOS_RT_EOF;
     uint64_t scope = read64(unit + 16);
     return isScopeOffset(*database, scope) &&
                    read64(database->data + scope + 8) == scopeID
-               ? OBELISK_RT_OK
-               : OBELISK_RT_EOF;
+               ? TALOS_RT_OK
+               : TALOS_RT_EOF;
   }
-  return OBELISK_RT_EOF;
+  return TALOS_RT_EOF;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_frame_origin(
-    const obelisk_rt_context *context, uint32_t originKind, uint64_t originID,
-    obelisk_rt_design_cursor_v1 *outCursor, bool *outIsStatement) noexcept {
+talos_rt_status talos_rt_cached_vpi_frame_origin(
+    const talos_rt_context *context, uint32_t originKind, uint64_t originID,
+    talos_rt_design_cursor_v1 *outCursor, bool *outIsStatement) noexcept {
   if (!outCursor || !outIsStatement)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outCursor = {};
   *outIsStatement = false;
   switch (originKind) {
   case 4:
   case 0: {
     uint64_t lexicalOwner = 0;
-    auto status = obelisk_rt_cached_vpi_code_unit_scope(
+    auto status = talos_rt_cached_vpi_code_unit_scope(
         context, originID, outCursor, &lexicalOwner);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     uint32_t kind = 0;
-    status = obelisk_rt_cached_vpi_type(context, *outCursor, &kind);
-    const auto *edge = obelisk::reflection::findVPITraversal(
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Frame),
-        static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::OriginRel),
-        obelisk::reflection::VPITraversalMode::Handle);
-    if (status != OBELISK_RT_OK || !edge ||
-        !obelisk::reflection::vpiObjectSetContains(edge->targets, kind)) {
+    status = talos_rt_cached_vpi_type(context, *outCursor, &kind);
+    const auto *edge = talos::reflection::findVPITraversal(
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::Frame),
+        static_cast<uint32_t>(talos::reflection::VPIRelationKind::OriginRel),
+        talos::reflection::VPITraversalMode::Handle);
+    if (status != TALOS_RT_OK || !edge ||
+        !talos::reflection::vpiObjectSetContains(edge->targets, kind)) {
       *outCursor = {};
-      return status == OBELISK_RT_OK ? OBELISK_RT_EOF : status;
+      return status == TALOS_RT_OK ? TALOS_RT_EOF : status;
     }
     *outIsStatement =
         isStatementOffset(*cachedDatabase(context), outCursor->offset);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   case 1: {
     uint64_t owner = 0;
-    obelisk_rt_design_cursor_v1 call{};
+    talos_rt_design_cursor_v1 call{};
     bool statement = false;
-    auto status = obelisk_rt_cached_vpi_call(context, originID, &call, &owner,
+    auto status = talos_rt_cached_vpi_call(context, originID, &call, &owner,
                                              &statement);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     uint32_t kind = 0;
-    status = obelisk_rt_cached_vpi_type(context, call, &kind);
-    if (status != OBELISK_RT_OK)
+    status = talos_rt_cached_vpi_type(context, call, &kind);
+    if (status != TALOS_RT_OK)
       return status;
-    const auto *edge = obelisk::reflection::findVPITraversal(
-        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Frame),
-        static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::OriginRel),
-        obelisk::reflection::VPITraversalMode::Handle);
+    const auto *edge = talos::reflection::findVPITraversal(
+        static_cast<uint32_t>(talos::reflection::VPIObjectKind::Frame),
+        static_cast<uint32_t>(talos::reflection::VPIRelationKind::OriginRel),
+        talos::reflection::VPITraversalMode::Handle);
     if (!edge ||
-        !obelisk::reflection::vpiObjectSetContains(edge->targets, kind))
-      return OBELISK_RT_EOF;
+        !talos::reflection::vpiObjectSetContains(edge->targets, kind))
+      return TALOS_RT_EOF;
     *outCursor = call;
     *outIsStatement = statement;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   case 2: {
     uint64_t owner = 0;
-    obelisk_rt_design_cursor_v1 statement{};
+    talos_rt_design_cursor_v1 statement{};
     auto status =
-        obelisk_rt_cached_vpi_statement(context, originID, &statement, &owner);
-    if (status != OBELISK_RT_OK)
+        talos_rt_cached_vpi_statement(context, originID, &statement, &owner);
+    if (status != TALOS_RT_OK)
       return status;
     const Database *database = cachedDatabase(context);
     if (!(read16(database->data + statement.offset + 38) &
-          OBELISK_RT_DESIGN_STATEMENT_SCOPE))
-      return OBELISK_RT_EOF;
+          TALOS_RT_DESIGN_STATEMENT_SCOPE))
+      return TALOS_RT_EOF;
     *outCursor = statement;
     *outIsStatement = true;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   case 3: {
-    obelisk_rt_design_cursor_v1 function{};
-    return obelisk_rt_cached_vpi_net_resolution(context, originID, outCursor,
+    talos_rt_design_cursor_v1 function{};
+    return talos_rt_cached_vpi_net_resolution(context, originID, outCursor,
                                                 &function);
   }
   default:
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_thread_origin(
-    const obelisk_rt_context *context, uint64_t codeUnitID,
-    obelisk_rt_design_cursor_v1 *outStatement) noexcept {
+talos_rt_status talos_rt_cached_vpi_thread_origin(
+    const talos_rt_context *context, uint64_t codeUnitID,
+    talos_rt_design_cursor_v1 *outStatement) noexcept {
   if (!outStatement)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outStatement = {};
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t low = 0, high = database->threadOriginBindingCount;
   while (low < high) {
     const uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::ThreadOriginBindingView binding(
+    talos::reflection::ThreadOriginBindingView binding(
         database->data + database->threadOriginBindings +
         middle * kThreadOriginBindingSize);
     if (binding.getCodeUnitID() < codeUnitID)
@@ -12887,33 +12887,33 @@ obelisk_rt_status obelisk_rt_cached_vpi_thread_origin(
       high = middle;
   }
   if (low == database->threadOriginBindingCount)
-    return OBELISK_RT_EOF;
-  obelisk::reflection::ThreadOriginBindingView binding(
+    return TALOS_RT_EOF;
+  talos::reflection::ThreadOriginBindingView binding(
       database->data + database->threadOriginBindings +
       low * kThreadOriginBindingSize);
   if (binding.getCodeUnitID() != codeUnitID)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   outStatement->offset = database->statements +
                          uint64_t{binding.getStatementIndex()} * kStatementSize;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_event_binding(const obelisk_rt_context *context,
-                                    obelisk_rt_design_cursor_v1 event,
+talos_rt_status
+talos_rt_cached_vpi_event_binding(const talos_rt_context *context,
+                                    talos_rt_design_cursor_v1 event,
                                     uint64_t *outEventID) noexcept {
   if (!outEventID)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outEventID = 0;
   const Database *database = cachedDatabase(context);
   uint32_t packed = 0;
   if (!database ||
       !packedObjectReferenceForCursor(*database, event.offset, packed))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t low = 0, high = database->eventBindingCount;
   while (low < high) {
     uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::EventBindingView binding(
+    talos::reflection::EventBindingView binding(
         database->data + database->eventBindings + middle * kEventBindingSize);
     if (binding.getEventIndexAndTable() < packed)
       low = middle + 1;
@@ -12921,31 +12921,31 @@ obelisk_rt_cached_vpi_event_binding(const obelisk_rt_context *context,
       high = middle;
   }
   if (low == database->eventBindingCount)
-    return OBELISK_RT_EOF;
-  obelisk::reflection::EventBindingView binding(
+    return TALOS_RT_EOF;
+  talos::reflection::EventBindingView binding(
       database->data + database->eventBindings + low * kEventBindingSize);
   if (binding.getEventIndexAndTable() != packed)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   *outEventID = binding.getEventID();
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_modport_binding(const obelisk_rt_context *context,
-                                      obelisk_rt_design_cursor_v1 modport,
+talos_rt_status
+talos_rt_cached_vpi_modport_binding(const talos_rt_context *context,
+                                      talos_rt_design_cursor_v1 modport,
                                       VPIModportBinding *outBinding) noexcept {
   if (!outBinding)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outBinding = {};
   const Database *database = cachedDatabase(context);
   uint32_t packed = 0;
   if (!database ||
       !packedObjectReferenceForCursor(*database, modport.offset, packed))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t low = 0, high = database->modportBindingCount;
   while (low < high) {
     uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::ModportBindingView binding(
+    talos::reflection::ModportBindingView binding(
         database->data + database->modportBindings +
         middle * kModportBindingSize);
     if (binding.getModportIndexAndTable() < packed)
@@ -12954,83 +12954,83 @@ obelisk_rt_cached_vpi_modport_binding(const obelisk_rt_context *context,
       high = middle;
   }
   if (low == database->modportBindingCount)
-    return OBELISK_RT_EOF;
-  obelisk::reflection::ModportBindingView binding(
+    return TALOS_RT_EOF;
+  talos::reflection::ModportBindingView binding(
       database->data + database->modportBindings + low * kModportBindingSize);
   if (binding.getModportIndexAndTable() != packed)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   std::string_view name;
   if (!getString(*database, database->strings + binding.getName(), name))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   outBinding->scope.offset =
       database->scopes + uint64_t{binding.getScopeIndex()} * kScopeSize;
   outBinding->name = reinterpret_cast<const uint8_t *>(name.data());
   outBinding->nameSize = name.size();
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_modport(const obelisk_rt_context *context,
-                              obelisk_rt_design_cursor_v1 scope,
+talos_rt_status
+talos_rt_cached_vpi_modport(const talos_rt_context *context,
+                              talos_rt_design_cursor_v1 scope,
                               const uint8_t *name, uint64_t nameSize,
-                              obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+                              talos_rt_design_cursor_v1 *outCursor) noexcept {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outCursor = {};
   if (nameSize && !name)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   if (!database || !isScopeOffset(*database, scope.offset) ||
       recordVPIKind(database->data + scope.offset) !=
-          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Interface))
-    return OBELISK_RT_INVALID_HANDLE;
+          static_cast<uint32_t>(talos::reflection::VPIObjectKind::Interface))
+    return TALOS_RT_INVALID_HANDLE;
   if (!nameSize)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   VPIRelationRange range{};
-  obelisk_rt_status status = obelisk_rt_cached_vpi_relation_range(
+  talos_rt_status status = talos_rt_cached_vpi_relation_range(
       context, scope,
-      static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Modport), true,
+      static_cast<uint32_t>(talos::reflection::VPIObjectKind::Modport), true,
       &range);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   for (uint64_t index = 0; index != range.count; ++index) {
-    obelisk_rt_design_cursor_v1 modport{};
+    talos_rt_design_cursor_v1 modport{};
     uint32_t type = 0;
     bool statement = false;
-    status = obelisk_rt_cached_vpi_relation_target(context, range.first + index,
+    status = talos_rt_cached_vpi_relation_target(context, range.first + index,
                                                    &modport, &type, &statement);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     VPIModportBinding binding{};
     if (statement ||
         type != static_cast<uint32_t>(
-                    obelisk::reflection::VPIObjectKind::Modport) ||
-        obelisk_rt_cached_vpi_modport_binding(context, modport, &binding) !=
-            OBELISK_RT_OK ||
+                    talos::reflection::VPIObjectKind::Modport) ||
+        talos_rt_cached_vpi_modport_binding(context, modport, &binding) !=
+            TALOS_RT_OK ||
         binding.scope.offset != scope.offset)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (binding.nameSize == nameSize &&
         std::memcmp(binding.name, name, nameSize) == 0) {
       *outCursor = modport;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
   }
-  return OBELISK_RT_EOF;
+  return TALOS_RT_EOF;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_class_typespec(
-    const obelisk_rt_context *context, uint64_t classID,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+talos_rt_status talos_rt_cached_vpi_class_typespec(
+    const talos_rt_context *context, uint64_t classID,
+    talos_rt_design_cursor_v1 *outCursor) noexcept {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outCursor = {};
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t low = 0, high = database->classTypeBindingCount;
   while (low < high) {
     uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::ClassTypeBindingView binding(
+    talos::reflection::ClassTypeBindingView binding(
         database->data + database->classTypeBindings +
         middle * kClassTypeBindingSize);
     if (binding.getClassID() < classID)
@@ -13039,33 +13039,33 @@ obelisk_rt_status obelisk_rt_cached_vpi_class_typespec(
       high = middle;
   }
   if (low == database->classTypeBindingCount)
-    return OBELISK_RT_EOF;
-  obelisk::reflection::ClassTypeBindingView binding(
+    return TALOS_RT_EOF;
+  talos::reflection::ClassTypeBindingView binding(
       database->data + database->classTypeBindings +
       low * kClassTypeBindingSize);
   if (binding.getClassID() != classID)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   return packedObjectReferenceOffset(
              *database, binding.getTypespecIndexAndTable(), outCursor->offset)
-             ? OBELISK_RT_OK
-             : OBELISK_RT_INVALID_DESIGN;
+             ? TALOS_RT_OK
+             : TALOS_RT_INVALID_DESIGN;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_class_member(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 member,
+talos_rt_status talos_rt_cached_vpi_class_member(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 member,
     VPIClassMemberBinding *outBinding) noexcept {
   if (!outBinding)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outBinding = {};
   const Database *database = cachedDatabase(context);
   uint32_t packed = 0;
   if (!database ||
       !packedObjectReferenceForCursor(*database, member.offset, packed))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t low = 0, high = database->classMemberBindingCount;
   while (low < high) {
     uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::ClassMemberBindingView binding(
+    talos::reflection::ClassMemberBindingView binding(
         database->data + database->classMemberBindings +
         middle * kClassMemberBindingSize);
     if (binding.getMemberIndexAndTable() < packed)
@@ -13074,11 +13074,11 @@ obelisk_rt_status obelisk_rt_cached_vpi_class_member(
       high = middle;
   }
   if (low == database->classMemberBindingCount)
-    return OBELISK_RT_EOF;
-  obelisk::reflection::ClassMemberBindingView binding(
+    return TALOS_RT_EOF;
+  talos::reflection::ClassMemberBindingView binding(
       database->data + database->classMemberBindings + low * kClassMemberBindingSize);
   if (binding.getMemberIndexAndTable() != packed)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   outBinding->classID = binding.getClassID();
   outBinding->byteOffset = binding.getByteOffset();
   outBinding->staticEventID = binding.getEventID();
@@ -13086,40 +13086,40 @@ obelisk_rt_status obelisk_rt_cached_vpi_class_member(
   outBinding->isMethod = (binding.getFlags() & 2) != 0;
   std::string_view name;
   if (!getString(*database, database->strings + binding.getName(), name))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   outBinding->name = reinterpret_cast<const uint8_t *>(name.data());
   outBinding->nameSize = name.size();
   if (!packedObjectReferenceOffset(*database, binding.getOwnerIndexAndTable(),
                                    outBinding->ownerScope.offset) ||
-      obelisk_rt_cached_vpi_class_typespec(context, binding.getClassID(),
-                                          &outBinding->ownerTypespec) != OBELISK_RT_OK ||
+      talos_rt_cached_vpi_class_typespec(context, binding.getClassID(),
+                                          &outBinding->ownerTypespec) != TALOS_RT_OK ||
       (binding.getStorageIndexAndTable() != UINT32_MAX &&
        !packedObjectReferenceOffset(*database, binding.getStorageIndexAndTable(),
                                       outBinding->backingStorage.offset)))
-    return OBELISK_RT_INVALID_DESIGN;
-  return OBELISK_RT_OK;
+    return TALOS_RT_INVALID_DESIGN;
+  return TALOS_RT_OK;
 }
 
-static obelisk_rt_status
-cachedLegacyMailboxElementType(const obelisk_rt_context *context,
-                               obelisk_rt_design_cursor_v1 typespec,
-                               obelisk_rt_design_cursor_v1 semantic,
-                               obelisk_rt_design_cursor_v1 *outType) noexcept {
+static talos_rt_status
+cachedLegacyMailboxElementType(const talos_rt_context *context,
+                               talos_rt_design_cursor_v1 typespec,
+                               talos_rt_design_cursor_v1 semantic,
+                               talos_rt_design_cursor_v1 *outType) noexcept {
   if (!outType)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outType = {};
   const Database *database = cachedDatabase(context);
   uint32_t packed = 0;
   if (!database || semantic.offset == 0 ||
       semantic.offset > database->semanticTypeCount ||
       !packedObjectReferenceForCursor(*database, typespec.offset, packed))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   const uint32_t semanticIndex = static_cast<uint32_t>(semantic.offset - 1);
   const uint64_t key = (uint64_t{packed} << 32) | semanticIndex;
   uint64_t low = 0, high = database->mailboxElementBindingCount;
   while (low != high) {
     const uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::MailboxElementBindingView binding(
+    talos::reflection::MailboxElementBindingView binding(
         database->data + database->mailboxElementBindings +
         middle * kMailboxElementBindingSize);
     const uint64_t candidate =
@@ -13131,48 +13131,48 @@ cachedLegacyMailboxElementType(const obelisk_rt_context *context,
       high = middle;
   }
   if (low == database->mailboxElementBindingCount)
-    return OBELISK_RT_EOF;
-  obelisk::reflection::MailboxElementBindingView binding(
+    return TALOS_RT_EOF;
+  talos::reflection::MailboxElementBindingView binding(
       database->data + database->mailboxElementBindings +
       low * kMailboxElementBindingSize);
   if (binding.getTypespecIndexAndTable() != packed ||
       binding.getSemanticTypeIndex() != semanticIndex)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   outType->offset =
       database->types + uint64_t{binding.getPhysicalTypeIndex()} * kTypeSize;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_value_layout_owner(
-    const obelisk_rt_context *context,
-    obelisk_rt_design_cursor_v1 reflectedOwner,
+talos_rt_status talos_rt_cached_vpi_value_layout_owner(
+    const talos_rt_context *context,
+    talos_rt_design_cursor_v1 reflectedOwner,
     VPIValueLayoutOwner *outOwner) noexcept {
   if (!outOwner)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outOwner = {};
   const Database *database = cachedDatabase(context);
   uint32_t packed = 0;
   if (!database ||
       !packedObjectReferenceForCursor(*database, reflectedOwner.offset, packed))
-    return OBELISK_RT_INVALID_HANDLE;
-  outOwner->kind = obelisk::reflection::ValueLayoutOwnerKind::ReflectedObject;
+    return TALOS_RT_INVALID_HANDLE;
+  outOwner->kind = talos::reflection::ValueLayoutOwnerKind::ReflectedObject;
   outOwner->index = packed;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_box_type(const obelisk_rt_context *context, uint64_t id,
+talos_rt_status
+talos_rt_cached_vpi_box_type(const talos_rt_context *context, uint64_t id,
                                VPIBoxTypeBinding *outType) noexcept {
   if (!outType)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outType = {};
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t low = 0, high = database->boxTypeBindingCount;
   while (low != high) {
     const uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::BoxTypeBindingView binding(
+    talos::reflection::BoxTypeBindingView binding(
         database->data + database->boxTypeBindings +
         middle * kBoxTypeBindingSize);
     if (binding.getID() < id)
@@ -13181,44 +13181,44 @@ obelisk_rt_cached_vpi_box_type(const obelisk_rt_context *context, uint64_t id,
       high = middle;
   }
   if (low == database->boxTypeBindingCount)
-    return OBELISK_RT_EOF;
-  obelisk::reflection::BoxTypeBindingView binding(
+    return TALOS_RT_EOF;
+  talos::reflection::BoxTypeBindingView binding(
       database->data + database->boxTypeBindings + low * kBoxTypeBindingSize);
   if (binding.getID() != id)
-    return OBELISK_RT_EOF;
-  outType->layout = {obelisk::reflection::ValueLayoutOwnerKind::BoxDescriptor,
+    return TALOS_RT_EOF;
+  outType->layout = {talos::reflection::ValueLayoutOwnerKind::BoxDescriptor,
                      static_cast<uint32_t>(low)};
   outType->semantic.offset = uint64_t{binding.getSemanticTypeIndex()} + 1;
   outType->physical.offset =
       database->types + uint64_t{binding.getPhysicalTypeIndex()} * kTypeSize;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_value_element_type(
-    const obelisk_rt_context *context, VPIValueLayoutOwner owner,
-    obelisk_rt_design_cursor_v1 semantic,
-    obelisk_rt_design_cursor_v1 *outType) noexcept {
+talos_rt_status talos_rt_cached_vpi_value_element_type(
+    const talos_rt_context *context, VPIValueLayoutOwner owner,
+    talos_rt_design_cursor_v1 semantic,
+    talos_rt_design_cursor_v1 *outType) noexcept {
   if (!outType)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outType = {};
   const Database *database = cachedDatabase(context);
   uint64_t reflectedOffset = 0;
-  using OwnerKind = obelisk::reflection::ValueLayoutOwnerKind;
+  using OwnerKind = talos::reflection::ValueLayoutOwnerKind;
   if (!database || semantic.offset == 0 ||
       semantic.offset > database->semanticTypeCount ||
-      !obelisk::reflection::isValidValueLayoutOwnerKind(owner.kind) ||
+      !talos::reflection::isValidValueLayoutOwnerKind(owner.kind) ||
       (owner.kind == OwnerKind::BoxDescriptor &&
        owner.index >= database->boxTypeBindingCount) ||
       (owner.kind == OwnerKind::ReflectedObject &&
        !packedObjectReferenceOffset(*database, owner.index, reflectedOffset)))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   const auto key =
       std::make_tuple(static_cast<uint32_t>(owner.kind), owner.index,
                       static_cast<uint32_t>(semantic.offset - 1));
   uint64_t low = 0, high = database->valueElementBindingCount;
   while (low != high) {
     const uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::ValueElementBindingView binding(
+    talos::reflection::ValueElementBindingView binding(
         database->data + database->valueElementBindings +
         middle * kValueElementBindingSize);
     const auto candidate =
@@ -13230,62 +13230,62 @@ obelisk_rt_status obelisk_rt_cached_vpi_value_element_type(
       high = middle;
   }
   if (low != database->valueElementBindingCount) {
-    obelisk::reflection::ValueElementBindingView binding(
+    talos::reflection::ValueElementBindingView binding(
         database->data + database->valueElementBindings +
         low * kValueElementBindingSize);
     if (std::make_tuple(binding.getOwnerKind(), binding.getOwnerIndex(),
                         binding.getSemanticTypeIndex()) == key) {
       outType->offset = database->types +
                         uint64_t{binding.getPhysicalTypeIndex()} * kTypeSize;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
   }
   return owner.kind == OwnerKind::ReflectedObject
              ? cachedLegacyMailboxElementType(context, {reflectedOffset},
                                               semantic, outType)
-             : OBELISK_RT_EOF;
+             : TALOS_RT_EOF;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_value_element_type(
-    const obelisk_rt_context *context,
-    obelisk_rt_design_cursor_v1 reflectedOwner,
-    obelisk_rt_design_cursor_v1 semantic,
-    obelisk_rt_design_cursor_v1 *outType) noexcept {
+talos_rt_status talos_rt_cached_vpi_value_element_type(
+    const talos_rt_context *context,
+    talos_rt_design_cursor_v1 reflectedOwner,
+    talos_rt_design_cursor_v1 semantic,
+    talos_rt_design_cursor_v1 *outType) noexcept {
   VPIValueLayoutOwner owner;
   auto status =
-      obelisk_rt_cached_vpi_value_layout_owner(context, reflectedOwner, &owner);
-  if (status != OBELISK_RT_OK) {
+      talos_rt_cached_vpi_value_layout_owner(context, reflectedOwner, &owner);
+  if (status != TALOS_RT_OK) {
     if (outType)
       *outType = {};
-    return outType ? status : OBELISK_RT_INVALID_ARGUMENT;
+    return outType ? status : TALOS_RT_INVALID_ARGUMENT;
   }
-  return obelisk_rt_cached_vpi_value_element_type(context, owner, semantic,
+  return talos_rt_cached_vpi_value_element_type(context, owner, semantic,
                                                   outType);
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_mailbox_element_type(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 typespec,
-    obelisk_rt_design_cursor_v1 semantic,
-    obelisk_rt_design_cursor_v1 *outType) noexcept {
-  return obelisk_rt_cached_vpi_value_element_type(context, typespec, semantic,
+talos_rt_status talos_rt_cached_vpi_mailbox_element_type(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 typespec,
+    talos_rt_design_cursor_v1 semantic,
+    talos_rt_design_cursor_v1 *outType) noexcept {
+  return talos_rt_cached_vpi_value_element_type(context, typespec, semantic,
                                                   outType);
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_semantic_class_typespec(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 semantic,
-    obelisk_rt_design_cursor_v1 *outCursor) noexcept {
+talos_rt_status talos_rt_cached_vpi_semantic_class_typespec(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 semantic,
+    talos_rt_design_cursor_v1 *outCursor) noexcept {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outCursor = {};
   const Database *database = cachedDatabase(context);
   if (!database || semantic.offset == 0 ||
       semantic.offset > database->semanticTypeCount)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t semanticIndex = static_cast<uint32_t>(semantic.offset - 1);
   uint64_t low = 0, high = database->semanticClassBindingCount;
   while (low < high) {
     uint64_t middle = low + (high - low) / 2;
-    obelisk::reflection::SemanticClassBindingView binding(
+    talos::reflection::SemanticClassBindingView binding(
         database->data + database->semanticClassBindings +
         middle * kSemanticClassBindingSize);
     if (binding.getSemanticType() < semanticIndex)
@@ -13294,64 +13294,64 @@ obelisk_rt_status obelisk_rt_cached_vpi_semantic_class_typespec(
       high = middle;
   }
   if (low == database->semanticClassBindingCount)
-    return OBELISK_RT_EOF;
-  obelisk::reflection::SemanticClassBindingView binding(
+    return TALOS_RT_EOF;
+  talos::reflection::SemanticClassBindingView binding(
       database->data + database->semanticClassBindings +
       low * kSemanticClassBindingSize);
   if (binding.getSemanticType() != semanticIndex)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   return packedObjectReferenceOffset(
              *database, binding.getTypespecIndexAndTable(), outCursor->offset)
-             ? OBELISK_RT_OK
-             : OBELISK_RT_INVALID_DESIGN;
+             ? TALOS_RT_OK
+             : TALOS_RT_INVALID_DESIGN;
 }
 
-obelisk_rt_status obelisk_rt_cached_design_semantic_type_info(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_semantic_type_info_v1 *outInfo) noexcept {
+talos_rt_status talos_rt_cached_design_semantic_type_info(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_semantic_type_info_v1 *outInfo) noexcept {
   if (!outInfo)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designSemanticTypeInfo(*database, cursor, outInfo)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_design_semantic_bit_width(const obelisk_rt_context *context,
-                                            obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status
+talos_rt_cached_design_semantic_bit_width(const talos_rt_context *context,
+                                            talos_rt_design_cursor_v1 cursor,
                                             uint64_t *outWidth) noexcept {
   if (!outWidth)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outWidth = 0;
   const Database *database = cachedDatabase(context);
   if (!database || cursor.offset == 0 ||
       cursor.offset > database->semanticTypeCount)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   return semanticPackedBitWidth(
       *database, static_cast<uint32_t>(cursor.offset - 1), outWidth);
 }
 
-obelisk_rt_status obelisk_rt_cached_design_semantic_type_edge(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    uint64_t index, obelisk_rt_design_semantic_type_edge_v1 *outEdge) noexcept {
+talos_rt_status talos_rt_cached_design_semantic_type_edge(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    uint64_t index, talos_rt_design_semantic_type_edge_v1 *outEdge) noexcept {
   if (!outEdge)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designSemanticTypeEdge(*database, cursor, index, outEdge)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_design_source(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_cached_design_source(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     const uint8_t **outFile, uint64_t *outFileSize, uint32_t *outLine,
     uint32_t *outColumn) noexcept {
   if (!outFile || !outFileSize || !outLine || !outColumn)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   const uint8_t *record = nullptr;
   uint32_t kind = 0;
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t fileOffset = 0;
   uint32_t line = 0;
   uint32_t column = 0;
@@ -13378,12 +13378,12 @@ obelisk_rt_status obelisk_rt_cached_design_source(
     column = read32(record + 24);
   } else {
     if (!getRecord(*database, cursor.offset, record, kind) ||
-        kind == OBELISK_RT_DESIGN_RECORD_TYPE)
-      return OBELISK_RT_INVALID_HANDLE;
+        kind == TALOS_RT_DESIGN_RECORD_TYPE)
+      return TALOS_RT_INVALID_HANDLE;
     fileOffset =
-        read64(record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 48 : 32));
+        read64(record + (kind == TALOS_RT_DESIGN_RECORD_SCOPE ? 48 : 32));
     uint64_t lineColumn =
-        read64(record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 56 : 88));
+        read64(record + (kind == TALOS_RT_DESIGN_RECORD_SCOPE ? 56 : 88));
     line = static_cast<uint32_t>(lineColumn >> 32);
     column = static_cast<uint32_t>(lineColumn);
   }
@@ -13393,78 +13393,78 @@ obelisk_rt_status obelisk_rt_cached_design_source(
   } else {
     std::string_view file;
     if (!getString(*database, fileOffset, file))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     *outFile = reinterpret_cast<const uint8_t *>(file.data());
     *outFileSize = file.size();
   }
   *outLine = line;
   *outColumn = column;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status obelisk_rt_cached_design_name(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_cached_design_name(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     const uint8_t **outData, uint64_t *outSize) noexcept {
   if (!outData || !outSize)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designName(*database, cursor, outData, outSize)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_type(const obelisk_rt_context *context,
-                                             obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_cached_vpi_type(const talos_rt_context *context,
+                                             talos_rt_design_cursor_v1 cursor,
                                              uint32_t *outType) noexcept {
   if (!outType)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIType(*database, cursor, outType)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_fixed_property(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_cached_vpi_fixed_property(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     uint32_t selector, VPIFixedPropertyValue *outValue) noexcept {
   if (!outValue)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database
              ? designVPIFixedProperty(*database, cursor, selector, outValue)
-             : OBELISK_RT_INVALID_HANDLE;
+             : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_definition_member_scope(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_cursor_v1 *outScope) noexcept {
+talos_rt_status talos_rt_cached_vpi_definition_member_scope(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_cursor_v1 *outScope) noexcept {
   if (!outScope)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outScope = {};
   const Database *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t scope = 0, memberIndex = 0;
   const uint8_t *member = nullptr;
   if (!virtualMemberForCursor(*database, cursor.offset, scope, memberIndex,
                               member))
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   outScope->offset = database->scopes + uint64_t{scope} * kScopeSize;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_frozen_value(const obelisk_rt_context *context,
-                                   obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status
+talos_rt_cached_vpi_frozen_value(const talos_rt_context *context,
+                                   talos_rt_design_cursor_v1 cursor,
                                    VPIFrozenValue *outValue) noexcept {
   if (!outValue)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   uint32_t rootIndex = 0, ordinal = 0;
   const uint8_t *root = nullptr, *recipe = nullptr, *node = nullptr;
   if (database && expressionForCursor(*database, cursor.offset, rootIndex,
                                       ordinal, root, recipe, node))
     return expressionFrozen(*database, read32(node + 28), *outValue)
-               ? OBELISK_RT_OK
-               : OBELISK_RT_EOF;
+               ? TALOS_RT_OK
+               : TALOS_RT_EOF;
   uint32_t scope = 0, memberIndex = 0, specialization = 0;
   const uint8_t *member = nullptr;
   if (database &&
@@ -13472,316 +13472,316 @@ obelisk_rt_cached_vpi_frozen_value(const obelisk_rt_context *context,
                              member, nullptr, &specialization))
     return findDefinitionParameterValue(*database, specialization, memberIndex,
                                         *outValue)
-               ? OBELISK_RT_OK
-               : OBELISK_RT_INVALID_HANDLE;
+               ? TALOS_RT_OK
+               : TALOS_RT_INVALID_HANDLE;
   uint32_t packedSource = 0;
   if (!database ||
       !packedObjectReferenceForCursor(*database, cursor.offset, packedSource))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   return findFrozenValue(*database, packedSource, *outValue)
-             ? OBELISK_RT_OK
-             : OBELISK_RT_INVALID_HANDLE;
+             ? TALOS_RT_OK
+             : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_resolved_net_type(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_cached_vpi_resolved_net_type(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     uint64_t bitOffset, uint64_t bitWidth, uint32_t *outType) noexcept {
   if (!outType)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIResolvedNetType(*database, cursor, bitOffset,
                                              bitWidth, outType)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_net_delay(const obelisk_rt_context *context,
-                                obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status
+talos_rt_cached_vpi_net_delay(const talos_rt_context *context,
+                                talos_rt_design_cursor_v1 cursor,
                                 uint64_t bitOffset, uint64_t bitWidth,
                                 VPINetDelayValue *outDelay) noexcept {
   if (!outDelay)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPINetDelay(*database, cursor, bitOffset, bitWidth,
                                       outDelay)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_relation_range(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 source,
+talos_rt_status talos_rt_cached_vpi_relation_range(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 source,
     uint32_t selector, bool iterate, VPIRelationRange *outRange) noexcept {
   if (!outRange)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIRelationRange(*database, source, selector, iterate,
                                            outRange)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_relation_target(
-    const obelisk_rt_context *context, uint64_t relationIndex,
-    obelisk_rt_design_cursor_v1 *outCursor, uint32_t *outType,
+talos_rt_status talos_rt_cached_vpi_relation_target(
+    const talos_rt_context *context, uint64_t relationIndex,
+    talos_rt_design_cursor_v1 *outCursor, uint32_t *outType,
     bool *outStatement) noexcept {
   if (!outCursor || !outType || !outStatement)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIRelationTarget(*database, relationIndex, outCursor,
                                             outType, outStatement)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_relation_index(const obelisk_rt_context *context,
-                                     obelisk_rt_design_cursor_v1 source,
+talos_rt_status
+talos_rt_cached_vpi_relation_index(const talos_rt_context *context,
+                                     talos_rt_design_cursor_v1 source,
                                      VPIRelationIndexInfo *outInfo) noexcept {
   if (!outInfo)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIRelationIndex(*database, source, outInfo)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_relation_index_dimension(
-    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+talos_rt_status talos_rt_cached_vpi_relation_index_dimension(
+    const talos_rt_context *context, const VPIRelationIndexInfo &info,
     uint32_t dimension, int64_t *outLeft, int64_t *outRight) noexcept {
   if (!outLeft || !outRight)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIRelationIndexDimension(*database, info, dimension,
                                                     outLeft, outRight)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_relation_index_key(
-    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+talos_rt_status talos_rt_cached_vpi_relation_index_key(
+    const talos_rt_context *context, const VPIRelationIndexInfo &info,
     int64_t index, uint32_t *outOrdinal) noexcept {
   if (!outOrdinal)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database
              ? designVPIRelationIndexKey(*database, info, index, outOrdinal)
-             : OBELISK_RT_INVALID_HANDLE;
+             : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_relation_index_ordinal_key(
-    const obelisk_rt_context *context, const VPIRelationIndexInfo &info,
+talos_rt_status talos_rt_cached_vpi_relation_index_ordinal_key(
+    const talos_rt_context *context, const VPIRelationIndexInfo &info,
     uint32_t ordinal, int64_t *outIndex) noexcept {
   if (!outIndex)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIRelationIndexOrdinalKey(*database, info, ordinal,
                                                      outIndex)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_array_member(const obelisk_rt_context *context,
-                                   obelisk_rt_design_cursor_v1 member,
+talos_rt_status
+talos_rt_cached_vpi_array_member(const talos_rt_context *context,
+                                   talos_rt_design_cursor_v1 member,
                                    VPIArrayMemberInfo *outInfo) noexcept {
   if (!outInfo)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIArrayMember(*database, member, outInfo)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_statement_scope(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
-    obelisk_rt_design_cursor_v1 *outScope) noexcept {
+talos_rt_status talos_rt_cached_vpi_statement_scope(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 statement,
+    talos_rt_design_cursor_v1 *outScope) noexcept {
   if (!outScope)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIStatementScope(*database, statement, outScope)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_statement_enclosing_scope(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
-    obelisk_rt_design_cursor_v1 *outScope, bool *outStatement) noexcept {
+talos_rt_status talos_rt_cached_vpi_statement_enclosing_scope(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 statement,
+    talos_rt_design_cursor_v1 *outScope, bool *outStatement) noexcept {
   if (!outScope || !outStatement)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIStatementEnclosingScope(*database, statement,
                                                      outScope, outStatement)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_statement_parent(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
-    obelisk_rt_design_cursor_v1 *outParent) noexcept {
+talos_rt_status talos_rt_cached_vpi_statement_parent(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 statement,
+    talos_rt_design_cursor_v1 *outParent) noexcept {
   if (!outParent)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIStatementParent(*database, statement, outParent)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_statement_owner(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
-    obelisk_rt_design_cursor_v1 *outOwner) noexcept {
+talos_rt_status talos_rt_cached_vpi_statement_owner(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 statement,
+    talos_rt_design_cursor_v1 *outOwner) noexcept {
   if (!outOwner)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIStatementOwner(*database, statement, outOwner)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_statement_is_scope(const obelisk_rt_context *context,
-                                         obelisk_rt_design_cursor_v1 statement,
+talos_rt_status
+talos_rt_cached_vpi_statement_is_scope(const talos_rt_context *context,
+                                         talos_rt_design_cursor_v1 statement,
                                          bool *outIsScope) noexcept {
   if (!outIsScope)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIStatementIsScope(*database, statement, outIsScope)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_statement_is_protected(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 statement,
+talos_rt_status talos_rt_cached_vpi_statement_is_protected(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 statement,
     bool *outIsProtected) noexcept {
   if (!outIsProtected)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   return database ? designVPIStatementIsProtected(*database, statement,
                                                   outIsProtected)
-                  : OBELISK_RT_INVALID_HANDLE;
+                  : TALOS_RT_INVALID_HANDLE;
 }
 
-bool obelisk_rt_checked_design_record(
-    const obelisk_rt_execution_descriptor_v1 *execution, uint64_t offset,
+bool talos_rt_checked_design_record(
+    const talos_rt_execution_descriptor_v1 *execution, uint64_t offset,
     const uint8_t *&record, uint32_t &kind) noexcept {
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     Database database;
-    return loadValidatedDatabase(execution, database) == OBELISK_RT_OK &&
+    return loadValidatedDatabase(execution, database) == TALOS_RT_OK &&
            getRecord(database, offset, record, kind);
   }
-  OBELISK_RT_CATCH_ALL { return false; }
+  TALOS_RT_CATCH_ALL { return false; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_design_validate(
-    const obelisk_rt_execution_descriptor_v1 *execution) {
-  OBELISK_RT_TRY {
+extern "C" talos_rt_status talos_rt_v1_design_validate(
+    const talos_rt_execution_descriptor_v1 *execution) {
+  TALOS_RT_TRY {
     Database database;
     return loadValidatedDatabase(execution, database);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_design_root(const obelisk_rt_execution_descriptor_v1 *execution,
-                          obelisk_rt_design_cursor_v1 *outCursor) {
+extern "C" talos_rt_status
+talos_rt_v1_design_root(const talos_rt_execution_descriptor_v1 *execution,
+                          talos_rt_design_cursor_v1 *outCursor) {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   Database database;
-  obelisk_rt_status status = loadValidatedDatabase(execution, database);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != TALOS_RT_OK)
     return status;
   return designRoot(database, outCursor);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_design_child(const obelisk_rt_execution_descriptor_v1 *execution,
-                           obelisk_rt_design_cursor_v1 cursor,
-                           obelisk_rt_design_cursor_v1 *outCursor) {
+extern "C" talos_rt_status
+talos_rt_v1_design_child(const talos_rt_execution_descriptor_v1 *execution,
+                           talos_rt_design_cursor_v1 cursor,
+                           talos_rt_design_cursor_v1 *outCursor) {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   Database database;
-  obelisk_rt_status status = loadValidatedDatabase(execution, database);
-  if (status != OBELISK_RT_OK)
-    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  talos_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != TALOS_RT_OK)
+    return mapInvalidDatabase(status, TALOS_RT_INVALID_HANDLE);
   return designChild(database, cursor, outCursor);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_design_child_at(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor, uint64_t index,
-    obelisk_rt_design_cursor_v1 *outCursor) {
+extern "C" talos_rt_status talos_rt_v1_design_child_at(
+    const talos_rt_execution_descriptor_v1 *execution,
+    talos_rt_design_cursor_v1 cursor, uint64_t index,
+    talos_rt_design_cursor_v1 *outCursor) {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   Database database;
-  obelisk_rt_status status = loadValidatedDatabase(execution, database);
-  if (status != OBELISK_RT_OK)
-    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  talos_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != TALOS_RT_OK)
+    return mapInvalidDatabase(status, TALOS_RT_INVALID_HANDLE);
   return designChildAt(database, cursor, index, outCursor);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_design_sibling(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_cursor_v1 *outCursor) {
+extern "C" talos_rt_status talos_rt_v1_design_sibling(
+    const talos_rt_execution_descriptor_v1 *execution,
+    talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_cursor_v1 *outCursor) {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   Database database;
-  obelisk_rt_status status = loadValidatedDatabase(execution, database);
-  if (status != OBELISK_RT_OK)
-    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  talos_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != TALOS_RT_OK)
+    return mapInvalidDatabase(status, TALOS_RT_INVALID_HANDLE);
   return designSibling(database, cursor, outCursor);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_design_lookup(const obelisk_rt_execution_descriptor_v1 *execution,
+extern "C" talos_rt_status
+talos_rt_v1_design_lookup(const talos_rt_execution_descriptor_v1 *execution,
                             const uint8_t *name, uint64_t nameSize,
-                            obelisk_rt_design_cursor_v1 *outCursor) {
+                            talos_rt_design_cursor_v1 *outCursor) {
   if (!outCursor || (nameSize != 0 && !name))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   Database database;
-  obelisk_rt_status status = loadValidatedDatabase(execution, database);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != TALOS_RT_OK)
     return status;
   return designLookup(database, name, nameSize, outCursor);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_design_info(const obelisk_rt_execution_descriptor_v1 *execution,
-                          obelisk_rt_design_cursor_v1 cursor,
-                          obelisk_rt_design_info_v1 *outInfo) {
+extern "C" talos_rt_status
+talos_rt_v1_design_info(const talos_rt_execution_descriptor_v1 *execution,
+                          talos_rt_design_cursor_v1 cursor,
+                          talos_rt_design_info_v1 *outInfo) {
   if (!outInfo)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   Database database;
-  obelisk_rt_status status = loadValidatedDatabase(execution, database);
-  if (status != OBELISK_RT_OK)
-    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  talos_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != TALOS_RT_OK)
+    return mapInvalidDatabase(status, TALOS_RT_INVALID_HANDLE);
   return designInfo(database, cursor, outInfo);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_design_type_info(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor,
-    obelisk_rt_design_type_info_v1 *outInfo) {
+extern "C" talos_rt_status talos_rt_v1_design_type_info(
+    const talos_rt_execution_descriptor_v1 *execution,
+    talos_rt_design_cursor_v1 cursor,
+    talos_rt_design_type_info_v1 *outInfo) {
   if (!outInfo)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   Database database;
-  obelisk_rt_status status = loadValidatedDatabase(execution, database);
-  if (status != OBELISK_RT_OK)
-    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  talos_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != TALOS_RT_OK)
+    return mapInvalidDatabase(status, TALOS_RT_INVALID_HANDLE);
   return designTypeInfo(database, cursor, outInfo);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_design_type_child(
-    const obelisk_rt_execution_descriptor_v1 *execution,
-    obelisk_rt_design_cursor_v1 cursor, uint64_t index,
-    obelisk_rt_design_cursor_v1 *outCursor) {
+extern "C" talos_rt_status talos_rt_v1_design_type_child(
+    const talos_rt_execution_descriptor_v1 *execution,
+    talos_rt_design_cursor_v1 cursor, uint64_t index,
+    talos_rt_design_cursor_v1 *outCursor) {
   if (!outCursor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   Database database;
-  obelisk_rt_status status = loadValidatedDatabase(execution, database);
-  if (status != OBELISK_RT_OK)
-    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  talos_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != TALOS_RT_OK)
+    return mapInvalidDatabase(status, TALOS_RT_INVALID_HANDLE);
   return designTypeChild(database, cursor, index, outCursor);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_design_name(const obelisk_rt_execution_descriptor_v1 *execution,
-                          obelisk_rt_design_cursor_v1 cursor,
+extern "C" talos_rt_status
+talos_rt_v1_design_name(const talos_rt_execution_descriptor_v1 *execution,
+                          talos_rt_design_cursor_v1 cursor,
                           const uint8_t **outData, uint64_t *outSize) {
   if (!outData || !outSize)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   Database database;
-  obelisk_rt_status status = loadValidatedDatabase(execution, database);
-  if (status != OBELISK_RT_OK)
-    return mapInvalidDatabase(status, OBELISK_RT_INVALID_HANDLE);
+  talos_rt_status status = loadValidatedDatabase(execution, database);
+  if (status != TALOS_RT_OK)
+    return mapInvalidDatabase(status, TALOS_RT_INVALID_HANDLE);
   return designName(database, cursor, outData, outSize);
 }
 
@@ -13828,44 +13828,44 @@ void setPackedByte(uint8_t *bytes, uint64_t bit, bool value) {
     bytes[bit / 8] &= static_cast<uint8_t>(~mask);
 }
 
-static obelisk_rt_status accessState(obelisk_rt_context *context,
-                                     obelisk_rt_design_cursor_v1 cursor,
+static talos_rt_status accessState(talos_rt_context *context,
+                                     talos_rt_design_cursor_v1 cursor,
                                      uint64_t *value, uint64_t *unknown,
                                      uint64_t bitWidth, bool write,
                                      bool overrideForce = false) {
   if (!context || !value || bitWidth == 0 || !context->execution)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
   const Database *database = cachedDatabase(context);
   const uint8_t *record;
   uint32_t kind;
   if (!database || !getRecord(*database, cursor.offset, record, kind) ||
-      kind < OBELISK_RT_DESIGN_RECORD_STORAGE ||
-      (kind > OBELISK_RT_DESIGN_RECORD_DRIVER &&
-       kind != OBELISK_RT_DESIGN_RECORD_PORT))
-    return OBELISK_RT_INVALID_HANDLE;
+      kind < TALOS_RT_DESIGN_RECORD_STORAGE ||
+      (kind > TALOS_RT_DESIGN_RECORD_DRIVER &&
+       kind != TALOS_RT_DESIGN_RECORD_PORT))
+    return TALOS_RT_INVALID_HANDLE;
   uint32_t capabilities = read32(record + 4);
   if ((capabilities &
-       (write ? OBELISK_RT_DESIGN_CAP_WRITE : OBELISK_RT_DESIGN_CAP_READ)) == 0)
-    return OBELISK_RT_PERMISSION_DENIED;
+       (write ? TALOS_RT_DESIGN_CAP_WRITE : TALOS_RT_DESIGN_CAP_READ)) == 0)
+    return TALOS_RT_PERMISSION_DENIED;
   uint64_t stateOffset = read64(record + 80);
   uint64_t width = read64(record + 56);
   if (bitWidth != width || stateOffset > context->execution->state_bit_count ||
       width > context->execution->state_bit_count - stateOffset)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t limbs = (width + 63) / 64;
   const uint8_t *typeRecord = database->data + read64(record + 48);
   bool fourState =
-      ((read32(typeRecord + 4) >> 8) & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
-  if (write && !overrideForce && kind == OBELISK_RT_DESIGN_RECORD_NET) {
+      ((read32(typeRecord + 4) >> 8) & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+  if (write && !overrideForce && kind == TALOS_RT_DESIGN_RECORD_NET) {
     bool connected = false;
-    obelisk_rt_status status = obelisk_rt_design_net_is_connected(
+    talos_rt_status status = talos_rt_design_net_is_connected(
         context, stateOffset, stateOffset + width, &connected);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     // A direct deposit cannot update one logical alias in isolation.
     if (connected)
-      return OBELISK_RT_PERMISSION_DENIED;
+      return TALOS_RT_PERMISSION_DENIED;
   }
   std::optional<PackedSignalTransitionBuffer> wideTransitions;
   constexpr size_t inlinePublishedBytes = 32;
@@ -13875,8 +13875,8 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
   if (write && width > 64) {
     if (width > UINT64_MAX - 7 ||
         (width + 7) / 8 > std::numeric_limits<size_t>::max() / 4)
-      return OBELISK_RT_OUT_OF_RESOURCES;
-    OBELISK_RT_TRY {
+      return TALOS_RT_OUT_OF_RESOURCES;
+    TALOS_RT_TRY {
       wideTransitions.emplace(width);
       size_t bytes = static_cast<size_t>((width + 7) / 8);
       if (bytes <= inlinePublishedBytes) {
@@ -13887,10 +13887,10 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         publishedPlanes = overflowPublishedPlanes.data();
       }
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      return TALOS_RT_OUT_OF_MEMORY;
     }
-    OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+    TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
   }
   bool stateChanged = false;
   bool runClockCoordinator = false;
@@ -13898,16 +13898,16 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     uint64_t signalBase = UINT64_MAX;
     if (write) {
-      signalBase = obelisk_rt_canonical_state_handle_unlocked(
+      signalBase = talos_rt_canonical_state_handle_unlocked(
           context, stateOffset, width);
       if (signalBase == UINT64_MAX)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
     }
     const uint8_t *canonicalValuePlane = nullptr;
     const uint8_t *canonicalUnknownPlane = nullptr;
-    const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+    const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
     if (!write && plan && !context->vpiObservationDemand &&
-        (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
+        (plan->flags & TALOS_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
         !context->nativeScheduleDeoptimized &&
         plan->state_bit_count == context->execution->state_bit_count &&
         plan->state_value && plan->state_unknown) {
@@ -13943,7 +13943,7 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
                                       : loadPackedState(context->stateUnknown,
                                                         stateOffset, width))
                                : 0;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (write && width <= 64) {
       uint64_t mask = packedMask(width);
@@ -13984,18 +13984,18 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         storePackedBytes(unknownBytes.data(), newUnknown);
         storePackedState(context->stateValue, stateOffset, width, newValue);
         storePackedState(context->stateUnknown, stateOffset, width, newUnknown);
-        obelisk_rt_sync_native_state_range_unlocked(context, stateOffset,
+        talos_rt_sync_native_state_range_unlocked(context, stateOffset,
                                                     width);
         // Force/release changes the persistent override state and must retain
         // the transactional generic handoff. Only an exact deposit may enter
         // the generated clock coordinator directly.
         bool synchronized =
-            !overrideForce && obelisk_rt_aot_external_deposit_unlocked(
+            !overrideForce && talos_rt_aot_external_deposit_unlocked(
                                   context, signalBase, stateOffset, width);
         if (!synchronized)
-          obelisk_rt_aot_external_write_handle_unlocked(
+          talos_rt_aot_external_write_handle_unlocked(
               context, signalBase, stateOffset, width, false);
-        if (!obelisk_rt_publish_native_signal_transition_unlocked(
+        if (!talos_rt_publish_native_signal_transition_unlocked(
                 context, signalBase, width, changedBytes.data(),
                 posedgeBytes.data(), negedgeBytes.data(), oldValueBytes.data(),
                 oldUnknownBytes.data(), valueBytes.data(), unknownBytes.data(),
@@ -14073,15 +14073,15 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
         }
       }
       if (write && stateChanged) {
-        obelisk_rt_sync_native_state_range_unlocked(context, stateOffset,
+        talos_rt_sync_native_state_range_unlocked(context, stateOffset,
                                                     width);
         bool synchronized =
-            !overrideForce && obelisk_rt_aot_external_deposit_unlocked(
+            !overrideForce && talos_rt_aot_external_deposit_unlocked(
                                   context, signalBase, stateOffset, width);
         if (!synchronized)
-          obelisk_rt_aot_external_write_handle_unlocked(
+          talos_rt_aot_external_write_handle_unlocked(
               context, signalBase, stateOffset, width, false);
-        if (!obelisk_rt_publish_native_signal_transition_unlocked(
+        if (!talos_rt_publish_native_signal_transition_unlocked(
                 context, signalBase, width, wideTransitions->changed(),
                 wideTransitions->posedge(), wideTransitions->negedge(),
                 publishedOldValue, publishedOldUnknown, publishedValue,
@@ -14100,73 +14100,73 @@ static obelisk_rt_status accessState(obelisk_rt_context *context,
       unknown[limbs - 1] &= mask;
   }
   if (runClockCoordinator) {
-    obelisk_rt_status status =
-        obelisk_rt_v1_scheduler_run_clock_coordinator(context);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status =
+        talos_rt_v1_scheduler_run_clock_coordinator(context);
+    if (status != TALOS_RT_OK)
       return status;
   }
-  if (write && kind == OBELISK_RT_DESIGN_RECORD_DRIVER)
-    return obelisk_rt_resolve_design_drivers(context, stateOffset,
+  if (write && kind == TALOS_RT_DESIGN_RECORD_DRIVER)
+    return talos_rt_resolve_design_drivers(context, stateOffset,
                                              stateOffset + width);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status obelisk_rt_design_state_offset(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_design_state_offset(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     uint64_t bitOffset, uint64_t *outStateOffset) noexcept {
   if (!context || !context->execution || !outStateOffset)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   const uint8_t *record = nullptr;
   uint32_t kind = 0;
   if (!database || !getRecord(*database, cursor.offset, record, kind) ||
-      (kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
-       kind != OBELISK_RT_DESIGN_RECORD_NET &&
-       kind != OBELISK_RT_DESIGN_RECORD_PORT))
-    return OBELISK_RT_INVALID_HANDLE;
+      (kind != TALOS_RT_DESIGN_RECORD_STORAGE &&
+       kind != TALOS_RT_DESIGN_RECORD_NET &&
+       kind != TALOS_RT_DESIGN_RECORD_PORT))
+    return TALOS_RT_INVALID_HANDLE;
   const uint64_t width = read64(record + 56);
   const uint64_t stateOffset = read64(record + 80);
   if (bitOffset >= width || stateOffset > context->execution->state_bit_count ||
       width > context->execution->state_bit_count - stateOffset)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   *outStateOffset = stateOffset + bitOffset;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_read_design_slice(obelisk_rt_context *context,
-                             obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status
+talos_rt_read_design_slice(talos_rt_context *context,
+                             talos_rt_design_cursor_v1 cursor,
                              uint64_t bitOffset, uint64_t bitWidth,
                              uint64_t *value, uint64_t *unknown) noexcept {
   if (!context || !value || bitWidth == 0 || !context->execution)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
   const Database *database = cachedDatabase(context);
   const uint8_t *record = nullptr;
   uint32_t kind = 0;
   if (!database || !getRecord(*database, cursor.offset, record, kind) ||
-      kind < OBELISK_RT_DESIGN_RECORD_STORAGE ||
-      (kind > OBELISK_RT_DESIGN_RECORD_DRIVER &&
-       kind != OBELISK_RT_DESIGN_RECORD_PORT) ||
-      (read32(record + 4) & OBELISK_RT_DESIGN_CAP_READ) == 0)
-    return OBELISK_RT_INVALID_HANDLE;
+      kind < TALOS_RT_DESIGN_RECORD_STORAGE ||
+      (kind > TALOS_RT_DESIGN_RECORD_DRIVER &&
+       kind != TALOS_RT_DESIGN_RECORD_PORT) ||
+      (read32(record + 4) & TALOS_RT_DESIGN_CAP_READ) == 0)
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t stateOffset = read64(record + 80);
   uint64_t rootWidth = read64(record + 56);
   if (bitOffset > rootWidth || bitWidth > rootWidth - bitOffset ||
       stateOffset > context->execution->state_bit_count ||
       rootWidth > context->execution->state_bit_count - stateOffset)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   const uint8_t *typeRecord = database->data + read64(record + 48);
   bool fourState =
-      ((read32(typeRecord + 4) >> 8) & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+      ((read32(typeRecord + 4) >> 8) & TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0;
   uint64_t selectedOffset = stateOffset + bitOffset;
 
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   const uint8_t *canonicalValuePlane = nullptr;
   const uint8_t *canonicalUnknownPlane = nullptr;
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   if (plan && !context->vpiObservationDemand &&
-      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
+      (plan->flags & TALOS_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
       !context->nativeScheduleDeoptimized &&
       plan->state_bit_count == context->execution->state_bit_count &&
       plan->state_value && plan->state_unknown) {
@@ -14207,47 +14207,47 @@ obelisk_rt_read_design_slice(obelisk_rt_context *context,
                      : loadPackedState(context->stateUnknown, offset, width))
               : 0;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_design_read(obelisk_rt_context *context,
-                          obelisk_rt_design_cursor_v1 cursor, uint64_t *value,
+extern "C" talos_rt_status
+talos_rt_v1_design_read(talos_rt_context *context,
+                          talos_rt_design_cursor_v1 cursor, uint64_t *value,
                           uint64_t *unknown, uint64_t bitWidth) {
   return accessState(context, cursor, value, unknown, bitWidth, false);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_design_write(
-    obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+extern "C" talos_rt_status talos_rt_v1_design_write(
+    talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     const uint64_t *value, const uint64_t *unknown, uint64_t bitWidth) {
   return accessState(context, cursor, const_cast<uint64_t *>(value),
                      const_cast<uint64_t *>(unknown), bitWidth, true);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_design_force(
-    obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+extern "C" talos_rt_status talos_rt_v1_design_force(
+    talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     const uint64_t *value, const uint64_t *unknown, uint64_t bitWidth) {
   if (!context || !value || bitWidth == 0 || !context->execution)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   const uint8_t *record;
   uint32_t kind;
   if (!database || !getRecord(*database, cursor.offset, record, kind) ||
-      (kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
-       kind != OBELISK_RT_DESIGN_RECORD_NET) ||
-      (read32(record + 4) & OBELISK_RT_DESIGN_CAP_WRITE) == 0 ||
+      (kind != TALOS_RT_DESIGN_RECORD_STORAGE &&
+       kind != TALOS_RT_DESIGN_RECORD_NET) ||
+      (read32(record + 4) & TALOS_RT_DESIGN_CAP_WRITE) == 0 ||
       read64(record + 56) != bitWidth)
-    return OBELISK_RT_PERMISSION_DENIED;
+    return TALOS_RT_PERMISSION_DENIED;
   uint64_t stateOffset = read64(record + 80);
   if (stateOffset > context->execution->state_bit_count ||
       bitWidth > context->execution->state_bit_count - stateOffset)
-    return OBELISK_RT_INVALID_HANDLE;
-  if (kind == OBELISK_RT_DESIGN_RECORD_NET)
-    return obelisk_rt_force_design_nets(
+    return TALOS_RT_INVALID_HANDLE;
+  if (kind == TALOS_RT_DESIGN_RECORD_NET)
+    return talos_rt_force_design_nets(
         context, stateOffset, bitWidth,
         reinterpret_cast<const uint8_t *>(value),
         reinterpret_cast<const uint8_t *>(unknown));
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (context->forceMask.empty())
@@ -14257,61 +14257,61 @@ extern "C" obelisk_rt_status obelisk_rt_v1_design_force(
         context->forceMask[absolute / 64] |= uint64_t{1} << (absolute % 64);
       }
     }
-    obelisk_rt_status status =
+    talos_rt_status status =
         accessState(context, cursor, const_cast<uint64_t *>(value),
                     const_cast<uint64_t *>(unknown), bitWidth, true, true);
-    if (status == OBELISK_RT_OK) {
+    if (status == TALOS_RT_OK) {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
-      obelisk_rt_aot_external_write_range_unlocked(context, stateOffset,
+      talos_rt_aot_external_write_range_unlocked(context, stateOffset,
                                                    bitWidth, true);
     }
     return status;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_design_release(obelisk_rt_context *context,
-                             obelisk_rt_design_cursor_v1 cursor) {
+extern "C" talos_rt_status
+talos_rt_v1_design_release(talos_rt_context *context,
+                             talos_rt_design_cursor_v1 cursor) {
   if (!context || !context->execution)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const Database *database = cachedDatabase(context);
   const uint8_t *record;
   uint32_t kind;
   if (!database || !getRecord(*database, cursor.offset, record, kind) ||
-      (kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
-       kind != OBELISK_RT_DESIGN_RECORD_NET) ||
-      (read32(record + 4) & OBELISK_RT_DESIGN_CAP_WRITE) == 0)
-    return OBELISK_RT_INVALID_HANDLE;
+      (kind != TALOS_RT_DESIGN_RECORD_STORAGE &&
+       kind != TALOS_RT_DESIGN_RECORD_NET) ||
+      (read32(record + 4) & TALOS_RT_DESIGN_CAP_WRITE) == 0)
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t stateOffset = read64(record + 80);
   uint64_t bitWidth = read64(record + 56);
   if (stateOffset > context->execution->state_bit_count ||
       bitWidth > context->execution->state_bit_count - stateOffset)
-    return OBELISK_RT_INVALID_HANDLE;
-  if (kind == OBELISK_RT_DESIGN_RECORD_NET)
-    return obelisk_rt_release_design_nets(context, stateOffset, bitWidth);
+    return TALOS_RT_INVALID_HANDLE;
+  if (kind == TALOS_RT_DESIGN_RECORD_NET)
+    return talos_rt_release_design_nets(context, stateOffset, bitWidth);
   if (bitWidth > UINT64_MAX - 7)
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
   uint64_t byteCount = (bitWidth + 7) / 8;
   if (byteCount > std::numeric_limits<size_t>::max())
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
   std::vector<uint8_t> oldValue, oldUnknown, newValue, newUnknown;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     oldValue.assign(static_cast<size_t>(byteCount), 0);
     oldUnknown.assign(static_cast<size_t>(byteCount), 0);
     newValue.assign(static_cast<size_t>(byteCount), 0);
     newUnknown.assign(static_cast<size_t>(byteCount), 0);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
   uint64_t signalBase = UINT64_MAX;
   bool stateChanged = false;
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    signalBase = obelisk_rt_canonical_state_handle_unlocked(
+    signalBase = talos_rt_canonical_state_handle_unlocked(
         context, stateOffset, bitWidth);
     if (signalBase == UINT64_MAX)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
       uint64_t absolute = stateOffset + bit;
       uint64_t limb = absolute / 64;
@@ -14326,7 +14326,7 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
       bool oldUnknownBit = (context->stateUnknown[limb] & mask) != 0;
       bool newValueBit = oldValueBit;
       bool newUnknownBit = oldUnknownBit;
-      if (kind == OBELISK_RT_DESIGN_RECORD_STORAGE && (assigned || retained)) {
+      if (kind == TALOS_RT_DESIGN_RECORD_STORAGE && (assigned || retained)) {
         newValueBit = assigned ? (context->assignValue[limb] & mask) != 0
                                : (context->continuousValue[limb] & mask) != 0;
         newUnknownBit = assigned
@@ -14348,12 +14348,12 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
       setPackedByte(newUnknown.data(), bit, newUnknownBit);
     }
     if (stateChanged)
-      obelisk_rt_aot_external_write_unlocked(context);
+      talos_rt_aot_external_write_unlocked(context);
     // Generic native fragments may resume direct addressing as soon as the
     // release guard is refreshed. Materialize the released continuous/assign
     // value in their bound planes before that boundary or any observer runs.
-    obelisk_rt_sync_native_state_range_unlocked(context, stateOffset, bitWidth);
-    obelisk_rt_aot_release_range_unlocked(context, stateOffset, bitWidth);
+    talos_rt_sync_native_state_range_unlocked(context, stateOffset, bitWidth);
+    talos_rt_aot_release_range_unlocked(context, stateOffset, bitWidth);
   }
   // A procedural variable retains the forced value. Continuously driven
   // storage and nets immediately reveal their retained driver state.
@@ -14362,22 +14362,22 @@ obelisk_rt_v1_design_release(obelisk_rt_context *context,
                               oldUnknown.data(), newValue.data(),
                               newUnknown.data());
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    if (context->schedulerStatus != OBELISK_RT_OK)
+    if (context->schedulerStatus != TALOS_RT_OK)
       return context->schedulerStatus;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_type_default(const obelisk_rt_context *context,
-                                   obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status
+talos_rt_cached_vpi_type_default(const talos_rt_context *context,
+                                   talos_rt_design_cursor_v1 cursor,
                                    VPITypeDefaultInfo *outInfo) noexcept {
   if (!context || !outInfo)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outInfo = {};
   const auto *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   uint32_t scope = 0, memberIndex = 0;
   const uint8_t *member = nullptr;
   bool refObject = false;
@@ -14385,11 +14385,11 @@ obelisk_rt_cached_vpi_type_default(const obelisk_rt_context *context,
                               member, nullptr, nullptr, &refObject) ||
       refObject ||
       definitionSourceKind(member) !=
-          uint32_t(obelisk::reflection::VPIObjectKind::TypeParameter))
-    return OBELISK_RT_EOF;
+          uint32_t(talos::reflection::VPIObjectKind::TypeParameter))
+    return TALOS_RT_EOF;
   constexpr uint16_t mode =
-      obelisk::reflection::expressionRootDefinitionMember |
-      obelisk::reflection::expressionRootConcreteTypeDefault;
+      talos::reflection::expressionRootDefinitionMember |
+      talos::reflection::expressionRootConcreteTypeDefault;
   auto wanted =
       std::make_tuple(memberIndex, definitionSourceSelector(member), mode);
   uint32_t low = 0, high = database->expressionRootBindingCount;
@@ -14406,55 +14406,55 @@ obelisk_rt_cached_vpi_type_default(const obelisk_rt_context *context,
   const uint8_t *root = expressionRoot(*database, low);
   if (!root || std::make_tuple(read32(root), read16(root + 12),
                                read16(root + 14)) != wanted)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   outInfo->semantic.offset = uint64_t{read32(root + 4)} + 1;
   outInfo->line = read32(root + 16);
   if (read32(root + 8) != UINT32_MAX) {
     std::string_view file;
     if (!getString(*database, database->strings + read32(root + 8), file))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     outInfo->file = reinterpret_cast<const uint8_t *>(file.data());
     outInfo->fileSize = file.size();
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_cached_vpi_expression(const obelisk_rt_context *context,
-                                 obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status
+talos_rt_cached_vpi_expression(const talos_rt_context *context,
+                                 talos_rt_design_cursor_v1 cursor,
                                  VPIExpressionInfo *outInfo) noexcept {
   if (!context || !outInfo)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outInfo = {};
   const auto *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   uint32_t rootIndex = 0, ordinal = 0;
   const uint8_t *root = nullptr, *recipe = nullptr, *node = nullptr;
   if (!expressionForCursor(*database, cursor.offset, rootIndex, ordinal, root,
                            recipe, node))
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   outInfo->kind = read16(node);
   outInfo->code = read16(node + 2);
   outInfo->operandCount = read32(node + 12);
   outInfo->sourceOnly = read32(node + 4) == UINT32_MAX;
   if (outInfo->sourceOnly)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   outInfo->semantic.offset = uint64_t{read32(node + 4)} + 1;
   if (semanticPackedBitWidth(*database, read32(node + 4), &outInfo->bitWidth) !=
-      OBELISK_RT_OK)
-    return OBELISK_RT_INVALID_DESIGN;
+      TALOS_RT_OK)
+    return TALOS_RT_INVALID_DESIGN;
   outInfo->constantSelect = true;
   const uint8_t *selection = node;
-  while (obelisk::reflection::isVPIBitSelection(read16(selection)) ||
+  while (talos::reflection::isVPIBitSelection(read16(selection)) ||
          read16(selection) ==
-             uint32_t(obelisk::reflection::VPIObjectKind::PartSelect) ||
+             uint32_t(talos::reflection::VPIObjectKind::PartSelect) ||
          read16(selection) ==
-             uint32_t(obelisk::reflection::VPIObjectKind::IndexedPartSelect)) {
+             uint32_t(talos::reflection::VPIObjectKind::IndexedPartSelect)) {
     uint64_t first = uint64_t{read32(recipe + 12)} + read32(selection + 8);
-    if (obelisk::reflection::isVPIBitSelection(read16(selection)) ||
+    if (talos::reflection::isVPIBitSelection(read16(selection)) ||
         read16(selection) ==
-            uint32_t(obelisk::reflection::VPIObjectKind::IndexedPartSelect)) {
+            uint32_t(talos::reflection::VPIObjectKind::IndexedPartSelect)) {
       uint32_t base = read32(database->data + database->expressionOperands +
                              (first + 1) * kExpressionOperandSize);
       if (!expressionOperandIsConstant(*database, root, recipe, base))
@@ -14466,65 +14466,65 @@ obelisk_rt_cached_vpi_expression(const obelisk_rt_context *context,
       break;
     selection = expressionNode(*database, recipe, parent);
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
-obelisk_rt_status obelisk_rt_cached_vpi_expression_operand(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
-    uint32_t index, obelisk_rt_design_cursor_v1 *outCursor,
+talos_rt_status talos_rt_cached_vpi_expression_operand(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
+    uint32_t index, talos_rt_design_cursor_v1 *outCursor,
     uint32_t *outKind) noexcept {
   if (!context || !outCursor || !outKind)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const auto *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   uint32_t rootIndex = 0, ordinal = 0, defaultBinding = UINT32_MAX;
   const uint8_t *root = nullptr, *recipe = nullptr, *node = nullptr;
   if (!expressionForCursor(*database, cursor.offset, rootIndex, ordinal, root,
                            recipe, node, &defaultBinding) ||
       index >= read32(node + 12))
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   uint64_t position = uint64_t{read32(recipe + 12)} + read32(node + 8) + index;
   uint32_t operand = read32(database->data + database->expressionOperands +
                             position * kExpressionOperandSize);
   return expressionOperandTarget(*database, rootIndex, operand,
                                  outCursor->offset, *outKind, defaultBinding)
-             ? OBELISK_RT_OK
-             : OBELISK_RT_INVALID_DESIGN;
+             ? TALOS_RT_OK
+             : TALOS_RT_INVALID_DESIGN;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_expression_use_ranges(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 source,
+talos_rt_status talos_rt_cached_vpi_expression_use_ranges(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 source,
     std::vector<VPIRelationRange> &ranges) noexcept {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ranges.clear();
   const auto *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_DESIGN;
-  using Rel = obelisk::reflection::VPIRelationKind;
+    return TALOS_RT_INVALID_DESIGN;
+  using Rel = talos::reflection::VPIRelationKind;
   uint32_t kind = 0;
-  if (designVPIType(*database, source, &kind) != OBELISK_RT_OK)
-    return OBELISK_RT_INVALID_HANDLE;
-  const auto *edge = obelisk::reflection::findVPITraversal(
+  if (designVPIType(*database, source, &kind) != TALOS_RT_OK)
+    return TALOS_RT_INVALID_HANDLE;
+  const auto *edge = talos::reflection::findVPITraversal(
       kind, uint32_t(Rel::UseRel),
-      obelisk::reflection::VPITraversalMode::Iterate);
+      talos::reflection::VPITraversalMode::Iterate);
   if (!edge || !database->expressionRootBindingCount)
-    return OBELISK_RT_EOF;
-  OBELISK_RT_TRY {
+    return TALOS_RT_EOF;
+  TALOS_RT_TRY {
     std::unordered_set<uint64_t> seen;
     VPIRelationRange physical{};
     auto status = designVPIRelationRange(
         *database, source, uint32_t(Rel::UseRel), true, &physical);
-    if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+    if (status != TALOS_RT_OK && status != TALOS_RT_EOF)
       return status;
-    if (status == OBELISK_RT_OK) {
+    if (status == TALOS_RT_OK) {
       for (uint64_t index = 0; index != physical.count; ++index) {
-        obelisk_rt_design_cursor_v1 target{};
+        talos_rt_design_cursor_v1 target{};
         uint32_t targetKind = 0;
         bool statement = false;
         if (designVPIRelationTarget(*database, physical.first + index, &target,
-                                    &targetKind, &statement) != OBELISK_RT_OK)
-          return OBELISK_RT_INVALID_DESIGN;
+                                    &targetKind, &statement) != TALOS_RT_OK)
+          return TALOS_RT_INVALID_DESIGN;
         seen.insert(target.offset);
       }
       ranges.push_back(physical);
@@ -14541,7 +14541,7 @@ obelisk_rt_status obelisk_rt_cached_vpi_expression_use_ranges(
       for (uint32_t ordinal = 0; ordinal != leafCount; ++ordinal) {
         ExpressionLeafInfo leaf;
         if (!expressionLeaf(*database, root, ordinal, leaf))
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         if (leaf.cursor == source.offset) {
           matches = true;
           break;
@@ -14553,8 +14553,8 @@ obelisk_rt_status obelisk_rt_cached_vpi_expression_use_ranges(
       uint32_t ownerKind = 0;
       uint64_t owner = 0;
       if (!expressionUseOwner(*database, root, ownerKind, owner))
-        return OBELISK_RT_INVALID_DESIGN;
-      if (!obelisk::reflection::vpiObjectSetContains(edge->targets,
+        return TALOS_RT_INVALID_DESIGN;
+      if (!talos::reflection::vpiObjectSetContains(edge->targets,
                                                      ownerKind) ||
           !seen.insert(owner).second)
         continue;
@@ -14564,44 +14564,44 @@ obelisk_rt_status obelisk_rt_cached_vpi_expression_use_ranges(
     }
     if (!found || ranges.empty()) {
       ranges.clear();
-      return OBELISK_RT_EOF;
+      return TALOS_RT_EOF;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     ranges.clear();
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     ranges.clear();
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   }
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_selected_use_candidates(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 source,
+talos_rt_status talos_rt_cached_vpi_selected_use_candidates(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 source,
     uint32_t selectedKind,
     std::vector<VPISelectedUseCandidate> &candidates) noexcept {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   candidates.clear();
   const auto *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_DESIGN;
-  using Kind = obelisk::reflection::VPIObjectKind;
-  using Rel = obelisk::reflection::VPIRelationKind;
-  const auto *edge = obelisk::reflection::findVPITraversal(
+    return TALOS_RT_INVALID_DESIGN;
+  using Kind = talos::reflection::VPIObjectKind;
+  using Rel = talos::reflection::VPIRelationKind;
+  const auto *edge = talos::reflection::findVPITraversal(
       selectedKind, uint32_t(Rel::UseRel),
-      obelisk::reflection::VPITraversalMode::Iterate);
+      talos::reflection::VPITraversalMode::Iterate);
   if (!edge)
-    return OBELISK_RT_EOF;
-  OBELISK_RT_TRY {
+    return TALOS_RT_EOF;
+  TALOS_RT_TRY {
     VPIRelationRange physical{};
     auto status = designVPIRelationRange(
         *database, source, uint32_t(Rel::UseRel), true, &physical);
-    if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+    if (status != TALOS_RT_OK && status != TALOS_RT_EOF)
       return status;
-    if (status == OBELISK_RT_OK)
+    if (status == TALOS_RT_OK)
       candidates.push_back({physical, {}});
     for (uint32_t index = 0; index != database->expressionRootBindingCount;
          ++index) {
@@ -14611,15 +14611,15 @@ obelisk_rt_status obelisk_rt_cached_vpi_selected_use_candidates(
       uint32_t ownerKind = 0;
       uint64_t owner = 0;
       if (!expressionUseOwner(*database, root, ownerKind, owner))
-        return OBELISK_RT_INVALID_DESIGN;
-      if (!obelisk::reflection::vpiObjectSetContains(edge->targets, ownerKind))
+        return TALOS_RT_INVALID_DESIGN;
+      if (!talos::reflection::vpiObjectSetContains(edge->targets, ownerKind))
         continue;
       const uint8_t *recipe = expressionTemplate(*database, root);
       uint32_t leafCount = recipe ? read32(recipe + 20) : 1;
       for (uint32_t ordinal = 0; ordinal != leafCount; ++ordinal) {
         ExpressionLeafInfo leaf;
         if (!expressionLeaf(*database, root, ordinal, leaf))
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         if (leaf.cursor != source.offset)
           continue;
         uint64_t selection = 0;
@@ -14636,7 +14636,7 @@ obelisk_rt_status obelisk_rt_cached_vpi_selected_use_candidates(
               uint32_t kind = read16(node);
               if (kind != uint32_t(Kind::PartSelect) &&
                   kind != uint32_t(Kind::IndexedPartSelect) &&
-                  !obelisk::reflection::isVPIBitSelection(kind))
+                  !talos::reflection::isVPIBitSelection(kind))
                 continue;
               uint64_t first = uint64_t{read32(recipe + 12)} + read32(node + 8);
               if (read32(database->data + database->expressionOperands +
@@ -14646,7 +14646,7 @@ obelisk_rt_status obelisk_rt_cached_vpi_selected_use_candidates(
               uint32_t targetKind = 0;
               if (!expressionOperandTarget(*database, index, current, selection,
                                            targetKind))
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               advanced = true;
               break;
             }
@@ -14660,37 +14660,37 @@ obelisk_rt_status obelisk_rt_cached_vpi_selected_use_candidates(
                               {selection}});
       }
     }
-    return candidates.empty() ? OBELISK_RT_EOF : OBELISK_RT_OK;
+    return candidates.empty() ? TALOS_RT_EOF : TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
-    const obelisk_rt_context *context, bool drivers,
+talos_rt_status talos_rt_cached_vpi_net_connection_candidates(
+    const talos_rt_context *context, bool drivers,
     std::vector<VPINetConnectionCandidate> &candidates) noexcept {
   candidates.clear();
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const auto *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_DESIGN;
-  using Kind = obelisk::reflection::VPIObjectKind;
-  using Rel = obelisk::reflection::VPIRelationKind;
-  OBELISK_RT_TRY {
-    auto relation = [&](obelisk_rt_design_cursor_v1 owner, uint32_t selector,
-                        obelisk_rt_design_cursor_v1 &target, uint32_t &kind) {
+    return TALOS_RT_INVALID_DESIGN;
+  using Kind = talos::reflection::VPIObjectKind;
+  using Rel = talos::reflection::VPIRelationKind;
+  TALOS_RT_TRY {
+    auto relation = [&](talos_rt_design_cursor_v1 owner, uint32_t selector,
+                        talos_rt_design_cursor_v1 &target, uint32_t &kind) {
       VPIRelationRange range{};
       auto status =
           designVPIRelationRange(*database, owner, selector, false, &range);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       bool statement = false;
       if (range.count != 1 ||
           designVPIRelationTarget(*database, range.first, &target, &kind,
-                                  &statement) != OBELISK_RT_OK)
-        return OBELISK_RT_INVALID_DESIGN;
-      return OBELISK_RT_OK;
+                                  &statement) != TALOS_RT_OK)
+        return TALOS_RT_INVALID_DESIGN;
+      return TALOS_RT_OK;
     };
     auto add = [&](uint64_t offset, uint32_t kind, uint64_t scope) {
       VPINetConnectionCandidate candidate;
@@ -14699,10 +14699,10 @@ obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
       if (kind == uint32_t(Kind::PrimTerm)) {
         VPIFixedPropertyValue direction{};
         if (designVPIFixedProperty(*database, candidate.owner, 20,
-                                   &direction) != OBELISK_RT_OK)
-          return OBELISK_RT_INVALID_DESIGN;
+                                   &direction) != TALOS_RT_OK)
+          return TALOS_RT_INVALID_DESIGN;
         if (drivers && direction.payload != 2 && direction.payload != 3)
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
         // An output terminal's address may read nets even though its data
         // expression drives them. Input/inout reads include their addresses.
         candidate.addressOnly = !drivers && direction.payload == 2;
@@ -14712,15 +14712,15 @@ obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
                               : uint32_t(Rel::ExprRel);
       auto status = relation(candidate.owner, selector, candidate.expression,
                              candidate.expressionKind);
-      if (status == OBELISK_RT_EOF)
-        return OBELISK_RT_OK;
-      if (status != OBELISK_RT_OK)
+      if (status == TALOS_RT_EOF)
+        return TALOS_RT_OK;
+      if (status != TALOS_RT_OK)
         return status;
       if (kind == uint32_t(Kind::ContAssign)) {
         status = relation(candidate.owner,
                           uint32_t(drivers ? Rel::RhsRel : Rel::LhsRel),
                           candidate.peer, candidate.peerKind);
-        if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+        if (status != TALOS_RT_OK && status != TALOS_RT_EOF)
           return status;
       }
       while (isScopeOffset(*database, scope)) {
@@ -14742,7 +14742,7 @@ obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
         candidate.addressOnly = true;
         candidates.push_back(candidate);
       }
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     };
     for (uint64_t index = 0; index != database->statementCount; ++index) {
       uint64_t offset = database->statements + index * kStatementSize;
@@ -14751,7 +14751,7 @@ obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
         auto status =
             add(offset, uint32_t(Kind::ContAssign),
                 database->scopes + uint64_t{read32(row + 12)} * kScopeSize);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       }
     }
@@ -14760,7 +14760,7 @@ obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
       const uint8_t *row = database->data + offset;
       if (recordVPIKind(row) == uint32_t(Kind::PrimTerm)) {
         auto status = add(offset, uint32_t(Kind::PrimTerm), read64(row + 16));
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       }
     }
@@ -14771,67 +14771,67 @@ obelisk_rt_status obelisk_rt_cached_vpi_net_connection_candidates(
         auto status =
             add(offset, uint32_t(Kind::PrimTerm),
                 database->scopes + uint64_t{read32(row + 8)} * kScopeSize);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       }
     }
-    return candidates.empty() ? OBELISK_RT_EOF : OBELISK_RT_OK;
+    return candidates.empty() ? TALOS_RT_EOF : TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_expression_operand_identifier(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
+talos_rt_status talos_rt_cached_vpi_expression_operand_identifier(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 cursor,
     uint32_t index, const uint8_t **outData, uint64_t *outSize) noexcept {
   if (!context || !outData || !outSize)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outData = nullptr;
   *outSize = 0;
   const auto *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   uint32_t rootIndex = 0, ordinal = 0;
   const uint8_t *root = nullptr, *recipe = nullptr, *node = nullptr;
   if (!expressionForCursor(*database, cursor.offset, rootIndex, ordinal, root,
                            recipe, node) ||
       index >= read32(node + 12))
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   uint64_t position = uint64_t{read32(recipe + 12)} + read32(node + 8) + index;
   uint32_t operand = read32(database->data + database->expressionOperands +
                             position * kExpressionOperandSize);
   if (!(operand & kExpressionOperandLeafFlag))
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   const uint8_t *shape = database->data + database->expressionLeafShapes +
                          (uint64_t{read32(recipe + 24)} +
                           (operand & ~kExpressionOperandLeafFlag)) *
                              kExpressionLeafShapeSize;
   uint32_t name = read32(shape + 8);
   if (name == UINT32_MAX)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   std::string_view identifier;
   if (!getString(*database, database->strings + name, identifier))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   *outData = reinterpret_cast<const uint8_t *>(identifier.data());
   *outSize = identifier.size();
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status obelisk_rt_cached_vpi_terminal_driver(
-    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 terminal,
+talos_rt_status talos_rt_cached_vpi_terminal_driver(
+    const talos_rt_context *context, talos_rt_design_cursor_v1 terminal,
     VPITerminalDriverBinding *outBinding) noexcept {
   if (!context || !outBinding)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outBinding = {};
   const auto *database = cachedDatabase(context);
   if (!database)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   uint32_t packed = 0;
   if (!packedObjectReferenceForCursor(*database, terminal.offset, packed))
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   uint64_t low = 0, high = database->terminalDriverBindingCount;
   auto row = [&](uint64_t index) {
-    return obelisk::reflection::TerminalDriverBindingView(
+    return talos::reflection::TerminalDriverBindingView(
         database->data + database->terminalDriverBindings +
         index * kTerminalDriverBindingSize);
   };
@@ -14844,7 +14844,7 @@ obelisk_rt_status obelisk_rt_cached_vpi_terminal_driver(
   }
   if (low == database->terminalDriverBindingCount ||
       row(low).getTerminalIndexAndTable() != packed)
-    return OBELISK_RT_EOF;
+    return TALOS_RT_EOF;
   auto binding = row(low);
   auto selectedOffset = [&](uint32_t index, uint64_t &offset) {
     if (index >= database->objectCount || !context->execution)
@@ -14853,7 +14853,7 @@ obelisk_rt_status obelisk_rt_cached_vpi_terminal_driver(
         database->data + database->objects + uint64_t{index} * kObjectSize;
     uint64_t base = read64(driver + 80);
     uint64_t width = read64(driver + 56);
-    if (recordKind(driver) != OBELISK_RT_DESIGN_RECORD_DRIVER ||
+    if (recordKind(driver) != TALOS_RT_DESIGN_RECORD_DRIVER ||
         binding.getBitOffset() >= width ||
         base > context->execution->state_bit_count ||
         width > context->execution->state_bit_count - base)
@@ -14865,7 +14865,7 @@ obelisk_rt_status obelisk_rt_cached_vpi_terminal_driver(
   if (!selectedOffset(binding.getLowDriverIndex(), result.lowStateOffset) ||
       (binding.getHighDriverIndex() != UINT32_MAX &&
        !selectedOffset(binding.getHighDriverIndex(), result.highStateOffset)))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   *outBinding = result;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }

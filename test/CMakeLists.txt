@@ -4,22 +4,22 @@ if(DEFINED CACHE{LLVM_LIT_ARGS})
   get_property(LLVM_LIT_ARGS CACHE LLVM_LIT_ARGS PROPERTY VALUE)
 endif()
 
-option(OBELISK_ENABLE_REAL_UVM_TESTS
+option(TALOS_ENABLE_REAL_UVM_TESTS
   "Fetch and run the opt-in Accellera UVM 2020.3.1 regression" OFF)
-set(OBELISK_REAL_UVM_DIR "")
-if(OBELISK_ENABLE_REAL_UVM_TESTS)
-  FetchContent_Declare(obelisk_uvm
+set(TALOS_REAL_UVM_DIR "")
+if(TALOS_ENABLE_REAL_UVM_TESTS)
+  FetchContent_Declare(talos_uvm
     URL
       "https://github.com/accellera-official/uvm-core/archive/78c06547a2a0a29b3dc9dcafae62b75b2ff61544.tar.gz"
     URL_HASH
       "SHA256=48e2f4ae3e9341c354b11e9c4a20ce24cc5ef7e6f87e05a8061386b611324422"
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     # UVM is a source fixture, not a CMake dependency.
-    SOURCE_SUBDIR _obelisk_no_build
+    SOURCE_SUBDIR _talos_no_build
   )
-  FetchContent_MakeAvailable(obelisk_uvm)
-  set(OBELISK_REAL_UVM_DIR "${obelisk_uvm_SOURCE_DIR}/src")
-  message(STATUS "Real-UVM regression source: ${OBELISK_REAL_UVM_DIR}")
+  FetchContent_MakeAvailable(talos_uvm)
+  set(TALOS_REAL_UVM_DIR "${talos_uvm_SOURCE_DIR}/src")
+  message(STATUS "Real-UVM regression source: ${TALOS_REAL_UVM_DIR}")
 endif()
 
 configure_lit_site_cfg(
@@ -29,47 +29,47 @@ configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
 )
 
-add_llvm_executable(obelisk-sim-standard-api-test EXCLUDE_FROM_ALL
+add_llvm_executable(talos-sim-standard-api-test EXCLUDE_FROM_ALL
   SimulationToStandardAPITest.cpp
 )
-llvm_update_compile_flags(obelisk-sim-standard-api-test)
-target_link_libraries(obelisk-sim-standard-api-test PRIVATE
-  ObeliskSimulationIR
-  ObeliskSimulationAnalysis
-  ObeliskSimulationToStandard
+llvm_update_compile_flags(talos-sim-standard-api-test)
+target_link_libraries(talos-sim-standard-api-test PRIVATE
+  TalosSimulationIR
+  TalosSimulationAnalysis
+  TalosSimulationToStandard
   MLIRArithDialect
   MLIRFuncDialect
   MLIRIR
   MLIRParser
   MLIRTransforms
 )
-set_target_properties(obelisk-sim-standard-api-test PROPERTIES
+set_target_properties(talos-sim-standard-api-test PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 
-add_executable(obelisk-coverage-fixture EXCLUDE_FROM_ALL
+add_executable(talos-coverage-fixture EXCLUDE_FROM_ALL
   Support/CoverageFixture.cpp)
-target_link_libraries(obelisk-coverage-fixture PRIVATE ObeliskCoverage)
-target_compile_features(obelisk-coverage-fixture PRIVATE cxx_std_17)
-set_target_properties(obelisk-coverage-fixture PROPERTIES
+target_link_libraries(talos-coverage-fixture PRIVATE TalosCoverage)
+target_compile_features(talos-coverage-fixture PRIVATE cxx_std_17)
+set_target_properties(talos-coverage-fixture PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 
-add_executable(obelisk-coverage-scaling-fixture EXCLUDE_FROM_ALL
+add_executable(talos-coverage-scaling-fixture EXCLUDE_FROM_ALL
   ../benchmark/coverage/format-scaling.cpp)
-target_link_libraries(obelisk-coverage-scaling-fixture PRIVATE ObeliskCoverage)
-target_compile_features(obelisk-coverage-scaling-fixture PRIVATE cxx_std_17)
-set_target_properties(obelisk-coverage-scaling-fixture PROPERTIES
+target_link_libraries(talos-coverage-scaling-fixture PRIVATE TalosCoverage)
+target_compile_features(talos-coverage-scaling-fixture PRIVATE cxx_std_17)
+set_target_properties(talos-coverage-scaling-fixture PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 
-add_executable(obelisk-source-tokens-test EXCLUDE_FROM_ALL
+add_executable(talos-source-tokens-test EXCLUDE_FROM_ALL
   Support/SourceTokensTest.cpp)
-target_link_libraries(obelisk-source-tokens-test PRIVATE ObeliskSourceTokens)
-set_target_properties(obelisk-source-tokens-test PROPERTIES
+target_link_libraries(talos-source-tokens-test PRIVATE TalosSourceTokens)
+set_target_properties(talos-source-tokens-test PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 
-function(obelisk_add_generated_process_object output_var directory input_file)
+function(talos_add_generated_process_object output_var directory input_file)
   set(generated_dir "${CMAKE_CURRENT_BINARY_DIR}/${directory}")
   set(generated_mlir "${generated_dir}/process.mlir")
   set(generated_raw_llvm "${generated_dir}/process.raw.ll")
@@ -101,23 +101,23 @@ function(obelisk_add_generated_process_object output_var directory input_file)
   file(MAKE_DIRECTORY "${generated_dir}")
   add_custom_command(
     OUTPUT "${generated_object}"
-    COMMAND $<TARGET_FILE:obelisk-opt>
+    COMMAND $<TARGET_FILE:talos-opt>
             ${generated_opt_options}
             "${CMAKE_CURRENT_SOURCE_DIR}/${input_file}"
-            "--pass-pipeline=builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension)),encode-obelisk-sim-to-bytecode{${generated_bytecode_options}},convert-obelisk-sim-processes-to-llvm-coroutines)"
+            "--pass-pipeline=builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension)),encode-talos-sim-to-bytecode{${generated_bytecode_options}},convert-talos-sim-processes-to-llvm-coroutines)"
             -o "${generated_mlir}"
-    COMMAND $<TARGET_FILE:obelisk-translate> --mlir-to-llvmir
+    COMMAND $<TARGET_FILE:talos-translate> --mlir-to-llvmir
             "${generated_mlir}" -o "${generated_raw_llvm}"
-    COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/opt"
+    COMMAND "${TALOS_LLVM_DIST_DIR}/bin/opt"
             "-passes=default<O3>"
             -S "${generated_raw_llvm}" -o "${generated_llvm}"
-    COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llc"
-            "-mtriple=${OBELISK_TARGET_TRIPLE}" -filetype=obj
+    COMMAND "${TALOS_LLVM_DIST_DIR}/bin/llc"
+            "-mtriple=${TALOS_TARGET_TRIPLE}" -filetype=obj
             -relocation-model=pic "${generated_llvm}"
             -o "${generated_object}"
     DEPENDS
-    obelisk-opt
-    obelisk-translate
+    talos-opt
+    talos-translate
     "${CMAKE_CURRENT_SOURCE_DIR}/${input_file}"
     VERBATIM
   )
@@ -128,140 +128,140 @@ function(obelisk_add_generated_process_object output_var directory input_file)
   set(${output_var} "${generated_object}" PARENT_SCOPE)
 endfunction()
 
-obelisk_add_generated_process_object(
+talos_add_generated_process_object(
   _generated_process_object
   GeneratedProcess
   Inputs/generated-process-coroutine.mlir
 )
-obelisk_add_generated_process_object(
+talos_add_generated_process_object(
   _generated_arithmetic_object
   GeneratedArithmetic
   Inputs/generated-bytecode-arithmetic.mlir
 )
-obelisk_add_generated_process_object(
+talos_add_generated_process_object(
   _generated_class_bitstream_native_object
   GeneratedClassBitstreamNative
   Inputs/generated-class-bitstream.mlir
 )
-obelisk_add_generated_process_object(
+talos_add_generated_process_object(
   _generated_class_bitstream_bytecode_object
   GeneratedClassBitstreamBytecode
   Inputs/generated-class-bitstream.mlir
   REQUIRE_BYTECODE
 )
-obelisk_add_generated_process_object(
+talos_add_generated_process_object(
   _generated_vpi_traversal_object
   GeneratedVPITraversal
   Conversion/simulation-dumpports.mlir
   VPI read
 )
-obelisk_add_generated_process_object(
+talos_add_generated_process_object(
   _generated_vpi_static_arrays_object
   GeneratedVPIStaticArrays
   Inputs/generated-vpi-static-arrays.mlir
   VPI read
 )
-obelisk_add_generated_process_object(
+talos_add_generated_process_object(
   _generated_vpi_resolved_net_types_object
   GeneratedVPIResolvedNetTypes
   Inputs/generated-vpi-resolved-net-types.mlir
   VPI read
 )
-obelisk_add_generated_process_object(
+talos_add_generated_process_object(
   _generated_vpi_nettypes_object
   GeneratedVPINettypes
   Inputs/generated-vpi-nettypes.mlir
   VPI read
 )
-obelisk_add_generated_process_object(
+talos_add_generated_process_object(
   _generated_vpi_interconnects_object
   GeneratedVPIInterconnects
   Inputs/generated-vpi-interconnects.mlir
   VPI read
 )
-add_executable(ObeliskGeneratedProcessRuntimeTests
+add_executable(TalosGeneratedProcessRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedProcessTest.cpp"
   "${_generated_process_object}"
 )
-target_link_libraries(ObeliskGeneratedProcessRuntimeTests PRIVATE
-  obelisk_rt
+target_link_libraries(TalosGeneratedProcessRuntimeTests PRIVATE
+  talos_rt
   GTest::gtest_main
 )
-target_compile_features(ObeliskGeneratedProcessRuntimeTests PRIVATE cxx_std_17)
-set_target_properties(ObeliskGeneratedProcessRuntimeTests PROPERTIES
+target_compile_features(TalosGeneratedProcessRuntimeTests PRIVATE cxx_std_17)
+set_target_properties(TalosGeneratedProcessRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
-add_executable(ObeliskGeneratedArithmeticRuntimeTests
+add_executable(TalosGeneratedArithmeticRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedArithmeticTest.cpp"
   "${_generated_arithmetic_object}"
 )
-add_executable(ObeliskGeneratedVPITraversalRuntimeTests
+add_executable(TalosGeneratedVPITraversalRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPITraversalTest.cpp"
   "${_generated_vpi_traversal_object}"
 )
-add_executable(ObeliskGeneratedVPIStaticArraysRuntimeTests
+add_executable(TalosGeneratedVPIStaticArraysRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIStaticArraysTest.cpp"
   "${_generated_vpi_static_arrays_object}"
 )
-add_executable(ObeliskGeneratedVPIResolvedNetTypesRuntimeTests
+add_executable(TalosGeneratedVPIResolvedNetTypesRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIResolvedNetTypesTest.cpp"
   "${_generated_vpi_resolved_net_types_object}"
 )
-add_executable(ObeliskGeneratedVPINettypesRuntimeTests
+add_executable(TalosGeneratedVPINettypesRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPINettypesTest.cpp"
   "${_generated_vpi_nettypes_object}"
 )
-add_executable(ObeliskGeneratedVPIInterconnectsRuntimeTests
+add_executable(TalosGeneratedVPIInterconnectsRuntimeTests
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIInterconnectsTest.cpp"
   "${_generated_vpi_interconnects_object}"
 )
-target_link_libraries(ObeliskGeneratedVPIInterconnectsRuntimeTests PRIVATE
-  obelisk_rt
+target_link_libraries(TalosGeneratedVPIInterconnectsRuntimeTests PRIVATE
+  talos_rt
   GTest::gtest_main
 )
-target_include_directories(ObeliskGeneratedVPIInterconnectsRuntimeTests SYSTEM BEFORE PRIVATE
-  "${PROJECT_BINARY_DIR}/lib/obelisk/include"
+target_include_directories(TalosGeneratedVPIInterconnectsRuntimeTests SYSTEM BEFORE PRIVATE
+  "${PROJECT_BINARY_DIR}/lib/talos/include"
 )
-target_include_directories(ObeliskGeneratedVPIInterconnectsRuntimeTests SYSTEM PRIVATE
-  ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+target_include_directories(TalosGeneratedVPIInterconnectsRuntimeTests SYSTEM PRIVATE
+  ${TALOS_SLANG_SOURCE_DIR}/external/ieee1800
 )
-target_compile_features(ObeliskGeneratedVPIInterconnectsRuntimeTests PRIVATE
+target_compile_features(TalosGeneratedVPIInterconnectsRuntimeTests PRIVATE
   cxx_std_17
 )
-set_target_properties(ObeliskGeneratedVPIInterconnectsRuntimeTests PROPERTIES
+set_target_properties(TalosGeneratedVPIInterconnectsRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
-target_link_libraries(ObeliskGeneratedVPINettypesRuntimeTests PRIVATE
-  obelisk_rt
+target_link_libraries(TalosGeneratedVPINettypesRuntimeTests PRIVATE
+  talos_rt
   GTest::gtest_main
 )
-target_include_directories(ObeliskGeneratedVPINettypesRuntimeTests SYSTEM BEFORE PRIVATE
-  "${PROJECT_BINARY_DIR}/lib/obelisk/include"
+target_include_directories(TalosGeneratedVPINettypesRuntimeTests SYSTEM BEFORE PRIVATE
+  "${PROJECT_BINARY_DIR}/lib/talos/include"
 )
-target_include_directories(ObeliskGeneratedVPINettypesRuntimeTests SYSTEM PRIVATE
-  ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+target_include_directories(TalosGeneratedVPINettypesRuntimeTests SYSTEM PRIVATE
+  ${TALOS_SLANG_SOURCE_DIR}/external/ieee1800
 )
-target_compile_features(ObeliskGeneratedVPINettypesRuntimeTests PRIVATE
+target_compile_features(TalosGeneratedVPINettypesRuntimeTests PRIVATE
   cxx_std_17
 )
-set_target_properties(ObeliskGeneratedVPINettypesRuntimeTests PROPERTIES
+set_target_properties(TalosGeneratedVPINettypesRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
-target_link_libraries(ObeliskGeneratedVPIResolvedNetTypesRuntimeTests PRIVATE
-  obelisk_rt
+target_link_libraries(TalosGeneratedVPIResolvedNetTypesRuntimeTests PRIVATE
+  talos_rt
   GTest::gtest_main
 )
-target_include_directories(ObeliskGeneratedVPIResolvedNetTypesRuntimeTests SYSTEM PRIVATE
-  ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+target_include_directories(TalosGeneratedVPIResolvedNetTypesRuntimeTests SYSTEM PRIVATE
+  ${TALOS_SLANG_SOURCE_DIR}/external/ieee1800
 )
-target_compile_features(ObeliskGeneratedVPIResolvedNetTypesRuntimeTests PRIVATE
+target_compile_features(TalosGeneratedVPIResolvedNetTypesRuntimeTests PRIVATE
   cxx_std_17
 )
-set_target_properties(ObeliskGeneratedVPIResolvedNetTypesRuntimeTests PROPERTIES
+set_target_properties(TalosGeneratedVPIResolvedNetTypesRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
 
-add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
+add_executable(talos-design-database-dump-test EXCLUDE_FROM_ALL
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedDesignDatabaseDumpTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIClassMessagesTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIAggregateMessagesTest.cpp"
@@ -347,84 +347,84 @@ add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIGenerateParametersTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIRTLPropertiesTest.cpp"
 )
-target_link_libraries(obelisk-design-database-dump-test PRIVATE
-  ObeliskSimulationToBytecode
-  obelisk_rt
+target_link_libraries(talos-design-database-dump-test PRIVATE
+  TalosSimulationToBytecode
+  talos_rt
   GTest::gtest_main
   MLIRParser
 )
-target_include_directories(obelisk-design-database-dump-test SYSTEM PRIVATE
-  ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+target_include_directories(talos-design-database-dump-test SYSTEM PRIVATE
+  ${TALOS_SLANG_SOURCE_DIR}/external/ieee1800
 )
-target_compile_features(obelisk-design-database-dump-test PRIVATE cxx_std_17)
-set_target_properties(obelisk-design-database-dump-test PROPERTIES
+target_compile_features(talos-design-database-dump-test PRIVATE cxx_std_17)
+set_target_properties(talos-design-database-dump-test PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
-target_link_libraries(ObeliskGeneratedVPIStaticArraysRuntimeTests PRIVATE
-  obelisk_rt
+target_link_libraries(TalosGeneratedVPIStaticArraysRuntimeTests PRIVATE
+  talos_rt
   GTest::gtest_main
 )
-target_include_directories(ObeliskGeneratedVPIStaticArraysRuntimeTests SYSTEM PRIVATE
-  ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+target_include_directories(TalosGeneratedVPIStaticArraysRuntimeTests SYSTEM PRIVATE
+  ${TALOS_SLANG_SOURCE_DIR}/external/ieee1800
 )
-target_compile_features(ObeliskGeneratedVPIStaticArraysRuntimeTests PRIVATE
+target_compile_features(TalosGeneratedVPIStaticArraysRuntimeTests PRIVATE
   cxx_std_17
 )
-set_target_properties(ObeliskGeneratedVPIStaticArraysRuntimeTests PROPERTIES
+set_target_properties(TalosGeneratedVPIStaticArraysRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
-target_link_libraries(ObeliskGeneratedVPITraversalRuntimeTests PRIVATE
-  obelisk_rt
+target_link_libraries(TalosGeneratedVPITraversalRuntimeTests PRIVATE
+  talos_rt
   GTest::gtest_main
 )
-target_include_directories(ObeliskGeneratedVPITraversalRuntimeTests SYSTEM PRIVATE
-  ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
+target_include_directories(TalosGeneratedVPITraversalRuntimeTests SYSTEM PRIVATE
+  ${TALOS_SLANG_SOURCE_DIR}/external/ieee1800
 )
-target_compile_features(ObeliskGeneratedVPITraversalRuntimeTests PRIVATE
+target_compile_features(TalosGeneratedVPITraversalRuntimeTests PRIVATE
   cxx_std_17
 )
-set_target_properties(ObeliskGeneratedVPITraversalRuntimeTests PROPERTIES
+set_target_properties(TalosGeneratedVPITraversalRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
-add_executable(ObeliskGeneratedClassBitstreamNative
+add_executable(TalosGeneratedClassBitstreamNative
   "${_generated_class_bitstream_native_object}"
 )
-target_link_libraries(ObeliskGeneratedClassBitstreamNative PRIVATE
-  obelisk_rt
+target_link_libraries(TalosGeneratedClassBitstreamNative PRIVATE
+  talos_rt
 )
-set_target_properties(ObeliskGeneratedClassBitstreamNative PROPERTIES
+set_target_properties(TalosGeneratedClassBitstreamNative PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
-add_executable(ObeliskGeneratedClassBitstreamBytecode
+add_executable(TalosGeneratedClassBitstreamBytecode
   "${_generated_class_bitstream_bytecode_object}"
 )
-target_link_libraries(ObeliskGeneratedClassBitstreamBytecode PRIVATE
-  obelisk_rt
+target_link_libraries(TalosGeneratedClassBitstreamBytecode PRIVATE
+  talos_rt
 )
-set_target_properties(ObeliskGeneratedClassBitstreamBytecode PROPERTIES
+set_target_properties(TalosGeneratedClassBitstreamBytecode PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
-target_link_libraries(ObeliskGeneratedArithmeticRuntimeTests PRIVATE
-  obelisk_rt
+target_link_libraries(TalosGeneratedArithmeticRuntimeTests PRIVATE
+  talos_rt
   GTest::gtest_main
 )
-target_compile_features(ObeliskGeneratedArithmeticRuntimeTests PRIVATE
+target_compile_features(TalosGeneratedArithmeticRuntimeTests PRIVATE
   cxx_std_17
 )
-set_target_properties(ObeliskGeneratedArithmeticRuntimeTests PROPERTIES
+set_target_properties(TalosGeneratedArithmeticRuntimeTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
-add_llvm_executable(ObeliskNativePartitionTests EXCLUDE_FROM_ALL
+add_llvm_executable(TalosNativePartitionTests EXCLUDE_FROM_ALL
   Support/NativePartitionTest.cpp
   Support/ActivationOrderTest.cpp
   Support/NativeGlobalInitializersTest.cpp
 )
-llvm_update_compile_flags(ObeliskNativePartitionTests)
-target_include_directories(ObeliskNativePartitionTests PRIVATE
+llvm_update_compile_flags(TalosNativePartitionTests)
+target_include_directories(TalosNativePartitionTests PRIVATE
   "${PROJECT_SOURCE_DIR}/tools/driver"
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )
-target_link_libraries(ObeliskNativePartitionTests PRIVATE
+target_link_libraries(TalosNativePartitionTests PRIVATE
   MLIRBuiltinToLLVMIRTranslation
   MLIRLLVMToLLVMIRTranslation
   MLIRTargetLLVMIRExport
@@ -438,21 +438,21 @@ target_link_libraries(ObeliskNativePartitionTests PRIVATE
   LLVMSupport
   GTest::gtest_main
 )
-set_target_properties(ObeliskNativePartitionTests PROPERTIES
+set_target_properties(TalosNativePartitionTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
 
 # Exhaustive oracles for compiler analyses: each enumerates a family of small
 # programs and checks every proof against direct execution.
-add_llvm_executable(ObeliskAnalysisOracleTests EXCLUDE_FROM_ALL
+add_llvm_executable(TalosAnalysisOracleTests EXCLUDE_FROM_ALL
   Support/ActivationOracleTest.cpp
   Support/BoundedLoopOracleTest.cpp
 )
-llvm_update_compile_flags(ObeliskAnalysisOracleTests)
-target_link_libraries(ObeliskAnalysisOracleTests PRIVATE
-  ObeliskSimulationAnalysis
-  ObeliskSimulationIR
-  ObeliskScheduleIR
+llvm_update_compile_flags(TalosAnalysisOracleTests)
+target_link_libraries(TalosAnalysisOracleTests PRIVATE
+  TalosSimulationAnalysis
+  TalosSimulationIR
+  TalosScheduleIR
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRFuncDialect
@@ -461,24 +461,24 @@ target_link_libraries(ObeliskAnalysisOracleTests PRIVATE
   MLIRUBDialect
   GTest::gtest_main
 )
-set_target_properties(ObeliskAnalysisOracleTests PROPERTIES
+set_target_properties(TalosAnalysisOracleTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
 
-set(OBELISK_RUNTIME_UNIT_TARGETS
-  ObeliskAnalysisOracleTests
-  ObeliskNativePartitionTests
-  ObeliskGeneratedArithmeticRuntimeTests
-  ObeliskGeneratedClassBitstreamBytecode
-  ObeliskGeneratedClassBitstreamNative
-  ObeliskGeneratedProcessRuntimeTests
-  ObeliskGeneratedVPIInterconnectsRuntimeTests
-  ObeliskGeneratedVPINettypesRuntimeTests
-  ObeliskGeneratedVPIStaticArraysRuntimeTests
-  ObeliskGeneratedVPIResolvedNetTypesRuntimeTests
-  ObeliskGeneratedVPITraversalRuntimeTests
-  ObeliskProcessRuntimeTests
-  ObeliskRuntimeTests
+set(TALOS_RUNTIME_UNIT_TARGETS
+  TalosAnalysisOracleTests
+  TalosNativePartitionTests
+  TalosGeneratedArithmeticRuntimeTests
+  TalosGeneratedClassBitstreamBytecode
+  TalosGeneratedClassBitstreamNative
+  TalosGeneratedProcessRuntimeTests
+  TalosGeneratedVPIInterconnectsRuntimeTests
+  TalosGeneratedVPINettypesRuntimeTests
+  TalosGeneratedVPIStaticArraysRuntimeTests
+  TalosGeneratedVPIResolvedNetTypesRuntimeTests
+  TalosGeneratedVPITraversalRuntimeTests
+  TalosProcessRuntimeTests
+  TalosRuntimeTests
 )
 
 # A nested suite rather than a sibling: lit checks each subdirectory of a suite
@@ -493,71 +493,71 @@ configure_lit_site_cfg(
 )
 
 # Runs only the unit suite, the counterpart to LLVM's check-llvm-unit.
-add_lit_testsuite(check-obelisk-runtime-units
-  "Running the Obelisk runtime unit tests"
+add_lit_testsuite(check-talos-runtime-units
+  "Running the Talos runtime unit tests"
   ${CMAKE_CURRENT_BINARY_DIR}/Unit
   DEPENDS
-  ${OBELISK_RUNTIME_UNIT_TARGETS}
+  ${TALOS_RUNTIME_UNIT_TARGETS}
 )
-set_target_properties(check-obelisk-runtime-units PROPERTIES FOLDER "Tests")
+set_target_properties(check-talos-runtime-units PROPERTIES FOLDER "Tests")
 
-set(_obelisk_driver_test_dependencies)
-if(TARGET obelisk-host-c-runtime-test)
-  list(APPEND _obelisk_driver_test_dependencies obelisk-host-c-runtime-test)
+set(_talos_driver_test_dependencies)
+if(TARGET talos-host-c-runtime-test)
+  list(APPEND _talos_driver_test_dependencies talos-host-c-runtime-test)
 endif()
-if(TARGET ObeliskLLVMPassPlugin)
-  list(APPEND _obelisk_driver_test_dependencies ObeliskLLVMPassPlugin)
+if(TARGET TalosLLVMPassPlugin)
+  list(APPEND _talos_driver_test_dependencies TalosLLVMPassPlugin)
 endif()
 
 # Repository and build-graph lints inspect sources, archives, and an isolated
 # CMake graph rather than compiler behavior, so they run outside the lit
 # regression suite: ODS custom-assembly coverage, the pay-for-play runtime
 # feature layout, and incremental native-support rebuilds.
-set(_obelisk_lint_dir "${PROJECT_SOURCE_DIR}/utils/lint")
-add_custom_target(check-obelisk-lint
-  COMMAND "${Python_EXECUTABLE}" "${_obelisk_lint_dir}/check-assembly-formats.py"
-    "${OBELISK_LLVM_DIST_DIR}" "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}"
-  DEPENDS obelisk_rt
-  COMMENT "Running the Obelisk repository and build-graph lints"
+set(_talos_lint_dir "${PROJECT_SOURCE_DIR}/utils/lint")
+add_custom_target(check-talos-lint
+  COMMAND "${Python_EXECUTABLE}" "${_talos_lint_dir}/check-assembly-formats.py"
+    "${TALOS_LLVM_DIST_DIR}" "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}"
+  DEPENDS talos_rt
+  COMMENT "Running the Talos repository and build-graph lints"
   USES_TERMINAL
 )
 # These inspect ELF sections and the Linux native-support staging graph.
-if(OBELISK_NATIVE_PLATFORM STREQUAL "linux")
-  add_custom_command(TARGET check-obelisk-lint POST_BUILD
+if(TALOS_NATIVE_PLATFORM STREQUAL "linux")
+  add_custom_command(TARGET check-talos-lint POST_BUILD
     COMMAND "${Python_EXECUTABLE}"
-      "${_obelisk_lint_dir}/check-dynamic-scan-feature-layout.py"
-      "${PROJECT_SOURCE_DIR}" "$<TARGET_FILE:obelisk_rt>"
-      "${OBELISK_LLVM_DIST_DIR}" "${OBELISK_COMPILER_RT_BUILTINS}"
-    COMMAND "${Python_EXECUTABLE}" "${_obelisk_lint_dir}/check-native-support.py"
+      "${_talos_lint_dir}/check-dynamic-scan-feature-layout.py"
+      "${PROJECT_SOURCE_DIR}" "$<TARGET_FILE:talos_rt>"
+      "${TALOS_LLVM_DIST_DIR}" "${TALOS_COMPILER_RT_BUILTINS}"
+    COMMAND "${Python_EXECUTABLE}" "${_talos_lint_dir}/check-native-support.py"
       "${CMAKE_COMMAND}" "${CMAKE_CURRENT_BINARY_DIR}/lint/native-support"
-      "${PROJECT_SOURCE_DIR}" "${OBELISK_LLVM_DIST_DIR}"
-      "${OBELISK_SLANG_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/include"
-      "${OBELISK_TARGET_TRIPLE}"
+      "${PROJECT_SOURCE_DIR}" "${TALOS_LLVM_DIST_DIR}"
+      "${TALOS_SLANG_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/include"
+      "${TALOS_TARGET_TRIPLE}"
     VERBATIM)
 endif()
-set_target_properties(check-obelisk-lint PROPERTIES FOLDER "Tests")
+set_target_properties(check-talos-lint PROPERTIES FOLDER "Tests")
 
-set(OBELISK_TEST_DEPENDS
-  obelisk
-  obelisk-test-driver
-  obelisk-filecheck
-  obelisk-not
-  obelisk-opt
-  obelisk-translate
-  obelisk-sim-standard-api-test
-  obelisk-design-database-dump-test
-  obelisk-coverage-fixture
-  obelisk-coverage-scaling-fixture
-  obelisk-source-tokens-test
-  obelisk-cov
-  ${_obelisk_driver_test_dependencies}
-  ${OBELISK_RUNTIME_UNIT_TARGETS}
+set(TALOS_TEST_DEPENDS
+  talos
+  talos-test-driver
+  talos-filecheck
+  talos-not
+  talos-opt
+  talos-translate
+  talos-sim-standard-api-test
+  talos-design-database-dump-test
+  talos-coverage-fixture
+  talos-coverage-scaling-fixture
+  talos-source-tokens-test
+  talos-cov
+  ${_talos_driver_test_dependencies}
+  ${TALOS_RUNTIME_UNIT_TARGETS}
 )
-add_custom_target(obelisk-test-depends DEPENDS ${OBELISK_TEST_DEPENDS})
-set_target_properties(obelisk-test-depends PROPERTIES FOLDER "Tests")
+add_custom_target(talos-test-depends DEPENDS ${TALOS_TEST_DEPENDS})
+set_target_properties(talos-test-depends PROPERTIES FOLDER "Tests")
 
-add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
+add_lit_testsuite(check-talos "Running the Talos regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS ${OBELISK_TEST_DEPENDS}
+  DEPENDS ${TALOS_TEST_DEPENDS}
 )
-set_target_properties(check-obelisk PROPERTIES FOLDER "Tests")
+set_target_properties(check-talos PROPERTIES FOLDER "Tests")

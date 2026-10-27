@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
 // Three fixed packed words share a 96-bit root. Distinct source
 // sites must not disable Eval when their exact physical slices are disjoint.
 // Each keeps its own pending slot; samples straddle the first clock edge.
-// PLAN-COUNT-3: llvm.mlir.global internal @__obelisk_eval_nba_valid_{{[0-9]+}}()
-// PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// PLAN-COUNT-3: llvm.mlir.global internal @__talos_eval_nba_valid_{{[0-9]+}}()
+// PLAN-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// PLAN: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
 
 !word = !simulation.logic<32>
 !words = !simulation.packed_array<2 : 0 x !word>

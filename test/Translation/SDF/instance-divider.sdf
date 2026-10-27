@@ -1,5 +1,5 @@
-// RUN: obelisk-translate --import-sdf %s | FileCheck %s
-// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+// RUN: talos-translate --import-sdf %s | FileCheck %s
+// RUN: talos-translate --import-sdf %s | talos-opt | FileCheck %s
 
 (DELAYFILE
   (SDFVERSION "4.0")
@@ -11,7 +11,7 @@
 // Preserve the SDF default dotted hierarchy text in transient IR. Per IEEE
 // 1800-2017 32.4, matching remains an annotator/frontend concern and adds no
 // runtime hierarchy lookup.
-// CHECK: obelisk_sdf.delay_file
+// CHECK: talos_sdf.delay_file
 // CHECK-NOT: divider =
-// CHECK: obelisk_sdf.cell
+// CHECK: talos_sdf.cell
 // CHECK-SAME: instance "top.middle.leaf"

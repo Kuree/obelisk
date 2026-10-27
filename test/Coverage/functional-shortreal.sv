@@ -1,8 +1,8 @@
-// RUN: %obelisk --std=1800-2023 --coverage=functional -O0 -o %t %s
+// RUN: %talos --std=1800-2023 --coverage=functional -O0 -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=ROWS
+// RUN: talos-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=ROWS
 
 // LRM 6.12, 19.3, 19.5 and 19.8.1: shortreal captures preserve IEEE
 // binary32 bits. Ref arguments follow storage and input arguments are local.

@@ -1,6 +1,6 @@
 // Runtime semantics for ../Conversion/simulation-delayed-mos-strength-runtime.mlir.
 
-// RUN: obelisk-opt %S/../Conversion/simulation-delayed-mos-strength-runtime.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)'  | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %S/../Conversion/simulation-delayed-mos-strength-runtime.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off require-bytecode=true},convert-talos-sim-processes-to-llvm-coroutines)'  | talos-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %s
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s

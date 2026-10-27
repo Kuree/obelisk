@@ -47,7 +47,7 @@ set(published "${version_root}/${STAGE_KEY}-${stage_content_key}")
 set(stage "${published}.tmp-${nonce}")
 file(REMOVE_RECURSE "${stage}")
 file(MAKE_DIRECTORY
-  "${stage}/licenses/obelisk"
+  "${stage}/licenses/talos"
   "${stage}/licenses/llvm"
   "${stage}/licenses/compiler-rt")
 
@@ -64,7 +64,7 @@ file(COPY
 file(COPY "${LLVM_DIST}/include/llvm/Support/LICENSE.TXT"
   DESTINATION "${stage}/licenses/llvm")
 configure_file("${SOURCE_DIR}/LICENSE"
-               "${stage}/licenses/obelisk/LICENSE" COPYONLY)
+               "${stage}/licenses/talos/LICENSE" COPYONLY)
 configure_file("${SOURCE_DIR}/docs/third-party/licenses/Apache-2.0.txt"
                "${stage}/licenses/llvm/Apache-2.0.txt" COPYONLY)
 configure_file("${SOURCE_DIR}/docs/third-party/licenses/LLVM-exception.txt"
@@ -100,19 +100,19 @@ endforeach()
 file(WRITE "${stage}/BUILD_PATH_PREFIXES.txt" "${prefix_manifest}")
 
 file(WRITE "${stage}/README.txt"
-  "Local Obelisk native-link support for ${TARGET_TRIPLE}.\n"
-  "libobelisk_rt.a contains native ELF objects for -O0 links.\n"
-  "libobelisk_rt_lto.a contains unified LLVM bitcode for Full-LTO links.\n"
-  "libobelisk_rt_prelinked.a contains a Full-LTO-optimized ELF runtime for ThinLTO links.\n"
+  "Local Talos native-link support for ${TARGET_TRIPLE}.\n"
+  "libtalos_rt.a contains native ELF objects for -O0 links.\n"
+  "libtalos_rt_lto.a contains unified LLVM bitcode for Full-LTO links.\n"
+  "libtalos_rt_prelinked.a contains a Full-LTO-optimized ELF runtime for ThinLTO links.\n"
   "Each runtime archive also contains prebuilt compiler-rt builtins as native objects.\n"
   "Host C-runtime inputs are discovered in-process when an executable is linked.\n"
   "Generated executables require the glibc version provided by the build host.\n"
-  "Install libc development files before configuring Obelisk.\n")
+  "Install libc development files before configuring Talos.\n")
 set(complete_contents
   "${TARGET_TRIPLE}\n${STAGE_KEY}\n${stage_content_key}\n")
 file(WRITE "${stage}/.complete" "${complete_contents}")
 
-function(obelisk_tree_fingerprint root output)
+function(talos_tree_fingerprint root output)
   file(GLOB_RECURSE entries LIST_DIRECTORIES FALSE RELATIVE "${root}"
     "${root}/*")
   if(EXISTS "${root}/.complete")
@@ -137,8 +137,8 @@ endfunction()
 
 file(MAKE_DIRECTORY "${version_root}")
 if(EXISTS "${published}" OR IS_SYMLINK "${published}")
-  obelisk_tree_fingerprint("${stage}" staged_fingerprint)
-  obelisk_tree_fingerprint("${published}" published_fingerprint)
+  talos_tree_fingerprint("${stage}" staged_fingerprint)
+  talos_tree_fingerprint("${published}" published_fingerprint)
   if(staged_fingerprint STREQUAL published_fingerprint)
     file(REMOVE_RECURSE "${stage}")
   else()

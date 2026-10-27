@@ -1,11 +1,11 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov --coverage-test=distribution | FileCheck %s --check-prefix=QUERY
 // RUN: %t +load_only --coverage-load=%t.obcov | FileCheck %s --check-prefix=LOAD
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 // RUN: %t +final_false --coverage-load=%t.obcov --coverage-output=%t.mixed.obcov --coverage-test=distribution-zero | FileCheck %s --check-prefix=FALSE
-// RUN: obelisk-cov report --format=json %t.mixed.obcov | FileCheck %s --check-prefix=MIXED
-// RUN: obelisk-cov merge --discard-test-detail -o %t.aggregate.obcov %t.mixed.obcov
-// RUN: obelisk-cov report --format=json %t.aggregate.obcov | FileCheck %s --check-prefix=AGGREGATE --implicit-check-not='"option":10,"value_kind":1,'
+// RUN: talos-cov report --format=json %t.mixed.obcov | FileCheck %s --check-prefix=MIXED
+// RUN: talos-cov merge --discard-test-detail -o %t.aggregate.obcov %t.mixed.obcov
+// RUN: talos-cov report --format=json %t.aggregate.obcov | FileCheck %s --check-prefix=AGGREGATE --implicit-check-not='"option":10,"value_kind":1,'
 
 // IEEE 19.5.1.1 and 19.7.1. Three instances, two configurations: changing the
 // policy captures different partitions at new(), while a later reset reuses

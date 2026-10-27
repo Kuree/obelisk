@@ -1,0 +1,302 @@
+// RUN: talos-opt %s --talos-sim-prepare | FileCheck %s --check-prefix=PREPARE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare,talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s --check-prefix=LOWER
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare,talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s --check-prefix=NO-PARENT-AWAIT
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=3' -o /dev/null
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=3' '--encode-talos-sim-to-bytecode=vpi=off' -o /dev/null
+
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
+  talos.sv.symbol.definition @s0.t attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.t attributes {hierarchical_name = "t", is_uninstantiated = false, name = "t", node_id = 3 : i64, referenced_path = "t", referenced_symbol = @s0.t} {
+      talos.sv.symbol.instance_body @s4.t attributes {hierarchical_name = "t", name = "t", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        talos.sv.symbol.variable @s5.clk attributes {hierarchical_name = "t.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s6.a attributes {hierarchical_name = "t.a", lifetime = 1 : i32, name = "a", node_id = 6 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s7.b attributes {hierarchical_name = "t.b", lifetime = 1 : i32, name = "b", node_id = 7 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s8.rst attributes {hierarchical_name = "t.rst", lifetime = 1 : i32, name = "rst", node_id = 8 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.property @s9.p attributes {has_default_instance = true, hierarchical_name = "t.p", name = "p", node_id = 9 : i64, port_count = 0 : i64, port_paths = [], port_symbols = []} {
+          talos.sv.expression.assertion_instance attributes {argument_count = 0 : i64, argument_formal_paths = [], argument_formal_symbols = [], argument_kinds = array<i64>, has_expanded_body = true, is_recursive_property = false, is_signed = false, local_variable_count = 2 : i64, local_variable_has_initializer = array<i64: 1, 1>, local_variable_paths = ["t.p.x", "t.p.y"], local_variable_symbols = [@s1.$root::@s3.t::@s4.t::@s9.p::@s10.x, @s1.$root::@s3.t::@s4.t::@s9.p::@s11.y], node_id = 10 : i64, referenced_path = "t.p", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p, semantic_type = !talos.property} {
+            talos.sv.assertion.clocking attributes {node_id = 11 : i64} {
+              talos.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 12 : i64} {
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 13 : i64, referenced_path = "t.clk", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s5.clk, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              talos.sv.assertion.disable_iff attributes {node_id = 14 : i64} {
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 15 : i64, referenced_path = "t.rst", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s8.rst, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+                talos.sv.assertion.binary attributes {node_id = 16 : i64, operator_kind = 11 : i32} {
+                  talos.sv.assertion.sequence_with_match attributes {has_repetition = false, match_item_count = 1 : i64, node_id = 17 : i64, repetition_is_unbounded = false} {
+                    talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 18 : i64, repetition_is_unbounded = false} {
+                      talos.sv.expression.named_value attributes {is_signed = false, node_id = 19 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 20 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                      talos.sv.expression.named_value attributes {is_signed = false, node_id = 21 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s10.x, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                      talos.sv.expression.unary_op attributes {is_signed = false, node_id = 22 : i64, operator_kind = 9 : i32, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                        talos.sv.expression.named_value attributes {is_signed = false, node_id = 23 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                    }
+                  }
+                  talos.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 2 : i64, min = 2 : i64}], node_id = 24 : i64} {
+                    talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 25 : i64, repetition_is_unbounded = false} {
+                      talos.sv.expression.binary_op attributes {is_signed = false, node_id = 26 : i64, operator_kind = 19 : i32, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                        talos.sv.expression.binary_op attributes {is_signed = false, node_id = 27 : i64, operator_kind = 9 : i32, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                          talos.sv.expression.named_value attributes {is_signed = false, node_id = 28 : i64, referenced_path = "t.b", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s7.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                          talos.sv.expression.named_value attributes {is_signed = false, node_id = 29 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s10.x, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                        }
+                        talos.sv.expression.binary_op attributes {is_signed = false, node_id = 30 : i64, operator_kind = 10 : i32, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                          talos.sv.expression.named_value attributes {is_signed = false, node_id = 31 : i64, referenced_path = "t.b", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s7.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                          talos.sv.expression.named_value attributes {is_signed = false, node_id = 32 : i64, referenced_path = "t.p.y", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s11.y, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            talos.sv.expression.named_value attributes {is_signed = false, node_id = 33 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+            }
+            talos.sv.expression.named_value attributes {is_signed = false, node_id = 34 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s10.x, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+            }
+          }
+          talos.sv.symbol.local_assertion_var @s14.y attributes {hierarchical_name = "t.p.y", name = "y", node_id = 64 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+            talos.sv.expression.named_value attributes {is_signed = false, node_id = 65 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+            }
+          }
+          talos.sv.symbol.local_assertion_var @s13.x attributes {hierarchical_name = "t.p.x", name = "x", node_id = 66 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+            talos.sv.expression.named_value attributes {is_signed = false, node_id = 67 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+            }
+          }
+          talos.sv.symbol.local_assertion_var @s11.y attributes {hierarchical_name = "t.p.y", name = "y", node_id = 68 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+            talos.sv.expression.named_value attributes {is_signed = false, node_id = 69 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s10.x, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+            }
+          }
+          talos.sv.symbol.local_assertion_var @s10.x attributes {hierarchical_name = "t.p.x", name = "x", node_id = 70 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+            talos.sv.expression.named_value attributes {is_signed = false, node_id = 71 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+            }
+          }
+        }
+        talos.sv.symbol.procedural_block @s12 attributes {hierarchical_name = "t", node_id = 35 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          // A false implication antecedent is a vacuous success. Keep this as
+          // cover property so the local-flow lowering must schedule its pass
+          // action without running antecedent match items.
+          talos.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 36 : i64, simulation.assertion_control_target_id = 101 : i64, simulation.assertion_controlled, simulation.assertion_kill_controlled} {
+            talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 37 : i64, repetition_is_unbounded = false} {
+              talos.sv.expression.assertion_instance attributes {argument_count = 0 : i64, argument_formal_paths = [], argument_formal_symbols = [], argument_kinds = array<i64>, has_expanded_body = true, is_recursive_property = false, is_signed = false, local_variable_count = 2 : i64, local_variable_has_initializer = array<i64: 1, 1>, local_variable_paths = ["t.p.x", "t.p.y"], local_variable_symbols = [@s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, @s1.$root::@s3.t::@s4.t::@s9.p::@s14.y], node_id = 38 : i64, referenced_path = "t.p", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p, semantic_type = !talos.property} {
+                talos.sv.assertion.clocking attributes {node_id = 39 : i64} {
+                  talos.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 40 : i64} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 41 : i64, referenced_path = "t.clk", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s5.clk, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  talos.sv.assertion.disable_iff attributes {node_id = 42 : i64} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 43 : i64, referenced_path = "t.rst", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s8.rst, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                    talos.sv.assertion.binary attributes {node_id = 44 : i64, operator_kind = 11 : i32} {
+                      talos.sv.assertion.sequence_with_match attributes {has_repetition = false, match_item_count = 4 : i64, node_id = 45 : i64, repetition_is_unbounded = false} {
+                        talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 46 : i64, repetition_is_unbounded = false} {
+                          talos.sv.expression.named_value attributes {is_signed = false, node_id = 47 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                        }
+                        talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 48 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                          talos.sv.expression.named_value attributes {is_signed = false, node_id = 49 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                          talos.sv.expression.unary_op attributes {is_signed = false, node_id = 50 : i64, operator_kind = 9 : i32, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                            talos.sv.expression.named_value attributes {is_signed = false, node_id = 51 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                            }
+                          }
+                        }
+                        talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 72 : i64, semantic_type = !talos.void, subroutine_kind = 1 : i32, system_library_cell = "work.t", system_scope_path = "t", system_scope_symbol = @s1.$root::@s3.t::@s4.t} {
+                          talos.sv.expression.binary_op attributes {is_signed = false, node_id = 73 : i64, operator_kind = 7 : i32, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                            talos.sv.expression.named_value attributes {is_signed = false, node_id = 83 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                            }
+                            talos.sv.expression.named_value attributes {is_signed = false, node_id = 84 : i64, referenced_path = "t.b", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s7.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                            }
+                          }
+                        }
+                        talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 77 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                          talos.sv.expression.named_value attributes {is_signed = false, node_id = 78 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                          talos.sv.expression.unary_op attributes {is_signed = false, node_id = 79 : i64, operator_kind = 9 : i32, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                            talos.sv.expression.named_value attributes {is_signed = false, node_id = 80 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                            }
+                          }
+                        }
+                        talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 81 : i64, semantic_type = !talos.void, subroutine_kind = 1 : i32, system_library_cell = "work.t", system_scope_path = "t", system_scope_symbol = @s1.$root::@s3.t::@s4.t} {
+                          talos.sv.expression.named_value attributes {is_signed = false, node_id = 82 : i64, referenced_path = "t.b", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s7.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                          }
+                        }
+                      }
+                      talos.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 2 : i64, min = 2 : i64}], node_id = 52 : i64} {
+                        talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 53 : i64, repetition_is_unbounded = false} {
+                          talos.sv.expression.binary_op attributes {is_signed = false, node_id = 54 : i64, operator_kind = 19 : i32, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                            talos.sv.expression.binary_op attributes {is_signed = false, node_id = 55 : i64, operator_kind = 9 : i32, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                              talos.sv.expression.named_value attributes {is_signed = false, node_id = 56 : i64, referenced_path = "t.b", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s7.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                              }
+                              talos.sv.expression.named_value attributes {is_signed = false, node_id = 57 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                              }
+                            }
+                            talos.sv.expression.binary_op attributes {is_signed = false, node_id = 58 : i64, operator_kind = 10 : i32, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                              talos.sv.expression.named_value attributes {is_signed = false, node_id = 59 : i64, referenced_path = "t.b", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s7.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                              }
+                              talos.sv.expression.named_value attributes {is_signed = false, node_id = 60 : i64, referenced_path = "t.p.y", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s14.y, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 61 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 62 : i64, referenced_path = "t.p.x", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s9.p::@s13.x, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+            }
+            talos.sv.statement.expression_statement attributes {node_id = 63 : i64} {
+              talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 74 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 75 : i64, referenced_path = "t.b", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s7.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 76 : i64, referenced_path = "t.a", referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The normalized types are frozen before the declaration inventory is
+// separated from its executable monitor.
+// PREPARE: local_variable_count = 2 : i64
+// PREPARE-SAME: simulation.assertion_local_types = [!simulation.logic<1>, !simulation.logic<1>]
+
+// The cover-property pass callback performs the observable action in
+// Reactive. Both a completed consequent and a false current antecedent use
+// this callback; the latter does not execute antecedent match items.
+// LOWER: simulation.func private @[[PASS_CALLBACK:unit_0\.fork\.36\.0\.0]](
+// LOWER: simulation.ref.load %arg1
+// LOWER: simulation.ref.store {{.*}} to %arg2
+
+// Match-call arguments are captured after each preceding local assignment.
+// The first combines its current local with sampled nonlocal b; the second
+// captures b directly. Both calls are independently guarded by the Disable
+// and Kill epochs before their observable effect, just like action reports.
+// LOWER: simulation.func private @[[MATCH_CALL_0:[^(]+]](%arg0: !simulation.context {{.*}}, %arg1: !simulation.logic<1> {{.*}}, %arg2: !simulation.ref<i64> {{.*}}, %arg3: i64 {{.*}}, %arg4: !simulation.ref<i64> {{.*}}, %arg5: i64
+// LOWER-SAME: domain = 0 : i32
+// LOWER-SAME: home_region = 10 : i32
+// LOWER-SAME: schedule.detached_controls
+// LOWER-SAME: simulation.concurrent_match_call
+// LOWER: %[[CALL0_KILL:.*]] = simulation.assert.kill_epoch %arg0 assertion 101 {simulation.concurrent_match_call_kill_epoch}
+// LOWER: %[[KILL0_CURRENT:.*]] = arith.cmpi eq, %[[CALL0_KILL]], %arg5
+// LOWER: cf.cond_br %[[KILL0_CURRENT]], ^[[CHECK0_DISABLE:bb[0-9]+]], ^[[KILL0_CANCELED:bb[0-9]+]]
+// LOWER: ^[[CHECK0_DISABLE]]:
+// LOWER: %[[CALL0_DISABLE:.*]] = simulation.ref.load %arg2
+// LOWER: %[[DISABLE0_CURRENT:.*]] = arith.cmpi eq, %[[CALL0_DISABLE]], %arg3
+// LOWER: cf.cond_br %[[DISABLE0_CURRENT]], ^[[CALL0_BODY:bb[0-9]+]], ^[[DISABLE0_CANCELED:bb[0-9]+]]
+// LOWER: ^[[CALL0_BODY]]:
+// LOWER-NOT: simulation.assert.sampled_read
+// LOWER: simulation.display %arg0 {{.*}}(%arg1)
+// LOWER: ^[[DISABLE0_CANCELED]]:
+// LOWER: simulation.return
+// LOWER: ^[[KILL0_CANCELED]]:
+// LOWER: simulation.return
+
+// LOWER: simulation.func private @[[MATCH_CALL_1:[^(]+]](%arg0: !simulation.context {{.*}}, %arg1: !simulation.logic<1> {{.*}}, %arg2: !simulation.ref<i64> {{.*}}, %arg3: i64 {{.*}}, %arg4: !simulation.ref<i64> {{.*}}, %arg5: i64
+// LOWER-SAME: simulation.concurrent_match_call
+// LOWER: %[[CALL1_KILL:.*]] = simulation.assert.kill_epoch %arg0 assertion 101 {simulation.concurrent_match_call_kill_epoch}
+// LOWER: %[[KILL1_CURRENT:.*]] = arith.cmpi eq, %[[CALL1_KILL]], %arg5
+// LOWER: cf.cond_br %[[KILL1_CURRENT]], ^[[CHECK1_DISABLE:bb[0-9]+]], ^{{.*}}
+// LOWER: ^[[CHECK1_DISABLE]]:
+// LOWER: %[[CALL1_DISABLE:.*]] = simulation.ref.load %arg2
+// LOWER: %[[DISABLE1_CURRENT:.*]] = arith.cmpi eq, %[[CALL1_DISABLE]], %arg3
+// LOWER: cf.cond_br %[[DISABLE1_CURRENT]], ^[[CALL1_BODY:bb[0-9]+]], ^{{.*}}
+// LOWER: ^[[CALL1_BODY]]:
+// LOWER-NOT: simulation.assert.sampled_read
+// LOWER: simulation.display %arg0 {{.*}}(%arg1)
+
+// A detached Reactive coordinator starts the first call and waits for it to
+// finish before starting the second. The assertion monitor only spawns this
+// coordinator and therefore never blocks on match-item execution.
+// LOWER: simulation.code_unit.decl {{[0-9]+}} {{.*}} debug "ordered assertion match calls"
+// LOWER-NEXT: simulation.func private @[[MATCH_CHAIN:[^(]+]](
+// LOWER-SAME: home_region = 10 : i32
+// LOWER-SAME: simulation.concurrent_match_call_chain
+// LOWER: %[[CALL0_PROCESS:.*]] = simulation.spawn @[[MATCH_CALL_0]](%arg0, %arg1, %arg2, %arg3, %arg4, %arg5)
+// LOWER-NEXT: simulation.suspend.await %[[CALL0_PROCESS]] to ^[[CALL1_START:bb[0-9]+]]
+// LOWER-SAME: resume_region = 10 : i32
+// LOWER: ^[[CALL1_START]]:
+// LOWER-NEXT: simulation.spawn @[[MATCH_CALL_1]](%arg0, %arg6, %arg7, %arg8, %arg9, %arg10)
+// LOWER-NEXT: simulation.return
+
+// Each of the two locals owns a cell at every one of the three sequence ages.
+// LOWER-LABEL: simulation.func private @unit_0(
+// LOWER: %[[INITIAL_KILL:.*]] = simulation.assert.kill_epoch %arg0 assertion 101 {simulation.concurrent_kill_epoch}
+// LOWER-NEXT: %[[KILL_EPOCH:.*]] = simulation.ref.alloc %[[INITIAL_KILL]] {simulation.concurrent_kill_epoch_storage}
+// LOWER-NEXT: %[[STATE:.*]] = simulation.ref.alloc {{.*}} -> !simulation.ref<i64>
+// LOWER: %[[DISABLE_EPOCH:.*]] = simulation.ref.alloc {{.*}} -> !simulation.ref<i64>
+// LOWER-COUNT-6: simulation.ref.alloc {{.*}} -> !simulation.ref<!simulation.logic<1>>
+// LOWER: simulation.suspend.edge posedge
+// LOWER-SAME: resume_region = 8 : i32
+
+// A true disable condition cancels the sampled attempt before predicates or
+// local initializers execute, and advances the report-cancellation epoch.
+// LOWER: %[[DISABLE:.*]] = simulation.ref.load %arg4
+// LOWER: %[[DISABLED:.*]] = simulation.logic.is_true %[[DISABLE]]
+// LOWER: cf.cond_br %[[DISABLED]], ^[[CANCEL:bb[0-9]+]], ^[[EVALUATE:bb[0-9]+]]
+// LOWER: ^[[CANCEL]]:
+// LOWER: simulation.ref.store {{.*}} to %[[STATE]]
+// LOWER: arith.addi
+// LOWER: ^[[EVALUATE]]:
+// LOWER: simulation.spawn @[[PASS_CALLBACK]]
+
+// Off skips the complete new-attempt path—including local initialization and
+// age-zero match items—but the already-live age state above still advances.
+// LOWER: %[[ENABLED:.*]] = simulation.assert.enabled %arg0 assertion 101 {simulation.concurrent_attempt_enable}
+// LOWER-NEXT: cf.cond_br %[[ENABLED]], ^[[START:bb[0-9]+]], ^[[AFTER_START:bb[0-9]+]]({{.*}} : i64)
+// LOWER: ^[[AFTER_START]]({{.*}}: i64):
+// LOWER: simulation.ref.store
+// LOWER: ^[[START]]:
+
+// Initializers execute in declaration order. Thus y's initializer observes
+// x's sampled initializer value. The successful antecedent then applies its
+// match assignment to x, while y retains its distinct per-attempt value.
+// LOWER: %[[INIT_X:.*]] = simulation.assert.sampled_read %arg0 from %arg2
+// LOWER: %[[ANTECEDENT:.*]] = simulation.assert.sampled_read %arg0 from %arg2
+// LOWER: simulation.spawn @[[PASS_CALLBACK]]
+// LOWER: %[[MATCH_SOURCE:.*]] = simulation.assert.sampled_read %arg0 from %arg2
+// LOWER: %[[MATCH_X:.*]] = simulation.logic.unary logical_not %[[MATCH_SOURCE]]
+// LOWER-NOT: simulation.display
+// LOWER: %[[MATCH_B0:.*]] = simulation.assert.sampled_read %arg0 from %arg3
+// LOWER-NEXT: %[[MATCH_ARG0:.*]] = simulation.logic.binary xor %[[MATCH_X]], %[[MATCH_B0]]
+// LOWER-NEXT: %[[MATCH0_DISABLE_EPOCH:.*]] = simulation.ref.load %[[DISABLE_EPOCH]]
+// LOWER-NEXT: %[[MATCH0_KILL_EPOCH:.*]] = simulation.ref.load %[[KILL_EPOCH]]
+// LOWER-NEXT: %[[MATCH_X_2:.*]] = simulation.logic.unary logical_not %[[MATCH_X]]
+// LOWER-NEXT: %[[MATCH_B1:.*]] = simulation.assert.sampled_read %arg0 from %arg3
+// LOWER-NEXT: %[[MATCH1_DISABLE_EPOCH:.*]] = simulation.ref.load %[[DISABLE_EPOCH]]
+// LOWER-NEXT: %[[MATCH1_KILL_EPOCH:.*]] = simulation.ref.load %[[KILL_EPOCH]]
+// LOWER-NEXT: simulation.spawn @[[MATCH_CHAIN]](%arg0, %[[MATCH_ARG0]], %[[DISABLE_EPOCH]], %[[MATCH0_DISABLE_EPOCH]], %[[KILL_EPOCH]], %[[MATCH0_KILL_EPOCH]], %[[MATCH_B1]], %[[DISABLE_EPOCH]], %[[MATCH1_DISABLE_EPOCH]], %[[KILL_EPOCH]], %[[MATCH1_KILL_EPOCH]])
+// LOWER-NOT: simulation.spawn @[[PASS_CALLBACK]]
+// LOWER: simulation.ref.store %[[MATCH_X_2]] to %[[X_AGE1:.*]]
+// LOWER-NEXT: simulation.ref.store %[[INIT_X]] to %[[Y_AGE1:.*]]
+// LOWER-NOT: talos.sv.
+
+// The Observed assertion monitor only starts the detached call coordinator;
+// it never waits for any attached subroutine itself.
+// NO-PARENT-AWAIT-LABEL: simulation.func private @unit_0(
+// NO-PARENT-AWAIT-NOT: simulation.suspend.await
+// NO-PARENT-AWAIT: }

@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --test-obelisk-activation-regions -o %t.analyzed 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s --test-talos-activation-regions -o %t.analyzed 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
-// RUN: obelisk-opt %s --test-obelisk-activation-memory -o /dev/null 2>&1 | FileCheck %s --check-prefix=MEM
+// RUN: talos-opt %s --test-talos-activation-memory -o /dev/null 2>&1 | FileCheck %s --check-prefix=MEM
 // IEEE 1800-2023 12.7.1: each entry initializes the inner induction from
 // the enclosing iteration. The finite proof must include zero-trip entries
 // and every stride residue, and respect fixed-width overflow (11.6).

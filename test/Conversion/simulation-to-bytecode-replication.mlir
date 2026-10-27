@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s
 
 // IEEE 1800-2017 11.4.12.1: a wide packed replication is one bytecode
 // instruction. Its instruction and register counts do not scale with the

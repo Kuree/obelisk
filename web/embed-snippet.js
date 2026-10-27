@@ -32,7 +32,7 @@ export const snippetSource = (source) => source.replace(/^\n+|\s+$/g, '');
 
 const TYPE_SET = new Set(TYPES);
 
-// slang TokenKind and TriviaKind names, as `obelisk -dump-tokens` prints them.
+// slang TokenKind and TriviaKind names, as `talos -dump-tokens` prints them.
 const LISTING_KINDS = {
   LineComment: 'comment',
   BlockComment: 'comment',
@@ -136,7 +136,7 @@ export function htmlSnippet({
   source, options, runnerUrl, colors = 'plain', tokens = null,
 }) {
   const args = embedArgs(options);
-  const data = args ? ` data-obelisk-args="${escapeAttribute(args)}"` : '';
+  const data = args ? ` data-talos-args="${escapeAttribute(args)}"` : '';
   const { pre, codeStyle, code } = colorize(snippetSource(source), colors, tokens);
   return [
     scriptTag(runnerUrl),

@@ -2,13 +2,13 @@
 // IEEE 1800-2023 19.4.1 allows a derived cross to replace a base cross
 // with the same name. Slang v11.0 diagnoses this as a redefinition.
 
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -emit-sim %s \
-// RUN:   | obelisk-opt --test-obelisk-print-coverage-schema -o %t.sim.mlir 2> %t.schema
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -emit-sim %s \
+// RUN:   | talos-opt --test-talos-print-coverage-schema -o %t.sim.mlir 2> %t.schema
 // RUN: FileCheck %s --check-prefix=SCHEMA < %t.schema
 // RUN: FileCheck %s --check-prefix=IR < %t.sim.mlir
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s --check-prefix=QUERY
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=REPORT
 
 class coverage_base;
   covergroup group(input bit chosen) with function sample(bit sampled);
@@ -134,9 +134,9 @@ endmodule
 // Each derived covergroup is a new declaration based on the previous one; a
 // base handle reaches the derived instance through a covergroup cast guarded
 // by the dynamic class of the object.
-// IR: simulation.covergroup.decl @[[BASE:__obelisk_covergroup_[A-Za-z0-9_]+]] schema {{[0-9]+}}
-// IR-NEXT: simulation.covergroup.decl @[[DERIVED:__obelisk_covergroup_[A-Za-z0-9_]+]] schema {{[0-9]+}} base @[[BASE]]
-// IR-NEXT: simulation.covergroup.decl @[[LEAF:__obelisk_covergroup_[A-Za-z0-9_]+]] schema {{[0-9]+}} base @[[DERIVED]]
-// IR: simulation.class.is_instance {{.*}} is @__obelisk_class_{{[A-Za-z0-9_]*}}coverage_derived
+// IR: simulation.covergroup.decl @[[BASE:__talos_covergroup_[A-Za-z0-9_]+]] schema {{[0-9]+}}
+// IR-NEXT: simulation.covergroup.decl @[[DERIVED:__talos_covergroup_[A-Za-z0-9_]+]] schema {{[0-9]+}} base @[[BASE]]
+// IR-NEXT: simulation.covergroup.decl @[[LEAF:__talos_covergroup_[A-Za-z0-9_]+]] schema {{[0-9]+}} base @[[DERIVED]]
+// IR: simulation.class.is_instance {{.*}} is @__talos_class_{{[A-Za-z0-9_]*}}coverage_derived
 // IR: simulation.covergroup.cast {{.*}} : !simulation.covergroup_handle<@[[DERIVED]]> to !simulation.covergroup_handle<@[[BASE]]>
 // IR: simulation.covergroup.cast {{.*}} : !simulation.covergroup_handle<@[[LEAF]]> to !simulation.covergroup_handle<@[[DERIVED]]>

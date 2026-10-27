@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: not %obelisk -E %S/protected-envelope-unsupported.sv > %t.stdout 2> %t.stderr
+// RUN: not %talos -E %S/protected-envelope-unsupported.sv > %t.stdout 2> %t.stderr
 // RUN: FileCheck %s --input-file=%t.stderr
 // RUN: test ! -s %t.stdout
 

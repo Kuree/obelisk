@@ -1,33 +1,33 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.mlir
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk-translate %t.mlir --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=op=simulation.class.method match={sym_name = "C0_1"} erase=true' --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: talos-translate %t.mlir --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: not talos-opt %s '--test-talos-edit-attributes=op=simulation.class.method match={sym_name = "C0_1"} erase=true' --convert-talos-sim-processes-to-llvm-coroutines -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING
 
 // IEEE 8.26: each join J<i> inherits two growing parent chains L<i> and R<i>,
 // and C<i> also inherits the earlier joins through its base. Descriptors keep
 // only direct bindings and parents in both backends: C2 binds J2 alone
 // (instead of the nine interfaces it reaches), J2 binds and lists its two
 // parents, and the chains list one parent each.
-// CHECK-LABEL: @C2.__obelisk_interfaces(){{.*}}: !llvm.array<1 x
-// CHECK: llvm.mlir.addressof @J2.__obelisk_interface_bases
-// CHECK-DAG: @C1.__obelisk_interfaces(){{.*}}: !llvm.array<1 x
-// CHECK-DAG: @C0.__obelisk_interfaces(){{.*}}: !llvm.array<1 x
-// CHECK-DAG: @C2.__obelisk_methods(){{.*}}: !llvm.array<2 x
-// CHECK-DAG: @C1.__obelisk_methods(){{.*}}: !llvm.array<2 x
-// CHECK-DAG: @C0.__obelisk_methods(){{.*}}: !llvm.array<2 x
-// CHECK-DAG: @J2.__obelisk_interfaces(){{.*}}: !llvm.array<2 x
-// CHECK-DAG: @J1.__obelisk_interfaces(){{.*}}: !llvm.array<2 x
-// CHECK-DAG: @J0.__obelisk_interfaces(){{.*}}: !llvm.array<2 x
-// CHECK-DAG: @J2.__obelisk_interface_bases(){{.*}}: !llvm.array<2 x ptr>
-// CHECK-DAG: @J1.__obelisk_interface_bases(){{.*}}: !llvm.array<2 x ptr>
-// CHECK-DAG: @J0.__obelisk_interface_bases(){{.*}}: !llvm.array<2 x ptr>
-// CHECK-DAG: @L2.__obelisk_interface_bases(){{.*}}: !llvm.array<1 x ptr>
-// CHECK-DAG: @L1.__obelisk_interface_bases(){{.*}}: !llvm.array<1 x ptr>
-// CHECK-DAG: @R2.__obelisk_interface_bases(){{.*}}: !llvm.array<1 x ptr>
-// CHECK-DAG: @R1.__obelisk_interface_bases(){{.*}}: !llvm.array<1 x ptr>
-// CHECK-DAG: @L2.__obelisk_interface_signatures(){{.*}}: !llvm.array<1 x i64>
-// CHECK-DAG: @R0.__obelisk_interface_signatures(){{.*}}: !llvm.array<1 x i64>
+// CHECK-LABEL: @C2.__talos_interfaces(){{.*}}: !llvm.array<1 x
+// CHECK: llvm.mlir.addressof @J2.__talos_interface_bases
+// CHECK-DAG: @C1.__talos_interfaces(){{.*}}: !llvm.array<1 x
+// CHECK-DAG: @C0.__talos_interfaces(){{.*}}: !llvm.array<1 x
+// CHECK-DAG: @C2.__talos_methods(){{.*}}: !llvm.array<2 x
+// CHECK-DAG: @C1.__talos_methods(){{.*}}: !llvm.array<2 x
+// CHECK-DAG: @C0.__talos_methods(){{.*}}: !llvm.array<2 x
+// CHECK-DAG: @J2.__talos_interfaces(){{.*}}: !llvm.array<2 x
+// CHECK-DAG: @J1.__talos_interfaces(){{.*}}: !llvm.array<2 x
+// CHECK-DAG: @J0.__talos_interfaces(){{.*}}: !llvm.array<2 x
+// CHECK-DAG: @J2.__talos_interface_bases(){{.*}}: !llvm.array<2 x ptr>
+// CHECK-DAG: @J1.__talos_interface_bases(){{.*}}: !llvm.array<2 x ptr>
+// CHECK-DAG: @J0.__talos_interface_bases(){{.*}}: !llvm.array<2 x ptr>
+// CHECK-DAG: @L2.__talos_interface_bases(){{.*}}: !llvm.array<1 x ptr>
+// CHECK-DAG: @L1.__talos_interface_bases(){{.*}}: !llvm.array<1 x ptr>
+// CHECK-DAG: @R2.__talos_interface_bases(){{.*}}: !llvm.array<1 x ptr>
+// CHECK-DAG: @R1.__talos_interface_bases(){{.*}}: !llvm.array<1 x ptr>
+// CHECK-DAG: @L2.__talos_interface_signatures(){{.*}}: !llvm.array<1 x i64>
+// CHECK-DAG: @R0.__talos_interface_signatures(){{.*}}: !llvm.array<1 x i64>
 
 // An inherited interface method without an implementation is rejected.
 // MISSING: error: concrete class does not implement interface R0

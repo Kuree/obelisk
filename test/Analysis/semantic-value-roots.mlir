@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-semantic-roots -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --mlir-disable-threading --test-obelisk-semantic-roots -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-semantic-roots -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --mlir-disable-threading --test-talos-semantic-roots -o /dev/null 2>&1 | FileCheck %s
 // Suspension forwarding preserves a phi's semantic identity, even when its
 // definition origin changes between iterations (LRM 6.21, 9.4).
 module {

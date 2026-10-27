@@ -1,0 +1,52 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=3' --emit-bytecode -o /dev/null
+
+module {
+  talos.sv.symbol.definition @s0.simulation_wide_delay attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_wide_delay", name = "simulation_wide_delay", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.simulation_wide_delay attributes {hierarchical_name = "simulation_wide_delay", is_uninstantiated = false, name = "simulation_wide_delay", node_id = 3 : i64, referenced_path = "simulation_wide_delay", referenced_symbol = @s0.simulation_wide_delay} {
+      talos.sv.symbol.instance_body @s4.simulation_wide_delay attributes {hierarchical_name = "simulation_wide_delay", name = "simulation_wide_delay", node_id = 4 : i64} {
+        talos.sv.symbol.variable @s5.amount attributes {hierarchical_name = "simulation_wide_delay.amount", lifetime = 1 : i32, name = "amount", node_id = 5 : i64, semantic_type = !talos.ranged_packed_array<127 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+        }
+        talos.sv.symbol.procedural_block @s6 attributes {hierarchical_name = "simulation_wide_delay", node_id = 6 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.timed attributes {node_id = 7 : i64} {
+            talos.sv.timing.delay attributes {node_id = 8 : i64} {
+              talos.sv.expression.named_value attributes {node_id = 9 : i64, referenced_path = "simulation_wide_delay.amount", referenced_symbol = @s1.$root::@s3.simulation_wide_delay::@s4.simulation_wide_delay::@s5.amount, semantic_type = !talos.ranged_packed_array<127 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+              }
+            }
+            talos.sv.statement.expression_statement attributes {node_id = 10 : i64} {
+              talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 11 : i64, semantic_type = !talos.ranged_packed_array<127 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                talos.sv.expression.named_value attributes {node_id = 12 : i64, referenced_path = "simulation_wide_delay.amount", referenced_symbol = @s1.$root::@s3.simulation_wide_delay::@s4.simulation_wide_delay::@s5.amount, semantic_type = !talos.ranged_packed_array<127 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                }
+                talos.sv.expression.conversion attributes {node_id = 13 : i64, semantic_type = !talos.ranged_packed_array<127 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                  talos.sv.expression.conversion attributes {node_id = 14 : i64, semantic_type = !talos.ranged_packed_array<127 : 0 x !talos.integral<1, true, true, 0 : 0, logic>>} {
+                    talos.sv.expression.integer_literal attributes {constant_value = "0", node_id = 15 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// CHECK-DAG: %[[MAX_WIDE:.*]] = arith.constant 9223372036854775807 : i128
+// CHECK-DAG: %[[MAX:.*]] = arith.constant 9223372036854775807 : i64
+// CHECK: %[[RAW:.*]] = simulation.ref.load
+// CHECK: %[[AMOUNT:.*]] = simulation.packed.flatten %[[RAW]]
+// CHECK: %[[BITS:.*]] = simulation.logic.to_bits %[[AMOUNT]] : !simulation.logic<128> -> i128
+// CHECK: %[[KNOWN:.*]] = simulation.logic.compare case_eq
+// CHECK: %[[NORMALIZED:.*]] = arith.select %[[KNOWN]], %[[BITS]], {{.*}} : i128
+// CHECK: %[[IN_RANGE_WIDE:.*]] = arith.cmpi ule, %[[NORMALIZED]], %[[MAX_WIDE]] : i128
+// CHECK: %[[BOUNDED_WIDE:.*]] = arith.select %[[IN_RANGE_WIDE]], %[[NORMALIZED]], %[[MAX_WIDE]] : i128
+// CHECK: %[[TRUNCATED:.*]] = arith.trunci %[[BOUNDED_WIDE]] : i128 to i64
+// CHECK: %[[IN_RANGE:.*]] = arith.cmpi ule, %[[TRUNCATED]], %[[MAX]] : i64
+// CHECK: %[[BOUNDED:.*]] = arith.select %[[IN_RANGE]], %[[TRUNCATED]], %[[MAX]] : i64
+// CHECK: %[[DELAY:.*]] = simulation.time.scale %[[BOUNDED]] by 1 signed = false : i64
+// CHECK: simulation.suspend.delay %[[DELAY]]

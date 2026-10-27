@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
+// RUN: talos-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=ANALYSIS
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' \
 // RUN:   | FileCheck %s --check-prefix=FUSION
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-set-module-attributes{attrs="{schedule.native_scheduler = 3 : i32, schedule.native_scheduler.auto_requested}"},simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=FUSION
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-set-module-attributes{attrs="{schedule.native_scheduler = 3 : i32, schedule.native_scheduler.auto_requested}"},simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=FUSION
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=LOWERING
 
 // A tiny clockless partial schedule should not pay to clone evaluator bodies.
@@ -15,12 +15,12 @@
 
 // ANALYSIS: native-aot eligible=true fully=false selected=false periodic=false
 
-// FUSION-NOT: __obelisk_eval_body
+// FUSION-NOT: __talos_eval_body
 
-// LOWERING-NOT: __obelisk_aot_schedule_plan_v1
+// LOWERING-NOT: __talos_aot_schedule_plan_v1
 // LOWERING-LABEL: llvm.func @main
-// LOWERING: llvm.call @obelisk_rt_v1_scheduler_run(
-// LOWERING-NOT: llvm.call @obelisk_rt_v1_scheduler_run_aot(
+// LOWERING: llvm.call @talos_rt_v1_scheduler_run(
+// LOWERING-NOT: llvm.call @talos_rt_v1_scheduler_run_aot(
 
 module attributes {
   schedule.native_scheduler = 0 : i32,

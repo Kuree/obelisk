@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s '--encode-talos-sim-to-bytecode=vpi=off' -o /dev/null
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
@@ -76,14 +76,14 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @evaluate.__obelisk_observer(
+// CHECK-LABEL: llvm.func @evaluate.__talos_observer(
 // CHECK-SAME: %[[CONTEXT:.*]]: !llvm.ptr, %{{.*}}: !llvm.ptr, %{{.*}}: i32,
 // CHECK-SAME: %[[VALUE:.*]]: !llvm.ptr, %[[UNKNOWN:.*]]: !llvm.ptr,
 // CHECK-SAME: %{{.*}}: i32) -> i32
 // CHECK: %[[RESULT:.*]] = llvm.call @evaluate(%[[CONTEXT]], %{{.*}})
 // CHECK: llvm.store %[[RESULT]], %[[VALUE]]
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @process.__obelisk_coro_ramp
+// CHECK-LABEL: llvm.func @process.__talos_coro_ramp
 // CHECK-SAME: native.frame = #native.frame<size = {{[^,]+}}, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1, 2, 3, 4, 5, 6, 7, 8]
 // CHECK: llvm.mlir.constant(1 : i64)
 // CHECK: llvm.mlir.constant(64 : i32)

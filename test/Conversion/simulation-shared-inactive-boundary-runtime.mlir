@@ -1,16 +1,16 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph{vpi=off},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph{vpi=off},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
 // #0 is a local Inactive boundary. It must not commit an earlier NBA,
 // replay the Active peer, or hand the complete plan to another scheduler.
 // The fully static plan keeps all five nodes, including the Inactive boundary,
-// in the AOT node loop; a partial plan would call obelisk_rt_v1_scheduler_run.
-// PLAN: llvm.mlir.global internal constant @__obelisk_aot_schedule_nodes_v1({{.*}} : !llvm.array<5 x struct<(i32, i32, i32)>>
-// PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// PLAN-NEXT: %[[NODES:.*]] = llvm.mlir.addressof @__obelisk_aot_schedule_nodes_v1
+// in the AOT node loop; a partial plan would call talos_rt_v1_scheduler_run.
+// PLAN: llvm.mlir.global internal constant @__talos_aot_schedule_nodes_v1({{.*}} : !llvm.array<5 x struct<(i32, i32, i32)>>
+// PLAN-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// PLAN-NEXT: %[[NODES:.*]] = llvm.mlir.addressof @__talos_aot_schedule_nodes_v1
 // PLAN-NEXT: %[[COUNT:.*]] = llvm.mlir.constant(5 : i32)
-// PLAN-NEXT: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes(%arg1, %[[NODES]], %[[COUNT]])
-// PLAN-NOT: llvm.call @obelisk_rt_v1_scheduler_run(
+// PLAN-NEXT: llvm.call @talos_rt_v1_scheduler_run_aot_nodes(%arg1, %[[NODES]], %[[COUNT]])
+// PLAN-NOT: llvm.call @talos_rt_v1_scheduler_run(
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",

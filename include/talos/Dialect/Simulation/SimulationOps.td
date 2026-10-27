@@ -1,0 +1,6507 @@
+//===- SimulationOps.td - Executable simulation operations ----*- td -*-===//
+
+#ifndef TALOS_DIALECT_SIMULATION_SIMULATIONOPS_TD
+#define TALOS_DIALECT_SIMULATION_SIMULATIONOPS_TD
+
+include "talos/Dialect/DPI/DPIAttrs.td"
+include "talos/Dialect/Schedule/ScheduleAttrs.td"
+include "talos/Dialect/Simulation/SimulationDialect.td"
+include "talos/Dialect/Simulation/SimulationEnums.td"
+include "talos/Dialect/Simulation/SimulationAttrs.td"
+include "talos/Dialect/Simulation/SimulationTypes.td"
+include "talos/Dialect/Runtime/RuntimeTypes.td"
+include "mlir/IR/SymbolInterfaces.td"
+include "mlir/Interfaces/CallInterfaces.td"
+include "mlir/Interfaces/CastInterfaces.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/FunctionInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/Interfaces/InferIntRangeInterface.td"
+include "mlir/Interfaces/MemorySlotInterfaces.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Interfaces/ViewLikeInterface.td"
+
+include "talos/Dialect/Simulation/SimulationResources.td"
+
+// The operation may allocate managed storage: a class object, string,
+// container, reference path, or coverage instance. Where code roots managed
+// values eagerly it is a collection point; under polled collection it only
+// records allocation pressure, and a poll must bound it when it repeats.
+def SimAllocatesManagedStorage : NativeOpTrait<"AllocatesManagedStorage">;
+
+class SimOp<string mnemonic, list<Trait> traits = []>
+    : Op<TalosSimulationDialect, mnemonic, traits> {
+  let assemblyFormat =
+      "operands attr-dict `:` functional-type(operands, results)";
+}
+
+class SimRefElementMatches<string ref, string value>
+    : TypesMatchWith<
+          "reference element type must match value type", ref, value,
+          "::llvm::cast<::talos::sim::RefType>($_self).getElementType()">;
+class SimNetElementMatches<string net, string value>
+    : TypesMatchWith<
+          "net element type must match value type", net, value,
+          "::llvm::cast<::talos::sim::NetType>($_self).getElementType()">;
+class SimDriverElementMatches<string driver, string value>
+    : TypesMatchWith<
+          "driver element type must match value type", driver, value,
+          "::llvm::cast<::talos::sim::DriverType>($_self).getElementType()">;
+
+//===----------------------------------------------------------------------===//
+// Design inventory
+//===----------------------------------------------------------------------===//
+
+def SimDesignOp : SimOp<"design", [
+  Symbol, SymbolTable, IsolatedFromAbove, NoTerminator, SingleBlock,
+  RecursiveMemoryEffects
+]> {
+  let summary = "isolated flattened simulation design";
+  let description = [{
+    Owns one flattened descriptor and code-unit inventory. When present,
+    `time_precision_fs` defines the femtosecond duration of one
+    `simulation.time` tick for every nested code unit.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       OptionalAttr<I64Attr>:$time_precision_fs,
+                       OptionalAttr<SimComputeGraphAttr>:$compute_graph);
+  let regions = (region AnyRegion : $body);
+  let assemblyFormat = "$sym_name attr-dict-with-keyword $body";
+  // A region verifier runs after the nested descriptor and code-unit
+  // verifiers, so cross-referencing them here can rely on their invariants
+  // and reports the most specific diagnostic first.
+  let hasRegionVerifier = 1;
+}
+
+def SimVPIDefinitionDeclOp : SimOp<"vpi_definition.decl", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "shared source definition identity for VPI instances";
+  let description = [{
+    Preserves one source module, interface, program, or built-in primitive
+    definition independently of its elaborated instances. Definition-invariant VPI metadata can therefore
+    be serialized once and reached through compact instance bindings. This is
+    reflection inventory only and never participates in executable scheduling.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I32Attr:$vpi_kind,
+                       StrAttr:$definition_name,
+                       OptionalAttr<LocationAttr>:$definition_loc,
+                       OptionalAttr<I32Attr>:$primitive_type);
+  let assemblyFormat = [{
+    $sym_name `type` $vpi_kind `name` $definition_name
+    (`definition_loc` $definition_loc^)?
+    (`primitive_type` $primitive_type^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIDefinitionBindingOp : SimOp<"vpi_definition.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "bind an exact primitive instance to its shared definition";
+  let arguments = (ins FlatSymbolRefAttr:$source,
+                       FlatSymbolRefAttr:$definition);
+  let assemblyFormat = "$source `to` $definition attr-dict";
+}
+
+def SimVPIDefinitionMemberDeclOp : SimOp<"vpi_definition_member.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "shared source declaration owned by a VPI definition";
+  let description = [{
+    Stores definition-invariant declaration identity once. Elaborated scopes
+    reach the member through their definition binding; specialization-specific
+    type and value metadata is carried by separate compact bindings. These ops
+    are cold reflection inventory and never participate in scheduling.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       FlatSymbolRefAttr:$definition, I32Attr:$vpi_kind,
+                       I32Attr:$ordinal, StrAttr:$member_name,
+                       OptionalAttr<SimVPIIODirection>:$direction,
+                       OptionalAttr<UnitAttr>:$is_local_param,
+                       OptionalAttr<UnitAttr>:$has_explicit_parameter_range,
+                       OptionalAttr<UnitAttr>:$unavailable_default,
+                       OptionalAttr<UnitAttr>:$has_original_default,
+                       OptionalAttr<UnitAttr>:$param_assign_by_name,
+                       OptionalAttr<UnitAttr>:$param_assign_type,
+                       OptionalAttr<UnitAttr>:$param_assign_default,
+                       OptionalAttr<UnitAttr>:$unavailable_rhs,
+                       OptionalAttr<UnitAttr>:$has_original_rhs);
+  let assemblyFormat = [{
+    $sym_name `of` $definition `type` $vpi_kind `ordinal` $ordinal
+    `name` $member_name (`direction` $direction^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIDefinitionTypeDefaultOp : SimOp<"vpi_definition_type_default", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "original builtin typespec source of a shared member";
+  let description = [{
+    Stores an original type source independently of effective specialization types.
+    The exact member must be a TypeParameter with has_original_default or a
+    type-target ParamAssign with has_original_rhs. This
+    bounded form admits anonymous builtin leaf types, without nominal or alias
+    identity. A type parameter reference uses an exact Expr (default) or Rhs
+    (assignment) relation instead.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$member,
+                       SimVPITypeSemanticsAttr:$original_type);
+  let assemblyFormat = "$member `type` $original_type attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIDefinitionSpecializationDeclOp
+    : SimOp<"vpi_definition_specialization.decl", [
+        Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        MemoryEffects<[MemWrite<SimInventoryResource>]>
+      ]> {
+  let summary = "shared elaborated specialization of a VPI definition";
+  let description = [{
+    Names one unique ordered set of effective member types and immutable
+    values. Any number of elaborated scopes may reference the specialization.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       FlatSymbolRefAttr:$definition);
+  let assemblyFormat = "$sym_name `of` $definition attr-dict";
+}
+
+def SimVPIDefinitionMemberSpecializationOp
+    : SimOp<"vpi_definition_member.specialize", [
+        DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        MemoryEffects<[MemWrite<SimInventoryResource>]>
+      ]> {
+  let summary = "effective type and immutable value in a shared specialization";
+  let arguments = (ins FlatSymbolRefAttr:$specialization,
+                       FlatSymbolRefAttr:$member,
+                       SimVPITypeSemanticsAttr:$effective_type,
+                       OptionalAttr<SimFrozenConstantAttr>:$immutable_value);
+  let assemblyFormat = [{
+    $specialization `member` $member `type` $effective_type attr-dict
+  }];
+}
+
+def SimVPIDefinitionMemberInstanceBindingOp
+    : SimOp<"vpi_definition_member.bind", [
+        DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        MemoryEffects<[MemWrite<SimInventoryResource>]>
+      ]> {
+  let summary = "instance-specific endpoint of a shared VPI member";
+  let description = [{
+    Associates a definition-owned member with its elaborated expression
+    endpoint in one numeric scope. The image stores these as a dense compact
+    slice per definition binding; no declaration or type metadata is cloned.
+  }];
+  let arguments = (ins I64Attr:$scope_id, FlatSymbolRefAttr:$member,
+                       SimVPIObjectRefAttr:$expr_target);
+  let assemblyFormat = [{
+    `scope` $scope_id `member` $member `expr` $expr_target attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIDefinitionMemberInstanceRelationOp
+    : SimOp<"vpi_definition_member.relation", [
+        DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        MemoryEffects<[MemWrite<SimInventoryResource>]>
+      ]> {
+  let summary = "instance-specific relation from a synthetic VPI member";
+  let description = [{
+    Preserves a sparse relation whose source is the allocation-free VPI
+    cursor formed from `scope_id` and `member`.  This keeps high-connection
+    provenance distinct even when multiple reference formals ultimately alias
+    the same simulated storage.  The inventory is cold and never participates
+    in executable scheduling.
+  }];
+  let arguments = (ins I64Attr:$scope_id, FlatSymbolRefAttr:$member,
+                       I32Attr:$selector, SimVPIRelationMode:$mode,
+                       I64Attr:$ordinal, SimVPIObjectRefAttr:$target);
+  let assemblyFormat = [{
+    `scope` $scope_id `member` $member `selector` $selector $mode
+    `ordinal` $ordinal `to` $target attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimScopeDeclOp : SimOp<"scope.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable numeric hierarchy, coverage, and VPI descriptor";
+  let arguments = (ins I64Attr:$id, OptionalAttr<I64Attr>:$parent,
+                       OptionalAttr<StrAttr>:$hierarchical_name,
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<StrAttr>:$definition_name,
+                       OptionalAttr<I64Attr>:$coverage_id,
+                       OptionalAttr<StrAttr>:$interface_type,
+                       OptionalAttr<I32Attr>:$vpi_kind,
+                       OptionalAttr<FlatSymbolRefAttr>:$vpi_definition,
+                       OptionalAttr<FlatSymbolRefAttr>:$vpi_specialization);
+  let assemblyFormat = [{$id (`parent` $parent^)?
+    (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)?
+    (`source_definition` $definition_name^)? (`coverage_id` $coverage_id^)?
+    (`interface` $interface_type^)? (`vpi_kind` $vpi_kind^)?
+    (`definition` $vpi_definition^)?
+    (`specialization` $vpi_specialization^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimCodeUnitDeclOp : SimOp<"code_unit.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable process or zero-time function inventory record";
+  let description = [{
+    Retains the elaborated identity and lexical hierarchy of a code unit even
+    when IPO erases its executable `simulation.func`. The ID is stable across
+    compilation modes and is also the runtime process handle ID. Entry kinds
+    without a source-level VPI object are intrinsically internal. The optional
+    `internal` marker additionally hides a normally source-visible entry kind.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$scope_id,
+                       SimEntryKind:$code_unit_kind,
+                       StrAttr:$hierarchical_name,
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<UnitAttr>:$internal);
+  let assemblyFormat = [{$id `in` $scope_id $code_unit_kind
+    `hierarchy` $hierarchical_name (`debug` $debug_name^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPICodeUnitScopeBindingOp : SimOp<"vpi_code_unit_scope.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "source callable scope of an internal executable code unit";
+  let description = [{
+    Connects an executable ABI helper to the exact source task or function it
+    implements. The source anchor retains its own public identity; the helper
+    never becomes a second public callable. This declaration is independent of
+    any call occurrence or runtime activation.
+  }];
+  let arguments = (ins I64Attr:$code_unit_id, FlatSymbolRefAttr:$source);
+  let assemblyFormat = "$code_unit_id `to` $source attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimStatementDeclOp : SimOp<"statement.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable VPI statement identity";
+  let description = [{
+    Describes one elaborated statement occurrence independently of executable
+    fragments and bytecode. The exact callback sites are separate inventory
+    records because one statement (notably `for`) may have multiple semantic
+    cbStmt points. `scope_id` is the physical/runtime enclosing scope. The
+    optional code-unit ID owns behavioral statements; scope-owned static
+    statement objects omit it, and their incoming containment relation is the
+    authoritative exact lexical owner (for example, an unbacked generate
+    scope). Statement nesting is represented only by `parent_id`. Source
+    provenance is retained when the frontend provides it, but does not control
+    whether the statement exists.
+  }];
+  let arguments = (ins I64Attr:$id, OptionalAttr<I64Attr>:$code_unit_id,
+                       I64Attr:$scope_id, I32Attr:$vpi_kind,
+                       OptionalAttr<I64Attr>:$parent_id,
+                       OptionalAttr<StrAttr>:$name,
+                       OptionalAttr<UnitAttr>:$is_scope,
+                       OptionalAttr<UnitAttr>:$is_protected);
+  let assemblyFormat = [{$id (`in` $code_unit_id^)? `scope` $scope_id
+    `type` $vpi_kind (`parent` $parent_id^)? (`name` $name^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPILocalDeclOp : SimOp<"vpi_local.decl", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable declaration of a frame automatic variable";
+  let description = [{
+    Preserves a local declaration independently of any runtime activation or
+    storage allocation. Its owner is the exact lexical code unit; `within`
+    names the nearest retained procedural scope statement when present.
+    Without `within`, the owner must be a task or function scope. Declaration
+    ordinals are dense within each exact scope. The stable ID belongs to the
+    independent local-declaration namespace. This operation does not initialize
+    or allocate storage; an executable binding supplies the current automatic
+    reference after that reference exists.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$code_unit_id, I64Attr:$scope_id,
+                       OptionalAttr<I64Attr>:$statement_scope_id,
+                       I32Attr:$ordinal, StrAttr:$hierarchical_name,
+                       StrAttr:$debug_name, TypeAttr:$value_type,
+                       SimVPITypeSemanticsAttr:$vpi_type,
+                       OptionalAttr<I32Attr>:$source_ordinal);
+  let assemblyFormat = [{$sym_name `id` $id `in` $code_unit_id `scope`
+    $scope_id (`within` $statement_scope_id^)? `ordinal` $ordinal
+    `hierarchy` $hierarchical_name `debug` $debug_name `:` $value_type attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIForeachDeclOp : SimOp<"vpi_foreach.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact fixed-array foreach collection and ordered index declarations";
+  let description = [{
+    Names an existing foreach statement and its whole fixed-array declaration.
+    Each loop_variables entry is an exact local symbol or a unit attribute for
+    a skipped dimension. Positions are source order, independent of the dense
+    local declaration ordinals. Skips serialize as distinct unnamed NullOp
+    occurrences; actual index variables retain their declaration identities.
+  }];
+  let arguments = (ins I64Attr:$statement_id,
+                       SimVPIObjectRefAttr:$collection,
+                       ArrayAttr:$loop_variables);
+  let assemblyFormat = "$statement_id `collection` $collection `indices` $loop_variables attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIStaticLocalBindingOp : SimOp<"vpi_static_local.bind",
+    [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "exact procedural scope of existing static variable storage";
+  let description = [{
+    Refines an existing static storage declaration's source owner without
+    introducing another variable identity. The owner is a task/function or
+    the nearest retained scope statement of the exact lexical code unit.
+    The ordinal is source declaration order across automatic and static
+    declarations; automatic declarations retain their separate dense frame
+    inventory ordinal and carry source_ordinal when the orders differ.
+    Delegated class and named-event identities use their own owner bindings.
+  }];
+  let arguments = (ins I64Attr:$storage_id, I64Attr:$code_unit_id,
+                       OptionalAttr<I64Attr>:$statement_scope_id,
+                       I32Attr:$ordinal);
+  let assemblyFormat = "$storage_id `in` $code_unit_id (`within` $statement_scope_id^)? `ordinal` $ordinal attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameBindOp : SimOp<"vpi.frame.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimStorageResource>, MemWrite<SimExternalResource>]>
+  ]> {
+  let summary = "bind an exact automatic local declaration to its live storage";
+  let description = [{
+    The reference names an owned automatic allocation of the declaration's
+    exact normalized type. The active frame must own that declaration's
+    lexical scope. This establishes a weak observation binding: it neither
+    initializes the source variable nor retains its storage or managed values.
+    Source lowering keeps the allocation's observation borrow alive through
+    the corresponding frame exit. Ref/inout aliases require their own explicit
+    alias representation and must not be passed as owned local allocations.
+  }];
+  let arguments = (ins SimContextType:$context, SimRefType:$reference,
+                       FlatSymbolRefAttr:$declaration);
+  let assemblyFormat = "$context `,` $reference `to` $declaration attr-dict "
+                       "`:` qualified(type($reference))";
+}
+
+def SimVPIInitializerBindingOp : SimOp<"vpi_initializer_binding",
+    [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "exact static source storage initialized by an internal helper";
+  let description = [{
+    Binds a nonprocedural initializer's executable identity to existing static
+    source storage. The helper introduces no procedural scope or frame. Calls
+    retain their helper owner and derive their lexical scope from the source
+    variable, including the canonical class property for static class storage.
+  }];
+  let arguments = (ins I64Attr:$code_unit_id, I64Attr:$storage_id);
+  let assemblyFormat = "$code_unit_id `storage` $storage_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPICallDeclOp : SimOp<"vpi_call.decl", [
+    Symbol, MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable identity of one source task/function call";
+  let description = [{
+    Identifies the actual call occurrence independently of executable clones.
+    A discarded call may alias its existing statement identity. Calls nested
+    within another expression have independent unnamed expression identities;
+    they never acquire a fabricated statement-containment edge. The enclosing
+    statement provides lexical context only. The optional callee code-unit ID
+    identifies a statically resolved source declaration, not a dynamic override.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$code_unit_id, I64Attr:$scope_id,
+                       I32Attr:$vpi_kind, StrAttr:$name,
+                       OptionalAttr<I64Attr>:$statement_id,
+                       OptionalAttr<I64Attr>:$enclosing_statement_id,
+                       OptionalAttr<I64Attr>:$callee_code_unit_id,
+                       UnitAttr:$is_indirect);
+  let assemblyFormat = [{$sym_name `id` $id `in` $code_unit_id `scope`
+    $scope_id `type` $vpi_kind `name` $name
+    (`statement` $statement_id^)? (`within` $enclosing_statement_id^)?
+    (`callee` $callee_code_unit_id^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+// Declaration-owned callable facts survive executable IPO. These are original
+// source ABI types, before hidden receivers, captures, or return slots.
+def SimVPICallableDeclOp : SimOp<"vpi_callable.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "original callable ABI and interface export provenance";
+  let arguments = (ins I64Attr:$code_unit_id,
+                       TypeAttrOf<FunctionType>:$signature,
+                       DenseI32ArrayAttr:$directions,
+                       OptionalAttr<FlatSymbolRefAttr>:$interface_member,
+                       OptionalAttr<DenseI64ArrayAttr>:$interface_exports,
+                       UnitAttr:$is_fork_join);
+  let assemblyFormat = [{$code_unit_id `signature` $signature
+    `directions` $directions (`member` $interface_member^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIInterfaceMemberDeclOp : SimOp<"vpi_interface_member.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "a callable member of one exact nominal interface type";
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       FlatSymbolRefAttr:$interface_type, StrAttr:$name,
+                       SimEntryKind:$member_kind,
+                       TypeAttrOf<FunctionType>:$signature,
+                       DenseI32ArrayAttr:$directions, UnitAttr:$is_extern);
+  let assemblyFormat = [{$sym_name `of` $interface_type `name` $name
+    $member_kind `signature` $signature `directions` $directions attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIInterfaceInstanceBindingOp : SimOp<"vpi_interface_instance.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact nominal type of an elaborated interface instance";
+  let arguments = (ins I64Attr:$scope_id, FlatSymbolRefAttr:$interface_type);
+  let assemblyFormat = "$scope_id `to` $interface_type attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIInterfaceCallDispatchOp : SimOp<"vpi_interface_call.dispatch", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "source identity and visibility contract of an indirect interface call";
+  let description = [{
+    Identifies the exact nominal member independently of its executable target
+    set. Access is 0 for an unrestricted interface, 1 for a modport import, and
+    2 for a modport export. All elaborated instances of the exact nominal
+    interface type participate, including instances under another top module
+    (IEEE 1800-2023 25.9). Empty target sets remain explicit contracts. Implementations are derived only
+    from declaration-owned interface membership and exports.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$call,
+                       FlatSymbolRefAttr:$member,
+                       I32Attr:$access);
+  let assemblyFormat = [{$call `member` $member `access` $access attr-dict}];
+  let hasVerifier = 1;
+}
+
+// A class dispatch domain is symbolic inventory, not an unchecked list of
+// target function IDs. The image encoder derives compatible implementations
+// from the same class-dispatch analysis used by executable lowering.
+def SimVPIClassCallDispatchOp : SimOp<"vpi_class_call_dispatch", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact receiver type and method of a reflected virtual call";
+  let arguments = (ins FlatSymbolRefAttr:$call,
+                       TypeAttrOf<SimClassHandleType>:$receiver_type,
+                       FlatSymbolRefAttr:$method);
+  let assemblyFormat = "$call `on` $receiver_type `via` $method attr-dict";
+}
+
+def SimVPIThreadOriginBindingOp : SimOp<"vpi_thread_origin_binding", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact source statement of a runtime thread activation";
+  let description = [{
+    Associates an executable code-unit identity with the source statement that
+    created that thread. This is immutable reflection inventory, independent of
+    statement containment. An outlined internal fork branch can therefore name
+    its original statement without moving that statement from its lexical owner.
+  }];
+  let arguments = (ins I64Attr:$code_unit_id, I64Attr:$statement_id);
+  let assemblyFormat = "$code_unit_id `origin` $statement_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimStatementSiteDeclOp : SimOp<"statement_site.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable semantic cbStmt callback site";
+  let description = [{
+    Names a semantic callback point on a statement. This is not an executable
+    poll or scheduling effect; a later lowering binds the stable site ID to
+    tier-specific fragment and bytecode locations.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$statement_id, I32Attr:$phase);
+  let assemblyFormat = [{$id `on` $statement_id `phase` $phase attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIStatementRelationDeclOp : SimOp<
+    "vpi_statement_relation.decl", [
+      MemoryEffects<[MemWrite<SimInventoryResource>]>
+    ]> {
+  let summary = "immutable VPI statement-containment relation";
+  let description = [{
+    Records one semantic incoming containment edge for a statement. The source
+    is a stable tagged scope, code-unit, statement, or VPI-anchor inventory ID.
+    Anchor sources retain lexical scopes, such as generate scopes, which do not
+    have an executable `scope.decl`. `mode_mask` uses bit zero for `vpi_handle`
+    and bit one for `vpi_iterate`; when both access modes expose the same
+    semantic child they are merged into one record. `ordinal` is dense
+    independently for each source, selector, and access mode.
+
+    This is static reflection inventory. It does not register callbacks or add
+    work to the scheduler.
+  }];
+  let arguments = (ins SimVPIStatementSourceKind:$source_kind,
+                       I64Attr:$source_id, I32Attr:$source_vpi_kind,
+                       I32Attr:$selector, I64Attr:$ordinal,
+                       I32Attr:$mode_mask, I64Attr:$target_statement_id);
+  let assemblyFormat = [{$source_kind $source_id `type` $source_vpi_kind
+    `selector` $selector `ordinal` $ordinal `modes` $mode_mask
+    `to` $target_statement_id attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIRelationDeclOp : SimOp<"vpi_relation.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable general VPI object relation";
+  let description = [{
+    Records one non-containment VPI graph edge between stable logical object
+    identities. Exact endpoint VPI kinds and traversal legality are derived
+    from the referenced declarations and the generated IEEE object model.
+    Each declaration represents one access mode so singular handle edges and
+    dense iterator ordering remain explicit. This metadata never participates
+    in scheduling or executable lowering.
+  }];
+  let arguments = (ins SimVPIObjectRefAttr:$source, I32Attr:$selector,
+                       SimVPIRelationMode:$mode, I64Attr:$ordinal,
+                       SimVPIObjectRefAttr:$target);
+  let assemblyFormat = [{
+    $source `selector` $selector $mode `ordinal` $ordinal `to` $target attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIExpressionDeclOp : SimOp<"vpi_expression.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact typed occurrence in a source RTL expression";
+  let description = [{
+    Preserves one computed source occurrence independently of shared declaration
+    leaves. `owner`, `selector`, `mode`, and `ordinal` identify its exact incoming
+    relation slot. This structural ownership is separate from the public Parent
+    relation of a selection. Value occurrences have an exact packed result type;
+    integral Constants also have immutable planes. A source_only Operation
+    explicitly retains syntax without an elaborated result type or value.
+    Its physical and semantic type pair must be absent. Operation and indexed-select
+    classifications are retained explicitly. These records neither allocate
+    simulation storage nor execute or schedule the expression. Exactly one
+    source context is retained: an instance scope, or a shared definition whose
+    original Parameter default owns this occurrence. The latter never captures
+    an arbitrary effective specialization.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+      I32Attr:$vpi_kind, OptionalAttr<I64Attr>:$scope_id,
+      SimVPIObjectRefAttr:$owner,
+      I32Attr:$selector, SimVPIRelationMode:$mode, I64Attr:$ordinal,
+      OptionalAttr<TypeAttr>:$type,
+      OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type,
+      OptionalAttr<SimFrozenConstantAttr>:$immutable_value,
+      OptionalAttr<I32Attr>:$op_type, OptionalAttr<I32Attr>:$indexed_direction,
+      UnitAttr:$source_only, OptionalAttr<FlatSymbolRefAttr>:$definition);
+  let assemblyFormat = [{
+    $sym_name `id` $id `type` $vpi_kind (`in` $scope_id^)? `owned_by` $owner
+    `selector` $selector $mode `ordinal` $ordinal (`:` $type^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPINetIdentityDeclOp : SimOp<"vpi_net_identity.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "declared net identity sharing a collapsed physical net";
+  let description = [{
+    Preserves a distinct source-declared net after executable topology has
+    collapsed it onto `backing_net_id`. The reflection object retains its own
+    name, scope, source type, optional user-defined nettype identity, and fixed
+    properties while value access shares the backing net's state offset. This
+    metadata is immutable and never participates in scheduling or executable
+    lowering.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$backing_net_id,
+                       I64Attr:$scope_id, TypeAttr:$type,
+                       StrAttr:$hierarchical_name, StrAttr:$debug_name,
+                       SimVPITypeSemanticsAttr:$vpi_type,
+                       OptionalAttr<FlatSymbolRefAttr>:$nettype);
+  let assemblyFormat = [{
+    $id `backed_by` $backing_net_id `in` $scope_id `:` $type
+    `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "canonical source identity for a persistent VPI object";
+  let description = [{
+    Separates source-language identity from executable descriptor identity.
+    `parent` names another anchor or a canonical class-specialization typespec
+    and preserves exact lexical ownership even when the display hierarchy is
+    ambiguous, as it is for multiple compilation units. A backing maps the
+    anchor onto an existing scope, class, or code-unit record; otherwise the
+    serializer materializes a static-only reflection object.  Anchors never
+    participate in scheduling or executable lowering. Relation-backed arrays
+    carry either declared `index_ranges` or exact `sparse_indices`; each child
+    carries its coordinates within the immediate parent. Optional
+    `index_dimension_flags` contains one 0/1 unpacked/packed flag per range.
+    `primitive_input_count` preserves the IEEE 37.33 vpiSize value for scalar
+    primitive anchors. `vpi_type` and `immutable_value` preserve the exact
+    source type and elaborated value of static-only objects such as parameters.
+    Effective type parameters retain only `vpi_type`; their resolved data type
+    is not a value and does not allocate immutable value storage. A lexical
+    generic type parameter instead carries `unresolved_type_parameter` and no
+    effective payload; its exact ClassDefn owner supplies source identity.
+    A lexical generic value parameter carries `unresolved_value_parameter` and
+    likewise has no effective type or value. Constant and Operation
+    anchors retain unnamed original-default expression occurrences, with exact
+    parameter/operator ownership and explicit generated expression relations.
+    `unavailable_default` retains the original source text for a present default
+    whose structure is unsupported. It is exclusive with an explicit Expr
+    relation; absence of both denotes no source default.
+    `has_explicit_parameter_range` records whether a value parameter directly
+    declared a packed range, rather than inheriting one from a built-in or
+    typedef type. These attributes remain reflection metadata and never
+    allocate simulation state.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$inventory_id,
+                       I32Attr:$vpi_kind, I64Attr:$enclosing_scope_id,
+                       OptionalAttr<FlatSymbolRefAttr>:$parent,
+                       I64Attr:$owner_ordinal,
+                       StrAttr:$hierarchical_name, StrAttr:$debug_name,
+                       OptionalAttr<UnitAttr>:$is_compilation_unit,
+                       OptionalAttr<SimVPIObjectBackingAttr>:$backing,
+                       OptionalAttr<DenseI64ArrayAttr>:$index_ranges,
+                       OptionalAttr<DenseI64ArrayAttr>:$index_dimension_flags,
+                       OptionalAttr<DenseI64ArrayAttr>:$sparse_indices,
+                       OptionalAttr<DenseI64ArrayAttr>:$member_indices,
+                       OptionalAttr<I64Attr>:$primitive_input_count,
+                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type,
+                       OptionalAttr<SimFrozenConstantAttr>:$immutable_value,
+                       OptionalAttr<UnitAttr>:$has_explicit_parameter_range,
+                       OptionalAttr<FlatSymbolRefAttr>:$class_method,
+                       OptionalAttr<UnitAttr>:$unresolved_type_parameter,
+                       OptionalAttr<StrAttr>:$unavailable_default,
+                       OptionalAttr<UnitAttr>:$unresolved_value_parameter);
+  let assemblyFormat = [{
+    $sym_name `id` $inventory_id `type` $vpi_kind
+    `in` $enclosing_scope_id (`parent` $parent^)?
+    `ordinal` $owner_ordinal `hierarchy` $hierarchical_name
+    `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPITerminalDriverBindingOp : SimOp<"vpi_terminal_driver.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact published driver state of a scalar primitive output";
+  let description = [{
+    Retains an output occurrence's own delayed driver state independently of
+    the resolved connected net. The optional high driver must be the exact
+    complementary polarity bank of the low driver. This inventory creates no
+    state, and both selectors use the same bit offset within their descriptors.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$terminal, I64Attr:$low_driver_id,
+                       OptionalAttr<I64Attr>:$high_driver_id,
+                       I64Attr:$bit_offset);
+  let assemblyFormat = "$terminal `low` $low_driver_id (`high` $high_driver_id^)? `bit` $bit_offset attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIEventBindingOp : SimOp<"vpi_event_binding", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "exact runtime identity of an immutable named-event declaration";
+  let description = [{
+    Associates a source named-event anchor with the event identity used by its
+    executable waits and triggers. This is immutable reflection inventory and
+    does not create an event or schedule work. Mutable event reference cells
+    use their storage binding instead.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$event, I64Attr:$event_id);
+  let assemblyFormat = "$event `id` $event_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIClassMemberDeclOp : SimOp<"vpi_class_member.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable class property declaration and executable binding";
+  let description = [{
+    Separates a lexical or specialized property declaration from its live
+    receiver. `owner` names a class-definition anchor or canonical class
+    typespec; an optional `field` names the exact executable class field. A
+    declaration without a field is lexical: it has an exact concrete source
+    type and a ClassDefn owner, but no executable value or backing. The source ID
+    shares the VPI anchor inventory namespace. A static property names its
+    existing storage or named event; instance properties use the class field's
+    native offset. This operation never allocates executable state.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$scope_id, FlatSymbolRefAttr:$owner,
+                       OptionalAttr<FlatSymbolRefAttr>:$field,
+                       StrAttr:$hierarchical_name, StrAttr:$debug_name,
+                       SimVPITypeSemanticsAttr:$vpi_type,
+                       OptionalAttr<I64Attr>:$static_storage,
+                       OptionalAttr<I64Attr>:$static_event);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner (`field` $field^)?
+    `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPINettypeDeclOp : SimOp<"vpi_nettype.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable user-defined nettype inventory";
+  let description = [{
+    Preserves one source `nettype` declaration after semantic IR is erased.
+    `owner` is its exact lexical VPI anchor, `target_type` is the declared data
+    type, `direct_alias` retains only the immediately named nettype declaration,
+    and `resolution_function` names the effective resolver's function anchor.
+    The declaration is cold reflection inventory and never participates in
+    scheduling or executable lowering.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$scope_id, FlatSymbolRefAttr:$owner,
+                       StrAttr:$hierarchical_name, StrAttr:$debug_name,
+                       SimVPITypeSemanticsAttr:$target_type,
+                       OptionalAttr<FlatSymbolRefAttr>:$direct_alias,
+                       OptionalAttr<FlatSymbolRefAttr>:$resolution_function);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner
+    `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIBoxTypeDeclOp : SimOp<"vpi_box_type.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable exact source type and storage layout for boxed values";
+  let description = [{
+    A positive stable ID binds a boxed runtime value to its exact source
+    semantics and normalized element storage type. This is a typed descriptor,
+    not a source VPI object. Its semantic and physical DAGs use the ordinary
+    reflection image graphs. No source type may be inferred from the executable
+    element type ID. The declaration survives executable symbol optimization.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       TypeAttr:$value_type,
+                       SimVPITypeSemanticsAttr:$vpi_type);
+  let assemblyFormat = "$sym_name `id` $id `:` $value_type attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable named VPI typespec inventory";
+  let description = [{
+    Preserves a source typespec as a resolvable symbol after semantic IR is
+    erased. For typedefs and anonymous enums, `owner` is the exact source VPI
+    anchor, or `statement_scope_id` names the exact procedural statement scope.
+    Exactly one owner is present. Unlike `scope_id`, neither collapses lexical package,
+    compilation-unit, class, subroutine, property, or sequence scopes. An
+    interface typespec uses its enclosing persistent anchor as an image
+    namespace because IEEE 1800 exposes it through `vpiTypespec`, not an owner
+    traversal. A builtin class typespec represents the alias-free process,
+    semaphore, or mailbox specialization and is owned by the source standard
+    package; it has no class definition or executable class descriptor.
+    A canonical mailbox specialization can preserve its normalized element
+    storage type in `message_type`. It supplies exact immutable layout for VPI
+    message snapshots and does not change the mailbox's own handle storage.
+    `target_type` retains the complete canonical source shape,
+    optional interface/modport identity, and ordered typedef-alias layers. The
+    declaration is reflection inventory only and never participates in
+    executable type conversion or scheduling.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$scope_id, OptionalAttr<FlatSymbolRefAttr>:$owner,
+                       StrAttr:$hierarchical_name,
+                       StrAttr:$debug_name,
+                       SimVPITypeSemanticsAttr:$target_type,
+                       DefaultValuedAttr<SimVPITypespecOrigin,
+                         "::talos::sim::VPITypespecOrigin::Typedef">:$origin,
+                       OptionalAttr<I64Attr>:$source_type_identity,
+                       OptionalAttr<TypeAttr>:$message_type,
+                       OptionalAttr<I64Attr>:$statement_scope_id);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id (`owner` $owner^)?
+    (`within` $statement_scope_id^)?
+    `hierarchy` $hierarchical_name
+    `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPILexicalClassTypespecDeclOp
+    : SimOp<"vpi_lexical_class_typespec.decl",
+            [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+             MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary =
+      "source class type construct without an effective specialization";
+  let description = [{
+    Represents the lexical class type in an extends clause (IEEE 37.32 details
+    1-3). `owner` is the class in which the construct occurs; `definition` names
+    the referenced lexical class declaration. The typespec has no executable
+    class identity, semantic type root, member inventory, or specialization
+    iteration membership. Omitted actuals are represented by default parameter
+    assignments; unsupported explicit actuals retain their source syntax.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
+      FlatSymbolRefAttr:$owner, FlatSymbolRefAttr:$definition,
+      StrAttr:$debug_name, OptionalAttr<StrAttr>:$unavailable_parameters);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner `definition` $definition
+    `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIClassExtendsDeclOp
+    : SimOp<"vpi_class_extends.decl",
+            [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+             MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "immutable source class extends occurrence";
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
+      FlatSymbolRefAttr:$owner, OptionalAttr<FlatSymbolRefAttr>:$base_typespec,
+      OptionalAttr<StrAttr>:$unavailable_base,
+      OptionalAttr<StrAttr>:$unavailable_arguments);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIClassParameterAssignDeclOp
+    : SimOp<"vpi_class_parameter_assign.decl",
+            [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+             MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "source class parameter assignment with exact RHS provenance";
+  let description = [{
+    The Lhs is a parameter of the lexical class named by `owner`'s definition.
+    An explicit `rhs` names its exact source expression or type. An explicit
+    unsupported RHS retains `unavailable_rhs`; with neither attribute, Rhs
+    shares the formal declaration's original Expr. `is_named` preserves named
+    syntax, including an empty named actual selecting the original default.
+    No assignment substitutes an elaborated value. The ordinal is dense in
+    declaration order among non-local parameters.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
+      FlatSymbolRefAttr:$owner, FlatSymbolRefAttr:$parameter, I64Attr:$ordinal,
+      OptionalAttr<FlatSymbolRefAttr>:$rhs,
+      OptionalAttr<StrAttr>:$unavailable_rhs, OptionalAttr<UnitAttr>:$is_named);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner `parameter` $parameter
+    `ordinal` $ordinal attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIUnresolvedTypeAliasDeclOp
+    : SimOp<"vpi_unresolved_type_alias.decl",
+            [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+             MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "lexical typedef of an unresolved class type parameter";
+  let description = [{
+    Preserves a distinct named typespec identity when its underlying type
+    parameter has no effective type (IEEE 1800-2023 37.25 details 6 and 11).
+    The exact target is an unresolved type parameter in the same lexical class,
+    or a preceding alias of such a parameter. The object has public kind
+    TypeParameter, but is a typedef, not a parameter declaration: it has no
+    effective semantic root, value, default expression, or Parameter inventory
+    membership. Concrete typedefs continue to use vpi_typespec.decl.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
+      FlatSymbolRefAttr:$owner, FlatSymbolRefAttr:$target,
+      StrAttr:$hierarchical_name, StrAttr:$debug_name);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner `alias` $target
+    `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIEnumConstDeclOp : SimOp<"vpi_enum_const.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable VPI enum-constant inventory";
+  let description = [{
+    Preserves one enum member in declaration order after semantic IR is
+    erased. `enum_typespec` is an exact symbol relation to the owning enum
+    typespec, so escaped names and identically named compilation-unit enums
+    cannot collide. `value` retains the source four-state constant spelling;
+    `immutable_value` retains its typed packed planes for value queries. Legacy
+    declarations without a typed value retain metadata only. This declaration
+    never participates in execution or scheduling.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$ordinal,
+                       FlatSymbolRefAttr:$enum_typespec,
+                       StrAttr:$name, StrAttr:$value,
+                       OptionalAttr<SimFrozenConstantAttr>:$immutable_value);
+  let assemblyFormat = [{
+    $id `enum` $enum_typespec `ordinal` $ordinal
+    `name` $name `value` $value attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimStorageDeclOp : SimOp<"storage.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "immutable mutable-storage descriptor";
+  let arguments = (ins I64Attr:$id, I64Attr:$scope_id, TypeAttr:$type,
+                       SimLifetime:$lifetime,
+                       OptionalAttr<StrAttr>:$hierarchical_name,
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<SimComputeObservabilityKind>:$observability,
+                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type);
+  let assemblyFormat = [{$id `in` $scope_id `:` $type $lifetime
+    (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimNetDeclOp : SimOp<"net.decl", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable resolved-net descriptor";
+  let description = [{
+    Declares the immutable metadata for a resolved net. `propagation_delays`
+    contains either one uniform rise/fall/third-delay triple or one triple per
+    packed bit. An all--1 per-bit triple denotes an immediate bit. For a
+    `trireg`, the third value is charge decay rather than turn-off, and -1 in
+    that slot denotes indefinite charge retention. `charge_strength` records
+    the Figure 28-2 small/medium/large strength of stored charge and is present
+    only on declared `trireg` storage.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$scope_id, TypeAttr:$type,
+                       SimLifetime:$lifetime,
+                       OptionalAttr<StrAttr>:$hierarchical_name,
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<SimComputeObservabilityKind>:$observability,
+                       DefaultValuedAttr<SimNetResolutionKind,
+                         "::talos::sim::NetResolutionKind::Wire">:$resolution_kind,
+                       OptionalAttr<DenseI64ArrayAttr>:$propagation_delays,
+                       OptionalAttr<SimStrength>:$charge_strength,
+                       OptionalAttr<UnitAttr>:$internal,
+                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type,
+                       OptionalAttr<FlatSymbolRefAttr>:$nettype);
+  let assemblyFormat = [{$id `in` $scope_id `:` $type $lifetime
+    (`hierarchy` $hierarchical_name^)? (`debug` $debug_name^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimNetConnectDeclOp : SimOp<"net.connect.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "canonical static bitwise net equivalence run";
+  let arguments = (ins I64Attr:$id, I64Attr:$scope_id,
+                       I64Attr:$lhs_net_id, I64Attr:$lhs_offset,
+                       I64Attr:$rhs_net_id, I64Attr:$rhs_offset,
+                       I64Attr:$width, BoolAttr:$rhs_reversed,
+                       OptionalAttr<StrAttr>:$provenance,
+                       OptionalAttr<BoolAttr>:$rhs_dominates);
+  let assemblyFormat = [{$id `in` $scope_id $lhs_net_id `[` $lhs_offset `]`
+    `to` $rhs_net_id `[` $rhs_offset `]` `width` $width
+    `reversed` `=` $rhs_reversed
+    (`provenance` $provenance^)?
+    (`rhs_dominates` `=` $rhs_dominates^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimPassSwitchDeclOp : SimOp<"net.pass.decl", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "static bidirectional pass-switch connection run";
+  let description = [{
+    Records a `tran`, `rtran`, `tranif`, or `rtranif` channel without collapsing the
+    terminal nets into one declaration. A boolean `directed` attribute extends
+    the same frozen representation to a MOS/CMOS source-to-output channel; its
+    right terminal is the source and its left terminal is the destination. The
+    runtime resolves the electrically connected component together while
+    retaining terminal-local strength and one logical switch contribution at
+    each endpoint for driver introspection.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$scope_id,
+                       I64Attr:$lhs_net_id, I64Attr:$lhs_offset,
+                       I64Attr:$rhs_net_id, I64Attr:$rhs_offset,
+                       I64Attr:$width, BoolAttr:$rhs_reversed);
+  let assemblyFormat = [{$id `in` $scope_id $lhs_net_id `[` $lhs_offset `]`
+    `to` $rhs_net_id `[` $rhs_offset `]` `width` $width
+    `reversed` `=` $rhs_reversed attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimPassSwitchControlOp : SimOp<"net.pass.control", [
+    MemoryEffects<[MemWrite<SimNetResource>]>
+  ]> {
+  let summary = "publish the four-state enable of a controlled pass switch";
+  let description = [{
+    Updates one frozen pass-switch run. The control is normalized to active
+    high: 1 enables the channel, 0 disables it, and x/z makes connectivity
+    uncertain according to IEEE 1800-2017 28.12.2.
+  }];
+  let arguments = (ins SimLogic1Type:$control, I64Attr:$pass_switch_id);
+  let assemblyFormat = "$pass_switch_id `=` $control attr-dict `:` qualified(type($control))";
+  let hasVerifier = 1;
+}
+
+def SimPassSwitchControlDelayedOp : SimOp<"net.pass.control_delayed", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimNetResource>]>
+  ]> {
+  let summary = "inertially publish a delayed four-state pass-switch enable";
+  let description = [{
+    Schedules one frozen controlled pass-switch run. A known active control
+    uses `turn_on_delay`, a known inactive control uses `turn_off_delay`, and
+    x/z uses `unknown_delay`. Re-evaluation of the same pass-switch ID rejects
+    an older pending pulse before its delayed topology state matures.
+  }];
+  let arguments = (ins SimLogic1Type:$control, SimTimeType:$turn_on_delay,
+                       SimTimeType:$turn_off_delay, SimTimeType:$unknown_delay,
+                       I64Attr:$pass_switch_id);
+  let assemblyFormat = [{$pass_switch_id `=` $control `after` `[` $turn_on_delay
+    `,` $turn_off_delay `,` $unknown_delay `]` attr-dict `:`
+    qualified(type($control))}];
+  let hasVerifier = 1;
+}
+
+def SimMosDriveDelayedOp : SimOp<"net.mos.drive_delayed", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimNetResource>]>
+  ]> {
+  let summary = "publish a strength-preserving inertial MOS contribution";
+  let description = [{
+    Samples the resolved strength range at the source of one frozen directed
+    MOS/CMOS edge, applies the normalized active-high four-state control and
+    the edge's resistive transfer, and schedules that exact contribution
+    inertially.  Pending updates are keyed by scalar edge, so source-strength
+    changes that preserve the logical value are not discarded.
+  }];
+  let arguments = (ins SimLogic1Type:$control, SimTimeType:$rise_delay,
+                       SimTimeType:$fall_delay, SimTimeType:$turnoff_delay,
+                       I64Attr:$pass_switch_id);
+  let assemblyFormat = [{$pass_switch_id `=` $control `after` `[` $rise_delay
+    `,` $fall_delay `,` $turnoff_delay `]` attr-dict `:`
+    qualified(type($control))}];
+  let hasVerifier = 1;
+}
+
+def SimDriverDeclOp : SimOp<"driver.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "immutable static net-driver descriptor";
+  let arguments = (ins I64Attr:$id, I64Attr:$scope_id, I64Attr:$net_id,
+                       TypeAttr:$type, SimLifetime:$lifetime,
+                       OptionalAttr<StrAttr>:$hierarchical_name,
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<I64Attr>:$driven_low,
+                       OptionalAttr<I64Attr>:$driven_width,
+                       DefaultValuedAttr<SimStrength,
+                         "::talos::sim::Strength::Strong">:$strength0,
+                       DefaultValuedAttr<SimStrength,
+                         "::talos::sim::Strength::Strong">:$strength1);
+  let assemblyFormat = [{$id `in` $scope_id `drives` $net_id `:` $type
+    $lifetime (`hierarchy` $hierarchical_name^)?
+    (`debug` $debug_name^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimPortDeclOp : SimOp<"port.decl", [MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "immutable module-port reflection descriptor";
+  let description = [{
+    Describes a source-level module port separately from its canonical storage
+    or net. `source_low` is the fixed packed bit offset into that descriptor.
+    Keeping the alias explicit lets EVCD select only ports while ordinary VCD
+    and executable code continue to use the canonical descriptor.
+  }];
+  let arguments = (ins I64Attr:$id, I64Attr:$scope_id,
+                       I64Attr:$source_id, BoolAttr:$source_is_net,
+                       I64Attr:$source_low, TypeAttr:$type,
+                       SimPortDirection:$direction, I64Attr:$ordinal,
+                       StrAttr:$hierarchical_name,
+                       OptionalAttr<StrAttr>:$debug_name,
+                       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type);
+  let assemblyFormat = [{$id `in` $scope_id `source` $source_id
+    `net` `=` $source_is_net `at` $source_low `:` $type $direction
+    `ordinal` $ordinal `hierarchy` $hierarchical_name
+    (`debug` $debug_name^)? attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupDeclOp : SimOp<"covergroup.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "symbolic reference to an embedded covergroup schema";
+  let description = [{
+    Names one functional-coverage type in the module's embedded typed v1
+    coverage database. `schema_type` is the stable type identity from that
+    database; it is not a physical table index. Coverpoints, crosses, bins,
+    options, source provenance, and resolved configurations live only in the
+    database and are deliberately not duplicated as parallel MLIR arrays.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$schema_type,
+                       OptionalAttr<FlatSymbolRefAttr>:$base,
+                       OptionalAttr<StrAttr>:$debug_name);
+  let assemblyFormat = [{
+    $sym_name `schema` $schema_type
+    (`base` $base^)? (`debug` $debug_name^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupNullOp : SimOp<"covergroup.null", [Pure, ConstantLike]> {
+  let summary = "typed null functional coverage handle";
+  let results = (outs SimCovergroupHandleType:$result);
+  let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let hasFolder = 1;
+  let hasVerifier = 1;
+}
+
+def SimCovergroupCastOp : SimOp<"covergroup.cast", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "change the static type of a related covergroup handle";
+  let arguments = (ins SimCovergroupHandleType:$input);
+  let results = (outs SimCovergroupHandleType:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` qualified(type($input)) `to` qualified(type($result))
+  }];
+}
+
+def SimCovergroupEqualOp : SimOp<"covergroup.equal", [
+    Pure, Commutative, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "compare nullable covergroup instance identities";
+  let arguments = (ins SimCovergroupHandleType:$lhs,
+                       SimCovergroupHandleType:$rhs);
+  let results = (outs I1:$equal);
+  let assemblyFormat = [{
+    $lhs `,` $rhs attr-dict `:` qualified(type($lhs)) `,`
+    qualified(type($rhs))
+  }];
+  let hasFolder = 1;
+}
+
+def SimVirtualInterfaceNullOp
+    : SimOp<"virtual_interface.null", [Pure, ConstantLike]> {
+  let summary = "typed null virtual interface handle";
+  let results = (outs SimVirtualInterfaceType:$result);
+  let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let hasFolder = 1;
+}
+
+def SimChandleNullOp : SimOp<"chandle.null", [Pure, ConstantLike]> {
+  let summary = "typed null DPI C pointer";
+  let results = (outs SimChandleType:$result);
+  let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let hasFolder = 1;
+}
+
+def SimChandleEqualOp : SimOp<"chandle.equal", [Pure, Commutative]> {
+  let summary = "compare opaque DPI C pointers, including null";
+  let arguments = (ins SimChandleType:$lhs, SimChandleType:$rhs);
+  let results = (outs I1:$equal);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs)";
+  let hasFolder = 1;
+}
+
+def SimVirtualInterfaceBindOp
+    : SimOp<"virtual_interface.bind", [Pure]> {
+  let summary = "bind an elaborated interface instance as a virtual handle";
+  let description = [{
+    Produces the stable scope identity of an elaborated interface instance.
+    Zero is reserved for null; consequently every bind scope must be nonzero.
+  }];
+  let arguments = (ins I64Attr:$scope_id);
+  let results = (outs SimVirtualInterfaceType:$result);
+  let assemblyFormat = "$scope_id attr-dict `:` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimVirtualInterfaceCastOp
+    : SimOp<"virtual_interface.cast", [Pure]> {
+  let summary = "change the static modport view of a virtual interface";
+  let arguments = (ins SimVirtualInterfaceType:$input);
+  let results = (outs SimVirtualInterfaceType:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` qualified(type($input)) `to` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SimVirtualInterfaceEqualOp
+    : SimOp<"virtual_interface.equal", [Pure, Commutative]> {
+  let summary = "compare virtual interface identities, including null";
+  let arguments = (ins SimVirtualInterfaceType:$lhs,
+                       SimVirtualInterfaceType:$rhs);
+  let results = (outs I1:$equal);
+  let assemblyFormat = [{
+    $lhs `,` $rhs attr-dict `:` qualified(type($lhs)) `,`
+    qualified(type($rhs))
+  }];
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SimVirtualInterfaceScopeOp
+    : SimOp<"virtual_interface.scope", [Pure]> {
+  let summary = "project a virtual interface handle to its elaborated scope ID";
+  let arguments = (ins SimVirtualInterfaceType:$input);
+  let results = (outs I64:$result);
+  let assemblyFormat = "$input attr-dict `:` qualified(type($input))";
+}
+
+def SimCovergroupPrepareOp : SimOp<"covergroup.prepare", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimCoverageResource>,
+                   MemWrite<SimCoverageResource>, MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "resolve constructor bins into a private coverage preparation";
+  let description = [{
+    Resolves primitive constructor expressions without publishing a coverage
+    configuration or instance. The context owns the opaque token until
+    `covergroup.release_preparation`. Selector predicates are evaluated later
+    against candidate queues; they are absent from this payload batch.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       FlatSymbolRefAttr:$declaration,
+                       Variadic<AnyType>:$payloads,
+                       DenseI64ArrayAttr:$expression_ids);
+  let results = (outs I64:$token);
+  let assemblyFormat = [{
+    $context `from` $declaration `payloads` `[` $payloads `]`
+    `expression_ids` $expression_ids attr-dict
+    `:` functional-type($payloads, results)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupCandidatesOp : SimOp<"covergroup.candidates", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimCoverageResource>,
+                   MemWrite<SimCoverageResource>,
+                   MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "fill an empty CrossQueueType with distinct selected values";
+  let arguments = (ins SimContextType:$context, I64:$token,
+                       AnyType:$queue, I64Attr:$selector, I32Attr:$maximum);
+  let assemblyFormat = [{
+    $context `,` $token `into` $queue `selector` $selector `maximum` $maximum
+    attr-dict `:` type($queue)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupBindWithOp : SimOp<"covergroup.bind_with", [
+    MemoryEffects<[MemRead<SimHeapResource>,
+                   MemRead<SimCoverageResource>, MemWrite<SimCoverageResource>]>
+  ]> {
+  let summary = "bind satisfying value tuples before selecting a parent";
+  let arguments = (ins SimContextType:$context, I64:$token,
+                       AnyType:$queue, I64Attr:$selector);
+  let assemblyFormat = [{
+    $context `,` $token `from` $queue `selector` $selector
+    attr-dict `:` type($queue)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupReleasePreparationOp
+    : SimOp<"covergroup.release_preparation", [
+        MemoryEffects<[MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "release a private constructor preparation";
+  let arguments = (ins SimContextType:$context, I64:$token);
+  let assemblyFormat = "$context `,` $token attr-dict";
+}
+
+def SimCovergroupCreateOp : SimOp<"covergroup.create", [
+    SimAllocatesManagedStorage,
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimCoverageResource>,
+                   MemWrite<SimCoverageResource>]>
+  ]> {
+  let summary = "create an enabled per-instance coverage accumulator";
+  let arguments = (ins SimContextType:$context,
+                       FlatSymbolRefAttr:$declaration,
+                       Variadic<AnyType>:$payloads,
+                       I32Attr:$argument_count,
+                       DenseI64ArrayAttr:$formal_ids,
+                       DenseI64ArrayAttr:$expression_ids);
+  let results = (outs SimCovergroupHandleType:$result);
+  let assemblyFormat = [{
+    $context `from` $declaration
+    `payloads` `[` $payloads `]` `argument_count` $argument_count
+    `formal_ids` $formal_ids `expression_ids` $expression_ids
+    attr-dict `:` functional-type($payloads, results)
+  }];
+}
+
+def SimCovergroupClockingSpawnOp
+    : SimOp<"covergroup.clock_event.spawn", [
+        MemoryEffects<[MemWrite<SimSchedulerResource>,
+                       MemWrite<SimProcessResource>]>
+      ]> {
+  let summary = "defer a covergroup clocking sampler to its design pass";
+  let description = [{
+    Transiently records the spawn of one automatic functional-coverage
+    sampler. Per-function lowering may create this operation but must not
+    mutate its parent design's symbol table. The subsequent design-anchored
+    materialization pass replaces it with an ordinary `simulation.spawn` and
+    creates the private sampler symbol.
+
+    `bindings` contains only the declaration paths referenced by the clocking
+    event or sample plan. `capture_attrs` describes the complete eventual
+    sampler argument list (context, handle, then captures). The operation is
+    forbidden at the finalized simulation boundary. `class_owner_capture` is
+    the capture index of an embedded covergroup's owning object, or -1 for a
+    non-class covergroup.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       Variadic<AnyType>:$captures,
+                       I32Attr:$class_owner_capture,
+                       I64Attr:$node_id,
+                       StrAttr:$covergroup_symbol,
+                       ArrayAttr:$bindings,
+                       ArrayAttr:$capture_attrs,
+                       ArrayAttr:$event_observers);
+}
+
+def SimCovergroupClockEventRegisterOp
+    : SimOp<"covergroup.clock_event.register", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimSchedulerResource>,
+                       MemWrite<SimProcessResource>]>
+      ]> {
+  let summary = "register exact clock-event covergroup sampling";
+  let description = [{
+    Registers a compiler-private covergroup sampling observer with the current
+    detached owner process. The first `edges.size()` values are bound primary
+    observers, followed by one encounter-time initial value per primary,
+    `condition_count` bound iff observers, and one bound sample observer. The
+    runtime reevaluates a primary when any of its dependencies is published,
+    compares the complete expression result for a change event, and uses its
+    least-significant bit for an explicit edge. It evaluates an iff observer
+    only after the corresponding primary occurrence.
+
+    The runtime invokes the sample observer synchronously for each qualifying
+    atomic publication unless the resolved v1 covergroup schema sets
+    `type_option.strobe`. Strobe registrations retain one trigger per numeric
+    time and evaluate the observer in the Postponed region. Multiple matching
+    clauses in one publication always produce one sample.
+
+    This operation is part of the single mutable v1 runtime ABI. It does not
+    describe or preserve an older execution layout.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       Variadic<AnyType>:$values,
+                       I32Attr:$condition_count,
+                       BoolAttr:$strobe,
+                       DenseI32ArrayAttr:$edges,
+                       DenseI32ArrayAttr:$condition_indices);
+  let assemblyFormat = [{
+    $context `,` $handle `events` `[` $values `]`
+    `conditions` $condition_count `edges` $edges
+    `indices` $condition_indices attr-dict `:` qualified(type($handle)) `,` type($values)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getPrimaries();
+    ::mlir::Operation::operand_range getInitialValues();
+    ::mlir::Operation::operand_range getConditions();
+    ::mlir::Value getSampler();
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupBlockEventPlanOp
+    : SimOp<"covergroup.block_event.plan", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>,
+                       MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "defer a covergroup block-event sampler to its design pass";
+  let description = [{
+    Transiently records construction-site captures for one block-event
+    covergroup. The design-anchored materialization pass creates the private
+    sample evaluator and replaces this operation with an immediate block-event
+    registration. Unlike a clocking event, this never creates or parks a
+    process, and type_option.strobe has no effect.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       Variadic<AnyType>:$captures,
+                       BoolAttr:$has_receiver,
+                       I32Attr:$class_owner_capture,
+                       I64Attr:$node_id,
+                       StrAttr:$covergroup_symbol,
+                       ArrayAttr:$bindings,
+                       ArrayAttr:$capture_attrs,
+                       DenseI64ArrayAttr:$target_ids,
+                       DenseI32ArrayAttr:$event_kinds);
+}
+
+def SimCovergroupBlockEventRegisterOp
+    : SimOp<"covergroup.block_event.register", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>,
+                       MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "register synchronous block-event covergroup sampling";
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       Optional<SimClassHandleType>:$receiver,
+                       SimObserverType:$sampler,
+                       DenseI64ArrayAttr:$target_ids,
+                       DenseI32ArrayAttr:$event_kinds);
+  let hasVerifier = 1;
+}
+
+def SimCovergroupBlockEventFireOp
+    : SimOp<"covergroup.block_event.fire", [
+        MemoryEffects<[
+          MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+          MemRead<SimNetResource>, MemWrite<SimNetResource>,
+          MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+          MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+          MemRead<SimCoverageResource>, MemWrite<SimCoverageResource>,
+          MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+          MemRead<SimIOResource>, MemWrite<SimIOResource>,
+          MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+          MemRead<SimExternalResource>, MemWrite<SimExternalResource>
+        ]>
+      ]> {
+  let summary = "fire one exact covergroup block boundary";
+  let arguments = (ins SimContextType:$context,
+                       Optional<SimClassHandleType>:$receiver,
+                       I64Attr:$target_id,
+                       SimBlockEventKindAttr:$event_kind);
+  let hasVerifier = 1;
+}
+
+def SimCoveragePointHitOp : SimOp<"coverage.point_hit", [
+    MemoryEffects<[MemWrite<SimCoverageResource>]>
+  ]> {
+  let summary = "saturating hit of one inventoried coverage point";
+  let description = [{
+    Records a semantic execution point by its dense physical counter index:
+    a source line point, or (with `kind` assertion) the success of an
+    assertion statement. Stable
+    point identity and source metadata live in the embedded native coverage
+    schema. The explicit index keeps lowering cheap while the resource effect
+    prevents motion across observed execution boundaries.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       I1:$enabled,
+                       ConfinedAttr<I64Attr, [IntNonNegative]>:$point,
+                       OptionalAttr<SimCoveragePointKindAttr>:$kind);
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$simContext, "::mlir::Value":$enabled,
+                   "::mlir::IntegerAttr":$point), [{
+      build($_builder, $_state, simContext, enabled, point,
+            CoveragePointKindAttr{});
+    }]>
+  ];
+  let assemblyFormat = "$context `if` $enabled `[` $point `]` attr-dict `:` type($context)";
+  let hasVerifier = 1;
+}
+
+def SimCoverageKeepaliveOp : SimOp<"coverage.keepalive", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimInventoryResource>]>
+  ]> {
+  let summary = "retain a function containing an inventoried coverage point";
+  let description = [{
+    Creates an explicit symbol-use edge from the design inventory to a private
+    function containing an included line-coverage obligation. This prevents
+    later symbol DCE from invalidating the already-built coverage schema. The
+    finalization pass erases the marker after all symbol-pruning passes.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$function);
+  let assemblyFormat = "$function attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimCoverageControlDefinitionOp
+    : SimOp<"coverage.control_definition", [
+        MemoryEffects<[MemRead<SimHeapResource>,
+                       MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "control code coverage selected by module definition";
+  let arguments = (ins SimContextType:$context, I32:$control, I32:$metric,
+                       I32:$scope, SimStringType:$definition);
+  let results = (outs I32:$status);
+  let assemblyFormat = [{
+    $context `control` $control `metric` $metric `scope` $scope
+    `definition` $definition attr-dict `:` type($context)
+  }];
+}
+
+def SimCoverageControlInstanceOp
+    : SimOp<"coverage.control_instance", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "control code coverage selected by elaborated instance";
+  let arguments = (ins SimContextType:$context, I32:$control, I32:$metric,
+                       I32:$scope, I64Attr:$coverage_scope_id);
+  let results = (outs I32:$status);
+  let assemblyFormat = [{
+    $context `control` $control `metric` $metric `scope` $scope
+    `instance` $coverage_scope_id attr-dict `:` type($context)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCoverageQueryDefinitionOp
+    : SimOp<"coverage.query_definition", [
+        MemoryEffects<[MemRead<SimHeapResource>,
+                       MemRead<SimCoverageResource>]>
+      ]> {
+  let summary = "query code coverage selected by module definition";
+  let arguments = (ins SimContextType:$context, I32:$metric, I32:$scope,
+                       SimStringType:$definition, BoolAttr:$maximum);
+  let results = (outs I32:$value);
+  let assemblyFormat = [{
+    $context `metric` $metric `scope` $scope `definition` $definition
+    `maximum` $maximum attr-dict `:` type($context)
+  }];
+}
+
+def SimCoverageQueryInstanceOp
+    : SimOp<"coverage.query_instance", [
+        MemoryEffects<[MemRead<SimCoverageResource>]>
+      ]> {
+  let summary = "query code coverage selected by elaborated instance";
+  let arguments = (ins SimContextType:$context, I32:$metric, I32:$scope,
+                       I64Attr:$coverage_scope_id, BoolAttr:$maximum);
+  let results = (outs I32:$value);
+  let assemblyFormat = [{
+    $context `metric` $metric `scope` $scope `instance` $coverage_scope_id
+    `maximum` $maximum attr-dict `:` type($context)
+  }];
+  let hasVerifier = 1;
+}
+
+class SimCoverageDatabaseOp<string mnemonic, list<Trait> effects>
+    : SimOp<mnemonic, effects> {
+  let arguments = (ins SimContextType:$context, I32:$metric,
+                       SimStringType:$name);
+  let results = (outs I32:$status);
+  let assemblyFormat = [{
+    $context `metric` $metric `name` $name attr-dict `:` type($context)
+  }];
+}
+
+def SimCoverageSaveOp
+    : SimCoverageDatabaseOp<"coverage.save", [
+        MemoryEffects<[MemRead<SimHeapResource>,
+                       MemRead<SimCoverageResource>,
+                       MemWrite<SimIOResource>]>
+      ]> {
+  let summary = "save one code-coverage metric to a coverage database";
+}
+
+def SimCoverageMergeOp
+    : SimCoverageDatabaseOp<"coverage.merge", [
+        MemoryEffects<[MemRead<SimHeapResource>,
+                       MemRead<SimIOResource>,
+                       MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "merge one code-coverage metric from a coverage database";
+}
+
+def SimCovergroupSampleEnabledOp : SimOp<"covergroup.sample_enabled", [
+    MemoryEffects<[MemRead<SimCoverageResource>]>
+  ]> {
+  let summary = "test whether a covergroup instance currently samples";
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle);
+  let results = (outs I1:$result);
+  let hasVerifier = 1;
+}
+
+def SimCovergroupFormalReadOp : SimOp<"covergroup.formal_read", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimCoverageResource>, MemRead<SimStorageResource>,
+                   MemRead<SimHeapResource>, MemAlloc<SimHeapResource>,
+                   MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "read a constructor formal captured by a covergroup instance";
+  let description = [{
+    Projects the value of an input constructor formal, or the retained typed
+    argument reference or current value of a live `ref` constructor formal,
+    from the instance configuration. A typed argument reference preserves the
+    storage binding until each use and can be passed to const-ref helpers. The
+    positive stable ID names a `FunctionalFormal` record in the embedded v1
+    schema; it is not a physical table index.
+    Input strings retain immutable managed values; references load the current
+    typed storage. A reference path may detach its selected element or obtain
+    a managed string snapshot, so reading can allocate and update the heap.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$formal_id);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $context `,` $handle `[` $formal_id `]` attr-dict `:`
+    type($context) `,` qualified(type($handle)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
+    MemoryEffects<[MemRead<SimCoverageResource>,
+                   MemWrite<SimCoverageResource>]>
+  ]> {
+  let summary = "atomically commit one typed functional-coverage sample";
+  let description = [{
+    Carries the once-evaluated results of every sample-phase expression needed
+    by the instance's typed plan. `expression_ids` contains the corresponding
+    stable `FunctionalExpression` identities from the embedded schema in
+    operand order. These are semantic identities, never physical table
+    indices. The runtime resolves the handle's constructor configuration and
+    atomically performs direct-bin matching, transition automata, ignore and
+    illegal precedence, and cross tuple/selector processing.
+
+    Integral and four-state sampled values remain typed values; predicates are
+    i1 and real coverpoint samples are f64. A string, container, aggregate
+    reference path, class handle, chandle, or event may occur only for the
+    once-evaluated
+    default of a corresponding formal on an overridden sample() method;
+    matching consumes the derived coverpoint and guard results. This
+    batch form ensures that a sampled expression or iff predicate is evaluated
+    once per sampling event even when several bins, transition steps, or
+    crosses consume it.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       Variadic<AnyTypeOf<[AnySignlessInteger,
+                                           SimLogicType, SimStringType,
+                                           SimDynamicArrayType, SimQueueType,
+                                           SimAssocArrayType,
+                                           SimReferencePathType,
+                                           SimClassHandleType,
+                                           SimChandleType,
+                                           SimEventType,
+                                           SimCovergroupHandleType,
+                                           SimProcessType,
+                                           SimVirtualInterfaceType,
+                                           SimSemaphoreType,
+                                           SimMailboxType,
+                                           F32, F64]>>:$values,
+                       DenseI64ArrayAttr:$expression_ids);
+  let assemblyFormat = [{
+    $context `,` $handle
+    `values` `[` $values `]` `ids` $expression_ids
+    attr-dict `:` functional-type(operands, results)
+  }];
+  let hasVerifier = 1;
+}
+
+class SimCovergroupControlOp<string mnemonic>
+    : SimOp<mnemonic, [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$item);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item attr-dict `:`
+    type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupStartOp
+    : SimCovergroupControlOp<"covergroup.start"> {
+  let summary = "enable group or functional-item sampling without clearing coverage";
+}
+
+def SimCovergroupStopOp
+    : SimCovergroupControlOp<"covergroup.stop"> {
+  let summary = "disable group or functional-item sampling without clearing coverage";
+}
+
+def SimCovergroupSetNameOp : SimOp<"covergroup.set_name", [
+    MemoryEffects<[MemRead<SimHeapResource>,
+                   MemRead<SimCoverageResource>,
+                   MemWrite<SimCoverageResource>]>
+  ]> {
+  let summary = "set the persistent name of a covergroup instance";
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       SimStringType:$name);
+  let assemblyFormat = [{
+    $context `,` $handle `name` $name attr-dict `:`
+    type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupSetIntegerOptionOp
+    : SimOp<"covergroup.set_integer_option", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "set a mutable integral option on a covergroup instance owner";
+  let description = [{
+    `item` is zero for the covergroup owner or a positive stable template
+    `FunctionalItem` ID for a coverpoint or cross. The runtime applies the
+    assignment to this instance only. Group-level `at_least` remains a default
+    and therefore does not replace an item-level override.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option,
+                       I64:$value);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item `option` $option `value` $value
+    attr-dict `:` type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupGetIntegerOptionOp
+    : SimOp<"covergroup.get_integer_option", [
+        MemoryEffects<[MemRead<SimCoverageResource>]>
+      ]> {
+  let summary = "read an integral option from a covergroup instance owner";
+  let description = [{
+    `item` is zero for the covergroup owner or a positive stable template
+    `FunctionalItem` ID for a coverpoint or cross. The result is the current
+    effective per-instance value after group defaults and item overrides.
+    Construction-only fields are readable but cannot be assigned procedurally.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option);
+  let results = (outs I64:$value);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item `option` $option
+    attr-dict `:` type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupGetStringOptionOp
+    : SimOp<"covergroup.get_string_option", [
+        SimAllocatesManagedStorage,
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemAlloc<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "read a covergroup name or an instance owner's comment";
+  let description = [{
+    `item` is zero for the group or a stable template FunctionalItem ID.
+    Names are group-only. The result is a managed string snapshot of the
+    current option value, including constructor values and later edits.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option);
+  let results = (outs SimStringType:$value);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item `option` $option
+    attr-dict `:` type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupSetStringOptionOp
+    : SimOp<"covergroup.set_string_option", [
+        MemoryEffects<[MemRead<SimHeapResource>,
+                       MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "set a mutable string option on a covergroup instance owner";
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option,
+                       SimStringType:$value);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item `option` $option `value` $value
+    attr-dict `:` type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupSetTypeIntegerOptionOp
+    : SimOp<"covergroup.set_type_integer_option", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "set a mutable integral option on a covergroup type owner";
+  let description = [{
+    `type` and `item` are stable schema identities. `item` is zero for the
+    covergroup or a positive template FunctionalItem ID. The update applies
+    immediately to cumulative queries and to configurations resolved later.
+    The group-only `distribute_first` option affects future bin construction;
+    existing configurations and counters remain intact.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       I64Attr:$typeId,
+                       I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option,
+                       I64:$value);
+  let assemblyFormat = [{
+    $context `type` $typeId `item` $item `option` $option `value` $value
+    attr-dict `:` type($context)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupSetTypeStringOptionOp
+    : SimOp<"covergroup.set_type_string_option", [
+        MemoryEffects<[MemRead<SimHeapResource>,
+                       MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "set a mutable string option on a covergroup type owner";
+  let arguments = (ins SimContextType:$context,
+                       I64Attr:$typeId,
+                       I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option,
+                       SimStringType:$value);
+  let assemblyFormat = [{
+    $context `type` $typeId `item` $item `option` $option `value` $value
+    attr-dict `:` type($context)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupInstanceQueryOp : SimOp<"covergroup.instance_query", [
+    MemoryEffects<[MemRead<SimCoverageResource>]>
+  ]> {
+  let summary = "query per-instance covergroup or functional-item coverage";
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$item);
+  let results = (outs F64:$percentage, I32:$covered, I32:$total);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item attr-dict `:`
+    type($context) `,` qualified(type($handle)) `->` `(` type($percentage) `,`
+    type($covered) `,` type($total) `)`
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupTypeQueryOp : SimOp<"covergroup.type_query", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimCoverageResource>]>
+  ]> {
+  let summary = "query cumulative covergroup or functional-item coverage";
+  let arguments = (ins SimContextType:$context,
+                       FlatSymbolRefAttr:$declaration,
+                       I64Attr:$item);
+  let results = (outs F64:$percentage, I32:$covered, I32:$total);
+  let assemblyFormat = [{
+    $context `from` $declaration `item` $item attr-dict `:`
+    type($context) `->` `(` type($percentage) `,`
+    type($covered) `,` type($total) `)`
+  }];
+}
+
+def SimFunctionalCoverageGetOp : SimOp<"coverage.functional_get", [
+    MemoryEffects<[MemRead<SimCoverageResource>]>
+  ]> {
+  let summary = "query global functional coverage";
+  let arguments = (ins SimContextType:$context);
+  let results = (outs F64:$percentage);
+  let assemblyFormat = "$context attr-dict `:` type($context) `->` type($percentage)";
+}
+
+class SimFunctionalCoverageDatabaseOp<string mnemonic>
+    : SimOp<mnemonic, [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemWrite<SimCoverageResource>]>
+      ]> {
+  let arguments = (ins SimContextType:$context, SimStringType:$name);
+  let assemblyFormat = "$context `,` $name attr-dict `:` type($context) `,` qualified(type($name))";
+}
+
+def SimFunctionalCoverageSetDbNameOp
+    : SimFunctionalCoverageDatabaseOp<"coverage.functional_set_db_name"> {
+  let summary = "set the automatic functional coverage database name";
+}
+
+def SimFunctionalCoverageLoadDbOp
+    : SimFunctionalCoverageDatabaseOp<"coverage.functional_load_db"> {
+  let summary = "load cumulative functional coverage from a database";
+}
+
+//===----------------------------------------------------------------------===//
+// Managed classes and dispatch inventory
+//===----------------------------------------------------------------------===//
+
+def SimClassDeclOp : SimOp<"class.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable managed class and hierarchy descriptor";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    I64Attr:$id,
+    OptionalAttr<FlatSymbolRefAttr>:$base,
+    OptionalAttr<ArrayAttr>:$interfaces,
+    OptionalAttr<FlatSymbolRefAttr>:$weak_referent,
+    OptionalAttr<SimRandomVariableReferenceArrayAttr>:
+        $random_variable_references,
+    OptionalAttr<FlatSymbolRefAttr>:$random_constraint_template,
+    OptionalAttr<FlatSymbolRefAttr>:$implicit_constructor,
+    BoolAttr:$is_abstract,
+    BoolAttr:$is_interface,
+    BoolAttr:$is_final,
+    OptionalAttr<StrAttr>:$debug_name,
+    OptionalAttr<FlatSymbolRefAttr>:$builtin_base
+  );
+  let assemblyFormat = [{
+    $sym_name `id` $id (`extends` $base^)?
+    (`implements` $interfaces^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimClassFieldDeclOp : SimOp<"class.field", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "declaration-order class property and trace descriptor";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    FlatSymbolRefAttr:$owner,
+    TypeAttr:$type,
+    I64Attr:$ordinal,
+    OptionalAttr<I64Attr>:$offset,
+    BoolAttr:$is_static,
+    BoolAttr:$is_weak,
+    OptionalAttr<StrAttr>:$debug_name
+  );
+  let assemblyFormat = [{
+    $sym_name `of` $owner `at` $ordinal (`offset` $offset^)?
+    `:` $type attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimClassMethodDeclOp : SimOp<"class.method", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "class method signature and deterministic dispatch slot";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    FlatSymbolRefAttr:$owner,
+    TypeAttr:$function_type,
+    OptionalAttr<I64Attr>:$slot,
+    OptionalAttr<I64Attr>:$signature_id,
+    OptionalAttr<I64Attr>:$interface_ordinal,
+    OptionalAttr<FlatSymbolRefAttr>:$implementation,
+    BoolAttr:$is_virtual,
+    BoolAttr:$is_pure,
+    BoolAttr:$is_static,
+    BoolAttr:$is_task,
+    BoolAttr:$is_final,
+    OptionalAttr<StrAttr>:$debug_name
+  );
+  let assemblyFormat = [{
+    $sym_name `of` $owner (`slot` $slot^)?
+    (`signature_id` $signature_id^)?
+    (`interface_ordinal` $interface_ordinal^)?
+    (`implemented_by` $implementation^)? `:` $function_type attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+// Constraint templates are declaration IR, not executable call-site plans.
+// Their isolated body is a pure integer dataflow graph whose only roots are
+// random.constraint_value operations and whose observable sinks are hard or
+// soft constraints. Runtime composition binds those roots to the active
+// object graph before translating the combined graph to the solver.
+def SimRandomConstraintTemplateOp
+    : SimOp<"random.constraint_template", [
+        DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+        Symbol, IsolatedFromAbove, NoTerminator, SingleBlock,
+        RecursiveMemoryEffects
+      ]> {
+  let summary = "reusable class-local random constraint dataflow";
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    FlatSymbolRefAttr:$owner,
+    OptionalAttr<SimRandomValueReferenceArrayAttr>:$references,
+    SimRandomConstraintBlockReferenceArrayAttr:$constraint_blocks
+  );
+  let regions = (region AnyRegion:$body);
+  let assemblyFormat = "$sym_name `of` $owner attr-dict-with-keyword $body";
+}
+
+def SimRandomConstraintValueOp : SimOp<"random.constraint_value", [Pure]> {
+  let summary = "read one symbolic random constraint template operand";
+  let arguments = (ins I32Attr:$index);
+  let results = (outs AnySignlessInteger:$result);
+  let assemblyFormat = "$index attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
+def SimRandomHardConstraintOp : SimOp<"random.hard_constraint", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "require one template predicate when its block is active";
+  let arguments = (ins I1:$predicate, I32Attr:$block);
+  let assemblyFormat = "$predicate `block` $block attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimRandomSoftConstraintOp : SimOp<"random.soft_constraint", [
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "prefer one template predicate with declaration-local order";
+  let arguments = (ins I1:$predicate, I32Attr:$block, I32Attr:$priority);
+  let assemblyFormat =
+      "$predicate `block` $block `priority` $priority attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimClassNullOp : SimOp<"class.null", [Pure, ConstantLike]> {
+  let summary = "typed null managed class handle";
+  let results = (outs SimClassHandleType:$result);
+  let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let hasFolder = 1;
+}
+
+def SimManagedNullOp : SimOp<"managed.null", [Pure, ConstantLike]> {
+  let summary = "typed null non-class managed handle";
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "attr-dict `:` qualified(type($result))";
+  let hasFolder = 1;
+  let hasVerifier = 1;
+}
+
+def SimManagedIsNullOp : SimOp<"managed.is_null", [Pure]> {
+  let summary = "test a managed handle for the canonical null value";
+  let arguments = (ins AnyType:$input);
+  let results = (outs I1:$result);
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SimBoxPackOp : SimOp<"box.pack", [Pure]> {
+  let summary = "erase a one-element typed dynamic array as a boxed value";
+  let arguments = (ins SimDynamicArrayType:$input);
+  let results = (outs SimBoxType:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+}
+
+def SimBoxBindTypeOp : SimOp<"box.bind_type", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "bind a boxed value's immutable exact source type descriptor";
+  let description = [{
+    The typed input is the one-element dynamic-array representation before
+    box.pack erases its element type. The descriptor's normalized value type
+    must match exactly. At runtime, the array must have one element and belong
+    to the executing context. A first binding is immutable; repeating the same
+    binding is permitted and a different binding is rejected. The operation
+    has an explicit heap write effect; box.pack remains a pure identity cast.
+  }];
+  let arguments = (ins SimDynamicArrayType:$input,
+                       FlatSymbolRefAttr:$descriptor);
+  let assemblyFormat =
+      "$input `to` $descriptor attr-dict `:` qualified(type($input))";
+}
+
+def SimBoxCastOp : SimOp<"box.cast", [Pure]> {
+  let summary = "recover a checked boxed dynamic-array representation";
+  let arguments = (ins SimBoxType:$input);
+  let results = (outs SimDynamicArrayType:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+}
+
+def SimBoxIsTypeOp : SimOp<"box.is_type", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "test the stable element type stored in a boxed value";
+  let arguments = (ins SimBoxType:$input, I64Attr:$type_id);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$input `type_id` $type_id attr-dict `:` type($input)";
+}
+
+def SimEventNullOp : SimOp<"event.null", [Pure, ConstantLike]> {
+  let summary = "null event handle";
+  let results = (outs SimEventType:$result);
+  let assemblyFormat = "attr-dict";
+  let hasFolder = 1;
+}
+
+def SimEventCreateOp : SimOp<"event.create", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "create a fresh named-event synchronization object";
+  let results = (outs SimEventType:$result);
+  let assemblyFormat = "attr-dict";
+}
+
+//===----------------------------------------------------------------------===//
+// Managed sequential containers
+//===----------------------------------------------------------------------===//
+
+def SimContainerSizeOp : SimOp<"container.size", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "return the live size of a dynamic array or queue";
+  let arguments = (ins AnyType:$container);
+  let results = (outs I64:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerCreateLikeOp : SimOp<"container.create_like", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "create a sequential container with matching typed metadata";
+  let arguments = (ins AnyType:$preferred, AnyType:$fallback, I64:$size);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerCreateOp : SimOp<"container.create", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemAlloc<SimHeapResource>,
+                   MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "create a sequential container from stable type metadata";
+  let arguments = (ins
+    I64:$size,
+    I64Attr:$type_id,
+    SimElementKindAttr:$element_kind,
+    SimElementFlagsAttr:$element_flags,
+    I64Attr:$value_size,
+    I64Attr:$alignment,
+    I64Attr:$bit_width,
+    DenseI64ArrayAttr:$trace_offsets,
+    DenseI32ArrayAttr:$trace_kinds,
+    SimContainerKindAttr:$container_kind,
+    I64Attr:$bound
+  );
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerCloneOp : SimOp<"container.clone", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "deep-clone a dynamic array or queue value";
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerImportFixedOp : SimOp<"container.import_fixed", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "bulk-copy one fixed unpacked array into a dynamic container";
+  let arguments = (ins AnyType:$container, SimUnpackedArrayType:$input,
+                        I64Attr:$element_span);
+  let hasVerifier = 1;
+}
+
+def SimContainerExportFixedOp : SimOp<"container.export_fixed", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "bulk-copy a dynamic container into one fixed unpacked array";
+  let arguments = (ins AnyType:$container, I64Attr:$element_span);
+  let results = (outs SimUnpackedArrayType:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerExportBitstreamOp : SimOp<"container.export_bitstream", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "pack leading dynamic-container elements into a fixed bit-stream";
+  let arguments = (ins AnyType:$container);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def SimRecursiveExportBitstreamOp : SimOp<"recursive.export_bitstream", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "pack one recursively dynamic source into a fixed bit-stream";
+  let arguments = (ins AnyType:$input, DenseI64ArrayAttr:$plan,
+                        OptionalAttr<UnitAttr>:$observe,
+                        OptionalAttr<UnitAttr>:$class_allow_hidden_root,
+                        OptionalAttr<I64Attr>:$class_site_id);
+  let results = (outs AnyType:$result, I1:$matched,
+                       SimManagedWatchType:$watch);
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimContainerSwapOp : SimOp<"container.swap", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "swap two sequential-container elements and their identities";
+  let arguments = (ins AnyType:$container, I64:$left, I64:$right);
+  let assemblyFormat = "$container `[` $left `,` $right `]` attr-dict `:` "
+                       "type($container)";
+  let hasVerifier = 1;
+}
+
+def SimContainerDeleteOp : SimOp<"container.delete", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "clear a dynamic array or queue";
+  let arguments = (ins AnyType:$container);
+  let hasVerifier = 1;
+}
+
+def SimQueueDeleteOp : SimOp<"queue.delete", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "delete one queue element by logical index";
+  let arguments = (ins SimQueueType:$queue, I64:$index);
+  let assemblyFormat = "$queue `[` $index `]` attr-dict `:` qualified(type($queue))";
+  let hasVerifier = 1;
+}
+
+def SimQueueInsertOp : SimOp<"queue.insert", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "insert one queue element at a logical index";
+  let arguments = (ins SimQueueType:$queue, I64:$index, AnyType:$value);
+  let assemblyFormat = "$value `into` $queue `[` $index `]` attr-dict `:` "
+                       "qualified(type($queue)) `,` type($value)";
+  let hasVerifier = 1;
+}
+
+// A mailbox is not a queue value: handles alias one shared FIFO, its bound is
+// a run-time constructor argument, and blocking methods participate in process
+// scheduling. Preserve that distinction in executable IR.
+def SimMailboxCreateOp : SimOp<"mailbox.create", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "create a typed bounded or unbounded mailbox";
+  let arguments = (ins
+    I64:$bound,
+    I64Attr:$type_id,
+    SimElementKindAttr:$element_kind,
+    SimElementFlagsAttr:$element_flags,
+    I64Attr:$value_size,
+    I64Attr:$alignment,
+    I64Attr:$bit_width,
+    DenseI64ArrayAttr:$trace_offsets,
+    DenseI32ArrayAttr:$trace_kinds
+  );
+  let results = (outs SimMailboxType:$result);
+  let hasVerifier = 1;
+}
+
+def SimMailboxNumOp : SimOp<"mailbox.num", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "return the current number of messages";
+  let arguments = (ins SimMailboxType:$mailbox);
+  let results = (outs I32:$result);
+}
+
+def SimMailboxTryPutOp : SimOp<"mailbox.try_put", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "attempt to append one message without blocking";
+  let arguments = (ins SimMailboxType:$mailbox, AnyType:$value);
+  let results = (outs I1:$success);
+  let hasVerifier = 1;
+}
+
+def SimMailboxTryPeekOp : SimOp<"mailbox.try_peek", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "attempt to copy the oldest message without removing it";
+  let arguments = (ins SimMailboxType:$mailbox);
+  let results = (outs I1:$success, AnyType:$value);
+  let hasVerifier = 1;
+}
+
+def SimMailboxTryGetOp : SimOp<"mailbox.try_get", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "attempt to remove and copy the oldest message";
+  let arguments = (ins SimMailboxType:$mailbox);
+  let results = (outs I1:$success, AnyType:$value);
+  let hasVerifier = 1;
+}
+
+def SimMailboxEqualOp : SimOp<"mailbox.equal", [Pure, Commutative,
+                                             SameTypeOperands]> {
+  let summary = "compare nullable mailbox identities with equivalent message types";
+  let arguments = (ins SimMailboxType:$lhs, SimMailboxType:$rhs);
+  let results = (outs I1:$equal);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` qualified(type($lhs))";
+  let hasFolder = 1;
+}
+
+def SimSemaphoreCreateOp : SimOp<"semaphore.create", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "create a semaphore with an initial signed key count";
+  let arguments = (ins I32:$keys);
+  let results = (outs SimSemaphoreType:$result);
+}
+
+def SimSemaphoreEqualOp : SimOp<"semaphore.equal", [Pure, Commutative]> {
+  let summary = "compare nullable shared semaphore bucket identities";
+  let arguments = (ins SimSemaphoreType:$lhs, SimSemaphoreType:$rhs);
+  let results = (outs I1:$equal);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
+}
+
+def SimSemaphorePutOp : SimOp<"semaphore.put", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "return keys to a semaphore";
+  let arguments = (ins SimSemaphoreType:$semaphore, I32:$keys);
+}
+
+def SimSemaphoreTryGetOp : SimOp<"semaphore.try_get", [
+    MemoryEffects<[
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemRead<SimSchedulerResource>
+    ]>
+  ]> {
+  let summary = "attempt to obtain semaphore keys without blocking";
+  let arguments = (ins SimSemaphoreType:$semaphore, I32:$keys);
+  let results = (outs I1:$success);
+}
+
+def SimRandomInitializationEnterOp : SimOp<"random.initialization_enter", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+                   MemRead<SimProcessResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "bind a lexical scope's initialization random stream";
+  let description = [{
+    Startup declarations and static process creation use the IEEE 18.14.1
+    initialization RNG of their module, interface, program, or package.
+    The nonzero scope ID identifies that elaborated owner. Enter resumes its
+    stream and returns an activation token; leave restores the prior binding.
+    Initialization bindings contain synchronous, zero-time work only.
+  }];
+  let arguments = (ins SimContextType:$context, I64Attr:$scope);
+  let results = (outs I64:$activation);
+}
+
+def SimRandomInitializationLeaveOp : SimOp<"random.initialization_leave", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+                   MemRead<SimProcessResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "restore the binding preceding initialization RNG entry";
+  let description = [{
+    A binding that encloses no operation with memory effects neither draws
+    from the stream nor creates a process or object, so it consumes no value
+    of the initialization RNG (IEEE 1800-2023 18.14.1) and the enter/leave
+    pair folds away.
+  }];
+  let arguments = (ins SimContextType:$context, I64:$activation);
+  let hasCanonicalizeMethod = 1;
+}
+
+def SimRandomNextOp : SimOp<"random.next", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
+  ]> {
+  let summary = "draw the next 64 bits from the active process stream";
+  let arguments = (ins SimContextType:$context);
+  let results = (outs I64:$result);
+}
+
+def SimLegacyRandomOp : SimOp<"random.legacy", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
+  ]> {
+  let summary = "draw the next IEEE Annex N $random value";
+  let description = [{
+    Draws from the context-global 32-bit legacy `$random` stream. This stream
+    is independent of the process-local `$urandom` state.
+  }];
+  let arguments = (ins SimContextType:$context);
+  let results = (outs I32:$result);
+}
+
+def SimRandomStateOp : SimOp<"random.state", [
+    MemoryEffects<[MemRead<SimRNGResource>]>
+  ]> {
+  let summary = "read the active random stream state";
+  let description = [{
+    Returns the two opaque words comprising the active process stream, or the
+    initialization stream when no logical process is active.
+  }];
+  let arguments = (ins SimContextType:$context);
+  let results = (outs I64:$state, I64:$increment);
+}
+
+def SimRandomSetStateOp : SimOp<"random.set_state", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
+  ]> {
+  let summary = "restore the active random stream state";
+  let arguments = (ins SimContextType:$context, I64:$state, I64:$increment);
+}
+
+def SimRandomBoundedOp : SimOp<"random.bounded", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
+  ]> {
+  let summary = "draw an unbiased active-process integer below a bound";
+  let arguments = (ins SimContextType:$context, I64:$bound);
+  let results = (outs I64:$result);
+}
+
+def SimRandomDistributionOp : SimOp<"random.distribution", [
+    Pure
+  ]> {
+  let summary = "draw a normative $dist_* variate from an explicit seed";
+  let description = [{
+    `distribution` selects the shape as an `talos_rt_distribution` value.
+    `seed` is the IEEE 1800 Annex N inout state. `next_seed` returns the state
+    after the draw.
+    `first` and `second` carry the distribution's parameters in source order;
+    distributions taking a single parameter ignore `second`.
+  }];
+  let arguments = (ins SimContextType:$context, SimRandomDistributionAttr:$distribution,
+                       I32:$seed, I32:$first, I32:$second);
+  let results = (outs I32:$result, I32:$next_seed);
+}
+
+def SimStochasticQueueOp : SimOp<"stochastic_queue", [
+    MemoryEffects<[MemRead<SimStochasticQueueResource>,
+                   MemWrite<SimStochasticQueueResource>,
+                   MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "execute one IEEE 1800-2017 20.16 queue operation";
+  let description = [{
+    `action` selects initialize, add, remove, full, or exam. The three inputs
+    are exact 32-bit four-state values. Two 64-bit four-state results carry
+    remove's job/information pair, full's Boolean result, or exam's statistic;
+    unused results are X. `unit_scale` is the number of design-precision ticks
+    per calling-scope time unit and governs time-statistic rounding. `status`
+    is the queue-operation status from Table 20-11, not a runtime ABI status.
+  }];
+  let arguments = (ins SimContextType:$context, SimStochasticQueueActionAttr:$action,
+                       SimLogicType:$id, SimLogicType:$first,
+                       SimLogicType:$second, I64Attr:$unit_scale);
+  let results = (outs SimLogicType:$primary, SimLogicType:$secondary,
+                      I32:$status);
+  let hasVerifier = 1;
+}
+
+def SimRandomCycleNextOp : SimOp<"random.cycle_next", [Pure]> {
+  let summary = "advance one keyed randc permutation";
+  let description = [{
+    Maps `position` through the keyed, width-specific permutation and returns
+    both the next wrapped position and the nonrepeating value. The operation is
+    pure; object-local key and position storage remains explicit in generated
+    simulation IR.
+  }];
+  let arguments = (ins I64:$key, I64:$position, I32Attr:$width);
+  let results = (outs I64:$next_position, I64:$value);
+  let hasVerifier = 1;
+}
+
+def SimRandomSolveOp : SimOp<"random.solve", [
+    MemoryEffects<[MemRead<SimRNGResource>]>
+  ]> {
+  let summary = "execute a compiler-produced residual random constraint plan";
+  let arguments = (ins SimContextType:$context, I64:$start,
+                       I64:$mutable_mask, I64:$constraint_mask,
+                       I64:$max_attempts, I64:$rng_state,
+                       I64:$rng_increment,
+                       Variadic<I64>:$captures,
+                       StrAttr:$program);
+  let results = (outs I64:$assignment, I1:$success, I64:$next_rng_state);
+  let assemblyFormat = [{
+    $context `from` $start `mutable` $mutable_mask `constraints`
+    $constraint_mask `limit` $max_attempts `state` $rng_state `increment`
+    $rng_increment `captures` `(` $captures `)`
+    $program attr-dict `:` type($context)
+  }];
+}
+
+def SimRandomSolveWideOp : SimOp<"random.solve_wide", [
+    MemoryEffects<[MemRead<SimRNGResource>]>,
+    AllTypesMatch<["start", "mutable_mask", "assignment"]>
+  ]> {
+  let summary = "execute an arbitrary-width residual random constraint plan";
+  let description = [{
+    This is the arbitrary-width counterpart of `random.solve`.  Packed values
+    stay as ordinary signless integers in Simulation IR; backend lowerings
+    expose them to the runtime through a canonical little-endian array of
+    64-bit words.  The flat-word ABI contains no host-only integer or pointer
+    representation and is suitable for WebAssembly linear memory.
+  }];
+  let arguments = (ins SimContextType:$context, AnySignlessInteger:$start,
+                       AnySignlessInteger:$mutable_mask,
+                       I64:$constraint_mask, I64:$max_attempts,
+                       I64:$rng_state, I64:$rng_increment,
+                       Variadic<AnySignlessInteger>:$captures,
+                       StrAttr:$program);
+  let results = (outs AnySignlessInteger:$assignment, I1:$success,
+                       I64:$next_rng_state);
+  let hasVerifier = 1;
+}
+
+def SimRandomCycleSampleOp : SimOp<"random.cycle_sample", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimRNGResource>, MemRead<SimHeapResource>,
+                   MemWrite<SimHeapResource>]>,
+    AllTypesMatch<["start", "mutable_mask", "assignment"]>
+  ]> {
+  let summary = "sample one cyclic field from its exact legal domain";
+  let description = [{
+    Specializes a compiler Z3 plan, projects away later random fields, and
+    permutes dense legal ranks for the indicated at-most-32-bit field. Only
+    that field changes in `assignment`. `domain` is an opaque managed string
+    containing the exact canonical projected relation. A changed relation
+    restarts the cycle. Returned histories and RNG are tentative; the caller
+    publishes them after the entire randomization succeeds. Soft preferences
+    and explicit ordering of ordinary fields belong to the subsequent solve.
+  }];
+  let arguments = (ins SimContextType:$context, AnySignlessInteger:$start,
+                       AnySignlessInteger:$mutable_mask,
+                       I64:$constraint_mask, I64:$rng_state, I64:$rng_increment,
+                       I64:$key, I64:$position, SimStringType:$domain,
+                       I32:$field_offset, I32:$field_width,
+                       Variadic<AnySignlessInteger>:$captures, StrAttr:$program);
+  let results = (outs AnySignlessInteger:$assignment, I1:$success,
+                       I64:$next_rng_state, I64:$next_key, I64:$next_position,
+                       SimStringType:$next_domain);
+  let hasVerifier = 1;
+}
+
+def SimRandomRealToRankOp : SimOp<"random.real_to_rank", [Pure]> {
+  let summary = "encode a finite IEEE value as its signed numeric coordinate";
+  let description = [{
+    Binary32 values use 279 coordinate bits and binary64 values use 2100 bits.
+    Finite values retain their exact canonical coordinate and both signed zero
+    encodings. A NaN or infinity produces a zero coordinate and false `finite`,
+    allowing source lowering to retain a separate frozen IEEE payload. This
+    operation does not consume any random state.
+  }];
+  let arguments = (ins AnyFloat:$value);
+  let results = (outs AnySignlessInteger:$rank, I1:$finite);
+  let assemblyFormat = [{ $value attr-dict `:` type($value) `->` type($rank) }];
+  let hasVerifier = 1;
+}
+
+def SimRandomRealFromRankOp : SimOp<"random.real_from_rank", [Pure]> {
+  let summary = "decode a finite signed numeric coordinate to an IEEE value";
+  let description = [{
+    The integer operand has 279 bits for binary32 or 2100 bits for binary64.
+    It must be within the finite numeric domain. Decoding rounds towards zero
+    at the format's spacing and retains both zero encodings. The numeric leaf
+    is shared by native and bytecode execution and consumes no random state.
+  }];
+  let arguments = (ins AnySignlessInteger:$rank);
+  let results = (outs AnyFloat:$value);
+  let assemblyFormat = [{ $rank attr-dict `:` type($rank) `->` type($value) }];
+  let hasVerifier = 1;
+}
+
+def SimRandomSeedOp : SimOp<"random.seed", [
+    MemoryEffects<[MemWrite<SimRNGResource>]>
+  ]> {
+  let summary = "seed the active process stream";
+  let arguments = (ins SimContextType:$context, I64:$seed);
+}
+
+def SimContainerReadOp : SimOp<"container.read", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "typed read from a dynamic array or queue";
+  let arguments = (ins AnyType:$container, I64:$index);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def SimContainerWriteOp : SimOp<"container.write", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "typed write to a dynamic array or queue";
+  let arguments = (ins AnyType:$container, I64:$index, AnyType:$value);
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Managed associative arrays
+//===----------------------------------------------------------------------===//
+
+def SimAssocCreateOp : SimOp<"assoc.create", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "create an empty typed associative array";
+  let arguments = (ins
+    I64Attr:$type_id,
+    SimElementKindAttr:$element_kind,
+    SimElementFlagsAttr:$element_flags,
+    I64Attr:$value_size,
+    I64Attr:$alignment,
+    I64Attr:$bit_width,
+    DenseI64ArrayAttr:$trace_offsets,
+    DenseI32ArrayAttr:$trace_kinds,
+    SimAssocKeyKindAttr:$key_kind,
+    I64Attr:$key_width);
+  let results = (outs SimAssocArrayType:$result);
+  let hasVerifier = 1;
+}
+
+def SimAssocReadOp : SimOp<"assoc.read", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "read an associative entry or its installed default";
+  let arguments = (ins SimAssocArrayType:$array, AnyType:$key);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def SimAssocWriteOp : SimOp<"assoc.write", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "insert or replace an explicit associative entry";
+  let arguments = (ins SimAssocArrayType:$array, AnyType:$key, AnyType:$value);
+  let hasVerifier = 1;
+}
+
+def SimAssocExistsOp : SimOp<"assoc.exists", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "test whether an explicit associative entry exists";
+  let arguments = (ins SimAssocArrayType:$array, AnyType:$key);
+  let results = (outs I1:$result);
+  let hasVerifier = 1;
+}
+
+def SimAssocDeleteOp : SimOp<"assoc.delete", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "delete one associative key";
+  let arguments = (ins SimAssocArrayType:$array, AnyType:$key);
+  let hasVerifier = 1;
+}
+
+def SimAssocSetDefaultOp : SimOp<"assoc.set_default", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "install a hidden assignment-pattern default";
+  let arguments = (ins SimAssocArrayType:$array, AnyType:$value);
+  let hasVerifier = 1;
+}
+
+def SimAssocTraverseOp : SimOp<"assoc.traverse", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "perform ordered first, last, next, or previous traversal";
+  let arguments = (ins SimAssocArrayType:$array, AnyType:$key,
+                       SimAssocTraversalDirectionAttr:$direction, BoolAttr:$endpoint);
+  let results = (outs AnyType:$result_key, I1:$success);
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Managed strings
+//===----------------------------------------------------------------------===//
+
+class SimStringAllocatingOp<string mnemonic, dag stringArgs>
+    : SimOp<mnemonic, [
+        SimAllocatesManagedStorage,
+        MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let arguments = stringArgs;
+  let results = (outs SimStringType:$result);
+}
+
+def SimStringLiteralOp
+    : SimStringAllocatingOp<"string.literal", (ins StrAttr:$value)> {
+  let summary = "materialize an immutable managed byte string";
+  let assemblyFormat = "$value attr-dict";
+}
+
+def SimStringFromPackedOp
+    : SimStringAllocatingOp<"string.from_packed", (ins AnyType:$input)> {
+  let summary = "convert a packed value to a managed byte string";
+  let hasVerifier = 1;
+}
+
+def SimStringToPackedOp : SimOp<"string.to_packed", [Pure]> {
+  let summary = "convert a managed byte string to a two-state packed value";
+  let arguments = (ins SimStringType:$input);
+  let results = (outs AnyInteger:$result);
+  let hasCanonicalizer = 1;
+}
+
+def SimStringToPackedExactOp : SimOp<"string.to_packed_exact", [Pure]> {
+  let summary = "pack a managed byte string and report an exact width match";
+  let arguments = (ins SimStringType:$input);
+  let results = (outs AnyInteger:$result, I1:$matched);
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimStringConcatOp
+    : SimStringAllocatingOp<"string.concat",
+                            (ins Variadic<SimStringType>:$inputs)> {
+  let summary = "concatenate managed byte strings";
+  let hasVerifier = 1;
+}
+
+def SimStringRepeatOp
+    : SimStringAllocatingOp<"string.repeat",
+                            (ins SimStringType:$input, I64:$count)> {
+  let summary = "repeat a managed byte string a runtime number of times";
+}
+
+def SimStringLengthOp : SimOp<"string.length", [Pure]> {
+  let summary = "return the byte length of a managed string";
+  let arguments = (ins SimStringType:$input);
+  let results = (outs I64:$result);
+  let hasCanonicalizer = 1;
+}
+
+def SimStringGetcOp : SimOp<"string.getc", [Pure]> {
+  let summary = "read one byte, returning zero for an invalid index";
+  let arguments = (ins SimStringType:$input, I64:$index);
+  let results = (outs I8:$result);
+  let hasCanonicalizer = 1;
+}
+
+def SimStringPutcOp
+    : SimStringAllocatingOp<"string.putc",
+                            (ins SimStringType:$input, I64:$index,
+                                 I8:$character)> {
+  let summary = "return a string with one byte conditionally updated";
+}
+
+def SimStringSubstrOp
+    : SimStringAllocatingOp<"string.substr",
+                            (ins SimStringType:$input, I64:$left, I64:$right)> {
+  let summary = "return an inclusive byte substring";
+}
+
+def SimStringCompareOp : SimOp<"string.compare", [Pure]> {
+  let summary = "compare two managed strings lexicographically";
+  let arguments = (ins SimStringType:$lhs, SimStringType:$rhs,
+                       BoolAttr:$case_insensitive);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{
+    $lhs `,` $rhs `case_insensitive` `=` $case_insensitive attr-dict
+  }];
+  let hasCanonicalizer = 1;
+}
+
+def SimStringCaseConvertOp
+    : SimStringAllocatingOp<"string.case_convert",
+                            (ins SimStringType:$input, BoolAttr:$to_upper)> {
+  let summary = "apply ASCII upper- or lower-case conversion";
+  let assemblyFormat = [{
+    $input `to_upper` `=` $to_upper attr-dict
+  }];
+}
+
+def SimStringScanFieldOp : SimOp<"string.scan_field", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "take one $sscanf conversion's field out of a string";
+  let description = [{
+    `prefix` is the format text before the conversion: whitespace in it
+    matches any run of input whitespace including none, and every other
+    character must match exactly. A zero `width` is unbounded; every other
+    value limits the field to that many input characters. `ok` is zero when
+    the prefix did not match or an ordinary field was empty, and `next_cursor`
+    then repeats `cursor`. The `%m` control conversion succeeds after matching
+    the prefix and consumes no field bytes; lowering supplies its hierarchy.
+  }];
+  let arguments = (ins SimStringType:$input, I32:$cursor, StrAttr:$prefix,
+                       I32Attr:$specifier, I64Attr:$width);
+  let results = (outs SimStringType:$field, I32:$next_cursor, I32:$ok);
+}
+
+def SimScanDynamicValidateOp : SimOp<"scan_dynamic_validate", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "preflight one destination of a dynamic scanf format";
+  let description = [{
+    This operation never consumes input. Lowering threads `plan_cursor`
+    through every statically typed destination and one `finalize` operation,
+    ensuring the complete cached format is valid before scanning begins.
+    `file` selects `$fscanf` rather than `$sscanf` diagnostics.
+  }];
+  let arguments = (ins SimStringType:$format, I32:$plan_cursor,
+                       BoolAttr:$file, BoolAttr:$finalize,
+                       I64Attr:$allowed_specifiers);
+  let results = (outs I32:$next_plan_cursor);
+}
+
+def SimStringScanDynamicOp : SimOp<"string.scan_dynamic", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "interpret one destination of a dynamic $sscanf format";
+  let description = [{
+    The runtime caches the parsed `format`, consumes preceding suppressed
+    conversions, and returns the next assigned field and its compact
+    `conversion_kind`.
+    `plan_cursor` indexes the immutable cached plan. `finalize` consumes only
+    trailing suppression and literal text. `allowed_specifiers` has one bit
+    per lower-case letter and provides a targeted runtime type check.
+  }];
+  let arguments = (ins SimStringType:$input, I32:$cursor,
+                       SimStringType:$format, I32:$plan_cursor, I32:$enabled,
+                       BoolAttr:$finalize, I64Attr:$allowed_specifiers,
+                       I64Attr:$raw_two_state_bytes,
+                       I64Attr:$raw_four_state_bytes);
+  let results = (outs SimStringType:$field, I32:$next_cursor,
+                      I32:$next_plan_cursor, I32:$conversion_kind, I32:$ok);
+}
+
+def SimStringScanRawOp : SimOp<"string.scan_raw", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "scan one destination-sized %u or %z raw field";
+  let arguments = (ins SimStringType:$input, I32:$cursor, StrAttr:$prefix,
+                       BoolAttr:$four_state, I64Attr:$max_width);
+  let results = (outs SimLogicType:$data, I32:$next_cursor, I32:$ok);
+}
+
+def SimStringSkipRawOp : SimOp<"string.skip_raw", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "skip an explicitly sized suppressed %u or %z raw field";
+  let arguments = (ins SimStringType:$input, I32:$cursor, StrAttr:$prefix,
+                       I64Attr:$byte_count);
+  let results = (outs I32:$next_cursor, I32:$ok);
+}
+
+def SimStringParseIntegerOp : SimOp<"string.parse_integer", [Pure]> {
+  let summary = "parse a managed string using a fixed integer radix";
+  let arguments = (ins SimStringType:$input, SimRadixAttr:$radix);
+  let results = (outs I64:$result);
+  let assemblyFormat = "$input `radix` `=` $radix attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimStringParseLogicOp : SimOp<"string.parse_logic", [Pure]> {
+  let summary = "parse a managed string into four-state integral data";
+  let description = [{
+    Parses at the result's exact width while preserving x, z, and ? digits in
+    separate value and unknown planes. Power-of-two radices place digits
+    directly; decimal uses bounded word-wise multiply and accumulate.
+  }];
+  let arguments = (ins SimStringType:$input, SimRadixAttr:$radix);
+  let results = (outs SimLogicType:$result);
+  let assemblyFormat =
+      "$input `radix` `=` $radix attr-dict `:` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimStringParseRealOp : SimOp<"string.parse_real", [Pure]> {
+  let summary = "parse a locale-independent real from a managed string";
+  let arguments = (ins SimStringType:$input);
+  let results = (outs F64:$result);
+}
+
+def SimStringParseRealConstantOp
+    : SimOp<"string.parse_real_constant", [Pure]> {
+  let summary = "convert the real-constant prefix of a managed string";
+  let description = [{
+    Implements `str.atoreal()` (IEEE 1800-2023 6.16.10): converts the longest
+    prefix of the string that is real-constant syntax (5.7.2), and yields zero
+    when the string starts with no digit. Unlike `string.parse_real`, the
+    scan accepts no white space, sign or bare decimal point.
+  }];
+  let arguments = (ins SimStringType:$input);
+  let results = (outs F64:$result);
+}
+
+def SimStringFormatIntegerOp
+    : SimStringAllocatingOp<"string.format_integer",
+                            (ins I64:$input, SimRadixAttr:$radix,
+                                 BoolAttr:$is_signed)> {
+  let summary = "format an integer into a managed string";
+  let assemblyFormat = [{
+    $input `radix` `=` $radix `signed` `=` $is_signed attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimStringFormatRealOp
+    : SimStringAllocatingOp<"string.format_real", (ins F64:$input)> {
+  let summary = "format a real into a managed string";
+}
+
+def SimStringOutputFormatOp : SimOp<"string.output_format", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+                   MemRead<SimIOResource>]>
+  ]> {
+  let summary = "format a SystemVerilog output list into a managed string";
+  let description = [{
+    This is the result-producing counterpart of `display`: it applies the
+    `$write` output-list rules without writing a descriptor. `item_flags` and
+    the call-site formatting environment have the same representation and
+    semantics as `display`. Bit 5 marks a literal or managed string as the
+    designated format expression used by `$sformat` and `$sformatf`.
+  }];
+  let arguments = (ins SimContextType:$context, Variadic<AnyType>:$items,
+                       SimRadixAttr:$default_radix,
+                       DenseI32ArrayAttr:$item_flags,
+                       OptionalAttr<StrAttr>:$scope,
+                       OptionalAttr<StrAttr>:$library_cell,
+                       OptionalAttr<I64Attr>:$time_multiplier,
+                       OptionalAttr<I32Attr>:$time_precision);
+  let results = (outs SimStringType:$result);
+  let assemblyFormat = [{$context `(` $items `)`
+    `radix` `=` $default_radix `flags` `=` $item_flags attr-dict
+    `:` type($items)}];
+  let hasVerifier = 1;
+}
+
+def SimClassAllocOp : SimOp<"class.alloc", [
+    SimAllocatesManagedStorage,
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "allocate zero-initialized storage for a concrete class";
+  let arguments = (ins SimContextType:$context);
+  let results = (outs SimClassHandleType:$result);
+  let assemblyFormat =
+      "$context attr-dict `:` type($context) `->` qualified(type($result))";
+}
+
+def SimClassCopyOp : SimOp<"class.copy", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "allocate a dynamic-type SystemVerilog shallow class copy";
+  let arguments = (ins SimContextType:$context, SimClassHandleType:$source);
+  let results = (outs SimClassHandleType:$result);
+  let assemblyFormat = [{
+    $context `,` $source attr-dict `:`
+    type($context) `,` qualified(type($source)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimClassObjectType : AnyTypeOf<[
+  SimClassHandleType, SimMailboxType, SimSemaphoreType]>;
+
+def SimClassBuiltinUpcastOp : SimOp<"class.builtin_upcast", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "preserve object identity through a built-in base view";
+  let description = [{
+    Converts a user class handle to its inherited semaphore or mailbox type.
+    The class declaration's builtin_base field supplies the exact base type.
+    The result retains the outer object identity, including null; builtin
+    operations resolve the private payload through its class descriptor.
+    This operation never reads or extracts the embedded payload field.
+  }];
+  let arguments = (ins SimClassHandleType:$object);
+  let results = (outs AnyTypeOf<[SimMailboxType, SimSemaphoreType]>:$result);
+  let assemblyFormat = [{
+    $object attr-dict `:` qualified(type($object))
+    `to` qualified(type($result))
+  }];
+}
+
+def SimClassIsInstanceOp : SimOp<"class.is_instance", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "test a dynamic class against a class or interface";
+  let arguments = (ins SimClassObjectType:$object,
+                       FlatSymbolRefAttr:$target);
+  let results = (outs I1:$result);
+  let assemblyFormat =
+      "$object `is` $target attr-dict `:` qualified(type($object))";
+}
+
+def SimClassIdOp : SimOp<"class.id", [Pure]> {
+  let summary = "return the stable identity of a managed object";
+  let description = [{
+    Returns zero for a null handle and a nonzero identity that is stable for
+    the lifetime of every allocated object. This implements
+    `weak_reference::get_id` without exposing a native address.
+  }];
+  let arguments = (ins SimClassHandleType:$object);
+  let results = (outs I64:$result);
+  let assemblyFormat =
+      "$object attr-dict `:` qualified(type($object))";
+}
+
+def SimClassCastOp : SimOp<"class.cast", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "checked class or interface cast";
+  let arguments = (ins SimClassObjectType:$object);
+  let results = (outs SimClassHandleType:$result);
+  let assemblyFormat = [{
+    $object attr-dict `:` qualified(type($object))
+    `to` qualified(type($result))
+  }];
+}
+
+def SimClassFieldRefOp : SimOp<"class.field_ref", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "managed reference to one instance property";
+  let arguments = (ins SimClassHandleType:$object,
+                       FlatSymbolRefAttr:$field);
+  let results = (outs SimManagedRefType:$result);
+  let assemblyFormat = [{
+    $object `[` $field `]` attr-dict `:` qualified(type($object))
+    `->` qualified(type($result))
+  }];
+}
+
+def SimManagedLoadOp : SimOp<"managed.load", [
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "race-free load through a managed field reference";
+  let arguments = (ins SimManagedRefType:$reference);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $reference attr-dict `:` qualified(type($reference))
+    `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimManagedStoreOp : SimOp<"managed.store", [
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "race-free store through a managed field reference";
+  let arguments = (ins AnyType:$value, SimManagedRefType:$reference);
+  let assemblyFormat = [{
+    $value `to` $reference attr-dict `:`
+    type($value) `,` qualified(type($reference))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimManagedBitsDynStoreOp : SimOp<"managed.bits_dyn_store", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "atomically replace a narrow slice of a wide packed field";
+  let description = [{
+    This native-lowering operation preserves `bits.dyn_insert` clipping and
+    out-of-range semantics without materializing the complete packed field as
+    one LLVM integer. It is formed only after any bytecode fallback has been
+    frozen.
+  }];
+  let arguments = (ins AnyInteger:$replacement, SimManagedRefType:$reference,
+                        AnyInteger:$low_bit);
+  let assemblyFormat = [{
+    $replacement `into` $reference `at` $low_bit attr-dict `:`
+    type($replacement) `,` qualified(type($reference)) `,` type($low_bit)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimManagedWatchOp : SimOp<"managed.watch", [
+    MemoryEffects<[MemRead<SimHeapResource>, MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "materialize a precise managed mutation dependency";
+  let description = [{
+    A field watch is formed from a managed reference and changes only when the
+    selected field value changes. A container watch is formed from a dynamic
+    array, queue, or associative array and changes whenever the container is
+    mutated. The stable token is scheduler-owned and contains no managed
+    pointer.
+  }];
+  let arguments = (ins AnyType:$input, SimManagedWatchKind:$kind);
+  let results = (outs SimManagedWatchType:$result);
+  let assemblyFormat = [{$kind $input attr-dict `:` type($input)}];
+  let hasVerifier = 1;
+}
+
+def SimManagedWatchNullOp
+    : SimOp<"managed.watch.null", [Pure, ConstantLike]> {
+  let summary = "null managed mutation dependency";
+  let results = (outs SimManagedWatchType:$result);
+  let assemblyFormat = "attr-dict";
+  let hasFolder = 1;
+}
+
+def SimManagedNBAEnqueueOp : SimOp<"managed.nba.enqueue", [
+    MemoryEffects<[
+      MemWrite<SimHeapResource>, MemWrite<SimSchedulerResource>
+    ]>
+  ]> {
+  let summary = "schedule a nonblocking managed-field update";
+  let description = [{
+    Captures both the owning object and any managed value as precise heap roots
+    until the scheduler commits the update. The destination is revalidated and
+    written atomically with respect to other managed-field accesses.
+  }];
+  let arguments = (ins AnyType:$value, SimManagedRefType:$destination,
+                       Optional<SimTimeType>:$delay);
+  let assemblyFormat = [{$value `to` $destination (`after` $delay^)? attr-dict
+    `:` functional-type(operands, results)}];
+  let hasVerifier = 1;
+}
+
+def SimManagedNBAEnqueueMaskedOp : SimOp<"managed.nba.enqueue_masked", [
+    MemoryEffects<[
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemWrite<SimSchedulerResource>
+    ]>
+  ]> {
+  let summary = "schedule a nonblocking partial update of class-backed storage";
+  let description = [{
+    IEEE 1800-2023 10.4.2: a nonblocking assignment to a fixed selection of a
+    class property, or of an element of an unpacked-array property reached
+    through a reference path. `mask` has the destination's type; the storage
+    bits under its known bits take their values (and unknown bits) from
+    `value` when the update commits, and the others keep the destination's
+    value at that time, so other updates in the slot survive.
+  }];
+  let arguments = (ins AnyType:$value,
+                       AnyTypeOf<[SimManagedRefType, SimReferencePathType]>:
+                         $destination,
+                       AnyType:$mask, Optional<SimTimeType>:$delay);
+  let assemblyFormat = [{$value `to` $destination `mask` $mask
+    (`after` $delay^)? attr-dict `:` functional-type(operands, results)}];
+  let hasVerifier = 1;
+}
+
+def SimReferencePathNBAEnqueueOp : SimOp<"reference_path.nba.enqueue", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemWrite<SimSchedulerResource>
+    ]>
+  ]> {
+  let summary = "schedule a nonblocking dynamic-container element update";
+  let description = [{
+    Captures a managed index path and the right-hand-side value. The scheduler
+    roots the path until commit, then resolves the captured container and index;
+    invalid indices remain no-ops.
+  }];
+  let arguments = (ins AnyType:$value, SimReferencePathType:$destination,
+                       Optional<SimTimeType>:$delay);
+  let assemblyFormat = [{$value `to` $destination (`after` $delay^)? attr-dict
+    `:` functional-type(operands, results)}];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupOptionReferenceOp
+    : SimOp<"covergroup.option_reference", [
+        SimAllocatesManagedStorage,
+        MemoryEffects<[MemRead<SimCoverageResource>, MemRead<SimHeapResource>,
+                       MemAlloc<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "capture an instance option for a deferred owner-local write";
+  let description = [{
+    Captures the typed receiver, stable item selector and either a positioned
+    integral mask or a string-character index. Integer paths carry i64 patch
+    bits; whole strings and character paths carry string and i8 respectively.
+    The current field is read only when a masked/character update commits.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle, I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option,
+                       I64:$mask, I64:$index, BoolAttr:$character);
+  let results = (outs SimReferencePathType:$result);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item `option` $option `mask` $mask
+    `index` $index `character` $character attr-dict `:`
+    type($context) `,` qualified(type($handle)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupTypeOptionReferenceOp
+    : SimOp<"covergroup.type_option_reference", [
+        SimAllocatesManagedStorage,
+        MemoryEffects<[MemRead<SimCoverageResource>, MemRead<SimStorageResource>,
+                       MemRead<SimHeapResource>, MemAlloc<SimHeapResource>,
+                       MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "capture a static option and its storage for a deferred write";
+  let description = [{
+    Retains the ordinary static field reference as well as the stable type and
+    item identities. Commit publishes the converted option and updates its
+    ordinary storage, preserving numeric masks and string-character writes.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimArgumentRefType:$reference, I64Attr:$typeId,
+                       I64Attr:$item, SimCovergroupInstanceOptionKind:$option,
+                       I64:$mask, I64:$index, BoolAttr:$character);
+  let results = (outs SimReferencePathType:$result);
+  let assemblyFormat = [{
+    $context `,` $reference `type` $typeId `item` $item `option` $option
+    `mask` $mask `index` $index `character` $character attr-dict `:`
+    type($context) `,` qualified(type($reference)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimArgumentRefFromRefOp : SimOp<"argument_ref.from_ref", [Pure]> {
+  let summary = "erase an ordinary reference into an exact-alias formal";
+  let arguments = (ins SimRefType:$input);
+  let results = (outs SimArgumentRefType:$result);
+  let assemblyFormat =
+      "$input attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimArgumentRefFromManagedOp
+    : SimOp<"argument_ref.from_managed", [Pure]> {
+  let summary = "erase a managed property reference into an exact-alias formal";
+  let arguments = (ins SimManagedRefType:$input);
+  let results = (outs SimArgumentRefType:$result);
+  let assemblyFormat =
+      "$input attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimArgumentRefRetypeOp : SimOp<"argument_ref.retype", [Pure]> {
+  let summary = "view an exact alias through an equivalent packed type";
+  let description = [{
+    Preserves the opaque alias representation while changing only the declared
+    packed element shape. The verifier requires identical packed width and
+    state domain; source signedness equivalence was checked before normalized
+    simulation types were formed.
+  }];
+  let arguments = (ins SimArgumentRefType:$input);
+  let results = (outs SimArgumentRefType:$result);
+  let assemblyFormat =
+      "$input attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimReferencePathIndexOp : SimOp<"reference_path.index", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemAlloc<SimHeapResource>,
+                   MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "capture an escaping dynamic-array or queue element lvalue";
+  let arguments = (ins SimContextType:$context, AnyType:$container, I64:$index,
+                       Optional<SimArgumentRefType>:$owner_reference);
+  let results = (outs SimReferencePathType:$result);
+  let assemblyFormat =
+      "$context `,` $container `[` $index `]` (`watching` $owner_reference^)? attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimReferencePathAssocOp : SimOp<"reference_path.assoc", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "capture an escaping associative-array element lvalue";
+  let arguments = (ins SimContextType:$context, SimAssocArrayType:$array,
+                       AnyType:$key, SimArgumentRefType:$owner_reference);
+  let results = (outs SimReferencePathType:$result);
+  let assemblyFormat =
+      "$context `,` $array `[` $key `]` `watching` $owner_reference attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimReferencePathStringCharacterOp
+    : SimOp<"reference_path.string_character", [
+        SimAllocatesManagedStorage,
+        MemoryEffects<[MemRead<SimStorageResource>,
+                       MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "capture a string-character lvalue for deferred update";
+  let arguments = (ins SimContextType:$context, SimStringType:$string,
+                       I64:$index, SimArgumentRefType:$owner_reference);
+  let results = (outs SimReferencePathType:$result);
+  let assemblyFormat =
+      "$context `,` $string `[` $index `]` `watching` $owner_reference attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimReferencePathAggregateElementOp
+    : SimOp<"reference_path.aggregate_element", [
+        SimAllocatesManagedStorage,
+        MemoryEffects<[MemRead<SimStorageResource>,
+                       MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "capture a fixed-aggregate element lvalue for deferred update";
+  let arguments = (ins
+    SimContextType:$context,
+    SimArgumentRefType:$owner_reference,
+    I64:$index,
+    I64Attr:$left,
+    I64Attr:$right,
+    I64Attr:$element_span,
+    I64Attr:$type_id,
+    SimElementKindAttr:$element_kind,
+    SimElementFlagsAttr:$element_flags,
+    I64Attr:$value_size,
+    I64Attr:$alignment,
+    I64Attr:$bit_width,
+    DenseI64ArrayAttr:$trace_offsets,
+    DenseI32ArrayAttr:$trace_kinds
+  );
+  let results = (outs SimReferencePathType:$result);
+  let hasVerifier = 1;
+}
+
+def SimReferencePathAggregateSliceOp
+    : SimOp<"reference_path.aggregate_slice", [
+        SimAllocatesManagedStorage,
+        MemoryEffects<[MemRead<SimStorageResource>,
+                       MemRead<SimHeapResource>, MemAlloc<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "retain a typed bit window within a fixed aggregate reference";
+  let arguments = (ins
+    SimContextType:$context,
+    SimArgumentRefType:$owner_reference,
+    I64Attr:$bit_offset,
+    I64Attr:$owner_bit_width,
+    I64Attr:$owner_plane_size,
+    BoolAttr:$owner_four_state,
+    I64Attr:$type_id,
+    SimElementKindAttr:$element_kind,
+    SimElementFlagsAttr:$element_flags,
+    I64Attr:$value_size,
+    I64Attr:$alignment,
+    I64Attr:$bit_width,
+    DenseI64ArrayAttr:$trace_offsets,
+    DenseI32ArrayAttr:$trace_kinds
+  );
+  let results = (outs SimReferencePathType:$result);
+  let hasVerifier = 1;
+}
+
+def SimArgumentRefFromPathOp
+    : SimOp<"argument_ref.from_path", [Pure]> {
+  let summary = "erase a managed reference path into an exact-alias formal";
+  let arguments = (ins SimReferencePathType:$input);
+  let results = (outs SimArgumentRefType:$result);
+  let assemblyFormat =
+      "$input attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimArgumentRefLoadOp : SimOp<"argument_ref.load", [
+    MemoryEffects<[
+      MemRead<SimStorageResource>, MemRead<SimHeapResource>
+    ]>
+  ]> {
+  let summary = "load through an exact-alias subroutine reference";
+  let arguments = (ins SimArgumentRefType:$reference);
+  let results = (outs AnyType:$result);
+  let assemblyFormat =
+      "$reference attr-dict `:` qualified(type($reference)) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+def SimArgumentRefStoreOp : SimOp<"argument_ref.store", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[
+      MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>
+    ]>
+  ]> {
+  let summary = "store through an exact-alias subroutine reference";
+  let arguments = (ins AnyType:$value, SimArgumentRefType:$reference);
+  let assemblyFormat =
+      "$value `to` $reference attr-dict `:` type($value) `,` qualified(type($reference))";
+  let hasVerifier = 1;
+}
+
+def SimClassDirectCallOp : SimOp<"class.direct_call", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[
+      MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+      MemRead<SimNetResource>, MemWrite<SimNetResource>,
+      MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+      MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemRead<SimIOResource>, MemWrite<SimIOResource>,
+      MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+      MemRead<SimExternalResource>, MemWrite<SimExternalResource>
+    ]>
+  ]> {
+  let summary = "direct instance method call with explicit receiver";
+  let arguments = (ins FlatSymbolRefAttr:$callee,
+                       SimClassHandleType:$receiver,
+                       Variadic<AnyType>:$arguments);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $callee $receiver `(` $arguments `)` attr-dict `:`
+    functional-type(operands, results)
+  }];
+}
+
+// Preparation-only call-graph edges. This marker is consumed immediately
+// after the first symbol-DCE pass and never reaches executable simulation IR.
+def SimClassDispatchTargetsOp : SimOp<"class.dispatch_targets", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>, Pure
+  ]> {
+  let summary = "retain compatible closed-world virtual dispatch targets";
+  let arguments = (ins SymbolRefArrayAttr:$targets);
+  let assemblyFormat = "$targets attr-dict";
+}
+
+def SimClassVirtualCallOp : SimOp<"class.virtual_call", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[
+      MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+      MemRead<SimNetResource>, MemWrite<SimNetResource>,
+      MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+      MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemRead<SimIOResource>, MemWrite<SimIOResource>,
+      MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+      MemRead<SimExternalResource>, MemWrite<SimExternalResource>
+    ]>
+  ]> {
+  let summary = "descriptor-table class or interface dispatch";
+  let arguments = (ins SimClassHandleType:$receiver,
+                       FlatSymbolRefAttr:$method,
+                       I64Attr:$slot,
+                       I64Attr:$signature_id,
+                       Variadic<AnyType>:$arguments);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $receiver `[` $method `]` `slot` $slot `signature_id` $signature_id
+    `(` $arguments `)` attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def SimWeakCreateOp : SimOp<"weak.create", [
+    SimAllocatesManagedStorage,
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "create a managed weak_reference wrapper";
+  let arguments = (ins SimContextType:$context,
+                       SimClassHandleType:$referent);
+  let results = (outs SimClassHandleType:$result);
+  let assemblyFormat = [{
+    $context `,` $referent attr-dict `:`
+    type($context) `,` qualified(type($referent))
+    `->` qualified(type($result))
+  }];
+}
+
+def SimWeakGetOp : SimOp<"weak.get", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "promote a reachable weak referent to a strong handle";
+  let arguments = (ins SimClassHandleType:$weak);
+  let results = (outs SimClassHandleType:$result);
+  let assemblyFormat = [{
+    $weak attr-dict `:` qualified(type($weak))
+    `->` qualified(type($result))
+  }];
+}
+
+def SimWeakClearOp : SimOp<"weak.clear", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "clear a weak_reference referent";
+  let arguments = (ins SimClassHandleType:$weak);
+  let assemblyFormat = "$weak attr-dict `:` qualified(type($weak))";
+}
+
+def SimGCSafepointOp : SimOp<"gc.safepoint", [
+    MemoryEffects<[
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>
+    ]>
+  ]> {
+  let summary = "precise generated collector safepoint";
+  let arguments = (ins SimContextType:$context);
+  let assemblyFormat = "$context attr-dict `:` type($context)";
+}
+
+// Internal native-lowering marker. The slot is an LLVM stack address whose
+// root record is pushed once at function entry; binding updates the precise
+// root immediately after a managed SSA value becomes available.
+def SimClassRootBindOp : SimOp<"class.root_bind", [
+    MemoryEffects<[MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "bind a managed SSA handle to a pre-registered root slot";
+  let arguments = (ins AnyType:$object, AnyType:$slot, I64Attr:$bit_offset,
+                       SimManagedRootMode:$mode, I32Attr:$kind_mask);
+  let assemblyFormat =
+      "$object `to` $slot `at` $bit_offset $mode `kinds` $kind_mask "
+      "attr-dict `:` "
+      "qualified(type($object)) `,` type($slot)";
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Isolated code units and direct invocation
+//===----------------------------------------------------------------------===//
+
+def SimFuncOp : SimOp<"func", [
+    AutomaticAllocationScope, FunctionOpInterface, IsolatedFromAbove,
+    RecursiveMemoryEffects
+  ]> {
+  let summary = "isolated multi-block simulation code unit";
+  let arguments = (ins SymbolNameAttr:$sym_name,
+                       TypeAttrOf<FunctionType>:$function_type,
+                       SimEntryKind:$entry_kind,
+                       DefaultValuedAttr<SimEventRegion,
+                         "::talos::sim::EventRegion::Active">:$home_region,
+                       DefaultValuedAttr<SimExecutionDomain,
+                         "::talos::sim::ExecutionDomain::Design">:$domain,
+                       OptionalAttr<StrAttr>:$sym_visibility,
+                       OptionalAttr<DictArrayAttr>:$arg_attrs,
+                       OptionalAttr<DictArrayAttr>:$res_attrs,
+                       OptionalAttr<I64Attr>:$code_unit_id,
+                       OptionalAttr<SimComputeEffectArrayAttr>:$effect_summary,
+                       OptionalAttr<SimFragmentABIAttr>:$fragment_abi,
+                       OptionalAttr<UnitAttr>:$internal);
+  let regions = (region AnyRegion:$body);
+  let builders = [OpBuilder<(ins "::llvm::StringRef":$name,
+      "::mlir::FunctionType":$type,
+      "::talos::sim::EntryKind":$entryKind,
+      CArg<"::llvm::ArrayRef<::mlir::NamedAttribute>", "{}">:$attrs,
+      CArg<"::llvm::ArrayRef<::mlir::DictionaryAttr>", "{}">:$argAttrs)>];
+  let extraClassDeclaration = [{
+    ::mlir::Region *getCallableRegion() {
+      return isExternal() ? nullptr : &getBody();
+    }
+    ::llvm::ArrayRef<::mlir::Type> getArgumentTypes() {
+      return getFunctionType().getInputs();
+    }
+    ::llvm::ArrayRef<::mlir::Type> getResultTypes() {
+      return getFunctionType().getResults();
+    }
+    bool isDeclaration() { return isExternal(); }
+  }];
+  let assemblyFormat = ?;
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+}
+
+def SimReturnOp
+    : SimOp<"return", [Pure, ReturnLike, Terminator, HasParent<"SimFuncOp">]> {
+  let summary = "return from a simulation code unit";
+  let arguments = (ins Variadic<AnyType> : $operands);
+  let assemblyFormat = "($operands^ `:` type($operands))? attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimCallOp : SimOp<"call", [
+  CallOpInterface, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  MemoryEffects<[
+    MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+    MemRead<SimNetResource>, MemWrite<SimNetResource>,
+    MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+    MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+    MemRead<SimHeapResource>, MemWrite<SimHeapResource>, MemRead<SimIOResource>,
+    MemWrite<SimIOResource>, MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+    MemRead<SimExternalResource>, MemWrite<SimExternalResource>
+  ]>
+]> {
+  let summary = "direct call to a sibling zero-time simulation function";
+  let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands,
+                       OptionalAttr<DictArrayAttr>:$arg_attrs,
+                       OptionalAttr<DictArrayAttr>:$res_attrs);
+  let results = (outs Variadic<AnyType> : $results);
+  let assemblyFormat = [{$callee `(` $operands `)` attr-dict
+    `:` functional-type($operands, $results)}];
+  let extraClassDeclaration = [{
+    ::mlir::CallInterfaceCallable getCallableForCallee() { return getCalleeAttr(); }
+    void setCalleeFromCallable(::mlir::CallInterfaceCallable callee) {
+      setCalleeAttr(::llvm::cast<::mlir::FlatSymbolRefAttr>(
+          ::llvm::cast<::mlir::SymbolRefAttr>(callee)));
+    }
+    ::mlir::Operation::operand_range getArgOperands() { return getOperands(); }
+    ::mlir::MutableOperandRange getArgOperandsMutable() {
+      return getOperandsMutable();
+    }
+  }];
+  let hasVerifier = 1;
+}
+
+def SimTaskCallOp : SimOp<"task.call", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[
+      MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+      MemRead<SimNetResource>, MemWrite<SimNetResource>,
+      MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+      MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemRead<SimIOResource>, MemWrite<SimIOResource>,
+      MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+      MemRead<SimExternalResource>, MemWrite<SimExternalResource>
+    ]>
+  ]> {
+  let summary = "transfer the current logical process into a task activation";
+  let description = [{
+    The argument prefix initializes the callee activation. The remaining
+    operands are forwarded to the caller continuation after the task returns.
+    Output destinations are explicit reference arguments in the callee
+    signature, so a suspended task never retains native caller addresses.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$values,
+                       I64Attr:$argument_count,
+                       OptionalAttr<SimContinuationSiteAttr>:$site);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{$callee `(` $values `)` `arguments`
+    $argument_count `to` $continuation attr-dict `:` type($values)}];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getArguments();
+    ::mlir::Operation::operand_range getContinuationOperands();
+    ::mlir::MutableOperandRange getContinuationOperandsMutable();
+  }];
+  let hasVerifier = 1;
+}
+
+def SimClassVirtualTaskCallOp : SimOp<"class.virtual_task_call", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[
+      MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
+      MemRead<SimNetResource>, MemWrite<SimNetResource>,
+      MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+      MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemRead<SimIOResource>, MemWrite<SimIOResource>,
+      MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+      MemRead<SimExternalResource>, MemWrite<SimExternalResource>
+    ]>
+  ]> {
+  let summary = "descriptor-dispatched virtual class task activation";
+  let description = [{
+    Resolves a virtual task through the receiver's managed class descriptor,
+    then transfers the current logical process into the selected task
+    activation. The receiver and explicit argument prefix initialize the
+    method inputs after the implicit caller context; remaining values are
+    forwarded to the continuation.
+  }];
+  let arguments = (ins SimClassHandleType:$receiver,
+                       FlatSymbolRefAttr:$method,
+                       I64Attr:$slot,
+                       I64Attr:$signature_id,
+                       Variadic<AnyType>:$values,
+                       I64Attr:$argument_count,
+                       OptionalAttr<SimContinuationSiteAttr>:$site);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{
+    $receiver `[` $method `]` `slot` $slot
+    `signature_id` $signature_id
+    `(` $values `)` `arguments` $argument_count `to` $continuation
+    attr-dict `:` functional-type(operands, results)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getArguments();
+    ::mlir::Operation::operand_range getContinuationOperands();
+    ::mlir::MutableOperandRange getContinuationOperandsMutable();
+  }];
+  let hasVerifier = 1;
+}
+
+def SimDPICallOp : SimOp<"dpi.call", [
+  DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "shared zero-time DPI-C import boundary";
+  let description = [{
+    Carries stable call-site metadata and normalized value operands. Results
+    contain a function return first (when present), followed by output and
+    inout copy-outs. Imported task C status is not an SV result.
+  }];
+  let arguments = (ins
+    I32Attr:$import_id,
+    StrAttr:$c_identifier,
+    I64Attr:$scope_id,
+    DPIABIArrayAttr:$abi_signature,
+    BoolAttr:$is_pure,
+    BoolAttr:$is_context,
+    BoolAttr:$is_task,
+    StrAttr:$source_file,
+    I32Attr:$source_line,
+    I32Attr:$source_column,
+    AnyType:$runtime_context,
+    Variadic<AnyType>:$arguments,
+    // Per ABI signature entry: a #dpi.open_array_abi bound to an open-array
+    // formal, or unit.
+    OptionalAttr<ArrayAttr>:$open_array_layouts,
+    // Per ABI signature entry: a #dpi.aggregate_abi, or unit.
+    OptionalAttr<ArrayAttr>:$aggregate_layouts,
+    // Logical operands before type conversion flattened them; absent while
+    // every operand is still one logical value.
+    OptionalAttr<I32Attr>:$logical_inputs
+  );
+  // Data results are followed by one internal runtime status. Keeping the
+  // status in this operation makes failure propagation explicit without
+  // exposing a task's C int status as a SystemVerilog value.
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $c_identifier `id` $import_id `scope` $scope_id
+    `context` $runtime_context `:` type($runtime_context)
+    `(` $arguments `)` attr-dict `:`
+    functional-type($arguments, $results)
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Formatting and file I/O
+//===----------------------------------------------------------------------===//
+
+def SimBytesConstantOp : SimOp<"bytes.constant", [Pure, ConstantLike]> {
+  let summary = "immutable literal bytes preserved from source";
+  let arguments = (ins StrAttr:$value);
+  let results = (outs SimBytesType:$result);
+  let assemblyFormat = "$value attr-dict";
+  let hasFolder = 1;
+}
+
+def SimContextRuntimeOp : SimOp<"context.runtime", [Pure]> {
+  let summary = "project a simulation context to its runtime context";
+  // The native converter may already have changed the physical context type
+  // when this projection is introduced in the same conversion transaction.
+  let arguments = (ins AnyType:$context);
+  let results = (outs RTContextType:$result);
+  let assemblyFormat = "$context attr-dict `:` type($context)";
+}
+
+def SimStatusCheckOp : SimOp<"status.check", [
+  MemoryEffects<[MemWrite<SimProcessResource>]>
+]> {
+  let summary = "propagate an unexpected runtime failure from a fragment";
+  let description = [{
+    Native fragment lowering consumes this operation and routes a non-OK
+    status through the fragment ABI. Expected SystemVerilog sentinel results
+    are selected before this hook and do not use it.
+  }];
+  let arguments = (ins RTStatusType:$status);
+  let assemblyFormat = "$status attr-dict";
+}
+
+def SimFinishOp : SimOp<"finish", [
+  MemoryEffects<[MemWrite<SimSchedulerResource>]>
+]> {
+  let summary = "request orderly design-wide simulation termination";
+  let description = [{
+    Records a design-wide finish request with the runtime scheduler. The
+    current activation must return after this operation; the scheduler skips
+    remaining ordinary work and enters the final-process phase.
+  }];
+  let arguments = (ins SimContextType:$context, I32:$verbosity);
+  let assemblyFormat = "$context `,` $verbosity attr-dict";
+}
+
+def SimProgramExitOp : SimOp<"program.exit", [
+  MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimProcessResource>]>
+]> {
+  let summary = "terminate the current program instance";
+  let description = [{
+    Implements IEEE 1800-2017 24.7 `$exit`. The runtime identifies the
+    program instance from the current logical process, terminates every
+    process in that instance, and finishes the simulation only after every
+    program instance has completed.
+  }];
+  let arguments = (ins SimContextType:$context);
+  let assemblyFormat = "$context attr-dict";
+}
+
+def SimStopOp : SimOp<"stop", [
+  MemoryEffects<[MemWrite<SimSchedulerResource>]>
+]> {
+  let summary = "request batch-mode simulation suspension";
+  let description = [{
+    Talos has no interactive debugger session, so executable batch targets
+    treat this request as orderly successful termination. The distinct
+    operation is preserved through the runtime ABI and bytecode intrinsic so
+    interactive hosts can give it different policy in the future.
+  }];
+  let arguments = (ins SimContextType:$context, I32:$verbosity);
+  let assemblyFormat = "$context `,` $verbosity attr-dict";
+}
+
+def SimFatalOp : SimOp<"fatal", [
+  MemoryEffects<[MemWrite<SimSchedulerResource>]>
+]> {
+  let summary = "request orderly unsuccessful simulation termination";
+  let arguments = (ins SimContextType:$context, I32:$verbosity);
+  let assemblyFormat = "$context `,` $verbosity attr-dict";
+}
+
+def SimErrorOp : SimOp<"error", [
+  MemoryEffects<[MemWrite<SimSchedulerResource>]>
+]> {
+  let summary = "record a nonterminating simulation error";
+  let description = [{
+    Records an unsuccessful final simulation status without requesting
+    termination. Ordinary scheduling continues until the design otherwise
+    completes or explicitly terminates.
+  }];
+  let arguments = (ins SimContextType:$context);
+  let assemblyFormat = "$context attr-dict";
+}
+
+// Plain storage stays free to move across a batch: a store moved out publishes
+// alone and a store moved in is merged, both exact. Every effect at which
+// another process or an observer could run is ordered against it.
+class SimPublicationBatchOp<string mnemonic>
+    : SimOp<mnemonic, [MemoryEffects<[
+          MemRead<SimSchedulerResource>, MemWrite<SimSchedulerResource>,
+          MemRead<SimProcessResource>, MemWrite<SimProcessResource>,
+          MemRead<SimExternalResource>, MemWrite<SimExternalResource>,
+          MemRead<SimIOResource>, MemWrite<SimIOResource>]>]> {
+  let arguments = (ins SimContextType:$context);
+  let assemblyFormat = "$context attr-dict";
+}
+
+def SimPublicationBatchBeginOp
+    : SimPublicationBatchOp<"publication.batch_begin"> {
+  let summary = "begin executing one statement as one event";
+  let description = [{
+    Brackets, with `sim.publication.batch_end`, a statement that the process
+    executes as one event (IEEE 1800-2023 4.7): in between there is no time
+    control and no operation that may observe signal values or run another
+    process. The runtime may then deliver the update events of the stores in
+    between together, with the OR of every store's change and edge masks. That
+    wakes exactly the waiters that per-store publication wakes (9.4.2); while
+    any observer of individual occurrences exists each store still publishes
+    immediately. Batches nest. Merging never changes semantics, so a backend
+    may drop both operations.
+  }];
+}
+
+def SimPublicationBatchEndOp : SimPublicationBatchOp<"publication.batch_end"> {
+  let summary = "deliver the update events held since the matching begin";
+}
+
+def SimProgramOwnedOp : SimOp<"program.owned", [
+  MemoryEffects<[MemRead<SimSchedulerResource>, MemRead<SimProcessResource>]>
+]> {
+  let summary = "test whether the executing thread belongs to a program";
+  let description = [{
+    IEEE 1800-2023 24.7: true when the executing thread, or the thread it
+    descends from, originates in an initial procedure of a program block.
+    `$exit` terminates that program; any other thread ignores it.
+  }];
+  let arguments = (ins SimContextType:$context);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$context attr-dict";
+}
+
+def SimTerminationRequestedOp : SimOp<"termination.requested", [
+  MemoryEffects<[MemRead<SimSchedulerResource>]>
+]> {
+  let summary = "test whether design-wide termination has been requested";
+  let arguments = (ins SimContextType:$context);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$context attr-dict";
+}
+
+def SimDisplayOp : SimOp<"display", [
+  MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimIOResource>]>
+]> {
+  let summary = "formatted display or write to a SystemVerilog descriptor";
+  let description = [{
+    `item_flags` describes the logical argument sequence. Bit 0 marks a
+    nonempty packed operand signed; bit 1 represents an omitted argument and
+    consumes no entry from `items`; bit 2 marks an f64 real operand; bit 3
+    marks a managed string; bit 4 marks a managed container. Bit 5 designates
+    the literal or managed-string format that owns all remaining items on
+    `string.output_format`; bit 6 marks a managed class handle; bit 7 marks a
+    managed string as a non-designated output-list format; bit 8 marks a
+    virtual-interface handle. `scope` and `library_cell` carry the elaborated call-site
+    information used by `%m` and `%l`. `time_multiplier` converts a numeric
+    `%t` argument from the invoking scope's time unit to the design precision
+    used by the runtime clock.
+  }];
+  let arguments = (ins SimContextType:$context, I32:$descriptor,
+                       Variadic<AnyType>:$items, BoolAttr:$append_newline,
+                       SimRadixAttr:$default_radix,
+                       DenseI32ArrayAttr:$item_flags,
+                       OptionalAttr<StrAttr>:$scope,
+                       OptionalAttr<StrAttr>:$library_cell,
+                       OptionalAttr<I64Attr>:$time_multiplier,
+                       OptionalAttr<I32Attr>:$time_precision);
+  let assemblyFormat = [{$context `to` $descriptor `(` $items `)`
+    `newline` `=` $append_newline `radix` `=` $default_radix
+    `flags` `=` $item_flags attr-dict
+    `:` type($items)}];
+  let hasVerifier = 1;
+}
+
+def SimTimeFormatOp : SimOp<"time.format", [
+  MemoryEffects<[MemWrite<SimIOResource>]>
+]> {
+  let summary = "install the design-wide %t display format";
+  let description = [{
+    `units` is the decimal exponent in seconds of the unit `%t` reports in.
+    `width` is a minimum field width covering the rendered suffix.
+  }];
+  let arguments = (ins SimContextType:$context, I32:$units,
+                       I32:$fraction_digits, SimBytesType:$suffix,
+                       I32:$width);
+}
+
+def SimTimeScanScaleOp : SimOp<"time.scan_scale", [
+  MemoryEffects<[MemRead<SimIOResource>]>
+]> {
+  let summary = "scale a %t input field through the current time format";
+  let description = [{
+    `time_multiplier` is the invoking scope's time unit in design-precision
+    ticks. `time_precision` is the decimal exponent in seconds of one such
+    tick. The design-wide `$timeformat` state selects the input unit and
+    decimal rounding; without an override, design-precision units and zero
+    fractional digits apply.
+  }];
+  let arguments = (ins SimContextType:$context, F64:$input,
+                       I64Attr:$time_multiplier,
+                       I32Attr:$time_precision);
+  let results = (outs F64:$result);
+  let assemblyFormat = [{
+    $context `,` $input `time_multiplier` `=` $time_multiplier
+    `time_precision` `=` $time_precision attr-dict
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Waveform dumping
+//
+// The runtime collects values by differencing the canonical state planes once
+// per time slot, so these ops only configure and gate that collection. None of
+// them observes an individual variable, and none is a per-transition site.
+//===----------------------------------------------------------------------===//
+
+class SimDumpOp<string mnemonic, dag dumpArgs>
+    : SimOp<mnemonic, [MemoryEffects<[MemRead<SimIOResource>,
+                                      MemWrite<SimIOResource>]>]> {
+  let arguments = dumpArgs;
+}
+
+def SimDumpOpenOp : SimDumpOp<"dump.open",
+    (ins SimContextType:$context, SimBytesType:$path)> {
+  let summary = "select the waveform file named by $dumpfile";
+}
+
+def SimDumpOpenStringOp : SimOp<"dump.open_string", [
+    MemoryEffects<[MemRead<SimIOResource>, MemWrite<SimIOResource>,
+                   MemRead<SimHeapResource>]>
+]> {
+  let summary = "select the waveform file named by a dynamic string";
+  let arguments = (ins SimContextType:$context, SimStringType:$path);
+}
+
+def SimDumpTimescaleOp : SimDumpOp<"dump.timescale",
+    (ins SimContextType:$context, I32:$exponent)> {
+  let summary = "declare the $timescale written into the waveform header";
+}
+
+def SimDumpVarsOp : SimDumpOp<"dump.vars",
+    (ins SimContextType:$context, I64:$levels, SimBytesType:$scope)> {
+  let summary = "add one $dumpvars selection to the traced set";
+  let description = [{
+    `levels` is the IEEE depth, where zero selects every level below `scope`.
+    An empty `scope` selects the design root. Selections accumulate until the
+    end of the time slot that made the first one.
+  }];
+}
+
+def SimDumpAllOp : SimDumpOp<"dump.all",
+    (ins SimContextType:$context)> {
+  let summary = "emit every selected variable at the current time";
+}
+
+def SimDumpControlOp : SimDumpOp<"dump.control",
+    (ins SimContextType:$context, BoolAttr:$enabled)> {
+  let summary = "$dumpon / $dumpoff";
+}
+
+def SimDumpLimitOp : SimDumpOp<"dump.limit",
+    (ins SimContextType:$context, I64:$bytes)> {
+  let summary = "bound the waveform file size in bytes";
+}
+
+def SimDumpFlushOp : SimDumpOp<"dump.flush",
+    (ins SimContextType:$context)> {
+  let summary = "flush buffered waveform output to the file";
+}
+
+def SimDumpPortsOp : SimOp<"dump.ports", [
+    MemoryEffects<[MemRead<SimIOResource>, MemWrite<SimIOResource>,
+                   MemRead<SimHeapResource>]>
+]> {
+  let summary = "add one module's ports to a named EVCD session";
+  let description = [{
+    `path` is the EVCD filename and `scope` is an elaborated module-instance
+    path. Calls naming the same file accumulate unique scopes. The runtime
+    starts every session at the end of the time slot containing its first
+    selection, independently of the ordinary VCD session.
+  }];
+  let arguments = (ins SimContextType:$context, SimStringType:$path,
+                       SimStringType:$scope, I32:$timescale_exponent);
+}
+
+def SimDumpPortsControlOp : SimOp<"dump.ports_control", [
+    MemoryEffects<[MemRead<SimIOResource>, MemWrite<SimIOResource>,
+                   MemRead<SimHeapResource>]>
+]> {
+  let summary = "control one or all named EVCD sessions";
+  let description = [{
+    An empty `path` targets every active EVCD session; a nonmatching path is
+    ignored. `value` carries the byte limit for `limit` and is otherwise zero.
+  }];
+  let arguments = (ins SimContextType:$context, SimStringType:$path,
+                       SimDumpPortsAction:$action, I64:$value);
+}
+
+class SimFileOp<string mnemonic, dag fileArgs, dag fileResults,
+                list<MemoryEffect> effects = [
+                  MemRead<SimIOResource>, MemWrite<SimIOResource>
+                ], list<Trait> traits = []>
+    : SimOp<mnemonic, !listconcat([MemoryEffects<effects>], traits)> {
+  let arguments = fileArgs;
+  let results = fileResults;
+}
+
+def SimFileOpenMCDOp : SimFileOp<"file.open_mcd",
+    (ins SimContextType:$context, SimBytesType:$path),
+    (outs I32:$descriptor)>;
+
+def SimFileOpenOp : SimFileOp<"file.open",
+    (ins SimContextType:$context, SimBytesType:$path, SimBytesType:$mode),
+    (outs I32:$descriptor)>;
+
+def SimFileOpenStringMCDOp : SimFileOp<"file.open_string_mcd",
+    (ins SimContextType:$context, SimStringType:$path),
+    (outs I32:$descriptor),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>,
+     MemRead<SimHeapResource>]>;
+
+def SimFileOpenStringOp : SimFileOp<"file.open_string",
+    (ins SimContextType:$context, SimStringType:$path, SimStringType:$mode),
+    (outs I32:$descriptor),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>,
+     MemRead<SimHeapResource>]>;
+
+def SimFileCloseOp : SimFileOp<"file.close",
+    (ins SimContextType:$context, I32:$descriptor), (outs)>;
+
+def SimFileFlushOp : SimFileOp<"file.flush",
+    (ins SimContextType:$context, I32:$descriptor), (outs)>;
+
+def SimFileGetcOp : SimFileOp<"file.getc",
+    (ins SimContextType:$context, I32:$descriptor), (outs I32:$result)>;
+
+def SimFileUngetcOp : SimFileOp<"file.ungetc",
+    (ins SimContextType:$context, I32:$byte, I32:$descriptor),
+    (outs I32:$result)>;
+
+def SimFileGetlineOp : SimFileOp<"file.getline",
+    (ins SimContextType:$context, I32:$descriptor),
+    (outs AnyInteger:$data, I32:$count)> {
+  let summary = "read one bounded line for assignment to a packed value";
+  let hasVerifier = 1;
+}
+
+def SimFileGetlineStringOp : SimFileOp<"file.getline_string",
+    (ins SimContextType:$context, I32:$descriptor),
+    (outs SimStringType:$data, I32:$count),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>,
+     MemRead<SimHeapResource>, MemWrite<SimHeapResource>],
+    [SimAllocatesManagedStorage]> {
+  let summary = "read one complete line into a managed string";
+}
+
+def SimFileScanFieldOp : SimFileOp<"file.scan_field",
+    (ins SimContextType:$context, I32:$descriptor, I32:$enabled,
+         StrAttr:$prefix, I32Attr:$specifier, I64Attr:$width),
+    (outs SimStringType:$field, I32:$ok, I32:$eof),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>,
+     MemRead<SimHeapResource>, MemWrite<SimHeapResource>],
+    [SimAllocatesManagedStorage]> {
+  let summary = "consume one $fscanf field from the current file position";
+  let description = [{
+    `enabled` suppresses all file access after an earlier conversion failed.
+    `eof` distinguishes an input failure from an ordinary matching failure.
+    The `%m` control conversion matches its prefix and consumes no field bytes.
+  }];
+}
+
+def SimFileScanDynamicOp : SimFileOp<"file.scan_dynamic",
+    (ins SimContextType:$context, I32:$descriptor, SimStringType:$format,
+         I32:$plan_cursor, I32:$enabled, BoolAttr:$finalize,
+         I64Attr:$allowed_specifiers, I64Attr:$raw_two_state_bytes,
+         I64Attr:$raw_four_state_bytes),
+    (outs SimStringType:$field, I32:$next_plan_cursor, I32:$conversion_kind,
+          I32:$ok, I32:$eof),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>,
+     MemRead<SimHeapResource>, MemWrite<SimHeapResource>],
+    [SimAllocatesManagedStorage]> {
+  let summary = "interpret one destination of a dynamic $fscanf format";
+}
+
+def SimFileScanRawOp : SimFileOp<"file.scan_raw",
+    (ins SimContextType:$context, I32:$descriptor, I32:$enabled,
+         StrAttr:$prefix, BoolAttr:$four_state, I64Attr:$max_width),
+    (outs SimLogicType:$data, I32:$ok, I32:$eof),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>]> {
+  let summary = "consume one destination-sized %u or %z raw file field";
+}
+
+def SimFileSkipRawOp : SimFileOp<"file.skip_raw",
+    (ins SimContextType:$context, I32:$descriptor, I32:$enabled,
+         StrAttr:$prefix, I64Attr:$byte_count),
+    (outs I32:$ok, I32:$eof),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>]> {
+  let summary = "skip an explicitly sized suppressed raw file field";
+}
+
+def SimPlusargTestOp : SimFileOp<"plusarg.test",
+    (ins SimContextType:$context, SimStringType:$name),
+    (outs I32:$found),
+    [MemRead<SimIOResource>, MemRead<SimHeapResource>]> {
+  let summary = "report whether a command-line plusarg starts with a prefix";
+}
+
+def SimPlusargValueOp : SimFileOp<"plusarg.value",
+    (ins SimContextType:$context, SimStringType:$prefix),
+    (outs SimStringType:$tail, I32:$found),
+    [MemRead<SimIOResource>, MemRead<SimHeapResource>,
+     MemWrite<SimHeapResource>],
+    [SimAllocatesManagedStorage]> {
+  let summary = "return the text following a matched command-line plusarg";
+}
+
+def SimPlusargScanOp : SimFileOp<"plusarg.scan",
+    (ins SimContextType:$context, SimStringType:$format),
+    (outs SimStringType:$tail, I32:$conversion, I32:$found),
+    [MemRead<SimIOResource>, MemRead<SimHeapResource>,
+     MemWrite<SimHeapResource>],
+    [SimAllocatesManagedStorage]> {
+  let summary = "parse a dynamic $value$plusargs format and return its field";
+  let description = [{
+    `conversion` is zero for `%s`, one for a real conversion, or the numeric
+    radix for an integral conversion. An invalid format returns `found` zero.
+  }];
+}
+
+def SimPlusargParseLogicOp : SimOp<"plusarg.parse_logic", [Pure]> {
+  let summary = "strictly parse one integral $value$plusargs remainder";
+  let arguments = (ins SimStringType:$input, SimRadixAttr:$radix);
+  let results = (outs SimLogicType:$result);
+  let hasVerifier = 1;
+}
+
+def SimPlusargParseRealOp : SimOp<"plusarg.parse_real", [Pure]> {
+  let summary = "strictly parse one real $value$plusargs remainder";
+  let arguments = (ins SimStringType:$input);
+  let results = (outs F64:$result);
+}
+
+def SimSystemOp : SimFileOp<"system",
+    (ins SimContextType:$context, SimStringType:$command),
+    (outs I32:$result),
+    [MemRead<SimIOResource>, MemWrite<SimIOResource>,
+     MemRead<SimHeapResource>]> {
+  let summary = "execute a host command and return its exit status";
+}
+
+def SimFileErrorStringOp : SimFileOp<"file.error_string",
+    (ins SimContextType:$context, I32:$descriptor),
+    (outs SimStringType:$message, I32:$code),
+    [MemRead<SimIOResource>, MemRead<SimHeapResource>,
+     MemWrite<SimHeapResource>],
+    [SimAllocatesManagedStorage]> {
+  let summary = "read a descriptor's pending error code and message";
+}
+
+def SimFileReadPackedOp : SimFileOp<"file.read_packed",
+    (ins SimContextType:$context, I32:$descriptor),
+    (outs AnyInteger:$data, I32:$count)> {
+  let summary = "read bytes into an integral variable in big-endian order";
+  let hasVerifier = 1;
+}
+
+def SimFileReadMemTokenOp : SimFileOp<"file.readmem_token",
+    (ins SimContextType:$context, I32:$descriptor, SimRadixAttr:$radix),
+    (outs SimLogicType:$data, I32:$kind, I64:$address)> {
+  let summary = "read one IEEE $readmem data or address token";
+  let description = [{
+    Reads one token using the lexical grammar shared by `$readmemb` and
+    `$readmemh`. The four-state `data` preserves 0, 1, X, and Z. `kind` is one
+    of the public runtime readmem token constants.
+  }];
+  let hasVerifier = 1;
+}
+
+def SimFileEofOp : SimFileOp<"file.eof",
+    (ins SimContextType:$context, I32:$descriptor), (outs I32:$result),
+    [MemRead<SimIOResource>]>;
+
+def SimFileSeekOp : SimFileOp<"file.seek",
+    (ins SimContextType:$context, I32:$descriptor, I64:$offset, I32:$origin),
+    (outs I32:$result)>;
+
+def SimFileTellOp : SimFileOp<"file.tell",
+    (ins SimContextType:$context, I32:$descriptor), (outs I64:$result),
+    [MemRead<SimIOResource>]>;
+
+def SimFileRewindOp : SimFileOp<"file.rewind",
+    (ins SimContextType:$context, I32:$descriptor), (outs I32:$result)>;
+
+def SimSpawnOp : SimOp<"spawn", [
+    CallOpInterface, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "spawn a sibling simulation process with explicit captures";
+  let description = [{
+    A spawn is a call edge that starts an independent logical process instead
+    of executing in the caller. Its operands are the callee's entry captures;
+    its result is the scheduler handle of the new process, not a callee result.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$callee, Variadic<AnyType>:$operands,
+                       OptionalAttr<DictArrayAttr>:$arg_attrs,
+                       OptionalAttr<DictArrayAttr>:$res_attrs);
+  let results = (outs SimProcessType:$process);
+  let assemblyFormat = [{$callee `(` $operands `)` attr-dict
+    `:` type($operands) `->` qualified(type($process))}];
+  let extraClassDeclaration = [{
+    ::mlir::CallInterfaceCallable getCallableForCallee() { return getCalleeAttr(); }
+    void setCalleeFromCallable(::mlir::CallInterfaceCallable callee) {
+      setCalleeAttr(::llvm::cast<::mlir::FlatSymbolRefAttr>(
+          ::llvm::cast<::mlir::SymbolRefAttr>(callee)));
+    }
+    ::mlir::Operation::operand_range getArgOperands() { return getOperands(); }
+    ::mlir::MutableOperandRange getArgOperandsMutable() {
+      return getOperandsMutable();
+    }
+  }];
+  let hasVerifier = 1;
+}
+
+def SimProcessNullOp : SimOp<"process.null", [Pure, ConstantLike]> {
+  let summary = "create the null IEEE process object handle";
+  let results = (outs SimProcessType:$result);
+  let assemblyFormat = "attr-dict";
+  let hasFolder = 1;
+}
+
+def SimProcessCurrentOp : SimOp<"process.current", [
+    MemoryEffects<[MemRead<SimSchedulerResource>, MemRead<SimProcessResource>]>
+  ]> {
+  let summary = "return the currently executing IEEE process object";
+  let description = [{
+    The logical process identity is stable across task activation boundaries.
+    Native and bytecode implementations may encode the handle differently,
+    but the value remains an opaque `!simulation.process` in Simulation IR.
+  }];
+  let results = (outs SimProcessType:$result);
+  let assemblyFormat = "attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimProcessEqualOp : SimOp<"process.equal", [Pure, Commutative]> {
+  let summary = "compare two process object identities, including null";
+  let arguments = (ins SimProcessType:$lhs, SimProcessType:$rhs);
+  let results = (outs I1:$equal);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
+}
+
+def SimProcessStatusOp : SimOp<"process.status", [
+    MemoryEffects<[MemRead<SimSchedulerResource>, MemRead<SimProcessResource>]>
+  ]> {
+  let summary = "query the IEEE state of one process object";
+  let description = [{
+    The i32 result uses the IEEE `process::state` ordinals: FINISHED=0,
+    RUNNING=1, WAITING=2, SUSPENDED=3, and KILLED=4. Process identities are
+    tombstones: equality and status remain valid after FINISHED or KILLED.
+    Querying a null handle reports a runtime invalid-handle failure.
+  }];
+  let arguments = (ins SimProcessType:$process);
+  let results = (outs I32:$status);
+  let assemblyFormat = "$process attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimProcessRandomStateOp : SimOp<"process.random_state", [
+    MemoryEffects<[MemRead<SimSchedulerResource>, MemRead<SimProcessResource>]>
+  ]> {
+  let summary = "read one IEEE process object's random stream state";
+  let description = [{
+    Returns the two opaque words comprising the selected process's random
+    stream. Process identities retain this state after FINISHED or KILLED, so
+    a referenced process tombstone continues to support random-state methods.
+  }];
+  let arguments = (ins SimProcessType:$process);
+  let results = (outs I64:$state, I64:$increment);
+  let assemblyFormat = "$process attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimProcessSetRandomStateOp : SimOp<"process.set_random_state", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemRead<SimProcessResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "restore one IEEE process object's random stream state";
+  let arguments = (ins SimProcessType:$process, I64:$state, I64:$increment);
+  let assemblyFormat = "$process `,` $state `,` $increment attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimProcessControlOp : SimOp<"process.control", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>,
+                   MemRead<SimProcessResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "apply an IEEE control operation to one process object";
+  let description = [{
+    This is a control-flow terminator because the target can dynamically name
+    the executing logical process or one of its ancestors. Resuming a process,
+    or controlling another process while the caller survives, transfers
+    immediately to the continuation. Suspending the caller yields and later
+    resumes at that continuation. Killing the caller never reaches it.
+
+    A null handle reports a runtime invalid-handle failure. Zero-time function
+    entries may contain this operation; lowering must propagate its control
+    action through the function call chain before coroutine or bytecode
+    materialization.
+  }];
+  let arguments = (ins SimProcessControlKind:$kind,
+                       SimProcessType:$process,
+                       Variadic<AnyType>:$continuation_operands,
+                       OptionalAttr<SimContinuationSiteAttr>:$site);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{$kind $process `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict}];
+  let hasVerifier = 1;
+}
+
+// Exact observation of dynamic procedural activations. The context is explicit;
+// IDs designate retained immutable declarations, never runtime frame indices.
+def SimVPICallPrepareOp
+    : SimOp<
+          "vpi.call.prepare", [DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+                               MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "prepare one exact source call without entering its callee";
+  let arguments = (ins SimContextType:$runtime_context,
+      FlatSymbolRefAttr:$call);
+  let results = (outs I64:$ticket);
+  let assemblyFormat = "$runtime_context `from` $call attr-dict";
+}
+
+def SimVPIFrameEnterForeignOp : SimOp<"vpi.frame.enter_foreign", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimInventoryResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "enter an exact imported callable whose body is foreign";
+  let description = [{
+    Consumes a prepared source call around an inlined DPI import ABI boundary.
+    The callable has an exact code-unit-to-source-scope binding, but no SV body
+    in which to emit an ordinary callee prologue. Physical transport is always
+    synchronous Function, including a source DPI task.
+  }];
+  let arguments = (ins SimContextType:$runtime_context,
+                       FlatSymbolRefAttr:$call, I64Attr:$code_unit_id);
+  let results = (outs I64:$activation);
+  let assemblyFormat = "$runtime_context `from` $call `unit` $code_unit_id attr-dict";
+}
+
+def SimVPIResolutionPrepareOp
+    : SimOp<"vpi.resolution.prepare",
+            [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "prepare the exact net-origin activation of its resolver";
+  let description = [{
+    The net's retained nettype and resolution-function binding determine the
+    callee. Net ID zero is valid. The generated caller does not acquire a frame;
+    the resolution function consumes the ticket in its ordinary prologue.
+  }];
+  let arguments = (ins SimContextType:$runtime_context, I64Attr:$net_id);
+  let results = (outs I64:$ticket);
+  let assemblyFormat = "$runtime_context `net` $net_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameEnterPreparedOp
+    : SimOp<"vpi.frame.enter_prepared",
+            [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "enter the prepared activation from its callee prologue";
+  let arguments = (ins SimContextType:$runtime_context, I64Attr:$code_unit_id,
+      DefaultValuedAttr<BoolAttr, "false">:$is_task);
+  let results = (outs I64:$activation);
+  let assemblyFormat = "$runtime_context `unit` $code_unit_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameEnterOp
+    : SimOp<
+          "vpi.frame.enter", [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "enter an exact root or nested statement scope";
+  let arguments = (ins SimContextType:$runtime_context, I64Attr:$code_unit_id,
+      OptionalAttr<I64Attr>:$statement_id);
+  let results = (outs I64:$activation);
+  let assemblyFormat = [{
+    $runtime_context `unit` $code_unit_id (`within` $statement_id^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameCheckpointOp
+    : SimOp<"vpi.frame.checkpoint",
+            [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "record the exact current source statement or its unavailability";
+  let description = [{
+    Positive IDs identify exact statements in the current lexical code unit.
+    Zero explicitly clears unavailable current-statement metadata rather than
+    leaving an earlier statement falsely current. A later positive checkpoint
+    restores exact identity.
+  }];
+  let arguments = (ins SimContextType:$runtime_context, I64Attr:$statement_id);
+  let assemblyFormat = "$runtime_context `statement` $statement_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimVPICallObservationOp : SimOp<"vpi.call.observation", [
+    MemoryEffects<[MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "retain exact source frame borrows across a synchronous call";
+  let description = [{
+    This temporary source-lowering inventory immediately follows one exact
+    synchronous call. Its references are the observations active at that call
+    occurrence. Exceptional-return propagation consumes it to place an
+    observation_end on each actual abnormal exit; normal paths retain their
+    frame.leave endpoints. It must disappear before backend lowering.
+  }];
+  let arguments = (ins Arg<Variadic<SimRefType>,
+      "active frame observation", [MemRead<SimStorageResource>]>:$observed,
+      ArrayAttr:$ending_targets);
+  let assemblyFormat = [{`(` $observed `:` type($observed) `)` attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimVPIFrameObservationEndOp : SimOp<"vpi.frame.observation_end", [
+    MemoryEffects<[MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "end local observation borrows on an already unwound exit";
+  let description = [{
+    A nonlocal disable or process termination may already have destroyed the
+    observed activation, so the exit must not execute frame.leave again. This
+    operation ends that activation's outstanding local observation borrows at
+    the exact exceptional CFG exit. It keeps their real Ref owners live until
+    owner-release planning consumes these endpoints; native and bytecode
+    lowering then erase the marker without retaining or reading runtime state.
+  }];
+  let arguments = (ins Arg<Variadic<SimRefType>, "", [MemRead<SimStorageResource>]>:$observed);
+  let assemblyFormat = "(`(` $observed^ `:` type($observed) `)`)? attr-dict";
+}
+
+def SimVPIFrameLeaveOp
+    : SimOp<
+          "vpi.frame.leave", [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "end a procedural activation and its local observation borrows";
+  let description = [{
+    Observed references are lexical observation-borrow endpoints. They keep
+    actual automatic owners live through this activation's query lifetime and
+    must survive ownership planning; they do not extend the runtime lifetime
+    after the frame leaves. Nonlocal disable ends observation at its control
+    operation instead of executing a second leave on an unwound activation.
+  }];
+  let arguments = (ins SimContextType:$runtime_context, I64:$activation,
+      Arg<Variadic<SimRefType>, "", [MemRead<SimStorageResource>]>:$observed);
+  let assemblyFormat = [{
+    $runtime_context `,` $activation
+    (`observing` `(` $observed^ `:` type($observed) `)`)? attr-dict
+  }];
+}
+
+def SimVPICallFinishOp
+    : SimOp<
+          "vpi.call.finish", [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "finish a consumed or cancelled source-call ticket";
+  let arguments = (ins SimContextType:$runtime_context, I64:$ticket);
+  let assemblyFormat = "$runtime_context `,` $ticket attr-dict";
+}
+
+def SimControlEnterOp : SimOp<"control.enter", [
+    MemoryEffects<[MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "enter one dynamic activation of a resolved named block";
+  let arguments = (ins I64Attr:$target_id);
+  let results = (outs SimControlType:$control);
+  let assemblyFormat = "$target_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimControlBoundaryOp : SimOp<"control.boundary", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "register the resumable exit of a named block activation";
+  let description = [{
+    The resume successor is the block exit used when another logical process
+    disables this activation. Its operands are checkpointed in the canonical
+    process frame. Ordinary execution registers that continuation and follows
+    the body successor without yielding to the scheduler.
+  }];
+  let arguments = (ins SimControlType:$activation,
+                       Variadic<AnyType>:$resume_operands,
+                       OptionalAttr<SimContinuationSiteAttr>:$site);
+  let successors = (successor AnySuccessor:$resume,
+                               AnySuccessor:$body);
+  let assemblyFormat = [{$activation `resume` $resume
+    (`(` $resume_operands^ `:` type($resume_operands) `)`)?
+    `body` $body attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimControlLeaveOp : SimOp<"control.leave", [
+    MemoryEffects<[MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "leave a named block activation normally";
+  let arguments = (ins SimControlType:$control);
+  let assemblyFormat = "$control attr-dict";
+}
+
+def SimControlDisableOp : SimOp<"control.disable", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "disable resolved named block activations";
+  let description = [{
+    An activation operand targets one dynamically enclosing activation.
+    Without it, lexical mode resolves the innermost inherited activation while
+    hierarchical mode disables all live activations of the exact elaborated
+    target ID.
+  }];
+  let arguments = (ins I64Attr:$target_id,
+                       Optional<SimControlType>:$activation,
+                       DefaultValuedAttr<BoolAttr, "false">:$hierarchical);
+  let assemblyFormat = [{$target_id (`activation` $activation^)?
+    attr-dict}];
+  let hasVerifier = 1;
+}
+
+def SimControlDisableSelectedOp : SimOp<"control.disable_selected", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "disable controls and return the exact current activation selected";
+  let description = [{
+    Returns the outermost affected dynamic activation in this logical process,
+    or zero if only other processes were affected. The returned scalar remains
+    usable after the selected control is unwound; it cannot enter or leave a
+    control. Hierarchical recursive occurrences are distinguished by this token.
+  }];
+  let arguments = (ins I64Attr:$target_id, Optional<SimControlType>:$activation,
+      DefaultValuedAttr<BoolAttr, "false">:$hierarchical);
+  let results = (outs I64:$selected);
+  let assemblyFormat = "$target_id (`activation` $activation^)? attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimControlMatchOp : SimOp<"control.match", [Pure]> {
+  let summary = "test a selected token against one exact control activation";
+  let arguments = (ins I64:$selected, SimControlType:$activation);
+  let results = (outs I1:$matches);
+  let assemblyFormat = "$selected `,` $activation attr-dict";
+}
+
+def SimControlLocalBoundaryOp : SimOp<"control.local_boundary", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>]> {
+  let summary = "retain a synchronous control exit until escape CFG lowering";
+  let description = [{
+    This compiler-only boundary keeps the exact activation and exit block for
+    synchronous functions. Escape lowering creates actual branches to the exit
+    only for the matching dynamic token, then replaces this marker with its
+    ordinary body branch. It registers no scheduler continuation.
+  }];
+  let arguments = (ins SimControlType:$activation);
+  let successors = (successor AnySuccessor:$exit, AnySuccessor:$body);
+  let assemblyFormat = "$activation `exit` $exit `body` $body attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimControlEscapePendingOp : SimOp<"control.escape_pending", [
+    MemoryEffects<[MemRead<SimProcessResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "consume a same-process nonlocal disable escape request";
+  let description = [{
+    Returns true exactly when the preceding resolved disable selected a named
+    block in an older task activation of the current logical process. The
+    current task must then return without copyout; the scheduler resumes the
+    owning activation at the registered control boundary.
+  }];
+  let results = (outs I1:$pending);
+  let assemblyFormat = "attr-dict";
+}
+
+def SimControlNonlocalExitOp : SimOp<"control.nonlocal_exit"> {
+  let summary = "mark the exceptional path of a nonlocal named-block exit";
+  let description = [{
+    This marker precedes a callable return selected by control.escape_pending.
+    Mandatory inlining resolves it either to a locally dominating named-block
+    boundary or to an abnormal task return whose caller boundary was prepared
+    by the runtime.
+  }];
+  let arguments = (ins I64Attr:$target_id, Optional<I64>:$selected);
+  let assemblyFormat = "$target_id (`selected` $selected^)? attr-dict";
+}
+
+def SimStaticOnceOp : SimOp<"static.once", [
+    MemoryEffects<[MemRead<SimProcessResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "claim one context-wide static initialization site";
+  let arguments = (ins I64Attr:$id);
+  let results = (outs I1:$first);
+  let assemblyFormat = "$id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimDeferredOnceOp : SimOp<"assert.deferred_once", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>,
+                   MemRead<SimProcessResource>]>
+  ]> {
+  let summary = "claim one deferred-immediate assertion site in this slot";
+  let arguments = (ins I64Attr:$id);
+  let results = (outs I1:$first);
+  let assemblyFormat = "$id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimSampledReadOp : SimOp<"assert.sampled_read", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemRead<SimStorageResource>, MemRead<SimNetResource>]>
+  ]> {
+  let summary = "read a canonical state value from the Preponed snapshot";
+  let description = [{
+    The source must have a proven canonical descriptor. A dynamic selection
+    snapshots that descriptor's bounded range and reads the selected packed
+    value at execution time. Sampled expressions must also sample any dynamic
+    selector. An invalid array selection returns the element's invalid-read
+    value; an unresolved descriptor cannot establish a snapshot footprint.
+  }];
+  let arguments = (ins SimContextType:$context, AnyType:$source);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$context `from` $source attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimSampledHistoryOp : SimOp<"assert.sampled_history", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>,
+                   MemRead<SimProcessResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "read and advance one compiler-assigned sampled-value ring";
+  let arguments = (ins SimContextType:$context, AnyType:$current, I1:$gate,
+                       I64Attr:$id, I64Attr:$depth);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$context `from` $current `gate` $gate `id` $id `depth` $depth attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimClockedSampleUpdateOp : SimOp<"assert.clocked_sample_update", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "advance one compiler-planned alternate-clock sample ring";
+  let arguments = (ins SimContextType:$context, AnyType:$current, I1:$gate,
+                       I64Attr:$id, I64Attr:$depth);
+  let assemblyFormat = "$context `from` $current `gate` $gate `id` $id `depth` $depth attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimClockedSampleReadOp : SimOp<"assert.clocked_sample_read", [
+    MemoryEffects<[MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "read one age from a compiler-planned alternate-clock ring";
+  let arguments = (ins SimContextType:$context, I64Attr:$id, I64Attr:$depth,
+                       I64Attr:$age);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$context `id` $id `depth` $depth `age` $age attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimDeferredEnqueueOp : SimOp<"assert.deferred_enqueue", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>,
+                   MemRead<SimProcessResource>]>
+  ]> {
+  let summary = "enqueue a deferred-immediate assertion report";
+  let description = [{
+    Record an encounter of one deferred-immediate assertion site in the
+    current logical process and return an opaque report ticket. Each encounter
+    remains independently pending until it matures or the originating process
+    reaches an LRM-defined flush point.
+  }];
+  let arguments = (ins I64Attr:$id);
+  let results = (outs I64:$ticket);
+  let assemblyFormat = "$id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimDeferredMatureOp : SimOp<"assert.deferred_mature", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "mature a pending deferred-immediate assertion report";
+  let description = [{
+    Return true only when the opaque report ticket is still pending for its
+    originating logical process. The ticket is consumed regardless, so
+    callbacks canceled by a process flush or assertion kill become no-ops.
+  }];
+  let arguments = (ins I64:$ticket);
+  let results = (outs I1:$current);
+  let assemblyFormat = "$ticket attr-dict `:` type($ticket)";
+  let hasVerifier = 1;
+}
+
+def SimAssertionControlOp : SimOp<"assert.control", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "change the control state of one assertion identity";
+  let description = [{
+    Apply one IEEE assertion control action to a compiler-resolved assertion
+    identity. Off preserves existing attempts and deferred reports. Kill
+    advances the assertion generation and cancels pending deferred reports;
+    generated concurrent monitors use that generation to invalidate live work.
+    Action controls affect only attempts that start after the control operation.
+  }];
+  let arguments = (ins SimContextType:$context, SimAssertionControlActionAttr:$action,
+                       I64Attr:$assertion_id);
+  let assemblyFormat = "$context `action` $action `assertion` $assertion_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimAssertionControlDynamicOp : SimOp<"assert.control.dynamic", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "dynamically change one assertion identity's control state";
+  let description = [{
+    Apply an IEEE assertion control action selected at execution time to one
+    compiler-resolved assertion identity. The action has already been checked
+    to be in the range 1 through 11.
+  }];
+  let arguments = (ins SimContextType:$context, I32:$action,
+                       I64Attr:$assertion_id);
+  let assemblyFormat = "$context `action` $action `assertion` $assertion_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimAssertionEnabledOp : SimOp<"assert.enabled", [
+    MemoryEffects<[MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "test whether one assertion may start a new attempt";
+  let arguments = (ins SimContextType:$context, I64Attr:$assertion_id);
+  let results = (outs I1:$enabled);
+  let assemblyFormat = "$context `assertion` $assertion_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimAssertionActionStateOp : SimOp<"assert.action_state", [
+    MemoryEffects<[MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "snapshot assertion pass/fail action enablement";
+  let description = [{
+    Return the action-enable mask at the start of one assertion attempt. Bit 0
+    enables nonvacuous pass actions, bit 1 enables vacuous pass actions, and
+    bit 2 enables fail actions. Deferred assertions capture this value so a
+    later assertion-control call cannot change an already executing attempt.
+  }];
+  let arguments = (ins SimContextType:$context, I64Attr:$assertion_id);
+  let results = (outs I32:$state);
+  let assemblyFormat = "$context `assertion` $assertion_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimAssertionKillEpochOp : SimOp<"assert.kill_epoch", [
+    MemoryEffects<[MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "read the Kill generation of one assertion identity";
+  let description = [{
+    Return the generation advanced by every effective Kill action. Concurrent
+    monitors snapshot this value for their live attempts and queued reports;
+    an epoch mismatch cancels work that predates Kill without exposing
+    compiler-owned monitor storage to the runtime.
+  }];
+  let arguments = (ins SimContextType:$context, I64Attr:$assertion_id);
+  let results = (outs I64:$epoch);
+  let assemblyFormat = "$context `assertion` $assertion_id attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimMonitorRegisterOp : SimOp<"monitor.register", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "replace the context-wide SystemVerilog monitor process";
+  let arguments = (ins SimProcessType:$process);
+  let assemblyFormat = "$process attr-dict";
+}
+
+def SimMonitorControlOp : SimOp<"monitor.control", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "enable or disable context-wide SystemVerilog monitor output";
+  let arguments = (ins BoolAttr:$enabled);
+  let assemblyFormat = "$enabled attr-dict";
+}
+
+def SimMonitorCurrentOp : SimOp<"monitor.current", [
+    MemoryEffects<[MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "test whether the executing process is the current monitor";
+  let results = (outs I1:$current);
+  let assemblyFormat = "attr-dict";
+}
+
+def SimDisableChildrenOp : SimOp<"children.disable", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "recursively cancel all current direct-child subtrees";
+  let assemblyFormat = "attr-dict";
+}
+
+//===----------------------------------------------------------------------===//
+// Context descriptors and mutable state
+//===----------------------------------------------------------------------===//
+
+def SimContextStorageOp : SimOp<"context.storage", [Pure]> {
+  let arguments = (ins SimContextType:$context, I64Attr:$id);
+  let results = (outs SimRefType:$result);
+  let assemblyFormat = "$context `[` $id `]` attr-dict `:` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimContextNetOp : SimOp<"context.net", [Pure]> {
+  let arguments = (ins SimContextType:$context, I64Attr:$id);
+  let results = (outs SimNetType:$result);
+  let assemblyFormat = "$context `[` $id `]` attr-dict `:` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimContextDriverOp : SimOp<"context.driver", [Pure]> {
+  let arguments = (ins SimContextType:$context, I64Attr:$id);
+  let results = (outs SimDriverType:$result);
+  let assemblyFormat = "$context `[` $id `]` attr-dict `:` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def SimContextEventOp : SimOp<"context.event", [Pure]> {
+  let arguments = (ins SimContextType:$context, I64Attr:$id);
+  let results = (outs SimEventType:$result);
+  let assemblyFormat = "$context `[` $id `]` attr-dict `:` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// First-class fixed aggregate values
+//===----------------------------------------------------------------------===//
+
+def SimPackedFlattenOp : SimOp<"packed.flatten", [
+    Pure, DeclareOpInterfaceMethods<CastOpInterface>]> {
+  let summary = "view a packed aggregate as its scalar bit representation";
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimPackedUnflattenOp : SimOp<"packed.unflatten", [
+    Pure, DeclareOpInterfaceMethods<CastOpInterface>]> {
+  let summary = "form a packed aggregate from its scalar bit representation";
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimAggregateDefaultOp : SimOp<"aggregate.default", [Pure]> {
+  let summary = "SystemVerilog default value of a fixed aggregate";
+  let description = [{
+    Struct and array elements default recursively. Union defaults retain their
+    language-level active-member or tag state; in particular, an unpacked
+    tagged union has no active member and a four-state packed tag is unknown.
+  }];
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
+def SimAggregateConstructOp : SimOp<"aggregate.construct", [Pure]> {
+  let summary = "construct a fixed struct or array in declaration order";
+  let arguments = (ins Variadic<AnyType>:$elements);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$elements attr-dict `:` functional-type($elements, $result)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimAggregateSplatOp : SimOp<"aggregate.splat", [Pure]> {
+  let summary = "fill every element of a fixed array with one value";
+  let description = [{
+    This is the compact form of a fixed-array assignment pattern whose
+    elements are all the same SSA value. It avoids making compiler memory and
+    instruction count proportional to the declared array length.
+  }];
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimAggregateExportBitstreamOp : SimOp<"aggregate.export_bitstream", [Pure]> {
+  let summary = "pack one fixed unpacked aggregate into a packed bit stream";
+  let arguments = (ins AnyType:$input, DenseI64ArrayAttr:$plan);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input `plan` $plan attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimAggregateImportBitstreamOp : SimOp<"aggregate.import_bitstream", [Pure]> {
+  let summary = "unpack one packed bit stream into a fixed unpacked aggregate";
+  let description = [{
+    Materializes the inverse of `aggregate.export_bitstream` using the same
+    compact, repeat-aware fixed-layout plan. This keeps construction of large
+    fixed aggregate bit-stream targets proportional to their type description
+    instead of their element count.
+  }];
+  let arguments = (ins AnyType:$input, DenseI64ArrayAttr:$plan);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input `plan` $plan attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimAggregateExtractOp : SimOp<"aggregate.extract", [Pure]> {
+  let summary = "extract one static struct or array subelement";
+  let arguments = (ins AnyType:$input, I64Attr:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimAggregateInsertOp : SimOp<"aggregate.insert", [Pure]> {
+  let summary = "replace one static struct or array subelement";
+  let arguments = (ins AnyType:$input, AnyType:$replacement, I64Attr:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$replacement `into` $input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimArrayDynExtractOp : SimOp<"array.extract_dynamic", [Pure]> {
+  let summary = "extract from a fixed array using a declared-range index";
+  let description = [{
+    The index is interpreted in the array's preserved source range. Unknown or
+    out-of-range indices produce the element type's recursive default.
+  }];
+  let arguments = (ins AnyType:$input, AnyType:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimArrayDynInsertOp : SimOp<"array.insert_dynamic", [Pure]> {
+  let summary = "replace an element of a fixed array using a declared-range index";
+  let description = [{
+    The index is interpreted in the array's preserved source range. IEEE
+    1800-2017 7.4.6 makes an unknown or out-of-range index invalid, and
+    "writing to an array with an invalid index shall perform no operation", so
+    such an index yields the input array unchanged.
+  }];
+  let arguments = (ins AnyType:$input, AnyType:$replacement, AnyType:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$replacement `into` $input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimUnionConstructOp : SimOp<"union.construct", [Pure]> {
+  let summary = "construct a union with one selected field";
+  let arguments = (ins AnyType:$value, I64Attr:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$value `as` $index attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def SimUnionExtractOp : SimOp<"union.extract", [Pure]> {
+  let summary = "extract one statically selected union field";
+  let arguments = (ins AnyType:$input, I64Attr:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimUnionIsActiveOp : SimOp<"union.is_active", [Pure]> {
+  let summary = "test the active member of a tagged union";
+  let description = [{
+    Returns false when the requested member is inactive or when the encoded
+    tag is unknown or invalid.
+  }];
+  let arguments = (ins AnyType:$input, I64Attr:$index);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$input `[` $index `]` attr-dict `:` type($input)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SimRefAllocOp : SimOp<"ref.alloc", [
+    DeclareOpInterfaceMethods<PromotableAllocationOpInterface>,
+    DeclareOpInterfaceMethods<DestructurableAllocationOpInterface>
+  ]> {
+  let summary = "promotable automatic local allocation";
+  let arguments = (ins AnyType:$initial_value);
+  let results = (outs Res<SimRefType, "", [MemAlloc<SimStorageResource>]>:$result);
+  let assemblyFormat = "$initial_value attr-dict `:` type($initial_value) `->` qualified(type($result))";
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimRefReleaseOwnerOp : SimOp<"ref.release_owner"> {
+  let summary = "end an automatic reference ownership lifetime";
+  let description = [{
+    Marks a control-flow point where the owner reference created by
+    `simulation.ref.alloc` is no longer live. This internal operation is
+    inserted by lifetime analysis and consumed by native lowering.
+  }];
+  let arguments =
+      (ins Arg<SimRefType, "", [MemFree<SimStorageResource>]>:$reference);
+  let assemblyFormat =
+      "$reference attr-dict `:` qualified(type($reference))";
+}
+
+def SimRefLoadOp : SimOp<"ref.load", [
+    DeclareOpInterfaceMethods<PromotableMemOpInterface>,
+    DeclareOpInterfaceMethods<DestructurableAccessorOpInterface>,
+    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>,
+    SimRefElementMatches<"reference", "result">
+  ]> {
+  let arguments = (ins Arg<SimRefType, "", [MemRead<SimStorageResource>]>:$reference);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$reference attr-dict `:` qualified(type($reference)) `->` type($result)";
+}
+
+def SimRefStoreOp : SimOp<"ref.store", [
+    DeclareOpInterfaceMethods<PromotableMemOpInterface>,
+    DeclareOpInterfaceMethods<DestructurableAccessorOpInterface>,
+    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>,
+    SimRefElementMatches<"reference", "value">
+  ]> {
+  let arguments = (ins AnyType:$value,
+                       Arg<SimRefType, "", [MemWrite<SimStorageResource>]>:$reference);
+  let assemblyFormat = "$value `to` $reference attr-dict `:` type($value) `,` qualified(type($reference))";
+}
+
+def SimRefCopyOp : SimOp<"ref.copy", [SameTypeOperands]> {
+  let summary = "copy a packed reference without materializing its value";
+  let arguments = (ins
+      Arg<SimRefType, "", [MemRead<SimStorageResource>]>:$source,
+      Arg<SimRefType, "", [MemWrite<SimStorageResource>]>:$destination);
+  let assemblyFormat =
+      "$source `to` $destination attr-dict `:` qualified(type($source))";
+}
+
+def SimOverrideOp : SimOp<"override", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "publish a whole static scalar force or procedural assign";
+  let arguments = (ins
+    Arg<AnyType, "", [
+      MemWrite<SimStorageResource>, MemWrite<SimNetResource>
+    ]>:$target,
+    AnyType:$value, BoolAttr:$is_assign);
+  let assemblyFormat = "$target `=` $value `assign` $is_assign attr-dict `:` type($target) `,` type($value)";
+  let hasVerifier = 1;
+}
+
+def SimDynamicOverrideOp : SimOp<"dynamic_override", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "claim or reevaluate a dependency-driven static-target override";
+  let description = [{
+    The owner is the evaluator process spawned for one execution of a force or
+    procedural assign statement. A claim replaces prior ownership for the
+    target range and publishes the initial value. A reevaluation updates only
+    bits the owner still controls, so partially overlapping later overrides do
+    not resurrect superseded bits. Release and replacement retire an evaluator
+    as soon as it owns no bits.
+  }];
+  let arguments = (ins
+    Arg<AnyType, "", [
+      MemWrite<SimStorageResource>, MemWrite<SimNetResource>
+    ]>:$target,
+    AnyType:$value,
+    SimProcessType:$owner,
+    BoolAttr:$is_assign,
+    BoolAttr:$claim);
+  let assemblyFormat = "$target `=` $value `owner` $owner `assign` $is_assign "
+                       "`claim` $claim attr-dict `:` type($target) `,` "
+                       "type($value)";
+  let hasVerifier = 1;
+}
+
+def SimReleaseOverrideOp : SimOp<"release_override", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "release a whole static scalar force or procedural assign";
+  let arguments = (ins
+    Arg<AnyType, "", [
+      MemWrite<SimStorageResource>, MemWrite<SimNetResource>
+    ]>:$target,
+    BoolAttr:$is_assign);
+  let assemblyFormat = "$target `assign` $is_assign attr-dict `:` type($target)";
+  let hasVerifier = 1;
+}
+
+def SimNetExtractOp : SimOp<"net.extract", [Pure, ViewLikeOpInterface]> {
+  let summary = "constant packed or exact aggregate-element view into a built-in net";
+  let arguments = (ins SimNetType:$input, I64Attr:$low_bit);
+  let results = (outs SimNetType:$result);
+  let assemblyFormat = "$input `from` $low_bit attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimRefExtractOp : SimOp<"ref.extract", [
+    Pure, ViewLikeOpInterface,
+    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>
+  ]> {
+  let arguments = (ins SimRefType:$input, I64Attr:$low_bit);
+  let results = (outs SimRefType:$result);
+  let assemblyFormat = "$input `from` $low_bit attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimRefDynExtractOp : SimOp<"ref.dyn_extract", [
+    Pure, ViewLikeOpInterface,
+    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>
+  ]> {
+  let summary = "dynamically select a packed storage slice";
+  let description = [{
+    The low-bit index may be a signless builtin integer or four-state logic.
+    An unknown index denotes no storage, so stores through the result have no
+    effect and loads produce X or zero according to the element domain.
+    Out-of-range bits likewise ignore writes and use the domain fallback on
+    loads, while in-range bits retain their normal storage effects.
+  }];
+  let arguments = (ins SimRefType:$input, AnyType:$low_bit);
+  let results = (outs SimRefType:$result);
+  let assemblyFormat = "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimRefSubelementOp : SimOp<"ref.subelement", [
+    Pure, ViewLikeOpInterface,
+    DeclareOpInterfaceMethods<DestructurableAccessorOpInterface>,
+    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>
+  ]> {
+  let summary = "static declaration-order view into aggregate storage";
+  let arguments = (ins SimRefType:$input, DenseI64ArrayAttr:$indices);
+  let results = (outs SimRefType:$result);
+  let assemblyFormat = "$input `[` $indices `]` attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimRefArrayElementOp : SimOp<"ref.array_element", [
+    Pure, ViewLikeOpInterface,
+    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>
+  ]> {
+  let summary = "dynamic declared-range view into fixed array storage";
+  let description = [{
+    An unknown or out-of-range source index denotes no storage. Loads through
+    the result return the recursive element default and stores have no effect.
+  }];
+  let arguments = (ins SimRefType:$input, AnyType:$index);
+  let results = (outs SimRefType:$result);
+  let assemblyFormat = "$input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimNetReadOp : SimOp<"net.read", [
+    MemoryEffects<[MemRead<SimNetResource>]>,
+    SimNetElementMatches<"net", "result">
+  ]> {
+  let arguments = (ins SimNetType:$net);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$net attr-dict `:` qualified(type($net)) `->` type($result)";
+}
+
+def SimNetCountDriversOp : SimOp<"net.count_drivers", [
+    MemoryEffects<[MemRead<SimNetResource>]>
+  ]> {
+  let summary = "count active scalar-net driver contributions";
+  let description = [{
+    Implements the state query underlying IEEE 1800-2017 Annex D.2. The net
+    operand must denote one scalar net bit. Results report whether that bit is
+    forced, followed by the counts of non-Z drivers in total, 0, 1, and x
+    states. Collapsed net components and paired conditional-primitive strength
+    drivers are counted as their logical SystemVerilog drivers.
+  }];
+  let arguments = (ins SimNetType:$net);
+  let results = (outs I32:$forced, I32:$total, I32:$zero, I32:$one,
+                       I32:$unknown);
+  let assemblyFormat = "$net attr-dict `:` qualified(type($net))";
+  let hasVerifier = 1;
+}
+
+def SimNetWriteOp : SimOp<"net.write", [
+    MemoryEffects<[MemWrite<SimNetResource>]>,
+    SimNetElementMatches<"net", "value">
+  ]> {
+  let summary = "atomically publish a user-defined resolved-net value";
+  let arguments = (ins SimNetType:$net, AnyType:$value);
+  let assemblyFormat = "$net `=` $value attr-dict `:` qualified(type($net)) `,` type($value)";
+}
+
+def SimDriverReadOp : SimOp<"driver.read", [
+    MemoryEffects<[MemRead<SimNetResource>]>,
+    SimDriverElementMatches<"driver", "result">
+  ]> {
+  let summary = "read one raw user-defined net driver contribution";
+  let arguments = (ins SimDriverType:$driver);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$driver attr-dict `:` qualified(type($driver)) `->` type($result)";
+}
+
+def SimDriverDriveOp : SimOp<"driver.drive", [
+    MemoryEffects<[MemWrite<SimNetResource>]>,
+    SimDriverElementMatches<"driver", "value">
+  ]> {
+  let arguments = (ins SimDriverType:$driver, AnyType:$value);
+  let assemblyFormat = "$driver `=` $value attr-dict `:` qualified(type($driver)) `,` type($value)";
+}
+
+def SimDriverDriveInertialOp : SimOp<"driver.drive_inertial", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimNetResource>]>,
+    SimDriverElementMatches<"driver", "value">
+  ]> {
+  let summary = "schedule an inertial gate or continuous-assignment drive";
+  let arguments = (ins SimDriverType:$driver, AnyType:$value,
+                       SimTimeType:$rise_delay, SimTimeType:$fall_delay,
+                       SimTimeType:$turnoff_delay, I64Attr:$code_unit_id,
+                       I32Attr:$component, BoolAttr:$vector_delay,
+                       DefaultValuedAttr<BoolAttr, "false">:$defer_resolution);
+  let assemblyFormat = [{
+    $driver `=` $value `after` `[` $rise_delay `,` $fall_delay `,`
+    $turnoff_delay `]` `site` $code_unit_id `:` $component
+    `vector` `=` $vector_delay attr-dict `:` qualified(type($driver)) `,`
+    type($value)
+  }];
+}
+
+def SimDriverDriveInertialPathOp : SimOp<"driver.drive_inertial_path", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimNetResource>]>,
+    SimDriverElementMatches<"driver", "value">,
+    AllTypesMatch<["active_mask", "rise_mask", "fall_mask", "turnoff_mask"]>
+  ]> {
+  let summary = "schedule one packed module-path inertial delay group";
+  let description = [{
+    `active_mask` selects bits governed by a path on this activation. The
+    transition masks assign each active bit to this static delay group for
+    rise, fall, and turnoff independently. Groups with the same site execute
+    consecutively; group zero starts a keyed generation batch, avoiding any
+    scheduler-queue cancellation scan.
+  }];
+  let arguments = (ins SimDriverType:$driver, AnyType:$value,
+                       AnySignlessInteger:$active_mask,
+                       AnySignlessInteger:$rise_mask,
+                       AnySignlessInteger:$fall_mask,
+                       AnySignlessInteger:$turnoff_mask,
+                       Optional<AnySignlessInteger>:$pulse_transition_masks,
+                       SimTimeType:$rise_delay, SimTimeType:$fall_delay,
+                       SimTimeType:$turnoff_delay,
+                       I64Attr:$code_unit_id,
+                       I32Attr:$component, I32Attr:$group,
+                       I32Attr:$group_count,
+                       DefaultValuedAttr<BoolAttr, "false">:$defer_resolution,
+                       DefaultValuedAttr<I64Attr, "-1">:$pulse_reject,
+                       DefaultValuedAttr<I64Attr, "-1">:$pulse_error,
+                       DefaultValuedAttr<BoolAttr, "false">:$pulse_on_detect,
+                       DefaultValuedAttr<BoolAttr, "false">:$pulse_show_cancelled);
+  let assemblyFormat = [{
+    $driver `=` $value `active` $active_mask `masks` `[` $rise_mask `,`
+    $fall_mask `,` $turnoff_mask `]` `after` `[` $rise_delay `,`
+    $fall_delay `,` $turnoff_delay `]` `site` $code_unit_id `:` $component
+    `group` $group `of` $group_count
+    (`pulse_transitions` $pulse_transition_masks^ `:` type($pulse_transition_masks))?
+    attr-dict `:` qualified(type($driver)) `,`
+    type($value) `,` type($active_mask)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimRefStoreInertialPathOp : SimOp<"ref.store_inertial_path", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimStorageResource>]>,
+    SimRefElementMatches<"reference", "value">,
+    AllTypesMatch<["write_mask", "active_mask", "rise_mask", "fall_mask",
+                   "turnoff_mask"]>
+  ]> {
+  let summary = "schedule one packed procedural module-path write group";
+  let description = [{
+    `write_mask` identifies the bits written by this procedural assignment.
+    `active_mask` selects the written bits governed by a qualified module path;
+    uncovered bits retain ordinary blocking or NBA region semantics. Groups
+    with one shared site arbitrate and cancel through the same keyed per-bit
+    runtime state used by continuous module-path drivers.
+  }];
+  let arguments = (ins SimRefType:$reference, AnyType:$value,
+                       AnySignlessInteger:$write_mask,
+                       AnySignlessInteger:$active_mask,
+                       AnySignlessInteger:$rise_mask,
+                       AnySignlessInteger:$fall_mask,
+                       AnySignlessInteger:$turnoff_mask,
+                       Optional<AnySignlessInteger>:$pulse_transition_masks,
+                       SimTimeType:$rise_delay, SimTimeType:$fall_delay,
+                       SimTimeType:$turnoff_delay,
+                       I64Attr:$site_id,
+                       I32Attr:$component, I32Attr:$group,
+                       I32Attr:$group_count, BoolAttr:$nonblocking,
+                       DefaultValuedAttr<I64Attr, "-1">:$pulse_reject,
+                       DefaultValuedAttr<I64Attr, "-1">:$pulse_error,
+                       DefaultValuedAttr<BoolAttr, "false">:$pulse_on_detect,
+                       DefaultValuedAttr<BoolAttr, "false">:$pulse_show_cancelled);
+  let assemblyFormat = [{
+    $value `to` $reference `write` $write_mask `active` $active_mask
+    `masks` `[` $rise_mask `,` $fall_mask `,` $turnoff_mask `]`
+    `after` `[` $rise_delay `,` $fall_delay `,` $turnoff_delay `]`
+    `site` $site_id `:` $component `group` $group `of` $group_count
+    `nonblocking` `=` $nonblocking
+    (`pulse_transitions` $pulse_transition_masks^ `:` type($pulse_transition_masks))?
+    attr-dict `:` qualified(type($reference))
+    `,` type($value) `,` type($write_mask)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimDriverDriveInertialStrengthPairOp : SimOp<
+    "driver.drive_inertial_strength_pair", [
+      MemoryEffects<[MemWrite<SimSchedulerResource>,
+                     MemWrite<SimNetResource>]>
+    ]> {
+  let summary = "schedule one inertial three-state strength-pair drive";
+  let description = [{
+    Schedules the two polarity banks used to represent one `bufif` or `notif`
+    output as a single inertial update. `transition_value` is the logical
+    four-state gate output used to select the rise, fall, turn-off, or unknown
+    delay. The low and high bank contributions mature atomically before net
+    resolution, including when only one bank changes.
+  }];
+  let arguments = (ins SimDriverType:$low_driver, AnyType:$low_value,
+                       SimDriverType:$high_driver, AnyType:$high_value,
+                       AnyType:$transition_value,
+                       SimTimeType:$rise_delay, SimTimeType:$fall_delay,
+                       SimTimeType:$turnoff_delay, I64Attr:$code_unit_id,
+                       I32Attr:$component);
+  let assemblyFormat = [{
+    $low_driver `=` $low_value `,` $high_driver `=` $high_value
+    `transition` $transition_value `after` `[` $rise_delay `,` $fall_delay `,`
+    $turnoff_delay `]` `site` $code_unit_id `:` $component attr-dict `:`
+    qualified(type($low_driver)) `,` type($low_value) `,`
+    qualified(type($high_driver)) `,` type($high_value) `,`
+    type($transition_value)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimDriverDriveInertialPathStrengthPairOp : SimOp<
+    "driver.drive_inertial_path_strength_pair", [
+      MemoryEffects<[MemWrite<SimSchedulerResource>,
+                     MemWrite<SimNetResource>]>,
+      AllTypesMatch<["active_mask", "rise_mask", "fall_mask",
+                     "turnoff_mask"]>
+    ]> {
+  let summary = "schedule one masked module-path strength-pair delay group";
+  let description = [{
+    Schedules the complementary polarity banks of a conditional primitive as
+    one atomic masked module-path update. All groups for a site execute
+    consecutively; group zero starts one per-bit arbitration batch.
+  }];
+  let arguments = (ins SimDriverType:$low_driver, AnyType:$low_value,
+                       SimDriverType:$high_driver, AnyType:$high_value,
+                       AnyType:$transition_value,
+                       AnySignlessInteger:$active_mask,
+                       AnySignlessInteger:$rise_mask,
+                       AnySignlessInteger:$fall_mask,
+                       AnySignlessInteger:$turnoff_mask,
+                       Optional<AnySignlessInteger>:$pulse_transition_masks,
+                       SimTimeType:$rise_delay, SimTimeType:$fall_delay,
+                       SimTimeType:$turnoff_delay, I64Attr:$code_unit_id,
+                       I32Attr:$component, I32Attr:$group,
+                       I32Attr:$group_count,
+                       DefaultValuedAttr<I64Attr, "-1">:$pulse_reject,
+                       DefaultValuedAttr<I64Attr, "-1">:$pulse_error,
+                       DefaultValuedAttr<BoolAttr, "false">:$pulse_on_detect,
+                       DefaultValuedAttr<BoolAttr, "false">:$pulse_show_cancelled);
+  let assemblyFormat = [{
+    $low_driver `=` $low_value `,` $high_driver `=` $high_value
+    `transition` $transition_value `active` $active_mask `masks` `[`
+    $rise_mask `,` $fall_mask `,` $turnoff_mask `]` `after` `[`
+    $rise_delay `,` $fall_delay `,` $turnoff_delay `]` `site`
+    $code_unit_id `:` $component `group` $group `of` $group_count
+    (`pulse_transitions` $pulse_transition_masks^ `:` type($pulse_transition_masks))?
+    attr-dict
+    `:` qualified(type($low_driver)) `,` type($low_value) `,`
+    qualified(type($high_driver)) `,` type($high_value) `,`
+    type($transition_value) `,` type($active_mask)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimDriverDriveDelayedNetOp : SimOp<"driver.drive_delayed_net", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>, MemWrite<SimNetResource>]>,
+    SimDriverElementMatches<"driver", "value">
+  ]> {
+  let summary = "drive a net whose resolved value has an inertial net delay";
+  let description = [{
+    Stores the driver contribution immediately, then resolves the target net
+    and schedules any resulting visible transition using the delay metadata on
+    the net declaration. The optional deferred-resolution flag pairs the two
+    strength banks of a conditional primitive into one logical update.
+  }];
+  let arguments = (ins SimDriverType:$driver, AnyType:$value,
+                       DefaultValuedAttr<BoolAttr, "false">:$defer_resolution);
+  let assemblyFormat = "$driver `=` $value attr-dict `:` qualified(type($driver)) `,` type($value)";
+}
+
+def SimDriverDriveChangedOp : SimOp<"driver.drive_changed", [
+    MemoryEffects<[MemWrite<SimNetResource>]>,
+    SimDriverElementMatches<"driver", "value">
+  ]> {
+  let summary = "drive a net and return whether its resolved value changed";
+  let description = [{
+    This internal operation is the transition-producing form used by generated
+    graph-region kernels. The result is true when any value or unknown-plane
+    bit in the affected resolved net changes. Ordinary process bodies retain
+    `driver.drive`; bytecode fallback bodies do not depend on this result.
+  }];
+  let arguments = (ins SimDriverType:$driver, AnyType:$value);
+  let results = (outs I1:$changed);
+  let assemblyFormat = "$driver `=` $value attr-dict `:` qualified(type($driver)) `,` type($value)";
+}
+
+def SimDriverExtractOp : SimOp<"driver.extract", [Pure, ViewLikeOpInterface]> {
+  let arguments = (ins SimDriverType:$input, I64Attr:$low_bit);
+  let results = (outs SimDriverType:$result);
+  let assemblyFormat = "$input `from` $low_bit attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimDriverDynExtractOp : SimOp<"driver.dyn_extract", [Pure, ViewLikeOpInterface]> {
+  let summary = "dynamically select a packed driver slice";
+  let description = [{
+    The low-bit index may be a signless builtin integer or four-state logic.
+    An unknown index suppresses the drive. Out-of-range bits are ignored while
+    in-range bits retain their normal net-driving effects.
+  }];
+  let arguments = (ins SimDriverType:$input, AnyType:$low_bit);
+  let results = (outs SimDriverType:$result);
+  let assemblyFormat = "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimDriverSubelementOp : SimOp<"driver.subelement", [Pure, ViewLikeOpInterface]> {
+  let summary = "static declaration-order view into an aggregate driver";
+  let arguments = (ins SimDriverType:$input, DenseI64ArrayAttr:$indices);
+  let results = (outs SimDriverType:$result);
+  let assemblyFormat = "$input `[` $indices `]` attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimDriverArrayElementOp : SimOp<"driver.array_element", [Pure, ViewLikeOpInterface]> {
+  let summary = "dynamic declared-range view into a fixed-array driver";
+  let arguments = (ins SimDriverType:$input, AnyType:$index);
+  let results = (outs SimDriverType:$result);
+  let assemblyFormat = "$input `[` $index `]` attr-dict `:` functional-type(operands, results)";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getInput(); }
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimNBAEnqueueOp : SimOp<"nba.enqueue", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>]>
+  ]> {
+  let arguments = (ins AnyType:$value, AnyType:$destination,
+                       Optional<SimTimeType>:$delay,
+                       OptionalAttr<SimNBASiteAttr>:$site,
+                       OptionalAttr<I64Attr>:$clocking_output);
+  let assemblyFormat = [{$value `to` $destination (`after` $delay^)? attr-dict
+    `:` functional-type(operands, results)}];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Packed values and time
+//===----------------------------------------------------------------------===//
+
+def SimLogicConstantOp : SimOp<"logic.constant", [Pure, ConstantLike]> {
+  let summary = "constant four-state value given as a value and unknown plane";
+  let description = [{
+    Folds to a two-element `ArrayAttr` holding the value and unknown planes,
+    which the dialect constant materializer turns back into this operation.
+  }];
+  let arguments = (ins APIntAttr:$value, APIntAttr:$unknown);
+  let results = (outs SimLogicType:$result);
+  let assemblyFormat = "$value `,` $unknown attr-dict `:` qualified(type($result))";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SimLogicFromBitsOp : SimOp<"logic.from_bits", [
+    Pure, DeclareOpInterfaceMethods<CastOpInterface>]> {
+  let arguments = (ins AnyInteger:$input);
+  let results = (outs SimLogicType:$result);
+  let assemblyFormat = "$input attr-dict `:` type($input) `->` qualified(type($result))";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SimLogicToBitsOp : SimOp<"logic.to_bits", [
+    Pure, DeclareOpInterfaceMethods<CastOpInterface>]> {
+  let summary = "convert four-state logic to two-state bits";
+  let description = [{
+    Performs the SystemVerilog four-state-to-two-state conversion. Every known
+    bit is preserved and every X or Z bit becomes zero.
+  }];
+  let arguments = (ins SimLogicType:$input);
+  let results = (outs AnyInteger:$result);
+  let assemblyFormat = "$input attr-dict `:` qualified(type($input)) `->` type($result)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicIsTrueOp : SimOp<"logic.is_true", [Pure]> {
+  let summary = "evaluate four-state logic as a control-flow predicate";
+  let description = [{
+    Returns true exactly when at least one input bit is a known one. Zero and
+    values containing only X and Z bits are false, matching SystemVerilog
+    conditional-statement truth evaluation.
+  }];
+  let arguments = (ins SimLogicType:$input);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$input attr-dict `:` qualified(type($input))";
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicMuxOp : SimOp<"logic.mux", [
+    Pure, AllTypesMatch<["true_value", "false_value", "result"]>
+  ]> {
+  let summary = "conditional-expression selection with IEEE X/Z merging";
+  let description = [{
+    A known condition selects one operand. For an X or Z condition, each
+    result bit is preserved only when both operands contain the same known 0
+    or 1; every other combination becomes X, as required by IEEE 1800-2017
+    Table 11-20.
+  }];
+  let arguments = (ins SimLogic1Type:$condition, SimLogicType:$true_value,
+                       SimLogicType:$false_value);
+  let results = (outs SimLogicType:$result);
+  let assemblyFormat = [{
+    $condition `?` $true_value `:` $false_value attr-dict `:`
+    functional-type(operands, results)
+  }];
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicCountBitsOp : SimOp<"logic.count_bits", [
+    Pure, DeclareOpInterfaceMethods<InferIntRangeInterface,
+                                   ["inferResultRangesFromOptional"]>]> {
+  let summary = "count selected four-state symbols in a fixed bitstream";
+  let description = [{
+    Each one-bit control selects exactly one of 0, 1, X, or Z using the
+    dialect's value/unknown encoding. Duplicate controls select that state only
+    once. The result is the count modulo 2^32, matching SystemVerilog `int`.
+  }];
+  let arguments = (ins AnyType:$input,
+                       Variadic<SimLogic1Type>:$controls);
+  let results = (outs I32:$result);
+  let assemblyFormat =
+      "$input `matching` $controls attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicClog2Op : SimOp<"logic.clog2", [
+    Pure, DeclareOpInterfaceMethods<InferIntRangeInterface,
+                                   ["inferResultRangesFromOptional"]>]> {
+  let summary = "SystemVerilog ceiling base-two logarithm";
+  let description = [{
+    Converts X and Z bits to zero, then returns the minimum number of bits
+    needed to represent the input minus one. Zero and one return zero. Signed
+    inputs are intentionally interpreted by bit pattern, as required by
+    SystemVerilog `$clog2`.
+  }];
+  let arguments = (ins SimLogicType:$input);
+  let results = (outs I32:$result);
+  let assemblyFormat = "$input attr-dict `:` qualified(type($input))";
+  let hasFolder = 1;
+}
+
+def SimLogicResizeOp : SimOp<"logic.resize", [
+    Pure, DeclareOpInterfaceMethods<CastOpInterface>]> {
+  let summary = "widen or narrow a four-state value";
+  let arguments = (ins SimLogicType:$input, BoolAttr:$is_signed);
+  let results = (outs SimLogicType:$result);
+  let assemblyFormat = "$input `signed` `=` $is_signed attr-dict `:` qualified(type($input)) `->` qualified(type($result))";
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicUnaryOp : SimOp<"logic.unary", [Pure]> {
+  let arguments = (ins SimUnaryKind:$kind, SimLogicType:$input);
+  let results = (outs SimLogicType:$result);
+  let assemblyFormat =
+      "$kind $input attr-dict `:` functional-type(operands, results)";
+  let extraClassDeclaration = [{
+    /// Bitwise negation. A one-bit logical negation maps 0, 1, X and Z
+    /// exactly as bitwise negation does (IEEE 1800-2023 11.4.7, Table
+    /// 11-15), and canonicalization spells the one-bit case that way, so
+    /// analyses must accept both forms.
+    bool isBitwiseNegation() {
+      return getKind() == UnaryKind::BitNot ||
+             (getKind() == UnaryKind::LogicalNot &&
+              getInput().getType().getWidth() == 1);
+    }
+  }];
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicReductionOp : SimOp<"logic.reduction", [Pure]> {
+  let summary = "four-state packed reduction";
+  let arguments = (ins SimReductionKind:$kind, SimLogicType:$input);
+  let results = (outs SimLogic1Type:$result);
+  let assemblyFormat = [{$kind $input attr-dict `:` qualified(type($input))
+    `->` qualified(type($result))}];
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicBinaryOp
+    : SimOp<"logic.binary", [Pure, SameOperandsAndResultType]> {
+  let arguments = (ins SimBinaryKind:$kind, SimLogicType:$lhs,
+                       SimLogicType:$rhs);
+  let results = (outs SimLogicType : $result);
+  let assemblyFormat =
+      "$kind $lhs `,` $rhs attr-dict `:` qualified(type($result))";
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicPowerOp : SimOp<"logic.power", [Pure]> {
+  let summary = "four-state integral exponentiation";
+  let description = [{
+    Computes the base-width modular power for a nonnegative exponent. The
+    exponent has its own packed width, as required by SystemVerilog. Unknown
+    bits in either operand produce an all-X result; signed negative-exponent
+    selection is represented by the surrounding semantic lowering.
+  }];
+  let arguments = (ins SimLogicType:$base, SimLogicType:$exponent);
+  let results = (outs SimLogicType:$result);
+  let assemblyFormat =
+      "$base `,` $exponent attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SimLogicLogicalOp : SimOp<"logic.logical", [Pure, Commutative]> {
+  let summary = "four-state logical conjunction or disjunction";
+  let arguments = (ins SimLogicalKind
+                   : $kind, SimLogicType
+                   : $lhs, SimLogicType
+                   : $rhs);
+  let results = (outs SimLogic1Type : $result);
+  let assemblyFormat =
+      "$kind $lhs `,` $rhs attr-dict `:` functional-type(operands, results)";
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicShiftOp
+    : SimOp<"logic.shift", [Pure, AllTypesMatch<["input", "result"]>]> {
+  let summary = "four-state shift with an independently typed amount";
+  let arguments = (ins SimShiftKind
+                   : $kind, SimLogicType
+                   : $input, AnyType
+                   : $amount);
+  let results = (outs SimLogicType : $result);
+  let assemblyFormat = "$kind $input `by` $amount attr-dict `:` "
+                       "functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicCompareOp
+    : SimOp<"logic.compare", [Pure, SameTypeOperands]> {
+  let arguments = (ins SimCompareKind
+                   : $kind, SimLogicType
+                   : $lhs, SimLogicType
+                   : $rhs);
+  let results = (outs AnyType : $result);
+  let assemblyFormat =
+      "$kind $lhs `,` $rhs attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicCaseDifferenceMaskOp
+    : SimOp<"logic.case_difference_mask", [Pure, SameTypeOperands]> {
+  let summary = "return one bit for every four-state symbol that changed";
+  let description = [{
+    Compares the value and unknown planes independently and returns their
+    bitwise union. Unlike `logic.compare case_ne`, the result retains the
+    position of every changed symbol, including X-to-Z and Z-to-X changes.
+  }];
+  let arguments = (ins SimLogicType:$lhs, SimLogicType:$rhs);
+  let results = (outs AnyInteger:$result);
+  let assemblyFormat =
+      "$lhs `,` $rhs attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicConcatOp : SimOp<"logic.concat", [Pure]> {
+  let arguments = (ins Variadic<SimLogicType> : $inputs);
+  let results = (outs SimLogicType : $result);
+  let assemblyFormat =
+      "$inputs attr-dict `:` functional-type($inputs, $result)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicReplicateOp : SimOp<"logic.replicate", [Pure]> {
+  let arguments = (ins SimLogicType : $input, I64Attr : $count);
+  let results = (outs SimLogicType : $result);
+  let assemblyFormat = "$input `times` $count attr-dict `:` "
+                       "qualified(type($input)) `->` qualified(type($result))";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicExtractOp : SimOp<"logic.extract", [Pure]> {
+  let arguments = (ins SimLogicType : $input, I64Attr : $low_bit);
+  let results = (outs SimLogicType : $result);
+  let assemblyFormat = "$input `from` $low_bit attr-dict `:` "
+                       "qualified(type($input)) `->` qualified(type($result))";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicDynExtractOp : SimOp<"logic.dyn_extract", [Pure]> {
+  let summary = "dynamically select a four-state packed slice";
+  let description = [{
+    The low-bit index may be a signless builtin integer or four-state logic and
+    its bit pattern is interpreted as a signed two's-complement value. Producers
+    must therefore zero-extend unsigned source indices before normalization so
+    that a positive index cannot be mistaken for a negative one. An unknown
+    index produces all X. For a partially out-of-range selection, in-range bits
+    are preserved and out-of-range bits are X.
+  }];
+  let arguments = (ins SimLogicType : $input, AnyType : $low_bit);
+  let results = (outs SimLogicType : $result);
+  let assemblyFormat =
+      "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimBitsDynExtractOp : SimOp<"bits.dyn_extract", [Pure]> {
+  let summary = "dynamically select a two-state packed slice";
+  let description = [{
+    The low-bit index may be a signless builtin integer or four-state logic and
+    its bit pattern is interpreted as a signed two's-complement value. Producers
+    must therefore zero-extend unsigned source indices before normalization so
+    that a positive index cannot be mistaken for a negative one. An unknown
+    index produces zero. For a partially out-of-range selection, in-range bits
+    are preserved and out-of-range bits are zero. This operation defines bounds
+    behavior without relying on poison-producing integer shifts.
+  }];
+  let arguments = (ins AnyInteger:$input, AnyType:$low_bit);
+  let results = (outs AnyInteger:$result);
+  let assemblyFormat =
+      "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicDynInsertOp
+    : SimOp<"logic.dyn_insert", [Pure, AllTypesMatch<["input", "result"]>]> {
+  let summary = "dynamically replace a four-state packed slice";
+  let description = [{
+    The low-bit index follows the same signed two's-complement normalization
+    contract as `logic.dyn_extract`. An unknown or wholly out-of-range index
+    leaves the input unchanged. A partially overlapping replacement updates
+    only the in-range input bits.
+  }];
+  let arguments = (ins SimLogicType:$input, SimLogicType:$replacement,
+                        AnyType:$low_bit);
+  let results = (outs SimLogicType:$result);
+  let assemblyFormat =
+      "$replacement `into` $input `at` $low_bit attr-dict `:` "
+      "functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimBitsDynInsertOp
+    : SimOp<"bits.dyn_insert", [Pure, AllTypesMatch<["input", "result"]>]> {
+  let summary = "dynamically replace a two-state packed slice";
+  let description = [{
+    The low-bit index follows the same signed two's-complement normalization
+    contract as `bits.dyn_extract`. An unknown or wholly out-of-range index
+    leaves the input unchanged. A partially overlapping replacement updates
+    only the in-range input bits.
+  }];
+  let arguments = (ins AnyInteger:$input, AnyInteger:$replacement,
+                        AnyType:$low_bit);
+  let results = (outs AnyInteger:$result);
+  let assemblyFormat =
+      "$replacement `into` $input `at` $low_bit attr-dict `:` "
+      "functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimLogicInsertOp
+    : SimOp<"logic.insert", [Pure, AllTypesMatch<["input", "result"]>]> {
+  let arguments = (ins SimLogicType
+                   : $input, SimLogicType
+                   : $replacement, I64Attr
+                   : $low_bit);
+  let results = (outs SimLogicType : $result);
+  let assemblyFormat = "$replacement `into` $input `at` $low_bit attr-dict `:` "
+                       "functional-type(operands, results)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let hasCanonicalizer = 1;
+}
+
+def SimTimeConstantOp : SimOp<"time.constant", [Pure, ConstantLike]> {
+  let summary = "nonnegative time measured in design-precision ticks";
+  let arguments = (ins I64Attr : $value);
+  let results = (outs SimTimeType : $result);
+  let assemblyFormat = "$value attr-dict";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SimTimeNowOp : SimOp<"time.now", [
+  MemoryEffects<[MemRead<SimSchedulerResource>]>
+]> {
+  let summary = "read the scheduler clock in design-precision ticks";
+  let arguments = (ins SimContextType:$context);
+  let results = (outs I64:$result);
+  let assemblyFormat = "$context attr-dict";
+}
+
+def SimTimeToRealOp : SimOp<"time.to_real", [Pure]> {
+  let summary = "convert design-precision ticks to a realtime value";
+  let arguments = (ins I64:$input, I64Attr:$scale);
+  let results = (outs F64:$result);
+  let assemblyFormat = "$input `by` $scale attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimTimeFromRealOp : SimOp<"time.from_real", [Pure]> {
+  let summary = "convert a realtime delay to design-precision ticks";
+  let description = [{
+    Rounds a nonnegative delay to the nearest source-precision quantum, with
+    ties rounded upward, and then expresses it in design-precision ticks. NaN
+    and negative inputs produce zero. Positive infinity and finite overflow
+    saturate to the largest quantum-aligned value representable in 64 bits.
+  }];
+  let arguments = (ins F64:$input, I64Attr:$scale, I64Attr:$quantum);
+  let results = (outs SimTimeType:$result);
+  let assemblyFormat = "$input `by` $scale `quantum` $quantum attr-dict";
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SimRealFromIntegerOp : SimOp<"real.from_integer", [Pure]> {
+  let summary = "convert a two-state integer to an IEEE floating value";
+  let description = [{
+    Converts with IEEE round-to-nearest, ties-to-even semantics. Magnitudes
+    outside the finite result range produce infinity with the source sign.
+  }];
+  let arguments = (ins AnyInteger:$input, BoolAttr:$is_signed);
+  let results = (outs AnyFloat:$result);
+  let assemblyFormat =
+      "$input `signed` `=` $is_signed attr-dict `:` type($input) `->` type($result)";
+  let hasFolder = 1;
+}
+
+def SimRealToIntegerOp : SimOp<"real.to_integer", [Pure]> {
+  let summary = "round an IEEE double to a two-state integer";
+  let arguments = (ins F64:$input, BoolAttr:$is_signed);
+  let results = (outs AnyInteger:$result);
+  let assemblyFormat =
+      "$input `signed` `=` $is_signed attr-dict `:` type($result)";
+}
+
+def SimTimeScaleOp : SimOp<"time.scale", [Pure]> {
+  let summary = "scale a dynamic packed delay into design-precision ticks";
+  let description = [{
+    The input is normalized to an unsigned i64 before this operation. Frontend
+    lowering is responsible for mapping unknown and negative values to zero
+    and for proving that multiplication by the positive scale cannot overflow
+    the supported simulation-time range.
+  }];
+  let arguments = (ins I64:$input, I64Attr:$scale,
+                       BoolAttr:$is_signed);
+  let results = (outs SimTimeType:$result);
+  let assemblyFormat = [{$input `by` $scale `signed` `=` $is_signed attr-dict
+    `:` type($input)}];
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SimTimeAddOp
+    : SimOp<"time.add", [Pure, SameOperandsAndResultType, Commutative]> {
+  let arguments = (ins SimTimeType : $lhs, SimTimeType : $rhs);
+  let results = (outs SimTimeType : $result);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Scheduler effects and suspension terminators
+//===----------------------------------------------------------------------===//
+
+def SimEventTriggerOp
+    : SimOp<"event.trigger",
+            [MemoryEffects<[MemWrite<SimSchedulerResource>]>]> {
+  let arguments = (ins SimEventType : $event, Optional<SimTimeType>:$delay,
+                       BoolAttr : $nonblocking,
+                       OptionalAttr<SimEventSiteAttr>:$site,
+                       OptionalAttr<UnitAttr>:$replaceable);
+  let assemblyFormat = "$event (`after` $delay^)? `nonblocking` `=` "
+                       "$nonblocking attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimEventTriggeredOp
+    : SimOp<"event.triggered",
+            [MemoryEffects<[MemRead<SimSchedulerResource>]>]> {
+  let summary = "test whether an event occurred in the current time slot";
+  let arguments = (ins SimEventType:$event);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$event attr-dict";
+}
+
+def SimClockingOutputTrackOp : SimOp<"clocking_output.track", [
+    MemoryEffects<[MemWrite<SimSchedulerResource>]>
+  ]> {
+  let summary = "track one static clocking-output event from time zero";
+  let description = [{
+    Register a statically bound clock and edge before design processes begin.
+    The runtime retains only the most recent matching numeric time, allowing a
+    zero-skew clocking output issued later in the same time slot to use the
+    current clocking event instead of waiting one cycle.
+  }];
+  let arguments = (ins AnyType:$clock, SimEdgeKind:$edge, I64Attr:$width);
+  let assemblyFormat = "$edge $clock `width` $width attr-dict `:` type($clock)";
+}
+
+def SimClockingOutputCurrentOp : SimOp<"clocking_output.current", [
+    MemoryEffects<[MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "test for a matching clocking-output event in this time slot";
+  let arguments = (ins AnyType:$clock, SimEdgeKind:$edge, I64Attr:$width,
+                       I64Attr:$descriptor);
+  let results = (outs I1:$current);
+  let assemblyFormat = "$edge $clock `width` $width `descriptor` $descriptor "
+                       "attr-dict `:` type($clock)";
+}
+
+def SimWaitOrderFailedOp
+    : SimOp<"wait_order.failed",
+            [MemoryEffects<[MemRead<SimSchedulerResource>]>]> {
+  let summary = "read the outcome of the ordered event wait just resumed";
+  let description = [{
+    Returns true when the immediately preceding `suspend.event_order`
+    completed because an untriggered later event occurred out of order. The
+    scheduler retains this per-logical-process result while executing the
+    resumed continuation.
+  }];
+  let results = (outs I1:$result);
+  let assemblyFormat = "attr-dict";
+}
+
+def SimClockOccurrenceConsumeOp : SimOp<"assert.clock_occurrence.consume", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>,
+                   MemRead<SimProcessResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "consume one finalized multi-clock occurrence cohort";
+  let description = [{
+    Returns the nonzero bit mask of the oldest finalized clock-occurrence
+    cohort queued for the current logical process and compiler-assigned site.
+    Zero means that no complete cohort remains. Cohorts are finalized only
+    after their producer scheduler wave has ended, so signal publication order
+    cannot expose a partial mask.
+  }];
+  let arguments = (ins SimContextType:$context, I64Attr:$occurrence_site);
+  let results = (outs I64:$mask);
+  let assemblyFormat = "$context `site` $occurrence_site attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimNoChangeUpdateOp : SimOp<"assert.nochange.update", [
+    MemoryEffects<[MemRead<SimSchedulerResource>,
+                   MemWrite<SimSchedulerResource>,
+                   MemRead<SimProcessResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "update one static nochange timing-check state";
+  let description = [{
+    Records one nonzero ordered occurrence cohort for a static `$nochange`
+    check. A zero cohort finalizes the numeric simulation slot and returns the
+    number of violations accumulated by the specialized pending-window state.
+  }];
+  let arguments = (ins SimContextType:$context, I64:$mask, I64:$start_offset,
+                       I64:$end_offset, I64Attr:$occurrence_site);
+  let results = (outs I64:$reports);
+  let assemblyFormat = "$context `,` $mask `offsets` `(` $start_offset `,` $end_offset `)` `site` $occurrence_site attr-dict";
+  let hasVerifier = 1;
+}
+
+def SimEventEqualOp : SimOp<"event.equal", [Pure, SameTypeOperands]> {
+  let summary = "compare two event handles for synchronization-object identity";
+  let arguments = (ins SimEventType:$lhs, SimEventType:$rhs);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
+}
+
+def SimObserverBindOp : SimOp<"observer.bind", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimStorageResource>, MemRead<SimNetResource>,
+                   MemRead<SimSchedulerResource>]>
+  ]> {
+  let summary = "bind an outlined timing evaluator to captures and dependencies";
+  let description = [{
+    Captures match the evaluator arguments following its implicit context
+    argument. Dependencies are canonical storage, net, or named-event handles
+    whose publications cause the evaluator to run. The operation itself does
+    not evaluate the expression.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$evaluator,
+                       Variadic<AnyType>:$values,
+                       I32Attr:$capture_count);
+  let results = (outs SimObserverType:$result);
+  let assemblyFormat = [{
+    $evaluator `values` `(` $values `:` type($values) `)`
+    `captures` $capture_count
+    attr-dict `:` qualified(type($result))
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getCaptures();
+    ::mlir::Operation::operand_range getDependencies();
+  }];
+  let hasVerifier = 1;
+}
+
+class SimSuspendOp<string mnemonic, dag extraArgs = (ins),
+                   list<Trait> extraTraits = []>
+    : SimOp<mnemonic,
+            !listconcat(
+                [
+                  Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+                  MemoryEffects<[
+                    MemWrite<SimSchedulerResource>, MemWrite<SimProcessResource>
+                  ]>
+                ],
+                extraTraits)> {
+  let arguments = !con(extraArgs, (ins Variadic<AnyType>:$continuation_operands,
+                                      OptionalAttr<SimContinuationSiteAttr>:$site,
+                                      OptionalAttr<SimEventRegion>:$resume_region));
+  let successors = (successor AnySuccessor : $continuation);
+  let hasVerifier = 1;
+}
+
+def SimSuspendDelayOp : SimSuspendOp<"suspend.delay", (ins SimTimeType:$delay,
+    OptionalAttr<SimTimingSiteAttr>:$timing)> {
+  let assemblyFormat = [{$delay `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)? attr-dict}];
+}
+
+def SimSuspendChangeOp : SimSuspendOp<"suspend.change", (ins AnyType:$watched)> {
+  let assemblyFormat = [{$watched `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)? attr-dict `:` type($watched)}];
+}
+
+def SimSuspendEdgeOp : SimSuspendOp<"suspend.edge", (ins
+    SimEdgeKind:$edge, AnyType:$watched)> {
+  let assemblyFormat = [{$edge $watched `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict `:` type($watched)}];
+}
+
+def SimSuspendEdgeIffOp : SimSuspendOp<"suspend.edge_iff", (ins
+    SimEdgeKind:$edge, AnyType:$watched, AnyType:$condition)> {
+  let summary = "suspend until a watched event whose level condition is true";
+  let description = [{
+    The condition is a directly addressable packed object. The scheduler
+    samples its complete four-state value when the primary event occurs and
+    latches a successful occurrence for the waiting process. Changes to the
+    condition alone never resume the process. IEEE 1800-2017 9.4.2.3 writes
+    the primary event with an optional edge identifier -- its `always @(a iff
+    enable == 1)` example qualifies a plain value change -- so a `change` edge
+    is as ordinary here as a directed one.
+  }];
+  let assemblyFormat = [{$edge $watched `iff` $condition `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict `:` type($watched) `,` type($condition)}];
+}
+
+def SimSuspendLevelOp : SimSuspendOp<"suspend.level", (ins AnyType:$watched)> {
+  let summary = "suspend until a directly watched packed value becomes true";
+  let description = [{
+    The scheduler evaluates the complete four-state value after every
+    overlapping store and latches the first true occurrence. This preserves a
+    transient true value even if a later store changes it again before the
+    waiting continuation executes.
+  }];
+  let assemblyFormat = [{$watched `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict `:` type($watched)}];
+}
+
+def SimSuspendAnyOp : SimOp<"suspend.any", [
+    Terminator,
+    DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "suspend until any watched handle observes its requested edge";
+  // The edge inventory determines the watched prefix; the remaining values
+  // are successor operands. Keeping one variadic group avoids a redundant
+  // segment-size attribute in the persistent IR.
+  let arguments = (ins Variadic<AnyType>:$values,
+                       DenseI32ArrayAttr:$edges,
+                       OptionalAttr<SimContinuationSiteAttr>:$site,
+                       OptionalAttr<SimEventRegion>:$resume_region);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{$values `edges` $edges `to` $continuation
+   attr-dict `:` type($values)}];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getWatched();
+    ::mlir::Operation::operand_range getContinuationOperands();
+    ::mlir::MutableOperandRange getContinuationOperandsMutable();
+  }];
+  let hasVerifier = 1;
+}
+
+def SimSuspendClockSetOp : SimOp<"suspend.clock_set", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "suspend on an exact set of frozen clock occurrences";
+  let description = [{
+    The first `edges.size()` values are direct signal clock primaries. They are
+    followed by `condition_count` optional iff handles and then successor
+    operands. `condition_indices` contains -1 or the condition index for every
+    primary. At most 64 primaries are accepted. The runtime groups all matched
+    primaries from one exact scheduler publication wave into an occurrence
+    mask without coalescing repeated occurrences in that wave.
+    The optional `slot_final` marker is reserved for Clause 31 coordinators
+    whose simultaneous-event decision needs every producer region at the
+    current numeric simulation time. It changes scheduler admission only; the
+    occurrence ABI and queue representation remain identical.
+  }];
+  let arguments = (ins Variadic<AnyType>:$values,
+                       I32Attr:$condition_count,
+                       DenseI32ArrayAttr:$edges,
+                       DenseI32ArrayAttr:$condition_indices,
+                       OptionalAttr<DenseI32ArrayAttr>:$condition_predicates,
+                       I64Attr:$occurrence_site,
+                       OptionalAttr<UnitAttr>:$slot_final,
+                       OptionalAttr<SimContinuationSiteAttr>:$site,
+                       OptionalAttr<SimEventRegion>:$resume_region);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{
+    $values `conditions` $condition_count `edges` $edges
+    `indices` $condition_indices `site` $occurrence_site
+    `to` $continuation attr-dict `:` type($values)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getPrimaries();
+    ::mlir::Operation::operand_range getConditions();
+    ::mlir::Operation::operand_range getContinuationOperands();
+    ::mlir::MutableOperandRange getContinuationOperandsMutable();
+  }];
+  let hasVerifier = 1;
+}
+
+def SimSuspendEventOp : SimSuspendOp<"suspend.event", (ins SimEventType:$event)> {
+  let assemblyFormat = [{$event `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)? attr-dict}];
+}
+
+def SimSuspendEventOrderOp : SimOp<"suspend.event_order", [
+    Terminator,
+    DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "suspend until named events occur in source order or fail";
+  let description = [{
+    The first `event_count` values are event handles in required occurrence
+    order. Remaining values are successor operands. The scheduler observes
+    every event publication synchronously, so an out-of-order occurrence is
+    retained even when several events trigger before the continuation runs.
+  }];
+  let arguments = (ins Variadic<AnyType>:$values,
+                       I32Attr:$event_count,
+                       OptionalAttr<SimContinuationSiteAttr>:$site,
+                       OptionalAttr<SimEventRegion>:$resume_region);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{$values `events` $event_count `to` $continuation
+    attr-dict `:` type($values)}];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getEvents();
+    ::mlir::Operation::operand_range getContinuationOperands();
+    ::mlir::MutableOperandRange getContinuationOperandsMutable();
+  }];
+  let hasVerifier = 1;
+}
+
+def SimSuspendMailboxOp : SimSuspendOp<"suspend.mailbox", (
+    ins SimMailboxType:$mailbox, SimMailboxWaitKind:$kind)> {
+  let summary = "suspend until a mailbox can complete a blocking operation";
+  let description = [{
+    Suspends on the mailbox's not-empty or not-full predicate. The mailbox
+    must also be passed to the continuation, which keeps the managed handle in
+    the canonical process frame and therefore rooted while the process waits.
+  }];
+  let assemblyFormat = [{$mailbox $kind `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict `:` qualified(type($mailbox))}];
+  let hasVerifier = 1;
+}
+
+def SimSuspendSemaphoreOp : SimSuspendOp<"suspend.semaphore", (
+    ins SimSemaphoreType:$semaphore, I32:$keys)> {
+  let summary = "suspend for a FIFO semaphore acquisition";
+  let description = [{
+    Suspends until this waiter is at the head of the semaphore's FIFO wait
+    order and the scheduler has atomically obtained the requested keys for it.
+    The handle and key count are copied into the runtime wait record, which is
+    a precise GC root and remains stable across suspension.
+  }];
+  let assemblyFormat = [{$keys `from` $semaphore `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict `:` type($semaphore)}];
+  let hasVerifier = 1;
+}
+
+def SimSuspendObserveOp : SimOp<"suspend.observe", [
+    Terminator,
+    DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "suspend on source-ordered computed timing clauses";
+  let description = [{
+    Each primary observer has one encounter-time initial value and requested
+    edge. `condition_indices` has one entry per primary: -1 denotes no `iff`,
+    otherwise the entry indexes the condition observer list. Conditions are
+    evaluated only after their corresponding primary occurrence.
+  }];
+  let arguments = (ins Variadic<AnyType>:$values,
+                       I32Attr:$condition_count,
+                       DenseI32ArrayAttr:$edges,
+                       DenseI32ArrayAttr:$condition_indices,
+                       OptionalAttr<SimContinuationSiteAttr>:$site,
+                       OptionalAttr<SimEventRegion>:$resume_region);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{
+    $values `conditions` $condition_count `edges` $edges
+    `indices` $condition_indices `to` $continuation attr-dict
+    `:` type($values)
+  }];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getPrimaries();
+    ::mlir::Operation::operand_range getInitialValues();
+    ::mlir::Operation::operand_range getConditions();
+    ::mlir::Operation::operand_range getContinuationOperands();
+    ::mlir::MutableOperandRange getContinuationOperandsMutable();
+  }];
+  let hasVerifier = 1;
+}
+
+def SimSuspendForeverOp : SimSuspendOp<"suspend.forever"> {
+  let summary = "permanently suspend the current logical process";
+  let assemblyFormat = [{`to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict}];
+}
+
+def SimSuspendAwaitOp : SimSuspendOp<"suspend.await", (ins SimProcessType:$process)> {
+  let summary = "suspend until the awaited process terminates";
+  let description = [{
+    Resumes once the target process has finished, whether it terminated
+    normally or was killed. This is used for an explicit task/process await;
+    fork/join synchronization uses `suspend.join`.
+  }];
+  let assemblyFormat = [{$process `to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)? attr-dict}];
+}
+
+def SimSuspendJoinOp : SimOp<"suspend.join", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "suspend until all or any child process terminates";
+  // `process_count` determines the process prefix of `values`; the remainder
+  // are successor operands. A single variadic group keeps segment bookkeeping
+  // out of the persistent IR while still allowing the suspension-threading
+  // pass to append live values.
+  let arguments = (ins SimJoinKind:$kind, Variadic<AnyType>:$values,
+                       I64Attr:$process_count,
+                       OptionalAttr<SimContinuationSiteAttr>:$site,
+                       OptionalAttr<SimEventRegion>:$resume_region);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{$kind $values `processes` $process_count `to`
+    $continuation attr-dict `:` type($values)}];
+  let extraClassDeclaration = [{
+    ::mlir::Operation::operand_range getProcesses();
+    ::mlir::Operation::operand_range getContinuationOperands();
+    ::mlir::MutableOperandRange getContinuationOperandsMutable();
+  }];
+  let hasVerifier = 1;
+}
+
+def SimSuspendChildrenOp : SimOp<"suspend.children", [
+    Terminator, DeclareOpInterfaceMethods<BranchOpInterface>,
+    MemoryEffects<[MemWrite<SimSchedulerResource>,
+                   MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "suspend until every current direct child has terminated";
+  let arguments = (ins Variadic<AnyType>:$continuation_operands,
+                       OptionalAttr<SimContinuationSiteAttr>:$site,
+                       OptionalAttr<SimEventRegion>:$resume_region);
+  let successors = (successor AnySuccessor:$continuation);
+  let assemblyFormat = [{`to` $continuation
+    (`(` $continuation_operands^ `:` type($continuation_operands) `)`)?
+    attr-dict}];
+  let hasVerifier = 1;
+}
+
+#endif // TALOS_DIALECT_SIMULATION_SIMULATIONOPS_TD

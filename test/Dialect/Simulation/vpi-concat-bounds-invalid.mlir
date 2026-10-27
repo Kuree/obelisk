@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics -o /dev/null
+// RUN: talos-opt %s --split-input-file --verify-diagnostics -o /dev/null
 // zero concatenated multiplier
 #bit = #simulation.vpi_type<kind = bit, isSigned = false, isFourState = false, range = [0, 0], children = [], childNames = []>
 #count = #simulation.vpi_type<kind = bit, isSigned = false, isFourState = false, range = [1, 0], children = [], childNames = []>

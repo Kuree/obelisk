@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -32,4 +32,4 @@ module attributes {
 // continuous publication; source0 and source1 are handle 2 and value 1.
 // CHECK: runtime.bytecode_image = array<i8:
 // CHECK-SAME: {{.*}}28, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0
-// NATIVE-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_continuous_plane
+// NATIVE-COUNT-2: llvm.call @talos_rt_v1_native_state_store_continuous_plane

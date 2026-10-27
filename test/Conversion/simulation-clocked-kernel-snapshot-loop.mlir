@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-clocked-kernels))' | FileCheck %s
 
 // IEEE 1800-2023 4.9.4: every iteration of the loop reads the value `r` had
 // before this activation, because its NBA has not been applied yet. The
@@ -55,7 +55,7 @@ module attributes {
       simulation.nba.enqueue %zero to %clk : (i1, !clkref) -> ()
       cf.br ^low
     }
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK: simulation.suspend.edge posedge %{{.*}} to ^[[START:bb[0-9]+]]
     // CHECK: ^[[START]]:
     // CHECK-NEXT: %[[OLD:.*]] = simulation.ref.load %[[R:arg[0-9]+]]

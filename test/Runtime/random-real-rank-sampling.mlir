@@ -11,18 +11,18 @@
 // RUNTIME: real numeric ranks valid 1
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "aarch64-unknown-linux-gnu"} {
-  llvm.mlir.global @obelisk_final_time(0 : i64) : i64
-  llvm.mlir.global @obelisk_time_precision_fs(1 : i64) : i64
+  llvm.mlir.global @talos_final_time(0 : i64) : i64
+  llvm.mlir.global @talos_time_precision_fs(1 : i64) : i64
   llvm.mlir.global internal constant @ok("real numeric ranks valid 1\00")
   llvm.mlir.global internal constant @bad("real numeric ranks valid 0\00")
   llvm.func @puts(!llvm.ptr) -> i32
-  llvm.func @obelisk_rt_v1_random_state_seed(!llvm.ptr, i64, i64)
-  llvm.func @obelisk_rt_v1_random_real64_to_rank(f64, !llvm.ptr, i64) -> i32
-  llvm.func @obelisk_rt_v1_random_real32_to_rank(f32, !llvm.ptr, i64) -> i32
-  llvm.func @obelisk_rt_v1_random_real64_from_rank(!llvm.ptr, i64, !llvm.ptr) -> i32
-  llvm.func @obelisk_rt_v1_random_real32_from_rank(!llvm.ptr, i64, !llvm.ptr) -> i32
-  llvm.func @obelisk_rt_v1_random_real64_interval(!llvm.ptr, f64, f64, i32, !llvm.ptr, !llvm.ptr) -> i32
-  llvm.func @obelisk_rt_v1_random_real32_interval(!llvm.ptr, f32, f32, i32, !llvm.ptr, !llvm.ptr) -> i32
+  llvm.func @talos_rt_v1_random_state_seed(!llvm.ptr, i64, i64)
+  llvm.func @talos_rt_v1_random_real64_to_rank(f64, !llvm.ptr, i64) -> i32
+  llvm.func @talos_rt_v1_random_real32_to_rank(f32, !llvm.ptr, i64) -> i32
+  llvm.func @talos_rt_v1_random_real64_from_rank(!llvm.ptr, i64, !llvm.ptr) -> i32
+  llvm.func @talos_rt_v1_random_real32_from_rank(!llvm.ptr, i64, !llvm.ptr) -> i32
+  llvm.func @talos_rt_v1_random_real64_interval(!llvm.ptr, f64, f64, i32, !llvm.ptr, !llvm.ptr) -> i32
+  llvm.func @talos_rt_v1_random_real32_interval(!llvm.ptr, f32, f32, i32, !llvm.ptr, !llvm.ptr) -> i32
 
   // Each encoding and its sign-flipped twin round-trip through the numeric rank: zeros, smallest subnormals, the subnormal/normal boundary, powers of two and the largest finite values. Columns: width, bits. The first 14 rows are double, the rest single.
   llvm.mlir.global internal constant @rows_roundtrip(dense<[28, 2,
@@ -192,22 +192,22 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.cond_br %wide, ^double, ^single
   ^double:
     %d = llvm.bitcast %bits : i64 to f64
-    %ds = llvm.call @obelisk_rt_v1_random_real64_to_rank(%d, %rank, %n) : (f64, !llvm.ptr, i64) -> i32
+    %ds = llvm.call @talos_rt_v1_random_real64_to_rank(%d, %rank, %n) : (f64, !llvm.ptr, i64) -> i32
     llvm.return %ds : i32
   ^single:
     %low = llvm.trunc %bits : i64 to i32
     %s = llvm.bitcast %low : i32 to f32
-    %ss = llvm.call @obelisk_rt_v1_random_real32_to_rank(%s, %rank, %n) : (f32, !llvm.ptr, i64) -> i32
+    %ss = llvm.call @talos_rt_v1_random_real32_to_rank(%s, %rank, %n) : (f32, !llvm.ptr, i64) -> i32
     llvm.return %ss : i32
   }
 
   llvm.func internal @from_rank(%rank: !llvm.ptr, %n: i64, %out: !llvm.ptr, %wide: i1) -> i32 {
     llvm.cond_br %wide, ^double, ^single
   ^double:
-    %ds = llvm.call @obelisk_rt_v1_random_real64_from_rank(%rank, %n, %out) : (!llvm.ptr, i64, !llvm.ptr) -> i32
+    %ds = llvm.call @talos_rt_v1_random_real64_from_rank(%rank, %n, %out) : (!llvm.ptr, i64, !llvm.ptr) -> i32
     llvm.return %ds : i32
   ^single:
-    %ss = llvm.call @obelisk_rt_v1_random_real32_from_rank(%rank, %n, %out) : (!llvm.ptr, i64, !llvm.ptr) -> i32
+    %ss = llvm.call @talos_rt_v1_random_real32_from_rank(%rank, %n, %out) : (!llvm.ptr, i64, !llvm.ptr) -> i32
     llvm.return %ss : i32
   }
 
@@ -216,14 +216,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   ^double:
     %dl = llvm.bitcast %lower : i64 to f64
     %du = llvm.bitcast %upper : i64 to f64
-    %ds = llvm.call @obelisk_rt_v1_random_real64_interval(%state, %dl, %du, %flags, %out, %success) : (!llvm.ptr, f64, f64, i32, !llvm.ptr, !llvm.ptr) -> i32
+    %ds = llvm.call @talos_rt_v1_random_real64_interval(%state, %dl, %du, %flags, %out, %success) : (!llvm.ptr, f64, f64, i32, !llvm.ptr, !llvm.ptr) -> i32
     llvm.return %ds : i32
   ^single:
     %l32 = llvm.trunc %lower : i64 to i32
     %u32 = llvm.trunc %upper : i64 to i32
     %sl = llvm.bitcast %l32 : i32 to f32
     %su = llvm.bitcast %u32 : i32 to f32
-    %ss = llvm.call @obelisk_rt_v1_random_real32_interval(%state, %sl, %su, %flags, %out, %success) : (!llvm.ptr, f32, f32, i32, !llvm.ptr, !llvm.ptr) -> i32
+    %ss = llvm.call @talos_rt_v1_random_real32_interval(%state, %sl, %su, %flags, %out, %success) : (!llvm.ptr, f32, f32, i32, !llvm.ptr, !llvm.ptr) -> i32
     llvm.return %ss : i32
   }
 
@@ -428,7 +428,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     %state = llvm.alloca %c2 x i64 : (i64) -> !llvm.ptr
     %out = llvm.alloca %c1 x i64 : (i64) -> !llvm.ptr
     %success = llvm.alloca %c1 x i32 : (i64) -> !llvm.ptr
-    llvm.call @obelisk_rt_v1_random_state_seed(%state, %seed, %sequence) : (!llvm.ptr, i64, i64) -> ()
+    llvm.call @talos_rt_v1_random_state_seed(%state, %seed, %sequence) : (!llvm.ptr, i64, i64) -> ()
     llvm.br ^sample(%zero, %zero, %true : i32, i32, i1)
   ^sample(%i: i32, %count: i32, %valid: i1):
     %status = llvm.call @interval(%state, %lower_bits, %upper_bits, %flags, %out, %success, %wide) : (!llvm.ptr, i64, i64, i32, !llvm.ptr, !llvm.ptr, i1) -> i32

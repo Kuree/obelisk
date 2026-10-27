@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports \
+// RUN: talos-opt %s --talos-sim-materialize-dpi-exports \
 // RUN:   --verify-diagnostics
 
 module attributes {dpi.has_exports} {
@@ -22,7 +22,7 @@ module attributes {dpi.has_exports} {
       simulation.return
     }
 
-    simulation.func private @"foo.__obelisk_dpi_export_bridge"(
+    simulation.func private @"foo.__talos_dpi_export_bridge"(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 11 : i64, entry_kind = 8 : i32} {
       simulation.return

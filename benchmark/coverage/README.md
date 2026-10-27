@@ -10,17 +10,17 @@ Build against the current runtime archive:
 
 ```sh
 c++ -O3 -DNDEBUG -std=c++17 -Iinclude -Ibuild/include \
-  benchmark/coverage/format-scaling.cpp build/runtime/libobelisk_rt.a \
+  benchmark/coverage/format-scaling.cpp build/runtime/libtalos_rt.a \
   -pthread -o build/coverage-format-scaling
 build/coverage-format-scaling 65536 128 build/scaling.obcov
-build/tools/obelisk-cov/obelisk-cov report --format=json \
+build/tools/talos-cov/talos-cov report --format=json \
   build/scaling.obcov -o build/scaling.json
 ```
 
 The arguments are point/field count, run count, output path, and optional
 `same-line`. The last mode puts all physical source points on one source line;
 LCOV must aggregate them before emitting one line per run. The same generator
-is the `obelisk-coverage-scaling-fixture` lit target. Its regression verifies
+is the `talos-coverage-scaling-fixture` lit target. Its regression verifies
 sparse contributors, toggle field paths, test filtering, and LCOV aggregation.
 Use a geometric sequence of counts and keep compiler flags, run count, and
 machine fixed when comparing implementations. Avoid concurrent benchmarks.
@@ -60,7 +60,7 @@ configurations, then writes a database. It is outside the unit suite, defaults
 to 16 configurations, and rejects counts above 128. For a short local check:
 
 ```sh
-build/tools/driver/obelisk --std=1800-2023 -O3 --target=native \
+build/tools/driver/talos --std=1800-2023 -O3 --target=native \
   --coverage=functional -o build/coverage-configuration-scaling \
   benchmark/coverage/configuration-scaling.sv
 timeout 1s build/coverage-configuration-scaling +N=128 \
@@ -86,7 +86,7 @@ pair, and rejects more than 128 configurations or 16 query pairs. It is outside
 the unit and lit suites. Each process below has a one-second deadline:
 
 ```sh
-build/tools/driver/obelisk --std=1800-2023 -O0 --target=native \
+build/tools/driver/talos --std=1800-2023 -O0 --target=native \
   --coverage=functional -o build/coverage-query-scaling \
   benchmark/coverage/query-configuration-scaling.sv
 timeout 1s build/coverage-query-scaling +N=128 +Q=16 \
@@ -125,7 +125,7 @@ schema loading and optional saving happen outside that timer.
 
 ```sh
 c++ -O3 -DNDEBUG -std=c++17 -Iinclude -Iruntime/include -Ibuild/include \
-  benchmark/coverage/bin-construction-scaling.cpp build/runtime/libobelisk_rt.a \
+  benchmark/coverage/bin-construction-scaling.cpp build/runtime/libtalos_rt.a \
   -pthread -o build/coverage-bin-construction-scaling
 timeout 1s build/coverage-bin-construction-scaling 128 build/bin-scaling.obcov
 ```
@@ -155,7 +155,7 @@ configuration and one instance, defaults to 32 iterations, and rejects counts
 above 1024. It is outside the unit and lit suites. Each process is bounded:
 
 ```sh
-build/tools/driver/obelisk --std=1800-2023 -O0 --target=native \
+build/tools/driver/talos --std=1800-2023 -O0 --target=native \
   --coverage=functional -o build/coverage-option-nba-scaling \
   benchmark/coverage/option-nba-scaling.sv
 timeout 1s build/coverage-option-nba-scaling +N=1024

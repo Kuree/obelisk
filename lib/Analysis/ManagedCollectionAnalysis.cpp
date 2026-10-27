@@ -1,9 +1,9 @@
 //===- ManagedCollectionAnalysis.cpp - Managed heap collection points ----===//
 
-#include "obelisk/Analysis/ManagedCollectionAnalysis.h"
+#include "talos/Analysis/ManagedCollectionAnalysis.h"
 
-#include "obelisk/Analysis/ClassDispatchAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/ClassDispatchAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/IR/SymbolTable.h"
@@ -17,7 +17,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
 /// A directed graph over dense indices, walked by llvm::scc_iterator. A
@@ -42,11 +42,11 @@ struct IndexGraph {
 };
 
 } // namespace
-} // namespace obelisk::analysis
+} // namespace talos::analysis
 
 template <>
-struct llvm::GraphTraits<obelisk::analysis::IndexGraph::Node *> {
-  using NodeRef = obelisk::analysis::IndexGraph::Node *;
+struct llvm::GraphTraits<talos::analysis::IndexGraph::Node *> {
+  using NodeRef = talos::analysis::IndexGraph::Node *;
   using ChildIteratorType = SmallVectorImpl<NodeRef>::iterator;
   static ChildIteratorType child_begin(NodeRef node) {
     return node->successors.begin();
@@ -57,14 +57,14 @@ struct llvm::GraphTraits<obelisk::analysis::IndexGraph::Node *> {
 };
 
 template <>
-struct llvm::GraphTraits<obelisk::analysis::IndexGraph *>
-    : llvm::GraphTraits<obelisk::analysis::IndexGraph::Node *> {
-  static NodeRef getEntryNode(obelisk::analysis::IndexGraph *graph) {
+struct llvm::GraphTraits<talos::analysis::IndexGraph *>
+    : llvm::GraphTraits<talos::analysis::IndexGraph::Node *> {
+  static NodeRef getEntryNode(talos::analysis::IndexGraph *graph) {
     return graph->nodes.back().get();
   }
 };
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
 llvm::BitVector IndexGraph::cyclicNodes() {
@@ -454,4 +454,4 @@ ManagedCollectionAnalysis::getPollSites(sim::SimFuncOp function) const {
   return found == pollSites.end() ? ArrayRef<Operation *>{} : found->second;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

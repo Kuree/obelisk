@@ -1,10 +1,10 @@
 // RUN: %target_clang %target_pic -c \
 // RUN:   %S/Inputs/dpi_open_array_composite_impl.c -I%resource_dir/include -o %t.o
-// RUN: %obelisk --target=native -o %t.native %s %t.o
+// RUN: %talos --target=native -o %t.native %s %t.o
 // RUN: %t.native | FileCheck %s
-// RUN: %obelisk --execution-tier=bytecode -o %t.bytecode %s %t.o
+// RUN: %talos --execution-tier=bytecode -o %t.bytecode %s %t.o
 // RUN: %t.bytecode | FileCheck %s
-// RUN: %obelisk --emit-dpi-header %s -o %t.h
+// RUN: %talos --emit-dpi-header %s -o %t.h
 // RUN: FileCheck %s --check-prefix=HEADER < %t.h
 
 module dpi_open_array_composite;

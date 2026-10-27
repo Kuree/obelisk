@@ -1,0 +1,88 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+
+module {
+  talos.sv.symbol.definition @s0.simulation_intra_assignment_event attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_intra_assignment_event", name = "simulation_intra_assignment_event", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.simulation_intra_assignment_event attributes {hierarchical_name = "simulation_intra_assignment_event", is_uninstantiated = false, name = "simulation_intra_assignment_event", node_id = 3 : i64, referenced_path = "simulation_intra_assignment_event", referenced_symbol = @s0.simulation_intra_assignment_event} {
+      talos.sv.symbol.instance_body @s4.simulation_intra_assignment_event attributes {hierarchical_name = "simulation_intra_assignment_event", name = "simulation_intra_assignment_event", node_id = 4 : i64} {
+        talos.sv.symbol.variable @s5.clk attributes {hierarchical_name = "simulation_intra_assignment_event.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s6.lhs attributes {hierarchical_name = "simulation_intra_assignment_event.lhs", lifetime = 1 : i32, name = "lhs", node_id = 6 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s7.rhs attributes {hierarchical_name = "simulation_intra_assignment_event.rhs", lifetime = 1 : i32, name = "rhs", node_id = 7 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s25.count attributes {hierarchical_name = "simulation_intra_assignment_event.count", lifetime = 1 : i32, name = "count", node_id = 25 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+        }
+        talos.sv.symbol.procedural_block @s8 attributes {hierarchical_name = "simulation_intra_assignment_event", node_id = 8 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.block attributes {node_id = 9 : i64} {
+            talos.sv.statement.list attributes {node_id = 10 : i64} {
+              talos.sv.statement.expression_statement attributes {node_id = 11 : i64} {
+                talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, has_timing_control = true, node_id = 12 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                  talos.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 13 : i64} {
+                    talos.sv.expression.named_value attributes {node_id = 14 : i64, referenced_path = "simulation_intra_assignment_event.clk", referenced_symbol = @s1.$root::@s3.simulation_intra_assignment_event::@s4.simulation_intra_assignment_event::@s5.clk, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  talos.sv.expression.named_value attributes {node_id = 15 : i64, referenced_path = "simulation_intra_assignment_event.lhs", referenced_symbol = @s1.$root::@s3.simulation_intra_assignment_event::@s4.simulation_intra_assignment_event::@s6.lhs, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                  talos.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "simulation_intra_assignment_event.rhs", referenced_symbol = @s1.$root::@s3.simulation_intra_assignment_event::@s4.simulation_intra_assignment_event::@s7.rhs, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 17 : i64} {
+                talos.sv.expression.assignment attributes {assignment_kind = 1 : i32, has_timing_control = true, node_id = 18 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                  talos.sv.timing.repeated_event attributes {node_id = 19 : i64} {
+                    talos.sv.expression.named_value attributes {node_id = 20 : i64, referenced_path = "simulation_intra_assignment_event.count", referenced_symbol = @s1.$root::@s3.simulation_intra_assignment_event::@s4.simulation_intra_assignment_event::@s25.count, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                    talos.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 21 : i64} {
+                      talos.sv.expression.named_value attributes {node_id = 22 : i64, referenced_path = "simulation_intra_assignment_event.clk", referenced_symbol = @s1.$root::@s3.simulation_intra_assignment_event::@s4.simulation_intra_assignment_event::@s5.clk, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                  talos.sv.expression.named_value attributes {node_id = 23 : i64, referenced_path = "simulation_intra_assignment_event.lhs", referenced_symbol = @s1.$root::@s3.simulation_intra_assignment_event::@s4.simulation_intra_assignment_event::@s6.lhs, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                  talos.sv.expression.named_value attributes {node_id = 24 : i64, referenced_path = "simulation_intra_assignment_event.rhs", referenced_symbol = @s1.$root::@s3.simulation_intra_assignment_event::@s4.simulation_intra_assignment_event::@s7.rhs, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The repeated NBA has a detached child whose count is a value capture. The
+// child loops over the event, then stages the already captured RHS.
+// CHECK-LABEL: simulation.func private @{{.*nba_event.*}}(
+// CHECK-SAME: %[[CHILD_COUNT:[a-zA-Z0-9_]+]]: i64
+// CHECK-SAME: schedule.detached_controls
+// CHECK: cf.cond_br %{{.*}}, ^[[REPEAT_HEADER:[a-zA-Z0-9_]+]](%[[CHILD_COUNT]] {{.*}}), ^[[REPEAT_COMMIT:[a-zA-Z0-9_]+]]
+// CHECK: ^[[REPEAT_COMMIT]]:
+// CHECK: simulation.nba.enqueue
+// CHECK: ^[[REPEAT_HEADER]](%[[REPEAT_COUNT:.*]]: i64):
+// CHECK: simulation.suspend.edge posedge {{.*}} to ^[[REPEAT_STEP:[a-zA-Z0-9_]+]](%[[REPEAT_COUNT]]
+// CHECK: ^[[REPEAT_STEP]](%[[STEP_COUNT:.*]]: i64):
+// CHECK: %[[NEXT_COUNT:.*]] = arith.subi %[[STEP_COUNT]]
+// CHECK: %[[CONTINUE:.*]] = arith.cmpi sgt, %[[NEXT_COUNT]]
+// CHECK: cf.cond_br %[[CONTINUE]], ^[[REPEAT_HEADER]](%[[NEXT_COUNT]] {{.*}}), ^[[REPEAT_COMMIT]]
+// The first assignment is blocking: its caller carries the RHS through the
+// wait and stores it in the continuation. It then evaluates the repeated
+// NBA's count, RHS, and LHS before dispatching.
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[EVENT_RHS:.*]] = simulation.ref.load
+// CHECK: simulation.suspend.edge posedge {{.*}} to ^[[EVENT_COMMIT:[a-zA-Z0-9_]+]](%[[EVENT_RHS]]
+// CHECK: ^[[EVENT_COMMIT]](%[[EVENT_COMMIT_RHS:.*]]: !simulation.logic<1>):
+// CHECK: simulation.ref.store %[[EVENT_COMMIT_RHS]]
+// CHECK: %[[REPEAT_RHS:.*]] = simulation.ref.load %{{.*}} : !simulation.ref<!simulation.logic<1>>
+// CHECK: %[[COUNT:.*]] = simulation.ref.load %{{.*}} : !simulation.ref<i32>
+// CHECK: %[[POSITIVE:.*]] = arith.cmpi sgt, %{{.*}}, %{{.*}} : i64
+// CHECK: cf.cond_br %[[POSITIVE]], ^[[SPAWN:.*]], ^[[IMMEDIATE:.*]]
+// CHECK: ^[[SPAWN]]:
+// CHECK: simulation.spawn @{{.*nba_event.*}}
+// CHECK: ^[[IMMEDIATE]]:
+// CHECK: simulation.nba.enqueue %[[REPEAT_RHS]]
+// CHECK-NOT: talos.sv.

@@ -2,9 +2,9 @@
 
 #include "SimulationPackedLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Matchers.h"
@@ -17,7 +17,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 // Very wide LLVM integers cause expensive recursive SelectionDAG integer
@@ -269,7 +269,7 @@ struct NativeFunctionFinalizationPass
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(NativeFunctionFinalizationPass)
 
   StringRef getArgument() const final {
-    return "obelisk-native-finalize-function";
+    return "talos-native-finalize-function";
   }
   StringRef getDescription() const final {
     return "Legalize wide bitwise planes and finalize native function policy";
@@ -295,7 +295,7 @@ struct NativeFunctionFinalizationPass
     SmallVector<LLVM::CallOp> provenOffsets;
     function.walk([&](LLVM::CallOp call) {
       if (native::has<native::InBoundsHandleOffset>(call) && call.getCallee() &&
-          *call.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
+          *call.getCallee() == "talos_rt_v1_native_handle_offset" &&
           call.getArgOperands().size() == 2)
         provenOffsets.push_back(call);
     });
@@ -326,13 +326,13 @@ struct NativeFunctionFinalizationPass
     {
       StringRef name = function.getSymName();
       uint64_t alignment = 0;
-      if (name.starts_with("__obelisk_aot_static_nba_commit_two_state"))
+      if (name.starts_with("__talos_aot_static_nba_commit_two_state"))
         alignment = 128;
-      else if (name.starts_with("__obelisk_fused_") &&
-               name.contains("__obelisk_eval_body_"))
+      else if (name.starts_with("__talos_fused_") &&
+               name.contains("__talos_eval_body_"))
         alignment = 64;
-      else if (::obelisk::schedule::has<
-                   ::obelisk::schedule::Field::EvalCallClosureRoot>(function))
+      else if (::talos::schedule::has<
+                   ::talos::schedule::Field::EvalCallClosureRoot>(function))
         alignment = 64;
       if (alignment) {
         auto desired = alignmentBuilder.getI64IntegerAttr(alignment);
@@ -400,11 +400,11 @@ std::unique_ptr<Pass> createNativeFunctionFinalizationPass() {
   return std::make_unique<NativeFunctionFinalizationPass>();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_SHARENATIVESCOPEDTEMPORARIESPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "talos/Conversion/Passes.h.inc"
 namespace {
 struct ShareNativeScopedTemporariesPass
     : impl::ShareNativeScopedTemporariesPassBase<
@@ -416,4 +416,4 @@ struct ShareNativeScopedTemporariesPass
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

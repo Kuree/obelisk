@@ -1,6 +1,6 @@
 //===- ActivationControlFlow.cpp - Edge-specific dispatch proofs
 //-----------===//
-#include "obelisk/Analysis/ActivationControlFlow.h"
+#include "talos/Analysis/ActivationControlFlow.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
@@ -12,7 +12,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 using Predicates = DenseMap<Value, bool>;
 void forgetDefinitions(Predicates &facts, ValueRange definitions) {
@@ -267,4 +267,4 @@ bool threadActivationControlFlow(Region &region) {
   }
   return !edges.empty();
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

@@ -1,7 +1,7 @@
 // RUN: rm -rf %t && mkdir -p %t && cd %t
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing %s -o %t/auto 2> %t/timing
+// RUN: talos -O3 --native-scheduler=auto --mlir-timing %s -o %t/auto 2> %t/timing
 // RUN: FileCheck %s --check-prefix=TIER < %t/timing
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t/reference
+// RUN: talos -O0 --native-scheduler=generic %s -o %t/reference
 // RUN: %t/auto > %t/auto.out && %t/reference > %t/reference.out
 // RUN: diff -u %t/reference.out %t/auto.out
 // RUN: FileCheck %s < %t/auto.out
@@ -25,6 +25,6 @@ module native_eval_file_open_checkpoint;
 endmodule
 
 // TIER: checkpoint admission: {{.*}} reason=runtime-state-access operation=simulation.file.open
-// TIER: obelisk eval executor inventory: {{.*}} runtime_checkpoints=1
+// TIER: talos eval executor inventory: {{.*}} runtime_checkpoints=1
 // TIER-NOT: error
 // CHECK: a=7 fd=1

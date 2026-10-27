@@ -1,11 +1,11 @@
 // RUN: %target_clang %target_pic -c \
 // RUN:   %S/Inputs/dpi_integer_time.c \
 // RUN:   -I%resource_dir/include -o %t.o
-// RUN: obelisk -O3 --vpi=off %s %t.o -o %t.o3.native
+// RUN: talos -O3 --vpi=off %s %t.o -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s %t.o -o %t.o3.bytecode
+// RUN: talos -O3 --vpi=off --execution-tier=bytecode %s %t.o -o %t.o3.bytecode
 // RUN: %t.o3.bytecode | FileCheck %s
-// RUN: obelisk --emit-dpi-header %s -o %t.h
+// RUN: talos --emit-dpi-header %s -o %t.h
 // RUN: FileCheck %s --check-prefix=HEADER < %t.h
 // RUN: %llvm_dist/bin/clang -x c -fsyntax-only -include %t.h \
 // RUN:   -I%resource_dir/include /dev/null

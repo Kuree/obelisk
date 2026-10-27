@@ -1,24 +1,24 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
-// RUN: FileCheck %s --check-prefix=PLAN --implicit-check-not='@__obelisk_eval_fast_coordinator' --implicit-check-not='@__obelisk_eval_steady_two_state_coordinator' --implicit-check-not='@__obelisk_eval_periodic_two_state_coordinator' --implicit-check-not='@__obelisk_eval_periodic_promotion' --implicit-check-not='obelisk.eval.forward_segment_edges' < %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: FileCheck %s --check-prefix=PLAN --implicit-check-not='@__talos_eval_fast_coordinator' --implicit-check-not='@__talos_eval_steady_two_state_coordinator' --implicit-check-not='@__talos_eval_periodic_two_state_coordinator' --implicit-check-not='@__talos_eval_periodic_promotion' --implicit-check-not='talos.eval.forward_segment_edges' < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=GROUP < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=STATE < %t.llvm.mlir
 
 // Reversed source spawn order still produces dependency-ranked computation.
 // The old model-wide forward-scan controller is absent.
-// PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
+// PLAN-LABEL: llvm.func @__talos_eval_ranked_group_0(
 // PLAN-SAME: schedule.eval.ranked_members = array<i32: 0, 1, 2, 3, 4>
-// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// PLAN: llvm.call @__obelisk_eval_ranked_group_0
-// GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
-// GROUP-SAME: schedule.eval.dataflow_fallback = @__obelisk_eval_ranked_group_0.fallback
+// PLAN-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// PLAN: llvm.call @__talos_eval_ranked_group_0
+// GROUP-LABEL: llvm.func @__talos_eval_ranked_group_0(
+// GROUP-SAME: schedule.eval.dataflow_fallback = @__talos_eval_ranked_group_0.fallback
 // GROUP-SAME: schedule.eval.materialized_group_calls = 5 : i64
 // GROUP-SAME: schedule.eval.predicated_dataflow
 // GROUP-NOT: llvm.switch
 // GROUP-NOT: llvm.call %
 // GROUP: llvm.return
-// GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
+// GROUP-LABEL: llvm.func @__talos_eval_ranked_group_0.fallback(
 // GROUP-SAME: schedule.eval.ssa_ready_words = 1 : i64
-// STATE-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
+// STATE-LABEL: llvm.func @__talos_eval_ranked_group_0(
 // STATE-SAME: schedule.eval.predicated_dataflow
 // STATE: llvm.add
 // STATE: llvm.add
@@ -26,7 +26,7 @@
 // STATE: llvm.add
 // STATE: llvm.add
 // STATE: llvm.return
-// STATE-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
+// STATE-LABEL: llvm.func @__talos_eval_ranked_group_0.fallback(
 // STATE-SAME: schedule.eval.ssa_value_ranges = 4 : i64
 !ref = !simulation.ref<i1>
 !vref = !simulation.ref<i8>

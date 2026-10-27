@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
 // A retained-state response closes a process-level request/response cycle.
 // IEEE 1800-2023 4.3 permits the publication DAG when the state transition is
 // idempotent and its intermediate values have no opaque observers. The old
@@ -7,10 +7,10 @@
 // CHECK-LABEL: simulation.design @held_member
 // CHECK: simulation.func @root
 // CHECK-NOT: simulation.spawn
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn
 // CHECK: simulation.return
-// CHECK: simulation.func private @__obelisk_region_kernel_0_0
+// CHECK: simulation.func private @__talos_region_kernel_0_0
 // CHECK: %[[STATE:.*]] = simulation.context.storage %{{.*}}[5]
 // CHECK: %[[OLD:.*]] = simulation.ref.load %[[STATE]]
 // CHECK: %[[NEXT:.*]] = arith.select %{{.*}}, %{{.*}}, %[[OLD]]
@@ -75,10 +75,10 @@ module {
 // -----
 
 // CHECK-LABEL: simulation.design @snapshot_member
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 // CHECK: simulation.spawn @producer_and_consumer
 // CHECK: simulation.spawn @held
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 module {
   simulation.design @snapshot_member {
     simulation.scope.decl 0
@@ -137,10 +137,10 @@ module {
 // -----
 
 // CHECK-LABEL: simulation.design @counter_member
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 // CHECK: simulation.spawn @producer_and_consumer
 // CHECK: simulation.spawn @held
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 module {
   simulation.design @counter_member {
     simulation.scope.decl 0

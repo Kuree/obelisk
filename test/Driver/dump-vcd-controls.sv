@@ -1,8 +1,8 @@
 // RUN: %split-file %s %t
-// RUN: cd %t && obelisk -O3 --vpi=off controls.sv -o o3.native
+// RUN: cd %t && talos -O3 --vpi=off controls.sv -o o3.native
 // RUN: cd %t && ./o3.native
 // RUN: FileCheck %s --check-prefix=VCD < %t/controls.vcd
-// RUN: cd %t && obelisk -O3 --vpi=off --execution-tier=bytecode controls.sv -o o3.bytecode
+// RUN: cd %t && talos -O3 --vpi=off --execution-tier=bytecode controls.sv -o o3.bytecode
 // RUN: cd %t && ./o3.bytecode
 // RUN: FileCheck %s --check-prefix=VCD < %t/controls.vcd
 

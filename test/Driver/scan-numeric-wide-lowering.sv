@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-sim -O0 --vpi=off %s | FileCheck %s
+// RUN: talos -emit-sim -O0 --vpi=off %s | FileCheck %s
 
 // A wide formatted-input destination is one exact-width parse operation. The
 // runtime owns the O(input digits + destination words) power-of-two loop; no

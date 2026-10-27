@@ -2,18 +2,18 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include <cstddef>
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 LLVM::AllocaOp findManagedRootRangeRecord(Operation *scope) {
   LLVM::AllocaOp record;
@@ -42,7 +42,7 @@ Value isManagedRootRangeRegistered(OpBuilder &builder, Location location,
       builder, location, LLVM::LLVMPointerType::get(builder.getContext()),
       builder.getI8Type(), record,
       ArrayRef<LLVM::GEPArg>{static_cast<int32_t>(
-          offsetof(obelisk_rt_gc_managed_root_range_v1, cookie))},
+          offsetof(talos_rt_gc_managed_root_range_v1, cookie))},
       LLVM::GEPNoWrapFlags::inbounds);
   Value cookie = LLVM::LoadOp::create(builder, location, i64, cookieAddress, 8);
   Value zero = LLVM::ConstantOp::create(builder, location, i64,
@@ -63,24 +63,24 @@ void emitGuardedManagedRootRangePop(OpBuilder &builder, Location location,
   builder.setInsertionPointToEnd(registered);
   if (!runtimeContext) {
     Value contextAddress = LLVM::AddressOfOp::create(
-        builder, location, pointer, "__obelisk_current_context");
+        builder, location, pointer, "__talos_current_context");
     runtimeContext =
         LLVM::LoadOp::create(builder, location, pointer, contextAddress, 8);
   }
   Value lane = LLVM::CallOp::create(
                    builder, location, TypeRange{pointer},
-                   SymbolRefAttr::get(context, "obelisk_rt_v1_gc_current_lane"),
+                   SymbolRefAttr::get(context, "talos_rt_v1_gc_current_lane"),
                    runtimeContext)
                    .getResult();
   Value status = LLVM::CallOp::create(
                      builder, location, TypeRange{builder.getI32Type()},
                      SymbolRefAttr::get(
-                         context, "obelisk_rt_v1_gc_managed_root_range_pop"),
+                         context, "talos_rt_v1_gc_managed_root_range_pop"),
                      ValueRange{lane, record})
                      .getResult();
   LLVM::CallOp::create(
       builder, location, TypeRange{},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+      SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
       ValueRange{runtimeContext, status});
   LLVM::BrOp::create(builder, location, rest);
 }
@@ -117,7 +117,7 @@ public:
       return LLVM::CallOp::create(
                  rewriter, location, TypeRange{rewriter.getI32Type()},
                  SymbolRefAttr::get(rewriter.getContext(),
-                                    "obelisk_rt_v1_gc_managed_root_range_push"),
+                                    "talos_rt_v1_gc_managed_root_range_push"),
                  ValueRange{lane, op.getRecord(), op.getSlots(), op.getCount()})
           .getResult();
     };
@@ -138,7 +138,7 @@ public:
     LLVM::BrOp::create(rewriter, location, ValueRange{push()}, join);
     rewriter.setInsertionPoint(op);
     Value ok = LLVM::ConstantOp::create(
-        rewriter, location, i32, rewriter.getI32IntegerAttr(OBELISK_RT_OK));
+        rewriter, location, i32, rewriter.getI32IntegerAttr(TALOS_RT_OK));
     LLVM::CondBrOp::create(
         rewriter, location,
         isManagedRootRangeRegistered(rewriter, location, op.getRecord()), join,
@@ -172,4 +172,4 @@ void populateNativeManagedRootToLLVMConversionPatterns(
       patterns.getContext());
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

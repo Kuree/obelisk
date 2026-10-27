@@ -1,10 +1,10 @@
 // The bytecode tier writes the same waveforms as native code for the designs
 // in dump-vcd.sv, including a positive time-scale exponent.
 // RUN: %split-file %S/dump-vcd.sv %t
-// RUN: cd %t && obelisk --execution-tier=bytecode design.sv -o %t/bytecode.sim
+// RUN: cd %t && talos --execution-tier=bytecode design.sv -o %t/bytecode.sim
 // RUN: cd %t && %t/bytecode.sim
 // RUN: FileCheck %S/dump-vcd.sv --check-prefix=VCD --implicit-check-not='$root' < %t/waves.vcd
-// RUN: cd %t && obelisk --execution-tier=bytecode positive-timescale.sv -o %t/positive-timescale-bytecode.sim
+// RUN: cd %t && talos --execution-tier=bytecode positive-timescale.sv -o %t/positive-timescale-bytecode.sim
 // RUN: cd %t && %t/positive-timescale-bytecode.sim
 // RUN: FileCheck %S/dump-vcd.sv --check-prefix=POSITIVE-TIMESCALE < %t/positive.vcd
 // RUN: FileCheck %S/dump-vcd.sv --check-prefix=POSITIVE-PORTS < %t/positive-ports.vcd

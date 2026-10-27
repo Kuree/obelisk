@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-combinational-dependencies -o /dev/null 2> %t.threaded
-// RUN: obelisk-opt %s --test-obelisk-combinational-dependencies --mlir-disable-threading -o /dev/null 2> %t.serial
+// RUN: talos-opt %s --test-talos-combinational-dependencies -o /dev/null 2> %t.threaded
+// RUN: talos-opt %s --test-talos-combinational-dependencies --mlir-disable-threading -o /dev/null 2> %t.serial
 // RUN: diff %t.threaded %t.serial
 // RUN: FileCheck %s < %t.threaded
 

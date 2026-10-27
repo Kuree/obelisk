@@ -1,17 +1,17 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion))' -o %t.fused
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion))' -o %t.fused
 // RUN: FileCheck %s < %t.fused
 // RUN: FileCheck %s --check-prefix=OWNERS < %t.fused
-// RUN: obelisk-opt %t.fused --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o /dev/null
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off prune-native=true},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=RANKED
+// RUN: talos-opt %t.fused --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' -o /dev/null
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion,simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off prune-native=true},convert-talos-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=RANKED
 
 // Retain induction loops in one source-ordered DAG. The bank transform is
 // between address production and result assembly, so only the external input
 // remains in the union wait. Clock/NBA sampling stays a separate activation.
-// CHECK: simulation.spawn @__obelisk_region_kernel_
+// CHECK: simulation.spawn @__talos_region_kernel_
 // CHECK: simulation.spawn @sample
 // CHECK-NOT: simulation.func @producer_and_consumer
 // CHECK-NOT: simulation.func @transform
-// CHECK: simulation.func private @__obelisk_region_kernel_
+// CHECK: simulation.func private @__talos_region_kernel_
 // CHECK: simulation.context.storage %arg0[0]
 // CHECK: arith.cmpi slt
 // CHECK: simulation.ref.dyn_extract
@@ -25,7 +25,7 @@
 // Original ownership survives nested loop cloning and CFG lowering. A later
 // scheduling query can recover process order without treating this kernel as
 // one original process. The helper's aggregate inventory remains available.
-// OWNERS: simulation.func private @__obelisk_region_kernel_
+// OWNERS: simulation.func private @__talos_region_kernel_
 // OWNERS-SAME: schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 1 : i64, continuation = [[A:[0-9]+]] : i32>, #schedule.source_owner<codeUnit = 2 : i64, continuation = [[B:[0-9]+]] : i32>]
 // OWNERS: simulation.ref.store {{.*}} {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 1 : i64, continuation = [[A]] : i32>}
 // OWNERS: simulation.ref.store {{.*}} {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 2 : i64, continuation = [[B]] : i32>}
@@ -34,10 +34,10 @@
 // Bounded dynamic accesses and internal blocking reads do not turn a proved
 // finite activation DAG into feedback. The source proof survives native
 // lowering in the preserved pipeline analysis and the same graph inventory.
-// RANKED: obelisk ranked activation: __obelisk_region_kernel_0_0 valid=1 complete=1
-// RANKED: obelisk ranked groups: candidates=2 groups=2 segments=0 members=2 clocked_members=1
-// RANKED: obelisk eval dependency: owner=0 island=0 body=__obelisk_region_kernel_0_0.__obelisk_eval_body_0 successors=
-// RANKED: obelisk eval dependency: owner=1 island=1 body=sample.__obelisk_eval_body_0 successors=
+// RANKED: talos ranked activation: __talos_region_kernel_0_0 valid=1 complete=1
+// RANKED: talos ranked groups: candidates=2 groups=2 segments=0 members=2 clocked_members=1
+// RANKED: talos eval dependency: owner=0 island=0 body=__talos_region_kernel_0_0.__talos_eval_body_0 successors=
+// RANKED: talos eval dependency: owner=1 island=1 body=sample.__talos_eval_body_0 successors=
 
 // Bounded address-copy and result-assembly loops, with a clocked NBA observer.
 // The result initializer and lane stores retain their original transitions.

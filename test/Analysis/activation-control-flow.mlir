@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-activation-control-flow -o %t.analyzed 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s --test-talos-activation-control-flow -o %t.analyzed 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
 
 // An early break and the induction backedge share a dispatch block after

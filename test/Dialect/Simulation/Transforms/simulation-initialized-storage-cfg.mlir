@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --obelisk-sim-propagate-initialized-storage -o %t.threaded
-// RUN: obelisk-opt %s --mlir-disable-threading --obelisk-sim-propagate-initialized-storage -o %t.serial
+// RUN: talos-opt %s --talos-sim-propagate-initialized-storage -o %t.threaded
+// RUN: talos-opt %s --mlir-disable-threading --talos-sim-propagate-initialized-storage -o %t.serial
 // RUN: diff %t.threaded %t.serial
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-propagate-initialized-storage))' | FileCheck %s
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-propagate-initialized-storage))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-propagate-initialized-storage{vpi=full}))' | FileCheck %s --check-prefix=VPI
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-propagate-initialized-storage))' | FileCheck %s
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(talos-sim-propagate-initialized-storage))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-propagate-initialized-storage{vpi=full}))' | FileCheck %s --check-prefix=VPI
 
 // LRM 6.8 requires declaration initialization before all process startups.
 // A CFG preheader is unconditional; a skipped initialization edge is not.

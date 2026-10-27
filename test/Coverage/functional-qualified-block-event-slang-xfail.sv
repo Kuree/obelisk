@@ -2,7 +2,7 @@
 // IEEE 1800-2023 19.3 permits class methods in block event expressions.
 // Slang v11.0 rejects the object-qualified method before AST import.
 
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov --coverage-test=block-event | FileCheck %s
 
 class holder;

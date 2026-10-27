@@ -1,9 +1,9 @@
-// RUN: obelisk -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: talos -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode 2>&1 | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=aot %s -o %t.o3.aot
+// RUN: talos -O3 --native-scheduler=aot %s -o %t.o3.aot
 // RUN: %t.o3.aot 2>&1 | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=aot --top=nochange_cell \
+// RUN: talos -O3 --native-scheduler=aot --top=nochange_cell \
 // RUN:   -emit-llvm %s -o - | FileCheck %s --check-prefix=AOT
 
 `timescale 1ns / 1ps
@@ -264,4 +264,4 @@ endmodule
 // retained positive-end tail and the newly open interval.
 // CHECK-DAG: warning: system timing check violation
 // CHECK-DAG: warning: system timing check violation
-// AOT: obelisk_rt_v1_nochange_update
+// AOT: talos_rt_v1_nochange_update

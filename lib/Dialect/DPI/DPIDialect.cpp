@@ -1,8 +1,8 @@
 //===- DPIDialect.cpp - SystemVerilog DPI-C boundary ----------------------===//
 
-#include "obelisk/Dialect/DPI/DPIDialect.h"
-#include "obelisk/Dialect/DPI/DPIAttrs.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Dialect/DPI/DPIDialect.h"
+#include "talos/Dialect/DPI/DPIAttrs.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -13,18 +13,18 @@
 #include <cstdint>
 
 using namespace mlir;
-using namespace obelisk::dpi;
+using namespace talos::dpi;
 
-#include "obelisk/Dialect/DPI/DPIDialect.cpp.inc"
-#include "obelisk/Dialect/DPI/DPIEnums.cpp.inc"
+#include "talos/Dialect/DPI/DPIDialect.cpp.inc"
+#include "talos/Dialect/DPI/DPIEnums.cpp.inc"
 
 #define GET_ATTRDEF_CLASSES
-#include "obelisk/Dialect/DPI/DPIAttrs.cpp.inc"
+#include "talos/Dialect/DPI/DPIAttrs.cpp.inc"
 
 void DPIDialect::initialize() {
   addAttributes<
 #define GET_ATTRDEF_LIST
-#include "obelisk/Dialect/DPI/DPIAttrs.cpp.inc"
+#include "talos/Dialect/DPI/DPIAttrs.cpp.inc"
       >();
 }
 
@@ -236,23 +236,23 @@ AggregateABIAttr::verify(function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
-uint64_t obelisk::dpi::getSignatureHash(ArrayAttr signature,
+uint64_t talos::dpi::getSignatureHash(ArrayAttr signature,
                                         uint64_t logicalInputs) {
-  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
-  hash = obelisk_stable_hash_append_uint_le(hash, logicalInputs, 8);
-  hash = obelisk_stable_hash_append_uint_le(
+  uint64_t hash = TALOS_STABLE_HASH_OFFSET_BASIS;
+  hash = talos_stable_hash_append_uint_le(hash, logicalInputs, 8);
+  hash = talos_stable_hash_append_uint_le(
       hash, signature.size() - logicalInputs, 8);
   for (Attribute attribute : signature) {
     auto abi = cast<ABIAttr>(attribute);
-    hash = obelisk_stable_hash_append_uint_le(
+    hash = talos_stable_hash_append_uint_le(
         hash, static_cast<uint32_t>(abi.getKind()), 4);
-    hash = obelisk_stable_hash_append_uint_le(
+    hash = talos_stable_hash_append_uint_le(
         hash, static_cast<uint32_t>(abi.getDirection()), 4);
-    hash = obelisk_stable_hash_append_uint_le(hash, abi.getWidth(), 4);
+    hash = talos_stable_hash_append_uint_le(hash, abi.getWidth(), 4);
     hash =
-        obelisk_stable_hash_append_uint_le(hash, abi.getFourState() ? 1 : 0, 1);
+        talos_stable_hash_append_uint_le(hash, abi.getFourState() ? 1 : 0, 1);
     hash =
-        obelisk_stable_hash_append_uint_le(hash, abi.getIsSigned() ? 1 : 0, 1);
+        talos_stable_hash_append_uint_le(hash, abi.getIsSigned() ? 1 : 0, 1);
   }
   return hash ? hash : 1;
 }

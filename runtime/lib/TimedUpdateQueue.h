@@ -1,10 +1,10 @@
 //===- TimedUpdateQueue.h - bounded-width deferred update calendar -*- C++
 //-*-===//
 
-#ifndef OBELISK_RUNTIME_LIB_TIMEDUPDATEQUEUE_H
-#define OBELISK_RUNTIME_LIB_TIMEDUPDATEQUEUE_H
+#ifndef TALOS_RUNTIME_LIB_TIMEDUPDATEQUEUE_H
+#define TALOS_RUNTIME_LIB_TIMEDUPDATEQUEUE_H
 
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include <array>
 #include <cassert>
@@ -98,9 +98,9 @@ template <typename Update> class TimedUpdateQueue {
   std::array<std::unique_ptr<Heap>, 2> heaps;
 
   static size_t regionIndex(uint32_t region) {
-    assert(region == OBELISK_RT_REGION_NBA ||
-           region == OBELISK_RT_REGION_RE_NBA);
-    return region == OBELISK_RT_REGION_NBA ? 0 : 1;
+    assert(region == TALOS_RT_REGION_NBA ||
+           region == TALOS_RT_REGION_RE_NBA);
+    return region == TALOS_RT_REGION_NBA ? 0 : 1;
   }
 
 public:
@@ -169,7 +169,7 @@ public:
     heaps[region]->insert(std::move(update));
   }
   const Update *front(uint32_t region) const {
-    if (region != OBELISK_RT_REGION_NBA && region != OBELISK_RT_REGION_RE_NBA)
+    if (region != TALOS_RT_REGION_NBA && region != TALOS_RT_REGION_RE_NBA)
       return nullptr;
     const auto &heap = heaps[regionIndex(region)];
     return heap ? heap->front() : nullptr;

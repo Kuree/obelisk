@@ -1,16 +1,16 @@
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 //===- BytecodeOperationEncoding.cpp - Bytecode instruction selection ----===//
 
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
-#include "obelisk/Analysis/NativeStorageLayout.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Analysis/NativeStorageLayout.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
                                        Operation *operation) {
@@ -72,7 +72,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         return failure();
       emit({Constant, 0, caseValue, 0, 0, 0, 0,
             addConstant(plan.layouts[caseValue], value)});
-      emit({Compare, OBELISK_RT_DB_CMP_EQ, match, reg(plan, switchOp.getFlag()),
+      emit({Compare, TALOS_RT_DB_CMP_EQ, match, reg(plan, switchOp.getFlag()),
             caseValue});
       auto mapping = addMap(plan, destination->getArguments(), plan, operands);
       uint64_t branch =
@@ -267,16 +267,16 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         callee.function.getEntryKind() == sim::EntryKind::Function)
       return op.emitOpError("spawn target is not a simulation process");
     SmallVector<Value> captures(op.getOperands());
-    if (found->second > OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK)
+    if (found->second > TALOS_RT_INTRINSIC_SPAWN_FUNCTION_MASK)
       return op.emitOpError("spawn target index exceeds bytecode encoding");
     sim::EntryKind entryKind = callee.function.getEntryKind();
     bool primeOnSpawn =
-        ::obelisk::schedule::has<::obelisk::schedule::Field::PrimeOnSpawn>(
+        ::talos::schedule::has<::talos::schedule::Field::PrimeOnSpawn>(
             callee.function);
     if (primeOnSpawn &&
         (!callee.function->hasAttr("internal") ||
-         !::obelisk::schedule::has<
-             ::obelisk::schedule::Field::DetachedControls>(callee.function) ||
+         !::talos::schedule::has<
+             ::talos::schedule::Field::DetachedControls>(callee.function) ||
          entryKind != sim::EntryKind::Fork))
       return op.emitOpError(
           "prime-on-spawn is reserved for internal detached waiters");
@@ -284,35 +284,35 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         sim::isStartupEntryKind(entryKind) ||
         (entryKind == sim::EntryKind::Initial &&
          callee.function.getHomeRegion() == sim::EventRegion::Active);
-    bool prioritySignalResume = ::obelisk::schedule::has<
-        ::obelisk::schedule::Field::PrioritySignalResume>(callee.function);
+    bool prioritySignalResume = ::talos::schedule::has<
+        ::talos::schedule::Field::PrioritySignalResume>(callee.function);
     bool concurrentSignalObserver =
-        ::obelisk::schedule::has<::obelisk::schedule::Field::ConcurrentCancel>(
+        ::talos::schedule::has<::talos::schedule::Field::ConcurrentCancel>(
             callee.function) ||
-        ::obelisk::schedule::has<::obelisk::schedule::Field::ConcurrentAbort>(
+        ::talos::schedule::has<::talos::schedule::Field::ConcurrentAbort>(
             callee.function);
     if (prioritySignalResume &&
         (!callee.function->hasAttr("internal") || !concurrentSignalObserver ||
-         !::obelisk::schedule::has<
-             ::obelisk::schedule::Field::DetachedControls>(callee.function) ||
+         !::talos::schedule::has<
+             ::talos::schedule::Field::DetachedControls>(callee.function) ||
          entryKind != sim::EntryKind::Fork ||
          callee.function.getHomeRegion() != sim::EventRegion::Reactive))
       return op.emitOpError(
           "priority signal resume is reserved for internal concurrent "
           "cancellation or abort observers");
     auto programOwner =
-        ::obelisk::schedule::get<::obelisk::schedule::Field::ProgramOwnerId>(
+        ::talos::schedule::get<::talos::schedule::Field::ProgramOwnerId>(
             callee.function);
     uint32_t flags =
-        found->second | (startup ? OBELISK_RT_INTRINSIC_SPAWN_STARTUP : 0) |
-        (::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+        found->second | (startup ? TALOS_RT_INTRINSIC_SPAWN_STARTUP : 0) |
+        (::talos::schedule::has<::talos::schedule::Field::DetachedControls>(
              callee.function)
-             ? OBELISK_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS
+             ? TALOS_RT_INTRINSIC_SPAWN_DETACHED_CONTROLS
              : 0) |
-        (primeOnSpawn ? OBELISK_RT_INTRINSIC_SPAWN_PRIME : 0) |
-        (prioritySignalResume ? OBELISK_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL
+        (primeOnSpawn ? TALOS_RT_INTRINSIC_SPAWN_PRIME : 0) |
+        (prioritySignalResume ? TALOS_RT_INTRINSIC_SPAWN_PRIORITY_SIGNAL
                               : 0) |
-        (programOwner ? OBELISK_RT_INTRINSIC_SPAWN_PROGRAM : 0);
+        (programOwner ? TALOS_RT_INTRINSIC_SPAWN_PROGRAM : 0);
     SmallVector<uint32_t> inputs;
     llvm::transform(captures, std::back_inserter(inputs),
                     [&](Value value) { return reg(plan, value); });
@@ -366,16 +366,16 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     uint32_t component = emitU64Constant(plan, op.getComponent());
     uint32_t flags = emitU64Constant(
         plan,
-        (op.getVectorDelay() ? OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY : 0) |
+        (op.getVectorDelay() ? TALOS_RT_INERTIAL_DRIVER_VECTOR_DELAY : 0) |
             (op.getDeferResolution()
-                 ? OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION
+                 ? TALOS_RT_INERTIAL_DRIVER_DEFER_RESOLUTION
                  : 0) |
             (sim::has<sim::metadata::UserNetRawDrive>(op)
-                 ? OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW
+                 ? TALOS_RT_INERTIAL_DRIVER_PUBLISH_RAW
                  : 0) |
-            (op.getValue().getType().isF32() ? OBELISK_RT_INERTIAL_DRIVER_REAL32
+            (op.getValue().getType().isF32() ? TALOS_RT_INERTIAL_DRIVER_REAL32
                                              : 0) |
-            (op.getValue().getType().isF64() ? OBELISK_RT_INERTIAL_DRIVER_REAL64
+            (op.getValue().getType().isF64() ? TALOS_RT_INERTIAL_DRIVER_REAL64
                                              : 0));
     if (codeUnit == kInvalidRegister || component == kInvalidRegister ||
         flags == kInvalidRegister)
@@ -399,17 +399,17 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         pulseControlled ? emitU64Constant(plan, op.getPulseError()) : 0;
     uint32_t flags = emitU64Constant(
         plan,
-        (op.getDeferResolution() ? OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION
+        (op.getDeferResolution() ? TALOS_RT_INERTIAL_DRIVER_DEFER_RESOLUTION
                                  : 0) |
             (sim::has<sim::metadata::UserNetRawDrive>(op)
-                 ? OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW
+                 ? TALOS_RT_INERTIAL_DRIVER_PUBLISH_RAW
                  : 0) |
-            (op.getPulseOnDetect() ? OBELISK_RT_INERTIAL_PATH_ON_DETECT : 0) |
+            (op.getPulseOnDetect() ? TALOS_RT_INERTIAL_PATH_ON_DETECT : 0) |
             (op.getPulseShowCancelled()
-                 ? OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED
+                 ? TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED
                  : 0) |
             (op.getPulseTransitionMasks()
-                 ? OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS
+                 ? TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS
                  : 0));
     if (codeUnit == kInvalidRegister || component == kInvalidRegister ||
         group == kInvalidRegister || groupCount == kInvalidRegister ||
@@ -451,12 +451,12 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     uint32_t pulseError =
         pulseControlled ? emitU64Constant(plan, op.getPulseError()) : 0;
     uint32_t pulseFlags = emitU64Constant(
-        plan, (op.getPulseOnDetect() ? OBELISK_RT_INERTIAL_PATH_ON_DETECT : 0) |
+        plan, (op.getPulseOnDetect() ? TALOS_RT_INERTIAL_PATH_ON_DETECT : 0) |
                   (op.getPulseShowCancelled()
-                       ? OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED
+                       ? TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED
                        : 0) |
                   (op.getPulseTransitionMasks()
-                       ? OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS
+                       ? TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS
                        : 0));
     if (siteID == kInvalidRegister || component == kInvalidRegister ||
         group == kInvalidRegister || groupCount == kInvalidRegister ||
@@ -513,12 +513,12 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     uint32_t pulseFlags =
         pulseControlled
             ? emitU64Constant(plan,
-                              OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS |
+                              TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS |
                                   (op.getPulseOnDetect()
-                                       ? OBELISK_RT_INERTIAL_PATH_ON_DETECT
+                                       ? TALOS_RT_INERTIAL_PATH_ON_DETECT
                                        : 0) |
                                   (op.getPulseShowCancelled()
-                                       ? OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED
+                                       ? TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED
                                        : 0))
             : 0;
     uint32_t pulseReject =
@@ -606,7 +606,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       return op.emitOpError("cannot allocate event identity registers");
     emit({HandleID, 0, left, reg(plan, op.getLhs())});
     emit({HandleID, 0, right, reg(plan, op.getRhs())});
-    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getResult()), left, right});
+    emit({Compare, TALOS_RT_DB_CMP_EQ, reg(plan, op.getResult()), left, right});
     return success();
   }
   if (auto op = dyn_cast<sim::SimProcessNullOp>(operation)) {
@@ -638,24 +638,24 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return success();
   }
   if (auto op = dyn_cast<sim::SimVirtualInterfaceScopeOp>(operation)) {
-    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
+    emit({Extract, TALOS_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
           reg(plan, op.getInput()), kInvalidRegister});
     return success();
   }
   if (auto op = dyn_cast<sim::SimVirtualInterfaceEqualOp>(operation)) {
-    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
+    emit({Compare, TALOS_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
           reg(plan, op.getLhs()), reg(plan, op.getRhs())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimChandleEqualOp>(operation)) {
-    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
+    emit({Compare, TALOS_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
           reg(plan, op.getLhs()), reg(plan, op.getRhs())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimProcessCurrentOp>(operation))
     return emitIntrinsic(plan, kIntrinsicProcessCurrent, {}, {op.getResult()});
   if (auto op = dyn_cast<sim::SimProcessEqualOp>(operation)) {
-    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
+    emit({Compare, TALOS_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
           reg(plan, op.getLhs()), reg(plan, op.getRhs())});
     return success();
   }
@@ -756,7 +756,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   }
   if (isa<sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp,
           sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp>(operation)) {
-    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND,
+    emit({Extract, TALOS_RT_DB_EXTRACT_ZERO_EXTEND,
           reg(plan, operation->getResult(0)),
           reg(plan, operation->getOperand(0)), kInvalidRegister});
     return success();
@@ -764,14 +764,14 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimLogicResizeOp>(operation)) {
     emit({Extract,
           static_cast<uint16_t>(op.getIsSigned()
-                                    ? OBELISK_RT_DB_EXTRACT_SIGN_EXTEND
-                                    : OBELISK_RT_DB_EXTRACT_ZERO_EXTEND),
+                                    ? TALOS_RT_DB_EXTRACT_SIGN_EXTEND
+                                    : TALOS_RT_DB_EXTRACT_ZERO_EXTEND),
           reg(plan, op.getResult()), reg(plan, op.getInput()),
           kInvalidRegister});
     return success();
   }
   if (auto op = dyn_cast<sim::SimLogicIsTrueOp>(operation)) {
-    emit({Reduce, OBELISK_RT_DB_REDUCE_IS_TRUE, reg(plan, op.getResult()),
+    emit({Reduce, TALOS_RT_DB_REDUCE_IS_TRUE, reg(plan, op.getResult()),
           reg(plan, op.getInput())});
     return success();
   }
@@ -784,8 +784,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     bool fourState =
         result == kInvalidRegister || plan.layouts[result].kind == Logic;
     emit({Select,
-          static_cast<uint16_t>(fourState ? OBELISK_RT_DB_SELECT_FOUR_STATE
-                                          : OBELISK_RT_DB_SELECT_BINARY),
+          static_cast<uint16_t>(fourState ? TALOS_RT_DB_SELECT_FOUR_STATE
+                                          : TALOS_RT_DB_SELECT_BINARY),
           result, reg(plan, op.getTrueValue()), reg(plan, op.getFalseValue()),
           reg(plan, op.getCondition())});
     return success();
@@ -799,7 +799,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       emit({Not, 0, reg(plan, op.getResult()), reg(plan, op.getInput())});
       break;
     case sim::UnaryKind::LogicalNot:
-      emit({Reduce, OBELISK_RT_DB_REDUCE_LOGICAL_NOT, reg(plan, op.getResult()),
+      emit({Reduce, TALOS_RT_DB_REDUCE_LOGICAL_NOT, reg(plan, op.getResult()),
             reg(plan, op.getInput())});
       break;
     case sim::UnaryKind::Negate: {
@@ -830,9 +830,9 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     uint32_t rightTruth = temporaryLike(plan, truthType, op.getResult());
     if (leftTruth == kInvalidRegister || rightTruth == kInvalidRegister)
       return failure();
-    emit({Reduce, OBELISK_RT_DB_REDUCE_LOGICAL_VALUE, leftTruth,
+    emit({Reduce, TALOS_RT_DB_REDUCE_LOGICAL_VALUE, leftTruth,
           reg(plan, op.getLhs())});
-    emit({Reduce, OBELISK_RT_DB_REDUCE_LOGICAL_VALUE, rightTruth,
+    emit({Reduce, TALOS_RT_DB_REDUCE_LOGICAL_VALUE, rightTruth,
           reg(plan, op.getRhs())});
     emit({op.getKind() == sim::LogicalKind::And ? And : Or, 0,
           reg(plan, op.getResult()), leftTruth, rightTruth});
@@ -850,28 +850,28 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return emitIntrinsic(plan, kIntrinsicLogicCaseDifferenceMask,
                          {op.getLhs(), op.getRhs()}, {op.getResult()});
   if (auto op = dyn_cast<sim::SimLogicExtractOp>(operation)) {
-    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
+    emit({Extract, TALOS_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
           reg(plan, op.getInput()), kInvalidRegister, 0, 0, op.getLowBit()});
     return success();
   }
   if (auto op = dyn_cast<sim::SimLogicDynExtractOp>(operation)) {
-    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
+    emit({Extract, TALOS_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
           reg(plan, op.getInput()), reg(plan, op.getLowBit())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimBitsDynExtractOp>(operation)) {
-    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
+    emit({Extract, TALOS_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
           reg(plan, op.getInput()), reg(plan, op.getLowBit())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimLogicDynInsertOp>(operation)) {
-    emit({Insert, OBELISK_RT_DB_INSERT_DYNAMIC, reg(plan, op.getResult()),
+    emit({Insert, TALOS_RT_DB_INSERT_DYNAMIC, reg(plan, op.getResult()),
           reg(plan, op.getInput()), reg(plan, op.getReplacement()),
           reg(plan, op.getLowBit())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimBitsDynInsertOp>(operation)) {
-    emit({Insert, OBELISK_RT_DB_INSERT_DYNAMIC, reg(plan, op.getResult()),
+    emit({Insert, TALOS_RT_DB_INSERT_DYNAMIC, reg(plan, op.getResult()),
           reg(plan, op.getInput()), reg(plan, op.getReplacement()),
           reg(plan, op.getLowBit())});
     return success();
@@ -914,7 +914,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
             "aggregate element has no bytecode word representation");
       uint16_t flags =
           isManagedAggregateWord(plan.layouts[elementRegister].kind)
-              ? OBELISK_RT_DB_AGGREGATE_MANAGED
+              ? TALOS_RT_DB_AGGREGATE_MANAGED
               : 0;
       emit({Insert, flags, destination, destination, elementRegister, 0, 0,
             subelement->first});
@@ -940,7 +940,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       return op.emitOpError(
           "aggregate replacement has no bytecode word representation");
     uint16_t flags = isManagedAggregateWord(plan.layouts[replacement].kind)
-                         ? OBELISK_RT_DB_AGGREGATE_MANAGED
+                         ? TALOS_RT_DB_AGGREGATE_MANAGED
                          : 0;
     emit({Insert, flags, reg(plan, op.getResult()), reg(plan, op.getInput()),
           replacement, 0, 0, subelement->first});
@@ -980,7 +980,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         inputs.push_back(emitU64Constant(plan, slot.kindMask));
         inputs.push_back(emitU64Constant(
             plan,
-            slot.conditional ? OBELISK_RT_MANAGED_ROOT_SLOT_CANDIDATE : 0));
+            slot.conditional ? TALOS_RT_MANAGED_ROOT_SLOT_CANDIDATE : 0));
       }
     }
     return emitIntrinsicRegisters(plan, intrinsic, inputs,
@@ -994,27 +994,27 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     if (!call)
       return op.emitOpError("missing verified VPI call declaration");
     return emitIntrinsicRegisters(
-        plan, OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE,
+        plan, TALOS_RT_INTRINSIC_V1_VPI_CALL_PREPARE,
         {emitU64Constant(plan, call.getId())}, {reg(plan, op.getTicket())});
   }
   if (auto op = dyn_cast<sim::SimVPIFrameEnterForeignOp>(operation))
     return emitIntrinsicRegisters(
-        plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED,
+        plan, TALOS_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED,
         {emitU64Constant(plan, op.getCodeUnitId()), emitU64Constant(plan, 0)},
         {reg(plan, op.getActivation())});
   if (auto op = dyn_cast<sim::SimVPIResolutionPrepareOp>(operation))
     return emitIntrinsicRegisters(
-        plan, OBELISK_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE,
+        plan, TALOS_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE,
         {emitU64Constant(plan, op.getNetId())}, {reg(plan, op.getTicket())});
   if (auto op = dyn_cast<sim::SimVPIFrameEnterPreparedOp>(operation))
     return emitIntrinsicRegisters(
-        plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED,
+        plan, TALOS_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED,
         {emitU64Constant(plan, op.getCodeUnitId()),
          emitU64Constant(plan, op.getIsTask())},
         {reg(plan, op.getActivation())});
   if (auto op = dyn_cast<sim::SimVPIFrameEnterOp>(operation))
     return emitIntrinsicRegisters(
-        plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER,
+        plan, TALOS_RT_INTRINSIC_V1_VPI_FRAME_ENTER,
         {emitU64Constant(plan, op.getCodeUnitId()),
          emitU64Constant(plan, op.getStatementId() ? 2 : 0),
          emitU64Constant(plan,
@@ -1022,13 +1022,13 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         {reg(plan, op.getActivation())});
   if (auto op = dyn_cast<sim::SimVPIFrameCheckpointOp>(operation))
     return emitIntrinsicRegisters(
-        plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT,
+        plan, TALOS_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT,
         {emitU64Constant(plan, op.getStatementId())}, {});
   if (auto op = dyn_cast<sim::SimVPIFrameLeaveOp>(operation))
-    return emitIntrinsic(plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_LEAVE,
+    return emitIntrinsic(plan, TALOS_RT_INTRINSIC_V1_VPI_FRAME_LEAVE,
                          {op.getActivation()}, {});
   if (auto op = dyn_cast<sim::SimVPICallFinishOp>(operation))
-    return emitIntrinsic(plan, OBELISK_RT_INTRINSIC_V1_VPI_CALL_FINISH,
+    return emitIntrinsic(plan, TALOS_RT_INTRINSIC_V1_VPI_CALL_FINISH,
                          {op.getTicket()}, {});
   if (isa<sim::SimDisableChildrenOp>(operation))
     return emitIntrinsic(plan, kIntrinsicDisableChildren, {}, {});
@@ -1056,7 +1056,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
                   op.getActivation());
   if (auto op = dyn_cast<sim::SimControlDisableSelectedOp>(operation))
     return emitIntrinsicRegisters(
-        plan, OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED,
+        plan, TALOS_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED,
         {emitU64Constant(plan, op.getTargetId()),
          op.getActivation() ? reg(plan, op.getActivation())
                             : emitU64Constant(plan, 0),
@@ -1167,4 +1167,4 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
             "is closed, so executable fallback is forbidden)";
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

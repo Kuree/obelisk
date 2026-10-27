@@ -1,15 +1,15 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-replicate,simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-replicate,simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
-// test-obelisk-replicate expands the writer marked test.replicate into the
+// test-talos-replicate expands the writer marked test.replicate into the
 // 65 single-bit writers (writer0 ... writer64) that span two ready words.
 
 // The copied clock is not certified periodic. Its wide NBA owners use ordered
 // generated staging, not one-entry latches or actor checkpoints. All 65 writes
 // survive queue growth and subsequent reuse after the first NBA barrier.
 // PLAN-NOT: .ordered_nba_checkpoint
-// PLAN: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
-// PLAN: llvm.func @__obelisk_eval_dispatch_v1
+// PLAN: llvm.mlir.global internal @__talos_eval_ordered_nba_queue_v1
+// PLAN: llvm.func @__talos_eval_dispatch_v1
 
 !bit = !simulation.logic<1>
 !clockref = !simulation.ref<!bit>

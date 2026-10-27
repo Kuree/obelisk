@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-instrument-managed-roots)))' | FileCheck %s --check-prefix=EAGER
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-instrument-managed-roots{polled=true})))' | FileCheck %s --check-prefix=POLLED
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-instrument-managed-roots)))' | FileCheck %s --check-prefix=EAGER
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-instrument-managed-roots{polled=true})))' | FileCheck %s --check-prefix=POLLED
 
 // By default every allocation and call may collect, so each function with a
 // handle live across one registers its roots at every activation. Under
@@ -14,16 +14,16 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
   simulation.design @polled_roots {
-    llvm.mlir.global internal @__obelisk_current_context() : !llvm.ptr {
+    llvm.mlir.global internal @__talos_current_context() : !llvm.ptr {
       %null = llvm.mlir.zero : !llvm.ptr
       llvm.return %null : !llvm.ptr
     }
-    llvm.func @obelisk_rt_v1_gc_current_lane(!llvm.ptr) -> !llvm.ptr
-    llvm.func @obelisk_rt_v1_gc_managed_root_range_push(
+    llvm.func @talos_rt_v1_gc_current_lane(!llvm.ptr) -> !llvm.ptr
+    llvm.func @talos_rt_v1_gc_managed_root_range_push(
         !llvm.ptr, !llvm.ptr, !llvm.ptr, i64) -> i32
-    llvm.func @obelisk_rt_v1_gc_managed_root_range_pop(
+    llvm.func @talos_rt_v1_gc_managed_root_range_pop(
         !llvm.ptr, !llvm.ptr) -> i32
-    llvm.func @obelisk_rt_v1_scheduler_fail(!llvm.ptr, i32)
+    llvm.func @talos_rt_v1_scheduler_fail(!llvm.ptr, i32)
 
     simulation.scope.decl 0
     simulation.code_unit.decl 1 in 0 function hierarchy "make"

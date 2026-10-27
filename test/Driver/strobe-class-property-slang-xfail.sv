@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk -emit-slang %s -o /dev/null
+// RUN: %talos -emit-slang %s -o /dev/null
 
 // IEEE 1800-2023 21.2.2: $strobe takes the same arguments as $display, and
 // 6.21 permits references to members of dynamic variables in procedural

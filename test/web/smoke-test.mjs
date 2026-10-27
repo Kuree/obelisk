@@ -1,5 +1,5 @@
 // End-to-end smoke test for the generated web artifacts. Run from the repo as:
-//   OBELISK_WEB_SITE=site node test/web/smoke-test.mjs
+//   TALOS_WEB_SITE=site node test/web/smoke-test.mjs
 
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
@@ -8,14 +8,14 @@ import { pathToFileURL } from 'node:url';
 
 // The site is the assembled Pages directory: web/ plus the wasm compiler and
 // its toolchain archives. Defaults to ./site, where the wasm CI job builds it.
-const directory = `${resolve(process.env.OBELISK_WEB_SITE ?? 'site')}/`;
+const directory = `${resolve(process.env.TALOS_WEB_SITE ?? 'site')}/`;
 const site = pathToFileURL(directory);
 const { runSimulation } = await import(new URL('wasi.js', site));
 await import(new URL('toolchain.js', site));
 
 const require = createRequire(import.meta.url);
-const createObeliskModule = require(`${directory}obelisk.js`);
-const createObeliskCovModule = require(`${directory}obelisk-cov.js`);
+const createTalosModule = require(`${directory}talos.js`);
+const createTalosCovModule = require(`${directory}talos-cov.js`);
 const logs = [];
 let phase = 'loading the compiler';
 
@@ -90,15 +90,15 @@ endmodule
   // the real browser compiler carries the schedule provenance consumed by the
   // clickable graph nodes.
   phase = 'loading the compiler for schedule provenance';
-  const scheduleModule = await createObeliskModule({
+  const scheduleModule = await createTalosModule({
     noInitialRun: true,
-    thisProgram: '/bin/obelisk',
+    thisProgram: '/bin/talos',
     locateFile: (name) => `${directory}${name}`,
     print: (line) => logs.push(line),
     printErr: (line) => logs.push(line),
   });
   phase = 'installing the toolchain for schedule provenance';
-  await globalThis.installObeliskToolchain(scheduleModule, {
+  await globalThis.installTalosToolchain(scheduleModule, {
     load: (name) => readFile(`${directory}toolchain/${name}`),
   });
   scheduleModule.FS.mkdir('/work');
@@ -135,16 +135,16 @@ endmodule
     const optimization = configuration.name;
     logs.length = 0;
     phase = `loading the compiler for ${optimization}`;
-    const mod = await createObeliskModule({
+    const mod = await createTalosModule({
       noInitialRun: true,
-      thisProgram: '/bin/obelisk',
+      thisProgram: '/bin/talos',
       locateFile: (name) => `${directory}${name}`,
       print: (line) => logs.push(line),
       printErr: (line) => logs.push(line),
     });
 
     phase = `installing the toolchain for ${optimization}`;
-    await globalThis.installObeliskToolchain(mod, {
+    await globalThis.installTalosToolchain(mod, {
       load: (name) => readFile(`${directory}toolchain/${name}`),
     });
     mod.FS.mkdir('/work');
@@ -192,13 +192,13 @@ endmodule
     const snapshot = files.find((file) => file.name === 'coverage.obcov');
     verifyCoverageImage(snapshot, optimization);
 
-    // The Coverage view shows the page obelisk-cov writes, run the way
+    // The Coverage view shows the page talos-cov writes, run the way
     // compiler-worker.js runs it.
     phase = `reporting the ${optimization} coverage`;
     const covLogs = [];
-    const cov = await createObeliskCovModule({
+    const cov = await createTalosCovModule({
       noInitialRun: true,
-      thisProgram: '/bin/obelisk-cov',
+      thisProgram: '/bin/talos-cov',
       locateFile: (name) => `${directory}${name}`,
       print: (line) => covLogs.push(line),
       printErr: (line) => covLogs.push(line),
@@ -211,7 +211,7 @@ endmodule
       '-o', '/work/coverage.html', '/work/coverage.obcov',
     ]) ?? 0;
     if (reportStatus !== 0)
-      throw new Error(`obelisk-cov exited with ${reportStatus} at ${optimization}: ${covLogs.join('\n')}`);
+      throw new Error(`talos-cov exited with ${reportStatus} at ${optimization}: ${covLogs.join('\n')}`);
     const page = cov.FS.readFile('/work/coverage.html', { encoding: 'utf8' });
     const payload = JSON.parse(
       page.match(/<script\b[^>]*\bid="coverage-data"[^>]*>([\s\S]*?)<\/script>/)[1]);
@@ -277,14 +277,14 @@ endmodule
         const label = `${optimization} ${scheduler} ${fixture}`;
         logs.length = 0;
         phase = `loading the compiler for ${label}`;
-        const mod = await createObeliskModule({
+        const mod = await createTalosModule({
           noInitialRun: true,
-          thisProgram: '/bin/obelisk',
+          thisProgram: '/bin/talos',
           locateFile: (name) => `${directory}${name}`,
           print: (line) => logs.push(line),
           printErr: (line) => logs.push(line),
         });
-        await globalThis.installObeliskToolchain(mod, {
+        await globalThis.installTalosToolchain(mod, {
           load: (name) => readFile(`${directory}toolchain/${name}`),
         });
         mod.FS.mkdir('/work');

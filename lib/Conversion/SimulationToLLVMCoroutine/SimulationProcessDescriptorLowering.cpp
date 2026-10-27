@@ -2,12 +2,12 @@
 
 #include "SimulationProcessWrapperLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Conversion/RuntimeToLLVM.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Conversion/RuntimeToLLVM.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
-#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Analysis/SimulationProcessFrameAnalysis.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Interfaces/CallInterfaces.h"
@@ -17,10 +17,10 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 uint64_t stableProcessID(StringRef name) {
-  return obelisk_stable_hash(name.data(), name.size());
+  return talos_stable_hash(name.data(), name.size());
 }
 
 namespace {
@@ -128,13 +128,13 @@ makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
           ? LLVM::LLVMStructType::getLiteral(context, {descriptorType, pointer})
           : descriptorType;
 
-  std::string continuationsName = (baseName + ".__obelisk_continuations").str();
-  std::string layoutName = (baseName + ".__obelisk_frame_layout").str();
+  std::string continuationsName = (baseName + ".__talos_continuations").str();
+  std::string layoutName = (baseName + ".__talos_frame_layout").str();
   std::string descriptorName =
-      (baseName + ".__obelisk_process_descriptor").str();
+      (baseName + ".__talos_process_descriptor").str();
   std::string designBytecodeName =
-      (baseName + ".__obelisk_bytecode_entry").str();
-  constexpr StringLiteral executionName = "__obelisk_execution_descriptor_v1";
+      (baseName + ".__talos_bytecode_entry").str();
+  constexpr StringLiteral executionName = "__talos_execution_descriptor_v1";
   // These embedded-image symbols are frozen before process finalization.
   // Generated wrappers and frame globals do not change their presence.
   bool hasExecution = embeddedSymbols.lookup(executionName) != nullptr;
@@ -166,10 +166,10 @@ makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
     llvm::append_range(fieldWords, row);
   }
   ArrayAttr fields = ArrayAttr::get(context, fieldRows);
-  uint64_t fieldsHash = obelisk_stable_hash(
+  uint64_t fieldsHash = talos_stable_hash(
       fieldWords.data(), fieldWords.size() * sizeof(uint64_t));
   std::string sharedName =
-      "__obelisk_frame_fields_" + llvm::utohexstr(fieldsHash, true);
+      "__talos_frame_fields_" + llvm::utohexstr(fieldsHash, true);
   std::string fieldsName = sharedName;
   for (unsigned probe = 1;; ++probe) {
     auto shared = embeddedSymbols.lookup<LLVM::GlobalOp>(fieldsName);
@@ -247,23 +247,23 @@ makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
         descriptor = insertValue(builder, location, descriptor, handle, 0);
         descriptor = insertValue(
             builder, location, descriptor,
-            llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 1);
+            llvmConstant(builder, location, i32, TALOS_RT_VERSION), 1);
         uint32_t flags = analysis.isBytecodeReadOnly()
-                             ? OBELISK_RT_PROCESS_BYTECODE_READ_ONLY
+                             ? TALOS_RT_PROCESS_BYTECODE_READ_ONLY
                              : 0;
         if (unmanagedNative && !bytecodeOnly)
-          flags |= OBELISK_RT_PROCESS_UNMANAGED_NATIVE |
-                   (tableProcess ? OBELISK_RT_PROCESS_TABLE_NATIVE : 0);
+          flags |= TALOS_RT_PROCESS_UNMANAGED_NATIVE |
+                   (tableProcess ? TALOS_RT_PROCESS_TABLE_NATIVE : 0);
         if (flags)
           descriptor =
               insertValue(builder, location, descriptor,
                           llvmConstant(builder, location, i32, flags), 2);
         uint32_t availableTiers =
             bytecodeOnly
-                ? OBELISK_RT_TIER_MASK_BYTECODE
-                : (hasDesignBytecode ? OBELISK_RT_TIER_MASK_NATIVE |
-                                           OBELISK_RT_TIER_MASK_BYTECODE
-                                     : OBELISK_RT_TIER_MASK_NATIVE);
+                ? TALOS_RT_TIER_MASK_BYTECODE
+                : (hasDesignBytecode ? TALOS_RT_TIER_MASK_NATIVE |
+                                           TALOS_RT_TIER_MASK_BYTECODE
+                                     : TALOS_RT_TIER_MASK_NATIVE);
         descriptor = insertValue(
             builder, location, descriptor,
             llvmConstant(builder, location, i32, availableTiers), 3);
@@ -277,7 +277,7 @@ makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
               LLVM::AddressOfOp::create(
                   builder, location, pointer,
                   usesCoroutine
-                      ? (baseName + ".__obelisk_native_requirements").str()
+                      ? (baseName + ".__talos_native_requirements").str()
                       : nativeZeroRequirementsName.str()),
               6);
           descriptor = insertValue(
@@ -285,8 +285,8 @@ makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
               LLVM::AddressOfOp::create(
                   builder, location, pointer,
                   tableProcess
-                      ? "obelisk_rt_v1_table_process_execute"
-                      : (baseName + ".__obelisk_native_execute").str()),
+                      ? "talos_rt_v1_table_process_execute"
+                      : (baseName + ".__talos_native_execute").str()),
               7);
           descriptor =
               insertValue(builder, location, descriptor,
@@ -315,10 +315,10 @@ makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
         return insertValue(builder, location, extended,
                            LLVM::AddressOfOp::create(
                                builder, location, pointer,
-                               (baseName + ".__obelisk_table.plan").str()),
+                               (baseName + ".__talos_table.plan").str()),
                            1);
       });
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

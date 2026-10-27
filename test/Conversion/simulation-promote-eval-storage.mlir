@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --schedule-promote-eval-storage | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(schedule-promote-eval-storage,schedule-promote-eval-storage))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-promote-eval-storage,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --schedule-promote-eval-storage | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(schedule-promote-eval-storage,schedule-promote-eval-storage))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-promote-eval-storage,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
 
 // This is the production cleanup after late localization. Canonical actors
 // keep their threaded continuation operands. Local SSA still observes blocking

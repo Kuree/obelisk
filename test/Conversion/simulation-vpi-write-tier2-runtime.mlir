@@ -1,13 +1,13 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
-// RUN: FileCheck %s --check-prefix=PLAN --implicit-check-not='llvm.func @__obelisk_eval_dispatch_v1' < %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=full},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: FileCheck %s --check-prefix=PLAN --implicit-check-not='llvm.func @__talos_eval_dispatch_v1' < %t.llvm.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-vpi-write-tier2-runtime.test.
 
 // Runtime companion to the guarded-store/net pass tests. Force Tier 2 in
 // the input IR: late deposits, force/release and X writes must remain correct
 // after a long clean compute-fragment interval, then recover normally.
-// PLAN: llvm.func @__obelisk_aot_schedule_run_v1
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
+// PLAN: llvm.func @__talos_aot_schedule_run_v1
+// PLAN: llvm.call @talos_rt_v1_scheduler_run_aot_nodes
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

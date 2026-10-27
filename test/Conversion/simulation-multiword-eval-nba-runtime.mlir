@@ -1,20 +1,20 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-replicate,simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-replicate,simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
-// test-obelisk-replicate expands the writer marked test.replicate into the
+// test-talos-replicate expands the writer marked test.replicate into the
 // 65 single-bit writers (writer0 ... writer64) that span two ready words.
 
 // LRM 4.5 / 4.6: generated Active work must drain across ALL owner words before
 // NBA publication. Independent writers exercise the clock prefix, promotion,
 // and a second activation after emptiness. The exact owners coexist with a
 // complete clock-group owner; they must not invalidate its NBA proof.
-// PLAN: llvm.mlir.global internal @__obelisk_aot_model_ingress_v1()
+// PLAN: llvm.mlir.global internal @__talos_aot_model_ingress_v1()
 // PLAN-SAME: !llvm.array<3 x i64>
-// PLAN: llvm.mlir.global internal @__obelisk_eval_promotion_pending_mask_v1()
+// PLAN: llvm.mlir.global internal @__talos_eval_promotion_pending_mask_v1()
 // PLAN-SAME: !llvm.array<2 x i64>
-// PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
+// PLAN-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// PLAN: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
+// PLAN-LABEL: llvm.func @__talos_eval_dispatch_v1(
 // PLAN: llvm.switch
 // PLAN: 64: ^
 

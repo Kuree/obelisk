@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-obelisk %s | FileCheck %s --check-prefix=OBELISK
+// RUN: talos -emit-slang %s | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-talos %s | FileCheck %s --check-prefix=TALOS
 
 module for_loop_inventory;
   integer i;
@@ -33,15 +33,15 @@ endmodule
 // SLANG-SAME: initializer_count = 0 : i64
 // SLANG-SAME: step_count = 2 : i64
 
-// OBELISK: obelisk.sv.statement.for_loop attributes {
-// OBELISK-SAME: has_condition = true
-// OBELISK-SAME: initializer_count = 2 : i64
-// OBELISK-SAME: step_count = 2 : i64
-// OBELISK: obelisk.sv.statement.for_loop attributes {
-// OBELISK-SAME: has_condition = false
-// OBELISK-SAME: initializer_count = 0 : i64
-// OBELISK-SAME: step_count = 0 : i64
-// OBELISK: obelisk.sv.statement.for_loop attributes {
-// OBELISK-SAME: has_condition = true
-// OBELISK-SAME: initializer_count = 0 : i64
-// OBELISK-SAME: step_count = 2 : i64
+// TALOS: talos.sv.statement.for_loop attributes {
+// TALOS-SAME: has_condition = true
+// TALOS-SAME: initializer_count = 2 : i64
+// TALOS-SAME: step_count = 2 : i64
+// TALOS: talos.sv.statement.for_loop attributes {
+// TALOS-SAME: has_condition = false
+// TALOS-SAME: initializer_count = 0 : i64
+// TALOS-SAME: step_count = 0 : i64
+// TALOS: talos.sv.statement.for_loop attributes {
+// TALOS-SAME: has_condition = true
+// TALOS-SAME: initializer_count = 0 : i64
+// TALOS-SAME: step_count = 2 : i64

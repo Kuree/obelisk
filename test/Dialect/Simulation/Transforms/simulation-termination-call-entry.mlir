@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=off}))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=full}))' | FileCheck %s --check-prefix=OPEN
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-simplify-bodies{vpi=off}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-simplify-bodies{vpi=full}))' | FileCheck %s --check-prefix=OPEN
 // A private call chain inherits a clear finish latch only if every caller
 // proves it. Public entry, a second unknown caller, and calls after $finish
 // retain the conservative entry behavior. VPI keeps the call boundary open.

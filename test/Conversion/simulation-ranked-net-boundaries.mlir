@@ -1,24 +1,24 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{op=simulation.net.connect.decl set={rhs_offset = 7 : i64, rhs_reversed = true}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{op=simulation.net.connect.decl erase=true},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=DISCONNECTED
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-edit-attributes{op=simulation.net.connect.decl set={rhs_offset = 7 : i64, rhs_reversed = true}},simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-edit-attributes{op=simulation.net.connect.decl erase=true},simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=DISCONNECTED
 
 // Net publication effects already include connected aliases, so both boundary
 // nodes participate in the directed chain without universal alias edges.
 // A storage -> driver -> collapsed net -> storage DAG. The net and storage
 // descriptor namespaces intentionally overlap. Boundary executors remain intact.
 
-// CHECK-LABEL: obelisk eval dependency: owner=0 island=0 body=step1.__obelisk_eval_body_0 successors=1
-// CHECK-NEXT: obelisk eval dependency: owner=1 island=0 body=step2.__obelisk_eval_body_0 successors=2
-// CHECK-NEXT: obelisk eval boundary: owner=2 island=0 body=step3.__obelisk_eval_body_0 successors=3
-// CHECK-NEXT: obelisk eval boundary: owner=3 island=0 body=step4.__obelisk_eval_body_0 successors=4
-// CHECK-NEXT: obelisk eval dependency: owner=4 island=0 body=step5.__obelisk_eval_body_0 successors={{$}}
+// CHECK-LABEL: talos eval dependency: owner=0 island=0 body=step1.__talos_eval_body_0 successors=1
+// CHECK-NEXT: talos eval dependency: owner=1 island=0 body=step2.__talos_eval_body_0 successors=2
+// CHECK-NEXT: talos eval boundary: owner=2 island=0 body=step3.__talos_eval_body_0 successors=3
+// CHECK-NEXT: talos eval boundary: owner=3 island=0 body=step4.__talos_eval_body_0 successors=4
+// CHECK-NEXT: talos eval dependency: owner=4 island=0 body=step5.__talos_eval_body_0 successors={{$}}
 
 // A reversed pass connection (second RUN) publishes the same aliases.
 // Without the connection (third RUN), step4 is a separate island.
 // Step3's now-isolated single-driver wire can join its producer group
 // (IEEE 1800-2023 4.9.1, 6.6.1); this must not invent a route to step4.
-// DISCONNECTED-LABEL: obelisk eval dependency: owner=2 island=0 body=step3.__obelisk_eval_body_0 successors={{$}}
-// DISCONNECTED-NEXT: obelisk eval boundary: owner=3 island=3 body=step4.__obelisk_eval_body_0 successors=4{{$}}
+// DISCONNECTED-LABEL: talos eval dependency: owner=2 island=0 body=step3.__talos_eval_body_0 successors={{$}}
+// DISCONNECTED-NEXT: talos eval boundary: owner=3 island=3 body=step4.__talos_eval_body_0 successors=4{{$}}
 
 !ref = !simulation.ref<i1>
 !vref = !simulation.ref<i8>

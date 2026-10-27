@@ -1,4 +1,4 @@
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.o3 2> %t.timing
+// RUN: talos --clocked-kernels=immediate -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.o3 2> %t.timing
 // RUN: FileCheck %s --check-prefix=PLAN < %t.timing
 // RUN: %t.o3 > %t.o3.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.o3.out
@@ -29,8 +29,8 @@ module native_eval_local_pending_masks;
   end
 endmodule
 
-// PLAN: obelisk eval transaction source roots: 2/2
-// PLAN: obelisk eval local pending roots: 1 cores={{[1-9][0-9]*}} fixed-candidates=1
+// PLAN: talos eval transaction source roots: 2/2
+// PLAN: talos eval local pending roots: 1 cores={{[1-9][0-9]*}} fixed-candidates=1
 // OUTPUT: 1 1000
 // OUTPUT-NEXT: 2 1zz1
 // OUTPUT-NEXT: 3 1202

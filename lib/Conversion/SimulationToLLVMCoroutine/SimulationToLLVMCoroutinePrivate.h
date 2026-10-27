@@ -1,15 +1,15 @@
 //===- SimulationToLLVMCoroutinePrivate.h - Shared lowering support ------===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
 
 #include "PackedStorageLayout.h"
 #include "SimulationProcessRuntimeABI.h"
-#include "obelisk/Analysis/ClockInferenceAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFieldEnums.h"
+#include "talos/Analysis/ClockInferenceAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFieldEnums.h"
 
-#include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
+#include "talos/Analysis/NativeStateLayoutAnalysis.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
@@ -43,16 +43,16 @@ class CondBranchOp;
 }
 } // namespace mlir
 
-namespace obelisk {
+namespace talos {
 class SimulationProcessFrameAnalysis;
 }
 
-namespace obelisk::sim {
+namespace talos::sim {
 class AssocArrayType;
 class SimFuncOp;
-} // namespace obelisk::sim
+} // namespace talos::sim
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 /// Function declarations never contain other native function declarations,
 /// and they are children of symbol tables (modules, designs). Inventory them
@@ -85,36 +85,36 @@ mlir::WalkResult walkNativeFunctions(mlir::Operation *root,
 }
 
 inline constexpr auto assumeCleanSpecializationAttr =
-    ::obelisk::schedule::Field::NativeAssumeCleanSpecialization;
+    ::talos::schedule::Field::NativeAssumeCleanSpecialization;
 inline constexpr auto cleanEvalBodyAttr =
-    ::obelisk::schedule::Field::NativeCleanEvalBody;
+    ::talos::schedule::Field::NativeCleanEvalBody;
 
 struct NativeStateLayout;
 NativeStateLayout makeCleanEvalStateLayout(const NativeStateLayout &layout);
 inline constexpr llvm::StringLiteral evalCheckpointActorName =
-    "__obelisk_eval_checkpoint_actor_v1";
+    "__talos_eval_checkpoint_actor_v1";
 inline constexpr llvm::StringLiteral evalCheckpointContinuationName =
-    "__obelisk_eval_checkpoint_continuation_v1";
+    "__talos_eval_checkpoint_continuation_v1";
 inline constexpr llvm::StringLiteral evalCheckpointCallbackName =
-    "__obelisk_eval_checkpoint_callback_v1";
+    "__talos_eval_checkpoint_callback_v1";
 inline constexpr llvm::StringLiteral evalCheckpointMutableStateName =
-    "__obelisk_eval_checkpoint_mutable_state_v1";
+    "__talos_eval_checkpoint_mutable_state_v1";
 inline constexpr llvm::StringLiteral evalDispatchName =
-    "__obelisk_eval_dispatch_v1";
+    "__talos_eval_dispatch_v1";
 // Per-step evidence that an activation staged four-state NBA data: the byte
 // selects the four-state commit, the bit array names the staged roots.
 inline constexpr llvm::StringLiteral evalStepFourStateFallbackName =
-    "__obelisk_eval_step_four_state_fallback_v1";
+    "__talos_eval_step_four_state_fallback_v1";
 inline constexpr llvm::StringLiteral evalStepFourStateNBARootsName =
-    "__obelisk_eval_step_four_state_nba_roots_v1";
+    "__talos_eval_step_four_state_nba_roots_v1";
 /// Create the step evidence globals unless they exist: a zero byte and, for a
 /// nonzero `taintWords`, a zeroed array of that many root-bit words.
 void materializeEvalStepFourStateGlobals(mlir::ModuleOp module,
                                          uint64_t taintWords);
 inline constexpr auto evalRuntimeNBARequiredAttr =
-    ::obelisk::schedule::Field::EvalRuntimeNbaRequired;
+    ::talos::schedule::Field::EvalRuntimeNbaRequired;
 inline constexpr auto evalRuntimeNBAFallbackAttr =
-    ::obelisk::schedule::Field::EvalRuntimeNbaFallback;
+    ::talos::schedule::Field::EvalRuntimeNbaFallback;
 
 enum class NativeReturnLowering {
   None,
@@ -191,13 +191,13 @@ struct NativeStateLayout : analysis::NativeStateLayoutAnalysis {
 };
 
 inline constexpr llvm::StringLiteral unknownSummaryName =
-    "__obelisk_state_unknown_summary_v1";
+    "__talos_state_unknown_summary_v1";
 inline constexpr llvm::StringLiteral unknownSummaryRootsName =
-    "__obelisk_state_unknown_summary_roots_v1";
+    "__talos_state_unknown_summary_roots_v1";
 inline constexpr llvm::StringLiteral unknownSummaryPatternsName =
-    "__obelisk_state_unknown_summary_patterns_v1";
+    "__talos_state_unknown_summary_patterns_v1";
 inline constexpr llvm::StringLiteral unknownSummaryBackoffName =
-    "__obelisk_state_unknown_summary_backoff_v1";
+    "__talos_state_unknown_summary_backoff_v1";
 
 struct DirectStaticStateRange {
   uint64_t offset;
@@ -223,7 +223,7 @@ bool emitDirectDynamicPackedStore(
     bool twoState, schedule::SourceOwnerAttr sourceOwner,
     const NativeStateAccessInfo *access = nullptr);
 
-/// Compiler-side field indices for obelisk_rt_native_schedule_plan. Keep all
+/// Compiler-side field indices for talos_rt_native_schedule_plan. Keep all
 /// LLVM literal construction and aggregate access tied to one named layout.
 enum class NativeSchedulePlanField : int64_t {
   Size = 0,
@@ -447,7 +447,7 @@ lowerNativeFunctionBody(mlir::Operation *root,
                         NativeReturnLowering returnLowering,
                         NativeCallResultLowering callResultLowering);
 mlir::LogicalResult
-threadProcessStateThroughCFG(obelisk::sim::SimFuncOp function);
+threadProcessStateThroughCFG(talos::sim::SimFuncOp function);
 mlir::LogicalResult threadRuntimeStatuses(mlir::ModuleOp module,
                                           mlir::AnalysisManager manager);
 void populateNativeManagedRootToLLVMConversionPatterns(
@@ -584,7 +584,7 @@ void notifySignal(
     std::optional<DirectStaticStateRange> directRange = std::nullopt,
     schedule::SourceOwnerAttr sourceOwner = {});
 mlir::LogicalResult
-insertAutomaticOwnerReleases(obelisk::sim::SimFuncOp function);
+insertAutomaticOwnerReleases(talos::sim::SimFuncOp function);
 mlir::LogicalResult
 releaseNativeAutomaticState(mlir::ModuleOp module,
                             const ReferenceArgumentMap &referenceArguments);
@@ -665,6 +665,6 @@ mlir::LogicalResult
 prepareNativeUnknownSummaryPublication(mlir::ModuleOp module,
                                        mlir::AnalysisManager manager);
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PRIVATE_H

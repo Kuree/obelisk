@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --cse | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines --cse | FileCheck %s
 
 // Native lowering must resolve only the static topology components touched by
 // a partial packed driver update. In particular, the 512-bit declarations in
@@ -118,33 +118,33 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @drive_scalar
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK-DAG: %[[Odrive_scalar100:.*]] = llvm.mlir.constant(100 : i64) : i64
 // CHECK-DAG: %[[Wdrive_scalar100:.*]] = llvm.mlir.constant(1 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_scalar100]], %[[Wdrive_scalar100]],
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_scalar100]], %[[Wdrive_scalar100]],
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
 
 // CHECK-LABEL: llvm.func @drive_multi
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK-DAG: %[[Odrive_multi200:.*]] = llvm.mlir.constant(200 : i64) : i64
 // CHECK-DAG: %[[Wdrive_multi200:.*]] = llvm.mlir.constant(7 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_multi200]], %[[Wdrive_multi200]],
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_multi200]], %[[Wdrive_multi200]],
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
 
 // CHECK-LABEL: llvm.func @drive_alias
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK-DAG: %[[Odrive_alias301:.*]] = llvm.mlir.constant(301 : i64) : i64
 // CHECK-DAG: %[[Wdrive_alias301:.*]] = llvm.mlir.constant(1 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_alias301]], %[[Wdrive_alias301]],
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_alias301]], %[[Wdrive_alias301]],
 // CHECK-DAG: %[[Odrive_alias7:.*]] = llvm.mlir.constant(7 : i64) : i64
 // CHECK-DAG: %[[Wdrive_alias7:.*]] = llvm.mlir.constant(1 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_alias7]], %[[Wdrive_alias7]],
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_alias7]], %[[Wdrive_alias7]],
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
 
 // A dynamic view cannot be proven to touch one bit. The exact conservative
@@ -152,20 +152,20 @@ module attributes {
 // CHECK-LABEL: llvm.func @drive_dynamic
 // CHECK-DAG: %[[Odrive_dynamic0:.*]] = llvm.mlir.constant(0 : i64) : i64
 // CHECK-DAG: %[[Wdrive_dynamic0:.*]] = llvm.mlir.constant(8 : i64) : i64
-// CHECK-DAG: llvm.call @obelisk_rt_v1_native_handle_offset
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_dynamic0]], %[[Wdrive_dynamic0]],
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-DAG: llvm.call @talos_rt_v1_native_handle_offset
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_dynamic0]], %[[Wdrive_dynamic0]],
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
 
 // CHECK-LABEL: llvm.func @drive_declared_range
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK-DAG: %[[Odrive_declared_range400:.*]] = llvm.mlir.constant(400 : i64) : i64
 // CHECK-DAG: %[[Wdrive_declared_range400:.*]] = llvm.mlir.constant(5 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_declared_range400]], %[[Wdrive_declared_range400]],
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[Odrive_declared_range400]], %[[Wdrive_declared_range400]],
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
 
 // CHECK-NOT: simulation.driver.drive

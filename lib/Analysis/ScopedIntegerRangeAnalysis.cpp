@@ -1,17 +1,17 @@
-#include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
+#include "talos/Analysis/ScopedIntegerRangeAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/Utils/InferIntRangeCommon.h"
-#include "obelisk/Analysis/BoundedLoopAnalysis.h"
-#include "obelisk/Analysis/IntegerRangeIPO.h"
-#include "obelisk/Analysis/ScalarEvolutionAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/BoundedLoopAnalysis.h"
+#include "talos/Analysis/IntegerRangeIPO.h"
+#include "talos/Analysis/ScalarEvolutionAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 static arith::CmpIPredicate swapComparison(arith::CmpIPredicate predicate) {
   switch (predicate) {
   case arith::CmpIPredicate::slt:
@@ -475,4 +475,4 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
     next.erase(key);
   propagateIfChanged(after, after->merge(next));
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

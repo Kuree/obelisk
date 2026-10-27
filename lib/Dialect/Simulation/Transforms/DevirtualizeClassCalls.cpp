@@ -1,9 +1,9 @@
 //===- DevirtualizeClassCalls.cpp - Resolve exact class dispatches -------===//
 
-#include "obelisk/Analysis/ClassDispatchAnalysis.h"
-#include "obelisk/Dialect/Obelisk/ObeliskOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Analysis/ClassDispatchAnalysis.h"
+#include "talos/Dialect/Talos/TalosOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -18,15 +18,15 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMDEVIRTUALIZECLASSCALLSPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMDEVIRTUALIZECLASSCALLSPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 
-namespace sim = ::obelisk::sim;
-namespace semantic = ::obelisk::ir;
+namespace sim = ::talos::sim;
+namespace semantic = ::talos::ir;
 
 /// Symbol DCE may remove every implementation of an unreachable virtual
 /// family. Renumber the surviving families densely within each inheritance
@@ -450,7 +450,7 @@ public:
   DevirtualizeFunctionCallsPass(const DevirtualizeFunctionCallsPass &other)
       : PassWrapper(other) {}
   StringRef getArgument() const final {
-    return "obelisk-sim-devirtualize-function-calls";
+    return "talos-sim-devirtualize-function-calls";
   }
   void runOnOperation() override;
 
@@ -631,12 +631,12 @@ void DevirtualizeFunctionCallsPass::runOnOperation() {
   }
 }
 
-class ObeliskSimDevirtualizeClassCallsPass final
-    : public impl::ObeliskSimDevirtualizeClassCallsPassBase<
-          ObeliskSimDevirtualizeClassCallsPass> {
+class TalosSimDevirtualizeClassCallsPass final
+    : public impl::TalosSimDevirtualizeClassCallsPassBase<
+          TalosSimDevirtualizeClassCallsPass> {
 public:
-  using Base = impl::ObeliskSimDevirtualizeClassCallsPassBase<
-      ObeliskSimDevirtualizeClassCallsPass>;
+  using Base = impl::TalosSimDevirtualizeClassCallsPassBase<
+      TalosSimDevirtualizeClassCallsPass>;
   using Base::Base;
   void runOnOperation() override {
     sim::SimDesignOp design = getOperation();
@@ -667,4 +667,4 @@ public:
 };
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

@@ -5,7 +5,7 @@
 #include <cstring>
 
 extern "C" {
-extern uint8_t __obelisk_state_value[], __obelisk_state_unknown[];
+extern uint8_t __talos_state_value[], __talos_state_unknown[];
 void write3(void *, int32_t);
 void write17(void *, int32_t);
 void write33(void *, int32_t);
@@ -30,8 +30,8 @@ int main() {
         value[byte] = uint8_t(byte * 37 + 0xa5);
         unknown[byte] = uint8_t(byte * 19 + 0x5a);
       }
-      std::memcpy(__obelisk_state_value, value.data(), bytes);
-      std::memcpy(__obelisk_state_unknown, unknown.data(), bytes);
+      std::memcpy(__talos_state_value, value.data(), bytes);
+      std::memcpy(__talos_state_unknown, unknown.data(), bytes);
       root.write(nullptr, index);
       if (index >= 0 && index < 25) {
         for (unsigned bit = 0; bit < root.width; ++bit) {
@@ -43,8 +43,8 @@ int main() {
                                   (((uint64_t{6} >> bit) & 1) ? mask : 0);
         }
       }
-      assert(std::memcmp(value.data(), __obelisk_state_value, bytes) == 0);
-      assert(std::memcmp(unknown.data(), __obelisk_state_unknown, bytes) == 0);
+      assert(std::memcmp(value.data(), __talos_state_value, bytes) == 0);
+      assert(std::memcmp(unknown.data(), __talos_state_unknown, bytes) == 0);
     }
   }
   std::puts("packed window guards preserved");

@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --split-input-file --schedule-coalesce-native-ready | FileCheck %s
-// RUN: obelisk-opt %s --split-input-file --schedule-coalesce-native-ready --convert-native-schedule-actions-to-llvm | FileCheck %s --check-prefix=LOWER
-// RUN: obelisk-opt %s --split-input-file --schedule-coalesce-native-ready | FileCheck %s --check-prefix=RESULT
-// RUN: obelisk-opt %s --split-input-file --schedule-coalesce-native-ready --convert-native-schedule-actions-to-llvm | FileCheck %s --check-prefix=RESULT-LOWER
+// RUN: talos-opt %s --split-input-file --schedule-coalesce-native-ready | FileCheck %s
+// RUN: talos-opt %s --split-input-file --schedule-coalesce-native-ready --convert-native-schedule-actions-to-llvm | FileCheck %s --check-prefix=LOWER
+// RUN: talos-opt %s --split-input-file --schedule-coalesce-native-ready | FileCheck %s --check-prefix=RESULT
+// RUN: talos-opt %s --split-input-file --schedule-coalesce-native-ready --convert-native-schedule-actions-to-llvm | FileCheck %s --check-prefix=RESULT-LOWER
 // Function arguments and early returns survive region formation. Branch
 // paths retain their own additions; ordinary state stores are not observers.
 // CHECK-LABEL: llvm.func @form(

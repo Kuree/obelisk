@@ -12,7 +12,7 @@
 
 using namespace llvm;
 using namespace mlir;
-using namespace obelisk::driver;
+using namespace talos::driver;
 
 namespace {
 
@@ -34,7 +34,7 @@ bool checkLayout(StringRef directory) {
                 (directory + "/crtn.o").str(), (directory + "/libc.so").str(),
                 (directory + "/libm.so").str()});
   FailureOr<HostCRuntimeInputs> inputs = discoverHostCRuntime(
-      "x86_64-unknown-linux-gnu", "/opt/obelisk/bin/obelisk", fs);
+      "x86_64-unknown-linux-gnu", "/opt/talos/bin/talos", fs);
   if (failed(inputs))
     return false;
   return StringRef(inputs->crt1).starts_with(directory) &&
@@ -61,7 +61,7 @@ int main() {
        "/usr/lib/x86_64-linux-gnu/libm.so"},
       /*addDynamicLinker=*/false);
   if (succeeded(discoverHostCRuntime("x86_64-unknown-linux-gnu",
-                                     "/opt/obelisk/bin/obelisk",
+                                     "/opt/talos/bin/talos",
                                      noDynamicLinker))) {
     errs() << "missing dynamic linker was accepted\n";
     return 1;
@@ -71,7 +71,7 @@ int main() {
                            "/usr/lib/x86_64-linux-gnu/libc.so",
                            "/usr/lib/x86_64-linux-gnu/libm.so"});
   if (succeeded(discoverHostCRuntime("x86_64-unknown-linux-gnu",
-                                     "/opt/obelisk/bin/obelisk", missing))) {
+                                     "/opt/talos/bin/talos", missing))) {
     errs() << "missing Scrt1.o was accepted\n";
     return 1;
   }

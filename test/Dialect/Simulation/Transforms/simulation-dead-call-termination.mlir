@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-boundaries))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-boundaries))' | FileCheck %s
 
 // IEEE 1800-2023 12.7.6 and 13.4: no memory effects does not imply that a
 // function returns. Preserve an unbounded CFG and its transitive callers.

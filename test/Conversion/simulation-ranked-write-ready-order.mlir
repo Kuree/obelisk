@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir 2> %t.trace
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 
 // A bounded writer only updates the high half. Even a directly admitted helper
 // must use its precise may-writes, or it appears to feed the low-half consumer.
-// TRACE: obelisk ranked activation: step5 valid=1 complete=1 inputs=1
-// TRACE: obelisk eval dependency: owner=4 island=0 body=step5.__obelisk_eval_body_0 successors={{$}}
+// TRACE: talos ranked activation: step5 valid=1 complete=1 inputs=1
+// TRACE: talos eval dependency: owner=4 island=0 body=step5.__talos_eval_body_0 successors={{$}}
 
 // Bounded reads use only the low half of storage 1. The final consumer writes
 // its high half, so the coarse graph has a false cycle through net boundaries.

@@ -1,11 +1,11 @@
 // REQUIRES: native-macho
-// RUN: env PATH=/nonexistent SDKROOT=/nonexistent DEVELOPER_DIR=/nonexistent %obelisk %s -o %t.exe
+// RUN: env PATH=/nonexistent SDKROOT=/nonexistent DEVELOPER_DIR=/nonexistent %talos %s -o %t.exe
 // RUN: llvm-readobj --file-headers --macho-version-min %t.exe | FileCheck %s --check-prefix=MACHO
 // RUN: codesign --verify %t.exe && %t.exe | FileCheck %s --check-prefix=OUTPUT
-// RUN: %obelisk -O0 %s -o %t.o0 && %t.o0 | FileCheck %s --check-prefix=OUTPUT
-// RUN: %obelisk -flto %s -o %t.lto && codesign --verify %t.lto && %t.lto | FileCheck %s --check-prefix=OUTPUT
-// RUN: %obelisk -c %s -o %t.o && llvm-readobj --file-headers %t.o | FileCheck %s --check-prefix=OBJECT
-// RUN: %obelisk -emit-llvm %s -o - | FileCheck %s --check-prefix=LLVM
+// RUN: %talos -O0 %s -o %t.o0 && %t.o0 | FileCheck %s --check-prefix=OUTPUT
+// RUN: %talos -flto %s -o %t.lto && codesign --verify %t.lto && %t.lto | FileCheck %s --check-prefix=OUTPUT
+// RUN: %talos -c %s -o %t.o && llvm-readobj --file-headers %t.o | FileCheck %s --check-prefix=OBJECT
+// RUN: %talos -emit-llvm %s -o - | FileCheck %s --check-prefix=LLVM
 
 module macos_native;
   logic [7:0] value;

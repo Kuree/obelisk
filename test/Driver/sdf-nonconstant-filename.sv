@@ -1,6 +1,6 @@
 // RUN: %split-file %s %t
-// RUN: cd %S/Inputs && obelisk -emit-slang %t/initializer.sv -o - | FileCheck %s --check-prefix=APPLIED
-// RUN: not obelisk -emit-slang %t/written.sv -o /dev/null 2>&1 | FileCheck %s --check-prefix=WRITTEN
+// RUN: cd %S/Inputs && talos -emit-slang %t/initializer.sv -o - | FileCheck %s --check-prefix=APPLIED
+// RUN: not talos -emit-slang %t/written.sv -o /dev/null 2>&1 | FileCheck %s --check-prefix=WRITTEN
 
 // IEEE 1800-2023 32.9 accepts any string or integral filename expression.
 // Annotation runs while elaborating, so a filename variable is accepted when

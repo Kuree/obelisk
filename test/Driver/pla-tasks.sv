@@ -1,8 +1,8 @@
-// RUN: obelisk -O3 --vpi=off %s -o %t.o3.native
+// RUN: talos -O3 --vpi=off %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: talos -O3 --vpi=off --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode | FileCheck %s
-// RUN: obelisk -emit-sim -O0 --vpi=off %s | FileCheck %s --check-prefix=LIFETIME
+// RUN: talos -emit-sim -O0 --vpi=off %s | FileCheck %s --check-prefix=LIFETIME
 
 // IEEE 1800-2017 20.17: all sixteen PLA tasks share the same ascending
 // memory/input/output order. Synchronous calls update only when invoked;

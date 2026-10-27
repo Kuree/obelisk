@@ -9,15 +9,15 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/Transforms/NativeTransforms.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
 #include "llvm/ADT/DenseMap.h"
 
 using namespace mlir;
 
-namespace obelisk::schedule {
+namespace talos::schedule {
 LLVM::GlobalOp
 NativeGlobalLookup::operator()(LLVM::AddressOfOp address) const {
   if (symbols)
@@ -237,11 +237,11 @@ void coalesceNativeReadyUpdates(Operation *operation,
                   [](FunctionReadyUpdates &input) { coalesceFunction(input); });
 }
 
-} // namespace obelisk::schedule
+} // namespace talos::schedule
 
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_COALESCENATIVEREADYPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 namespace {
 struct CoalesceNativeReadyPass
     : impl::CoalesceNativeReadyPassBase<CoalesceNativeReadyPass> {
@@ -250,4 +250,4 @@ struct CoalesceNativeReadyPass
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

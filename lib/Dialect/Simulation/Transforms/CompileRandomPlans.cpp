@@ -1,9 +1,9 @@
 //===- CompileRandomPlans.cpp - Materialize exact random plans -----------===//
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Solver/ConstraintSolver.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Solver/ConstraintSolver.h"
 
 #include "mlir/IR/BuiltinOps.h"
 
@@ -11,9 +11,9 @@
 
 using namespace mlir;
 
-namespace obelisk {
-#define GEN_PASS_DEF_OBELISKSIMCOMPILERANDOMPLANSPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+namespace talos {
+#define GEN_PASS_DEF_TALOSSIMCOMPILERANDOMPLANSPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 uint32_t read32(const uint8_t *p) {
@@ -27,13 +27,13 @@ using PlanCache = llvm::DenseMap<std::pair<StringAttr, Attribute>, StringAttr>;
 
 template <typename Op> LogicalResult compile(Op op, PlanCache &cache) {
   StringRef bytes = op.getProgram();
-  if (bytes.size() < OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE)
+  if (bytes.size() < TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE)
     return op.emitOpError("has a truncated random program");
   const auto *data = reinterpret_cast<const uint8_t *>(bytes.data());
   uint32_t flags = read32(data + 20);
-  if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
-      !(flags & (OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                 OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)))
+  if ((flags & TALOS_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
+      !(flags & (TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                 TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)))
     return success();
   std::vector<uint32_t> captures;
   for (Value capture : op.getCaptures())
@@ -49,7 +49,7 @@ template <typename Op> LogicalResult compile(Op op, PlanCache &cache) {
   if (!plan)
     return op->emitError("could not compile an exact random sampling plan");
   std::vector<uint8_t> program(data, data + bytes.size());
-  flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN;
+  flags |= TALOS_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN;
   for (unsigned byte = 0; byte != 4; ++byte)
     program[20 + byte] = static_cast<uint8_t>(flags >> (byte * 8));
   program.insert(program.end(), plan->begin(), plan->end());
@@ -62,9 +62,9 @@ template <typename Op> LogicalResult compile(Op op, PlanCache &cache) {
   return success();
 }
 
-class ObeliskSimCompileRandomPlansPass final
-    : public impl::ObeliskSimCompileRandomPlansPassBase<
-          ObeliskSimCompileRandomPlansPass> {
+class TalosSimCompileRandomPlansPass final
+    : public impl::TalosSimCompileRandomPlansPassBase<
+          TalosSimCompileRandomPlansPass> {
 public:
   using Base::Base;
   void runOnOperation() override {
@@ -87,4 +87,4 @@ public:
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

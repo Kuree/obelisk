@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -passes='default<O3>,verify' -disable-output
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | opt -passes='default<O3>,verify' -disable-output
 
 !record = !simulation.packed_struct<[
   #simulation.field<name = "payload", type = !simulation.logic<206>, ordinal = 0, packedOffset = 7>,
@@ -17,7 +17,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     // copy. Both stores consume that snapshot without loading an i426 value.
     // CHECK-LABEL: llvm.func @snapshot
     // CHECK-NOT: i426
-    // CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_load_plane
+    // CHECK-COUNT-2: llvm.call @talos_rt_v1_native_state_load_plane
     // CHECK-NOT: i426
     // CHECK-COUNT-2: llvm.intr.memcpy
     // CHECK-NOT: i426
@@ -28,9 +28,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     // CHECK-NOT: i426
     // CHECK: llvm.store {{.*}} : i16, !llvm.ptr
     // CHECK-NOT: i426
-    // CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+    // CHECK: llvm.call @talos_rt_v1_scheduler_signal_transition
     // CHECK-NOT: i426
-    // CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+    // CHECK: llvm.call @talos_rt_v1_scheduler_signal_transition
     // CHECK-NOT: i426
     // CHECK: llvm.return
     simulation.func @snapshot(

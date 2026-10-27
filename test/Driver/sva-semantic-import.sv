@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-obelisk %s | FileCheck %s --check-prefix=OBELISK
+// RUN: talos -emit-slang %s | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-talos %s | FileCheck %s --check-prefix=TALOS
 
 module sva_semantic_import(
     input logic clk,
@@ -86,20 +86,20 @@ endmodule
 // SLANG-SAME: is_recursive_property = true
 // SLANG-SAME: referenced_path = "sva_semantic_import.recursive"
 
-// OBELISK: obelisk.sv.symbol.clocking_block
-// OBELISK-SAME: is_default = true
-// OBELISK-SAME: is_global = false
-// OBELISK: obelisk.sv.symbol.property
-// OBELISK-SAME: default_clocking_path = "sva_semantic_import.cb"
-// OBELISK-SAME: name = "typed"
-// OBELISK-SAME: port_count = 3 : i64
-// OBELISK: obelisk.sv.statement.concurrent_assertion
-// OBELISK-SAME: default_clocking_path = "sva_semantic_import.cb"
-// OBELISK-SAME: has_default_disable = true
-// OBELISK: obelisk.sv.expression.assertion_instance
-// OBELISK-SAME: argument_count = 3 : i64
-// OBELISK-SAME: argument_kinds = array<i64: 2, 0, 1>
-// OBELISK-SAME: referenced_path = "sva_semantic_import.typed"
-// OBELISK: obelisk.sv.expression.assertion_instance attributes {{.*}}has_expanded_body = false
-// OBELISK-SAME: is_recursive_property = true
-// OBELISK-SAME: referenced_path = "sva_semantic_import.recursive"
+// TALOS: talos.sv.symbol.clocking_block
+// TALOS-SAME: is_default = true
+// TALOS-SAME: is_global = false
+// TALOS: talos.sv.symbol.property
+// TALOS-SAME: default_clocking_path = "sva_semantic_import.cb"
+// TALOS-SAME: name = "typed"
+// TALOS-SAME: port_count = 3 : i64
+// TALOS: talos.sv.statement.concurrent_assertion
+// TALOS-SAME: default_clocking_path = "sva_semantic_import.cb"
+// TALOS-SAME: has_default_disable = true
+// TALOS: talos.sv.expression.assertion_instance
+// TALOS-SAME: argument_count = 3 : i64
+// TALOS-SAME: argument_kinds = array<i64: 2, 0, 1>
+// TALOS-SAME: referenced_path = "sva_semantic_import.typed"
+// TALOS: talos.sv.expression.assertion_instance attributes {{.*}}has_expanded_body = false
+// TALOS-SAME: is_recursive_property = true
+// TALOS-SAME: referenced_path = "sva_semantic_import.recursive"

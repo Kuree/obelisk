@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=DYNAMIC
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=DYNAMIC
 
 // Dynamic writes are clipped to their physical root (LRM 11.5.1), even for
 // negative, partially out-of-range and invalid offsets. A root outside all
@@ -6,13 +6,13 @@
 // must retain it. The unaligned 129-bit root shares bytes with its neighbors.
 // The cold publication helper and its calls use a register-preserving
 // convention, so a caller keeps no frame for it on the hot path.
-// DYNAMIC: llvm.func preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1(
+// DYNAMIC: llvm.func preserve_mostcc @__talos_eval_promotion_publish_unknown_v1(
 // DYNAMIC-LABEL: llvm.func @write_disjoint(
-// DYNAMIC-NOT: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
-// DYNAMIC: llvm.mlir.addressof @__obelisk_state_unknown
-// DYNAMIC-NOT: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
+// DYNAMIC-NOT: llvm.call preserve_mostcc @__talos_eval_promotion_publish_unknown_v1
+// DYNAMIC: llvm.mlir.addressof @__talos_state_unknown
+// DYNAMIC-NOT: llvm.call preserve_mostcc @__talos_eval_promotion_publish_unknown_v1
 // DYNAMIC-LABEL: llvm.func @write_overlapping(
-// DYNAMIC: llvm.call preserve_mostcc @__obelisk_eval_promotion_publish_unknown_v1
+// DYNAMIC: llvm.call preserve_mostcc @__talos_eval_promotion_publish_unknown_v1
 // DYNAMIC: llvm.func
 
 module attributes {

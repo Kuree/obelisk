@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s -o - | FileCheck %s --implicit-check-not="timing_delay_fs = array<i64: -9223372036854775808>"
+// RUN: talos -emit-slang %s -o - | FileCheck %s --implicit-check-not="timing_delay_fs = array<i64: -9223372036854775808>"
 
 // long double is binary64 on MSVC. INT64_MAX rounds to 2^63 there, so the
 // floating-to-integer conversion must use an exclusive upper bound.

@@ -3,11 +3,11 @@
 #include "SimulationAOTPlanning.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/SimulationScheduleAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -20,7 +20,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 LogicalResult materializeNativePeriodicClockPlan(
     ModuleOp module, ArrayRef<NativePeriodicClock> periodicClocks) {
@@ -35,14 +35,14 @@ LogicalResult materializeNativePeriodicClockPlan(
   Type entryType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i32, i32, i64, i64, pointer, i64});
   Type tableType = LLVM::LLVMArrayType::get(entryType, periodicClocks.size());
-  if (module.lookupSymbol("__obelisk_periodic_clock_plan_v1"))
+  if (module.lookupSymbol("__talos_periodic_clock_plan_v1"))
     return module.emitError("duplicate generated periodic-clock plan");
   SmallVector<std::string> coverageSymbols(periodicClocks.size());
   for (auto [index, clock] : llvm::enumerate(periodicClocks)) {
     if (clock.getCoveragePoints().empty())
       continue;
     coverageSymbols[index] =
-        (Twine("__obelisk_periodic_clock_coverage_") + Twine(index)).str();
+        (Twine("__talos_periodic_clock_coverage_") + Twine(index)).str();
     Type pointsType =
         LLVM::LLVMArrayType::get(i64, clock.getCoveragePoints().size());
     makeConstantGlobal(
@@ -60,7 +60,7 @@ LogicalResult materializeNativePeriodicClockPlan(
         });
   }
   makeConstantGlobal(
-      module, location, tableType, "__obelisk_periodic_clock_plan_v1",
+      module, location, tableType, "__talos_periodic_clock_plan_v1",
       LLVM::Linkage::Internal, 8, [&](OpBuilder &initializer) {
         Value table = LLVM::ZeroOp::create(initializer, location, tableType);
         for (auto [index, clock] : llvm::enumerate(periodicClocks)) {
@@ -105,4 +105,4 @@ LogicalResult materializeNativePeriodicClockPlan(
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

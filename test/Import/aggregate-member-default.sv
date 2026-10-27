@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-obelisk %s | FileCheck %s --check-prefix=SEMANTIC
+// RUN: talos -emit-talos %s | FileCheck %s --check-prefix=SEMANTIC
 
 // Verify imported aggregate member defaults without invoking lowering.
 
@@ -10,6 +10,6 @@ module aggregate_member_default;
   } value;
 endmodule
 
-// SEMANTIC: obelisk.sv.symbol.variable
-// SEMANTIC-SAME: obelisk.aggregate_member_initializer_ordinals
-// SEMANTIC: obelisk.sv.expression.named_value
+// SEMANTIC: talos.sv.symbol.variable
+// SEMANTIC-SAME: talos.aggregate_member_initializer_ordinals
+// SEMANTIC: talos.sv.expression.named_value

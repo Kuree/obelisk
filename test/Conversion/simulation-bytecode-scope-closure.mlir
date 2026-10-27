@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{prune-native=true vpi=full})' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph),encode-talos-sim-to-bytecode{prune-native=true vpi=full})' | FileCheck %s
 
 // CHECK-LABEL: simulation.func @root
 // CHECK-NOT: runtime.bytecode_function

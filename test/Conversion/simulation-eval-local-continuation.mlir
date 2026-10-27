@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(convert-scf-to-cf,simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CFG
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(convert-scf-to-cf,simulation.design(talos-sim-build-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CFG
 
 // LRM 6.21: threaded identity does not imply persistent contents. A full
 // activation definition must reach every private read on every path before scratch can be
@@ -246,26 +246,26 @@ module attributes {schedule.native_scheduler = 3 : i32} {
 // CHECK-LABEL: simulation.func @one_branch_reset(
 // CHECK-NOT: schedule.eval.body
 // CHECK: simulation.suspend.change
-// CHECK-LABEL: simulation.func private @reset.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @reset.__talos_eval_body_
 // CHECK-SAME: schedule.eval.reconstructs_continuation
 // CHECK: simulation.ref.alloc
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @forwarded_reset.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @forwarded_reset.__talos_eval_body_
 // CHECK-SAME: schedule.eval.reconstructs_continuation
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @branch_reset.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @branch_reset.__talos_eval_body_
 // CHECK-SAME: schedule.eval.reconstructs_continuation
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @region_reset.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @region_reset.__talos_eval_body_
 // CHECK-SAME: schedule.eval.reconstructs_continuation
 // CHECK: scf.if
 // CHECK: simulation.return
 
-// CHECK-LABEL: simulation.func private @loop_reset.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @loop_reset.__talos_eval_body_
 // CHECK-SAME: schedule.eval.reconstructs_continuation
 // CHECK: simulation.ref.store
 // CHECK: simulation.return
-// CHECK-NOT: @zero_trip_reset.__obelisk_eval_body_
+// CHECK-NOT: @zero_trip_reset.__talos_eval_body_
 
 // The same semantic admission after lowering structured control flow.
 // CFG-LABEL: simulation.func @reset(

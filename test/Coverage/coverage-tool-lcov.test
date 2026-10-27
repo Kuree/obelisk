@@ -1,8 +1,8 @@
 # RUN: %coverage-fixture %t.a.obcov 1 alpha 1
 # RUN: %coverage-fixture %t.b.obcov 2 beta 0
-# RUN: obelisk-cov merge -o %t.merged.obcov %t.a.obcov %t.b.obcov
-# RUN: obelisk-cov report --format=text --test=missing --fail-under=functional=100 %t.merged.obcov | FileCheck %s --check-prefix=EMPTY
-# RUN: obelisk-cov report --format=lcov -o %t.lcov %t.merged.obcov
+# RUN: talos-cov merge -o %t.merged.obcov %t.a.obcov %t.b.obcov
+# RUN: talos-cov report --format=text --test=missing --fail-under=functional=100 %t.merged.obcov | FileCheck %s --check-prefix=EMPTY
+# RUN: talos-cov report --format=lcov -o %t.lcov %t.merged.obcov
 # RUN: FileCheck %s --check-prefix=LCOV < %t.lcov
 # RUN: %if lcov %{ %lcov --summary %t.lcov 2>&1 | FileCheck %s --check-prefix=LCOV-TOOL %}
 

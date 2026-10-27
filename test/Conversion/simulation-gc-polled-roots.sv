@@ -1,8 +1,8 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt --test-obelisk-native-backend='scheduler=auto sim-opt-level=0 opt-level=0 closed-executable=false stop-after=lowering' --obelisk-sim-insert-gc-polls | FileCheck %s
+// RUN: talos -emit-slang %s | talos-opt --test-talos-native-backend='scheduler=auto sim-opt-level=0 opt-level=0 closed-executable=false stop-after=lowering' --talos-sim-insert-gc-polls | FileCheck %s
 
 // Handles live in an initial block across callees that collect at their own
 // polls: an allocating loop, a recursive builder, string churn, and a virtual
-// call whose overrides differ. The source is lowered as `obelisk -O0
+// call whose overrides differ. The source is lowered as `talos -O0
 // --vpi=off` lowers it (so calls stay calls), ahead of its backend passes;
 // ../Runtime/simulation-gc-polled-roots.test runs it with a collection at every
 // opportunity, which reclaims a handle if any of these calls skips its roots.

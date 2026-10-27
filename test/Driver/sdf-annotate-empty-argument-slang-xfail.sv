@@ -1,6 +1,6 @@
 // XFAIL: *
 // RUN: %split-file %s %t
-// RUN: cd %t && %obelisk -emit-obelisk top.sv -o /dev/null
+// RUN: cd %t && %talos -emit-talos top.sv -o /dev/null
 
 // IEEE 1800-2023 32.9 Syntax 32-1: an optional $sdf_annotate argument may be
 // left empty, as `[ , [ "config_file" ] ...]` allows a comma without it.

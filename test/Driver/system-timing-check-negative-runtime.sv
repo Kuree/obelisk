@@ -1,9 +1,9 @@
-// RUN: obelisk -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.aot
+// RUN: talos -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
+// RUN: talos -O3 --native-scheduler=eval %s -o %t.aot
 // RUN: %t.aot 2>&1 | FileCheck %s --check-prefix=OUT
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.aot > /dev/null 2> %t.diag
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.aot > /dev/null 2> %t.diag
 // RUN: FileCheck %s --check-prefix=AOTDIAG < %t.diag
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode 2>&1 | FileCheck %s --check-prefix=OUT
 
 `timescale 1ns / 1ps
@@ -56,9 +56,9 @@ module system_timing_check_negative_runtime;
   end
 endmodule
 
-// SIM-DAG: simulation.func private @__obelisk_negative_timing_monitor_
+// SIM-DAG: simulation.func private @__talos_negative_timing_monitor_
 // SIM-DAG: simulation.suspend.change
-// SIM-DAG: simulation.spawn @__obelisk_negative_timing_monitor_{{[0-9]+}}.$commit
+// SIM-DAG: simulation.spawn @__talos_negative_timing_monitor_{{[0-9]+}}.$commit
 // SIM-DAG: simulation.suspend.delay
 // SIM-DAG: simulation.suspend.clock_set
 // SIM-NOT: timing_check_table
@@ -66,5 +66,5 @@ endmodule
 // Only the 3.001 ns data edge violates; both endpoints are excluded.
 // OUT: negative-open-window 010
 // OUT-NEXT: negative-periodic 6
-// AOTDIAG: obelisk-signal-diagnostics
+// AOTDIAG: talos-signal-diagnostics
 // AOTDIAG-SAME: aot_node_executions={{[1-9][0-9]*}}

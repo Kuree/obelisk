@@ -1,0 +1,70 @@
+// RUN: %split-file %s %t
+// RUN: not talos-opt %t/missing-clock.mlir '--lower-talos-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not talos-opt %t/future-procedural.mlir '--lower-talos-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=PROCEDURAL
+
+// MISSING: error: global sampled values currently require one direct global clock signal without iff
+// PROCEDURAL: error: $future_gclk requires the detached global-future assertion resolver
+
+//--- missing-clock.mlir
+
+module {
+  talos.sv.symbol.definition @s0.bad attributes {definition_kind = 0 : i32, hierarchical_name = "bad", name = "bad", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.bad attributes {hierarchical_name = "bad", is_uninstantiated = false, name = "bad", node_id = 3 : i64, referenced_path = "bad", referenced_symbol = @s0.bad} {
+      talos.sv.symbol.instance_body @s4.bad attributes {hierarchical_name = "bad", name = "bad", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        talos.sv.symbol.variable @s5.a attributes {hierarchical_name = "bad.a", lifetime = 1 : i32, name = "a", node_id = 5 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s6.b attributes {hierarchical_name = "bad.b", lifetime = 1 : i32, name = "b", node_id = 6 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.procedural_block @s7 attributes {hierarchical_name = "bad", node_id = 7 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.expression_statement attributes {node_id = 8 : i64} {
+            talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 9 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+              talos.sv.expression.named_value attributes {is_signed = false, node_id = 10 : i64, referenced_path = "bad.b", referenced_symbol = @s1.$root::@s3.bad::@s4.bad::@s6.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+              }
+              talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$past_gclk", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 11 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>, subroutine_kind = 0 : i32, system_library_cell = "work.bad", system_scope_path = "bad", system_scope_symbol = @s1.$root::@s3.bad::@s4.bad} {
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 12 : i64, referenced_path = "bad.a", referenced_symbol = @s1.$root::@s3.bad::@s4.bad::@s5.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+//--- future-procedural.mlir
+
+module {
+  talos.sv.symbol.definition @s0.bad attributes {definition_kind = 0 : i32, hierarchical_name = "bad", name = "bad", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.bad attributes {hierarchical_name = "bad", is_uninstantiated = false, name = "bad", node_id = 3 : i64, referenced_path = "bad", referenced_symbol = @s0.bad} {
+      talos.sv.symbol.instance_body @s4.bad attributes {hierarchical_name = "bad", name = "bad", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        talos.sv.symbol.variable @s5.gclk attributes {hierarchical_name = "bad.gclk", lifetime = 1 : i32, name = "gclk", node_id = 5 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s6.a attributes {hierarchical_name = "bad.a", lifetime = 1 : i32, name = "a", node_id = 6 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s7.b attributes {hierarchical_name = "bad.b", lifetime = 1 : i32, name = "b", node_id = 7 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.procedural_block @s8 attributes {hierarchical_name = "bad", node_id = 8 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.expression_statement attributes {node_id = 9 : i64} {
+            talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 10 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+              talos.sv.expression.named_value attributes {is_signed = false, node_id = 11 : i64, referenced_path = "bad.b", referenced_symbol = @s1.$root::@s3.bad::@s4.bad::@s7.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+              }
+              talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$future_gclk", clocking_block_event, clocking_event_edge = 1 : i32, clocking_event_path = "bad.gclk", clocking_event_symbol = @s1.$root::@s3.bad::@s4.bad::@s5.gclk, constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 12 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>, subroutine_kind = 0 : i32, system_library_cell = "work.bad", system_scope_path = "bad", system_scope_symbol = @s1.$root::@s3.bad::@s4.bad} {
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 13 : i64, referenced_path = "bad.a", referenced_symbol = @s1.$root::@s3.bad::@s4.bad::@s6.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

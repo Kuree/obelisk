@@ -1,14 +1,14 @@
 //===- RandomProgramSMT.cpp - Decode random constraints to SMT -*- C++ -*-===//
 
-#include "obelisk/Solver/ConstraintSolver.h"
+#include "talos/Solver/ConstraintSolver.h"
 
-#ifdef OBELISK_ENABLE_Z3
+#ifdef TALOS_ENABLE_Z3
 
 #include "RandomProgramSMT.h"
 
-#include "obelisk/Runtime/RandomDomain.h"
-#include "obelisk/Runtime/RandomSamplerPlan.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/RandomDomain.h"
+#include "talos/Runtime/RandomSamplerPlan.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Verifier.h"
@@ -29,7 +29,7 @@
 #include <utility>
 #include <vector>
 
-namespace obelisk::solver {
+namespace talos::solver {
 namespace {
 
 uint16_t read16(const uint8_t *bytes) {
@@ -171,33 +171,33 @@ bool containsVariable(mlir::Value expression, const SMTVariable &variable,
 }
 
 bool isUnary(uint8_t opcode) {
-  return (opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
-          opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
-         opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
-         opcode == OBELISK_RT_RANDOM_CLOG2_V1;
+  return (opcode >= TALOS_RT_RANDOM_CAST_V1 &&
+          opcode <= TALOS_RT_RANDOM_LOGICAL_NOT_V1) ||
+         opcode == TALOS_RT_RANDOM_COUNT_ONES_V1 ||
+         opcode == TALOS_RT_RANDOM_CLOG2_V1;
 }
 
 bool isBinary(uint8_t opcode) {
-  return (opcode >= OBELISK_RT_RANDOM_ADD_V1 &&
-          opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1) ||
-         (opcode >= OBELISK_RT_RANDOM_DIV_V1 &&
-          opcode <= OBELISK_RT_RANDOM_POWER_V1);
+  return (opcode >= TALOS_RT_RANDOM_ADD_V1 &&
+          opcode <= TALOS_RT_RANDOM_LOGICAL_EQUIV_V1) ||
+         (opcode >= TALOS_RT_RANDOM_DIV_V1 &&
+          opcode <= TALOS_RT_RANDOM_POWER_V1);
 }
 
 } // namespace
 
 std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                                                       size_t programSize) {
-  if (!program || programSize < OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE ||
-      read32(program) != OBELISK_RT_RANDOM_PROGRAM_MAGIC)
+  if (!program || programSize < TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE ||
+      read32(program) != TALOS_RT_RANDOM_PROGRAM_MAGIC)
     return std::nullopt;
   uint16_t version = read16(program + 4);
-  bool version1 = version == OBELISK_RT_RANDOM_PROGRAM_VERSION_V1;
-  bool version2 = version == OBELISK_RT_RANDOM_PROGRAM_VERSION_V2;
+  bool version1 = version == TALOS_RT_RANDOM_PROGRAM_VERSION_V1;
+  bool version2 = version == TALOS_RT_RANDOM_PROGRAM_VERSION_V2;
   uint16_t headerSize = read16(program + 6);
   if ((!version1 && !version2) ||
-      (version1 && headerSize != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE) ||
-      (version2 && headerSize != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2) ||
+      (version1 && headerSize != TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE) ||
+      (version2 && headerSize != TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2) ||
       programSize < headerSize)
     return std::nullopt;
   uint32_t aggregateWidth = read32(program + 8);
@@ -208,22 +208,22 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   // table over the whole relation would incorrectly condition those choices
   // on lower-stage constraints. The compiled sampler handles the staged
   // program.
-  if (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)
+  if (programFlags & TALOS_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)
     return std::nullopt;
   uint32_t literalWordCount = version2 ? read32(program + 24) : 0;
   if ((version1 && aggregateWidth > 64) ||
       (version2 && read32(program + 28) != 0) ||
-      (programFlags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
-                        OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
-                        OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-                        OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
-                        OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                        OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)) != 0 ||
+      (programFlags & ~(TALOS_RT_RANDOM_PROGRAM_HAS_SOFT |
+                        TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
+                        TALOS_RT_RANDOM_PROGRAM_HAS_DIST |
+                        TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS |
+                        TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                        TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)) != 0 ||
       instructionCount > (std::numeric_limits<size_t>::max() - headerSize) /
-                             OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2)
+                             TALOS_RT_RANDOM_INSTRUCTION_SIZE_V2)
     return std::nullopt;
   size_t instructionBytes = static_cast<size_t>(instructionCount) *
-                            OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+                            TALOS_RT_RANDOM_INSTRUCTION_SIZE_V2;
   size_t expectedSize = headerSize + instructionBytes;
   if (literalWordCount >
       (std::numeric_limits<size_t>::max() - expectedSize) / sizeof(uint64_t))
@@ -243,7 +243,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       [&](uint32_t index) -> std::optional<DecodedInstruction> {
     const uint8_t *cursor =
         program + headerSize +
-        static_cast<size_t>(index) * OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+        static_cast<size_t>(index) * TALOS_RT_RANDOM_INSTRUCTION_SIZE_V2;
     DecodedInstruction decoded{};
     decoded.opcode = cursor[0];
     if (version1) {
@@ -253,7 +253,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         return std::nullopt;
       decoded.operand = read32(cursor + 4);
       decoded.auxiliary = read64(cursor + 8);
-      if (decoded.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1 &&
+      if (decoded.opcode == TALOS_RT_RANDOM_PUSH_LITERAL_V1 &&
           decoded.width != 0)
         decoded.literal = llvm::APInt(decoded.width, decoded.auxiliary);
       return decoded;
@@ -265,7 +265,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     decoded.operand = read32(cursor + 8);
     uint32_t auxiliary = read32(cursor + 12);
     decoded.auxiliary = auxiliary;
-    if (decoded.opcode != OBELISK_RT_RANDOM_PUSH_LITERAL_V1)
+    if (decoded.opcode != TALOS_RT_RANDOM_PUSH_LITERAL_V1)
       return decoded;
     if (decoded.width == 0)
       return std::nullopt;
@@ -288,19 +288,19 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     return decoded;
   };
   bool hasSolveBefore =
-      (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
+      (programFlags & TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
   uint32_t solveEdgeCount = 0;
   size_t solveEdgesOffset = 0;
   size_t solveMaskWords = version2 ? (uint64_t(aggregateWidth) + 63) / 64 : 1;
   size_t solveEdgeSize =
-      solveMaskWords * 16 + OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
+      solveMaskWords * 16 + TALOS_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
   if (hasSolveBefore) {
     if (expectedSize > std::numeric_limits<size_t>::max() -
-                           OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE ||
-        programSize < expectedSize + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE)
+                           TALOS_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE ||
+        programSize < expectedSize + TALOS_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE)
       return std::nullopt;
     solveEdgeCount = read32(program + expectedSize);
-    solveEdgesOffset = expectedSize + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
+    solveEdgesOffset = expectedSize + TALOS_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
     if (aggregateWidth == 0 || solveEdgeCount == 0 ||
         solveEdgeCount >
             (std::numeric_limits<size_t>::max() - solveEdgesOffset) /
@@ -309,8 +309,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     expectedSize =
         solveEdgesOffset + static_cast<size_t>(solveEdgeCount) * solveEdgeSize;
   }
-  bool hasDist = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
-  bool weighted = (programFlags & OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) != 0;
+  bool hasDist = (programFlags & TALOS_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
+  bool weighted = (programFlags & TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) != 0;
   if ((weighted && !hasDist) || (hasDist && hasSolveBefore && !weighted))
     return std::nullopt;
   uint32_t distGroupCount = 0;
@@ -318,40 +318,40 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   size_t distRecordsOffset = 0;
   if (hasDist) {
     if (expectedSize > std::numeric_limits<size_t>::max() -
-                           OBELISK_RT_RANDOM_DIST_HEADER_SIZE ||
-        programSize < expectedSize + OBELISK_RT_RANDOM_DIST_HEADER_SIZE)
+                           TALOS_RT_RANDOM_DIST_HEADER_SIZE ||
+        programSize < expectedSize + TALOS_RT_RANDOM_DIST_HEADER_SIZE)
       return std::nullopt;
     distGroupCount = read32(program + expectedSize);
     distRecordCount = read32(program + expectedSize + 4);
-    distRecordsOffset = expectedSize + OBELISK_RT_RANDOM_DIST_HEADER_SIZE;
+    distRecordsOffset = expectedSize + TALOS_RT_RANDOM_DIST_HEADER_SIZE;
     if (distGroupCount == 0 || distGroupCount > distRecordCount ||
         distRecordCount >
             (std::numeric_limits<size_t>::max() - distRecordsOffset) /
-                OBELISK_RT_RANDOM_DIST_RECORD_SIZE)
+                TALOS_RT_RANDOM_DIST_RECORD_SIZE)
       return std::nullopt;
     expectedSize = distRecordsOffset + static_cast<size_t>(distRecordCount) *
-                                           OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
+                                           TALOS_RT_RANDOM_DIST_RECORD_SIZE;
   }
-  bool hasDomains = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0;
+  bool hasDomains = (programFlags & TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0;
   uint32_t domainGroupCount = 0;
   uint32_t domainRecordCount = 0;
   size_t domainRecordsOffset = 0;
   if (hasDomains) {
     if (expectedSize > std::numeric_limits<size_t>::max() -
-                           OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE ||
-        programSize < expectedSize + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE)
+                           TALOS_RT_RANDOM_DOMAIN_HEADER_SIZE ||
+        programSize < expectedSize + TALOS_RT_RANDOM_DOMAIN_HEADER_SIZE)
       return std::nullopt;
     domainGroupCount = read32(program + expectedSize);
     domainRecordCount = read32(program + expectedSize + 4);
-    domainRecordsOffset = expectedSize + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE;
+    domainRecordsOffset = expectedSize + TALOS_RT_RANDOM_DOMAIN_HEADER_SIZE;
     if (domainGroupCount == 0 || domainRecordCount == 0 ||
         domainRecordCount >
             (std::numeric_limits<size_t>::max() - domainRecordsOffset) /
-                OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE)
+                TALOS_RT_RANDOM_DOMAIN_RECORD_SIZE)
       return std::nullopt;
     expectedSize =
         domainRecordsOffset + static_cast<size_t>(domainRecordCount) *
-                                  OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
+                                  TALOS_RT_RANDOM_DOMAIN_RECORD_SIZE;
   }
   if (programSize != expectedSize)
     return std::nullopt;
@@ -362,7 +362,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       std::optional<DecodedInstruction> decoded = decodeInstruction(index);
       if (!decoded)
         return std::nullopt;
-      if (decoded->opcode != OBELISK_RT_RANDOM_PUSH_LITERAL_V1)
+      if (decoded->opcode != TALOS_RT_RANDOM_PUSH_LITERAL_V1)
         continue;
       if (decoded->auxiliary != nextLiteralWord)
         return std::nullopt;
@@ -416,10 +416,10 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       llvm::APInt beforeMask = *before, afterMask = *after;
       uint32_t constraintBlock = read32(edge);
       uint32_t reserved = read32(edge + 4);
-      edge += OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
+      edge += TALOS_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
       if (beforeMask.isZero() || afterMask.isZero() ||
           !(beforeMask & afterMask).isZero() || reserved != 0 ||
-          (constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+          (constraintBlock != TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
            constraintBlock >= 64))
         return std::nullopt;
       auto beforeId = registerMask(beforeMask),
@@ -462,42 +462,42 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       uint64_t coefficient = read64(record + 32);
       uint32_t capture = read32(record + 40);
       uint32_t flags = read32(record + 44);
-      record += OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
+      record += TALOS_RT_RANDOM_DIST_RECORD_SIZE;
       uint64_t mask = width >= 64  ? UINT64_MAX
                       : width == 0 ? 0
                                    : (uint64_t{1} << width) - 1;
       bool fullDomain = cardinality == 0 && width == 64 && lower == 0;
-      bool captured = flags & OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL;
+      bool captured = flags & TALOS_RT_RANDOM_DIST_CAPTURED_INTERVAL;
       bool defaultComplement =
-          flags & OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT;
+          flags & TALOS_RT_RANDOM_DIST_DEFAULT_COMPLEMENT;
       if (group >= distGroupCount || width == 0 || width > 64 ||
           targetOffset > aggregateWidth ||
           width > aggregateWidth - targetOffset ||
           (weighted ? reserved > 64 : reserved != 0) ||
           (captured ? lower >= captureCount || cardinality >= captureCount ||
-                          !(flags & OBELISK_RT_RANDOM_DIST_PER_RANGE)
+                          !(flags & TALOS_RT_RANDOM_DIST_PER_RANGE)
                     : lower > mask ||
                           (!fullDomain && (cardinality == 0 ||
                                            cardinality - 1 > mask - lower))) ||
           (defaultComplement &&
-           (captured || !(flags & OBELISK_RT_RANDOM_DIST_PER_RANGE) ||
+           (captured || !(flags & TALOS_RT_RANDOM_DIST_PER_RANGE) ||
             lower != 0 || cardinality != mask + 1)) ||
           (!weighted && coefficient == 0) || capture >= captureCount ||
           (weighted
-               ? !(flags & OBELISK_RT_RANDOM_DIST_RAW_WEIGHT) ||
-                     (flags & ~(OBELISK_RT_RANDOM_DIST_RAW_WEIGHT |
-                                OBELISK_RT_RANDOM_DIST_PER_RANGE |
-                                OBELISK_RT_RANDOM_DIST_TARGET_SIGNED |
-                                OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL |
-                                OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT |
-                                OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT)) != 0
-               : (flags & ~(OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED |
-                            OBELISK_RT_RANDOM_DIST_TARGET_SIGNED)) != 0) ||
-          (constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+               ? !(flags & TALOS_RT_RANDOM_DIST_RAW_WEIGHT) ||
+                     (flags & ~(TALOS_RT_RANDOM_DIST_RAW_WEIGHT |
+                                TALOS_RT_RANDOM_DIST_PER_RANGE |
+                                TALOS_RT_RANDOM_DIST_TARGET_SIGNED |
+                                TALOS_RT_RANDOM_DIST_CAPTURED_INTERVAL |
+                                TALOS_RT_RANDOM_DIST_DEFAULT_COMPLEMENT |
+                                TALOS_RT_RANDOM_DIST_EXPRESSION_WEIGHT)) != 0
+               : (flags & ~(TALOS_RT_RANDOM_DIST_WEIGHT_SIGNED |
+                            TALOS_RT_RANDOM_DIST_TARGET_SIGNED)) != 0) ||
+          (constraintBlock != TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
            constraintBlock >= 64))
         return std::nullopt;
       DistGroupInfo &info = groups[group];
-      uint32_t targetFlags = flags & OBELISK_RT_RANDOM_DIST_TARGET_SIGNED;
+      uint32_t targetFlags = flags & TALOS_RT_RANDOM_DIST_TARGET_SIGNED;
       if (info.seen && (info.constraintBlock != constraintBlock ||
                         info.targetOffset != targetOffset ||
                         info.width != width || info.targetFlags != targetFlags))
@@ -525,13 +525,13 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   if (hasDomains) {
     const uint8_t *record = program + domainRecordsOffset;
     for (uint32_t index = 0; index != domainRecordCount; ++index) {
-      obelisk::random::DomainRecord decoded;
-      if (!obelisk::random::readDomainRecord(
+      talos::random::DomainRecord decoded;
+      if (!talos::random::readDomainRecord(
               record, aggregateWidth, version2, program + literalPoolOffset,
               literalWordCount, literalUse.data(), decoded) ||
           decoded.group >= domainGroupCount)
         return std::nullopt;
-      record += OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
+      record += TALOS_RT_RANDOM_DOMAIN_RECORD_SIZE;
       uint32_t group = decoded.group;
       uint32_t targetOffset = decoded.targetOffset;
       uint32_t width = decoded.width;
@@ -597,8 +597,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       std::optional<DecodedInstruction> decoded = decodeInstruction(index);
       if (!decoded)
         return std::nullopt;
-      if (decoded->opcode != OBELISK_RT_RANDOM_PUSH_CAPTURE_V1 &&
-          decoded->opcode != OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1)
+      if (decoded->opcode != TALOS_RT_RANDOM_PUSH_CAPTURE_V1 &&
+          decoded->opcode != TALOS_RT_RANDOM_END_DIST_WEIGHT_BIT_V1)
         continue;
       if (decoded->operand >= captureCount || decoded->width == 0)
         return std::nullopt;
@@ -668,22 +668,22 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     if (!distBits.visit(opcode, width, flags, operand, immediate))
       return std::nullopt;
     if (width == 0 || (version1 && width > 64) ||
-        (flags & ~OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
+        (flags & ~TALOS_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
       return std::nullopt;
-    if (version2 && opcode != OBELISK_RT_RANDOM_PUSH_LITERAL_V1 &&
-        opcode != OBELISK_RT_RANDOM_END_SOFT_V1 &&
-        opcode != OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 &&
-        opcode != OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1 && immediate != 0)
+    if (version2 && opcode != TALOS_RT_RANDOM_PUSH_LITERAL_V1 &&
+        opcode != TALOS_RT_RANDOM_END_SOFT_V1 &&
+        opcode != TALOS_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 &&
+        opcode != TALOS_RT_RANDOM_END_DIST_TARGET_BIT_V1 && immediate != 0)
       return std::nullopt;
-    bool signedOperation = (flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
-    if (opcode == OBELISK_RT_RANDOM_STORE_VALUE_V1) {
+    bool signedOperation = (flags & TALOS_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
+    if (opcode == TALOS_RT_RANDOM_STORE_VALUE_V1) {
       if (stack.empty() || flags != 0 || immediate != 0 ||
           operand != temporaries.size() || width != stack.back().width)
         return std::nullopt;
       temporaries.push_back(stack.back());
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_LOAD_VALUE_V1) {
+    if (opcode == TALOS_RT_RANDOM_LOAD_VALUE_V1) {
       if (flags != 0 || immediate != 0 || operand >= temporaries.size() ||
           width != temporaries[operand].width)
         return std::nullopt;
@@ -694,7 +694,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       stack.back().instructionBegin = index;
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1) {
+    if (opcode == TALOS_RT_RANDOM_PUSH_VARIABLE_V1) {
       if (aggregateWidth == 0 || operand >= aggregateWidth ||
           width > aggregateWidth - operand)
         return std::nullopt;
@@ -702,7 +702,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       stack.push_back({variable.bits, width, variable, std::nullopt, index});
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_PUSH_CAPTURE_V1) {
+    if (opcode == TALOS_RT_RANDOM_PUSH_CAPTURE_V1) {
       if (operand >= captures.size())
         return std::nullopt;
       stack.push_back(
@@ -711,7 +711,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
            width, std::nullopt, std::nullopt, index});
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
+    if (opcode == TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
       if (width != 1 || flags != 0 || operand >= 64 || immediate != 0)
         return std::nullopt;
       // This formula plans only the all-enabled proposal. The runtime uses
@@ -720,14 +720,14 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                        std::nullopt, std::nullopt, index});
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
+    if (opcode == TALOS_RT_RANDOM_PUSH_LITERAL_V1) {
       if (!decoded->literal)
         return std::nullopt;
       stack.push_back({constant(builder, location, *decoded->literal), width,
                        std::nullopt, std::nullopt, index});
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
+    if (opcode == TALOS_RT_RANDOM_END_DIST_GUARD_V1) {
       if (!weighted || width != 1 || flags != 0 || stack.size() != 1 ||
           immediate != 0 || operand >= guardSeen.size() || guardSeen[operand])
         return std::nullopt;
@@ -735,10 +735,10 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       stack.clear();
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 ||
-        opcode == OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1) {
+    if (opcode == TALOS_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 ||
+        opcode == TALOS_RT_RANDOM_END_DIST_TARGET_BIT_V1) {
       if (!weighted || flags ||
-          operand >= (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1
+          operand >= (opcode == TALOS_RT_RANDOM_END_DIST_WEIGHT_BIT_V1
                           ? captureCount
                           : guardSeen.size()) ||
           stack.size() != 1 || stack.back().width != width || immediate >= width)
@@ -747,16 +747,16 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         stack.clear();
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||
-        opcode == OBELISK_RT_RANDOM_END_SOFT_V1) {
+    if (opcode == TALOS_RT_RANDOM_END_HARD_V1 ||
+        opcode == TALOS_RT_RANDOM_END_SOFT_V1) {
       if (width != 1 || stack.size() != 1 ||
-          (operand != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+          (operand != TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
            operand >= 64) ||
-          (opcode == OBELISK_RT_RANDOM_END_HARD_V1 && immediate != 0) ||
-          (opcode == OBELISK_RT_RANDOM_END_SOFT_V1 &&
+          (opcode == TALOS_RT_RANDOM_END_HARD_V1 && immediate != 0) ||
+          (opcode == TALOS_RT_RANDOM_END_SOFT_V1 &&
            !softPriorities.insert(immediate, instructionCount)))
         return std::nullopt;
-      if (opcode == OBELISK_RT_RANDOM_END_HARD_V1) {
+      if (opcode == TALOS_RT_RANDOM_END_HARD_V1) {
         mlir::Value constraint = truth(builder, location, stack.back());
         hard = mlir::smt::AndOp::create(builder, location, hard, constraint);
         result.hardConstraints.push_back({constraint, {}, false});
@@ -768,7 +768,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           result.directCaptureBounds.push_back(
               *stack.back().directCaptureBound);
       }
-      if (opcode == OBELISK_RT_RANDOM_END_SOFT_V1) {
+      if (opcode == TALOS_RT_RANDOM_END_SOFT_V1) {
         result.softConstraints.push_back(
             {truth(builder, location, stack.back()),
              static_cast<unsigned>(immediate),
@@ -778,12 +778,12 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
              stack.back().directDefinition,
              stack.back().directCaptureBound});
       }
-      sawHard |= opcode == OBELISK_RT_RANDOM_END_HARD_V1;
-      sawSoft |= opcode == OBELISK_RT_RANDOM_END_SOFT_V1;
+      sawHard |= opcode == TALOS_RT_RANDOM_END_HARD_V1;
+      sawSoft |= opcode == TALOS_RT_RANDOM_END_SOFT_V1;
       stack.clear();
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_SELECT_V1) {
+    if (opcode == TALOS_RT_RANDOM_SELECT_V1) {
       if (stack.size() < 3)
         return std::nullopt;
       StackValue falseValue = stack.back();
@@ -806,7 +806,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       StackValue input = stack.back();
       stack.pop_back();
       switch (opcode) {
-      case OBELISK_RT_RANDOM_COUNT_ONES_V1: {
+      case TALOS_RT_RANDOM_COUNT_ONES_V1: {
         unsigned countWidth = std::min(
             width, static_cast<unsigned>(llvm::Log2_64(input.width) + 1));
         llvm::SmallVector<mlir::Value> terms;
@@ -837,7 +837,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                          std::nullopt, std::nullopt, input.instructionBegin});
         break;
       }
-      case OBELISK_RT_RANDOM_CLOG2_V1: {
+      case TALOS_RT_RANDOM_CLOG2_V1: {
         unsigned resultWidth = std::min(
             width, static_cast<unsigned>(llvm::Log2_64(input.width) + 1));
         mlir::Value result = constant(builder, location, 0, resultWidth);
@@ -866,28 +866,28 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                          input.instructionBegin});
         break;
       }
-      case OBELISK_RT_RANDOM_CAST_V1:
-      case OBELISK_RT_RANDOM_POS_V1:
+      case TALOS_RT_RANDOM_CAST_V1:
+      case TALOS_RT_RANDOM_POS_V1:
         stack.push_back(
             {resize(builder, location, input, width, signedOperation), width,
              width == input.width ? input.directVariable : std::nullopt,
              std::nullopt, input.instructionBegin});
         break;
-      case OBELISK_RT_RANDOM_NEG_V1:
+      case TALOS_RT_RANDOM_NEG_V1:
         stack.push_back(
             {mlir::smt::BVNegOp::create(
                  builder, location,
                  resize(builder, location, input, width, signedOperation)),
              width, std::nullopt, std::nullopt, input.instructionBegin});
         break;
-      case OBELISK_RT_RANDOM_BIT_NOT_V1:
+      case TALOS_RT_RANDOM_BIT_NOT_V1:
         stack.push_back(
             {mlir::smt::BVNotOp::create(
                  builder, location,
                  resize(builder, location, input, width, signedOperation)),
              width, std::nullopt, std::nullopt, input.instructionBegin});
         break;
-      case OBELISK_RT_RANDOM_REDUCE_AND_V1:
+      case TALOS_RT_RANDOM_REDUCE_AND_V1:
         stack.push_back(booleanValue(
             builder, location,
             mlir::smt::EqOp::create(
@@ -896,13 +896,13 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                     builder, location, llvm::APInt::getAllOnes(input.width))),
             input.instructionBegin));
         break;
-      case OBELISK_RT_RANDOM_REDUCE_OR_V1:
+      case TALOS_RT_RANDOM_REDUCE_OR_V1:
         stack.push_back(booleanValue(builder, location,
                                      truth(builder, location, input),
                                      input.instructionBegin));
         break;
-      case OBELISK_RT_RANDOM_REDUCE_XOR_V1:
-      case OBELISK_RT_RANDOM_REDUCE_XNOR_V1: {
+      case TALOS_RT_RANDOM_REDUCE_XOR_V1:
+      case TALOS_RT_RANDOM_REDUCE_XNOR_V1: {
         mlir::Value parity =
             mlir::smt::BoolConstantOp::create(builder, location, false);
         for (unsigned bit = 0; bit != input.width; ++bit) {
@@ -913,13 +913,13 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
               constant(builder, location, 1, 1));
           parity = mlir::smt::XOrOp::create(builder, location, parity, current);
         }
-        if (opcode == OBELISK_RT_RANDOM_REDUCE_XNOR_V1)
+        if (opcode == TALOS_RT_RANDOM_REDUCE_XNOR_V1)
           parity = mlir::smt::NotOp::create(builder, location, parity);
         stack.push_back(
             booleanValue(builder, location, parity, input.instructionBegin));
         break;
       }
-      case OBELISK_RT_RANDOM_REDUCE_NAND_V1:
+      case TALOS_RT_RANDOM_REDUCE_NAND_V1:
         stack.push_back(booleanValue(
             builder, location,
             mlir::smt::DistinctOp::create(
@@ -928,8 +928,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                     builder, location, llvm::APInt::getAllOnes(input.width))),
             input.instructionBegin));
         break;
-      case OBELISK_RT_RANDOM_REDUCE_NOR_V1:
-      case OBELISK_RT_RANDOM_LOGICAL_NOT_V1:
+      case TALOS_RT_RANDOM_REDUCE_NOR_V1:
+      case TALOS_RT_RANDOM_LOGICAL_NOT_V1:
         stack.push_back(booleanValue(
             builder, location,
             mlir::smt::NotOp::create(builder, location,
@@ -947,8 +947,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     stack.pop_back();
     StackValue lhs = stack.back();
     stack.pop_back();
-    if (opcode >= OBELISK_RT_RANDOM_EQ_V1 &&
-        opcode <= OBELISK_RT_RANDOM_LT_V1) {
+    if (opcode >= TALOS_RT_RANDOM_EQ_V1 &&
+        opcode <= TALOS_RT_RANDOM_LT_V1) {
       unsigned compareWidth = std::max(lhs.width, rhs.width);
       mlir::Value left =
           resize(builder, location, lhs, compareWidth, signedOperation);
@@ -956,29 +956,29 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           resize(builder, location, rhs, compareWidth, signedOperation);
       mlir::Value predicate;
       switch (opcode) {
-      case OBELISK_RT_RANDOM_EQ_V1:
+      case TALOS_RT_RANDOM_EQ_V1:
         predicate = mlir::smt::EqOp::create(builder, location, left, right);
         break;
-      case OBELISK_RT_RANDOM_NE_V1:
+      case TALOS_RT_RANDOM_NE_V1:
         predicate =
             mlir::smt::DistinctOp::create(builder, location, left, right);
         break;
       default: {
         mlir::smt::BVCmpPredicate comparison;
         if (signedOperation) {
-          comparison = opcode == OBELISK_RT_RANDOM_GE_V1
+          comparison = opcode == TALOS_RT_RANDOM_GE_V1
                            ? mlir::smt::BVCmpPredicate::sge
-                       : opcode == OBELISK_RT_RANDOM_GT_V1
+                       : opcode == TALOS_RT_RANDOM_GT_V1
                            ? mlir::smt::BVCmpPredicate::sgt
-                       : opcode == OBELISK_RT_RANDOM_LE_V1
+                       : opcode == TALOS_RT_RANDOM_LE_V1
                            ? mlir::smt::BVCmpPredicate::sle
                            : mlir::smt::BVCmpPredicate::slt;
         } else {
-          comparison = opcode == OBELISK_RT_RANDOM_GE_V1
+          comparison = opcode == TALOS_RT_RANDOM_GE_V1
                            ? mlir::smt::BVCmpPredicate::uge
-                       : opcode == OBELISK_RT_RANDOM_GT_V1
+                       : opcode == TALOS_RT_RANDOM_GT_V1
                            ? mlir::smt::BVCmpPredicate::ugt
-                       : opcode == OBELISK_RT_RANDOM_LE_V1
+                       : opcode == TALOS_RT_RANDOM_LE_V1
                            ? mlir::smt::BVCmpPredicate::ule
                            : mlir::smt::BVCmpPredicate::ult;
         }
@@ -990,17 +990,17 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       std::optional<SMTVariableEquality> directEquality;
       std::optional<SMTVariableDefinition> directDefinition;
       std::optional<SMTVariableCaptureBound> directCaptureBound;
-      if (opcode == OBELISK_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
+      if (opcode == TALOS_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
           lhs.directVariable && rhs.directVariable &&
           lhs.directVariable->offset != rhs.directVariable->offset)
         directEquality =
             SMTVariableEquality{*lhs.directVariable, *rhs.directVariable};
-      if (opcode == OBELISK_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
+      if (opcode == TALOS_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
           lhs.directVariable && !rhs.directVariable &&
           !containsVariable(rhs.bits, *lhs.directVariable, referenceBudget))
         directDefinition = SMTVariableDefinition{*lhs.directVariable, rhs.bits,
                                                  rhs.instructionBegin, index};
-      else if (opcode == OBELISK_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
+      else if (opcode == TALOS_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
                rhs.directVariable && !lhs.directVariable &&
                !containsVariable(lhs.bits, *rhs.directVariable,
                                  referenceBudget))
@@ -1024,22 +1024,22 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           return std::nullopt;
         return found->second;
       };
-      if (lhs.width == rhs.width && (opcode == OBELISK_RT_RANDOM_GE_V1 ||
-                                     opcode == OBELISK_RT_RANDOM_GT_V1 ||
-                                     opcode == OBELISK_RT_RANDOM_LE_V1 ||
-                                     opcode == OBELISK_RT_RANDOM_LT_V1)) {
+      if (lhs.width == rhs.width && (opcode == TALOS_RT_RANDOM_GE_V1 ||
+                                     opcode == TALOS_RT_RANDOM_GT_V1 ||
+                                     opcode == TALOS_RT_RANDOM_LE_V1 ||
+                                     opcode == TALOS_RT_RANDOM_LT_V1)) {
         std::optional<uint32_t> lhsCapture = directCaptureIndex(lhs);
         std::optional<uint32_t> rhsCapture = directCaptureIndex(rhs);
         if (lhs.directVariable && rhsCapture) {
           SMTCaptureBoundKind kind;
           switch (opcode) {
-          case OBELISK_RT_RANDOM_GE_V1:
+          case TALOS_RT_RANDOM_GE_V1:
             kind = SMTCaptureBoundKind::LowerInclusive;
             break;
-          case OBELISK_RT_RANDOM_GT_V1:
+          case TALOS_RT_RANDOM_GT_V1:
             kind = SMTCaptureBoundKind::LowerExclusive;
             break;
-          case OBELISK_RT_RANDOM_LE_V1:
+          case TALOS_RT_RANDOM_LE_V1:
             kind = SMTCaptureBoundKind::UpperInclusive;
             break;
           default:
@@ -1052,13 +1052,13 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         } else if (rhs.directVariable && lhsCapture) {
           SMTCaptureBoundKind kind;
           switch (opcode) {
-          case OBELISK_RT_RANDOM_LE_V1:
+          case TALOS_RT_RANDOM_LE_V1:
             kind = SMTCaptureBoundKind::LowerInclusive;
             break;
-          case OBELISK_RT_RANDOM_LT_V1:
+          case TALOS_RT_RANDOM_LT_V1:
             kind = SMTCaptureBoundKind::LowerExclusive;
             break;
-          case OBELISK_RT_RANDOM_GE_V1:
+          case TALOS_RT_RANDOM_GE_V1:
             kind = SMTCaptureBoundKind::UpperInclusive;
             break;
           default:
@@ -1076,23 +1076,23 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                        std::move(directCaptureBound)));
       continue;
     }
-    if (opcode >= OBELISK_RT_RANDOM_LOGICAL_AND_V1 &&
-        opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1) {
+    if (opcode >= TALOS_RT_RANDOM_LOGICAL_AND_V1 &&
+        opcode <= TALOS_RT_RANDOM_LOGICAL_EQUIV_V1) {
       mlir::Value left = truth(builder, location, lhs);
       mlir::Value right = truth(builder, location, rhs);
       mlir::Value predicate;
       switch (opcode) {
-      case OBELISK_RT_RANDOM_LOGICAL_AND_V1:
+      case TALOS_RT_RANDOM_LOGICAL_AND_V1:
         predicate = mlir::smt::AndOp::create(builder, location, left, right);
         break;
-      case OBELISK_RT_RANDOM_LOGICAL_OR_V1:
+      case TALOS_RT_RANDOM_LOGICAL_OR_V1:
         predicate = mlir::smt::OrOp::create(builder, location, left, right);
         break;
-      case OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1:
+      case TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1:
         predicate =
             mlir::smt::ImpliesOp::create(builder, location, left, right);
         break;
-      case OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1:
+      case TALOS_RT_RANDOM_LOGICAL_EQUIV_V1:
         predicate = mlir::smt::EqOp::create(builder, location, left, right);
         break;
       default:
@@ -1100,7 +1100,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       }
       StackValue combined =
           booleanValue(builder, location, predicate, lhs.instructionBegin);
-      if (opcode == OBELISK_RT_RANDOM_LOGICAL_AND_V1) {
+      if (opcode == TALOS_RT_RANDOM_LOGICAL_AND_V1) {
         // Conjoining definedness does not weaken a direct equality or bound.
         // Retain an unambiguous candidate; Z3 still proves it from the complete
         // hard formula before generating a structural sampling proposal.
@@ -1119,22 +1119,22 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       stack.push_back(std::move(combined));
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_SHIFT_LEFT_V1 ||
-        opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_V1 ||
-        opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1) {
+    if (opcode == TALOS_RT_RANDOM_SHIFT_LEFT_V1 ||
+        opcode == TALOS_RT_RANDOM_SHIFT_RIGHT_V1 ||
+        opcode == TALOS_RT_RANDOM_SHIFT_RIGHT_ARITH_V1) {
       unsigned operationWidth = std::max<unsigned>(width, rhs.width);
       StackValue resizedLhs{
           resize(builder, location, lhs, operationWidth,
-                 opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1),
+                 opcode == TALOS_RT_RANDOM_SHIFT_RIGHT_ARITH_V1),
           operationWidth};
       StackValue resizedRhs{
           resize(builder, location, rhs, operationWidth, false),
           operationWidth};
       mlir::Value shifted;
-      if (opcode == OBELISK_RT_RANDOM_SHIFT_LEFT_V1)
+      if (opcode == TALOS_RT_RANDOM_SHIFT_LEFT_V1)
         shifted = mlir::smt::BVShlOp::create(builder, location, resizedLhs.bits,
                                              resizedRhs.bits);
-      else if (opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_V1)
+      else if (opcode == TALOS_RT_RANDOM_SHIFT_RIGHT_V1)
         shifted = mlir::smt::BVLShrOp::create(builder, location,
                                               resizedLhs.bits, resizedRhs.bits);
       else
@@ -1145,7 +1145,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
            width, std::nullopt, std::nullopt, lhs.instructionBegin});
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_POWER_V1) {
+    if (opcode == TALOS_RT_RANDOM_POWER_V1) {
       mlir::Value base = resize(builder, location, lhs, width, signedOperation);
       mlir::Value result = constant(builder, location, 1, width);
       for (unsigned bit = 0; bit != rhs.width; ++bit) {
@@ -1169,41 +1169,41 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     mlir::Value right = resize(builder, location, rhs, width, signedOperation);
     mlir::Value bits;
     switch (opcode) {
-    case OBELISK_RT_RANDOM_ADD_V1:
+    case TALOS_RT_RANDOM_ADD_V1:
       bits = mlir::smt::BVAddOp::create(builder, location, left, right);
       break;
-    case OBELISK_RT_RANDOM_SUB_V1:
+    case TALOS_RT_RANDOM_SUB_V1:
       bits = mlir::smt::BVAddOp::create(
           builder, location, left,
           mlir::smt::BVNegOp::create(builder, location, right));
       break;
-    case OBELISK_RT_RANDOM_MUL_V1:
+    case TALOS_RT_RANDOM_MUL_V1:
       bits = mlir::smt::BVMulOp::create(builder, location, left, right);
       break;
-    case OBELISK_RT_RANDOM_DIV_V1:
+    case TALOS_RT_RANDOM_DIV_V1:
       bits = signedOperation
                  ? mlir::Value(mlir::smt::BVSDivOp::create(builder, location,
                                                            left, right))
                  : mlir::Value(mlir::smt::BVUDivOp::create(builder, location,
                                                            left, right));
       break;
-    case OBELISK_RT_RANDOM_MOD_V1:
+    case TALOS_RT_RANDOM_MOD_V1:
       bits = signedOperation
                  ? mlir::Value(mlir::smt::BVSRemOp::create(builder, location,
                                                            left, right))
                  : mlir::Value(mlir::smt::BVURemOp::create(builder, location,
                                                            left, right));
       break;
-    case OBELISK_RT_RANDOM_BIT_AND_V1:
+    case TALOS_RT_RANDOM_BIT_AND_V1:
       bits = mlir::smt::BVAndOp::create(builder, location, left, right);
       break;
-    case OBELISK_RT_RANDOM_BIT_OR_V1:
+    case TALOS_RT_RANDOM_BIT_OR_V1:
       bits = mlir::smt::BVOrOp::create(builder, location, left, right);
       break;
-    case OBELISK_RT_RANDOM_BIT_XOR_V1:
+    case TALOS_RT_RANDOM_BIT_XOR_V1:
       bits = mlir::smt::BVXOrOp::create(builder, location, left, right);
       break;
-    case OBELISK_RT_RANDOM_BIT_XNOR_V1:
+    case TALOS_RT_RANDOM_BIT_XNOR_V1:
       bits = mlir::smt::BVNotOp::create(
           builder, location,
           mlir::smt::BVXOrOp::create(builder, location, left, right));
@@ -1215,7 +1215,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         {bits, width, std::nullopt, std::nullopt, lhs.instructionBegin});
   }
 
-  bool encodedSoft = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
+  bool encodedSoft = (programFlags & TALOS_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
   if (!stack.empty() || !sawHard || sawSoft != encodedSoft ||
       !softPriorities.dense())
     return std::nullopt;
@@ -1320,6 +1320,6 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   return result;
 }
 
-} // namespace obelisk::solver
+} // namespace talos::solver
 
 #endif

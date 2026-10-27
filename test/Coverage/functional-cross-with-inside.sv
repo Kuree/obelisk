@@ -1,7 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s 2>&1 | FileCheck %s --check-prefix=WARN
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s 2>&1 | FileCheck %s --check-prefix=WARN
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s --check-prefix=OUT
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=BINS
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=BINS
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 
 // IEEE 1800-2023 11.4.6, 11.4.13, 19.6.1.2. Singular members use
 // asymmetric wildcard equality; ranges are inclusive. A known member match

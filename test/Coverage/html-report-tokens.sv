@@ -4,17 +4,17 @@ endmodule
 
 /*
   The HTML report colors source from slang's token listing for the chosen
-  standard, exactly as obelisk -dump-tokens lists it. A standard the page
+  standard, exactly as talos -dump-tokens lists it. A standard the page
   cannot list tokens for is a usage error. This comment is one token, which
   keeps the listing short.
 
-  RUN: cd %S && %obelisk --std=1800-2023 -O0 --coverage=line -o %t.sim html-report-tokens.sv
+  RUN: cd %S && %talos --std=1800-2023 -O0 --coverage=line -o %t.sim html-report-tokens.sv
   RUN: %t.sim --coverage-output=%t.obcov
-  RUN: %obelisk -dump-tokens --std=1800-2023 %s -o - | FileCheck %s --check-prefix=TOKENS
-  RUN: %obelisk -dump-tokens --std=1800-2017 %s -o - | FileCheck %s --check-prefix=TOKENS
-  RUN: obelisk-cov report --format=html --source-root=%S --std=1800-2023 %t.obcov | FileCheck %s --check-prefix=HTML
-  RUN: obelisk-cov report --format=html --source-root=%S --std=1800-2017 %t.obcov | FileCheck %s --check-prefix=HTML
-  RUN: not obelisk-cov report --format=html --std=1800-2005 %t.obcov 2>&1 | FileCheck %s --check-prefix=BAD-STD
+  RUN: %talos -dump-tokens --std=1800-2023 %s -o - | FileCheck %s --check-prefix=TOKENS
+  RUN: %talos -dump-tokens --std=1800-2017 %s -o - | FileCheck %s --check-prefix=TOKENS
+  RUN: talos-cov report --format=html --source-root=%S --std=1800-2023 %t.obcov | FileCheck %s --check-prefix=HTML
+  RUN: talos-cov report --format=html --source-root=%S --std=1800-2017 %t.obcov | FileCheck %s --check-prefix=HTML
+  RUN: not talos-cov report --format=html --std=1800-2005 %t.obcov 2>&1 | FileCheck %s --check-prefix=BAD-STD
 
   TOKENS: 0 6 ModuleKeyword
   TOKENS-NEXT: 7 1 Identifier

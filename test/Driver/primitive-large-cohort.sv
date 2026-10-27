@@ -1,9 +1,9 @@
-// RUN: obelisk -O3 --vpi=off -D AUTO_NMOS %s -o %t.auto
+// RUN: talos -O3 --vpi=off -D AUTO_NMOS %s -o %t.auto
 // RUN: %t.auto > %t.auto.out
 // RUN: FileCheck %s --implicit-check-not="LARGE PRIMITIVE FAIL" < %t.auto.out
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval -G N=32 %s -o %t.eval
+// RUN: talos -O3 --vpi=off --native-scheduler=eval -G N=32 %s -o %t.eval
 // RUN: %t.eval | diff -u %t.auto.out -
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.auto.out -
 
 // A large cohort of scalar built-in primitives stays compact under the
@@ -46,7 +46,7 @@ module primitive_large_cohort;
 endmodule
 
 // CHECK: LARGE PRIMITIVE PASS
-// KERNEL-COUNT-8: simulation.func private @__obelisk_region_kernel_
+// KERNEL-COUNT-8: simulation.func private @__talos_region_kernel_
 // KERNEL-NOT: schedule.primitive_name = "and"
 // The acyclic graph keeps the input ranges in Tier-1. The dynamically changed
 // lane has distinct ownership from the two unchanged ranges.

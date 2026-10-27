@@ -1,26 +1,26 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
-// RUN: FileCheck %s --implicit-check-not='@__obelisk_eval_nba_commit_{{(widths|shifts|classes|regions|fixed_masks|clear|direct)}}_v1' < %t.mlir
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | diff %t.mlir -
-// RUN: obelisk-opt %t.mlir --canonicalize --cse | FileCheck %s --check-prefix=FOLDED
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: FileCheck %s --implicit-check-not='@__talos_eval_nba_commit_{{(widths|shifts|classes|regions|fixed_masks|clear|direct)}}_v1' < %t.mlir
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | diff %t.mlir -
+// RUN: talos-opt %t.mlir --canonicalize --cse | FileCheck %s --check-prefix=FOLDED
 
 // Uniform integer columns become constants before native partitioning. This
 // includes zero shifts and nonzero width masks, but never the accumulator
 // pointer column. The ninth observer has a different trigger and mask; those
 // mixed columns must retain their indexed loads. NBA order and four-state
 // payloads are unchanged (IEEE 1800-2023 4.3, 4.6, 6.3.1, 10.4.2).
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_eval_nba_commit_accumulators_v1() {{.*}} : !llvm.array<9 x ptr>
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_eval_nba_commit_edges_v1(dense<[0, 0, 0, 0, 0, 0, 0, 0, 1]>
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_eval_nba_commit_watch_masks_v1(dense<[255, 255, 255, 255, 255, 255, 255, 255, 1]>
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_eval_nba_commit_transients_v1(dense<[255, 255, 255, 255, 255, 255, 255, 255, 0]>
-// CHECK-LABEL: llvm.func @__obelisk_aot_static_nba_commit_v1(
-// CHECK: %[[OFFSETS:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_commit_offsets_v1
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_eval_nba_commit_accumulators_v1() {{.*}} : !llvm.array<9 x ptr>
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_eval_nba_commit_edges_v1(dense<[0, 0, 0, 0, 0, 0, 0, 0, 1]>
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_eval_nba_commit_watch_masks_v1(dense<[255, 255, 255, 255, 255, 255, 255, 255, 1]>
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_eval_nba_commit_transients_v1(dense<[255, 255, 255, 255, 255, 255, 255, 255, 0]>
+// CHECK-LABEL: llvm.func @__talos_aot_static_nba_commit_v1(
+// CHECK: %[[OFFSETS:.*]] = llvm.mlir.addressof @__talos_eval_nba_commit_offsets_v1
 // CHECK-NEXT: %[[SLOT:.*]] = llvm.getelementptr %[[OFFSETS]][%{{.*}}]
 // CHECK-NEXT: llvm.load %[[SLOT]]
 // CHECK-NEXT: llvm.mlir.constant(0 : i64)
 // CHECK-NEXT: llvm.mlir.constant(255 : i64)
 // CHECK-NEXT: llvm.mlir.constant(255 : i64)
-// CHECK: llvm.mlir.addressof @__obelisk_eval_nba_commit_edges_v1
-// FOLDED-LABEL: llvm.func @__obelisk_aot_static_nba_commit_v1(
+// CHECK: llvm.mlir.addressof @__talos_eval_nba_commit_edges_v1
+// FOLDED-LABEL: llvm.func @__talos_aot_static_nba_commit_v1(
 // FOLDED: %[[CLASS:.*]] = llvm.mlir.constant(8 : i64)
 // FOLDED: llvm.switch %[[CLASS]] : i64,
 

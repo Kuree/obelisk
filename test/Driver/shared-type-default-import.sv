@@ -1,5 +1,5 @@
-// RUN: obelisk --std=1800-2023 -emit-slang %s -o /dev/null
-// RUN: obelisk --std=1800-2023 -emit-obelisk %s -o /dev/null
+// RUN: talos --std=1800-2023 -emit-slang %s -o /dev/null
+// RUN: talos --std=1800-2023 -emit-talos %s -o /dev/null
 module parameterized #(type T = int, type U = T, type V = U);
   localparam type Local = T;
 endmodule

@@ -1,11 +1,11 @@
 // Portable coverage scaling probe. See README.md for build instructions.
-#include "obelisk/Coverage/CoverageDatabase.h"
+#include "talos/Coverage/CoverageDatabase.h"
 
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 
-using namespace obelisk::coverage;
+using namespace talos::coverage;
 
 int main(int argc, char **argv) {
   const uint64_t count = argc > 1 ? std::strtoull(argv[1], nullptr, 10) : 65536;

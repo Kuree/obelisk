@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --talos-sim-plan-native-partitions \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=PARTITION
 
 module attributes {
@@ -9,7 +9,7 @@ module attributes {
 } {
   simulation.design @classes {
     simulation.scope.decl 0 hierarchy "top"
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.code_unit.decl 2 in 0 function hierarchy "Base.get"
     simulation.code_unit.decl 3 in 0 function hierarchy "Base.tag"
 
@@ -206,36 +206,36 @@ module attributes {
   }
 }
 
-// CHECK: llvm.func @obelisk_rt_v1_object_bits_insert(!llvm.ptr, i64, i64, i64, i32, i64, i32) -> i32
-// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_class_descriptor
-// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_interfaces
+// CHECK: llvm.func @talos_rt_v1_object_bits_insert(!llvm.ptr, i64, i64, i64, i32, i64, i32) -> i32
+// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__talos_class_descriptor
+// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__talos_interfaces
 // CHECK: llvm.mlir.constant(4 : i64)
-// CHECK: llvm.mlir.addressof @J.__obelisk_interface_signatures
-// CHECK: llvm.mlir.addressof @J.__obelisk_interface_bases
-// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_trace_entries
+// CHECK: llvm.mlir.addressof @J.__talos_interface_signatures
+// CHECK: llvm.mlir.addressof @J.__talos_interface_bases
+// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__talos_trace_entries
 // CHECK: llvm.mlir.constant(3 : i32)
-// CHECK: llvm.mlir.addressof @Base.__obelisk_trace_layout
-// CHECK-LABEL: llvm.mlir.global internal constant @Base.__obelisk_class_descriptor
-// CHECK-LABEL: llvm.mlir.global internal constant @J.__obelisk_interface_bases
-// CHECK: llvm.mlir.addressof @I.__obelisk_interface
-// CHECK-LABEL: llvm.func internal @Base_get.__obelisk_native_thunk
+// CHECK: llvm.mlir.addressof @Base.__talos_trace_layout
+// CHECK-LABEL: llvm.mlir.global internal constant @Base.__talos_class_descriptor
+// CHECK-LABEL: llvm.mlir.global internal constant @J.__talos_interface_bases
+// CHECK: llvm.mlir.addressof @I.__talos_interface
+// CHECK-LABEL: llvm.func internal @Base_get.__talos_native_thunk
 // PARTITION: module attributes {
 // PARTITION-SAME: native.physical_partition_manifest = [
 // PARTITION-SAME: id = "unit:2"
-// PARTITION-SAME: members = [@Base_get.__obelisk_native_thunk, @base_get]
+// PARTITION-SAME: members = [@Base_get.__talos_native_thunk, @base_get]
 // PARTITION-SAME: id = "unit:3"
-// PARTITION-SAME: members = [@Base_tag.__obelisk_native_thunk, @base_tag]
-// PARTITION: llvm.func internal @Base_get.__obelisk_native_thunk
+// PARTITION-SAME: members = [@Base_tag.__talos_native_thunk, @base_tag]
+// PARTITION: llvm.func internal @Base_get.__talos_native_thunk
 // PARTITION-SAME: native.partition = "unit:2"
-// PARTITION: llvm.func internal @Base_tag.__obelisk_native_thunk
+// PARTITION: llvm.func internal @Base_tag.__talos_native_thunk
 // PARTITION-SAME: native.partition = "unit:3"
 // CHECK-LABEL: llvm.func @root(
-// CHECK: llvm.call @obelisk_rt_v1_object_allocate
-// CHECK: llvm.call @obelisk_rt_v1_object_shallow_copy
-// CHECK: llvm.call @obelisk_rt_v1_object_is_instance
-// CHECK: llvm.call @obelisk_rt_v1_object_cast
-// CHECK: llvm.call @obelisk_rt_v1_object_shallow_copy
-// CHECK: llvm.call @obelisk_rt_v1_object_write
+// CHECK: llvm.call @talos_rt_v1_object_allocate
+// CHECK: llvm.call @talos_rt_v1_object_shallow_copy
+// CHECK: llvm.call @talos_rt_v1_object_is_instance
+// CHECK: llvm.call @talos_rt_v1_object_cast
+// CHECK: llvm.call @talos_rt_v1_object_shallow_copy
+// CHECK: llvm.call @talos_rt_v1_object_write
 // CHECK-NOT: llvm.shl {{.*}} : i327
 // CHECK: %[[BIT_OFFSET:.*]] = llvm.mlir.constant(24 : i64) : i64
 // CHECK: %[[LOW:.*]] = llvm.mlir.constant(17 : i64) : i64
@@ -244,25 +244,25 @@ module attributes {
 // CHECK: %[[OBJECT:.*]] = llvm.inttoptr {{.*}} : i64 to !llvm.ptr
 // CHECK: %[[FIELD_WIDTH:.*]] = llvm.mlir.constant(32768 : i64) : i64
 // CHECK: %[[REPLACEMENT_WIDTH:.*]] = llvm.mlir.constant(8 : i32) : i32
-// CHECK: llvm.call @obelisk_rt_v1_object_bits_insert(%[[OBJECT]], %[[BIT_OFFSET]], %[[FIELD_WIDTH]], %[[LOW]], %[[VALID]], %[[REPLACEMENT]], %[[REPLACEMENT_WIDTH]])
-// CHECK-NOT: llvm.call @obelisk_rt_v1_object_bits_insert
-// CHECK: llvm.call @obelisk_rt_v1_object_read
-// CHECK: llvm.call @obelisk_rt_v1_object_write
-// CHECK: llvm.call @obelisk_rt_v1_object_read
-// CHECK: llvm.call @obelisk_rt_v1_object_write
-// CHECK: llvm.call @obelisk_rt_v1_object_write
-// CHECK: llvm.call @obelisk_rt_v1_object_read
+// CHECK: llvm.call @talos_rt_v1_object_bits_insert(%[[OBJECT]], %[[BIT_OFFSET]], %[[FIELD_WIDTH]], %[[LOW]], %[[VALID]], %[[REPLACEMENT]], %[[REPLACEMENT_WIDTH]])
+// CHECK-NOT: llvm.call @talos_rt_v1_object_bits_insert
+// CHECK: llvm.call @talos_rt_v1_object_read
+// CHECK: llvm.call @talos_rt_v1_object_write
+// CHECK: llvm.call @talos_rt_v1_object_read
+// CHECK: llvm.call @talos_rt_v1_object_write
+// CHECK: llvm.call @talos_rt_v1_object_write
+// CHECK: llvm.call @talos_rt_v1_object_read
 // CHECK: llvm.udiv
-// CHECK: llvm.call @obelisk_rt_v1_object_write
-// CHECK-NOT: llvm.call @obelisk_rt_v1_object_bits_insert
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_managed_nba
+// CHECK: llvm.call @talos_rt_v1_object_write
+// CHECK-NOT: llvm.call @talos_rt_v1_object_bits_insert
+// CHECK: llvm.call @talos_rt_v1_scheduler_managed_nba
 // CHECK: llvm.call @base_get
-// CHECK: llvm.call @obelisk_rt_v1_method_invoke
-// CHECK: llvm.call @obelisk_rt_v1_object_cast
+// CHECK: llvm.call @talos_rt_v1_method_invoke
+// CHECK: llvm.call @talos_rt_v1_object_cast
 // CHECK: %[[IID:.*]] = llvm.mlir.constant(1 : i64)
 // CHECK: %[[ORDINAL:.*]] = llvm.mlir.constant(0 : i64)
 // CHECK: %[[SIGNATURE:.*]] = llvm.mlir.constant(17 : i64)
-// CHECK: llvm.call @obelisk_rt_v1_interface_method_invoke({{.*}}, {{.*}}, %[[IID]], %[[ORDINAL]], %[[SIGNATURE]],
-// CHECK: llvm.call @obelisk_rt_v1_gc_safepoint
+// CHECK: llvm.call @talos_rt_v1_interface_method_invoke({{.*}}, {{.*}}, %[[IID]], %[[ORDINAL]], %[[SIGNATURE]],
+// CHECK: llvm.call @talos_rt_v1_gc_safepoint
 // CHECK-NOT: simulation.class
 // CHECK-NOT: simulation.managed

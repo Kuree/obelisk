@@ -1,10 +1,10 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov --coverage-test=explicit-cross | FileCheck %s --check-prefix=QUERY
 // RUN: %t --coverage-output=%t.reverse.obcov --coverage-test=explicit-cross-reverse +reverse | FileCheck %s --check-prefix=QUERY
-// RUN: obelisk-cov merge -o %t.merged.obcov %t.obcov %t.reverse.obcov
-// RUN: obelisk-cov inspect %t.merged.obcov | FileCheck %s --check-prefix=MERGED
+// RUN: talos-cov merge -o %t.merged.obcov %t.obcov %t.reverse.obcov
+// RUN: talos-cov inspect %t.merged.obcov | FileCheck %s --check-prefix=MERGED
 // RUN: %t --coverage-load=%t.obcov --coverage-output=%t.loaded.obcov --coverage-test=explicit-cross-loaded | FileCheck %s --check-prefix=LOADED
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 
 // Constructing the covergroup instances in opposite orders yields the same
 // counts, and the two runs merge: the merge holds two runs and the

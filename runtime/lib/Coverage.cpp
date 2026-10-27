@@ -10,7 +10,7 @@
 #include "../../lib/Coverage/CoverageTransitionIndex.h"
 #include "ProcessPacking.h"
 #include "ProcessShared.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Runtime/StableHash.h"
 
 #include <cctype>
 #include <charconv>
@@ -32,8 +32,8 @@
 // Sampling retains only the immutable label graph and numeric bin ordinals.
 // Constructor query indexes and temporary value projections can be released.
 struct FunctionalCoverageCrossSelection {
-  using Graph = obelisk::coverage::detail::DecisionIndex;
-  using Index = obelisk::coverage::detail::IndexMap<uint64_t, uint32_t>;
+  using Graph = talos::coverage::detail::DecisionIndex;
+  using Index = talos::coverage::detail::IndexMap<uint64_t, uint32_t>;
   std::shared_ptr<const Graph> graph;
   std::vector<Index> bins;
   std::vector<std::pair<uint32_t, uint32_t>> variables;
@@ -60,49 +60,49 @@ struct FunctionalCoverageCrossSelection {
 // Templates are partitioned once. A constructor then touches only its type's
 // static rows and its newly resolved bundle, independent of earlier instances.
 struct FunctionalCoverageConstructionSchemas {
-  obelisk::coverage::Digest schemaFingerprint{};
-  obelisk::coverage::detail::TypeHierarchyIndex hierarchy;
-  obelisk::coverage::detail::IndexMap<
-      uint64_t, std::shared_ptr<const obelisk::coverage::Database>>
+  talos::coverage::Digest schemaFingerprint{};
+  talos::coverage::detail::TypeHierarchyIndex hierarchy;
+  talos::coverage::detail::IndexMap<
+      uint64_t, std::shared_ptr<const talos::coverage::Database>>
       types;
-  obelisk::coverage::detail::IndexMap<
-      uint64_t, obelisk::coverage::FunctionalContainerType>
+  talos::coverage::detail::IndexMap<
+      uint64_t, talos::coverage::FunctionalContainerType>
       containerTypes;
-  obelisk::coverage::detail::IndexMap<
-      uint64_t, obelisk::coverage::FunctionalAggregateType>
+  talos::coverage::detail::IndexMap<
+      uint64_t, talos::coverage::FunctionalAggregateType>
       aggregateTypes;
-  obelisk::coverage::detail::IndexMap<uint64_t,
-                                      obelisk::coverage::FunctionalClassType>
+  talos::coverage::detail::IndexMap<uint64_t,
+                                      talos::coverage::FunctionalClassType>
       classTypes;
-  obelisk::coverage::detail::IndexMap<uint64_t, uint64_t> virtualInterfaceTypes;
-  obelisk::coverage::detail::IndexMap<uint64_t, uint64_t>
+  talos::coverage::detail::IndexMap<uint64_t, uint64_t> virtualInterfaceTypes;
+  talos::coverage::detail::IndexMap<uint64_t, uint64_t>
       virtualInterfaceScopes;
-  obelisk::coverage::detail::IndexMap<uint64_t, uint64_t> formalValueTypes;
-  obelisk::coverage::detail::IndexSet<uint64_t> itemIDs, binIDs, valueSetIDs;
-  obelisk::coverage::detail::IndexMap<uint64_t,
-                                      obelisk::coverage::FunctionalItem>
+  talos::coverage::detail::IndexMap<uint64_t, uint64_t> formalValueTypes;
+  talos::coverage::detail::IndexSet<uint64_t> itemIDs, binIDs, valueSetIDs;
+  talos::coverage::detail::IndexMap<uint64_t,
+                                      talos::coverage::FunctionalItem>
       items;
-  using TypeProfile = obelisk::coverage::detail::IndexMap<
-      std::tuple<obelisk::coverage::FunctionalConfigurationOptionOwnerKind,
+  using TypeProfile = talos::coverage::detail::IndexMap<
+      std::tuple<talos::coverage::FunctionalConfigurationOptionOwnerKind,
                  uint64_t,
-                 obelisk::coverage::FunctionalConfigurationOptionKind>,
-      std::tuple<obelisk::coverage::FunctionalConfigurationValueKind, uint64_t,
+                 talos::coverage::FunctionalConfigurationOptionKind>,
+      std::tuple<talos::coverage::FunctionalConfigurationValueKind, uint64_t,
                  std::string>>;
-  obelisk::coverage::detail::IndexMap<uint64_t, TypeProfile> loadedTypeProfiles;
+  talos::coverage::detail::IndexMap<uint64_t, TypeProfile> loadedTypeProfiles;
 };
 
 struct FunctionalCoverageConfigurationSchemas {
-  const obelisk::coverage::Database *source = nullptr;
-  obelisk::coverage::detail::IndexMap<
+  const talos::coverage::Database *source = nullptr;
+  talos::coverage::detail::IndexMap<
       FunctionalCoverageTypeKey,
-      std::shared_ptr<const obelisk::coverage::Database>>
+      std::shared_ptr<const talos::coverage::Database>>
       configurations;
 };
 
 struct FunctionalCoverageQueryMetadata {
   struct SampleTransition {
-    const obelisk::coverage::ResolvedTransitionAlternative *resolved = nullptr;
-    const obelisk::coverage::TransitionAlternative *definition = nullptr;
+    const talos::coverage::ResolvedTransitionAlternative *resolved = nullptr;
+    const talos::coverage::TransitionAlternative *definition = nullptr;
     size_t bin = 0;
     size_t activeSlot = 0;
   };
@@ -122,28 +122,28 @@ struct FunctionalCoverageQueryMetadata {
   std::shared_ptr<const FunctionalCoverageConstructionSchemas> templates;
   ConstructionOptions groupOptions;
   std::vector<ConstructionOptions> itemOptions;
-  std::vector<obelisk::coverage::ResolvedFunctionalItem> items;
-  std::vector<obelisk::coverage::ResolvedFunctionalBin> bins;
-  obelisk::coverage::detail::IndexMap<uint64_t, size_t> itemPositions;
-  obelisk::coverage::detail::IndexMap<uint64_t, size_t> templateItemPositions;
+  std::vector<talos::coverage::ResolvedFunctionalItem> items;
+  std::vector<talos::coverage::ResolvedFunctionalBin> bins;
+  talos::coverage::detail::IndexMap<uint64_t, size_t> itemPositions;
+  talos::coverage::detail::IndexMap<uint64_t, size_t> templateItemPositions;
   /// Same-name inherited selectors follow the effective aggregating item.
   /// SIZE_MAX marks ambiguity without a linear scan at every field read.
-  obelisk::coverage::detail::IndexMap<std::pair<std::string, uint32_t>, size_t>
+  talos::coverage::detail::IndexMap<std::pair<std::string, uint32_t>, size_t>
       inheritedItemPositions;
-  obelisk::coverage::detail::IndexMap<uint64_t, size_t> binPositions;
-  obelisk::coverage::detail::IndexMap<uint64_t, size_t> crossPositions;
+  talos::coverage::detail::IndexMap<uint64_t, size_t> binPositions;
+  talos::coverage::detail::IndexMap<uint64_t, size_t> crossPositions;
   std::vector<std::vector<size_t>> itemBins;
-  obelisk::coverage::detail::IndexSet<uint64_t> explicitAtLeastItems;
+  talos::coverage::detail::IndexSet<uint64_t> explicitAtLeastItems;
   /// Sample ordinals are frozen with the configuration. Optional defaults
   /// occupy their own slots even when omitted from a particular ABI batch.
-  std::vector<const obelisk::coverage::FunctionalExpression *>
+  std::vector<const talos::coverage::FunctionalExpression *>
       sampleExpressions;
   std::vector<SampleItem> sampleItems;
   std::vector<size_t> binIffs;
-  std::vector<const obelisk::coverage::ResolvedFunctionalValueSet *>
+  std::vector<const talos::coverage::ResolvedFunctionalValueSet *>
       binValueSets;
-  obelisk::coverage::detail::IndexMap<
-      uint64_t, const obelisk::coverage::ResolvedFunctionalValueSet *>
+  talos::coverage::detail::IndexMap<
+      uint64_t, const talos::coverage::ResolvedFunctionalValueSet *>
       valueSets;
 };
 
@@ -151,30 +151,30 @@ struct FunctionalCoverageDiagnosticIndex {
   /// Live rows refer to the current run and instances, which enter the
   /// persisted schema only when a snapshot is assembled. Keeping them here
   /// leaves coverage_load's input database valid after an illegal-bin hit.
-  std::vector<obelisk::coverage::IllegalBinDiagnostic> rows;
+  std::vector<talos::coverage::IllegalBinDiagnostic> rows;
   size_t indexed = 0;
-  obelisk::coverage::detail::IndexMap<
-      std::tuple<obelisk::coverage::UUID, uint64_t, uint64_t, uint64_t>, size_t>
+  talos::coverage::detail::IndexMap<
+      std::tuple<talos::coverage::UUID, uint64_t, uint64_t, uint64_t>, size_t>
       positions;
 };
 
 struct FunctionalCoverageLoadedData {
   struct Instance {
     uint64_t typeID = 0;
-    obelisk::coverage::Digest configuration{};
-    obelisk::coverage::detail::IndexMap<uint64_t, uint64_t> counts;
+    talos::coverage::Digest configuration{};
+    talos::coverage::detail::IndexMap<uint64_t, uint64_t> counts;
     // Cross identities here are template IDs, shared by all configurations.
-    obelisk::coverage::detail::IndexMap<
-        uint64_t, obelisk::coverage::detail::IndexMap<
+    talos::coverage::detail::IndexMap<
+        uint64_t, talos::coverage::detail::IndexMap<
                       std::vector<uint64_t>, FunctionalCoverageCrossTupleState>>
         crossTuples;
-    std::vector<obelisk::coverage::ResolvedInstanceOption> options;
+    std::vector<talos::coverage::ResolvedInstanceOption> options;
     // The persisted profile is immutable until the next database load. Point
     // queries borrow this full profile using their original item ordinal.
     mutable std::shared_ptr<const FunctionalCoverageInstanceState> profile;
   };
-  const obelisk::coverage::Database *source = nullptr;
-  obelisk::coverage::detail::IndexMap<FunctionalCoverageTypeKey,
+  const talos::coverage::Database *source = nullptr;
+  talos::coverage::detail::IndexMap<FunctionalCoverageTypeKey,
                                       std::vector<Instance>>
       configurations;
 };
@@ -182,21 +182,21 @@ struct FunctionalCoverageLoadedData {
 namespace {
 
 bool isFunctionalRealValueKind(uint32_t kind) {
-  return kind == OBELISK_RT_FUNCTIONAL_VALUE_REAL ||
-         kind == OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL;
+  return kind == TALOS_RT_FUNCTIONAL_VALUE_REAL ||
+         kind == TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL;
 }
 
 std::optional<double>
-functionalRealValue(const obelisk_rt_functional_value_v1 &value) {
+functionalRealValue(const talos_rt_functional_value_v1 &value) {
   if (!value.value || value.unknown)
     return std::nullopt;
-  if (value.kind == OBELISK_RT_FUNCTIONAL_VALUE_REAL && value.bit_width == 64 &&
+  if (value.kind == TALOS_RT_FUNCTIONAL_VALUE_REAL && value.bit_width == 64 &&
       value.value_size == sizeof(double)) {
     double real;
     std::memcpy(&real, value.value, sizeof(real));
     return real;
   }
-  if (value.kind == OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL &&
+  if (value.kind == TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL &&
       value.bit_width == 32 && value.value_size == sizeof(float)) {
     float real;
     std::memcpy(&real, value.value, sizeof(real));
@@ -204,9 +204,9 @@ functionalRealValue(const obelisk_rt_functional_value_v1 &value) {
   }
   return std::nullopt;
 }
-using obelisk::coverage::detail::IndexMap;
-using obelisk::coverage::detail::IndexSet;
-using obelisk::coverage::detail::sortByKey;
+using talos::coverage::detail::IndexMap;
+using talos::coverage::detail::IndexSet;
+using talos::coverage::detail::sortByKey;
 
 int32_t saturateI32(uint64_t value) {
   return value > static_cast<uint64_t>(INT32_MAX) ? INT32_MAX
@@ -217,7 +217,7 @@ uint64_t saturatingAdd(uint64_t left, uint64_t right) {
   return right > UINT64_MAX - left ? UINT64_MAX : left + right;
 }
 
-CoverageState *coverageState(obelisk_rt_context *context, bool create) {
+CoverageState *coverageState(talos_rt_context *context, bool create) {
   if (!context->coverage && create)
     context->coverage = std::make_unique<CoverageState>();
   return context->coverage.get();
@@ -241,28 +241,28 @@ bool atomicSaturatingIncrement(std::atomic<uint64_t> &value) {
 }
 
 struct CrossSelectorTerm {
-  const obelisk::coverage::CrossSelectorNode *condition = nullptr;
+  const talos::coverage::CrossSelectorNode *condition = nullptr;
   bool negated = false;
 };
 
 using CrossSelectorConjunction = std::vector<CrossSelectorTerm>;
 using CrossSelectorDNF = std::vector<CrossSelectorConjunction>;
 
-obelisk_rt_status
-decodeCrossSelectorDNF(const obelisk::coverage::Database &schema,
-                       const obelisk::coverage::CrossSelectorNode &root,
+talos_rt_status
+decodeCrossSelectorDNF(const talos::coverage::Database &schema,
+                       const talos::coverage::CrossSelectorNode &root,
                        uint64_t alternativeLimit, CrossSelectorDNF &result,
                        bool substituteSetsWithFalse = false) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   result.clear();
   if (alternativeLimit == 0)
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
   std::unordered_map<uint64_t, const CrossSelectorNode *> nodes;
   for (const CrossSelectorNode &node : schema.crossSelectorNodes) {
     if (node.cross != root.cross)
       continue;
     if (!nodes.emplace(node.id, &node).second)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
   }
 
   std::vector<const CrossSelectorNode *> reachable;
@@ -278,14 +278,14 @@ decodeCrossSelectorDNF(const obelisk::coverage::Database &schema,
       if (ordinal >= node->operandCount ||
           uint64_t{node->firstOperand} + ordinal >=
               schema.crossSelectorOperands.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       const CrossSelectorOperand &operand =
           schema.crossSelectorOperands[node->firstOperand + ordinal];
       if (operand.node != node->id || operand.ordinal != ordinal)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       auto child = nodes.find(operand.operand);
       if (child == nodes.end() || child->second->ordinal >= node->ordinal)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       pending.push_back(child->second);
     }
   }
@@ -357,20 +357,20 @@ decodeCrossSelectorDNF(const obelisk::coverage::Database &schema,
       if (!node->target || node->operandCount || node->withExpression ||
           node->constructionExpression || node->tupleSet ||
           node->matchesExpression)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       nodeDNF.push_back({{node, false}});
     } else if (node->kind == CrossSelectorKind::AllTuples) {
       if (node->target || node->bin || node->valueSet || node->withExpression ||
           node->constructionExpression || node->tupleSet ||
           node->matchesExpression || node->operandCount || node->flags ||
           node->matchesPolicy != CrossMatchesPolicy::None || node->matchesCount)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       nodeDNF.emplace_back();
     } else if (node->kind == CrossSelectorKind::Not) {
       if (node->target || node->bin || node->valueSet || node->withExpression ||
           node->constructionExpression || node->tupleSet ||
           node->matchesExpression || node->operandCount != 1)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       const CrossSelectorOperand &operand =
           schema.crossSelectorOperands[node->firstOperand];
       const CrossSelectorNode *child = nodes.at(operand.operand);
@@ -378,14 +378,14 @@ decodeCrossSelectorDNF(const obelisk::coverage::Database &schema,
           !child->target || child->operandCount || child->withExpression ||
           child->constructionExpression || child->tupleSet ||
           child->matchesExpression)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       nodeDNF.push_back({{child, true}});
     } else if (node->kind == CrossSelectorKind::And ||
                node->kind == CrossSelectorKind::Or) {
       if (node->target || node->bin || node->valueSet || node->withExpression ||
           node->constructionExpression || node->tupleSet ||
           node->matchesExpression || node->operandCount != 2)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       const CrossSelectorOperand &leftOperand =
           schema.crossSelectorOperands[node->firstOperand];
       const CrossSelectorOperand &rightOperand =
@@ -393,7 +393,7 @@ decodeCrossSelectorDNF(const obelisk::coverage::Database &schema,
       auto left = decoded.find(leftOperand.operand);
       auto right = decoded.find(rightOperand.operand);
       if (left == decoded.end() || right == decoded.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       if (node->kind == CrossSelectorKind::Or) {
         uint64_t leftTermCount = 0;
         uint64_t rightTermCount = 0;
@@ -402,25 +402,25 @@ decodeCrossSelectorDNF(const obelisk::coverage::Database &schema,
             !countTerms(left->second, leftTermCount) ||
             !countTerms(right->second, rightTermCount) ||
             rightTermCount > alternativeLimit - leftTermCount)
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         nodeDNF = left->second;
         nodeDNF.insert(nodeDNF.end(), right->second.begin(),
                        right->second.end());
       } else {
         if (!left->second.empty() &&
             right->second.size() > alternativeLimit / left->second.size())
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         nodeDNF.reserve(left->second.size() * right->second.size());
         uint64_t nodeTermCount = 0;
         for (const CrossSelectorConjunction &leftTerms : left->second)
           for (const CrossSelectorConjunction &rightTerms : right->second) {
             if (leftTerms.size() > alternativeLimit ||
                 rightTerms.size() > alternativeLimit - leftTerms.size())
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             const uint64_t conjunctionSize =
                 leftTerms.size() + rightTerms.size();
             if (conjunctionSize > alternativeLimit - nodeTermCount)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             nodeTermCount += conjunctionSize;
             CrossSelectorConjunction conjunction = leftTerms;
             conjunction.insert(conjunction.end(), rightTerms.begin(),
@@ -433,30 +433,30 @@ decodeCrossSelectorDNF(const obelisk::coverage::Database &schema,
       if (!node->constructionExpression || node->target || node->bin ||
           node->valueSet || node->withExpression || node->tupleSet ||
           node->operandCount)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       // An empty DNF is false. Parents naturally implement false && X and
       // false || X without expanding any CrossVal value domain.
     } else {
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     }
     normalize(nodeDNF);
     if ((!substituteSetsWithFalse && nodeDNF.empty()) ||
         nodeDNF.size() > alternativeLimit)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     uint64_t nodeTermCount = 0;
     if (!countTerms(nodeDNF, nodeTermCount) ||
         nodeDNF.size() > alternativeLimit - decodedAlternativeCount ||
         nodeTermCount > alternativeLimit - decodedTermCount)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     decodedAlternativeCount += nodeDNF.size();
     decodedTermCount += nodeTermCount;
     decoded.emplace(node->id, std::move(nodeDNF));
   }
   auto rootDNF = decoded.find(root.id);
   if (rootDNF == decoded.end())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   result = std::move(rootDNF->second);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 bool bit(const uint8_t *data, uint64_t index) {
@@ -499,7 +499,7 @@ void recordToggleBit(CoverageState &coverage, uint64_t index, bool newValue,
 /// publishedLow + publishedWidth) come from the new planes when given; the
 /// others from committed static state. A vector with unknown bits holds no
 /// state.
-void recordFSMMachine(const obelisk_rt_context *context,
+void recordFSMMachine(const talos_rt_context *context,
                       CoverageState &coverage,
                       const CoverageFSMMachine &machine, uint32_t published,
                       uint64_t publishedLow, uint64_t publishedWidth,
@@ -545,11 +545,11 @@ void recordFSMMachine(const obelisk_rt_context *context,
       coverage.fsmOverflow[index] = 1;
 }
 
-bool schemaCounts(const obelisk::coverage::Database &schema,
+bool schemaCounts(const talos::coverage::Database &schema,
                   uint64_t &lineCount, uint64_t &toggleBitCount) {
   lineCount = schema.linePoints.size();
   toggleBitCount = 0;
-  for (const obelisk::coverage::ToggleObject &object : schema.toggleObjects) {
+  for (const talos::coverage::ToggleObject &object : schema.toggleObjects) {
     if (object.bitWidth > UINT64_MAX - toggleBitCount)
       return false;
     toggleBitCount += object.bitWidth;
@@ -586,7 +586,7 @@ bool isValidSVScopeDefinition(int32_t scopeDefinition) {
 }
 
 uint64_t availableRunCoverage(const CoverageState &coverage) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   uint64_t flags = 0;
   for (uint64_t index = 0; index != coverage.lineCount; ++index)
     if (!coverage.lineExcluded[index]) {
@@ -614,8 +614,8 @@ uint64_t availableRunCoverage(const CoverageState &coverage) {
   return flags;
 }
 
-uint64_t runFlagForMetric(obelisk::coverage::MetricKind metric) {
-  using namespace obelisk::coverage;
+uint64_t runFlagForMetric(talos::coverage::MetricKind metric) {
+  using namespace talos::coverage;
   switch (metric) {
   case MetricKind::Line:
     return RunContainsLine;
@@ -632,9 +632,9 @@ uint64_t runFlagForMetric(obelisk::coverage::MetricKind metric) {
   }
 }
 
-void retainPersistedRunData(obelisk::coverage::Database &database,
+void retainPersistedRunData(talos::coverage::Database &database,
                             uint64_t persistedRunFlags) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (Run &run : database.runs)
     run.flags &= persistedRunFlags;
   database.runs.erase(
@@ -703,13 +703,13 @@ bool isScopeSelected(const CoverageState &coverage, uint64_t scope,
 }
 
 bool loadedCounterHit(const CoverageState &coverage,
-                      obelisk::coverage::MetricKind metric, uint64_t entity,
+                      talos::coverage::MetricKind metric, uint64_t entity,
                       uint32_t subindex) {
   if (!coverage.schema)
     return false;
   return std::any_of(coverage.schema->counters.begin(),
                      coverage.schema->counters.end(),
-                     [&](const obelisk::coverage::Counter &counter) {
+                     [&](const talos::coverage::Counter &counter) {
                        return counter.metric == metric &&
                               counter.entity == entity &&
                               counter.subindex == subindex && counter.value;
@@ -818,16 +818,16 @@ int32_t controlSelectedCoverage(CoverageState &coverage, int32_t control,
   }
 
   if (control == SVCovReset && coverage.schema) {
-    obelisk::coverage::MetricKind metric =
-        coverageType == SVCovStatement ? obelisk::coverage::MetricKind::Line
+    talos::coverage::MetricKind metric =
+        coverageType == SVCovStatement ? talos::coverage::MetricKind::Line
         : coverageType == SVCovAssertion
-            ? obelisk::coverage::MetricKind::Assertion
-        : coverageType == SVCovFSM ? obelisk::coverage::MetricKind::FSM
-                                   : obelisk::coverage::MetricKind::Toggle;
+            ? talos::coverage::MetricKind::Assertion
+        : coverageType == SVCovFSM ? talos::coverage::MetricKind::FSM
+                                   : talos::coverage::MetricKind::Toggle;
     coverage.schema->counters.erase(
         std::remove_if(coverage.schema->counters.begin(),
                        coverage.schema->counters.end(),
-                       [&](const obelisk::coverage::Counter &counter) {
+                       [&](const talos::coverage::Counter &counter) {
                          return counter.metric == metric &&
                                 resetEntities.count(counter.entity);
                        }),
@@ -859,7 +859,7 @@ int32_t querySelectedCoverage(const CoverageState &coverage,
         continue;
       total = saturatingAdd(total, 1);
       if (coverage.lineCounters[index].load(std::memory_order_relaxed) ||
-          loadedCounterHit(coverage, obelisk::coverage::MetricKind::Line,
+          loadedCounterHit(coverage, talos::coverage::MetricKind::Line,
                            point.id, 0))
         covered = saturatingAdd(covered, 1);
     }
@@ -872,7 +872,7 @@ int32_t querySelectedCoverage(const CoverageState &coverage,
         continue;
       total = saturatingAdd(total, 1);
       if (coverage.fsmCounters[index] ||
-          loadedCounterHit(coverage, obelisk::coverage::MetricKind::FSM,
+          loadedCounterHit(coverage, talos::coverage::MetricKind::FSM,
                            state.id, 0))
         covered = saturatingAdd(covered, 1);
     }
@@ -885,7 +885,7 @@ int32_t querySelectedCoverage(const CoverageState &coverage,
         continue;
       total = saturatingAdd(total, 1);
       if (coverage.assertionCounters[index].load(std::memory_order_relaxed) ||
-          loadedCounterHit(coverage, obelisk::coverage::MetricKind::Assertion,
+          loadedCounterHit(coverage, talos::coverage::MetricKind::Assertion,
                            point.id, 0))
         covered = saturatingAdd(covered, 1);
     }
@@ -901,7 +901,7 @@ int32_t querySelectedCoverage(const CoverageState &coverage,
         total = saturatingAdd(total, 2);
         for (uint32_t direction = 0; direction != 2; ++direction)
           if (coverage.toggleCounters[index * 4 + direction] ||
-              loadedCounterHit(coverage, obelisk::coverage::MetricKind::Toggle,
+              loadedCounterHit(coverage, talos::coverage::MetricKind::Toggle,
                                object.id,
                                static_cast<uint32_t>(bitIndex * 4 + direction)))
             covered = saturatingAdd(covered, 1);
@@ -916,13 +916,13 @@ int32_t querySelectedCoverage(const CoverageState &coverage,
 }
 
 struct PersistentCoverageMetric {
-  obelisk::coverage::MetricKind metric;
+  talos::coverage::MetricKind metric;
   uint64_t runFlag;
 };
 
 std::optional<PersistentCoverageMetric>
 persistentCoverageMetric(int32_t coverageType) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   if (coverageType == SVCovStatement)
     return PersistentCoverageMetric{MetricKind::Line, RunContainsLine};
   if (coverageType == SVCovToggle)
@@ -935,9 +935,9 @@ persistentCoverageMetric(int32_t coverageType) {
   return std::nullopt;
 }
 
-void retainPersistentMetric(obelisk::coverage::Database &database,
+void retainPersistentMetric(talos::coverage::Database &database,
                             PersistentCoverageMetric selected) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   database.counters.erase(
       std::remove_if(database.counters.begin(), database.counters.end(),
                      [&](const Counter &counter) {
@@ -992,11 +992,11 @@ void retainPersistentMetric(obelisk::coverage::Database &database,
   database.illegalBinDiagnostics.clear();
 }
 
-obelisk::coverage::Status
-mergePersistentMetricSlice(obelisk::coverage::Database &destination,
-                           const obelisk::coverage::Database &source,
+talos::coverage::Status
+mergePersistentMetricSlice(talos::coverage::Database &destination,
+                           const talos::coverage::Database &source,
                            PersistentCoverageMetric selected) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database result = destination;
   Status status = validate(result);
   if (status != Status::Ok)
@@ -1065,19 +1065,19 @@ struct FailedCoverageSaveCleanup {
   }
 };
 
-obelisk_rt_status copyManagedCoverageString(obelisk_rt_string_v1 value,
+talos_rt_status copyManagedCoverageString(talos_rt_string_v1 value,
                                             std::string &result) {
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(value, scratch, &bytes, &size);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(value, scratch, &bytes, &size);
+  if (status != TALOS_RT_OK)
     return status;
   if (size > SIZE_MAX)
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
   result = size ? std::string(bytes, static_cast<size_t>(size)) : std::string();
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 uint64_t processID() {
@@ -1125,7 +1125,7 @@ std::string expandOutputPath(const CoverageState &coverage) {
   return result;
 }
 
-obelisk::coverage::UUID makeRunUUID(obelisk_rt_context *context,
+talos::coverage::UUID makeRunUUID(talos_rt_context *context,
                                     CoverageState &coverage) {
   if (!std::all_of(coverage.runUUID.begin(), coverage.runUUID.end(),
                    [](uint8_t byte) { return byte == 0; }))
@@ -1136,7 +1136,7 @@ obelisk::coverage::UUID makeRunUUID(obelisk_rt_context *context,
       processID(), static_cast<uint64_t>(reinterpret_cast<uintptr_t>(context)),
       static_cast<uint64_t>(
           std::hash<std::thread::id>{}(std::this_thread::get_id()))};
-  obelisk::coverage::Digest digest = obelisk::coverage::sha256(
+  talos::coverage::Digest digest = talos::coverage::sha256(
       reinterpret_cast<const uint8_t *>(identity.data()), sizeof(identity));
   std::copy_n(digest.begin(), coverage.runUUID.size(),
               coverage.runUUID.begin());
@@ -1146,23 +1146,23 @@ obelisk::coverage::UUID makeRunUUID(obelisk_rt_context *context,
   return coverage.runUUID;
 }
 
-obelisk_rt_status mapCoverageStatus(obelisk::coverage::Status status);
+talos_rt_status mapCoverageStatus(talos::coverage::Status status);
 
-obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
+talos_rt_status makeSnapshot(talos_rt_context *context,
                                CoverageState &coverage, uint32_t runStatus,
                                uint64_t simulationTime,
-                               obelisk::coverage::Database &result) {
+                               talos::coverage::Database &result) {
   if (!coverage.schema)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   result = *coverage.schema;
-  obelisk::coverage::Diagnostic canonicalDiagnostic;
+  talos::coverage::Diagnostic canonicalDiagnostic;
   auto canonicalStatus =
-      obelisk::coverage::canonicalizeFunctionalConfigurations(
+      talos::coverage::canonicalizeFunctionalConfigurations(
           result, &canonicalDiagnostic);
-  if (canonicalStatus != obelisk::coverage::Status::Ok)
+  if (canonicalStatus != talos::coverage::Status::Ok)
     return mapCoverageStatus(canonicalStatus);
   retainPersistedRunData(result, coverage.persistedRunFlags);
-  obelisk::coverage::Run run;
+  talos::coverage::Run run;
   run.uuid = makeRunUUID(context, coverage);
   run.name = coverage.testName.empty() ? "default" : coverage.testName;
   run.status = runStatus;
@@ -1179,44 +1179,44 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
   if (std::any_of(
           result.runs.begin(), result.runs.end(),
           [&](const auto &existing) { return existing.uuid == run.uuid; }))
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   result.runs.push_back(run);
 
-  if (coverage.finalized && (run.flags & obelisk::coverage::RunContainsLine)) {
+  if (coverage.finalized && (run.flags & talos::coverage::RunContainsLine)) {
     for (uint64_t index = 0; index != coverage.lineCount; ++index)
       result.counters.push_back(
-          {run.uuid, obelisk::coverage::MetricKind::Line,
+          {run.uuid, talos::coverage::MetricKind::Line,
            result.linePoints[index].id, 0, 0,
            coverage.lineOverflow[index].load(std::memory_order_relaxed) ? 1u
                                                                         : 0u,
            coverage.lineCounters[index].load(std::memory_order_relaxed)});
   }
   if (coverage.finalized &&
-      (run.flags & obelisk::coverage::RunContainsAssertion)) {
+      (run.flags & talos::coverage::RunContainsAssertion)) {
     for (uint64_t index = 0; index != coverage.assertionCount; ++index)
       result.counters.push_back(
-          {run.uuid, obelisk::coverage::MetricKind::Assertion,
+          {run.uuid, talos::coverage::MetricKind::Assertion,
            result.assertionPoints[index].id, 0, 0,
            coverage.assertionOverflow[index].load(std::memory_order_relaxed)
                ? 1u
                : 0u,
            coverage.assertionCounters[index].load(std::memory_order_relaxed)});
   }
-  if (coverage.finalized && (run.flags & obelisk::coverage::RunContainsFSM)) {
+  if (coverage.finalized && (run.flags & talos::coverage::RunContainsFSM)) {
     for (size_t index = 0; index != coverage.fsmCounters.size(); ++index)
-      result.counters.push_back({run.uuid, obelisk::coverage::MetricKind::FSM,
+      result.counters.push_back({run.uuid, talos::coverage::MetricKind::FSM,
                                  result.fsmStates[index].id, 0, 0,
                                  coverage.fsmOverflow[index] ? 1u : 0u,
                                  coverage.fsmCounters[index]});
   }
   if (coverage.finalized &&
-      (run.flags & obelisk::coverage::RunContainsToggle)) {
+      (run.flags & talos::coverage::RunContainsToggle)) {
     uint64_t base = 0;
-    for (const obelisk::coverage::ToggleObject &object : result.toggleObjects) {
+    for (const talos::coverage::ToggleObject &object : result.toggleObjects) {
       for (uint64_t bitIndex = 0; bitIndex != object.bitWidth; ++bitIndex)
         for (uint32_t direction = 0; direction != 4; ++direction)
           result.counters.push_back(
-              {run.uuid, obelisk::coverage::MetricKind::Toggle, object.id, 0,
+              {run.uuid, talos::coverage::MetricKind::Toggle, object.id, 0,
                static_cast<uint32_t>(bitIndex * 4 + direction),
                coverage.toggleOverflow[(base + bitIndex) * 4 + direction] ? 1u
                                                                           : 0u,
@@ -1224,15 +1224,15 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
       base += object.bitWidth;
     }
   }
-  if (run.flags & obelisk::coverage::RunContainsFunctional) {
+  if (run.flags & talos::coverage::RunContainsFunctional) {
     if (coverage.diagnosticIndex)
       result.illegalBinDiagnostics.insert(
           result.illegalBinDiagnostics.end(),
           coverage.diagnosticIndex->rows.begin(),
           coverage.diagnosticIndex->rows.end());
-    using Owner = obelisk::coverage::FunctionalConfigurationOptionOwnerKind;
-    using Option = obelisk::coverage::FunctionalConfigurationOptionKind;
-    using ValueKind = obelisk::coverage::FunctionalConfigurationValueKind;
+    using Owner = talos::coverage::FunctionalConfigurationOptionOwnerKind;
+    using Option = talos::coverage::FunctionalConfigurationOptionKind;
+    using ValueKind = talos::coverage::FunctionalConfigurationValueKind;
     auto appendTypeUnsignedOption = [&](uint64_t owner, Owner ownerKind,
                                         Option option, uint64_t value) {
       result.resolvedInstanceOptions.push_back({run.uuid,
@@ -1269,14 +1269,14 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
              ValueKind::String, value, 0, 0});
     }
     using ResolvedKey =
-        std::tuple<uint64_t, obelisk::coverage::Digest, uint64_t>;
-    IndexMap<ResolvedKey, const obelisk::coverage::ResolvedFunctionalItem *>
+        std::tuple<uint64_t, talos::coverage::Digest, uint64_t>;
+    IndexMap<ResolvedKey, const talos::coverage::ResolvedFunctionalItem *>
         itemsByID;
     for (const auto &item : result.resolvedFunctionalItems)
       itemsByID.emplace(ResolvedKey{item.type, item.configuration, item.id},
                         &item);
     IndexMap<ResolvedKey, uint64_t> crossTemplates;
-    IndexMap<std::pair<uint64_t, obelisk::coverage::Digest>,
+    IndexMap<std::pair<uint64_t, talos::coverage::Digest>,
              const FunctionalCoverageTypeState *>
         typesByConfiguration;
     for (const auto &[key, type] : coverage.types) {
@@ -1309,7 +1309,7 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
       result.resolvedInstances.push_back(
           {run.uuid, instance.typeID, handle, instance.name,
            instance.generatedName
-               ? obelisk::coverage::ResolvedInstanceGeneratedName
+               ? talos::coverage::ResolvedInstanceGeneratedName
                : 0,
            instance.configuration});
       auto appendUnsignedOption = [&, &handle = handle](
@@ -1340,14 +1340,14 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
       if (instance.itemGoals.size() != type->second->items.size() ||
           instance.itemWeights.size() != type->second->items.size() ||
           instance.itemAtLeast.size() != type->second->items.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       for (size_t itemIndex = 0; itemIndex != type->second->items.size();
            ++itemIndex) {
         uint64_t resolvedID = type->second->items[itemIndex];
         auto foundItem = itemsByID.find(
             {instance.typeID, instance.configuration, resolvedID});
         if (foundItem == itemsByID.end())
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         const auto *resolved = foundItem->second;
         appendUnsignedOption(resolved->templateItem, Owner::Item, Option::Goal,
                              instance.itemGoals[itemIndex]);
@@ -1357,9 +1357,9 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
                              Option::AtLeast, instance.itemAtLeast[itemIndex]);
         if (explicitPrintMissingItems.count(resolved->templateItem)) {
           auto printMissing = printMissingByItem.find(resolved->templateItem);
-          if (resolved->kind != obelisk::coverage::FunctionalItemKind::Cross ||
+          if (resolved->kind != talos::coverage::FunctionalItemKind::Cross ||
               printMissing == printMissingByItem.end())
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           appendUnsignedOption(resolved->templateItem, Owner::Item,
                                Option::CrossNumPrintMissing,
                                printMissing->second);
@@ -1371,10 +1371,10 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
                Option::Comment, ValueKind::String, *comment->second, 0, 0});
       }
       if (instance.bins.size() != type->second->bins.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       for (const FunctionalCoverageBinState &counter : instance.bins)
         result.counters.push_back(
-            {run.uuid, obelisk::coverage::MetricKind::Functional, counter.id,
+            {run.uuid, talos::coverage::MetricKind::Functional, counter.id,
              handle, 0, counter.overflow ? 1u : 0u, counter.count});
       for (const auto &crossEntry : instance.crossTuples) {
         const uint64_t resolvedCross = crossEntry.first;
@@ -1382,13 +1382,13 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
         auto cross = crossTemplates.find(
             {instance.typeID, instance.configuration, resolvedCross});
         if (cross == crossTemplates.end())
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         for (const auto &[components, counter] : tuples) {
           if (components.size() > UINT32_MAX ||
               result.sparseCrossTupleComponents.size() > UINT32_MAX ||
               components.size() >
                   UINT32_MAX - result.sparseCrossTupleComponents.size())
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           const uint32_t first =
               static_cast<uint32_t>(result.sparseCrossTupleComponents.size());
           result.sparseCrossTupleComponents.insert(
@@ -1397,7 +1397,7 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
           result.sparseCrossTuples.push_back(
               {run.uuid, handle, cross->second, first,
                static_cast<uint32_t>(components.size()), counter.count,
-               counter.overflow ? obelisk::coverage::SparseCrossTupleOverflow
+               counter.overflow ? talos::coverage::SparseCrossTupleOverflow
                                 : 0});
         }
       }
@@ -1423,7 +1423,7 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
                               row.simulationTime);
             });
   struct OrderedSparseTuple {
-    obelisk::coverage::SparseCrossTuple tuple;
+    talos::coverage::SparseCrossTuple tuple;
     std::vector<uint64_t> components;
   };
   std::vector<OrderedSparseTuple> sparse;
@@ -1431,7 +1431,7 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
   for (const auto &tuple : result.sparseCrossTuples) {
     if (uint64_t{tuple.firstComponent} + tuple.componentCount >
         result.sparseCrossTupleComponents.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     sparse.push_back(
         {tuple,
          std::vector<uint64_t>(
@@ -1454,20 +1454,20 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
     result.sparseCrossTuples.push_back(entry.tuple);
   }
   result.schemaFingerprint =
-      obelisk::coverage::computeSchemaFingerprint(result);
-  return OBELISK_RT_OK;
+      talos::coverage::computeSchemaFingerprint(result);
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status mapCoverageStatus(obelisk::coverage::Status status) {
+talos_rt_status mapCoverageStatus(talos::coverage::Status status) {
   switch (status) {
-  case obelisk::coverage::Status::Ok:
-    return OBELISK_RT_OK;
-  case obelisk::coverage::Status::OutOfMemory:
-    return OBELISK_RT_OUT_OF_MEMORY;
-  case obelisk::coverage::Status::IoError:
-    return OBELISK_RT_IO_ERROR;
+  case talos::coverage::Status::Ok:
+    return TALOS_RT_OK;
+  case talos::coverage::Status::OutOfMemory:
+    return TALOS_RT_OUT_OF_MEMORY;
+  case talos::coverage::Status::IoError:
+    return TALOS_RT_IO_ERROR;
   default:
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   }
 }
 
@@ -1479,19 +1479,19 @@ struct CoverageResult {
 };
 
 struct FunctionalCoverageSetQueryIndex;
-obelisk_rt_status
-markStaticallyEmptyStateBins(obelisk::coverage::Database &schema,
+talos_rt_status
+markStaticallyEmptyStateBins(talos::coverage::Database &schema,
                              uint64_t typeID,
-                             const obelisk::coverage::Digest &configuration,
+                             const talos::coverage::Digest &configuration,
                              FunctionalCoverageSetQueryIndex &setQueries);
-obelisk_rt_status
-deriveTransitionExclusions(const obelisk::coverage::Database &schema,
+talos_rt_status
+deriveTransitionExclusions(const talos::coverage::Database &schema,
                            uint64_t typeID,
-                           const obelisk::coverage::Digest &configuration,
+                           const talos::coverage::Digest &configuration,
                            std::unordered_set<uint64_t> &suppressedAlternatives,
                            std::unordered_set<uint64_t> &emptyBins,
                            FunctionalCoverageSetQueryIndex &setQueries);
-bool functionalBooleanTrue(const obelisk_rt_functional_value_v1 &value);
+bool functionalBooleanTrue(const talos_rt_functional_value_v1 &value);
 
 struct FunctionalIdentityReservations {
   const IndexSet<uint64_t> &templates;
@@ -1507,12 +1507,12 @@ template <typename Reservations>
 uint64_t resolvedFunctionalID(const char *nameSpace, uint64_t typeID,
                               uint64_t templateID, uint32_t ordinal,
                               const Reservations &occupied) {
-  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
-  hash = obelisk_stable_hash_append(hash, nameSpace, std::strlen(nameSpace));
-  hash = obelisk_stable_hash_append_byte(hash, 0);
-  hash = obelisk_stable_hash_append_uint_le(hash, typeID, 8);
-  hash = obelisk_stable_hash_append_uint_le(hash, templateID, 8);
-  hash = obelisk_stable_hash_append_uint_le(hash, ordinal, 4);
+  uint64_t hash = TALOS_STABLE_HASH_OFFSET_BASIS;
+  hash = talos_stable_hash_append(hash, nameSpace, std::strlen(nameSpace));
+  hash = talos_stable_hash_append_byte(hash, 0);
+  hash = talos_stable_hash_append_uint_le(hash, typeID, 8);
+  hash = talos_stable_hash_append_uint_le(hash, templateID, 8);
+  hash = talos_stable_hash_append_uint_le(hash, ordinal, 4);
   // Stable identities are never repaired with a physical-table ordinal: a
   // collision is an invalid design, exactly like a compiler stable-ID
   // collision.  This keeps the identity invariant under unrelated insertion.
@@ -1573,10 +1573,10 @@ uint32_t functionalLimbCount(uint32_t bitWidth) {
 
 FunctionalInteger
 functionalIntegerFromBits(std::vector<uint64_t> bits, uint32_t bitWidth,
-                          obelisk::coverage::CoverageSignedness signedness) {
+                          talos::coverage::CoverageSignedness signedness) {
   FunctionalInteger result;
   result.negative =
-      signedness == obelisk::coverage::CoverageSignedness::Signed &&
+      signedness == talos::coverage::CoverageSignedness::Signed &&
       ((bits.back() >> ((bitWidth - 1) % 64)) & 1);
   result.magnitude = std::move(bits);
   if (result.negative) {
@@ -1594,18 +1594,18 @@ functionalIntegerFromBits(std::vector<uint64_t> bits, uint32_t bitWidth,
   return result;
 }
 
-bool decodeFunctionalInteger(const obelisk_rt_functional_value_v1 &descriptor,
-                             obelisk::coverage::CoverageSignedness signedness,
+bool decodeFunctionalInteger(const talos_rt_functional_value_v1 &descriptor,
+                             talos::coverage::CoverageSignedness signedness,
                              FunctionalInteger &result, bool &hasUnknown) {
-  if ((descriptor.kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL &&
-       descriptor.kind != OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE) ||
+  if ((descriptor.kind != TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL &&
+       descriptor.kind != TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE) ||
       !descriptor.bit_width ||
       descriptor.value_size != (descriptor.bit_width + 7) / 8 ||
       !descriptor.value ||
-      (descriptor.kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE) !=
+      (descriptor.kind == TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE) !=
           (descriptor.unknown != nullptr) ||
-      (signedness != obelisk::coverage::CoverageSignedness::Signed &&
-       signedness != obelisk::coverage::CoverageSignedness::Unsigned) ||
+      (signedness != talos::coverage::CoverageSignedness::Signed &&
+       signedness != talos::coverage::CoverageSignedness::Unsigned) ||
       descriptor.bit_width > UINT32_MAX)
     return false;
 
@@ -1617,7 +1617,7 @@ bool decodeFunctionalInteger(const obelisk_rt_functional_value_v1 &descriptor,
         readLittleEndianLimb(descriptor.unknown, descriptor.value_size, limb);
     uint64_t encoded =
         readLittleEndianLimb(descriptor.value, descriptor.value_size, limb);
-    bits[limb] = descriptor.kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
+    bits[limb] = descriptor.kind == TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE
                      ? encoded ^ unknown
                      : encoded;
     if (limb + 1 == limbCount && descriptor.bit_width % 64) {
@@ -1635,8 +1635,8 @@ bool decodeFunctionalInteger(const obelisk_rt_functional_value_v1 &descriptor,
 
 struct FunctionalWildcardCube {
   uint32_t bitWidth = 0;
-  obelisk::coverage::CoverageSignedness signedness =
-      obelisk::coverage::CoverageSignedness::NotApplicable;
+  talos::coverage::CoverageSignedness signedness =
+      talos::coverage::CoverageSignedness::NotApplicable;
   std::vector<uint64_t> aval;
   std::vector<uint64_t> wildcard;
 };
@@ -1654,18 +1654,18 @@ void setCubeBit(std::vector<uint64_t> &plane, uint32_t index, bool value) {
 }
 
 bool decodeFunctionalWildcardCube(
-    const obelisk_rt_functional_value_v1 &descriptor,
-    obelisk::coverage::CoverageSignedness signedness,
+    const talos_rt_functional_value_v1 &descriptor,
+    talos::coverage::CoverageSignedness signedness,
     FunctionalWildcardCube &result) {
-  if ((descriptor.kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL &&
-       descriptor.kind != OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE) ||
+  if ((descriptor.kind != TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL &&
+       descriptor.kind != TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE) ||
       !descriptor.bit_width || descriptor.bit_width > UINT32_MAX ||
       descriptor.value_size != (descriptor.bit_width + 7) / 8 ||
       !descriptor.value ||
-      (descriptor.kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE) !=
+      (descriptor.kind == TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE) !=
           (descriptor.unknown != nullptr) ||
-      (signedness != obelisk::coverage::CoverageSignedness::Signed &&
-       signedness != obelisk::coverage::CoverageSignedness::Unsigned))
+      (signedness != talos::coverage::CoverageSignedness::Signed &&
+       signedness != talos::coverage::CoverageSignedness::Unsigned))
     return false;
   result.bitWidth = static_cast<uint32_t>(descriptor.bit_width);
   result.signedness = signedness;
@@ -1677,7 +1677,7 @@ bool decodeFunctionalWildcardCube(
         readLittleEndianLimb(descriptor.unknown, descriptor.value_size, limb);
     uint64_t encoded =
         readLittleEndianLimb(descriptor.value, descriptor.value_size, limb);
-    uint64_t aval = descriptor.kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
+    uint64_t aval = descriptor.kind == TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE
                         ? encoded ^ unknown
                         : encoded;
     result.wildcard[limb] = unknown;
@@ -1697,7 +1697,7 @@ FunctionalInteger wildcardCubeExtreme(const FunctionalWildcardCube &cube,
   for (uint32_t bit = 0; bit != cube.bitWidth; ++bit)
     if (cubeBit(cube.wildcard, bit))
       setCubeBit(bits, bit, maximum);
-  if (cube.signedness == obelisk::coverage::CoverageSignedness::Signed) {
+  if (cube.signedness == talos::coverage::CoverageSignedness::Signed) {
     uint32_t sign = cube.bitWidth - 1;
     const bool signCanZero =
         cubeBit(cube.wildcard, sign) || !cubeBit(cube.aval, sign);
@@ -1711,12 +1711,12 @@ FunctionalInteger wildcardCubeExtreme(const FunctionalWildcardCube &cube,
 
 bool functionalIntegerRepresentable(
     const FunctionalInteger &value, uint32_t bitWidth,
-    obelisk::coverage::CoverageSignedness signedness);
+    talos::coverage::CoverageSignedness signedness);
 
 std::vector<FunctionalWildcardCube> castFunctionalWildcardCube(
     const FunctionalWildcardCube &source, uint32_t targetWidth,
-    obelisk::coverage::CoverageSignedness targetSignedness) {
-  using obelisk::coverage::CoverageSignedness;
+    talos::coverage::CoverageSignedness targetSignedness) {
+  using talos::coverage::CoverageSignedness;
   auto constrain = [](FunctionalWildcardCube &cube, uint32_t begin,
                       uint32_t end, bool value) {
     for (uint32_t bit = begin; bit < end; ++bit) {
@@ -1821,8 +1821,8 @@ FunctionalInteger functionalMaximum(uint32_t bitWidth, bool isSigned) {
 
 bool functionalIntegerRepresentable(
     const FunctionalInteger &value, uint32_t bitWidth,
-    obelisk::coverage::CoverageSignedness signedness) {
-  bool isSigned = signedness == obelisk::coverage::CoverageSignedness::Signed;
+    talos::coverage::CoverageSignedness signedness) {
+  bool isSigned = signedness == talos::coverage::CoverageSignedness::Signed;
   if (value.negative) {
     if (!isSigned)
       return false;
@@ -1969,7 +1969,7 @@ long double floatingFunctionalMagnitude(const FunctionalMagnitude &value) {
 struct FunctionalCrossProfile {
   uint64_t atLeast = 1;
   uint64_t type = 0;
-  obelisk::coverage::Digest configuration{};
+  talos::coverage::Digest configuration{};
   uint64_t cross = 0;
   uint64_t root = 0;
   uint32_t targetCount = 0;
@@ -1982,18 +1982,18 @@ struct FunctionalCrossProfile {
 };
 
 using FunctionalCrossNodeKey =
-    std::tuple<uint64_t, obelisk::coverage::Digest, uint64_t, uint64_t>;
+    std::tuple<uint64_t, talos::coverage::Digest, uint64_t, uint64_t>;
 using FunctionalCrossBinKey =
-    std::tuple<uint64_t, obelisk::coverage::Digest, uint64_t>;
+    std::tuple<uint64_t, talos::coverage::Digest, uint64_t>;
 
 /// Count the union of canonical automatic-cross graphs without enumerating
 /// tuples. Each state identifies the profile nodes that still accept a prefix;
 /// equal labels are merged and equal successor states carry a multiplicity.
 bool countFunctionalCrossProfileUnion(
-    const obelisk::coverage::Database &schema,
+    const talos::coverage::Database &schema,
     const std::vector<FunctionalCrossProfile> &profiles,
     FunctionalMagnitude &result) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   result.clear();
   if (profiles.empty())
     return true;
@@ -2078,10 +2078,10 @@ bool countFunctionalCrossProfileUnion(
 }
 
 bool functionalCrossProfileContains(
-    const obelisk::coverage::Database &schema,
+    const talos::coverage::Database &schema,
     const FunctionalCrossProfile &profile,
     const std::vector<std::string> &components) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   if (!profile.root || profile.targetCount != components.size())
     return false;
   uint64_t nodeID = profile.root;
@@ -2241,9 +2241,9 @@ struct IntegralCoverageShape {
 };
 
 bool makeIntegralCoverageShape(
-    const obelisk::coverage::Database &schema,
-    const obelisk::coverage::ResolvedFunctionalValueAtom &atom,
-    uint32_t bitWidth, obelisk::coverage::CoverageSignedness signedness,
+    const talos::coverage::Database &schema,
+    const talos::coverage::ResolvedFunctionalValueAtom &atom,
+    uint32_t bitWidth, talos::coverage::CoverageSignedness signedness,
     IntegralCoverageShape &shape);
 
 bool coverageShapeIntersectsPrefix(const IntegralCoverageShape &shape,
@@ -2258,7 +2258,7 @@ int compareIntegralBitVectors(const std::vector<uint64_t> &left,
 /// Enumerate the canonical union of signed-biased integral shapes.  Prefix
 /// blocks make the cardinality check exact before any individual values are
 /// materialized, including for overlapping wildcard cubes.
-obelisk_rt_status
+talos_rt_status
 enumerateIntegralShapeUnion(const std::vector<IntegralCoverageShape> &shapes,
                             uint32_t bitWidth,
                             std::vector<FunctionalMagnitude> &values) {
@@ -2274,8 +2274,8 @@ enumerateIntegralShapeUnion(const std::vector<IntegralCoverageShape> &shapes,
 
   values.clear();
   if (shapes.empty())
-    return OBELISK_RT_OK;
-  const uint64_t limit = obelisk::coverage::ParseLimits{}.maxRecords;
+    return TALOS_RT_OK;
+  const uint64_t limit = talos::coverage::ParseLimits{}.maxRecords;
   const uint32_t limbCount = functionalLimbCount(bitWidth);
   Frame root;
   root.prefix.resize(limbCount);
@@ -2290,7 +2290,7 @@ enumerateIntegralShapeUnion(const std::vector<IntegralCoverageShape> &shapes,
   uint64_t visited = 0;
   while (!search.empty()) {
     if (visited++ == limit)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     Frame frame = std::move(search.back());
     search.pop_back();
     std::vector<size_t> intersecting;
@@ -2320,12 +2320,12 @@ enumerateIntegralShapeUnion(const std::vector<IntegralCoverageShape> &shapes,
       if (!functionalMagnitudeFitsU32(cardinality) ||
           functionalMagnitudeAsU32(cardinality) > limit ||
           blocks.size() == limit)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       blocks.push_back({std::move(frame.prefix), frame.remainingBit});
       continue;
     }
     if (search.size() > limit - 2)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     Frame one{frame.prefix, frame.remainingBit - 1, intersecting};
     setCubeBit(one.prefix, static_cast<uint32_t>(frame.remainingBit), true);
     search.push_back(std::move(one));
@@ -2348,7 +2348,7 @@ enumerateIntegralShapeUnion(const std::vector<IntegralCoverageShape> &shapes,
       values.push_back(std::move(value));
     }
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 struct StateCoverageInterval {
@@ -2371,9 +2371,9 @@ bool advanceStateCoverageEndpoint(std::vector<uint64_t> &endpoint,
 
 template <typename Real>
 bool makeRealStateCoverageInterval(
-    const obelisk::coverage::ResolvedFunctionalValueAtom &atom,
+    const talos::coverage::ResolvedFunctionalValueAtom &atom,
     StateCoverageInterval &interval) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   double sourceLow, sourceHigh;
   std::memcpy(&sourceLow, &atom.realLowBits, sizeof(sourceLow));
   std::memcpy(&sourceHigh, &atom.realHighBits, sizeof(sourceHigh));
@@ -2411,11 +2411,11 @@ bool makeRealStateCoverageInterval(
 }
 
 bool makeStateCoverageInterval(
-    const obelisk::coverage::Database &schema,
-    const obelisk::coverage::ResolvedFunctionalValueSet &set,
-    const obelisk::coverage::ResolvedFunctionalValueAtom &atom, bool shortReal,
+    const talos::coverage::Database &schema,
+    const talos::coverage::ResolvedFunctionalValueSet &set,
+    const talos::coverage::ResolvedFunctionalValueAtom &atom, bool shortReal,
     StateCoverageInterval &interval) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   if (set.kind == FunctionalValueSetKind::Real)
     return shortReal ? makeRealStateCoverageInterval<float>(atom, interval)
                      : makeRealStateCoverageInterval<double>(atom, interval);
@@ -2456,7 +2456,7 @@ bool makeStateCoverageInterval(
 
 void mergeStateCoverageIntervals(
     std::vector<StateCoverageInterval> &intervals) {
-  obelisk::coverage::detail::sortByKey(
+  talos::coverage::detail::sortByKey(
       intervals.begin(), intervals.end(),
       [](const auto &interval) -> const auto & { return interval.low; });
   std::vector<StateCoverageInterval> merged;
@@ -2487,9 +2487,9 @@ void mergeStateCoverageIntervals(
 /// General cubes share decision graphs, grouped by their exact B plane so
 /// wildcard 0/1 expansion cannot accidentally consume constrained X/Z values.
 struct FunctionalCoverageSetQueryIndex {
-  using Set = obelisk::coverage::ResolvedFunctionalValueSet;
-  using Bin = obelisk::coverage::ResolvedFunctionalBin;
-  using Graph = obelisk::coverage::detail::DecisionIndex;
+  using Set = talos::coverage::ResolvedFunctionalValueSet;
+  using Bin = talos::coverage::ResolvedFunctionalBin;
+  using Graph = talos::coverage::detail::DecisionIndex;
   using Root = Graph::Root;
   using DomainKey = std::tuple<uint32_t, uint32_t, uint32_t, bool>;
   struct CompiledSet {
@@ -2515,27 +2515,27 @@ struct FunctionalCoverageSetQueryIndex {
     }
   };
 
-  const obelisk::coverage::Database &schema;
+  const talos::coverage::Database &schema;
   uint64_t type;
-  obelisk::coverage::Digest configuration;
-  obelisk_rt_status status = OBELISK_RT_OK;
+  talos::coverage::Digest configuration;
+  talos_rt_status status = TALOS_RT_OK;
   IndexMap<uint64_t, size_t> bins, sets, items, templateItems, plans, selectors,
       crossPlans, tupleSets;
   IndexMap<std::pair<uint64_t, uint64_t>, size_t> bindings, targetOrdinals;
   IndexMap<uint64_t, std::vector<size_t>> alternatives;
-  IndexMap<uint64_t, std::vector<const obelisk::coverage::CrossPredicateNode *>>
+  IndexMap<uint64_t, std::vector<const talos::coverage::CrossPredicateNode *>>
       predicatePrograms;
   IndexMap<std::pair<uint64_t, uint32_t>, const Set *> predicateValues;
   IndexMap<uint64_t, FunctionalMagnitude> wideMatches;
   IndexSet<uint64_t> indexTargets;
   FunctionalMagnitude
-  matchCount(const obelisk::coverage::ResolvedCrossSelectorBinding &binding) {
-    if (!(binding.flags & obelisk::coverage::ResolvedCrossSelectorWideMatches))
+  matchCount(const talos::coverage::ResolvedCrossSelectorBinding &binding) {
+    if (!(binding.flags & talos::coverage::ResolvedCrossSelectorWideMatches))
       return binding.matchesCount ? FunctionalMagnitude{binding.matchesCount}
                                   : FunctionalMagnitude{};
     auto value = wideMatches.find(binding.node);
     if (value == wideMatches.end()) {
-      status = OBELISK_RT_INVALID_DESIGN;
+      status = TALOS_RT_INVALID_DESIGN;
       return {};
     }
     return value->second;
@@ -2552,10 +2552,10 @@ struct FunctionalCoverageSetQueryIndex {
       selections;
 
   FunctionalCoverageSetQueryIndex(
-      const obelisk::coverage::Database &schema, uint64_t type,
-      const obelisk::coverage::Digest &configuration)
+      const talos::coverage::Database &schema, uint64_t type,
+      const talos::coverage::Digest &configuration)
       : schema(schema), type(type), configuration(configuration) {
-    using namespace obelisk::coverage;
+    using namespace talos::coverage;
     auto indexRows = [&](const auto &rows, auto &index) {
       for (size_t ordinal = 0; ordinal != rows.size(); ++ordinal)
         if (rows[ordinal].type == type &&
@@ -2686,7 +2686,7 @@ struct FunctionalCoverageSetQueryIndex {
   const Set *valueSet(uint64_t id) const {
     return lookup(sets, schema.resolvedFunctionalValueSets, id);
   }
-  const obelisk::coverage::ResolvedCrossSelectorBinding *
+  const talos::coverage::ResolvedCrossSelectorBinding *
   binding(uint64_t cross, uint64_t node) const {
     auto found = bindings.find({cross, node});
     return found == bindings.end()
@@ -2699,7 +2699,7 @@ struct FunctionalCoverageSetQueryIndex {
     if (found == graphs.end()) {
       bool real = std::get<0>(domain) ==
                   static_cast<uint32_t>(
-                      obelisk::coverage::FunctionalValueSetKind::Real);
+                      talos::coverage::FunctionalValueSetKind::Real);
       uint32_t width =
           real ? (std::get<3>(domain) ? 32 : 64) : std::get<1>(domain);
       found = graphs.emplace(domain, std::make_unique<Graph>(width)).first;
@@ -2712,11 +2712,11 @@ struct FunctionalCoverageSetQueryIndex {
   }
 
   void setTransitionValues(uint64_t bin, uint32_t width,
-                           obelisk::coverage::CoverageSignedness signedness,
+                           talos::coverage::CoverageSignedness signedness,
                            Root root) {
     DomainKey domain = {
         static_cast<uint32_t>(
-            obelisk::coverage::FunctionalValueSetKind::Integral),
+            talos::coverage::FunctionalValueSetKind::Integral),
         width, static_cast<uint32_t>(signedness), false};
     auto key = std::make_pair(domain, root);
     auto found = transitionSets.find(key);
@@ -2736,7 +2736,7 @@ struct FunctionalCoverageSetQueryIndex {
 
   std::shared_ptr<CompiledSet> compile(std::vector<uint64_t> sources,
                                        bool shortReal) {
-    using namespace obelisk::coverage;
+    using namespace talos::coverage;
     detail::sortByKey(sources.begin(), sources.end(),
                       [](uint64_t id) { return id; });
     sources.erase(std::unique(sources.begin(), sources.end()), sources.end());
@@ -2749,7 +2749,7 @@ struct FunctionalCoverageSetQueryIndex {
     for (uint64_t id : result->sources) {
       const Set *set = valueSet(id);
       if (!set) {
-        status = OBELISK_RT_INVALID_DESIGN;
+        status = TALOS_RT_INVALID_DESIGN;
         return nullptr;
       }
       DomainKey domain = {static_cast<uint32_t>(set->kind), set->bitWidth,
@@ -2758,7 +2758,7 @@ struct FunctionalCoverageSetQueryIndex {
         result->domain = domain;
         result->graph = &graphFor(domain);
       } else if (domain != result->domain) {
-        status = OBELISK_RT_INVALID_DESIGN;
+        status = TALOS_RT_INVALID_DESIGN;
         return nullptr;
       }
       if (!result->numeric)
@@ -2785,9 +2785,9 @@ struct FunctionalCoverageSetQueryIndex {
   }
 
   bool prepare(CompiledSet &set) {
-    using namespace obelisk::coverage;
+    using namespace talos::coverage;
     if (set.prepared)
-      return status == OBELISK_RT_OK;
+      return status == TALOS_RT_OK;
     set.prepared = true;
     if (!set.graph)
       return true;
@@ -2818,7 +2818,7 @@ struct FunctionalCoverageSetQueryIndex {
             continue;
           }
           if (atom.kind != FunctionalValueAtomKind::IntegralValue) {
-            status = OBELISK_RT_INVALID_DESIGN;
+            status = TALOS_RT_INVALID_DESIGN;
             return false;
           }
           std::vector<uint64_t> aval(atom.limbCount), bval(atom.limbCount),
@@ -2844,14 +2844,14 @@ struct FunctionalCoverageSetQueryIndex {
       }
     }
     if (graph.exhausted())
-      status = OBELISK_RT_OUT_OF_RESOURCES;
-    return status == OBELISK_RT_OK;
+      status = TALOS_RT_OUT_OF_RESOURCES;
+    return status == TALOS_RT_OK;
   }
 
   std::shared_ptr<CompiledSet>
   subject(const Bin &bin,
           const std::unordered_set<uint64_t> &suppressedAlternatives) {
-    using namespace obelisk::coverage;
+    using namespace talos::coverage;
     auto cached = binSets.find(bin.id);
     if (cached != binSets.end())
       return cached->second;
@@ -2859,7 +2859,7 @@ struct FunctionalCoverageSetQueryIndex {
     if (bin.kind == FunctionalBinKind::State) {
       auto plan = plans.find(bin.id);
       if (plan == plans.end()) {
-        status = OBELISK_RT_INVALID_DESIGN;
+        status = TALOS_RT_INVALID_DESIGN;
         return nullptr;
       }
       sources.push_back(
@@ -2867,7 +2867,7 @@ struct FunctionalCoverageSetQueryIndex {
     } else if (bin.kind == FunctionalBinKind::Transition) {
       auto found = alternatives.find(bin.id);
       if (found == alternatives.end()) {
-        status = OBELISK_RT_INVALID_DESIGN;
+        status = TALOS_RT_INVALID_DESIGN;
         return nullptr;
       }
       for (size_t ordinal : found->second) {
@@ -2878,7 +2878,7 @@ struct FunctionalCoverageSetQueryIndex {
         if (!alternative.stepCount ||
             uint64_t{alternative.firstStep} + alternative.stepCount >
                 schema.resolvedTransitionSteps.size()) {
-          status = OBELISK_RT_INVALID_DESIGN;
+          status = TALOS_RT_INVALID_DESIGN;
           return nullptr;
         }
         const auto &terminal =
@@ -2887,13 +2887,13 @@ struct FunctionalCoverageSetQueryIndex {
         if (terminal.type != type || terminal.configuration != configuration ||
             terminal.bin != bin.id || terminal.alternative != alternative.id ||
             terminal.ordinal != alternative.stepCount - 1) {
-          status = OBELISK_RT_INVALID_DESIGN;
+          status = TALOS_RT_INVALID_DESIGN;
           return nullptr;
         }
         sources.push_back(terminal.valueSet);
       }
     } else {
-      status = OBELISK_RT_INVALID_DESIGN;
+      status = TALOS_RT_INVALID_DESIGN;
       return nullptr;
     }
     auto result = compile(std::move(sources), shortRealItems.count(bin.item));
@@ -2902,7 +2902,7 @@ struct FunctionalCoverageSetQueryIndex {
   }
 
   std::shared_ptr<CompiledSet> mask(const Bin &bin) {
-    using namespace obelisk::coverage;
+    using namespace talos::coverage;
     if (bin.kind != FunctionalBinKind::State)
       return nullptr; // State exclusions do not remove transition values.
     auto found = exclusionSets.find(bin.item);
@@ -2920,21 +2920,21 @@ struct FunctionalCoverageSetQueryIndex {
                   const std::unordered_set<uint64_t> &suppressedAlternatives) {
     const Bin *definition = bin(binID);
     if (!definition) {
-      status = OBELISK_RT_INVALID_DESIGN;
+      status = TALOS_RT_INVALID_DESIGN;
       return false;
     }
     auto left = subject(*definition, suppressedAlternatives);
     auto right = compile({selectionID}, shortRealItems.count(definition->item));
     auto excluded = mask(*definition);
     if (left && excluded && left->domain != excluded->domain)
-      status = OBELISK_RT_INVALID_DESIGN;
-    if (!left || !right || status != OBELISK_RT_OK || !left->graph ||
+      status = TALOS_RT_INVALID_DESIGN;
+    if (!left || !right || status != TALOS_RT_OK || !left->graph ||
         left->domain != right->domain)
       return false;
     if (left->numeric && right->numeric && (!excluded || excluded->numeric)) {
       auto key = std::make_tuple(
           definition->item, selectionID,
-          definition->kind == obelisk::coverage::FunctionalBinKind::State);
+          definition->kind == talos::coverage::FunctionalBinKind::State);
       auto cached = selections.find(key);
       if (cached == selections.end()) {
         auto trimmed = std::make_shared<CompiledSet>();
@@ -2999,7 +2999,7 @@ struct FunctionalCoverageSetQueryIndex {
       }
       Root overlap = graph.intersect(remaining, selected->second);
       if (graph.exhausted()) {
-        status = OBELISK_RT_OUT_OF_RESOURCES;
+        status = TALOS_RT_OUT_OF_RESOURCES;
         return false;
       }
       if (overlap)
@@ -3013,14 +3013,14 @@ struct FunctionalCoverageSetQueryIndex {
               const std::unordered_set<uint64_t> &suppressedAlternatives) {
     const Bin *definition = bin(binID);
     if (!definition || !cap) {
-      status = !cap ? OBELISK_RT_INVALID_ARGUMENT : OBELISK_RT_INVALID_DESIGN;
+      status = !cap ? TALOS_RT_INVALID_ARGUMENT : TALOS_RT_INVALID_DESIGN;
       return 0;
     }
     auto values = subject(*definition, suppressedAlternatives);
     auto excluded = mask(*definition);
     if (values && excluded && values->domain != excluded->domain)
-      status = OBELISK_RT_INVALID_DESIGN;
-    if (!values || status != OBELISK_RT_OK || !values->graph ||
+      status = TALOS_RT_INVALID_DESIGN;
+    if (!values || status != TALOS_RT_OK || !values->graph ||
         !prepare(*values) || (excluded && !prepare(*excluded)))
       return 0;
     Graph &graph = *values->graph;
@@ -3034,7 +3034,7 @@ struct FunctionalCoverageSetQueryIndex {
       }
       uint64_t count = graph.cardinality(remaining, cap);
       if (graph.exhausted()) {
-        status = OBELISK_RT_OUT_OF_RESOURCES;
+        status = TALOS_RT_OUT_OF_RESOURCES;
         return 0;
       }
       if (count >= cap - result)
@@ -3048,11 +3048,11 @@ struct FunctionalCoverageSetQueryIndex {
 struct PreparedCrossValueIndex;
 std::atomic<uint64_t> nextCoveragePreparationStamp{1};
 struct PreparedFunctionalConstruction {
-  std::unique_ptr<obelisk::coverage::Database> schema;
+  std::unique_ptr<talos::coverage::Database> schema;
   std::unique_ptr<FunctionalCoverageSetQueryIndex> queries;
-  const obelisk::coverage::Database *borrowedSchema = nullptr;
+  const talos::coverage::Database *borrowedSchema = nullptr;
   FunctionalCoverageSetQueryIndex *borrowedQueries = nullptr;
-  const obelisk::coverage::Database &database() const {
+  const talos::coverage::Database &database() const {
     return schema ? *schema : *borrowedSchema;
   }
   FunctionalCoverageSetQueryIndex &query() const {
@@ -3070,9 +3070,9 @@ struct PreparedFunctionalConstruction {
 /// until after selection preserves correlations; existential value projection
 /// deduplicates overlapping bins without enumerating their Cartesian product.
 struct PreparedCrossValueIndex {
-  using Graph = obelisk::coverage::detail::DecisionIndex;
-  using Image = obelisk::coverage::detail::DecisionProjectionIndex;
-  using CountImage = obelisk::coverage::detail::DecisionCountProjectionIndex;
+  using Graph = talos::coverage::detail::DecisionIndex;
+  using Image = talos::coverage::detail::DecisionProjectionIndex;
+  using CountImage = talos::coverage::detail::DecisionCountProjectionIndex;
   using Root = Graph::Root;
   using CompiledSet = FunctionalCoverageSetQueryIndex::CompiledSet;
   struct Axis {
@@ -3081,7 +3081,7 @@ struct PreparedCrossValueIndex {
     bool fourState = false, indexFirst = false, binaryValues = true;
     std::vector<uint32_t> avalVariables, bvalVariables, valueAvalVariables,
         valueBvalVariables;
-    obelisk::coverage::CoverageSignedness signedness;
+    talos::coverage::CoverageSignedness signedness;
     Graph *source = nullptr;
     Root relation = 0;
     std::unique_ptr<Image> avalImage, bvalImage;
@@ -3101,17 +3101,17 @@ struct PreparedCrossValueIndex {
   std::shared_ptr<Graph> sampleGraph;
   std::shared_ptr<FunctionalCoverageCrossSelection> sampleSelection;
   std::unique_ptr<CountImage> countImage;
-  std::unique_ptr<obelisk::coverage::detail::PredicateDecisionIndex> predicates;
+  std::unique_ptr<talos::coverage::detail::PredicateDecisionIndex> predicates;
   IndexMap<uint64_t, size_t> targetAxes;
   IndexMap<uint64_t, Root> selectors;
   Root universe = 1;
-  obelisk_rt_status status = OBELISK_RT_OK;
+  talos_rt_status status = TALOS_RT_OK;
 
   explicit PreparedCrossValueIndex(PreparedFunctionalConstruction &prepared)
       : prepared(prepared) {}
 
   bool check() {
-    if (prepared.query().status != OBELISK_RT_OK)
+    if (prepared.query().status != TALOS_RT_OK)
       status = prepared.query().status;
     if ((relation && relation->exhausted()) ||
         (values && values->exhausted()) ||
@@ -3121,8 +3121,8 @@ struct PreparedCrossValueIndex {
         (sampleImage && sampleImage->exhausted()) ||
         (sampleGraph && sampleGraph->exhausted()) ||
         (predicates && predicates->exhausted()))
-      status = OBELISK_RT_OUT_OF_RESOURCES;
-    return status == OBELISK_RT_OK;
+      status = TALOS_RT_OUT_OF_RESOURCES;
+    return status == TALOS_RT_OK;
   }
 
   Root label(const Axis &axis, uint32_t ordinal) {
@@ -3142,7 +3142,7 @@ struct PreparedCrossValueIndex {
     auto &queries = prepared.query();
     if (!set || set->graph != axis.source ||
         (mask && mask->domain != set->domain)) {
-      status = queries.status == OBELISK_RT_OK ? OBELISK_RT_INVALID_DESIGN
+      status = queries.status == TALOS_RT_OK ? TALOS_RT_INVALID_DESIGN
                                                : queries.status;
       return 0;
     }
@@ -3177,7 +3177,7 @@ struct PreparedCrossValueIndex {
       result = relation->unite(result, relation->intersect(aval, bplane));
       if (axis.avalImage->exhausted() || axis.bvalImage->exhausted() ||
           !check()) {
-        status = OBELISK_RT_OUT_OF_RESOURCES;
+        status = TALOS_RT_OUT_OF_RESOURCES;
         return 0;
       }
     }
@@ -3187,8 +3187,8 @@ struct PreparedCrossValueIndex {
     return result;
   }
 
-  bool build(const obelisk::coverage::CrossPlan &plan) {
-    using namespace obelisk::coverage;
+  bool build(const talos::coverage::CrossPlan &plan) {
+    using namespace talos::coverage;
     const auto &schema = prepared.database();
     auto &queries = prepared.query();
     uint64_t relationWidth = 0, valueWidth = 0;
@@ -3199,7 +3199,7 @@ struct PreparedCrossValueIndex {
       if (!item ||
           target.tupleResultKind != FunctionalExpressionResultKind::Integral ||
           !target.tupleBitWidth) {
-        status = OBELISK_RT_INVALID_DESIGN;
+        status = TALOS_RT_INVALID_DESIGN;
         return false;
       }
       Axis axis;
@@ -3219,7 +3219,7 @@ struct PreparedCrossValueIndex {
       if (relationWidth + axis.binWidth + uint64_t{axis.width} * 2 >
               UINT32_MAX ||
           valueWidth + uint64_t{axis.width} * 2 > UINT32_MAX) {
-        status = OBELISK_RT_OUT_OF_RESOURCES;
+        status = TALOS_RT_OUT_OF_RESOURCES;
         return false;
       }
       relationWidth += axis.binWidth + uint64_t{axis.width} * 2;
@@ -3232,7 +3232,7 @@ struct PreparedCrossValueIndex {
       axes.push_back(std::move(axis));
     }
     if (relationWidth > (uint64_t{1} << 18)) {
-      status = OBELISK_RT_OUT_OF_RESOURCES;
+      status = TALOS_RT_OUT_OF_RESOURCES;
       return false;
     }
     relation = std::make_unique<Graph>(relationWidth);
@@ -3309,19 +3309,19 @@ struct PreparedCrossValueIndex {
     valueImage =
         std::make_unique<Image>(*relation, *values, std::move(valueVariables));
     predicates =
-        std::make_unique<obelisk::coverage::detail::PredicateDecisionIndex>(
+        std::make_unique<talos::coverage::detail::PredicateDecisionIndex>(
             *relation);
     return check();
   }
 
-  Root predicate(const obelisk::coverage::CrossSelectorNode &selector) {
-    using namespace obelisk::coverage;
+  Root predicate(const talos::coverage::CrossSelectorNode &selector) {
+    using namespace talos::coverage;
     using Predicate = detail::PredicateDecisionIndex;
     const auto &schema = prepared.database();
     auto &queries = prepared.query();
     auto program = queries.predicatePrograms.find(selector.id);
     if (program == queries.predicatePrograms.end()) {
-      status = OBELISK_RT_INVALID_DESIGN;
+      status = TALOS_RT_INVALID_DESIGN;
       return 0;
     }
     return predicates->compile(
@@ -3331,7 +3331,7 @@ struct PreparedCrossValueIndex {
           if (node.kind == CrossPredicateKind::Target) {
             auto target = targetAxes.find(node.target);
             if (target == targetAxes.end()) {
-              status = OBELISK_RT_INVALID_DESIGN;
+              status = TALOS_RT_INVALID_DESIGN;
               return value;
             }
             const auto &axis = axes[target->second];
@@ -3355,12 +3355,12 @@ struct PreparedCrossValueIndex {
             auto found =
                 queries.predicateValues.find({node.selector, node.ordinal});
             if (found == queries.predicateValues.end()) {
-              status = OBELISK_RT_INVALID_DESIGN;
+              status = TALOS_RT_INVALID_DESIGN;
               return value;
             }
             const auto &set = *found->second;
             if (set.atomCount != 1 || set.bitWidth != node.bitWidth) {
-              status = OBELISK_RT_INVALID_DESIGN;
+              status = TALOS_RT_INVALID_DESIGN;
               return value;
             }
             const auto &atom =
@@ -3381,15 +3381,15 @@ struct PreparedCrossValueIndex {
 
   Root
   matchingBins(Root subject, Root accepted,
-               const obelisk::coverage::ResolvedCrossSelectorBinding &binding) {
-    using namespace obelisk::coverage;
+               const talos::coverage::ResolvedCrossSelectorBinding &binding) {
+    using namespace talos::coverage;
     if (binding.matchesPolicy == CrossMatchesPolicy::All)
       return relation->subtract(
           binImage->project(subject),
           binImage->project(relation->subtract(subject, accepted)));
     auto count = prepared.query().matchCount(binding);
     if (count.empty()) {
-      status = OBELISK_RT_INVALID_DESIGN;
+      status = TALOS_RT_INVALID_DESIGN;
       return 0;
     }
     Root satisfying = relation->intersect(subject, accepted);
@@ -3398,7 +3398,7 @@ struct PreparedCrossValueIndex {
                : countImage->atLeast(satisfying, std::move(count));
   }
 
-  Root tupleValues(const obelisk::coverage::ResolvedFunctionalTupleSet &set) {
+  Root tupleValues(const talos::coverage::ResolvedFunctionalTupleSet &set) {
     const auto &schema = prepared.database();
     auto &queries = prepared.query();
     Root result = 0;
@@ -3406,7 +3406,7 @@ struct PreparedCrossValueIndex {
       const auto &tuple =
           schema.resolvedFunctionalTupleSetTuples[set.firstTuple + ordinal];
       if (tuple.componentCount != axes.size()) {
-        status = OBELISK_RT_INVALID_DESIGN;
+        status = TALOS_RT_INVALID_DESIGN;
         return 0;
       }
       Root value = 1;
@@ -3416,7 +3416,7 @@ struct PreparedCrossValueIndex {
                                                         index];
         if (component.ordinal != index ||
             component.target != axes[index].item) {
-          status = OBELISK_RT_INVALID_DESIGN;
+          status = TALOS_RT_INVALID_DESIGN;
           return 0;
         }
         value = relation->intersect(
@@ -3430,9 +3430,9 @@ struct PreparedCrossValueIndex {
     return result;
   }
 
-  Root select(const obelisk::coverage::CrossSelectorNode &root,
+  Root select(const talos::coverage::CrossSelectorNode &root,
               uint64_t resolvedCross, uint64_t outerWith) {
-    using namespace obelisk::coverage;
+    using namespace talos::coverage;
     const auto &schema = prepared.database();
     auto &queries = prepared.query();
     if (auto cached = selectors.find(root.id); cached != selectors.end())
@@ -3446,7 +3446,7 @@ struct PreparedCrossValueIndex {
         continue;
       if (node->withExpression && node->id != outerWith &&
           !queries.binding(resolvedCross, node->id)) {
-        status = OBELISK_RT_INVALID_DESIGN;
+        status = TALOS_RT_INVALID_DESIGN;
         return 0;
       }
       reachable.push_back(node);
@@ -3458,7 +3458,7 @@ struct PreparedCrossValueIndex {
         if (!child || child->cross != root.cross ||
             child->ordinal >= node->ordinal || operand.node != node->id ||
             operand.ordinal != ordinal) {
-          status = OBELISK_RT_INVALID_DESIGN;
+          status = TALOS_RT_INVALID_DESIGN;
           return 0;
         }
         pending.push_back(child);
@@ -3479,7 +3479,7 @@ struct PreparedCrossValueIndex {
       } else if (node->kind == CrossSelectorKind::Binsof) {
         auto target = targetAxes.find(node->target);
         if (target == targetAxes.end()) {
-          status = OBELISK_RT_INVALID_DESIGN;
+          status = TALOS_RT_INVALID_DESIGN;
           return 0;
         }
         auto &axis = axes[target->second];
@@ -3491,7 +3491,7 @@ struct PreparedCrossValueIndex {
         if (node->valueSet) {
           const auto *binding = queries.binding(resolvedCross, node->id);
           if (!binding || !binding->valueSet) {
-            status = OBELISK_RT_INVALID_DESIGN;
+            status = TALOS_RT_INVALID_DESIGN;
             return 0;
           }
           Root selection =
@@ -3516,20 +3516,20 @@ struct PreparedCrossValueIndex {
                                      binding->tupleSet)
                     : nullptr;
         if (!set) {
-          status = OBELISK_RT_INVALID_DESIGN;
+          status = TALOS_RT_INVALID_DESIGN;
           return 0;
         }
         Root accepted = tupleValues(*set);
         selected = matchingBins(universe, accepted, *binding);
       } else {
-        status = OBELISK_RT_INVALID_DESIGN;
+        status = TALOS_RT_INVALID_DESIGN;
         return 0;
       }
       if ((node->withExpression || node->predicateRoot) &&
           node->id != outerWith) {
         const auto *binding = queries.binding(resolvedCross, node->id);
         if (!binding) {
-          status = OBELISK_RT_INVALID_DESIGN;
+          status = TALOS_RT_INVALID_DESIGN;
           return 0;
         }
         Root accepted = 0;
@@ -3542,7 +3542,7 @@ struct PreparedCrossValueIndex {
                                            schema.resolvedFunctionalTupleSets,
                                            binding->tupleSet);
           if (!set) {
-            status = OBELISK_RT_INVALID_DESIGN;
+            status = TALOS_RT_INVALID_DESIGN;
             return 0;
           }
           accepted = tupleValues(*set);
@@ -3591,15 +3591,15 @@ struct PreparedCrossValueIndex {
     return sampleImage->project(selected);
   }
 
-  obelisk_rt_status bind(const obelisk::coverage::CrossPlan &plan,
-                         const obelisk::coverage::CrossSelectorNode &node,
+  talos_rt_status bind(const talos::coverage::CrossPlan &plan,
+                         const talos::coverage::CrossSelectorNode &node,
                          uint64_t resolvedCross,
                          const CoverageTupleQueueSnapshot &snapshot) {
-    using namespace obelisk::coverage;
+    using namespace talos::coverage;
     auto matches = prepared.withMatches.find(node.id);
     if (!node.withExpression || matches == prepared.withMatches.end() ||
         selectors.count(node.id) || plan.targetCount != axes.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     Root subordinate = select(node, resolvedCross, node.id);
     if (!check())
       return status;
@@ -3619,7 +3619,7 @@ struct PreparedCrossValueIndex {
                                             : nullptr;
       for (uint64_t byte = 0; byte != snapshot.valueSize; ++byte)
         if ((aval[byte] & ~used[byte]) || (bval && (bval[byte] & ~used[byte])))
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
       Root tuple = 1;
       std::vector<std::pair<uint32_t, bool>> assignments;
       for (size_t index = axes.size(); index != 0; --index) {
@@ -3634,7 +3634,7 @@ struct PreparedCrossValueIndex {
                       : ((aval[encodedBit / 8] >> (encodedBit % 8)) & 1);
             if (plane && one &&
                 !(target.tupleFlags & CrossTargetDomainFourState))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             if (!plane && axis.signedness == CoverageSignedness::Signed &&
                 bit == axis.width - 1)
               one = !one;
@@ -3665,14 +3665,14 @@ struct PreparedCrossValueIndex {
     if (!check())
       return status;
     selectors.emplace(node.id, selected);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status candidates(const obelisk::coverage::CrossPlan &plan,
-                               const obelisk::coverage::CrossSelectorNode &root,
+  talos_rt_status candidates(const talos::coverage::CrossPlan &plan,
+                               const talos::coverage::CrossSelectorNode &root,
                                uint64_t resolvedCross, uint32_t maximum,
                                CoverageTupleQueueSnapshot &output) {
-    using namespace obelisk::coverage;
+    using namespace talos::coverage;
     Root selected =
         select(root, resolvedCross, root.withExpression ? root.id : 0);
     Root image = valueImage->project(relation->intersect(universe, selected));
@@ -3680,18 +3680,18 @@ struct PreparedCrossValueIndex {
     if (!check())
       return status;
     if (!values->enumerate(image, maximum, tuples))
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     CoverageTupleQueueSnapshot result;
     result.count = tuples.size();
     if (!plan.tupleProvenanceSpan || plan.tupleProvenanceSpan > UINT64_MAX - 7)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     result.valueSize = (plan.tupleProvenanceSpan + 7) / 8;
     result.fourState = (plan.tupleFlags & CrossTupleFourState) != 0;
     uint64_t byteLimit = std::min<uint64_t>(ParseLimits{}.maxSectionBytes,
                                             std::numeric_limits<size_t>::max());
     if (result.valueSize > byteLimit ||
         (result.count && result.valueSize > byteLimit / result.count))
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     result.value.resize(result.count * result.valueSize);
     if (result.fourState)
       result.unknown.resize(result.value.size());
@@ -3718,25 +3718,25 @@ struct PreparedCrossValueIndex {
           bool bval =
               read(values->getWidth() - 1 - axis.valueBvalVariables[bit]);
           if (bval && !result.fourState)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           if (result.fourState)
             write(result.unknown, target.tupleBitOffset + bit, bval);
         }
       }
     }
     output = std::move(result);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 };
 
 // Index each physical bin once; reused crosses share their target geometry.
 void initializeSelectionIndex(PreparedFunctionalConstruction &index,
-                              const obelisk::coverage::Database &schema,
+                              const talos::coverage::Database &schema,
                               FunctionalCoverageSetQueryIndex &queries,
                               uint64_t type,
-                              const obelisk::coverage::Digest &configuration,
+                              const talos::coverage::Digest &configuration,
                               const std::unordered_set<uint64_t> &suppressed) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   index.borrowedSchema = &schema;
   index.borrowedQueries = &queries;
   index.suppressedTransitions = suppressed;
@@ -3764,7 +3764,7 @@ void initializeSelectionIndex(PreparedFunctionalConstruction &index,
 
 std::shared_ptr<PreparedCrossValueIndex>
 selectionKernel(PreparedFunctionalConstruction &index,
-                const obelisk::coverage::CrossPlan &plan) {
+                const talos::coverage::CrossPlan &plan) {
   std::vector<uint64_t> targets;
   targets.reserve(plan.targetCount);
   for (uint32_t ordinal = 0; ordinal != plan.targetCount; ++ordinal)
@@ -3779,41 +3779,41 @@ selectionKernel(PreparedFunctionalConstruction &index,
   return kernel;
 }
 
-obelisk_rt_status resolvedFunctionalBinIntersectsValueSet(
-    const obelisk::coverage::Database &schema, uint64_t type,
-    const obelisk::coverage::Digest &configuration, uint64_t bin,
-    const obelisk::coverage::ResolvedFunctionalValueSet &selection,
+talos_rt_status resolvedFunctionalBinIntersectsValueSet(
+    const talos::coverage::Database &schema, uint64_t type,
+    const talos::coverage::Digest &configuration, uint64_t bin,
+    const talos::coverage::ResolvedFunctionalValueSet &selection,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
     FunctionalCoverageSetQueryIndex &setQueries, bool &result);
-bool crossSelectorUsesWith(const obelisk::coverage::Database &schema,
-                           const obelisk::coverage::CrossSelectorNode &root,
+bool crossSelectorUsesWith(const talos::coverage::Database &schema,
+                           const talos::coverage::CrossSelectorNode &root,
                            FunctionalCoverageSetQueryIndex &setQueries);
-bool crossSelectorUsesSet(const obelisk::coverage::Database &schema,
-                          const obelisk::coverage::CrossSelectorNode &root,
+bool crossSelectorUsesSet(const talos::coverage::Database &schema,
+                          const talos::coverage::CrossSelectorNode &root,
                           FunctionalCoverageSetQueryIndex &setQueries);
-obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
-    const obelisk::coverage::Database &schema, uint64_t type,
-    const obelisk::coverage::Digest &configuration, uint64_t resolvedCross,
-    const obelisk::coverage::CrossSelectorNode &root,
+talos_rt_status resolvedCrossSelectorSelectsBinTuple(
+    const talos::coverage::Database &schema, uint64_t type,
+    const talos::coverage::Digest &configuration, uint64_t resolvedCross,
+    const talos::coverage::CrossSelectorNode &root,
     const std::vector<uint64_t> &binTuple,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
     FunctionalCoverageSetQueryIndex &setQueries, bool &result);
-obelisk_rt_status resolvedCrossSelectorSetCandidates(
-    const obelisk::coverage::Database &schema, uint64_t type,
-    const obelisk::coverage::Digest &configuration, uint64_t resolvedCross,
-    const obelisk::coverage::CrossSelectorNode &root,
+talos_rt_status resolvedCrossSelectorSetCandidates(
+    const talos::coverage::Database &schema, uint64_t type,
+    const talos::coverage::Digest &configuration, uint64_t resolvedCross,
+    const talos::coverage::CrossSelectorNode &root,
     const std::vector<std::vector<uint64_t>> &targetBins,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
     FunctionalCoverageSetQueryIndex &setQueries,
     std::vector<std::vector<uint64_t>> &result);
-obelisk_rt_status
-emitFunctionalOverlapWarnings(const obelisk::coverage::Database &schema,
+talos_rt_status
+emitFunctionalOverlapWarnings(const talos::coverage::Database &schema,
                               uint64_t type,
-                              const obelisk::coverage::Digest &configuration);
+                              const talos::coverage::Digest &configuration);
 
 IndexMap<uint64_t, FunctionalCoverageConstructionSchemas::TypeProfile>
-staticFunctionalTypeProfiles(const obelisk::coverage::Database &schema) {
-  using namespace obelisk::coverage;
+staticFunctionalTypeProfiles(const talos::coverage::Database &schema) {
+  using namespace talos::coverage;
   IndexMap<uint64_t, FunctionalCoverageConstructionSchemas::TypeProfile>
       profiles;
   IndexMap<std::tuple<uint64_t, Digest, uint64_t>, uint64_t> items;
@@ -3847,19 +3847,19 @@ staticFunctionalTypeProfiles(const obelisk::coverage::Database &schema) {
   return profiles;
 }
 
-obelisk_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
-  using namespace obelisk::coverage;
+talos_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
+  using namespace talos::coverage;
   if (!coverage.schema)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   const auto &source = *coverage.schema;
   if (coverage.constructionSchemas &&
       coverage.constructionSchemas->schemaFingerprint ==
           source.schemaFingerprint)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
 
   auto prepared = std::make_shared<FunctionalCoverageConstructionSchemas>();
   if (!prepared->hierarchy.build(source.functionalTypes))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   prepared->schemaFingerprint = source.schemaFingerprint;
   prepared->loadedTypeProfiles = staticFunctionalTypeProfiles(source);
   IndexMap<uint64_t, std::shared_ptr<Database>> types;
@@ -3869,7 +3869,7 @@ obelisk_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
   for (const auto &type : source.functionalTypes) {
     auto scope = scopes.find(type.scope);
     if (scope == scopes.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     auto schema = std::make_shared<Database>();
     schema->flags = source.flags;
     schema->producer = source.producer;
@@ -4055,12 +4055,12 @@ obelisk_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
     prepared->types.emplace(id, std::move(schema));
   }
   coverage.constructionSchemas = std::move(prepared);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status indexFunctionalConfigurations(CoverageState &coverage) {
+talos_rt_status indexFunctionalConfigurations(CoverageState &coverage) {
   if (coverage.configurationIndexSchema != coverage.schema.get()) {
-    IndexMap<uint64_t, std::vector<obelisk::coverage::Digest>> prepared;
+    IndexMap<uint64_t, std::vector<talos::coverage::Digest>> prepared;
     IndexSet<FunctionalCoverageTypeKey> keys;
     for (const auto &row : coverage.schema->functionalConfigurations) {
       prepared[row.type].push_back(row.configuration);
@@ -4087,17 +4087,17 @@ obelisk_rt_status indexFunctionalConfigurations(CoverageState &coverage) {
       configurations.push_back(row.configuration);
     ++coverage.indexedConfigurations;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status resolveStaticFunctionalType(
-    obelisk_rt_context *context, obelisk::coverage::Database &destination,
-    uint64_t typeID, const obelisk_rt_functional_value_v1 *expressions,
-    uint64_t expressionCount, obelisk::coverage::Digest &resolvedConfiguration,
+talos_rt_status resolveStaticFunctionalType(
+    talos_rt_context *context, talos::coverage::Database &destination,
+    uint64_t typeID, const talos_rt_functional_value_v1 *expressions,
+    uint64_t expressionCount, talos::coverage::Digest &resolvedConfiguration,
     const FunctionalCoverageConstructionSchemas &templates,
     PreparedFunctionalConstruction *prepared = nullptr,
-    const obelisk::coverage::Database *sourceSchema = nullptr) {
-  using namespace obelisk::coverage;
+    const talos::coverage::Database *sourceSchema = nullptr) {
+  using namespace talos::coverage;
   const Database &schema = sourceSchema ? *sourceSchema : destination;
   FunctionalIdentityReservations itemIDs{templates.itemIDs, {}},
       binIDs{templates.binIDs, {}}, valueSetIDs{templates.valueSetIDs, {}};
@@ -4119,7 +4119,7 @@ obelisk_rt_status resolveStaticFunctionalType(
     uint64_t id = resolvedFunctionalID("functional.resolved.item", typeID,
                                        item->id, 0, itemIDs);
     if (!id)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     itemIDs.insert(id);
     resolvedItemPositions.emplace(id, resolvedItemRows.size());
     resolvedItemRows.push_back({typeID,
@@ -4172,7 +4172,7 @@ obelisk_rt_status resolveStaticFunctionalType(
   std::vector<PendingDefaultArray> pendingDefaultArrays;
   IndexMap<uint64_t, uint32_t> nextResolvedBinOrdinal;
   IndexSet<uint64_t> transitionAlternativeIDs;
-  IndexMap<uint64_t, const obelisk_rt_functional_value_v1 *> expressionValues;
+  IndexMap<uint64_t, const talos_rt_functional_value_v1 *> expressionValues;
   for (uint64_t i = 0; i != expressionCount; ++i)
     expressionValues.emplace(expressions[i].id, &expressions[i]);
   IndexMap<uint64_t, const FunctionalExpression *> expressionSchemas;
@@ -4217,7 +4217,7 @@ obelisk_rt_status resolveStaticFunctionalType(
     return entry == index.end() ? nullptr : entry->second;
   };
   auto expressionValue =
-      [&](uint64_t id) -> const obelisk_rt_functional_value_v1 * {
+      [&](uint64_t id) -> const talos_rt_functional_value_v1 * {
     auto entry = expressionValues.find(id);
     return entry == expressionValues.end() ? nullptr : entry->second;
   };
@@ -4225,7 +4225,7 @@ obelisk_rt_status resolveStaticFunctionalType(
     auto entry = expressionSchemas.find(id);
     return entry == expressionSchemas.end() ? nullptr : entry->second;
   };
-  auto decodeRealBound = [&](const obelisk_rt_functional_value_v1 &value,
+  auto decodeRealBound = [&](const talos_rt_functional_value_v1 &value,
                              uint64_t expressionID,
                              bool &hasUnknown) -> std::optional<double> {
     if (isFunctionalRealValueKind(value.kind))
@@ -4266,7 +4266,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         continue;
     }
     const FunctionalExpression *expression = expressionSchema(plan.expression);
-    const obelisk_rt_functional_value_v1 *encoded =
+    const talos_rt_functional_value_v1 *encoded =
         expressionValue(plan.expression);
     // An instance name is mutable metadata, not resolved schema. Validate its
     // constructor result here, but do not add it to the configuration rows or
@@ -4274,22 +4274,22 @@ obelisk_rt_status resolveStaticFunctionalType(
     if (plan.option == FunctionalConfigurationOptionKind::Name) {
       if (!group || !expression || !encoded ||
           expression->resultKind != FunctionalExpressionResultKind::String ||
-          encoded->kind != OBELISK_RT_FUNCTIONAL_VALUE_STRING)
-        return OBELISK_RT_INVALID_DESIGN;
+          encoded->kind != TALOS_RT_FUNCTIONAL_VALUE_STRING)
+        return TALOS_RT_INVALID_DESIGN;
       continue;
     }
     if (plan.option == FunctionalConfigurationOptionKind::Comment) {
       if (!expression || !encoded ||
           expression->resultKind != FunctionalExpressionResultKind::String ||
-          encoded->kind != OBELISK_RT_FUNCTIONAL_VALUE_STRING)
-        return OBELISK_RT_INVALID_DESIGN;
+          encoded->kind != TALOS_RT_FUNCTIONAL_VALUE_STRING)
+        return TALOS_RT_INVALID_DESIGN;
       std::string comment;
-      obelisk_rt_status status =
+      talos_rt_status status =
           copyManagedCoverageString(encoded->payload, comment);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
-      if (!obelisk::coverage::isValidUtf8(comment))
-        return OBELISK_RT_INVALID_DESIGN;
+      if (!talos::coverage::isValidUtf8(comment))
+        return TALOS_RT_INVALID_DESIGN;
       configurationOptionRows.push_back(
           {typeID,
            {},
@@ -4305,15 +4305,15 @@ obelisk_rt_status resolveStaticFunctionalType(
     }
     if (plan.option == FunctionalConfigurationOptionKind::RealInterval) {
       if (!expression || !encoded || !isRealResultKind(expression->resultKind))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       auto real = functionalRealValue(*encoded);
       if (!real)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       double interval = *real;
       uint64_t intervalBits = 0;
       std::memcpy(&intervalBits, &interval, sizeof(intervalBits));
       if (!std::isfinite(interval) || interval <= 0.0)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       const uint64_t resolvedOwnerID = group ? typeID : resolvedOwner->second;
       configurationOptionRows.push_back(
           {typeID,
@@ -4344,7 +4344,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         booleanOption ? FunctionalExpressionResultKind::Boolean
                       : FunctionalExpressionResultKind::Integral;
     if (!expression || !encoded || expression->resultKind != expectedResult)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     uint64_t value = 0;
     FunctionalConfigurationValueKind valueKind =
         FunctionalConfigurationValueKind::Unsigned;
@@ -4357,17 +4357,17 @@ obelisk_rt_status resolveStaticFunctionalType(
       if (!decodeFunctionalInteger(*encoded, expression->signedness, integer,
                                    unknown) ||
           unknown || integer.negative || integer.magnitude.size() > 1)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       value = integer.magnitude.empty() ? 0 : integer.magnitude.front();
     }
     switch (plan.option) {
     case FunctionalConfigurationOptionKind::Goal:
       if (value > 100)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       break;
     case FunctionalConfigurationOptionKind::Weight:
       if (value > UINT32_MAX)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       break;
     case FunctionalConfigurationOptionKind::AutoBinMax:
       break;
@@ -4385,7 +4385,7 @@ obelisk_rt_status resolveStaticFunctionalType(
     case FunctionalConfigurationOptionKind::CrossRetainAutoBins:
       break;
     default:
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     }
     configurationOptionRows.push_back({typeID,
                                        {},
@@ -4400,7 +4400,7 @@ obelisk_rt_status resolveStaticFunctionalType(
     if (group &&
         plan.option == FunctionalConfigurationOptionKind::DistributeFirst) {
       if (plan.scope != FunctionalOptionScopeKind::Type)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       groupDistributeFirst = value != 0;
       distributeFirstRow = configurationOptionRows.size() - 1;
     }
@@ -4426,7 +4426,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         groupCrossRetainAutoBins = value != 0;
         break;
       default:
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       }
       continue;
     }
@@ -4439,7 +4439,7 @@ obelisk_rt_status resolveStaticFunctionalType(
       continue;
     auto position = resolvedItemPositions.find(resolvedOwner->second);
     if (position == resolvedItemPositions.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     auto *item = &resolvedItemRows[position->second];
     switch (plan.option) {
     case FunctionalConfigurationOptionKind::Goal:
@@ -4456,19 +4456,19 @@ obelisk_rt_status resolveStaticFunctionalType(
       break;
     case FunctionalConfigurationOptionKind::CrossNumPrintMissing:
       if (item->kind != FunctionalItemKind::Cross)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       break;
     case FunctionalConfigurationOptionKind::DetectOverlap:
       if (item->kind != FunctionalItemKind::Coverpoint)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       break;
     case FunctionalConfigurationOptionKind::CrossRetainAutoBins:
       if (item->kind != FunctionalItemKind::Cross)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       itemCrossRetainAutoBins.emplace(item->id, value != 0);
       break;
     default:
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     }
   }
   // 19.5.1.1 captures the current distribution policy at construction. A
@@ -4603,15 +4603,15 @@ obelisk_rt_status resolveStaticFunctionalType(
   auto resolveTransitionAtom =
       [&](const FunctionalValueAtom &atom, const FunctionalValueSet &set,
           bool wildcard,
-          std::vector<PendingAtom> &result) -> obelisk_rt_status {
+          std::vector<PendingAtom> &result) -> talos_rt_status {
     if (atom.kind != FunctionalValueAtomKind::IntegralValue &&
         atom.kind != FunctionalValueAtomKind::IntegralRange)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const bool singleton = atom.kind == FunctionalValueAtomKind::IntegralValue;
     const bool lowerUnbounded = atom.flags & FunctionalValueAtomLowerUnbounded;
     const bool upperUnbounded = atom.flags & FunctionalValueAtomUpperUnbounded;
     if (singleton && (lowerUnbounded || upperUnbounded))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto *low =
         lowerUnbounded ? nullptr : expressionValue(atom.lowerExpression);
     const auto *high = upperUnbounded ? nullptr
@@ -4625,7 +4625,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                                                     : atom.upperExpression);
     if ((!lowerUnbounded && (!low || !lowExpression)) ||
         (!upperUnbounded && (!high || !highExpression)))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
 
     const bool targetSigned = set.signedness == CoverageSignedness::Signed;
     const FunctionalInteger targetMinimum =
@@ -4691,7 +4691,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                                   *low, lowExpression->signedness, lowCube)) ||
           (!upperUnbounded && !decodeFunctionalWildcardCube(
                                   *high, highExpression->signedness, highCube)))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       if (singleton) {
         std::vector<FunctionalWildcardCube> alternatives =
             castFunctionalWildcardCube(lowCube, set.bitWidth, set.signedness);
@@ -4699,10 +4699,10 @@ obelisk_rt_status resolveStaticFunctionalType(
           std::fputs("warning: wildcard transition bin singleton is outside "
                      "the effective coverpoint type and is ignored\n",
                      stderr);
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
         }
         if (alternatives.size() > ParseLimits{}.maxRecords - result.size())
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         for (const FunctionalWildcardCube &cube : alternatives) {
           PendingAtom pending;
           pending.atom.kind = atom.kind;
@@ -4715,7 +4715,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           }
           result.push_back(std::move(pending));
         }
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       FunctionalInteger lowValue =
           lowerUnbounded ? targetMinimum : wildcardCubeExtreme(lowCube, false);
@@ -4723,7 +4723,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           upperUnbounded ? targetMaximum : wildcardCubeExtreme(highCube, true);
       if (clipRange(lowValue, highValue, "wildcard "))
         appendKnown(lowValue, highValue);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
 
     FunctionalInteger lowValue = targetMinimum;
@@ -4735,7 +4735,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         (!upperUnbounded &&
          !decodeFunctionalInteger(*high, highExpression->signedness, highValue,
                                   highUnknown)))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (lowUnknown || highUnknown) {
       std::fputs(singleton
                      ? "warning: transition bin singleton contains X or Z "
@@ -4743,7 +4743,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                      : "warning: transition bin range contains X or Z and is "
                        "ignored\n",
                  stderr);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (singleton) {
       if (!functionalIntegerRepresentable(lowValue, set.bitWidth,
@@ -4751,19 +4751,19 @@ obelisk_rt_status resolveStaticFunctionalType(
         std::fputs("warning: transition bin singleton is outside the "
                    "effective coverpoint type and is ignored\n",
                    stderr);
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       highValue = lowValue;
     } else if (!clipRange(lowValue, highValue, "")) {
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     appendKnown(lowValue, highValue);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   };
   for (const FunctionalBin *bin : templateBins) {
     auto item = resolvedItems.find(bin->item);
     if (item == resolvedItems.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto *sample = lookup(coverpointSamples, bin->item);
     const bool shortRealPoint =
         sample &&
@@ -4772,7 +4772,7 @@ obelisk_rt_status resolveStaticFunctionalType(
       uint64_t binID = resolvedFunctionalID("functional.resolved.bin", typeID,
                                             bin->id, 0, binIDs);
       if (!binID)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       binIDs.insert(binID);
       resolvedCrossBinRows.push_back({typeID,
                                       {},
@@ -4808,7 +4808,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                            : program->alternativeCount == 0) ||
           uint64_t{program->firstAlternative} + program->alternativeCount >
               schema.transitionAlternatives.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
 
       if (multiple) {
         struct ConcreteValue {
@@ -4848,7 +4848,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               uint64_t{templateAlternative.firstStep} +
                       templateAlternative.stepCount >
                   schema.transitionSteps.size())
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
 
           std::vector<ConcreteStep> concreteSteps;
           concreteSteps.reserve(templateAlternative.stepCount);
@@ -4869,17 +4869,17 @@ obelisk_rt_status resolveStaticFunctionalType(
                 templateStep.ordinal != stepOrdinal ||
                 (!once && !consecutive) ||
                 !resolveTransitionBounds(templateStep, lowerBound, upperBound))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             const auto *set = lookup(valueSets, templateStep.valueSet);
             if (!set || set->kind != FunctionalValueSetKind::Integral ||
                 set->setExpression || !set->atomCount ||
                 (set->flags & ~FunctionalValueSetNeedsResolution) ||
                 uint64_t{set->firstAtom} + set->atomCount >
                     schema.functionalValueAtoms.size())
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
 
             if (templateAlternative.stepCount == 1 && lowerBound == 1)
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
 
             const bool targetSigned =
                 set->signedness == CoverageSignedness::Signed;
@@ -4889,23 +4889,23 @@ obelisk_rt_status resolveStaticFunctionalType(
                  ++atomIndex) {
               const FunctionalValueAtom &atom =
                   schema.functionalValueAtoms[set->firstAtom + atomIndex];
-              obelisk_rt_status status = resolveTransitionAtom(
+              talos_rt_status status = resolveTransitionAtom(
                   atom, *set, (bin->flags & FunctionalBinWildcard) != 0,
                   resolvedAtoms);
-              if (status != OBELISK_RT_OK)
+              if (status != TALOS_RT_OK)
                 return status;
             }
             std::vector<IntegralCoverageShape> shapes;
             shapes.reserve(resolvedAtoms.size());
             for (const PendingAtom &atom : resolvedAtoms) {
               if (atom.limbs.size() != limbCount)
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               IntegralCoverageShape shape;
               shape.interval =
                   atom.atom.kind == FunctionalValueAtomKind::IntegralRange;
               if (!shape.interval &&
                   atom.atom.kind != FunctionalValueAtomKind::IntegralValue)
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               if (shape.interval) {
                 shape.low.resize(limbCount);
                 shape.high.resize(limbCount);
@@ -4917,12 +4917,12 @@ obelisk_rt_status resolveStaticFunctionalType(
                 const auto &value = atom.limbs[limb];
                 if (shape.interval) {
                   if (value.lowBval || value.highBval || value.wildcardMask)
-                    return OBELISK_RT_INVALID_DESIGN;
+                    return TALOS_RT_INVALID_DESIGN;
                   shape.low[limb] = value.lowAval;
                   shape.high[limb] = value.highAval;
                 } else {
                   if (value.lowBval & ~value.wildcardMask)
-                    return OBELISK_RT_INVALID_DESIGN;
+                    return TALOS_RT_INVALID_DESIGN;
                   shape.value[limb] = value.lowAval & ~value.wildcardMask;
                   shape.wildcard[limb] = value.wildcardMask;
                 }
@@ -4948,9 +4948,9 @@ obelisk_rt_status resolveStaticFunctionalType(
             concreteStep.upperBound = upperBound;
             concreteStep.repetition = templateStep.repetition;
             std::vector<FunctionalMagnitude> values;
-            obelisk_rt_status enumerationStatus =
+            talos_rt_status enumerationStatus =
                 enumerateIntegralShapeUnion(shapes, set->bitWidth, values);
-            if (enumerationStatus != OBELISK_RT_OK)
+            if (enumerationStatus != TALOS_RT_OK)
               return enumerationStatus;
             concreteStep.values.reserve(values.size());
             for (FunctionalMagnitude &orderedValue : values) {
@@ -4973,12 +4973,12 @@ obelisk_rt_status resolveStaticFunctionalType(
             }
             const uint64_t repetitionDifference = upperBound - lowerBound;
             if (repetitionDifference >= ParseLimits{}.maxRecords)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             const uint64_t repetitionChoices = repetitionDifference + 1;
             if (!concreteStep.values.empty() &&
                 concreteStep.values.size() >
                     ParseLimits{}.maxRecords / repetitionChoices)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             if (concreteStep.values.empty())
               alternativeSurvives = false;
             concreteSteps.push_back(std::move(concreteStep));
@@ -4996,7 +4996,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                 step.upperBound - step.lowerBound + 1;
             const uint64_t stepChoices = step.values.size() * repetitionChoices;
             if (sequences.size() > ParseLimits{}.maxRecords / stepChoices)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             std::vector<ConcreteSequence> expanded;
             expanded.reserve(sequences.size() * stepChoices);
             // IEEE 1800-2023 19.5.2 presents the leftmost transition item as
@@ -5011,7 +5011,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                       "[*" + std::to_string(repetitions) + "]";
                   if (component.size() >
                       ParseLimits{}.maxStringBytes - repetitionSuffix.size())
-                    return OBELISK_RT_OUT_OF_RESOURCES;
+                    return TALOS_RT_OUT_OF_RESOURCES;
                   component += repetitionSuffix;
                 }
                 for (const ConcreteSequence &prefix : sequences) {
@@ -5023,7 +5023,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                           ParseLimits{}.maxStringBytes - component.size() ||
                       separator > ParseLimits{}.maxStringBytes -
                                       sequence.label.size() - component.size())
-                    return OBELISK_RT_OUT_OF_RESOURCES;
+                    return TALOS_RT_OUT_OF_RESOURCES;
                   if (separator)
                     sequence.label += "=>";
                   sequence.label += component;
@@ -5041,9 +5041,9 @@ obelisk_rt_status resolveStaticFunctionalType(
                   }),
               sequences.end());
           if (sequences.size() > ParseLimits{}.maxRecords - binExpansionOrdinal)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           if (binExpansionOrdinal > UINT32_MAX - sequences.size())
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
 
           const uint32_t firstAlternative =
               static_cast<uint32_t>(resolvedTransitionAlternativeRows.size());
@@ -5054,16 +5054,16 @@ obelisk_rt_status resolveStaticFunctionalType(
             uint64_t binID = resolvedFunctionalID(
                 "functional.resolved.bin", typeID, bin->id, binOrdinal, binIDs);
             if (!binID)
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             binIDs.insert(binID);
             if (sequence.label.size() > ParseLimits{}.maxStringBytes - 2)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             const std::string suffix = "[" + sequence.label + "]";
             if (bin->name.size() >
                     ParseLimits{}.maxStringBytes - suffix.size() ||
                 bin->hierarchy.size() >
                     ParseLimits{}.maxStringBytes - suffix.size())
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             resolvedBinRows.push_back({typeID,
                                        {},
                                        binID,
@@ -5091,7 +5091,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                 "functional.resolved.transition-alternative", typeID, binID, 0,
                 transitionAlternativeIDs);
             if (!alternativeID)
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             transitionAlternativeIDs.insert(alternativeID);
             const uint32_t firstStep =
                 static_cast<uint32_t>(resolvedTransitionStepRows.size());
@@ -5104,7 +5104,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                   "functional.resolved.transition-value-set", typeID,
                   step.templateSet->id, binOrdinal, valueSetIDs);
               if (!setID)
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               valueSetIDs.insert(setID);
               PendingSet base;
               base.set = {typeID,
@@ -5178,7 +5178,7 @@ obelisk_rt_status resolveStaticFunctionalType(
       uint64_t binID = resolvedFunctionalID("functional.resolved.bin", typeID,
                                             bin->id, 0, binIDs);
       if (!binID)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       binIDs.insert(binID);
       const uint32_t firstBin = static_cast<uint32_t>(resolvedBinRows.size());
       resolvedBinRows.push_back({typeID,
@@ -5231,12 +5231,12 @@ obelisk_rt_status resolveStaticFunctionalType(
             uint64_t{templateAlternative.firstStep} +
                     templateAlternative.stepCount >
                 schema.transitionSteps.size())
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         uint64_t alternativeID = resolvedFunctionalID(
             "functional.resolved.transition-alternative", typeID, bin->id,
             alternativeOrdinal, transitionAlternativeIDs);
         if (!alternativeID)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         transitionAlternativeIDs.insert(alternativeID);
         const uint32_t firstStep =
             static_cast<uint32_t>(resolvedTransitionStepRows.size());
@@ -5263,17 +5263,17 @@ obelisk_rt_status resolveStaticFunctionalType(
               templateStep.ordinal != stepOrdinal ||
               (!once && !consecutive && !gotoRepetition && !nonconsecutive) ||
               !resolveTransitionBounds(templateStep, lowerBound, upperBound))
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           const auto *set = lookup(valueSets, templateStep.valueSet);
           if (!set || set->kind != FunctionalValueSetKind::Integral ||
               set->setExpression || !set->atomCount ||
               (set->flags & ~FunctionalValueSetNeedsResolution))
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           uint64_t resolvedSetID =
               resolvedFunctionalID("functional.resolved.transition-value-set",
                                    typeID, set->id, 0, valueSetIDs);
           if (!resolvedSetID)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           valueSetIDs.insert(resolvedSetID);
           PendingSet base;
           base.set = {typeID,
@@ -5297,10 +5297,10 @@ obelisk_rt_status resolveStaticFunctionalType(
                ++atomIndex) {
             const FunctionalValueAtom &atom =
                 schema.functionalValueAtoms[set->firstAtom + atomIndex];
-            obelisk_rt_status status = resolveTransitionAtom(
+            talos_rt_status status = resolveTransitionAtom(
                 atom, *set, (bin->flags & FunctionalBinWildcard) != 0,
                 resolvedAtoms);
-            if (status != OBELISK_RT_OK)
+            if (status != TALOS_RT_OK)
               return status;
           }
           if (resolvedAtoms.empty()) {
@@ -5316,7 +5316,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           // bounds can depend on constructor arguments, so enforce this while
           // resolving each instance as well as in database validation.
           if (templateAlternative.stepCount == 1 && lowerBound == 1)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           alternativeSteps.push_back({typeID,
                                       {},
                                       binID,
@@ -5374,7 +5374,7 @@ obelisk_rt_status resolveStaticFunctionalType(
       continue;
     }
     if (bin->kind != FunctionalBinKind::State)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto *plan = lookup(binPlans, bin->id);
     const bool isDefault = (bin->flags & FunctionalBinDefault) != 0;
     if (!plan || (isDefault ? plan->valueSet != 0 : plan->valueSet == 0) ||
@@ -5388,11 +5388,11 @@ obelisk_rt_status resolveStaticFunctionalType(
         (plan->arrayMode == FunctionalBinArrayMode::Fixed &&
          ((bool(plan->arrayCardinality) == bool(plan->cardinalityExpression)) ||
           plan->distribution != FunctionalBinDistributionKind::Uniform)))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     uint64_t binID = resolvedFunctionalID("functional.resolved.bin", typeID,
                                           bin->id, 0, binIDs);
     if (!binID)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     binIDs.insert(binID);
     uint64_t resolvedSetID = 0;
     std::optional<PendingSet> resolvedTemplateSet;
@@ -5402,12 +5402,12 @@ obelisk_rt_status resolveStaticFunctionalType(
                                       ? noWithExpressions
                                       : withOwner->second;
     if (withExpressions.size() > MaxFunctionalWithCandidates)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     std::vector<bool> withPredicateResults;
     withPredicateResults.reserve(withExpressions.size());
     for (uint32_t ordinal = 0; ordinal != withExpressions.size(); ++ordinal) {
       const FunctionalExpression &withExpression = *withExpressions[ordinal];
-      const obelisk_rt_functional_value_v1 *predicate =
+      const talos_rt_functional_value_v1 *predicate =
           expressionValue(withExpression.id);
       if (withExpression.ownerOrdinal != ordinal ||
           withExpression.ownerSubordinal != 0 ||
@@ -5416,24 +5416,24 @@ obelisk_rt_status resolveStaticFunctionalType(
           withExpression.evaluationPhase !=
               FunctionalExpressionEvaluationPhase::Constructor ||
           !predicate ||
-          (predicate->kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL &&
-           predicate->kind != OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE) ||
+          (predicate->kind != TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL &&
+           predicate->kind != TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE) ||
           predicate->bit_width != 1 || predicate->value_size != 1 ||
           !predicate->value || predicate->owner || predicate->payload ||
           predicate->argument_ref_kind ||
-          (predicate->kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE) !=
+          (predicate->kind == TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE) !=
               (predicate->unknown != nullptr))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       withPredicateResults.push_back(functionalBooleanTrue(*predicate));
     }
     if (!isDefault) {
       const auto *set = lookup(valueSets, plan->valueSet);
       if (!set || (set->flags & ~FunctionalValueSetNeedsResolution))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       resolvedSetID = resolvedFunctionalID("functional.resolved.value-set",
                                            typeID, set->id, 0, valueSetIDs);
       if (!resolvedSetID)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       valueSetIDs.insert(resolvedSetID);
       PendingSet pending;
       pending.set = {typeID,
@@ -5455,24 +5455,24 @@ obelisk_rt_status resolveStaticFunctionalType(
       if (set->setExpression) {
         const FunctionalExpression *setExpression =
             expressionSchema(set->setExpression);
-        const obelisk_rt_functional_value_v1 *construction =
+        const talos_rt_functional_value_v1 *construction =
             expressionValue(set->setExpression);
         if (!setExpression || !construction ||
             setExpression->resultKind != FunctionalExpressionResultKind::Set ||
-            construction->kind != OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER)
-          return OBELISK_RT_INVALID_DESIGN;
+            construction->kind != TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER)
+          return TALOS_RT_INVALID_DESIGN;
         const bool sourceReal =
             setExpression->signedness == CoverageSignedness::NotApplicable;
         const bool sourceFourState =
             setExpression->flags & FunctionalExpressionSetElementFourState;
-        const uint32_t sourceKind = sourceReal        ? OBELISK_RT_ELEMENT_REAL
-                                    : sourceFourState ? OBELISK_RT_ELEMENT_LOGIC
-                                                      : OBELISK_RT_ELEMENT_BITS;
+        const uint32_t sourceKind = sourceReal        ? TALOS_RT_ELEMENT_REAL
+                                    : sourceFourState ? TALOS_RT_ELEMENT_LOGIC
+                                                      : TALOS_RT_ELEMENT_BITS;
         CoverageSetSnapshot snapshot;
-        obelisk_rt_status snapshotStatus = obelisk_rt_coverage_set_snapshot(
+        talos_rt_status snapshotStatus = talos_rt_coverage_set_snapshot(
             context, construction->owner, setExpression->bitWidth, sourceKind,
             sourceFourState, ParseLimits{}.maxRecords, snapshot);
-        if (snapshotStatus != OBELISK_RT_OK)
+        if (snapshotStatus != TALOS_RT_OK)
           return snapshotStatus;
 
         const bool wildcard = (bin->flags & FunctionalBinWildcard) != 0;
@@ -5485,7 +5485,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           return current <= maximum && additional <= maximum - current;
         };
         auto elementDescriptor = [&](uint64_t ordinal) {
-          obelisk_rt_functional_value_v1 value{};
+          talos_rt_functional_value_v1 value{};
           value.id = setExpression->id;
           value.bit_width = setExpression->bitWidth;
           value.value_size = snapshot.valueSize;
@@ -5494,14 +5494,14 @@ obelisk_rt_status resolveStaticFunctionalType(
             value.unknown =
                 snapshot.unknown.data() + ordinal * snapshot.valueSize;
           value.kind = sourceReal ? (setExpression->bitWidth == 32
-                                         ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
-                                         : OBELISK_RT_FUNCTIONAL_VALUE_REAL)
+                                         ? TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL
+                                         : TALOS_RT_FUNCTIONAL_VALUE_REAL)
                        : sourceFourState
-                           ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
-                           : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
+                           ? TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE
+                           : TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL;
           return value;
         };
-        auto decodeReal = [&](const obelisk_rt_functional_value_v1 &value,
+        auto decodeReal = [&](const talos_rt_functional_value_v1 &value,
                               double &result) {
           auto real = functionalRealValue(value);
           if (!real)
@@ -5515,13 +5515,13 @@ obelisk_rt_status resolveStaticFunctionalType(
             std::fputs("warning: functional bin set element is outside the "
                        "effective coverpoint type and is ignored\n",
                        stderr);
-            return OBELISK_RT_OK;
+            return TALOS_RT_OK;
           }
           if (!canAppend(pending.atoms.size(), 1,
                          ResolvedFunctionalValueAtomRecord::Size) ||
               !canAppend(pending.limbs.size(), targetLimbCount,
                          ResolvedFunctionalValueLimbRecord::Size))
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           const uint32_t atomOrdinal = pending.atoms.size();
           const uint32_t firstLimb = pending.limbs.size();
           std::vector<uint64_t> limbs =
@@ -5534,14 +5534,14 @@ obelisk_rt_status resolveStaticFunctionalType(
                                    FunctionalValueAtomKind::IntegralValue,
                                    FunctionalValueAtomLowerInclusive |
                                        FunctionalValueAtomUpperInclusive});
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
         };
         auto appendReal = [&](double value) {
           if (!std::isfinite(value)) {
             std::fputs("warning: functional bin set element is not a finite "
                        "real value and is ignored\n",
                        stderr);
-            return OBELISK_RT_OK;
+            return TALOS_RT_OK;
           }
           if (shortRealPoint &&
               (std::abs(value) > std::numeric_limits<float>::max() ||
@@ -5550,11 +5550,11 @@ obelisk_rt_status resolveStaticFunctionalType(
                        "when converted to the effective coverpoint type and "
                        "is ignored\n",
                        stderr);
-            return OBELISK_RT_OK;
+            return TALOS_RT_OK;
           }
           if (!canAppend(pending.atoms.size(), 1,
                          ResolvedFunctionalValueAtomRecord::Size))
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           uint64_t bits = 0;
           std::memcpy(&bits, &value, sizeof(bits));
           const uint32_t atomOrdinal = pending.atoms.size();
@@ -5562,18 +5562,18 @@ obelisk_rt_status resolveStaticFunctionalType(
                                    FunctionalValueAtomKind::RealInterval,
                                    FunctionalValueAtomLowerInclusive |
                                        FunctionalValueAtomUpperInclusive});
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
         };
 
         for (uint64_t ordinal = 0; ordinal != snapshot.count; ++ordinal) {
-          obelisk_rt_functional_value_v1 element = elementDescriptor(ordinal);
+          talos_rt_functional_value_v1 element = elementDescriptor(ordinal);
           if (set->kind == FunctionalValueSetKind::Real) {
             if (sourceReal) {
               double value = 0.0;
               if (!decodeReal(element, value))
-                return OBELISK_RT_INVALID_DESIGN;
-              if (obelisk_rt_status status = appendReal(value);
-                  status != OBELISK_RT_OK)
+                return TALOS_RT_INVALID_DESIGN;
+              if (talos_rt_status status = appendReal(value);
+                  status != TALOS_RT_OK)
                 return status;
               continue;
             }
@@ -5581,7 +5581,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             bool unknown = false;
             if (!decodeFunctionalInteger(element, setExpression->signedness,
                                          integer, unknown))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             if (unknown) {
               std::fputs("warning: functional bin set element contains X or "
                          "Z and is ignored\n",
@@ -5602,17 +5602,17 @@ obelisk_rt_status resolveStaticFunctionalType(
                          stderr);
               continue;
             }
-            if (obelisk_rt_status status = appendReal(value);
-                status != OBELISK_RT_OK)
+            if (talos_rt_status status = appendReal(value);
+                status != TALOS_RT_OK)
               return status;
             continue;
           }
           if (set->kind != FunctionalValueSetKind::Integral)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           if (sourceReal) {
             double value = 0.0;
             if (!decodeReal(element, value))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             FunctionalInteger integer;
             if (!functionalIntegerFromReal(value, integer)) {
               std::fputs("warning: functional bin set real element changes "
@@ -5621,8 +5621,8 @@ obelisk_rt_status resolveStaticFunctionalType(
                          stderr);
               continue;
             }
-            if (obelisk_rt_status status = appendInteger(integer);
-                status != OBELISK_RT_OK)
+            if (talos_rt_status status = appendInteger(integer);
+                status != TALOS_RT_OK)
               return status;
             continue;
           }
@@ -5631,29 +5631,29 @@ obelisk_rt_status resolveStaticFunctionalType(
             bool unknown = false;
             if (!decodeFunctionalInteger(element, setExpression->signedness,
                                          integer, unknown))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             if (unknown) {
               std::fputs("warning: functional bin set element contains X or "
                          "Z and is ignored\n",
                          stderr);
               continue;
             }
-            if (obelisk_rt_status status = appendInteger(integer);
-                status != OBELISK_RT_OK)
+            if (talos_rt_status status = appendInteger(integer);
+                status != TALOS_RT_OK)
               return status;
             continue;
           }
           FunctionalWildcardCube sourceCube;
           if (!decodeFunctionalWildcardCube(element, setExpression->signedness,
                                             sourceCube))
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           // Casting widens each candidate to the effective point width. Check
           // that even one physical result fits the database limits
           // before the helper allocates its target-width planes; the exact
           // candidate count is checked below after conversion.
           if (!canAppend(0, targetLimbCount,
                          ResolvedFunctionalValueLimbRecord::Size))
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           std::vector<FunctionalWildcardCube> alternatives =
               castFunctionalWildcardCube(sourceCube, set->bitWidth,
                                          set->signedness);
@@ -5670,7 +5670,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               !canAppend(pending.limbs.size(),
                          alternatives.size() * uint64_t{targetLimbCount},
                          ResolvedFunctionalValueLimbRecord::Size))
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           for (const FunctionalWildcardCube &cube : alternatives) {
             const uint32_t atomOrdinal = pending.atoms.size();
             const uint32_t firstLimb = pending.limbs.size();
@@ -5709,10 +5709,10 @@ obelisk_rt_status resolveStaticFunctionalType(
                                    ? low
                                    : expressionValue(atom.upperExpression);
             if ((!lowerUnbounded && !low) || (!upperUnbounded && !high))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             if (set->kind == FunctionalValueSetKind::Real) {
               if (atom.kind != FunctionalValueAtomKind::RealInterval)
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               uint64_t lowBits = 0, highBits = 0;
               bool hasUnknown = false;
               auto lower =
@@ -5725,7 +5725,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                                : decodeRealBound(*high, atom.upperExpression,
                                                  hasUnknown);
               if (!lower || !upper)
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               if (hasUnknown) {
                 std::fputs("warning: functional bin real element contains X "
                            "or Z and is ignored\n",
@@ -5758,7 +5758,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               if ((!lowerUnbounded && !std::isfinite(lowValue)) ||
                   (!upperUnbounded && !std::isfinite(highValue)) ||
                   (!lowerUnbounded && !upperUnbounded && lowValue > highValue))
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               if (shortRealPoint && !singleton) {
                 // Intersect a real range with the binary32 domain. Each end
                 // moves at most one ULP after rounding; never enumerate values.
@@ -5817,7 +5817,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             if (set->kind != FunctionalValueSetKind::Integral ||
                 (!lowerUnbounded && isFunctionalRealValueKind(low->kind)) ||
                 (!upperUnbounded && isFunctionalRealValueKind(high->kind)))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             uint32_t limbCount = (uint64_t{set->bitWidth} + 63) / 64;
             bool wildcard = (bin->flags & FunctionalBinWildcard) != 0;
             const bool targetSigned =
@@ -5849,7 +5849,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                    (!highExpression ||
                     !decodeFunctionalInteger(*high, highExpression->signedness,
                                              originalHigh, highUnknown))))
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
 
               if (lowUnknown || highUnknown) {
                 std::fputs(atom.kind == FunctionalValueAtomKind::IntegralValue
@@ -5937,7 +5937,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                  (!highExpression ||
                   !decodeFunctionalWildcardCube(
                       *high, highExpression->signedness, highCube))))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             if (atom.kind == FunctionalValueAtomKind::IntegralValue) {
               std::vector<FunctionalWildcardCube> alternatives =
                   castFunctionalWildcardCube(lowCube, set->bitWidth,
@@ -6015,7 +6015,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             continue;
           }
           if (atom.lowerExpression || atom.upperExpression)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           for (uint32_t limbIndex = 0; limbIndex != atom.limbCount;
                ++limbIndex) {
             const auto &limb =
@@ -6067,7 +6067,7 @@ obelisk_rt_status resolveStaticFunctionalType(
       if (!withExpressions.empty()) {
         if (!resolvedTemplateSet ||
             resolvedTemplateSet->set.kind != FunctionalValueSetKind::Integral)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         const uint32_t bitWidth = resolvedTemplateSet->set.bitWidth;
         const auto signedness = resolvedTemplateSet->set.signedness;
         const uint32_t limbCount = functionalLimbCount(bitWidth);
@@ -6082,7 +6082,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                             return limb.lowBval || limb.highBval ||
                                    limb.wildcardMask;
                           }))
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           FunctionalMagnitude current(limbCount), high(limbCount);
           for (uint32_t limb = 0; limb != limbCount; ++limb) {
             current[limb] = source.limbs[limb].lowAval;
@@ -6095,10 +6095,10 @@ obelisk_rt_status resolveStaticFunctionalType(
           normalizeFunctionalMagnitude(current);
           normalizeFunctionalMagnitude(high);
           if (compareMagnitude(current, high) > 0)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           while (true) {
             if (candidateOrdinal == withPredicateResults.size())
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             if (withPredicateResults[candidateOrdinal]) {
               FunctionalMagnitude encoded = current;
               encoded.resize(limbCount);
@@ -6121,19 +6121,19 @@ obelisk_rt_status resolveStaticFunctionalType(
           }
         }
         if (candidateOrdinal != withPredicateResults.size())
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         expansionAtoms.front() = std::move(selected);
       }
     } else {
       if (!resolvedTemplateSet)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       if (resolvedTemplateSet->set.kind == FunctionalValueSetKind::Real) {
         if (plan->arrayMode != FunctionalBinArrayMode::Unsized &&
             plan->arrayMode != FunctionalBinArrayMode::Fixed)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         const double interval = effectiveRealInterval(item->second);
         if (!std::isfinite(interval) || interval <= 0.0)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
 
         auto decodeRealBits = [](uint64_t bits) {
           double value = 0.0;
@@ -6159,7 +6159,7 @@ obelisk_rt_status resolveStaticFunctionalType(
              unpackPendingAtoms(*resolvedTemplateSet)) {
           if (source.atom.kind != FunctionalValueAtomKind::RealInterval ||
               !source.limbs.empty())
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           const bool lowerUnbounded =
               source.atom.flags & FunctionalValueAtomLowerUnbounded;
           const bool upperUnbounded =
@@ -6170,7 +6170,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           if (!range || lowerUnbounded || upperUnbounded ||
               high - low <= interval) {
             if (realItems.size() == ParseLimits{}.maxRecords)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             realItems.push_back(source);
             continue;
           }
@@ -6181,7 +6181,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               ParseLimits{}.maxRecords - realItems.size();
           if (!std::isfinite(span) || !std::isfinite(partitionCount) ||
               partitionCount > static_cast<double>(remainingLimit) + 1.0)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           uint64_t partitions = static_cast<uint64_t>(partitionCount);
           auto boundary = [&](uint64_t ordinal) {
             return low + interval * static_cast<double>(ordinal);
@@ -6194,20 +6194,20 @@ obelisk_rt_status resolveStaticFunctionalType(
             --partitions;
           while (boundary(partitions) < high) {
             if (partitions == remainingLimit)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             ++partitions;
           }
           if (partitions > remainingLimit)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           for (uint64_t partition = 0; partition != partitions; ++partition) {
             const bool last = partition + 1 == partitions;
             const double current = partition ? boundary(partition) : low;
             const double next = last ? high : boundary(partition + 1);
             if (!std::isfinite(current) || !std::isfinite(next) ||
                 next <= current || (!last && next >= high))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             if (realItems.size() == ParseLimits{}.maxRecords)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             realItems.push_back(makeRealAtom(
                 current, next,
                 FunctionalValueAtomLowerInclusive |
@@ -6285,7 +6285,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               uniqueItems.push_back(std::move(entry));
           }
           if (uniqueItems.size() > UINT32_MAX)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           arrayCardinality = static_cast<uint32_t>(uniqueItems.size());
           expansionAtoms.reserve(uniqueItems.size());
           expansionLabels.reserve(uniqueItems.size());
@@ -6293,19 +6293,19 @@ obelisk_rt_status resolveStaticFunctionalType(
           for (PendingAtom &entry : uniqueItems) {
             std::string label;
             if (!realItemLabel(entry, label))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             expansionAtoms.push_back({std::move(entry)});
             expansionLabels.push_back(std::move(label));
           }
         } else {
           if (plan->arrayCardinality) {
             if (plan->arrayCardinality > UINT32_MAX)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             arrayCardinality = static_cast<uint32_t>(plan->arrayCardinality);
           } else {
             const FunctionalExpression *cardinalitySchema =
                 expressionSchema(plan->cardinalityExpression);
-            const obelisk_rt_functional_value_v1 *cardinalityValue =
+            const talos_rt_functional_value_v1 *cardinalityValue =
                 expressionValue(plan->cardinalityExpression);
             FunctionalInteger cardinality;
             bool unknown = false;
@@ -6315,11 +6315,11 @@ obelisk_rt_status resolveStaticFunctionalType(
                                          cardinality, unknown) ||
                 unknown || cardinality.negative ||
                 !functionalMagnitudeFitsU32(cardinality.magnitude))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             arrayCardinality = functionalMagnitudeAsU32(cardinality.magnitude);
           }
           if (!arrayCardinality)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           expansionAtoms.resize(arrayCardinality);
           expansionLabels.reserve(arrayCardinality);
           const size_t perBin =
@@ -6341,7 +6341,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         }
       } else {
         if (resolvedTemplateSet->set.kind != FunctionalValueSetKind::Integral)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         const uint32_t bitWidth = resolvedTemplateSet->set.bitWidth;
         const auto signedness = resolvedTemplateSet->set.signedness;
         const uint32_t limbCount = functionalLimbCount(bitWidth);
@@ -6388,7 +6388,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         for (const PendingAtom &atom : sourceAtoms) {
           FunctionalMagnitude count;
           if (atom.limbs.size() != limbCount || !atomCardinality(atom, count))
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           sourceCardinalities.push_back(count);
           total = addFunctionalMagnitudes(total, count);
         }
@@ -6399,16 +6399,16 @@ obelisk_rt_status resolveStaticFunctionalType(
         };
         auto materializeConcreteValues =
             [&](const std::vector<PendingAtom> &atoms,
-                std::vector<ConcreteValue> &values) -> obelisk_rt_status {
+                std::vector<ConcreteValue> &values) -> talos_rt_status {
           for (const PendingAtom &atom : atoms) {
             FunctionalMagnitude count;
             if (atom.limbs.size() != limbCount ||
                 !atomCardinality(atom, count) ||
                 !functionalMagnitudeFitsU32(count))
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             uint32_t concreteCount = functionalMagnitudeAsU32(count);
             if (concreteCount > ParseLimits{}.maxRecords - values.size())
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             if (atom.atom.kind == FunctionalValueAtomKind::IntegralRange) {
               FunctionalMagnitude current = endpoint(atom, false);
               for (uint32_t ordinal = 0; ordinal != concreteCount; ++ordinal) {
@@ -6449,7 +6449,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               values.push_back({std::move(concrete), bval});
             }
           }
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
         };
         auto makeConcreteAtom = [&](const ConcreteValue &value) {
           PendingAtom concrete;
@@ -6475,12 +6475,12 @@ obelisk_rt_status resolveStaticFunctionalType(
 
         if (plan->arrayMode == FunctionalBinArrayMode::Unsized) {
           std::vector<ConcreteValue> values;
-          obelisk_rt_status materialized =
+          talos_rt_status materialized =
               materializeConcreteValues(sourceAtoms, values);
-          if (materialized != OBELISK_RT_OK)
+          if (materialized != TALOS_RT_OK)
             return materialized;
           if (values.size() > UINT32_MAX)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           arrayCardinality = static_cast<uint32_t>(values.size());
           expansionAtoms.reserve(values.size());
           expansionLabels.reserve(values.size());
@@ -6490,15 +6490,15 @@ obelisk_rt_status resolveStaticFunctionalType(
           }
         } else {
           if (plan->arrayMode != FunctionalBinArrayMode::Fixed)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           if (plan->arrayCardinality) {
             if (plan->arrayCardinality > UINT32_MAX)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             arrayCardinality = static_cast<uint32_t>(plan->arrayCardinality);
           } else {
             const FunctionalExpression *cardinalitySchema =
                 expressionSchema(plan->cardinalityExpression);
-            const obelisk_rt_functional_value_v1 *cardinalityValue =
+            const talos_rt_functional_value_v1 *cardinalityValue =
                 expressionValue(plan->cardinalityExpression);
             FunctionalInteger cardinality;
             bool unknown = false;
@@ -6508,11 +6508,11 @@ obelisk_rt_status resolveStaticFunctionalType(
                                          cardinality, unknown) ||
                 unknown || cardinality.negative ||
                 !functionalMagnitudeFitsU32(cardinality.magnitude))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             arrayCardinality = functionalMagnitudeAsU32(cardinality.magnitude);
           }
           if (!arrayCardinality)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           expansionAtoms.resize(arrayCardinality);
           expansionLabels.reserve(arrayCardinality);
           uint32_t remainder = 0;
@@ -6652,7 +6652,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                                                             : required;
               if (!appendSlice(sourceAtoms[sourceIndex], sourceOffset, take,
                                expansionAtoms[expansion]))
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               sourceOffset = addFunctionalMagnitudes(sourceOffset, take);
               required = subtractFunctionalMagnitudes(required, take);
               if (compareMagnitude(sourceOffset,
@@ -6671,16 +6671,16 @@ obelisk_rt_status resolveStaticFunctionalType(
           // runtime independently reconstructs that stream and requires an
           // exact cardinality match before using it.
           std::vector<ConcreteValue> candidates;
-          obelisk_rt_status materialized =
+          talos_rt_status materialized =
               materializeConcreteValues(sourceAtoms, candidates);
-          if (materialized != OBELISK_RT_OK)
+          if (materialized != TALOS_RT_OK)
             return materialized;
           if (candidates.size() != withPredicateResults.size())
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           for (const ConcreteValue &candidate : candidates)
             if (std::any_of(candidate.bval.begin(), candidate.bval.end(),
                             [](uint64_t limb) { return limb != 0; }))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
 
           std::vector<uint32_t> occurrences;
           occurrences.reserve(candidates.size());
@@ -6700,7 +6700,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             arrayCardinality = 0;
           } else if (plan->arrayMode == FunctionalBinArrayMode::Unsized) {
             if (occurrences.size() > UINT32_MAX)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             arrayCardinality = static_cast<uint32_t>(occurrences.size());
             expansionAtoms.resize(arrayCardinality);
             expansionLabels.reserve(arrayCardinality);
@@ -6714,7 +6714,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             }
           } else if (plan->arrayMode == FunctionalBinArrayMode::Fixed) {
             if (!arrayCardinality)
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             expansionAtoms.resize(arrayCardinality);
             expansionLabels.reserve(arrayCardinality);
             const size_t valuesPerBin =
@@ -6736,7 +6736,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               cursor += count;
             }
           } else {
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           }
         }
       }
@@ -6754,7 +6754,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             resolvedFunctionalID("functional.resolved.value-set", typeID,
                                  plan->valueSet, expansion, valueSetIDs);
         if (!expansionBinID || !expansionSetID)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         binIDs.insert(expansionBinID);
         valueSetIDs.insert(expansionSetID);
       }
@@ -6844,7 +6844,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         !sampleExpression->bitWidth ||
         (sampleExpression->signedness != CoverageSignedness::Signed &&
          sampleExpression->signedness != CoverageSignedness::Unsigned))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
 
     const uint32_t bitWidth = sampleExpression->bitWidth;
     const uint32_t limbCount = functionalLimbCount(bitWidth);
@@ -6860,7 +6860,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           if (atom.limbCount != limbCount ||
               atom.firstLimb > set.limbs.size() ||
               limbCount > set.limbs.size() - atom.firstLimb)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           IntegralCoverageShape shape;
           shape.interval = atom.kind == FunctionalValueAtomKind::IntegralRange;
           if (!shape.interval &&
@@ -6962,7 +6962,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               addFunctionalMagnitudes(missingCardinality, blockCardinality);
           if (!functionalMagnitudeFitsU32(missingCardinality) ||
               functionalMagnitudeAsU32(missingCardinality) > binRecordLimit)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           missingBlocks.push_back(
               {std::move(frame.prefix), frame.remainingBit});
           continue;
@@ -6998,7 +6998,7 @@ obelisk_rt_status resolveStaticFunctionalType(
     const uint32_t cardinality = static_cast<uint32_t>(values.size());
     if (resolvedBinRows.size() > binRecordLimit ||
         cardinality > binRecordLimit - resolvedBinRows.size())
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     auto &group = resolvedGroupRows[pendingDefault.groupIndex];
     group.firstBin = static_cast<uint32_t>(resolvedBinRows.size());
     group.binCount = cardinality;
@@ -7026,14 +7026,14 @@ obelisk_rt_status resolveStaticFunctionalType(
         binID = resolvedFunctionalID("functional.resolved.bin", typeID,
                                      pendingDefault.bin->id, expansion, binIDs);
         if (!binID)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         binIDs.insert(binID);
       }
       uint64_t setID =
           resolvedFunctionalID("functional.resolved.value-set", typeID,
                                pendingDefault.bin->id, expansion, valueSetIDs);
       if (!setID)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       valueSetIDs.insert(setID);
 
       PendingAtom atom;
@@ -7096,7 +7096,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             FunctionalExpressionResultKind::Integral ||
         (sampleExpression->signedness != CoverageSignedness::Signed &&
          sampleExpression->signedness != CoverageSignedness::Unsigned))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
 
     const uint32_t bitWidth = sampleExpression->bitWidth;
     const uint32_t limbCount = functionalLimbCount(bitWidth);
@@ -7106,12 +7106,12 @@ obelisk_rt_status resolveStaticFunctionalType(
         bitWidth < 32 ? std::min(uint64_t{1} << bitWidth, autoBinMax)
                       : autoBinMax;
     if (binCount64 > binRecordLimit)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     const uint32_t binCount = static_cast<uint32_t>(binCount64);
 
     if (resolvedBinRows.size() > binRecordLimit ||
         binCount > binRecordLimit - resolvedBinRows.size())
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     const uint32_t firstBin = static_cast<uint32_t>(resolvedBinRows.size());
     if (!binCount) {
       resolvedGroupRows.push_back({typeID,
@@ -7165,7 +7165,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           "functional.resolved.automatic-value-set", typeID,
           resolvedItem.templateItem, expansion, valueSetIDs);
       if (!binID || !setID)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       binIDs.insert(binID);
       valueSetIDs.insert(setID);
 
@@ -7251,7 +7251,7 @@ obelisk_rt_status resolveStaticFunctionalType(
   for (size_t index = 0; index != resolvedGroupRows.size(); ++index) {
     auto item = resolvedItemPositions.find(resolvedGroupRows[index].item);
     if (item == resolvedItemPositions.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     groupsByItem[item->second].push_back(index);
   }
   std::vector<ResolvedFunctionalBin> packedBins;
@@ -7264,16 +7264,16 @@ obelisk_rt_status resolveStaticFunctionalType(
     for (size_t groupIndex : groupsByItem[itemIndex]) {
       auto group = resolvedGroupRows[groupIndex];
       if (uint64_t{group.firstBin} + group.binCount > resolvedBinRows.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       if (packedBins.size() > UINT32_MAX ||
           group.binCount > UINT32_MAX - packedBins.size())
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       const uint32_t source = group.firstBin;
       group.firstBin = static_cast<uint32_t>(packedBins.size());
       for (uint32_t offset = 0; offset != group.binCount; ++offset) {
         auto &bin = resolvedBinRows[source + offset];
         if (bin.item != group.item)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         bin.ordinal = ordinal++;
         packedBins.push_back(std::move(bin));
       }
@@ -7281,12 +7281,12 @@ obelisk_rt_status resolveStaticFunctionalType(
     }
   }
   if (packedBins.size() != resolvedBinRows.size())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   resolvedBinRows = std::move(packedBins);
   resolvedGroupRows = std::move(packedGroups);
   if (resolvedBinRows.size() > binRecordLimit ||
       resolvedCrossBinRows.size() > binRecordLimit - resolvedBinRows.size())
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
   resolvedBinRows.insert(resolvedBinRows.end(), resolvedCrossBinRows.begin(),
                          resolvedCrossBinRows.end());
 
@@ -7306,20 +7306,20 @@ obelisk_rt_status resolveStaticFunctionalType(
   auto captureSelectorInteger =
       [&](uint64_t selector, uint64_t cross, uint32_t ordinal,
           const FunctionalExpression &descriptor,
-          const obelisk_rt_functional_value_v1 &value,
-          ResolvedFunctionalValueSetRole role) -> obelisk_rt_status {
+          const talos_rt_functional_value_v1 &value,
+          ResolvedFunctionalValueSetRole role) -> talos_rt_status {
     if (!descriptor.bitWidth || value.bit_width != descriptor.bitWidth ||
         !value.value ||
-        (value.kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL &&
-         value.kind != OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE))
-      return OBELISK_RT_INVALID_DESIGN;
+        (value.kind != TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL &&
+         value.kind != TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE))
+      return TALOS_RT_INVALID_DESIGN;
     uint64_t id = resolvedFunctionalID(
         role == ResolvedFunctionalValueSetRole::MatchesCount
             ? "functional.resolved.matches-count"
             : "functional.resolved.predicate-value",
         typeID, selector, ordinal, valueSetIDs);
     if (!id)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     valueSetIDs.insert(id);
     PendingSet pending;
     pending.set.type = typeID;
@@ -7358,7 +7358,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                              FunctionalValueAtomLowerInclusive |
                                  FunctionalValueAtomUpperInclusive});
     pendingSets.push_back(std::move(pending));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   };
 
   std::vector<ResolvedCrossSelectorBinding> resolvedSelectorBindingRows;
@@ -7374,7 +7374,7 @@ obelisk_rt_status resolveStaticFunctionalType(
       continue;
     if (node.tupleSet || (node.kind == CrossSelectorKind::Set) !=
                              (node.constructionExpression != 0))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (!node.withExpression && (node.kind == CrossSelectorKind::Not ||
                                  node.kind == CrossSelectorKind::And ||
                                  node.kind == CrossSelectorKind::Or ||
@@ -7385,7 +7385,7 @@ obelisk_rt_status resolveStaticFunctionalType(
          resolvedTarget == resolvedItems.end()) ||
         (node.kind != CrossSelectorKind::Binsof &&
          (node.target || node.bin || node.valueSet)))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (node.bin) {
       auto targetBin = std::find_if(
           schema.functionalBins.begin(), schema.functionalBins.end(),
@@ -7393,7 +7393,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             return candidate.id == node.bin && candidate.item == node.target;
           });
       if (targetBin == schema.functionalBins.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
     uint64_t resolvedSetID = 0;
     if (node.valueSet) {
@@ -7409,13 +7409,13 @@ obelisk_rt_status resolveStaticFunctionalType(
           set->flags != FunctionalValueSetNeedsResolution ||
           uint64_t{set->firstAtom} + set->atomCount >
               schema.functionalValueAtoms.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
 
       resolvedSetID =
           resolvedFunctionalID("functional.resolved.selector-value-set", typeID,
                                set->id, 0, valueSetIDs);
       if (!resolvedSetID)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       valueSetIDs.insert(resolvedSetID);
       PendingSet pending;
       pending.set = {typeID,
@@ -7447,7 +7447,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         if (atom.kind != FunctionalValueAtomKind::IntegralValue &&
             atom.kind != FunctionalValueAtomKind::IntegralRange &&
             atom.kind != FunctionalValueAtomKind::RealInterval)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         const bool lowerUnbounded =
             atom.flags & FunctionalValueAtomLowerUnbounded;
         const bool upperUnbounded =
@@ -7462,10 +7462,10 @@ obelisk_rt_status resolveStaticFunctionalType(
                            : singleton ? low
                                        : expressionValue(atom.upperExpression);
         if ((!lowerUnbounded && !low) || (!upperUnbounded && !high))
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         if (set->kind == FunctionalValueSetKind::Real) {
           if (atom.kind != FunctionalValueAtomKind::RealInterval)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           bool hasUnknown = false;
           auto lower =
               lowerUnbounded
@@ -7477,7 +7477,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                   ? lower
                   : decodeRealBound(*high, atom.upperExpression, hasUnknown);
           if (!lower || !upper)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           if (hasUnknown) {
             std::fputs(
                 "warning: cross bin real intersect value contains X or Z "
@@ -7487,7 +7487,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           }
           if ((!lowerUnbounded && !std::isfinite(*lower)) ||
               (!upperUnbounded && !std::isfinite(*upper)))
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           if (!lowerUnbounded && !upperUnbounded && *lower > *upper) {
             std::fputs("warning: cross bin real intersect range has reversed "
                        "bounds and is ignored\n",
@@ -7540,7 +7540,7 @@ obelisk_rt_status resolveStaticFunctionalType(
              (!high || !highExpression ||
               !decodeFunctionalInteger(*high, highExpression->signedness,
                                        originalHigh, highUnknown))))
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         if (lowUnknown || highUnknown) {
           std::fputs("warning: cross bin intersect value contains X or Z and "
                      "is ignored\n",
@@ -7615,21 +7615,21 @@ obelisk_rt_status resolveStaticFunctionalType(
         const auto *descriptor = expressionSchema(operand.expression);
         const auto *value = expressionValue(operand.expression);
         if (!descriptor || !value)
-          return OBELISK_RT_INVALID_DESIGN;
-        obelisk_rt_status captured = captureSelectorInteger(
+          return TALOS_RT_INVALID_DESIGN;
+        talos_rt_status captured = captureSelectorInteger(
             node.id, resolvedCross->second, operand.ordinal, *descriptor,
             *value, ResolvedFunctionalValueSetRole::PredicateValue);
-        if (captured != OBELISK_RT_OK)
+        if (captured != TALOS_RT_OK)
           return captured;
       }
     } else if (node.flags & CrossSelectorScalarWith) {
       const auto *predicate = expressionValue(node.withExpression);
       if (!predicate ||
-          (predicate->kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL &&
-           predicate->kind != OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE) ||
+          (predicate->kind != TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL &&
+           predicate->kind != TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE) ||
           predicate->bit_width != 1 || predicate->value_size != 1 ||
           !predicate->value)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       bool truth = (*static_cast<const uint8_t *>(predicate->value) & 1) &&
                    (!predicate->unknown ||
                     !(*static_cast<const uint8_t *>(predicate->unknown) & 1));
@@ -7644,21 +7644,21 @@ obelisk_rt_status resolveStaticFunctionalType(
           expressionValue(node.withExpression ? node.withExpression
                                               : node.constructionExpression);
       if (!staticPlan || !construction ||
-          construction->kind != OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
+          construction->kind != TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
           uint64_t{staticPlan->firstTarget} + staticPlan->targetCount >
               schema.crossTargets.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
 
       CoverageTupleQueueSnapshot snapshot;
-      obelisk_rt_status snapshotStatus =
-          obelisk_rt_coverage_tuple_queue_snapshot(
+      talos_rt_status snapshotStatus =
+          talos_rt_coverage_tuple_queue_snapshot(
               context, construction->owner, staticPlan->tupleElementType,
               staticPlan->tupleProvenanceSpan,
               (staticPlan->tupleFlags & CrossTupleFourState) != 0,
               node.withExpression ? MaxFunctionalCrossWithCandidates
                                   : ParseLimits{}.maxRecords,
               snapshot);
-      if (snapshotStatus != OBELISK_RT_OK)
+      if (snapshotStatus != TALOS_RT_OK)
         return snapshotStatus;
 
       struct TupleComponentValue {
@@ -7687,7 +7687,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         const CrossTarget &target =
             schema.crossTargets[staticPlan->firstTarget + ordinal];
         if (target.cross != node.cross || target.ordinal != ordinal)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         for (uint32_t bit = 0; bit != target.tupleBitWidth; ++bit)
           setBit(usedBits, target.tupleBitOffset + bit, true);
       }
@@ -7702,7 +7702,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         for (uint64_t byte = 0; byte != snapshot.valueSize; ++byte)
           if ((encoded[byte] & ~usedBits[byte]) ||
               (unknown && (unknown[byte] & ~usedBits[byte])))
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
 
         TupleValue tuple;
         tuple.key.reserve(snapshot.valueSize * (snapshot.fourState ? 2 : 1));
@@ -7719,7 +7719,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               schema.crossTargets[staticPlan->firstTarget + ordinal];
           auto resolvedTarget = resolvedItems.find(target.target);
           if (resolvedTarget == resolvedItems.end())
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           TupleComponentValue component;
           component.target = &target;
           component.resolvedItem = resolvedTarget->second;
@@ -7738,7 +7738,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           if (!(target.tupleFlags & CrossTupleFieldFourState) &&
               std::any_of(component.bval.begin(), component.bval.end(),
                           [](uint64_t limb) { return limb != 0; }))
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           if (isRealResultKind(target.tupleResultKind)) {
             double real = 0.0;
             uint64_t encodedBits = component.aval.front();
@@ -7793,7 +7793,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           resolvedFunctionalID("functional.resolved.selector-set-tuples",
                                typeID, node.id, 0, tupleSetIDs);
       if (!resolvedTupleSetID)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       tupleSetIDs.insert(resolvedTupleSetID);
       PendingTupleSet pendingTupleSet;
       pendingTupleSet.set = {typeID,
@@ -7807,19 +7807,19 @@ obelisk_rt_status resolveStaticFunctionalType(
                              FunctionalTupleElementMode::ValueTuple,
                              0};
       if (values.size() > UINT32_MAX)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       for (uint32_t tupleOrdinal = 0; tupleOrdinal != values.size();
            ++tupleOrdinal) {
         uint64_t tupleID =
             resolvedFunctionalID("functional.resolved.selector-set-tuple",
                                  typeID, node.id, tupleOrdinal, tupleIDs);
         if (!tupleID)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         tupleIDs.insert(tupleID);
         if (values[tupleOrdinal].components.size() > UINT32_MAX ||
             pendingTupleSet.components.size() >
                 UINT32_MAX - values[tupleOrdinal].components.size())
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         const uint32_t firstComponent = pendingTupleSet.components.size();
         for (uint32_t componentOrdinal = 0;
              componentOrdinal != values[tupleOrdinal].components.size();
@@ -7830,14 +7830,14 @@ obelisk_rt_status resolveStaticFunctionalType(
               uint64_t{tupleOrdinal} * staticPlan->targetCount +
               componentOrdinal;
           if (wideStableOrdinal > UINT32_MAX)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           const uint32_t stableOrdinal =
               static_cast<uint32_t>(wideStableOrdinal);
           uint64_t componentSetID =
               resolvedFunctionalID("functional.resolved.selector-set-value",
                                    typeID, node.id, stableOrdinal, valueSetIDs);
           if (!componentSetID)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           valueSetIDs.insert(componentSetID);
           PendingSet base;
           base.set = {typeID,
@@ -7903,12 +7903,12 @@ obelisk_rt_status resolveStaticFunctionalType(
             !decodeFunctionalInteger(*value, descriptor->signedness, integer,
                                      unknown) ||
             unknown || integer.negative || integer.magnitude.empty())
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         if (integer.magnitude.size() > 1) {
-          obelisk_rt_status captured = captureSelectorInteger(
+          talos_rt_status captured = captureSelectorInteger(
               node.id, resolvedCross->second, 0, *descriptor, *value,
               ResolvedFunctionalValueSetRole::MatchesCount);
-          if (captured != OBELISK_RT_OK)
+          if (captured != TALOS_RT_OK)
             return captured;
           resolvedBindingFlags |= ResolvedCrossSelectorWideMatches;
           resolvedMatchesCount = 0;
@@ -7917,10 +7917,10 @@ obelisk_rt_status resolveStaticFunctionalType(
       }
       if (!resolvedMatchesCount &&
           !(resolvedBindingFlags & ResolvedCrossSelectorWideMatches))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     } else if (resolvedMatchesPolicy != CrossMatchesPolicy::None &&
                resolvedMatchesPolicy != CrossMatchesPolicy::All)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (!resolvedSetID && !resolvedTupleSetID && !resolvedBindingFlags)
       continue;
     resolvedSelectorBindingRows.push_back({typeID,
@@ -7980,11 +7980,11 @@ obelisk_rt_status resolveStaticFunctionalType(
   const uint64_t valueRecordLimit =
       std::min<uint64_t>(UINT32_MAX, ParseLimits{}.maxRecords);
   if (pendingSets.size() > valueRecordLimit)
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
   for (PendingSet &pending : pendingSets) {
     if (pending.atoms.size() > valueRecordLimit - resolvedAtomRows.size() ||
         pending.limbs.size() > valueRecordLimit - resolvedLimbRows.size())
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     pending.set.firstAtom = resolvedAtomRows.size();
     for (auto atom : pending.atoms) {
       atom.firstLimb += resolvedLimbRows.size();
@@ -8077,16 +8077,16 @@ obelisk_rt_status resolveStaticFunctionalType(
   auto queryStorage = std::make_unique<FunctionalCoverageSetQueryIndex>(
       fingerprintInput, typeID, Digest{});
   auto &setQueries = *queryStorage;
-  obelisk_rt_status stateExclusionStatus = markStaticallyEmptyStateBins(
+  talos_rt_status stateExclusionStatus = markStaticallyEmptyStateBins(
       fingerprintInput, typeID, Digest{}, setQueries);
-  if (stateExclusionStatus != OBELISK_RT_OK)
+  if (stateExclusionStatus != TALOS_RT_OK)
     return stateExclusionStatus;
   std::unordered_set<uint64_t> suppressedTransitionAlternatives;
   std::unordered_set<uint64_t> emptyTransitionBins;
-  obelisk_rt_status transitionExclusionStatus = deriveTransitionExclusions(
+  talos_rt_status transitionExclusionStatus = deriveTransitionExclusions(
       fingerprintInput, typeID, Digest{}, suppressedTransitionAlternatives,
       emptyTransitionBins, setQueries);
-  if (transitionExclusionStatus != OBELISK_RT_OK)
+  if (transitionExclusionStatus != TALOS_RT_OK)
     return transitionExclusionStatus;
   for (auto &bin : fingerprintInput.resolvedFunctionalBins)
     if (bin.type == typeID && bin.configuration == Digest{} &&
@@ -8098,7 +8098,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         fingerprintInput.resolvedFunctionalBins[binBase + index];
     if (resolved.type != typeID || resolved.configuration != Digest{} ||
         resolved.id != row.id)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     row.flags = resolved.flags;
   }
 
@@ -8142,7 +8142,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               !decodeFunctionalInteger(*value, descriptor->signedness, integer,
                                        unknown) ||
               unknown || integer.negative)
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           count = integer.magnitude.empty() ? 0
                   : integer.magnitude.size() > 1
                       ? cap
@@ -8150,9 +8150,9 @@ obelisk_rt_status resolveStaticFunctionalType(
         } else
           count = std::min(count, cap);
         if (!count)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
       } else if (node.matchesPolicy != CrossMatchesPolicy::All)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       prepared->withMatches.emplace(node.id, count);
       FunctionalMagnitude magnitude =
           count ? FunctionalMagnitude{count} : FunctionalMagnitude{};
@@ -8160,7 +8160,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               magnitude, prepared->maximumMatchCount) > 0)
         prepared->maximumMatchCount = std::move(magnitude);
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
   PreparedFunctionalConstruction selectionIndex;
@@ -8243,7 +8243,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             schema.crossTargets.size() ||
         uint64_t{staticPlan->firstBin} + staticPlan->binCount >
             schema.crossBins.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
 
     PendingCross pending;
     CrossRetainAutoPolicy retain = staticPlan->retainAutoPolicy;
@@ -8253,7 +8253,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                    : CrossRetainAutoPolicy::Discard;
     if (retain != CrossRetainAutoPolicy::Retain &&
         retain != CrossRetainAutoPolicy::Discard)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     pending.plan = {typeID, {}, cross->id, retain, 0, 0, 0, 0};
 
     std::vector<std::vector<const ResolvedFunctionalBin *>> targetBins;
@@ -8263,20 +8263,20 @@ obelisk_rt_status resolveStaticFunctionalType(
           schema.crossTargets[staticPlan->firstTarget + ordinal];
       if (staticTarget.cross != cross->templateItem ||
           staticTarget.ordinal != ordinal)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       auto target = resolvedItems.find(staticTarget.target);
       if (target == resolvedItems.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       const auto &bins = orderedBins[target->second];
       if (bins.size() > UINT32_MAX)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       targetBins.push_back(bins);
     }
     const auto &allTargetBins = targetBins;
     uint64_t fullRectangleBinEntryCount = 0;
     for (const auto &bins : allTargetBins) {
       if (bins.size() > recordLimit - fullRectangleBinEntryCount)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       fullRectangleBinEntryCount += bins.size();
     }
     std::unordered_map<uint64_t, const ResolvedFunctionalBin *> binsByID;
@@ -8291,7 +8291,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                                            fingerprintInput.crossSelectorNodes,
                                            bin.rootSelector);
       if (!root)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       if (crossSelectorUsesWith(schema, *root, setQueries)) {
         symbolic = selectionKernel(selectionIndex, *staticPlan);
         if (!symbolic->check())
@@ -8320,14 +8320,14 @@ obelisk_rt_status resolveStaticFunctionalType(
     auto markEmpty = [&](uint64_t templateBin) {
       auto mirror = resolvedBinTemplates.find({cross->id, templateBin});
       if (mirror == resolvedBinTemplates.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       auto &row = resolvedBinRows[mirror->second];
       row.flags |= FunctionalBinEmpty;
       fingerprintInput.resolvedFunctionalBins[binBase + mirror->second].flags =
           row.flags;
       if (setQueries.bins.find(row.id) == setQueries.bins.end())
-        return OBELISK_RT_INVALID_DESIGN;
-      return OBELISK_RT_OK;
+        return TALOS_RT_INVALID_DESIGN;
+      return TALOS_RT_OK;
     };
 
     // IEEE 1800-2023 19.6.1: AND intersects selected products and OR unions
@@ -8344,7 +8344,7 @@ obelisk_rt_status resolveStaticFunctionalType(
       CrossSelectorDNF alternatives;
       if (crossBin.cross != cross->templateItem || !node ||
           node->cross != cross->templateItem)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
 
       bool hasSignificantAlternative = false;
       BinSelection selection;
@@ -8361,9 +8361,9 @@ obelisk_rt_status resolveStaticFunctionalType(
         selection.selected = selected;
       } else {
         const bool usesSet = crossSelectorUsesSet(schema, *node, setQueries);
-        obelisk_rt_status selectorStatus = decodeCrossSelectorDNF(
+        talos_rt_status selectorStatus = decodeCrossSelectorDNF(
             schema, *node, recordLimit, alternatives, usesSet);
-        if (selectorStatus != OBELISK_RT_OK)
+        if (selectorStatus != TALOS_RT_OK)
           return selectorStatus;
         for (const CrossSelectorConjunction &terms : alternatives) {
           // Bound both the retained rectangle payload and the full temporary
@@ -8371,7 +8371,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           // must not permit an unbounded transient allocation first.
           if (fullRectangleBinEntryCount >
               recordLimit - selectorRectangleBinEntryCount)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           SelectorRectangle rectangle;
           rectangle.allowedBins.reserve(allTargetBins.size());
           for (const auto &bins : allTargetBins) {
@@ -8394,7 +8394,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             if (staticTarget == schema.crossTargets.begin() +
                                     staticPlan->firstTarget +
                                     staticPlan->targetCount)
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             const ResolvedFunctionalValueSet *selectedSet = nullptr;
             if (condition->valueSet) {
               auto binding = std::find_if(
@@ -8414,12 +8414,12 @@ obelisk_rt_status resolveStaticFunctionalType(
                             });
               if (binding == resolvedSelectorBindingRows.end() ||
                   set == resolvedSetRows.end())
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               selectedSet = &*set;
             }
-            obelisk_rt_status selectionStatus = OBELISK_RT_OK;
+            talos_rt_status selectionStatus = TALOS_RT_OK;
             auto isSelected = [&](uint64_t binID) {
-              if (selectionStatus != OBELISK_RT_OK)
+              if (selectionStatus != TALOS_RT_OK)
                 return false;
               auto found = binsByID.find(binID);
               if (found == binsByID.end())
@@ -8432,7 +8432,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                 selectionStatus = resolvedFunctionalBinIntersectsValueSet(
                     fingerprintInput, typeID, Digest{}, bin->id, *selectedSet,
                     suppressedTransitionAlternatives, setQueries, intersects);
-                selected = selectionStatus == OBELISK_RT_OK && intersects;
+                selected = selectionStatus == TALOS_RT_OK && intersects;
               }
               return term.negated ? !selected : selected;
             };
@@ -8441,7 +8441,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                 std::remove_if(allowed.begin(), allowed.end(),
                                [&](uint64_t id) { return !isSelected(id); }),
                 allowed.end());
-            if (selectionStatus != OBELISK_RT_OK)
+            if (selectionStatus != TALOS_RT_OK)
               return selectionStatus;
           }
           const bool significant = std::all_of(
@@ -8450,16 +8450,16 @@ obelisk_rt_status resolveStaticFunctionalType(
           if (!significant)
             continue;
           if (selectorRectangles.size() >= recordLimit)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           uint64_t rectangleBinEntryCount = 0;
           for (const auto &bins : rectangle.allowedBins) {
             if (bins.size() > recordLimit - rectangleBinEntryCount)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             rectangleBinEntryCount += bins.size();
           }
           if (rectangleBinEntryCount >
               recordLimit - selectorRectangleBinEntryCount)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           selectorRectangleBinEntryCount += rectangleBinEntryCount;
           hasSignificantAlternative = true;
           selectorRectangles.push_back(std::move(rectangle));
@@ -8474,12 +8474,12 @@ obelisk_rt_status resolveStaticFunctionalType(
               fingerprintInput, typeID, Digest{}, cross->id, *node,
               targetBinIDs, suppressedTransitionAlternatives, setQueries,
               candidates);
-          if (selectorStatus != OBELISK_RT_OK)
+          if (selectorStatus != TALOS_RT_OK)
             return selectorStatus;
           for (const auto &tuple : candidates) {
             if (selectorRectangles.size() >= recordLimit ||
                 tuple.size() > recordLimit - selectorRectangleBinEntryCount)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             SelectorRectangle rectangle;
             rectangle.allowedBins.reserve(tuple.size());
             for (uint64_t bin : tuple)
@@ -8491,14 +8491,14 @@ obelisk_rt_status resolveStaticFunctionalType(
         }
       }
       if (!hasSignificantAlternative) {
-        if (obelisk_rt_status status = markEmpty(crossBin.bin);
-            status != OBELISK_RT_OK)
+        if (talos_rt_status status = markEmpty(crossBin.bin);
+            status != TALOS_RT_OK)
           return status;
         continue;
       }
       auto mirror = resolvedBinTemplates.find({cross->id, crossBin.bin});
       if (mirror == resolvedBinTemplates.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       selection.excluding = resolvedBinRows[mirror->second].flags &
                             (FunctionalBinIgnore | FunctionalBinIllegal);
       selection.endRectangle = selectorRectangles.size();
@@ -8517,8 +8517,8 @@ obelisk_rt_status resolveStaticFunctionalType(
       for (const BinSelection &selection : binSelections)
         if (excluded && !selection.excluding &&
             !graph.subtract(selection.selected, excluded))
-          if (obelisk_rt_status status = markEmpty(selection.templateBin);
-              status != OBELISK_RT_OK)
+          if (talos_rt_status status = markEmpty(selection.templateBin);
+              status != TALOS_RT_OK)
             return status;
       if (!symbolic->check())
         return symbolic->status;
@@ -8533,7 +8533,7 @@ obelisk_rt_status resolveStaticFunctionalType(
       // pieces disjoint; the work is bounded like the rectangles themselves.
       uint64_t splitWork = 0;
       auto escapes = [&](const SelectorRectangle &start,
-                         bool &escaped) -> obelisk_rt_status {
+                         bool &escaped) -> talos_rt_status {
         std::vector<std::pair<SelectorRectangle, size_t>> pending{{start, 0}};
         escaped = false;
         while (!pending.empty()) {
@@ -8556,7 +8556,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           }
           if (next == exclusions.size()) {
             escaped = true;
-            return OBELISK_RT_OK;
+            return TALOS_RT_OK;
           }
           const auto &excluded = exclusions[next]->allowedBins;
           SelectorRectangle prefix = piece;
@@ -8570,7 +8570,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                                   other.end(), std::back_inserter(inside));
             if (!outside.empty()) {
               if (++splitWork > recordLimit)
-                return OBELISK_RT_OUT_OF_RESOURCES;
+                return TALOS_RT_OUT_OF_RESOURCES;
               SelectorRectangle split = prefix;
               split.allowedBins[axis] = std::move(outside);
               pending.emplace_back(std::move(split), next + 1);
@@ -8578,7 +8578,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             prefix.allowedBins[axis] = std::move(inside);
           }
         }
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       };
       if (!exclusions.empty())
         for (const BinSelection &selection : binSelections) {
@@ -8587,13 +8587,13 @@ obelisk_rt_status resolveStaticFunctionalType(
           bool escaped = false;
           for (size_t index = selection.firstRectangle;
                !escaped && index != selection.endRectangle; ++index)
-            if (obelisk_rt_status status =
+            if (talos_rt_status status =
                     escapes(selectorRectangles[index], escaped);
-                status != OBELISK_RT_OK)
+                status != TALOS_RT_OK)
               return status;
           if (!escaped)
-            if (obelisk_rt_status status = markEmpty(selection.templateBin);
-                status != OBELISK_RT_OK)
+            if (talos_rt_status status = markEmpty(selection.templateBin);
+                status != TALOS_RT_OK)
               return status;
         }
     }
@@ -8616,7 +8616,7 @@ obelisk_rt_status resolveStaticFunctionalType(
     // absent from this resolved configuration.
     if (retain == CrossRetainAutoPolicy::Discard) {
       if (!appendPendingCross(std::move(pending)))
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       continue;
     }
 
@@ -8624,7 +8624,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         std::any_of(allTargetBins.begin(), allTargetBins.end(),
                     [](const auto &bins) { return bins.empty(); })) {
       if (!appendPendingCross(std::move(pending)))
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       continue;
     }
 
@@ -8664,7 +8664,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           auto label = axis.binOrdinals.find(bin->id);
           if (label == axis.binOrdinals.end() ||
               label->second >= byLabel.size())
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           byLabel[label->second] = bin;
           nameOrder.emplace(bin->id, order);
         }
@@ -8687,7 +8687,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               uint32_t successor = 0;
               if (finalTarget) {
                 if (frame.root != 1)
-                  return OBELISK_RT_INVALID_DESIGN;
+                  return TALOS_RT_INVALID_DESIGN;
               } else {
                 auto [position, inserted] = successors.emplace(
                     frame.root,
@@ -8695,7 +8695,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                 if (inserted) {
                   if (++rawStateCount > recordLimit ||
                       levels[ordinal + 1].size() >= UINT32_MAX)
-                    return OBELISK_RT_OUT_OF_RESOURCES;
+                    return TALOS_RT_OUT_OF_RESOURCES;
                   levels[ordinal + 1].push_back({{}, {}, frame.root});
                 }
                 successor = position->second;
@@ -8704,13 +8704,13 @@ obelisk_rt_status resolveStaticFunctionalType(
                   std::min<uint64_t>(byLabel.size(), frame.first + span);
               for (uint64_t code = frame.first; code != limit; ++code) {
                 if (++rawEdgeCount > recordLimit)
-                  return OBELISK_RT_OUT_OF_RESOURCES;
+                  return TALOS_RT_OUT_OF_RESOURCES;
                 state.edges.push_back({byLabel[code], successor, finalTarget});
               }
             } else {
               const uint32_t bit = axis.binFirst + frame.depth;
               if (span == 1 || variable < bit)
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               pending.push_back(
                   {variable == bit ? graph.child(frame.root, true) : frame.root,
                    frame.depth + 1, frame.first + span / 2});
@@ -8752,7 +8752,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             if (finalTarget && !next.empty())
               continue;
             if (++rawEdgeCount > recordLimit)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             RawEdge edge;
             edge.bin = bin;
             edge.accepts = finalTarget;
@@ -8762,7 +8762,7 @@ obelisk_rt_status resolveStaticFunctionalType(
               if (inserted) {
                 if (++rawStateCount > recordLimit ||
                     levels[ordinal + 1].size() >= UINT32_MAX)
-                  return OBELISK_RT_OUT_OF_RESOURCES;
+                  return TALOS_RT_OUT_OF_RESOURCES;
                 levels[ordinal + 1].push_back({next, {}});
               }
               edge.successor = position->second;
@@ -8781,17 +8781,17 @@ obelisk_rt_status resolveStaticFunctionalType(
     std::vector<std::vector<uint64_t>> stateNodes(levels.size());
     std::vector<std::vector<FunctionalMagnitude>> stateCounts(levels.size());
     auto stableNodeID = [&](uint32_t ordinal, const NodeSignature &signature) {
-      uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
+      uint64_t hash = TALOS_STABLE_HASH_OFFSET_BASIS;
       static constexpr char nameSpace[] =
           "functional.resolved.cross-automatic-node";
-      hash = obelisk_stable_hash_append(hash, nameSpace, sizeof(nameSpace) - 1);
-      hash = obelisk_stable_hash_append_byte(hash, 0);
-      hash = obelisk_stable_hash_append_uint_le(hash, typeID, 8);
-      hash = obelisk_stable_hash_append_uint_le(hash, cross->templateItem, 8);
-      hash = obelisk_stable_hash_append_uint_le(hash, ordinal, 4);
+      hash = talos_stable_hash_append(hash, nameSpace, sizeof(nameSpace) - 1);
+      hash = talos_stable_hash_append_byte(hash, 0);
+      hash = talos_stable_hash_append_uint_le(hash, typeID, 8);
+      hash = talos_stable_hash_append_uint_le(hash, cross->templateItem, 8);
+      hash = talos_stable_hash_append_uint_le(hash, ordinal, 4);
       for (const auto &[bin, child] : signature) {
-        hash = obelisk_stable_hash_append_uint_le(hash, bin, 8);
-        hash = obelisk_stable_hash_append_uint_le(hash, child, 8);
+        hash = talos_stable_hash_append_uint_le(hash, bin, 8);
+        hash = talos_stable_hash_append_uint_le(hash, child, 8);
       }
       return hash && !crossNodeIDs.count(hash) ? hash : uint64_t{0};
     };
@@ -8828,16 +8828,16 @@ obelisk_rt_status resolveStaticFunctionalType(
         }
         if (!recordsFit(fingerprintInput.resolvedCrossAutomaticNodes.size(),
                         generatedCrossNodeCount, pending.nodes.size() + 1))
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         if (!recordsFit(fingerprintInput.resolvedCrossAutomaticEdges.size(),
                         generatedCrossEdgeCount, pendingEdgeCount) ||
             !recordsFit(fingerprintInput.resolvedCrossAutomaticEdges.size(),
                         generatedCrossEdgeCount + pendingEdgeCount,
                         signature.size()))
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         uint64_t nodeID = stableNodeID(ordinal, signature);
         if (!nodeID)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         crossNodeIDs.insert(nodeID);
         PendingCrossNode node;
         node.node = {typeID,
@@ -8863,7 +8863,7 @@ obelisk_rt_status resolveStaticFunctionalType(
     pending.plan.rootNode = stateNodes.front().front();
     pending.automaticBinCount = stateCounts.front().front();
     if (!appendPendingCross(std::move(pending)))
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
   }
 
   std::vector<ResolvedCrossPlan> resolvedCrossPlanRows;
@@ -8873,7 +8873,7 @@ obelisk_rt_status resolveStaticFunctionalType(
     if (resolvedCrossCountLimbs.size() > UINT32_MAX ||
         pending.automaticBinCount.size() >
             UINT32_MAX - resolvedCrossCountLimbs.size())
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     pending.plan.firstAutomaticBinCountLimb =
         static_cast<uint32_t>(resolvedCrossCountLimbs.size());
     pending.plan.automaticBinCountLimbCount =
@@ -8894,7 +8894,7 @@ obelisk_rt_status resolveStaticFunctionalType(
   for (PendingCrossNode &pending : pendingCrossNodes) {
     if (resolvedCrossEdgeRows.size() > UINT32_MAX ||
         pending.edges.size() > UINT32_MAX - resolvedCrossEdgeRows.size())
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     pending.node.firstEdge =
         static_cast<uint32_t>(resolvedCrossEdgeRows.size());
     resolvedCrossNodeRows.push_back(pending.node);
@@ -8930,7 +8930,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           schema.functionalConfigurations.end(), [&](const auto &entry) {
             return entry.type == typeID && entry.configuration == configuration;
           }))
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
 
   for (auto &row : resolvedItemRows)
     row.configuration = configuration;
@@ -9014,32 +9014,32 @@ obelisk_rt_status resolveStaticFunctionalType(
   destination.resolvedFunctionalTupleSetComponents =
       std::move(resolvedTupleComponentRows);
 
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status validateFunctionalTypeOptionOwner(CoverageState &coverage,
+talos_rt_status validateFunctionalTypeOptionOwner(CoverageState &coverage,
                                                     uint64_t typeID,
                                                     uint64_t itemID) {
-  obelisk_rt_status status = ensureFunctionalConstructionSchemas(coverage);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status = ensureFunctionalConstructionSchemas(coverage);
+  if (status != TALOS_RT_OK)
     return status;
   if (!coverage.constructionSchemas->types.count(typeID))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   if (itemID) {
     auto item = coverage.constructionSchemas->items.find(itemID);
     if (item == coverage.constructionSchemas->items.end() ||
         item->second.type != typeID)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
+talos_rt_status
 applyFunctionalTypeOptions(CoverageState &coverage, uint64_t typeID,
                            FunctionalCoverageTypeState &type) {
   auto overrides = coverage.typeOptions.find(typeID);
   if (overrides == coverage.typeOptions.end())
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   const FunctionalCoverageTypeOptions &options = overrides->second;
   if (options.goal)
     type.typeGoal = *options.goal;
@@ -9050,7 +9050,7 @@ applyFunctionalTypeOptions(CoverageState &coverage, uint64_t typeID,
   if (type.items.size() != type.typeItemGoals.size() ||
       type.items.size() != type.typeItemWeights.size() || !type.queryMetadata ||
       type.queryMetadata->items.size() != type.items.size())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   for (size_t index = 0; index != type.items.size(); ++index) {
     const auto *resolved = &type.queryMetadata->items[index];
     if (auto goal = options.itemGoals.find(resolved->templateItem);
@@ -9060,25 +9060,25 @@ applyFunctionalTypeOptions(CoverageState &coverage, uint64_t typeID,
         weight != options.itemWeights.end())
       type.typeItemWeights[index] = weight->second;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-prepareFunctionalSampleMetadata(const obelisk::coverage::Database &schema,
+talos_rt_status
+prepareFunctionalSampleMetadata(const talos::coverage::Database &schema,
                                 uint64_t typeID,
                                 const FunctionalCoverageTypeState &type,
                                 FunctionalCoverageQueryMetadata &metadata);
 
-obelisk_rt_status createResolvedFunctionalType(
-    CoverageState &coverage, const obelisk::coverage::Database &schema,
-    uint64_t typeID, const obelisk::coverage::Digest &configuration,
+talos_rt_status createResolvedFunctionalType(
+    CoverageState &coverage, const talos::coverage::Database &schema,
+    uint64_t typeID, const talos::coverage::Digest &configuration,
     FunctionalCoverageTypeState &result) {
   FunctionalCoverageTypeState type;
   type.configuration = configuration;
   auto metadata = std::make_shared<FunctionalCoverageQueryMetadata>();
   FunctionalCoverageSetQueryIndex setQueries(schema, typeID, configuration);
   metadata->templates = coverage.constructionSchemas;
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   const auto optionsByOwner = detail::groupRecords(
       schema.functionalConfigurationOptions, [](const auto &option) {
         return std::make_tuple(option.type, option.configuration,
@@ -9101,10 +9101,10 @@ obelisk_rt_status createResolvedFunctionalType(
     if (entry.metric == MetricKind::Functional)
       excludedEntities.insert(entry.entity);
   std::unordered_set<uint64_t> emptyTransitionBins;
-  obelisk_rt_status transitionExclusionStatus = deriveTransitionExclusions(
+  talos_rt_status transitionExclusionStatus = deriveTransitionExclusions(
       schema, typeID, configuration, type.suppressedTransitionAlternatives,
       emptyTransitionBins, setQueries);
-  if (transitionExclusionStatus != OBELISK_RT_OK)
+  if (transitionExclusionStatus != TALOS_RT_OK)
     return transitionExclusionStatus;
   std::unordered_set<uint64_t> transitionBinsWithAlternatives;
   for (const auto &alternative : schema.resolvedTransitionAlternatives)
@@ -9114,39 +9114,39 @@ obelisk_rt_status createResolvedFunctionalType(
   size_t verifiedEmptyTransitionBins = 0;
   for (const auto &bin : schema.resolvedFunctionalBins) {
     if (bin.type != typeID || bin.configuration != configuration ||
-        bin.kind != obelisk::coverage::FunctionalBinKind::Transition ||
-        (bin.flags & (obelisk::coverage::FunctionalBinIgnore |
-                      obelisk::coverage::FunctionalBinIllegal)) ||
+        bin.kind != talos::coverage::FunctionalBinKind::Transition ||
+        (bin.flags & (talos::coverage::FunctionalBinIgnore |
+                      talos::coverage::FunctionalBinIllegal)) ||
         !transitionBinsWithAlternatives.count(bin.id))
       continue;
     bool empty = emptyTransitionBins.count(bin.id);
-    if (bool(bin.flags & obelisk::coverage::FunctionalBinEmpty) != empty)
-      return OBELISK_RT_INVALID_DESIGN;
+    if (bool(bin.flags & talos::coverage::FunctionalBinEmpty) != empty)
+      return TALOS_RT_INVALID_DESIGN;
     verifiedEmptyTransitionBins += empty;
   }
   if (verifiedEmptyTransitionBins != emptyTransitionBins.size())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   for (const auto &option : groupOptions) {
     if (option.type != typeID || option.configuration != configuration ||
         option.owner != typeID ||
         option.ownerKind !=
-            obelisk::coverage::FunctionalConfigurationOptionOwnerKind::Group)
+            talos::coverage::FunctionalConfigurationOptionOwnerKind::Group)
       continue;
-    using Option = obelisk::coverage::FunctionalConfigurationOptionKind;
-    using Scope = obelisk::coverage::FunctionalOptionScopeKind;
+    using Option = talos::coverage::FunctionalConfigurationOptionKind;
+    using Scope = talos::coverage::FunctionalOptionScopeKind;
     if (option.scope == Scope::Instance && option.option == Option::Goal) {
       if (option.value > 100)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       type.instanceGoal = static_cast<uint32_t>(option.value);
     } else if (option.scope == Scope::Instance &&
                option.option == Option::Weight) {
       if (option.value > UINT32_MAX)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       type.instanceWeight = static_cast<uint32_t>(option.value);
     } else if (option.scope == Scope::Instance &&
                option.option == Option::GetInstCoverage) {
       if (option.value > 1)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       type.getInstCoverage = option.value != 0;
     } else if (option.scope == Scope::Instance &&
                option.option == Option::PerInstance) {
@@ -9165,29 +9165,29 @@ obelisk_rt_status createResolvedFunctionalType(
       type.groupCrossNumPrintMissing = option.value;
     } else if (option.scope == Scope::Type && option.option == Option::Goal) {
       if (option.value > 100)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       type.typeGoal = static_cast<uint32_t>(option.value);
     } else if (option.scope == Scope::Type && option.option == Option::Weight) {
       if (option.value > UINT32_MAX)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       type.typeWeight = static_cast<uint32_t>(option.value);
     } else if (option.scope == Scope::Type &&
                option.option == Option::MergeInstances) {
       if (option.value > 1)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       type.mergeInstances = option.value != 0;
     } else if (option.scope == Scope::Type &&
                option.option == Option::DistributeFirst) {
       if (option.value > 1)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       type.distributeFirst = option.value != 0;
     } else if (option.scope == Scope::Type && option.option == Option::Strobe) {
       if (option.value > 1)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       type.strobe = option.value != 0;
     }
   }
-  std::vector<const obelisk::coverage::ResolvedFunctionalItem *> items;
+  std::vector<const talos::coverage::ResolvedFunctionalItem *> items;
   for (const auto &item : schema.resolvedFunctionalItems)
     if (item.type == typeID && item.configuration == type.configuration)
       items.push_back(&item);
@@ -9198,18 +9198,18 @@ obelisk_rt_status createResolvedFunctionalType(
   for (const auto &option : groupOptions)
     if (option.type == typeID && option.configuration == configuration &&
         option.owner == typeID &&
-        option.ownerKind == obelisk::coverage::
+        option.ownerKind == talos::coverage::
                                 FunctionalConfigurationOptionOwnerKind::Group &&
         option.scope ==
-            obelisk::coverage::FunctionalOptionScopeKind::Instance &&
+            talos::coverage::FunctionalOptionScopeKind::Instance &&
         option.option ==
-            obelisk::coverage::FunctionalConfigurationOptionKind::AtLeast)
+            talos::coverage::FunctionalConfigurationOptionKind::AtLeast)
       groupAtLeast = option.value;
   for (const auto *item : items) {
     const auto &itemOptions =
         optionsFor(FunctionalConfigurationOptionOwnerKind::Item, item->id);
     const bool nonAggregating =
-        (item->flags & obelisk::coverage::FunctionalItemNonAggregating) != 0;
+        (item->flags & talos::coverage::FunctionalItemNonAggregating) != 0;
     auto constructionOptions = metadata->groupOptions;
     for (const auto &option : itemOptions) {
       if (option.scope != FunctionalOptionScopeKind::Instance)
@@ -9242,25 +9242,25 @@ obelisk_rt_status createResolvedFunctionalType(
     for (const auto &option : itemOptions)
       if (option.type == typeID && option.configuration == configuration &&
           option.owner == item->id &&
-          option.ownerKind == obelisk::coverage::
+          option.ownerKind == talos::coverage::
                                   FunctionalConfigurationOptionOwnerKind::Item &&
           option.scope ==
-              obelisk::coverage::FunctionalOptionScopeKind::Instance &&
+              talos::coverage::FunctionalOptionScopeKind::Instance &&
           option.option ==
-              obelisk::coverage::FunctionalConfigurationOptionKind::AtLeast)
+              talos::coverage::FunctionalConfigurationOptionKind::AtLeast)
         itemAtLeast = option.value;
     for (const auto &option : itemOptions)
       if (option.type == typeID && option.configuration == configuration &&
           option.owner == item->id &&
-          option.ownerKind == obelisk::coverage::
+          option.ownerKind == talos::coverage::
                                   FunctionalConfigurationOptionOwnerKind::Item &&
           option.scope ==
-              obelisk::coverage::FunctionalOptionScopeKind::Instance &&
-          option.option == obelisk::coverage::
+              talos::coverage::FunctionalOptionScopeKind::Instance &&
+          option.option == talos::coverage::
                                FunctionalConfigurationOptionKind::
                                    CrossNumPrintMissing) {
-        if (item->kind != obelisk::coverage::FunctionalItemKind::Cross)
-          return OBELISK_RT_INVALID_DESIGN;
+        if (item->kind != talos::coverage::FunctionalItemKind::Cross)
+          return TALOS_RT_INVALID_DESIGN;
         type.crossNumPrintMissing[item->templateItem] = option.value;
         type.explicitCrossNumPrintMissingItems.insert(item->templateItem);
       }
@@ -9271,18 +9271,18 @@ obelisk_rt_status createResolvedFunctionalType(
       if (option.type != typeID || option.configuration != configuration ||
           option.owner != item->id ||
           option.ownerKind !=
-              obelisk::coverage::FunctionalConfigurationOptionOwnerKind::Item ||
-          option.scope != obelisk::coverage::FunctionalOptionScopeKind::Type)
+              talos::coverage::FunctionalConfigurationOptionOwnerKind::Item ||
+          option.scope != talos::coverage::FunctionalOptionScopeKind::Type)
         continue;
       if (option.option ==
-          obelisk::coverage::FunctionalConfigurationOptionKind::Goal) {
+          talos::coverage::FunctionalConfigurationOptionKind::Goal) {
         if (option.value > 100)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         typeGoal = static_cast<uint32_t>(option.value);
       } else if (option.option ==
-                 obelisk::coverage::FunctionalConfigurationOptionKind::Weight) {
+                 talos::coverage::FunctionalConfigurationOptionKind::Weight) {
         if (option.value > UINT32_MAX)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         typeWeight = static_cast<uint32_t>(option.value);
       }
     }
@@ -9302,7 +9302,7 @@ obelisk_rt_status createResolvedFunctionalType(
          bin.atLeast, bin.kind, flags, 0, false, excluded});
     auto position = metadata->itemPositions.find(bin.item);
     if (position == metadata->itemPositions.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     metadata->itemBins[position->second].push_back(metadata->bins.size());
     metadata->binPositions.emplace(bin.id, metadata->bins.size());
     metadata->bins.push_back(bin);
@@ -9312,23 +9312,23 @@ obelisk_rt_status createResolvedFunctionalType(
                            configuration,
                            type.suppressedTransitionAlternatives);
   const uint64_t selectorResolutionLimit =
-      obelisk::coverage::ParseLimits{}.maxRecords;
+      talos::coverage::ParseLimits{}.maxRecords;
   uint64_t explicitRectangleCount = 0;
   uint64_t explicitRectangleBinEntryCount = 0;
-  IndexMap<uint64_t, const obelisk::coverage::CrossPlan *> staticCrossPlans;
+  IndexMap<uint64_t, const talos::coverage::CrossPlan *> staticCrossPlans;
   for (const auto &plan : schema.crossPlans)
     staticCrossPlans.emplace(plan.item, &plan);
-  IndexMap<uint64_t, const obelisk::coverage::CrossSelectorNode *> selectors;
+  IndexMap<uint64_t, const talos::coverage::CrossSelectorNode *> selectors;
   for (const auto &selector : schema.crossSelectorNodes)
     selectors.emplace(selector.id, &selector);
   IndexMap<std::pair<uint64_t, uint64_t>, size_t> crossBins;
   for (size_t index = 0; index != metadata->bins.size(); ++index) {
     const auto &bin = metadata->bins[index];
-    if (bin.kind == obelisk::coverage::FunctionalBinKind::Cross)
+    if (bin.kind == talos::coverage::FunctionalBinKind::Cross)
       crossBins.emplace(std::make_pair(bin.item, bin.templateBin), index);
   }
   IndexMap<std::pair<uint64_t, uint64_t>,
-           const obelisk::coverage::ResolvedCrossSelectorBinding *>
+           const talos::coverage::ResolvedCrossSelectorBinding *>
       bindings;
   for (const auto &binding : schema.resolvedCrossSelectorBindings)
     if (binding.type == typeID && binding.configuration == configuration)
@@ -9341,17 +9341,17 @@ obelisk_rt_status createResolvedFunctionalType(
       continue;
     auto itemPosition = metadata->itemPositions.find(plan.cross);
     if (itemPosition == metadata->itemPositions.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto *item = &metadata->items[itemPosition->second];
     auto staticPlanPosition = staticCrossPlans.find(item->templateItem);
-    if (item->kind != obelisk::coverage::FunctionalItemKind::Cross ||
+    if (item->kind != talos::coverage::FunctionalItemKind::Cross ||
         staticPlanPosition == staticCrossPlans.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto *staticPlan = staticPlanPosition->second;
     if ((plan.retainAutoPolicy !=
-             obelisk::coverage::CrossRetainAutoPolicy::Retain &&
+             talos::coverage::CrossRetainAutoPolicy::Retain &&
          plan.retainAutoPolicy !=
-             obelisk::coverage::CrossRetainAutoPolicy::Discard) ||
+             talos::coverage::CrossRetainAutoPolicy::Discard) ||
         uint64_t{staticPlan->firstTarget} + staticPlan->targetCount >
             schema.crossTargets.size() ||
         uint64_t{staticPlan->firstBin} + staticPlan->binCount >
@@ -9359,7 +9359,7 @@ obelisk_rt_status createResolvedFunctionalType(
         uint64_t{plan.firstAutomaticBinCountLimb} +
                 plan.automaticBinCountLimbCount >
             schema.resolvedCrossAutomaticBinCountLimbs.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     FunctionalCoverageCrossState cross;
     cross.id = item->id;
     cross.templateItem = item->templateItem;
@@ -9381,8 +9381,8 @@ obelisk_rt_status createResolvedFunctionalType(
       if (target.cross != item->templateItem || target.ordinal != ordinal ||
           resolvedTarget == metadata->templateItemPositions.end() ||
           metadata->items[resolvedTarget->second].kind !=
-              obelisk::coverage::FunctionalItemKind::Coverpoint)
-        return OBELISK_RT_INVALID_DESIGN;
+              talos::coverage::FunctionalItemKind::Coverpoint)
+        return TALOS_RT_INVALID_DESIGN;
       cross.targets.push_back(metadata->items[resolvedTarget->second].id);
       targetOrdinals.emplace(target.target, ordinal);
     }
@@ -9397,7 +9397,7 @@ obelisk_rt_status createResolvedFunctionalType(
           selectorPosition == selectors.end() ||
           selectorPosition->second->cross != item->templateItem ||
           resolvedBinPosition == crossBins.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       const auto *selector = selectorPosition->second;
       const auto *resolvedBin = &metadata->bins[resolvedBinPosition->second];
       FunctionalCoverageCrossState::ExplicitBin explicitBin;
@@ -9418,10 +9418,10 @@ obelisk_rt_status createResolvedFunctionalType(
       } else {
         const bool usesSet =
             crossSelectorUsesSet(schema, *selector, setQueries);
-        obelisk_rt_status selectorStatus = decodeCrossSelectorDNF(
-            schema, *selector, obelisk::coverage::ParseLimits{}.maxRecords,
+        talos_rt_status selectorStatus = decodeCrossSelectorDNF(
+            schema, *selector, talos::coverage::ParseLimits{}.maxRecords,
             alternatives, usesSet);
-        if (selectorStatus != OBELISK_RT_OK)
+        if (selectorStatus != TALOS_RT_OK)
           return selectorStatus;
         for (const CrossSelectorConjunction &terms : alternatives) {
           FunctionalCoverageCrossState::Rectangle rectangle;
@@ -9431,20 +9431,20 @@ obelisk_rt_status createResolvedFunctionalType(
             const auto *condition = term.condition;
             auto targetOrdinal = targetOrdinals.find(condition->target);
             if (targetOrdinal == targetOrdinals.end())
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             const auto *staticTarget =
                 &schema.crossTargets[staticPlan->firstTarget +
                                      targetOrdinal->second];
 
-            const obelisk::coverage::ResolvedFunctionalValueSet *selectedSet =
+            const talos::coverage::ResolvedFunctionalValueSet *selectedSet =
                 nullptr;
             if (condition->valueSet) {
               auto binding = bindings.find({cross.id, condition->id});
               if (binding == bindings.end())
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               auto set = metadata->valueSets.find(binding->second->valueSet);
               if (set == metadata->valueSets.end())
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               selectedSet = set->second;
             }
 
@@ -9454,23 +9454,23 @@ obelisk_rt_status createResolvedFunctionalType(
             for (size_t binIndex : metadata->itemBins[targetPosition->second]) {
               const auto &candidate = type.bins[binIndex];
               constexpr uint32_t omitted =
-                  obelisk::coverage::FunctionalBinDefault |
-                  obelisk::coverage::FunctionalBinDefaultSequence |
-                  obelisk::coverage::FunctionalBinIgnore |
-                  obelisk::coverage::FunctionalBinIllegal |
-                  obelisk::coverage::FunctionalBinEmpty;
+                  talos::coverage::FunctionalBinDefault |
+                  talos::coverage::FunctionalBinDefaultSequence |
+                  talos::coverage::FunctionalBinIgnore |
+                  talos::coverage::FunctionalBinIllegal |
+                  talos::coverage::FunctionalBinEmpty;
               if (candidate.flags & omitted)
                 continue;
               bool selected =
                   !condition->bin || candidate.templateBin == condition->bin;
               if (selected && selectedSet) {
                 bool intersects = false;
-                obelisk_rt_status status =
+                talos_rt_status status =
                     resolvedFunctionalBinIntersectsValueSet(
                         schema, typeID, configuration, candidate.id,
                         *selectedSet, type.suppressedTransitionAlternatives,
                         setQueries, intersects);
-                if (status != OBELISK_RT_OK)
+                if (status != TALOS_RT_OK)
                   return status;
                 selected = intersects;
               }
@@ -9484,7 +9484,7 @@ obelisk_rt_status createResolvedFunctionalType(
                     selectedBins.size() >= selectorResolutionLimit -
                                                explicitRectangleBinEntryCount -
                                                rectangleBinEntryCount)
-                  return OBELISK_RT_OUT_OF_RESOURCES;
+                  return TALOS_RT_OUT_OF_RESOURCES;
                 selectedBins.push_back(candidate.id);
               }
             }
@@ -9525,7 +9525,7 @@ obelisk_rt_status createResolvedFunctionalType(
           if (explicitRectangleCount >= selectorResolutionLimit ||
               rectangleBinEntryCount >
                   selectorResolutionLimit - explicitRectangleBinEntryCount)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           for (auto &[targetOrdinal, selectedBins] : constraints)
             rectangle.constraints.push_back(
                 {targetOrdinal, std::move(selectedBins)});
@@ -9542,11 +9542,11 @@ obelisk_rt_status createResolvedFunctionalType(
             for (size_t binIndex : metadata->itemBins[targetPosition->second]) {
               const auto &candidate = type.bins[binIndex];
               constexpr uint32_t omitted =
-                  obelisk::coverage::FunctionalBinDefault |
-                  obelisk::coverage::FunctionalBinDefaultSequence |
-                  obelisk::coverage::FunctionalBinIgnore |
-                  obelisk::coverage::FunctionalBinIllegal |
-                  obelisk::coverage::FunctionalBinEmpty;
+                  talos::coverage::FunctionalBinDefault |
+                  talos::coverage::FunctionalBinDefaultSequence |
+                  talos::coverage::FunctionalBinIgnore |
+                  talos::coverage::FunctionalBinIllegal |
+                  talos::coverage::FunctionalBinEmpty;
               if (!(candidate.flags & omitted))
                 targetBins[targetOrdinal].push_back(candidate.id);
             }
@@ -9558,13 +9558,13 @@ obelisk_rt_status createResolvedFunctionalType(
           selectorStatus = resolvedCrossSelectorSetCandidates(
               schema, typeID, configuration, cross.id, *selector, targetBins,
               type.suppressedTransitionAlternatives, setQueries, candidates);
-          if (selectorStatus != OBELISK_RT_OK)
+          if (selectorStatus != TALOS_RT_OK)
             return selectorStatus;
           for (const auto &tuple : candidates) {
             if (explicitRectangleCount >= selectorResolutionLimit ||
                 tuple.size() >
                     selectorResolutionLimit - explicitRectangleBinEntryCount)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             FunctionalCoverageCrossState::Rectangle rectangle;
             for (size_t ordinal = 0; ordinal != tuple.size(); ++ordinal)
               rectangle.constraints.push_back(
@@ -9583,61 +9583,61 @@ obelisk_rt_status createResolvedFunctionalType(
   for (const auto &option : schema.functionalConfigurationOptions)
     if (option.type == typeID && option.configuration == configuration &&
         option.ownerKind ==
-            obelisk::coverage::FunctionalConfigurationOptionOwnerKind::Item &&
+            talos::coverage::FunctionalConfigurationOptionOwnerKind::Item &&
         option.scope ==
-            obelisk::coverage::FunctionalOptionScopeKind::Instance &&
+            talos::coverage::FunctionalOptionScopeKind::Instance &&
         option.option ==
-            obelisk::coverage::FunctionalConfigurationOptionKind::AtLeast)
+            talos::coverage::FunctionalConfigurationOptionKind::AtLeast)
       metadata->explicitAtLeastItems.insert(option.owner);
-  obelisk_rt_status sampleStatus =
+  talos_rt_status sampleStatus =
       prepareFunctionalSampleMetadata(schema, typeID, type, *metadata);
-  if (sampleStatus != OBELISK_RT_OK)
+  if (sampleStatus != TALOS_RT_OK)
     return sampleStatus;
   type.queryMetadata = std::move(metadata);
-  obelisk_rt_status typeOptionStatus =
+  talos_rt_status typeOptionStatus =
       applyFunctionalTypeOptions(coverage, typeID, type);
-  if (typeOptionStatus != OBELISK_RT_OK)
+  if (typeOptionStatus != TALOS_RT_OK)
     return typeOptionStatus;
-  obelisk_rt_status overlapStatus =
+  talos_rt_status overlapStatus =
       emitFunctionalOverlapWarnings(schema, typeID, configuration);
-  if (overlapStatus != OBELISK_RT_OK)
+  if (overlapStatus != TALOS_RT_OK)
     return overlapStatus;
   result = std::move(type);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status ensureFunctionalConfigurationSchemas(CoverageState &coverage);
+talos_rt_status ensureFunctionalConfigurationSchemas(CoverageState &coverage);
 
-obelisk_rt_status
+talos_rt_status
 bindResolvedFunctionalType(CoverageState &coverage, uint64_t typeID,
-                           const obelisk::coverage::Digest &configuration,
+                           const talos::coverage::Digest &configuration,
                            FunctionalCoverageTypeState *&result) {
   FunctionalCoverageTypeKey key{typeID, configuration};
   auto found = coverage.types.find(key);
   if (found != coverage.types.end()) {
     result = &found->second;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (!coverage.schema)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   indexFunctionalConfigurations(coverage);
   if (!coverage.configurationKeys.count(key))
-    return OBELISK_RT_INVALID_DESIGN;
-  obelisk_rt_status status = ensureFunctionalConfigurationSchemas(coverage);
-  if (status != OBELISK_RT_OK)
+    return TALOS_RT_INVALID_DESIGN;
+  talos_rt_status status = ensureFunctionalConfigurationSchemas(coverage);
+  if (status != TALOS_RT_OK)
     return status;
   auto bundle = coverage.loadedConfigurationSchemas->configurations.find(key);
   if (bundle == coverage.loadedConfigurationSchemas->configurations.end())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   FunctionalCoverageTypeState type;
   status = createResolvedFunctionalType(coverage, *bundle->second, typeID,
                                         configuration, type);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   type.configurationSchema = bundle->second;
   auto insertion = coverage.types.emplace(key, std::move(type));
   result = &insertion.first->second;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 // Prepare all allocation and rebasing before publishing either metadata or
@@ -9648,7 +9648,7 @@ bool prepareConfigurationColumn(std::vector<T> &destination,
                                 const std::vector<T> &bundle,
                                 std::vector<T> &prepared) {
   const size_t limit = std::min<uint64_t>(
-      UINT32_MAX, obelisk::coverage::ParseLimits{}.maxRecords);
+      UINT32_MAX, talos::coverage::ParseLimits{}.maxRecords);
   if (destination.size() > limit || bundle.size() > limit - destination.size())
     return false;
   prepared = bundle;
@@ -9659,10 +9659,10 @@ bool prepareConfigurationColumn(std::vector<T> &destination,
   return true;
 }
 
-obelisk_rt_status
-prepareConfigurationAppend(obelisk::coverage::Database &destination,
-                           const obelisk::coverage::Database &bundle,
-                           obelisk::coverage::Database &prepared) {
+talos_rt_status
+prepareConfigurationAppend(talos::coverage::Database &destination,
+                           const talos::coverage::Database &bundle,
+                           talos::coverage::Database &prepared) {
   if (!prepareConfigurationColumn(destination.functionalConfigurations,
                                   bundle.functionalConfigurations,
                                   prepared.functionalConfigurations) ||
@@ -9725,7 +9725,7 @@ prepareConfigurationAppend(obelisk::coverage::Database &destination,
           destination.resolvedFunctionalTupleSetComponents,
           bundle.resolvedFunctionalTupleSetComponents,
           prepared.resolvedFunctionalTupleSetComponents))
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
   for (auto &row : prepared.resolvedFunctionalBinGroups)
     row.firstBin += destination.resolvedFunctionalBins.size();
   for (auto &row : prepared.resolvedFunctionalValueSets)
@@ -9746,11 +9746,11 @@ prepareConfigurationAppend(obelisk::coverage::Database &destination,
   for (auto &row : prepared.resolvedFunctionalTupleSetTuples)
     row.firstComponent +=
         destination.resolvedFunctionalTupleSetComponents.size();
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-void appendPreparedConfiguration(obelisk::coverage::Database &destination,
-                                 obelisk::coverage::Database &prepared) {
+void appendPreparedConfiguration(talos::coverage::Database &destination,
+                                 talos::coverage::Database &prepared) {
   auto append = [](auto &to, auto &from) {
     using Row = typename std::decay_t<decltype(to)>::value_type;
     static_assert(std::is_nothrow_move_constructible_v<Row>);
@@ -9800,20 +9800,20 @@ void appendPreparedConfiguration(obelisk::coverage::Database &destination,
          prepared.resolvedFunctionalTupleSetComponents);
 }
 
-obelisk_rt_status
+talos_rt_status
 ensureFunctionalConfigurationSchemas(CoverageState &coverage) {
   if (!coverage.schema)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   if (coverage.loadedConfigurationSchemas &&
       coverage.loadedConfigurationSchemas->source == coverage.schema.get())
-    return OBELISK_RT_OK;
-  obelisk_rt_status status = ensureFunctionalConstructionSchemas(coverage);
-  if (status != OBELISK_RT_OK)
+    return TALOS_RT_OK;
+  talos_rt_status status = ensureFunctionalConstructionSchemas(coverage);
+  if (status != TALOS_RT_OK)
     return status;
-  std::vector<obelisk::coverage::Database> bundles;
-  auto partitionStatus = obelisk::coverage::partitionFunctionalConfigurations(
+  std::vector<talos::coverage::Database> bundles;
+  auto partitionStatus = talos::coverage::partitionFunctionalConfigurations(
       *coverage.schema, bundles);
-  if (partitionStatus != obelisk::coverage::Status::Ok)
+  if (partitionStatus != talos::coverage::Status::Ok)
     return mapCoverageStatus(partitionStatus);
   auto prepared = std::make_shared<FunctionalCoverageConfigurationSchemas>();
   prepared->source = coverage.schema.get();
@@ -9822,10 +9822,10 @@ ensureFunctionalConfigurationSchemas(CoverageState &coverage) {
     const FunctionalCoverageTypeKey key{row.type, row.configuration};
     auto source = coverage.constructionSchemas->types.find(row.type);
     if (source == coverage.constructionSchemas->types.end() ||
-        !obelisk::coverage::isSchemaOnly(*source->second))
-      return OBELISK_RT_INVALID_DESIGN;
+        !talos::coverage::isSchemaOnly(*source->second))
+      return TALOS_RT_INVALID_DESIGN;
     auto schema =
-        std::make_shared<obelisk::coverage::Database>(*source->second);
+        std::make_shared<talos::coverage::Database>(*source->second);
     // Partitioning has already checked/rebased each owned payload. The static
     // projection has no resolved rows, so adopt its bundle without another
     // allocation, copy, or rebase of the twenty resolved columns.
@@ -9833,16 +9833,16 @@ ensureFunctionalConfigurationSchemas(CoverageState &coverage) {
     prepared->configurations.emplace(key, std::move(schema));
   }
   coverage.loadedConfigurationSchemas = std::move(prepared);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
+talos_rt_status
+bindFunctionalType(talos_rt_context *context, CoverageState &coverage,
                    uint64_t typeID, FunctionalCoverageTypeState *&result,
-                   const obelisk_rt_functional_value_v1 *expressions = nullptr,
+                   const talos_rt_functional_value_v1 *expressions = nullptr,
                    uint64_t expressionCount = 0) {
   if (!coverage.schema)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   indexFunctionalConfigurations(coverage);
   const bool payloadless = !expressionCount;
   auto overrides = coverage.typeOptions.find(typeID);
@@ -9852,7 +9852,7 @@ bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
           : overrides->second.distributeFirst;
   const std::pair<uint64_t, uint32_t> payloadlessKey{
       typeID, distributeFirst ? (*distributeFirst ? 1u : 0u) : 2u};
-  auto cachePayloadless = [&](const obelisk::coverage::Digest &configuration) {
+  auto cachePayloadless = [&](const talos::coverage::Digest &configuration) {
     if (payloadless)
       coverage.payloadlessConfigurations[payloadlessKey] = configuration;
   };
@@ -9866,40 +9866,40 @@ bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
         configurations->second.size() == 1) {
       auto status = bindResolvedFunctionalType(
           coverage, typeID, configurations->second.front(), result);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       if (!distributeFirst || result->distributeFirst == *distributeFirst) {
         cachePayloadless(result->configuration);
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
     }
   }
 
-  obelisk_rt_status status = ensureFunctionalConstructionSchemas(coverage);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status = ensureFunctionalConstructionSchemas(coverage);
+  if (status != TALOS_RT_OK)
     return status;
   auto templateSchema = coverage.constructionSchemas->types.find(typeID);
   if (templateSchema == coverage.constructionSchemas->types.end())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   // Resolution and validation touch only this type and this configuration.
   auto resolved =
-      std::make_shared<obelisk::coverage::Database>(*templateSchema->second);
-  obelisk::coverage::Digest exact{};
+      std::make_shared<talos::coverage::Database>(*templateSchema->second);
+  talos::coverage::Digest exact{};
   status = resolveStaticFunctionalType(context, *resolved, typeID, expressions,
                                        expressionCount, exact,
                                        *coverage.constructionSchemas);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   FunctionalCoverageTypeKey key{typeID, exact};
   auto existing = coverage.types.find(key);
   if (existing != coverage.types.end()) {
     cachePayloadless(exact);
     result = &existing->second;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  obelisk::coverage::Diagnostic diagnostic;
-  if (obelisk::coverage::validate(*resolved, &diagnostic) !=
-      obelisk::coverage::Status::Ok) {
+  talos::coverage::Diagnostic diagnostic;
+  if (talos::coverage::validate(*resolved, &diagnostic) !=
+      talos::coverage::Status::Ok) {
     std::fprintf(stderr,
                  "error: resolved functional coverage schema is "
                  "invalid%s%s%s%s\n",
@@ -9907,7 +9907,7 @@ bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
                  diagnostic.field ? diagnostic.field : "",
                  diagnostic.detail.empty() ? "" : ": ",
                  diagnostic.detail.empty() ? "" : diagnostic.detail.c_str());
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   }
   const auto newProfiles = staticFunctionalTypeProfiles(*resolved);
   const auto &profile = newProfiles.at(typeID);
@@ -9915,7 +9915,7 @@ bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
       coverage.constructionSchemas->loadedTypeProfiles.find(typeID);
   if (loadedProfile != coverage.constructionSchemas->loadedTypeProfiles.end()) {
     if (loadedProfile->second != profile)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
   } else {
     auto configurations = coverage.configurationsByType.find(typeID);
     if (configurations != coverage.configurationsByType.end() &&
@@ -9924,24 +9924,24 @@ bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
           coverage.types.find({typeID, configurations->second.front()});
       if (previous == coverage.types.end() ||
           !previous->second.configurationSchema)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       const auto previousProfiles =
           staticFunctionalTypeProfiles(*previous->second.configurationSchema);
       if (previousProfiles.at(typeID) != profile)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
   }
   FunctionalCoverageTypeState type;
   status =
       createResolvedFunctionalType(coverage, *resolved, typeID, exact, type);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   type.configurationSchema = resolved;
-  obelisk::coverage::Database prepared;
+  talos::coverage::Database prepared;
   const bool append = !coverage.configurationKeys.count(key);
   if (append) {
     status = prepareConfigurationAppend(*coverage.schema, *resolved, prepared);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
   }
   // Index insertion has the strong exception guarantee. After it succeeds,
@@ -9951,10 +9951,10 @@ bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
     appendPreparedConfiguration(*coverage.schema, prepared);
   result = &insertion.first->second;
   cachePayloadless(exact);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-const obelisk::coverage::FunctionalContainerType *
+const talos::coverage::FunctionalContainerType *
 functionalContainerType(const CoverageState &coverage, uint64_t valueType) {
   if (!valueType || !coverage.constructionSchemas)
     return nullptr;
@@ -9964,7 +9964,7 @@ functionalContainerType(const CoverageState &coverage, uint64_t valueType) {
              : &found->second;
 }
 
-const obelisk::coverage::FunctionalContainerType *
+const talos::coverage::FunctionalContainerType *
 functionalDefaultContainerType(const CoverageState &coverage,
                                uint64_t formalID) {
   if (!coverage.constructionSchemas)
@@ -9975,7 +9975,7 @@ functionalDefaultContainerType(const CoverageState &coverage,
              : functionalContainerType(coverage, found->second);
 }
 
-const obelisk::coverage::FunctionalAggregateType *
+const talos::coverage::FunctionalAggregateType *
 functionalAggregateType(const CoverageState &coverage, uint64_t id) {
   if (!coverage.constructionSchemas)
     return nullptr;
@@ -9985,7 +9985,7 @@ functionalAggregateType(const CoverageState &coverage, uint64_t id) {
              : &found->second;
 }
 
-const obelisk::coverage::FunctionalAggregateType *
+const talos::coverage::FunctionalAggregateType *
 functionalDefaultAggregateType(const CoverageState &coverage, uint64_t formal) {
   if (!coverage.constructionSchemas)
     return nullptr;
@@ -9995,7 +9995,7 @@ functionalDefaultAggregateType(const CoverageState &coverage, uint64_t formal) {
              : functionalAggregateType(coverage, found->second);
 }
 
-const obelisk::coverage::FunctionalClassType *
+const talos::coverage::FunctionalClassType *
 functionalClassType(const CoverageState &coverage, uint64_t id) {
   if (!coverage.constructionSchemas)
     return nullptr;
@@ -10005,7 +10005,7 @@ functionalClassType(const CoverageState &coverage, uint64_t id) {
              : &found->second;
 }
 
-const obelisk::coverage::FunctionalClassType *
+const talos::coverage::FunctionalClassType *
 functionalDefaultClassType(const CoverageState &coverage, uint64_t formal) {
   if (!coverage.constructionSchemas)
     return nullptr;
@@ -10015,18 +10015,18 @@ functionalDefaultClassType(const CoverageState &coverage, uint64_t formal) {
              : functionalClassType(coverage, found->second);
 }
 
-bool validateClassFormal(obelisk_rt_context *context,
-                         obelisk_rt_object_v1 *object,
-                         const obelisk::coverage::FunctionalClassType *type) {
+bool validateClassFormal(talos_rt_context *context,
+                         talos_rt_object_v1 *object,
+                         const talos::coverage::FunctionalClassType *type) {
   if (!type)
     return false;
   const auto *descriptor =
-      obelisk_rt_managed_class_lookup(context, type->classType);
+      talos_rt_managed_class_lookup(context, type->classType);
   return descriptor &&
          (!object ||
-          (obelisk_rt_managed_object_belongs_to(context, object) &&
-           obelisk_rt_managed_object_kind(object) == OBELISK_RT_MANAGED_CLASS &&
-           obelisk_rt_v1_object_is_instance(object, descriptor)));
+          (talos_rt_managed_object_belongs_to(context, object) &&
+           talos_rt_managed_object_kind(object) == TALOS_RT_MANAGED_CLASS &&
+           talos_rt_v1_object_is_instance(object, descriptor)));
 }
 
 uint64_t formalValueType(const CoverageState &coverage, uint64_t formal) {
@@ -10038,26 +10038,26 @@ uint64_t formalValueType(const CoverageState &coverage, uint64_t formal) {
              : found->second;
 }
 
-bool validateProcessFormal(obelisk_rt_context *context, uint64_t handle) {
+bool validateProcessFormal(talos_rt_context *context, uint64_t handle) {
   if (!handle)
     return true;
-  obelisk_rt_process_state state = OBELISK_RT_PROCESS_FINISHED;
-  return obelisk_rt_v1_process_status(context, handle, &state) == OBELISK_RT_OK;
+  talos_rt_process_state state = TALOS_RT_PROCESS_FINISHED;
+  return talos_rt_v1_process_status(context, handle, &state) == TALOS_RT_OK;
 }
 
-bool validateSemaphoreFormal(obelisk_rt_context *context,
-                             obelisk_rt_object_v1 *object) {
+bool validateSemaphoreFormal(talos_rt_context *context,
+                             talos_rt_object_v1 *object) {
   if (!object)
     return true;
-  if (!obelisk_rt_managed_object_belongs_to(context, object))
+  if (!talos_rt_managed_object_belongs_to(context, object))
     return false;
   // A zero-key readiness query checks the private bucket descriptor without
   // acquiring keys or disturbing queued waiters.
   bool ready = false;
-  return obelisk_rt_semaphore_keys_ready(object, 0, ready) == OBELISK_RT_OK;
+  return talos_rt_semaphore_keys_ready(object, 0, ready) == TALOS_RT_OK;
 }
 
-bool validateVirtualInterfaceFormal(obelisk_rt_context *context,
+bool validateVirtualInterfaceFormal(talos_rt_context *context,
                                     uint64_t handle, uint64_t valueType) {
   if (!handle)
     return true;
@@ -10072,7 +10072,7 @@ bool validateVirtualInterfaceFormal(obelisk_rt_context *context,
          type->second == scope->second;
 }
 
-bool validateCovergroupFormal(obelisk_rt_context *context, uint64_t handle,
+bool validateCovergroupFormal(talos_rt_context *context, uint64_t handle,
                               uint64_t type) {
   CoverageState *coverage = coverageState(context, false);
   if (!coverage || !coverage->constructionSchemas ||
@@ -10087,58 +10087,58 @@ bool validateCovergroupFormal(obelisk_rt_context *context, uint64_t handle,
 }
 
 bool validateAggregateFormal(
-    obelisk_rt_context *context, obelisk_rt_object_v1 *object,
-    const obelisk::coverage::FunctionalAggregateType *type) {
+    talos_rt_context *context, talos_rt_object_v1 *object,
+    const talos::coverage::FunctionalAggregateType *type) {
   if (!type || !object ||
-      !obelisk_rt_managed_object_belongs_to(context, object))
+      !talos_rt_managed_object_belongs_to(context, object))
     return false;
-  const obelisk_rt_element_type_v1 *element = nullptr;
-  return obelisk_rt_reference_path_element(object, &element) == OBELISK_RT_OK &&
-         element->kind == OBELISK_RT_ELEMENT_AGGREGATE &&
+  const talos_rt_element_type_v1 *element = nullptr;
+  return talos_rt_reference_path_element(object, &element) == TALOS_RT_OK &&
+         element->kind == TALOS_RT_ELEMENT_AGGREGATE &&
          element->type_id == type->elementType &&
          element->value_size == type->valueSize &&
          element->alignment == type->alignment && element->flags == type->flags;
 }
 
 bool validateContainerFormal(
-    obelisk_rt_context *context, obelisk_rt_object_v1 *object,
-    const obelisk::coverage::FunctionalContainerType *type) {
+    talos_rt_context *context, talos_rt_object_v1 *object,
+    const talos::coverage::FunctionalContainerType *type) {
   if (!type)
     return false;
   if (!object)
     return true;
-  if (!obelisk_rt_managed_object_belongs_to(context, object))
+  if (!talos_rt_managed_object_belongs_to(context, object))
     return false;
-  if (type->kind == obelisk::coverage::FunctionalContainerKind::Mailbox) {
-    obelisk_rt_object_v1 *payload = nullptr;
-    if (obelisk_rt_builtin_class_payload(object, BuiltinClassKind::Mailbox,
-                                         &payload) != OBELISK_RT_OK)
+  if (type->kind == talos::coverage::FunctionalContainerKind::Mailbox) {
+    talos_rt_object_v1 *payload = nullptr;
+    if (talos_rt_builtin_class_payload(object, BuiltinClassKind::Mailbox,
+                                         &payload) != TALOS_RT_OK)
       return false;
     object = payload;
   }
   const auto *element =
-      obelisk_rt_managed_element_type_lookup(context, type->elementType);
+      talos_rt_managed_element_type_lookup(context, type->elementType);
   if (!element)
     return false;
   struct Validation {
-    const obelisk::coverage::FunctionalContainerType &type;
-    const obelisk_rt_element_type_v1 *element;
+    const talos::coverage::FunctionalContainerType &type;
+    const talos_rt_element_type_v1 *element;
   } validation{*type, element};
-  return obelisk_rt_managed_object_access(
-             object, OBELISK_RT_MANAGED_CONTAINER,
+  return talos_rt_managed_object_access(
+             object, TALOS_RT_MANAGED_CONTAINER,
              [](void *environment, uint8_t *data,
-                uint64_t extent) -> obelisk_rt_status {
-               if (extent != sizeof(obelisk::runtime_detail::ContainerHeader))
-                 return OBELISK_RT_INVALID_HANDLE;
+                uint64_t extent) -> talos_rt_status {
+               if (extent != sizeof(talos::runtime_detail::ContainerHeader))
+                 return TALOS_RT_INVALID_HANDLE;
                const auto &header = *reinterpret_cast<
-                   const obelisk::runtime_detail::ContainerHeader *>(data);
+                   const talos::runtime_detail::ContainerHeader *>(data);
                const auto &validation =
                    *static_cast<const Validation *>(environment);
                const auto &type = validation.type;
                bool mailbox =
                    type.kind ==
-                   obelisk::coverage::FunctionalContainerKind::Mailbox;
-               uint32_t kind = mailbox ? OBELISK_RT_CONTAINER_QUEUE
+                   talos::coverage::FunctionalContainerKind::Mailbox;
+               uint32_t kind = mailbox ? TALOS_RT_CONTAINER_QUEUE
                                        : static_cast<uint32_t>(type.kind);
                return header.kind == kind &&
                               header.isMailbox ==
@@ -10148,23 +10148,23 @@ bool validateContainerFormal(
                                   static_cast<uint32_t>(type.keyKind) &&
                               header.keyWidth == type.keyWidth &&
                               (mailbox || header.bound == type.bound)
-                          ? OBELISK_RT_OK
-                          : OBELISK_RT_INVALID_DESIGN;
+                          ? TALOS_RT_OK
+                          : TALOS_RT_INVALID_DESIGN;
              },
-             &validation) == OBELISK_RT_OK;
+             &validation) == TALOS_RT_OK;
 }
 
 bool validateValue(
-    obelisk_rt_context *context, const obelisk_rt_functional_value_v1 &value,
-    obelisk::coverage::FunctionalExpressionResultKind result, uint64_t width,
+    talos_rt_context *context, const talos_rt_functional_value_v1 &value,
+    talos::coverage::FunctionalExpressionResultKind result, uint64_t width,
     bool reference,
-    const obelisk::coverage::FunctionalContainerType *containerType = nullptr,
-    const obelisk::coverage::FunctionalAggregateType *aggregateType = nullptr,
-    const obelisk::coverage::FunctionalClassType *classType = nullptr,
+    const talos::coverage::FunctionalContainerType *containerType = nullptr,
+    const talos::coverage::FunctionalAggregateType *aggregateType = nullptr,
+    const talos::coverage::FunctionalClassType *classType = nullptr,
     uint64_t valueType = 0) {
-  using Result = obelisk::coverage::FunctionalExpressionResultKind;
-  if (obelisk::coverage::isRealResultKind(result))
-    width = obelisk::coverage::getRealResultBitWidth(result);
+  using Result = talos::coverage::FunctionalExpressionResultKind;
+  if (talos::coverage::isRealResultKind(result))
+    width = talos::coverage::getRealResultBitWidth(result);
   // Boolean schema descriptors have no integral type width, but their helper
   // ABI representation is the canonical one-bit logic value.
   if (result == Result::Boolean)
@@ -10175,11 +10175,11 @@ bool validateValue(
             result == Result::Process || result == Result::VirtualInterface ||
             result == Result::Semaphore || result == Result::Mailbox) &&
            reference)
-    width = sizeof(obelisk_rt_string_v1) * 8;
+    width = sizeof(talos_rt_string_v1) * 8;
   if (!value.id)
     return false;
   if (reference) {
-    if (!(value.kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&
+    if (!(value.kind == TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&
           value.bit_width == width && value.value_size == (width + 7) / 8 &&
           !value.value && !value.unknown && value.argument_ref_kind <= 2 &&
           (value.argument_ref_kind == 0 || value.owner)))
@@ -10205,14 +10205,14 @@ bool validateValue(
                              ? context->nativeStateBitCount
                              : context->stateValue.size() * uint64_t{64};
     uint64_t word = 0;
-    if (obelisk_rt_v1_argument_ref_load(
+    if (talos_rt_v1_argument_ref_load(
             context, stateValue, stateUnknown, stateBits, value.owner,
             value.payload, value.argument_ref_kind, 64, 8, 0,
             result == Result::Covergroup || result == Result::Process ||
                     result == Result::VirtualInterface
-                ? OBELISK_RT_ARGUMENT_VALUE_BITS
-                : OBELISK_RT_ARGUMENT_VALUE_CLASS,
-            &word, nullptr) != OBELISK_RT_OK)
+                ? TALOS_RT_ARGUMENT_VALUE_BITS
+                : TALOS_RT_ARGUMENT_VALUE_CLASS,
+            &word, nullptr) != TALOS_RT_OK)
       return false;
     if (result == Result::Covergroup)
       return validateCovergroupFormal(context, word, valueType);
@@ -10220,8 +10220,8 @@ bool validateValue(
       return validateProcessFormal(context, word);
     if (result == Result::VirtualInterface)
       return validateVirtualInterfaceFormal(context, word, valueType);
-    auto *object = obelisk_rt_object_from_managed_word(word);
-    return obelisk_rt_managed_word_from_object(object) == word &&
+    auto *object = talos_rt_object_from_managed_word(word);
+    return talos_rt_managed_word_from_object(object) == word &&
            (result == Result::Semaphore
                 ? validateSemaphoreFormal(context, object)
             : result == Result::ClassHandle
@@ -10231,10 +10231,10 @@ bool validateValue(
   if (result == Result::Covergroup || result == Result::Process ||
       result == Result::VirtualInterface)
     return value.kind == (result == Result::VirtualInterface
-                              ? OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
+                              ? TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
                           : result == Result::Process
-                              ? OBELISK_RT_FUNCTIONAL_VALUE_PROCESS
-                              : OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP) &&
+                              ? TALOS_RT_FUNCTIONAL_VALUE_PROCESS
+                              : TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP) &&
            !value.bit_width && !value.value_size && !value.value &&
            !value.unknown && !value.owner && !value.argument_ref_kind &&
            (result == Result::VirtualInterface
@@ -10245,61 +10245,61 @@ bool validateValue(
                 : validateCovergroupFormal(context, value.payload, valueType));
   if (result == Result::Chandle || result == Result::Event)
     return value.kind == (result == Result::Event
-                              ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
-                              : OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE) &&
+                              ? TALOS_RT_FUNCTIONAL_VALUE_EVENT
+                              : TALOS_RT_FUNCTIONAL_VALUE_CHANDLE) &&
            !value.bit_width && !value.value_size && !value.value &&
            !value.unknown && !value.owner && !value.argument_ref_kind;
   if (result == Result::Semaphore)
-    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE &&
+    return value.kind == TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE &&
            !value.bit_width && !value.value_size && !value.value &&
            !value.unknown && !value.payload && !value.argument_ref_kind &&
            validateSemaphoreFormal(context, value.owner);
   if (result == Result::ClassHandle)
-    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE &&
+    return value.kind == TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE &&
            !value.bit_width && !value.value_size && !value.value &&
            !value.unknown && !value.payload && !value.argument_ref_kind &&
            validateClassFormal(context, value.owner, classType);
   if (result == Result::Aggregate)
-    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE &&
+    return value.kind == TALOS_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE &&
            !value.bit_width && !value.value_size && !value.value &&
            !value.unknown && !value.payload && !value.argument_ref_kind &&
            validateAggregateFormal(context, value.owner, aggregateType);
   if (result == Result::Container || result == Result::Mailbox)
     return value.kind ==
                (result == Result::Mailbox
-                    ? OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX
-                    : OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER) &&
+                    ? TALOS_RT_FUNCTIONAL_VALUE_MAILBOX
+                    : TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER) &&
            !value.bit_width && !value.value_size && !value.value &&
            !value.unknown && !value.payload && !value.argument_ref_kind &&
            validateContainerFormal(context, value.owner, containerType);
   if (result == Result::String)
-    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING &&
+    return value.kind == TALOS_RT_FUNCTIONAL_VALUE_STRING &&
            value.bit_width == 0 && value.value_size == 0 && !value.value &&
            !value.unknown && !value.owner && value.argument_ref_kind == 0 &&
-           obelisk_rt_validate_string(context, value.payload) == OBELISK_RT_OK;
+           talos_rt_validate_string(context, value.payload) == TALOS_RT_OK;
   if (result == Result::TupleQueue || result == Result::Set)
-    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER &&
+    return value.kind == TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER &&
            value.bit_width == 0 && value.value_size == 0 && !value.value &&
            !value.unknown && !value.payload && !value.argument_ref_kind &&
            (!value.owner ||
-            (obelisk_rt_managed_object_belongs_to(context, value.owner) &&
-             obelisk_rt_managed_object_kind(value.owner) ==
-                 OBELISK_RT_MANAGED_CONTAINER));
+            (talos_rt_managed_object_belongs_to(context, value.owner) &&
+             talos_rt_managed_object_kind(value.owner) ==
+                 TALOS_RT_MANAGED_CONTAINER));
   if (value.owner || value.payload || value.argument_ref_kind || !value.value)
     return false;
-  if (obelisk::coverage::isRealResultKind(result))
+  if (talos::coverage::isRealResultKind(result))
     return value.kind == (result == Result::ShortReal
-                              ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
-                              : OBELISK_RT_FUNCTIONAL_VALUE_REAL) &&
+                              ? TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL
+                              : TALOS_RT_FUNCTIONAL_VALUE_REAL) &&
            value.bit_width == width && value.value_size == width / 8 &&
            !value.unknown;
   if (result != Result::Boolean && result != Result::Integral)
     return false;
-  if ((value.kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL &&
-       value.kind != OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE) ||
+  if ((value.kind != TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL &&
+       value.kind != TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE) ||
       value.bit_width != width || !width ||
       value.value_size != (width + 7) / 8 ||
-      (value.kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE) !=
+      (value.kind == TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE) !=
           (value.unknown != nullptr))
     return false;
   unsigned tail = width % 8;
@@ -10312,7 +10312,7 @@ bool validateValue(
          (!bval || !(bval[value.value_size - 1] & padding));
 }
 
-void snapshotValue(const obelisk_rt_functional_value_v1 &source,
+void snapshotValue(const talos_rt_functional_value_v1 &source,
                    FunctionalCoverageValue &destination) {
   destination.id = source.id;
   destination.bitWidth = source.bit_width;
@@ -10321,21 +10321,21 @@ void snapshotValue(const obelisk_rt_functional_value_v1 &source,
   destination.argumentRefKind = source.argument_ref_kind;
   destination.owner = source.owner;
   destination.payload = source.payload;
-  if (source.kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_PROCESS ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE)
+  if (source.kind == TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF ||
+      source.kind == TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
+      source.kind == TALOS_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE ||
+      source.kind == TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
+      source.kind == TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE ||
+      source.kind == TALOS_RT_FUNCTIONAL_VALUE_MAILBOX ||
+      source.kind == TALOS_RT_FUNCTIONAL_VALUE_CHANDLE ||
+      source.kind == TALOS_RT_FUNCTIONAL_VALUE_EVENT ||
+      source.kind == TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP ||
+      source.kind == TALOS_RT_FUNCTIONAL_VALUE_PROCESS ||
+      source.kind == TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE)
     return;
   // Strings are immutable values. The context's service-root enumerator
   // retains this captured managed word independently of the caller's storage.
-  if (source.kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING)
+  if (source.kind == TALOS_RT_FUNCTIONAL_VALUE_STRING)
     return;
   auto *value = static_cast<const uint8_t *>(source.value);
   destination.value.assign(value, value + source.value_size);
@@ -10353,13 +10353,13 @@ std::vector<const Entry *> schemaOrdered(const std::vector<Entry> &entries,
   // projections. Borrowed nominal identities have no expression rows.
   // Resolving each expression's owner again would make batching quadratic.
   for (const auto &entry : entries) {
-    if constexpr (std::is_same_v<Entry, obelisk::coverage::FunctionalFormal>) {
+    if constexpr (std::is_same_v<Entry, talos::coverage::FunctionalFormal>) {
       if (entry.type == typeID &&
           (entry.kind ==
-           obelisk::coverage::FunctionalFormalKind::Constructor) == constructor)
+           talos::coverage::FunctionalFormalKind::Constructor) == constructor)
         result.push_back(&entry);
     } else {
-      using Phase = obelisk::coverage::FunctionalExpressionEvaluationPhase;
+      using Phase = talos::coverage::FunctionalExpressionEvaluationPhase;
       const bool selected =
           constructor ? (entry.evaluationPhase == Phase::Constructor ||
                          entry.evaluationPhase == Phase::Option)
@@ -10369,7 +10369,7 @@ std::vector<const Entry *> schemaOrdered(const std::vector<Entry> &entries,
     }
   }
   sortByKey(result.begin(), result.end(), [](const auto *row) {
-    if constexpr (std::is_same_v<Entry, obelisk::coverage::FunctionalFormal>)
+    if constexpr (std::is_same_v<Entry, talos::coverage::FunctionalFormal>)
       return row->ordinal;
     else
       return std::tie(row->evaluationPhase, row->resultOrdinal);
@@ -10377,12 +10377,12 @@ std::vector<const Entry *> schemaOrdered(const std::vector<Entry> &entries,
   return result;
 }
 
-obelisk_rt_status
-prepareFunctionalSampleMetadata(const obelisk::coverage::Database &schema,
+talos_rt_status
+prepareFunctionalSampleMetadata(const talos::coverage::Database &schema,
                                 uint64_t typeID,
                                 const FunctionalCoverageTypeState &type,
                                 FunctionalCoverageQueryMetadata &metadata) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   metadata.sampleExpressions =
       schemaOrdered(schema.functionalExpressions, typeID, false);
   metadata.sampleItems.resize(metadata.items.size());
@@ -10401,7 +10401,7 @@ prepareFunctionalSampleMetadata(const obelisk::coverage::Database &schema,
       continue;
     auto item = metadata.templateItemPositions.find(expression.owner);
     if (item == metadata.templateItemPositions.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     auto &sample = metadata.sampleItems[item->second];
     if (expression.role == FunctionalExpressionRole::CoverpointSample)
       sample.value = index;
@@ -10415,7 +10415,7 @@ prepareFunctionalSampleMetadata(const obelisk::coverage::Database &schema,
     if (bin.valueSet) {
       auto set = metadata.valueSets.find(bin.valueSet);
       if (set == metadata.valueSets.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       metadata.binValueSets[index] = set->second;
     }
   }
@@ -10428,7 +10428,7 @@ prepareFunctionalSampleMetadata(const obelisk::coverage::Database &schema,
       continue;
     auto position = metadata.binPositions.find(alternative.bin);
     if (position == metadata.binPositions.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto &bin = type.bins[position->second];
     auto item = metadata.itemPositions.find(bin.item);
     auto program = programs.find(bin.templateBin);
@@ -10441,20 +10441,20 @@ prepareFunctionalSampleMetadata(const obelisk::coverage::Database &schema,
         uint64_t{program->second->firstAlternative} +
                 program->second->alternativeCount >
             schema.transitionAlternatives.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto &definition =
         schema.transitionAlternatives[program->second->firstAlternative +
                                       alternative.templateAlternativeOrdinal];
     if (definition.stepCount != alternative.stepCount ||
         uint64_t{definition.firstStep} + definition.stepCount >
             schema.transitionSteps.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     for (uint32_t ordinal = 0; ordinal != alternative.stepCount; ++ordinal) {
       const auto &step =
           schema.resolvedTransitionSteps[alternative.firstStep + ordinal];
       if (step.alternative != alternative.id || step.ordinal != ordinal ||
           !metadata.valueSets.count(step.valueSet))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
     auto &sampleItem = metadata.sampleItems[item->second];
     if (bin.flags & (FunctionalBinIgnore | FunctionalBinIllegal)) {
@@ -10471,7 +10471,7 @@ prepareFunctionalSampleMetadata(const obelisk::coverage::Database &schema,
                                       position->second,
                                       metadata.transitionSlotCount++});
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 FunctionalCoverageDiagnosticIndex &
@@ -10494,22 +10494,22 @@ uint64_t readPlaneLimb(const void *plane, uint64_t size, uint32_t ordinal) {
   return readLittleEndianLimb(plane, size, ordinal);
 }
 
-bool functionalBooleanTrue(const obelisk_rt_functional_value_v1 &value) {
+bool functionalBooleanTrue(const talos_rt_functional_value_v1 &value) {
   uint64_t unknown = readPlaneLimb(value.unknown, value.value_size, 0);
   uint64_t encoded = readPlaneLimb(value.value, value.value_size, 0);
   // !simulation.logic transports (aval ^ bval, bval).  IEEE boolean
   // conversion accepts only a known one; X and Z are not true.
-  uint64_t aval = value.kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
+  uint64_t aval = value.kind == TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE
                       ? encoded ^ unknown
                       : encoded;
   return !(unknown & 1) && (aval & 1);
 }
 
 int compareIntegral(
-    const obelisk_rt_functional_value_v1 &value,
-    const std::vector<obelisk::coverage::ResolvedFunctionalValueLimb> &limbs,
-    const obelisk::coverage::ResolvedFunctionalValueAtom &atom, bool high,
-    obelisk::coverage::CoverageSignedness signedness) {
+    const talos_rt_functional_value_v1 &value,
+    const std::vector<talos::coverage::ResolvedFunctionalValueLimb> &limbs,
+    const talos::coverage::ResolvedFunctionalValueAtom &atom, bool high,
+    talos::coverage::CoverageSignedness signedness) {
   uint32_t count = static_cast<uint32_t>((value.bit_width + 63) / 64);
   for (uint32_t reverse = count; reverse != 0; --reverse) {
     uint32_t ordinal = reverse - 1;
@@ -10520,7 +10520,7 @@ int compareIntegral(
       bound = high ? limb.highAval : limb.lowAval;
     }
     if (ordinal == count - 1 &&
-        signedness == obelisk::coverage::CoverageSignedness::Signed) {
+        signedness == talos::coverage::CoverageSignedness::Signed) {
       uint64_t sign = uint64_t{1} << ((value.bit_width - 1) % 64);
       actual ^= sign;
       bound ^= sign;
@@ -10531,17 +10531,17 @@ int compareIntegral(
   return 0;
 }
 
-bool valueSetMatches(const obelisk::coverage::Database &schema,
-                     const obelisk::coverage::ResolvedFunctionalValueSet *set,
-                     const obelisk_rt_functional_value_v1 &value) {
+bool valueSetMatches(const talos::coverage::Database &schema,
+                     const talos::coverage::ResolvedFunctionalValueSet *set,
+                     const talos_rt_functional_value_v1 &value) {
   if (!set ||
-      (set->kind == obelisk::coverage::FunctionalValueSetKind::Integral &&
+      (set->kind == talos::coverage::FunctionalValueSetKind::Integral &&
        set->bitWidth != value.bit_width))
     return false;
   for (uint32_t atomIndex = 0; atomIndex != set->atomCount; ++atomIndex) {
     const auto &atom =
         schema.resolvedFunctionalValueAtoms[set->firstAtom + atomIndex];
-    if (atom.kind == obelisk::coverage::FunctionalValueAtomKind::RealInterval) {
+    if (atom.kind == talos::coverage::FunctionalValueAtomKind::RealInterval) {
       auto real = functionalRealValue(value);
       if (!real)
         continue;
@@ -10549,13 +10549,13 @@ bool valueSetMatches(const obelisk::coverage::Database &schema,
       std::memcpy(&low, &atom.realLowBits, sizeof(low));
       std::memcpy(&high, &atom.realHighBits, sizeof(high));
       bool lower =
-          (atom.flags & obelisk::coverage::FunctionalValueAtomLowerUnbounded) ||
-          ((atom.flags & obelisk::coverage::FunctionalValueAtomLowerInclusive)
+          (atom.flags & talos::coverage::FunctionalValueAtomLowerUnbounded) ||
+          ((atom.flags & talos::coverage::FunctionalValueAtomLowerInclusive)
                ? actual >= low
                : actual > low);
       bool upper =
-          (atom.flags & obelisk::coverage::FunctionalValueAtomUpperUnbounded) ||
-          ((atom.flags & obelisk::coverage::FunctionalValueAtomUpperInclusive)
+          (atom.flags & talos::coverage::FunctionalValueAtomUpperUnbounded) ||
+          ((atom.flags & talos::coverage::FunctionalValueAtomUpperInclusive)
                ? actual <= high
                : actual < high);
       if (lower && upper)
@@ -10571,7 +10571,7 @@ bool valueSetMatches(const obelisk::coverage::Database &schema,
       uint64_t encoded =
           readPlaneLimb(value.value, value.value_size, limbIndex);
       uint64_t bval = readPlaneLimb(value.unknown, value.value_size, limbIndex);
-      uint64_t aval = value.kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
+      uint64_t aval = value.kind == TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE
                           ? encoded ^ bval
                           : encoded;
       uint64_t mask = ~limb.wildcardMask;
@@ -10581,7 +10581,7 @@ bool valueSetMatches(const obelisk::coverage::Database &schema,
                !((bval ^ limb.lowBval) & mask);
     }
     if (atom.kind ==
-            obelisk::coverage::FunctionalValueAtomKind::IntegralValue &&
+            talos::coverage::FunctionalValueAtomKind::IntegralValue &&
         exact)
       return true;
     bool known = true;
@@ -10589,18 +10589,18 @@ bool valueSetMatches(const obelisk::coverage::Database &schema,
          ++limbIndex)
       known &= !readPlaneLimb(value.unknown, value.value_size, limbIndex);
     if (atom.kind ==
-            obelisk::coverage::FunctionalValueAtomKind::IntegralRange &&
+            talos::coverage::FunctionalValueAtomKind::IntegralRange &&
         known) {
       int low = compareIntegral(value, schema.resolvedFunctionalValueLimbs,
                                 atom, false, set->signedness);
       int high = compareIntegral(value, schema.resolvedFunctionalValueLimbs,
                                  atom, true, set->signedness);
       bool lower =
-          (atom.flags & obelisk::coverage::FunctionalValueAtomLowerInclusive)
+          (atom.flags & talos::coverage::FunctionalValueAtomLowerInclusive)
               ? low >= 0
               : low > 0;
       bool upper =
-          (atom.flags & obelisk::coverage::FunctionalValueAtomUpperInclusive)
+          (atom.flags & talos::coverage::FunctionalValueAtomUpperInclusive)
               ? high <= 0
               : high < 0;
       if (lower && upper)
@@ -10611,11 +10611,11 @@ bool valueSetMatches(const obelisk::coverage::Database &schema,
 }
 
 bool makeIntegralCoverageShape(
-    const obelisk::coverage::Database &schema,
-    const obelisk::coverage::ResolvedFunctionalValueAtom &atom,
-    uint32_t bitWidth, obelisk::coverage::CoverageSignedness signedness,
+    const talos::coverage::Database &schema,
+    const talos::coverage::ResolvedFunctionalValueAtom &atom,
+    uint32_t bitWidth, talos::coverage::CoverageSignedness signedness,
     IntegralCoverageShape &shape) {
-  using AtomKind = obelisk::coverage::FunctionalValueAtomKind;
+  using AtomKind = talos::coverage::FunctionalValueAtomKind;
   if (atom.kind == AtomKind::RealInterval)
     return false;
   uint32_t count = functionalLimbCount(bitWidth);
@@ -10651,7 +10651,7 @@ bool makeIntegralCoverageShape(
   // Flipping the sign bit maps two's-complement signed order to ordinary
   // unsigned lexicographic order. This lets one prefix algorithm cover both
   // signed and unsigned values without target-sized arithmetic.
-  if (signedness == obelisk::coverage::CoverageSignedness::Signed) {
+  if (signedness == talos::coverage::CoverageSignedness::Signed) {
     uint32_t signBit = bitWidth - 1;
     uint64_t signMask = uint64_t{1} << (signBit % 64);
     uint32_t signLimb = signBit / 64;
@@ -10671,26 +10671,26 @@ bool makeIntegralCoverageShape(
 /// Transition bins use the
 /// last step of every surviving transition alternative; the cross selects the
 /// bin when any such terminal value set intersects the requested set.
-obelisk_rt_status resolvedFunctionalBinIntersectsValueSet(
-    const obelisk::coverage::Database &schema, uint64_t type,
-    const obelisk::coverage::Digest &configuration, uint64_t binID,
-    const obelisk::coverage::ResolvedFunctionalValueSet &selection,
+talos_rt_status resolvedFunctionalBinIntersectsValueSet(
+    const talos::coverage::Database &schema, uint64_t type,
+    const talos::coverage::Digest &configuration, uint64_t binID,
+    const talos::coverage::ResolvedFunctionalValueSet &selection,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
     FunctionalCoverageSetQueryIndex &setQueries, bool &result) {
   result = false;
   if (&schema != &setQueries.schema || type != setQueries.type ||
       configuration != setQueries.configuration || selection.type != type ||
       selection.configuration != configuration)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   result = setQueries.intersects(binID, selection.id,
                                  suppressedTransitionAlternatives);
   return setQueries.status;
 }
 
-bool crossSelectorUsesWith(const obelisk::coverage::Database &schema,
-                           const obelisk::coverage::CrossSelectorNode &root,
+bool crossSelectorUsesWith(const talos::coverage::Database &schema,
+                           const talos::coverage::CrossSelectorNode &root,
                            FunctionalCoverageSetQueryIndex &setQueries) {
-  std::vector<const obelisk::coverage::CrossSelectorNode *> worklist{&root};
+  std::vector<const talos::coverage::CrossSelectorNode *> worklist{&root};
   IndexSet<uint64_t> visited;
   while (!worklist.empty()) {
     const auto *node = worklist.back();
@@ -10715,17 +10715,17 @@ bool crossSelectorUsesWith(const obelisk::coverage::Database &schema,
   return false;
 }
 
-bool crossSelectorUsesSet(const obelisk::coverage::Database &schema,
-                          const obelisk::coverage::CrossSelectorNode &root,
+bool crossSelectorUsesSet(const talos::coverage::Database &schema,
+                          const talos::coverage::CrossSelectorNode &root,
                           FunctionalCoverageSetQueryIndex &setQueries) {
-  std::vector<const obelisk::coverage::CrossSelectorNode *> worklist{&root};
+  std::vector<const talos::coverage::CrossSelectorNode *> worklist{&root};
   IndexSet<uint64_t> visited;
   while (!worklist.empty()) {
     const auto *node = worklist.back();
     worklist.pop_back();
     if (!visited.insert(node->id).second)
       continue;
-    if (node->kind == obelisk::coverage::CrossSelectorKind::Set)
+    if (node->kind == talos::coverage::CrossSelectorKind::Set)
       return true;
     for (uint32_t ordinal = 0; ordinal != node->operandCount; ++ordinal) {
       if (uint64_t{node->firstOperand} + ordinal >=
@@ -10743,40 +10743,40 @@ bool crossSelectorUsesSet(const obelisk::coverage::Database &schema,
   return false;
 }
 
-obelisk_rt_status resolvedFunctionalBinCardinalityCapped(
-    const obelisk::coverage::Database &schema, uint64_t type,
-    const obelisk::coverage::Digest &configuration, uint64_t binID,
+talos_rt_status resolvedFunctionalBinCardinalityCapped(
+    const talos::coverage::Database &schema, uint64_t type,
+    const talos::coverage::Digest &configuration, uint64_t binID,
     uint64_t cap,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
     FunctionalCoverageSetQueryIndex &setQueries, uint64_t &result) {
   result = 0;
   if (&schema != &setQueries.schema || type != setQueries.type ||
       configuration != setQueries.configuration)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   result = setQueries.cardinality(binID, cap, suppressedTransitionAlternatives);
   return setQueries.status;
 }
 
-obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
-    const obelisk::coverage::Database &schema, uint64_t type,
-    const obelisk::coverage::Digest &configuration, uint64_t resolvedCross,
-    const obelisk::coverage::CrossSelectorNode &root,
+talos_rt_status resolvedCrossSelectorSelectsBinTuple(
+    const talos::coverage::Database &schema, uint64_t type,
+    const talos::coverage::Digest &configuration, uint64_t resolvedCross,
+    const talos::coverage::CrossSelectorNode &root,
     const std::vector<uint64_t> &binTuple,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
     FunctionalCoverageSetQueryIndex &setQueries, bool &result) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   result = false;
   const auto *cross = setQueries.lookup(
       setQueries.items, schema.resolvedFunctionalItems, resolvedCross);
   if (!cross || cross->kind != FunctionalItemKind::Cross ||
       root.cross != cross->templateItem)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   const auto *plan = setQueries.lookup(setQueries.crossPlans, schema.crossPlans,
                                        cross->templateItem);
   if (!plan || binTuple.size() != plan->targetCount ||
       uint64_t{plan->firstTarget} + plan->targetCount >
           schema.crossTargets.size())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
 
   std::vector<uint64_t> resolvedTargets;
   resolvedTargets.reserve(plan->targetCount);
@@ -10791,7 +10791,7 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
         !resolvedTarget ||
         resolvedTarget->kind != FunctionalItemKind::Coverpoint || !bin ||
         bin->item != resolvedTarget->id)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     resolvedTargets.push_back(resolvedTarget->id);
   }
 
@@ -10800,44 +10800,44 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
   };
   IndexMap<uint64_t, bool> memo;
   IndexMap<uint64_t, bool> evaluating;
-  std::function<obelisk_rt_status(const CrossSelectorNode &, bool &)> evaluate =
-      [&](const CrossSelectorNode &node, bool &selected) -> obelisk_rt_status {
+  std::function<talos_rt_status(const CrossSelectorNode &, bool &)> evaluate =
+      [&](const CrossSelectorNode &node, bool &selected) -> talos_rt_status {
     auto memoized = memo.find(node.id);
     if (memoized != memo.end()) {
       selected = memoized->second;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     bool &active = evaluating[node.id];
     if (active)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     active = true;
     auto finish = [&](bool value) {
       active = false;
       memo.emplace(node.id, value);
       selected = value;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     };
     bool base = false;
     if (node.kind == CrossSelectorKind::Binsof) {
       auto target = setQueries.targetOrdinals.find({root.cross, node.target});
       if (target == setQueries.targetOrdinals.end() ||
           target->second >= binTuple.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       const auto *bin = setQueries.bin(binTuple[target->second]);
       if (!bin)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       base = !node.bin || bin->templateBin == node.bin;
       if (base && node.valueSet) {
         auto binding = bindingFor(node.id);
         if (!binding || !binding->valueSet)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         const auto *set = setQueries.valueSet(binding->valueSet);
         if (!set)
-          return OBELISK_RT_INVALID_DESIGN;
-        obelisk_rt_status status = resolvedFunctionalBinIntersectsValueSet(
+          return TALOS_RT_INVALID_DESIGN;
+        talos_rt_status status = resolvedFunctionalBinIntersectsValueSet(
             schema, type, configuration, bin->id, *set,
             suppressedTransitionAlternatives, setQueries, base);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       }
     } else if (node.kind == CrossSelectorKind::Set ||
@@ -10854,7 +10854,7 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
       if (node.operandCount != expected ||
           uint64_t{node.firstOperand} + expected >
               schema.crossSelectorOperands.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       std::array<bool, 2> operands{};
       for (uint32_t ordinal = 0; ordinal != expected; ++ordinal) {
         const auto &operand =
@@ -10863,9 +10863,9 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
             setQueries.selectors, schema.crossSelectorNodes, operand.operand);
         if (operand.node != node.id || operand.ordinal != ordinal ||
             (!child || child->cross != root.cross))
-          return OBELISK_RT_INVALID_DESIGN;
-        obelisk_rt_status status = evaluate(*child, operands[ordinal]);
-        if (status != OBELISK_RT_OK)
+          return TALOS_RT_INVALID_DESIGN;
+        talos_rt_status status = evaluate(*child, operands[ordinal]);
+        if (status != TALOS_RT_OK)
           return status;
       }
       base = node.kind == CrossSelectorKind::Not    ? !operands[0]
@@ -10873,7 +10873,7 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
              : node.kind == CrossSelectorKind::And  ? operands[0] && operands[1]
                                                    : operands[0] || operands[1];
     } else {
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     }
     if (!base || (!node.withExpression && !node.predicateRoot &&
                   !node.constructionExpression))
@@ -10881,7 +10881,7 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
 
     auto binding = bindingFor(node.id);
     if (!binding || binding->withExpression != node.withExpression)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if ((binding->flags & ResolvedCrossSelectorSymbolicWith) ||
         ((binding->flags & ResolvedCrossSelectorScalarWith) &&
          (binding->flags & ResolvedCrossSelectorWideMatches))) {
@@ -10904,12 +10904,12 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
         return finish(true);
       if (binding->matchesPolicy != CrossMatchesPolicy::Count ||
           !binding->matchesCount)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       uint64_t volume = 1, threshold = binding->matchesCount;
       for (uint64_t bin : binTuple) {
         uint64_t count = setQueries.cardinality(
             bin, threshold, suppressedTransitionAlternatives);
-        if (setQueries.status != OBELISK_RT_OK)
+        if (setQueries.status != TALOS_RT_OK)
           return setQueries.status;
         if (!count)
           return finish(false);
@@ -10920,7 +10920,7 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
       return finish(volume >= threshold);
     }
     if (!binding->tupleSet)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto *tupleSet = setQueries.lookup(setQueries.tupleSets,
                                              schema.resolvedFunctionalTupleSets,
                                              binding->tupleSet);
@@ -10928,7 +10928,7 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
         tupleSet->elementMode != FunctionalTupleElementMode::ValueTuple ||
         uint64_t{tupleSet->firstTuple} + tupleSet->tupleCount >
             schema.resolvedFunctionalTupleSetTuples.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     uint64_t satisfying = 0;
     for (uint32_t tupleOrdinal = 0; tupleOrdinal != tupleSet->tupleCount;
          ++tupleOrdinal) {
@@ -10938,7 +10938,7 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
       if (tuple.componentCount != plan->targetCount ||
           uint64_t{tuple.firstComponent} + tuple.componentCount >
               schema.resolvedFunctionalTupleSetComponents.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       bool contained = true;
       for (uint32_t componentOrdinal = 0;
            componentOrdinal != tuple.componentCount; ++componentOrdinal) {
@@ -10948,12 +10948,12 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
         const auto *set = setQueries.valueSet(component.valueSet);
         if (component.ordinal != componentOrdinal ||
             component.target != resolvedTargets[componentOrdinal] || !set)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         bool intersects = false;
-        obelisk_rt_status status = resolvedFunctionalBinIntersectsValueSet(
+        talos_rt_status status = resolvedFunctionalBinIntersectsValueSet(
             schema, type, configuration, binTuple[componentOrdinal], *set,
             suppressedTransitionAlternatives, setQueries, intersects);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
         if (!intersects) {
           contained = false;
@@ -10968,16 +10968,16 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
                     satisfying >= binding->matchesCount);
     if (binding->matchesPolicy != CrossMatchesPolicy::All ||
         binding->matchesCount)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
 
     const uint64_t cap = uint64_t{tupleSet->tupleCount} + 1;
     uint64_t total = 1;
     for (uint32_t ordinal = 0; ordinal != plan->targetCount; ++ordinal) {
       uint64_t containedValues = 0;
-      obelisk_rt_status status = resolvedFunctionalBinCardinalityCapped(
+      talos_rt_status status = resolvedFunctionalBinCardinalityCapped(
           schema, type, configuration, binTuple[ordinal], cap,
           suppressedTransitionAlternatives, setQueries, containedValues);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       if (!containedValues)
         return finish(false);
@@ -10990,15 +10990,15 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
   return evaluate(root, result);
 }
 
-obelisk_rt_status resolvedCrossSelectorSetCandidates(
-    const obelisk::coverage::Database &schema, uint64_t type,
-    const obelisk::coverage::Digest &configuration, uint64_t resolvedCross,
-    const obelisk::coverage::CrossSelectorNode &root,
+talos_rt_status resolvedCrossSelectorSetCandidates(
+    const talos::coverage::Database &schema, uint64_t type,
+    const talos::coverage::Digest &configuration, uint64_t resolvedCross,
+    const talos::coverage::CrossSelectorNode &root,
     const std::vector<std::vector<uint64_t>> &targetBins,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
     FunctionalCoverageSetQueryIndex &setQueries,
     std::vector<std::vector<uint64_t>> &result) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   result.clear();
   const uint64_t limit = ParseLimits{}.maxRecords;
   IndexSet<std::vector<uint64_t>> unique;
@@ -11013,13 +11013,13 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
       for (uint32_t ordinal = 0; ordinal != node->operandCount; ++ordinal) {
         if (uint64_t{node->firstOperand} + ordinal >=
             schema.crossSelectorOperands.size())
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         uint64_t childID =
             schema.crossSelectorOperands[node->firstOperand + ordinal].operand;
         const auto *child = setQueries.lookup(
             setQueries.selectors, schema.crossSelectorNodes, childID);
         if (!child || child->cross != root.cross)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         worklist.push_back(child);
       }
       continue;
@@ -11033,7 +11033,7 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
     if (!tupleSet || tupleSet->selector != node->id || targetBins.empty() ||
         uint64_t{tupleSet->firstTuple} + tupleSet->tupleCount >
             schema.resolvedFunctionalTupleSetTuples.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     for (uint32_t tupleOrdinal = 0; tupleOrdinal != tupleSet->tupleCount;
          ++tupleOrdinal) {
       const auto &valueTuple =
@@ -11042,7 +11042,7 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
       if (valueTuple.componentCount != targetBins.size() ||
           uint64_t{valueTuple.firstComponent} + valueTuple.componentCount >
               schema.resolvedFunctionalTupleSetComponents.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       std::vector<std::vector<uint64_t>> memberships(targetBins.size());
       uint64_t product = 1;
       for (uint32_t targetOrdinal = 0;
@@ -11052,13 +11052,13 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
         const auto *selection = setQueries.valueSet(component.valueSet);
         if (!selection || selection->type != type ||
             component.ordinal != targetOrdinal)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         for (uint64_t bin : targetBins[targetOrdinal]) {
           bool intersects = false;
-          obelisk_rt_status status = resolvedFunctionalBinIntersectsValueSet(
+          talos_rt_status status = resolvedFunctionalBinIntersectsValueSet(
               schema, type, configuration, bin, *selection,
               suppressedTransitionAlternatives, setQueries, intersects);
-          if (status != OBELISK_RT_OK)
+          if (status != TALOS_RT_OK)
             return status;
           if (intersects)
             memberships[targetOrdinal].push_back(bin);
@@ -11068,7 +11068,7 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
           break;
         }
         if (product > limit / memberships[targetOrdinal].size())
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         product *= memberships[targetOrdinal].size();
       }
       std::vector<uint64_t> candidate(targetBins.size());
@@ -11081,14 +11081,14 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
           remainder /= memberships[ordinal].size();
         }
         bool selected = false;
-        obelisk_rt_status status = resolvedCrossSelectorSelectsBinTuple(
+        talos_rt_status status = resolvedCrossSelectorSelectsBinTuple(
             schema, type, configuration, resolvedCross, root, candidate,
             suppressedTransitionAlternatives, setQueries, selected);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
         if (selected && unique.insert(candidate).second) {
           if (unique.size() > limit)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           result.push_back(candidate);
         }
       }
@@ -11096,14 +11096,14 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
   }
   detail::sortByKey(result.begin(), result.end(),
                     [](const auto &tuple) -> const auto & { return tuple; });
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-emitFunctionalOverlapWarnings(const obelisk::coverage::Database &schema,
+talos_rt_status
+emitFunctionalOverlapWarnings(const talos::coverage::Database &schema,
                               uint64_t type,
-                              const obelisk::coverage::Digest &configuration) {
-  using namespace obelisk::coverage;
+                              const talos::coverage::Digest &configuration) {
+  using namespace talos::coverage;
   auto optionValue = [&](uint64_t owner,
                          FunctionalConfigurationOptionOwnerKind ownerKind,
                          bool fallback) {
@@ -11347,7 +11347,7 @@ emitFunctionalOverlapWarnings(const obelisk::coverage::Database &schema,
                    "error: detect_overlap traversal limit exceeded for "
                    "functional coverpoint '%s'\n",
                    item.hierarchy.c_str());
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
     if (result == SearchResult::Found)
       std::fprintf(stderr,
@@ -11356,7 +11356,7 @@ emitFunctionalOverlapWarnings(const obelisk::coverage::Database &schema,
                    item.hierarchy.c_str(), left->name.c_str(),
                    right->name.c_str());
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 int compareIntegralBitVectors(const std::vector<uint64_t> &left,
@@ -11440,14 +11440,14 @@ bool coverageShapeContainsPrefix(const IntegralCoverageShape &shape,
 /// regular language, not a finite list of words. Share exclusion prefix and
 /// decision graphs per point and prove emptiness by product reachability.
 /// Derived graphs are private and do not enter the database identity.
-obelisk_rt_status
-deriveTransitionExclusions(const obelisk::coverage::Database &schema,
+talos_rt_status
+deriveTransitionExclusions(const talos::coverage::Database &schema,
                            uint64_t typeID,
-                           const obelisk::coverage::Digest &configuration,
+                           const talos::coverage::Digest &configuration,
                            std::unordered_set<uint64_t> &suppressedAlternatives,
                            std::unordered_set<uint64_t> &emptyBins,
                            FunctionalCoverageSetQueryIndex &setQueries) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   using Graph = detail::DecisionIndex;
   using Language = detail::TransitionIndex;
   constexpr uint64_t maxDerivationWork = uint64_t{1} << 14;
@@ -11466,13 +11466,13 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
     if (bin.type != typeID || bin.configuration != configuration)
       continue;
     if (!bins.emplace(bin.id, &bin).second)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (bin.kind == FunctionalBinKind::Transition &&
         (bin.flags & (FunctionalBinIgnore | FunctionalBinIllegal)))
       affectedItems.insert(bin.item);
   }
   if (affectedItems.empty())
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   for (const auto &expression : schema.functionalExpressions)
     if (expression.role == FunctionalExpressionRole::CoverpointSample &&
         (expression.flags & FunctionalExpressionCoverpointFourState))
@@ -11505,14 +11505,14 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
   IndexMap<uint64_t, uint64_t> ordinaryCounts, suppressedCounts;
   auto labelFor = [&](Point &point, uint64_t item,
                       const ResolvedFunctionalValueSet &set,
-                      Graph::Root &label) -> obelisk_rt_status {
+                      Graph::Root &label) -> talos_rt_status {
     if (set.kind != FunctionalValueSetKind::Integral || !set.bitWidth ||
         uint64_t{set.firstAtom} + set.atomCount >
             schema.resolvedFunctionalValueAtoms.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (!point.values) {
       if (set.bitWidth == UINT32_MAX)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       point.width = set.bitWidth;
       point.signedness = set.signedness;
       // Known transition sets reject every X/Z sample, so one extra decision
@@ -11532,20 +11532,20 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
       point.language = std::make_unique<Language>(*point.values, width, domain);
     } else if (point.width != set.bitWidth ||
                point.signedness != set.signedness)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (auto found = point.sets.find(set.id); found != point.sets.end()) {
       label = found->second;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     label = 0;
     const uint32_t limbs = functionalLimbCount(point.width + 1);
     for (uint32_t ordinal = 0; ordinal != set.atomCount; ++ordinal) {
       if (!consumeWork(uint64_t{set.bitWidth} + 2))
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       const auto &atom =
           schema.resolvedFunctionalValueAtoms[set.firstAtom + ordinal];
       if (atom.valueSet != set.id || atom.ordinal != ordinal)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       StateCoverageInterval interval;
       Graph::Root root;
       if (makeStateCoverageInterval(schema, set, atom, false, interval)) {
@@ -11561,17 +11561,17 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
         if (!makeIntegralCoverageShape(schema, atom, set.bitWidth,
                                        set.signedness, shape) ||
             shape.interval)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         shape.value.resize(limbs, 0);
         shape.wildcard.resize(limbs, 0);
         root = point.values->cube(shape.value, shape.wildcard);
       }
       label = point.values->unite(label, root);
       if (point.values->exhausted())
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
     }
     point.sets.emplace(set.id, label);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   };
   for (const auto &alternative : schema.resolvedTransitionAlternatives) {
     if (alternative.type != typeID ||
@@ -11579,15 +11579,15 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
       continue;
     auto bin = bins.find(alternative.bin);
     if (bin == bins.end() || bin->second->kind != FunctionalBinKind::Transition)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (!affectedItems.count(bin->second->item))
       continue;
     if (!alternative.stepCount ||
         uint64_t{alternative.firstStep} + alternative.stepCount >
             schema.resolvedTransitionSteps.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (!consumeWork(alternative.stepCount))
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     auto program = programs.find(bin->second->templateBin);
     if (program == programs.end() ||
         alternative.templateAlternativeOrdinal >=
@@ -11595,14 +11595,14 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
         uint64_t{program->second->firstAlternative} +
                 program->second->alternativeCount >
             schema.transitionAlternatives.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto &definition =
         schema.transitionAlternatives[program->second->firstAlternative +
                                       alternative.templateAlternativeOrdinal];
     if (definition.stepCount != alternative.stepCount ||
         uint64_t{definition.firstStep} + definition.stepCount >
             schema.transitionSteps.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     bool exclusion =
         bin->second->flags & (FunctionalBinIgnore | FunctionalBinIllegal);
     auto &point = points.emplace(bin->second->item).first->second;
@@ -11627,20 +11627,20 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
           (repetition == TransitionRepetitionKind::Once &&
            (step.lowerBound != 1 || step.upperBound != 1)) ||
           set == valueSets.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       if (step.upperBound > maxDerivationWork - maximumLength)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       maximumLength += step.upperBound;
       Graph::Root label;
-      obelisk_rt_status status =
+      talos_rt_status status =
           labelFor(point, bin->second->item, *set->second, label);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       steps.push_back({label, step.lowerBound, step.upperBound, repetition});
       if (exclusion) {
         uint64_t choices = step.upperBound - step.lowerBound + 1;
         if (wordCount > maxDerivationWork / choices)
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         wordCount *= choices;
       }
     }
@@ -11662,20 +11662,20 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
         length += repetitions[ordinal];
       }
       if (!consumeWork(length))
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       std::vector<Graph::Root> word;
       word.reserve(length);
       for (size_t ordinal = 0; ordinal != steps.size(); ++ordinal)
         word.insert(word.end(), repetitions[ordinal], steps[ordinal].values);
       point.language->addExclusion(word);
       if (point.language->exhausted())
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
     }
   }
   for (auto &[item, point] : points) {
     bool projectTerminals = setQueries.needsTransitionValues(item);
     Graph *target = nullptr;
-    std::unique_ptr<obelisk::coverage::detail::DecisionProjectionIndex> image;
+    std::unique_ptr<talos::coverage::detail::DecisionProjectionIndex> image;
     if (projectTerminals) {
       FunctionalCoverageSetQueryIndex::DomainKey domain = {
           static_cast<uint32_t>(FunctionalValueSetKind::Integral), point.width,
@@ -11685,7 +11685,7 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
       for (uint32_t variable = 1; variable <= point.width; ++variable)
         variables[variable] = variable - 1;
       image =
-          std::make_unique<obelisk::coverage::detail::DecisionProjectionIndex>(
+          std::make_unique<talos::coverage::detail::DecisionProjectionIndex>(
               *point.values, *target, std::move(variables));
     }
     for (const auto &ordinary : point.ordinary) {
@@ -11694,7 +11694,7 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
               ? point.language->terminalValues(ordinary.steps)
               : (point.language->hasAcceptedWord(ordinary.steps) ? 1 : 0);
       if (point.language->exhausted())
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       if (!terminals) {
         suppressedAlternatives.insert(ordinary.alternative);
         ++suppressedCounts[ordinary.bin];
@@ -11707,13 +11707,13 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
       if (terminals) {
         if (point.values->variable(terminals) != 0 ||
             point.values->child(terminals, true) != 0)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         terminals = point.values->child(terminals, false);
       }
       auto &combined = point.binTerminals[ordinary.bin];
       combined = target->unite(combined, image->project(terminals));
       if (image->exhausted())
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
     }
     for (auto [bin, root] : point.binTerminals)
       setQueries.setTransitionValues(bin, point.width, point.signedness, root);
@@ -11721,15 +11721,15 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
   for (auto [bin, count] : ordinaryCounts)
     if (suppressedCounts[bin] == count)
       emptyBins.insert(bin);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-markStaticallyEmptyStateBins(obelisk::coverage::Database &schema,
+talos_rt_status
+markStaticallyEmptyStateBins(talos::coverage::Database &schema,
                              uint64_t typeID,
-                             const obelisk::coverage::Digest &configuration,
+                             const talos::coverage::Digest &configuration,
                              FunctionalCoverageSetQueryIndex &setQueries) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   IndexMap<uint64_t, const ResolvedFunctionalBinPlan *> plans;
   for (const auto &plan : schema.resolvedFunctionalBinPlans)
     if (plan.type == typeID && plan.configuration == configuration)
@@ -11873,7 +11873,7 @@ markStaticallyEmptyStateBins(obelisk::coverage::Database &schema,
     // Reuse frozen symbolic unions for general cubes. Do not rebuild or
     // rescan all exclusion atoms for each ordinary bin.
     uint64_t cardinality = setQueries.cardinality(bin.id, 1, {});
-    if (setQueries.status != OBELISK_RT_OK)
+    if (setQueries.status != TALOS_RT_OK)
       return setQueries.status;
     if (!cardinality)
       bin.flags |= FunctionalBinEmpty;
@@ -11901,7 +11901,7 @@ markStaticallyEmptyStateBins(obelisk::coverage::Database &schema,
   for (size_t bin = 0; bin != remaining.size(); ++bin)
     if (remaining[bin] == 0)
       schema.resolvedFunctionalBins[bin].flags |= FunctionalBinEmpty;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 const FunctionalCoverageCrossState *
@@ -11918,7 +11918,7 @@ findFunctionalCross(const FunctionalCoverageTypeState &type, uint64_t item) {
   return found == type.crosses.end() ? nullptr : &*found;
 }
 
-const obelisk::coverage::ResolvedFunctionalItem *
+const talos::coverage::ResolvedFunctionalItem *
 queryItemMetadata(const FunctionalCoverageTypeState &type, size_t itemIndex) {
   const size_t index =
       type.projectedItemIndex == SIZE_MAX ? itemIndex : type.projectedItemIndex;
@@ -11983,9 +11983,9 @@ queryInstanceItem(const FunctionalCoverageInstanceState &instance,
                                          state.count >= crossAtLeast ? 1 : 0);
         }
     }
-    constexpr uint32_t omitted = obelisk::coverage::FunctionalBinIgnore |
-                                 obelisk::coverage::FunctionalBinIllegal |
-                                 obelisk::coverage::FunctionalBinEmpty;
+    constexpr uint32_t omitted = talos::coverage::FunctionalBinIgnore |
+                                 talos::coverage::FunctionalBinIllegal |
+                                 talos::coverage::FunctionalBinEmpty;
     uint64_t explicitTotal = 0;
     for (size_t ordinal : queryItemBinOrdinals(type, item)) {
       const auto &bin = instance.bins[ordinal];
@@ -12014,11 +12014,11 @@ queryInstanceItem(const FunctionalCoverageInstanceState &instance,
   }
   if (instance.bins.size() != type.bins.size())
     return result;
-  constexpr uint32_t omitted = obelisk::coverage::FunctionalBinIgnore |
-                               obelisk::coverage::FunctionalBinIllegal |
-                               obelisk::coverage::FunctionalBinEmpty |
-                               obelisk::coverage::FunctionalBinDefault |
-                               obelisk::coverage::FunctionalBinDefaultSequence;
+  constexpr uint32_t omitted = talos::coverage::FunctionalBinIgnore |
+                               talos::coverage::FunctionalBinIllegal |
+                               talos::coverage::FunctionalBinEmpty |
+                               talos::coverage::FunctionalBinDefault |
+                               talos::coverage::FunctionalBinDefaultSequence;
   for (size_t ordinal : queryItemBinOrdinals(type, item)) {
     const auto &bin = instance.bins[ordinal];
     if (bin.item != item || (bin.flags & omitted) || bin.excluded)
@@ -12102,7 +12102,7 @@ void initializeFunctionalInstanceProfile(
 const std::vector<LoadedFunctionalInstance> &
 collectLoadedFunctionalInstances(const CoverageState &coverage, uint64_t typeID,
                                  const FunctionalCoverageTypeState &type) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   static const std::vector<LoadedFunctionalInstance> empty;
   if (!coverage.schema)
     return empty;
@@ -12182,16 +12182,16 @@ collectLoadedFunctionalInstances(const CoverageState &coverage, uint64_t typeID,
                                                             : found->second;
 }
 
-obelisk_rt_status
+talos_rt_status
 buildLoadedFunctionalInstance(const CoverageState &coverage,
                               const LoadedFunctionalInstance &loaded,
                               const FunctionalCoverageTypeState &type,
                               FunctionalCoverageInstanceState &instance) {
-  using Owner = obelisk::coverage::FunctionalConfigurationOptionOwnerKind;
-  using Option = obelisk::coverage::FunctionalConfigurationOptionKind;
+  using Owner = talos::coverage::FunctionalConfigurationOptionOwnerKind;
+  using Option = talos::coverage::FunctionalConfigurationOptionKind;
   if (!coverage.schema || !type.queryMetadata ||
       type.projectedItemIndex != SIZE_MAX)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   const auto &metadata = *type.queryMetadata;
   initializeFunctionalInstanceProfile(instance, type);
   instance.bins = type.bins;
@@ -12203,7 +12203,7 @@ buildLoadedFunctionalInstance(const CoverageState &coverage,
     auto position = metadata.templateItemPositions.find(templateItem);
     if (position == metadata.templateItemPositions.end() ||
         metadata.items[position->second].kind !=
-            obelisk::coverage::FunctionalItemKind::Cross)
+            talos::coverage::FunctionalItemKind::Cross)
       continue;
     auto &destination =
         instance.crossTuples[metadata.items[position->second].id];
@@ -12246,10 +12246,10 @@ buildLoadedFunctionalInstance(const CoverageState &coverage,
     }
     auto position = metadata.templateItemPositions.find(option.owner);
     if (position == metadata.templateItemPositions.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const size_t index = position->second;
     if (index >= type.items.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto &resolved = metadata.items[position->second];
     if (option.option == Option::Goal) {
       const bool seen = !itemGoals.insert(resolved.templateItem).second;
@@ -12267,8 +12267,8 @@ buildLoadedFunctionalInstance(const CoverageState &coverage,
       itemAtLeast[resolved.templateItem] =
           std::max(itemAtLeast[resolved.templateItem], option.value);
     } else if (option.option == Option::CrossNumPrintMissing) {
-      if (resolved.kind != obelisk::coverage::FunctionalItemKind::Cross)
-        return OBELISK_RT_INVALID_DESIGN;
+      if (resolved.kind != talos::coverage::FunctionalItemKind::Cross)
+        return TALOS_RT_INVALID_DESIGN;
       itemCrossNumPrintMissing[resolved.templateItem] = std::max(
           itemCrossNumPrintMissing[resolved.templateItem], option.value);
     }
@@ -12284,7 +12284,7 @@ buildLoadedFunctionalInstance(const CoverageState &coverage,
   IndexMap<uint64_t, uint64_t> effectiveAtLeast;
   for (size_t index = 0; index != type.items.size(); ++index) {
     if (index >= metadata.items.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto &resolved = metadata.items[index];
     auto threshold = itemAtLeast.find(resolved.templateItem);
     if (threshold != itemAtLeast.end()) {
@@ -12305,10 +12305,10 @@ buildLoadedFunctionalInstance(const CoverageState &coverage,
     if (auto threshold = effectiveAtLeast.find(cross);
         threshold != effectiveAtLeast.end())
       value = threshold->second;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status materializeLoadedFunctionalInstance(
+talos_rt_status materializeLoadedFunctionalInstance(
     const CoverageState &coverage, const LoadedFunctionalInstance &loaded,
     const FunctionalCoverageTypeState &type,
     const FunctionalCoverageInstanceState *&result) {
@@ -12316,34 +12316,34 @@ obelisk_rt_status materializeLoadedFunctionalInstance(
     auto fullType = coverage.types.find({loaded.typeID, loaded.configuration});
     if (fullType == coverage.types.end() ||
         fullType->second.queryMetadata != type.queryMetadata)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     auto prepared = std::make_shared<FunctionalCoverageInstanceState>();
-    obelisk_rt_status status = buildLoadedFunctionalInstance(
+    talos_rt_status status = buildLoadedFunctionalInstance(
         coverage, loaded, fullType->second, *prepared);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     loaded.profile = std::move(prepared);
   }
   result = loaded.profile.get();
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status collectCumulativeAtLeast(
+talos_rt_status collectCumulativeAtLeast(
     const CoverageState &coverage, uint64_t typeID,
     const std::vector<const FunctionalCoverageTypeState *> &types,
     IndexMap<uint64_t, uint64_t> &thresholds) {
   if (!coverage.schema)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   thresholds = {};
   for (const FunctionalCoverageTypeState *type : types) {
     if (!type)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     std::vector<uint64_t> templateItems;
     templateItems.reserve(type->items.size());
     for (size_t index = 0; index != type->items.size(); ++index) {
       const auto *resolved = queryItemMetadata(*type, index);
       if (!resolved)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       templateItems.push_back(resolved->templateItem);
     }
     auto accumulate = [&](const FunctionalCoverageInstanceState &instance,
@@ -12367,29 +12367,29 @@ obelisk_rt_status collectCumulativeAtLeast(
       auto instance = coverage.instances.find(handle);
       if (instance != coverage.instances.end() &&
           !accumulate(instance->second, true))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
     for (const LoadedFunctionalInstance &loaded :
          collectLoadedFunctionalInstances(coverage, typeID, *type)) {
       const FunctionalCoverageInstanceState *instance = nullptr;
-      obelisk_rt_status status =
+      talos_rt_status status =
           materializeLoadedFunctionalInstance(coverage, loaded, *type, instance);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       if (!accumulate(*instance, true))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status queryMergedType(
+talos_rt_status queryMergedType(
     const CoverageState &coverage, uint64_t typeID,
     const std::vector<const FunctionalCoverageTypeState *> &configurations,
     CoverageResult &result, uint64_t &instanceCount) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   if (!coverage.schema || configurations.empty())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
 
   struct MergedBin {
     uint64_t count = 0;
@@ -12411,29 +12411,29 @@ obelisk_rt_status queryMergedType(
   IndexMap<uint64_t, uint64_t> cumulativeAtLeast;
   result = {};
   instanceCount = 0;
-  obelisk_rt_status thresholdStatus = collectCumulativeAtLeast(
+  talos_rt_status thresholdStatus = collectCumulativeAtLeast(
       coverage, typeID, configurations, cumulativeAtLeast);
-  if (thresholdStatus != OBELISK_RT_OK)
+  if (thresholdStatus != TALOS_RT_OK)
     return thresholdStatus;
 
   for (const FunctionalCoverageTypeState *type : configurations) {
     if (!type || type->items.size() != type->typeItemGoals.size() ||
         type->items.size() != type->typeItemWeights.size() ||
         type->items.size() != type->itemAggregating.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     auto accumulate = [&](const FunctionalCoverageInstanceState &instance)
-        -> obelisk_rt_status {
+        -> talos_rt_status {
       for (size_t itemIndex = 0; itemIndex != type->items.size(); ++itemIndex) {
         if (!type->itemAggregating[itemIndex])
           continue;
         const uint64_t resolvedItemID = type->items[itemIndex];
         const auto *resolvedItem = queryItemMetadata(*type, itemIndex);
         if (!resolvedItem || !type->queryMetadata)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         MergedItem &item = items[resolvedItem->templateItem];
         auto threshold = cumulativeAtLeast.find(resolvedItem->templateItem);
         if (threshold == cumulativeAtLeast.end())
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         item.atLeast = threshold->second;
         if (!item.hasProfile) {
           item.goal = type->typeItemGoals[itemIndex];
@@ -12441,7 +12441,7 @@ obelisk_rt_status queryMergedType(
           item.hasProfile = true;
         } else if (item.goal != type->typeItemGoals[itemIndex] ||
                    item.weight != type->typeItemWeights[itemIndex]) {
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         }
         const FunctionalCoverageCrossState *cross =
             findFunctionalCross(*type, resolvedItemID);
@@ -12449,10 +12449,10 @@ obelisk_rt_status queryMergedType(
           if (!item.cross)
             item.cross = true;
           if (cross->automaticBinCount.empty() != (cross->automaticRoot == 0))
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           if (cross->automaticRoot) {
             if (cross->targets.size() > UINT32_MAX)
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
             FunctionalCrossProfile profile{
                 item.atLeast,
                 typeID,
@@ -12471,13 +12471,13 @@ obelisk_rt_status queryMergedType(
           if (tuples != instance.crossTuples.end()) {
             for (const auto &[components, state] : tuples->second) {
               if (components.size() != cross->targets.size())
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               std::vector<std::string> names;
               names.reserve(components.size());
               for (uint64_t binID : components) {
                 auto bin = type->queryMetadata->binPositions.find(binID);
                 if (bin == type->queryMetadata->binPositions.end())
-                  return OBELISK_RT_INVALID_DESIGN;
+                  return TALOS_RT_INVALID_DESIGN;
                 names.push_back(type->queryMetadata->bins[bin->second].name);
               }
               item.tuples[names] =
@@ -12493,14 +12493,14 @@ obelisk_rt_status queryMergedType(
               continue;
             const auto &resolvedBin = type->queryMetadata->bins[ordinal];
             if (resolvedBin.kind != FunctionalBinKind::Cross)
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             MergedBin &merged = item.bins[resolvedBin.name];
             merged.count = saturatingAdd(merged.count, bin.count);
           }
           continue;
         }
         if (item.cross)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         for (size_t ordinal : queryItemBinOrdinals(*type, resolvedItemID)) {
           const auto &bin = instance.bins[ordinal];
           constexpr uint32_t omitted =
@@ -12514,27 +12514,27 @@ obelisk_rt_status queryMergedType(
           merged.count = saturatingAdd(merged.count, bin.count);
         }
       }
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     };
 
     for (uint64_t handle : type->instances) {
       auto instance = coverage.instances.find(handle);
       if (instance == coverage.instances.end())
         continue;
-      obelisk_rt_status status = accumulate(instance->second);
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status = accumulate(instance->second);
+      if (status != TALOS_RT_OK)
         return status;
       ++instanceCount;
     }
     for (const LoadedFunctionalInstance &instance :
          collectLoadedFunctionalInstances(coverage, typeID, *type)) {
       const FunctionalCoverageInstanceState *materialized = nullptr;
-      obelisk_rt_status materialize = materializeLoadedFunctionalInstance(
+      talos_rt_status materialize = materializeLoadedFunctionalInstance(
           coverage, instance, *type, materialized);
-      if (materialize != OBELISK_RT_OK)
+      if (materialize != TALOS_RT_OK)
         return materialize;
-      obelisk_rt_status status = accumulate(*materialized);
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status = accumulate(*materialized);
+      if (status != TALOS_RT_OK)
         return status;
       ++instanceCount;
     }
@@ -12550,13 +12550,13 @@ obelisk_rt_status queryMergedType(
     if (item.cross) {
       if (!countFunctionalCrossProfileUnion(
               *coverage.schema, item.automaticProfiles, totalMagnitude))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       std::vector<FunctionalCrossProfile> positiveProfiles;
       if (item.atLeast)
         positiveProfiles = item.automaticProfiles;
       if (!countFunctionalCrossProfileUnion(*coverage.schema, positiveProfiles,
                                             positiveThresholdMagnitude))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
     const uint64_t total =
         item.cross
@@ -12576,7 +12576,7 @@ obelisk_rt_status queryMergedType(
             contained = true;
           }
         if (!contained)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         if (item.atLeast && hits >= item.atLeast)
           sparseCovered = saturatingAdd(sparseCovered, 1);
       }
@@ -12621,7 +12621,7 @@ obelisk_rt_status queryMergedType(
     result.covered = 0;
     result.total = 0;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 CoverageResult
@@ -12662,7 +12662,7 @@ queryType(const CoverageState &coverage, uint64_t typeID,
        collectLoadedFunctionalInstances(coverage, typeID, type)) {
     const FunctionalCoverageInstanceState *materialized = nullptr;
     if (materializeLoadedFunctionalInstance(coverage, instance, type,
-                                            materialized) != OBELISK_RT_OK)
+                                            materialized) != TALOS_RT_OK)
       continue;
     CoverageResult current = queryInstance(
         *materialized, type, cumulativeAtLeast ? &itemThresholds : nullptr);
@@ -12690,21 +12690,21 @@ queryType(const CoverageState &coverage, uint64_t typeID,
   return result;
 }
 
-obelisk_rt_status
+talos_rt_status
 queryAllTypeConfigurations(CoverageState &coverage, uint64_t typeID,
                            CoverageResult &result, uint64_t &instanceCount,
                            uint64_t *outTypeWeight = nullptr) {
   if (!coverage.schema)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   indexFunctionalConfigurations(coverage);
   auto configurationRows = coverage.configurationsByType.find(typeID);
   if (configurationRows == coverage.configurationsByType.end() ||
       configurationRows->second.empty()) {
-    obelisk_rt_status status = ensureFunctionalConstructionSchemas(coverage);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = ensureFunctionalConstructionSchemas(coverage);
+    if (status != TALOS_RT_OK)
       return status;
     if (!coverage.constructionSchemas->types.count(typeID))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
 
     // A type query aggregates constructed instances.  Before the first
     // construction there is no constructor-resolved configuration to bind and
@@ -12722,7 +12722,7 @@ queryAllTypeConfigurations(CoverageState &coverage, uint64_t typeID,
     instanceCount = 0;
     if (outTypeWeight)
       *outTypeWeight = 0;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
   const auto &configurations = configurationRows->second;
@@ -12730,9 +12730,9 @@ queryAllTypeConfigurations(CoverageState &coverage, uint64_t typeID,
   types.reserve(configurations.size());
   for (const auto &configuration : configurations) {
     FunctionalCoverageTypeState *type = nullptr;
-    obelisk_rt_status status =
+    talos_rt_status status =
         bindResolvedFunctionalType(coverage, typeID, configuration, type);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     types.push_back(type);
   }
@@ -12741,22 +12741,22 @@ queryAllTypeConfigurations(CoverageState &coverage, uint64_t typeID,
     if (type->mergeInstances != mergeInstances ||
         type->typeGoal != types.front()->typeGoal ||
         type->typeWeight != types.front()->typeWeight)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
   if (outTypeWeight)
     *outTypeWeight = types.front()->typeWeight;
 
   result = {};
   instanceCount = 0;
   if (mergeInstances) {
-    obelisk_rt_status status =
+    talos_rt_status status =
         queryMergedType(coverage, typeID, types, result, instanceCount);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
   } else {
     IndexMap<uint64_t, uint64_t> cumulativeAtLeast;
-    obelisk_rt_status thresholdStatus =
+    talos_rt_status thresholdStatus =
         collectCumulativeAtLeast(coverage, typeID, types, cumulativeAtLeast);
-    if (thresholdStatus != OBELISK_RT_OK)
+    if (thresholdStatus != TALOS_RT_OK)
       return thresholdStatus;
     double weightedPercentage = 0.0;
     uint64_t totalWeight = 0;
@@ -12809,12 +12809,12 @@ queryAllTypeConfigurations(CoverageState &coverage, uint64_t typeID,
       result.total /= left;
     }
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-const obelisk::coverage::ResolvedFunctionalItem *
+const talos::coverage::ResolvedFunctionalItem *
 findResolvedFunctionalItem(const CoverageState &coverage, uint64_t typeID,
-                           const obelisk::coverage::Digest &configuration,
+                           const talos::coverage::Digest &configuration,
                            uint64_t templateItem) {
   if (!coverage.schema || !templateItem)
     return nullptr;
@@ -12844,7 +12844,7 @@ bool selectFunctionalItem(const CoverageState &coverage, uint64_t typeID,
                           const FunctionalCoverageTypeState &type,
                           FunctionalCoverageTypeState &selected,
                           uint64_t *effectiveTemplateItem = nullptr) {
-  const obelisk::coverage::ResolvedFunctionalItem *resolved =
+  const talos::coverage::ResolvedFunctionalItem *resolved =
       findResolvedFunctionalItem(coverage, typeID, type.configuration,
                                  templateItem);
   if (!resolved)
@@ -12894,7 +12894,7 @@ queryFunctionalItemInstance(const FunctionalCoverageInstanceState &instance,
                            cumulativeAtLeast);
 }
 
-obelisk_rt_status
+talos_rt_status
 queryFunctionalItemType(const CoverageState &coverage, uint64_t typeID,
                         const FunctionalCoverageTypeState &type,
                         CoverageResult &result, uint64_t *outTotalWeight,
@@ -12904,9 +12904,9 @@ queryFunctionalItemType(const CoverageState &coverage, uint64_t typeID,
   uint64_t totalWeight = 0;
   double weightedPercentage = 0.0;
   auto accumulate = [&](const FunctionalCoverageInstanceState &instance)
-      -> obelisk_rt_status {
+      -> talos_rt_status {
     if (type.projectedItemIndex >= instance.itemWeights.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     // IEEE 19.11.3 weights each point/cross instance by its own option.weight,
     // including procedural changes. The enclosing group and the constructor's
     // default item profile do not determine this item's averaging weight.
@@ -12919,25 +12919,25 @@ queryFunctionalItemType(const CoverageState &coverage, uint64_t typeID,
     }
     result.covered = saturatingAdd(result.covered, current.covered);
     result.total = saturatingAdd(result.total, current.total);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   };
   for (uint64_t handle : type.instances) {
     auto instance = coverage.instances.find(handle);
     if (instance != coverage.instances.end()) {
-      obelisk_rt_status status = accumulate(instance->second);
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status = accumulate(instance->second);
+      if (status != TALOS_RT_OK)
         return status;
     }
   }
   for (const auto &loaded :
        collectLoadedFunctionalInstances(coverage, typeID, type)) {
     const FunctionalCoverageInstanceState *instance = nullptr;
-    obelisk_rt_status materialize =
+    talos_rt_status materialize =
         materializeLoadedFunctionalInstance(coverage, loaded, type, instance);
-    if (materialize != OBELISK_RT_OK)
+    if (materialize != TALOS_RT_OK)
       return materialize;
-    obelisk_rt_status status = accumulate(*instance);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = accumulate(*instance);
+    if (status != TALOS_RT_OK)
       return status;
   }
   if (totalWeight) {
@@ -12946,21 +12946,21 @@ queryFunctionalItemType(const CoverageState &coverage, uint64_t typeID,
   }
   if (outTotalWeight)
     *outTotalWeight = totalWeight;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
+talos_rt_status
 queryMergedFunctionalItem(const CoverageState &coverage, uint64_t typeID,
                           const std::vector<FunctionalCoverageTypeState> &types,
                           CoverageResult &result) {
   if (!coverage.schema || types.empty())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   std::vector<const FunctionalCoverageTypeState *> selected;
   selected.reserve(types.size());
   for (const auto &type : types) {
     if (type.items.size() != 1 || type.typeItemGoals.size() != 1 ||
         type.typeItemWeights.size() != 1)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     selected.push_back(&type);
   }
   uint64_t ignoredInstanceCount = 0;
@@ -12992,20 +12992,20 @@ void makeFunctionalCountsConsistent(CoverageResult &result) {
   }
 }
 
-obelisk_rt_status queryAllItemConfigurations(CoverageState &coverage,
+talos_rt_status queryAllItemConfigurations(CoverageState &coverage,
                                              uint64_t typeID,
                                              uint64_t templateItem,
                                              CoverageResult &result) {
   if (!coverage.schema || !templateItem)
-    return OBELISK_RT_INVALID_DESIGN;
-  obelisk_rt_status templateStatus =
+    return TALOS_RT_INVALID_DESIGN;
+  talos_rt_status templateStatus =
       ensureFunctionalConstructionSchemas(coverage);
-  if (templateStatus != OBELISK_RT_OK)
+  if (templateStatus != TALOS_RT_OK)
     return templateStatus;
   auto templateSchema = coverage.constructionSchemas->items.find(templateItem);
   if (templateSchema == coverage.constructionSchemas->items.end() ||
       templateSchema->second.type != typeID)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
 
   std::vector<FunctionalCoverageTypeState> selectedTypes;
   indexFunctionalConfigurations(coverage);
@@ -13013,14 +13013,14 @@ obelisk_rt_status queryAllItemConfigurations(CoverageState &coverage,
   if (configurations != coverage.configurationsByType.end()) {
     for (const auto &configuration : configurations->second) {
       FunctionalCoverageTypeState *type = nullptr;
-      obelisk_rt_status status =
+      talos_rt_status status =
           bindResolvedFunctionalType(coverage, typeID, configuration, type);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       selectedTypes.emplace_back();
       if (!selectFunctionalItem(coverage, typeID, templateItem, *type,
                                 selectedTypes.back()))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
   }
   if (selectedTypes.empty()) {
@@ -13035,7 +13035,7 @@ obelisk_rt_status queryAllItemConfigurations(CoverageState &coverage,
       if (weight != options->second.itemWeights.end() && !weight->second)
         result.percentage = 100.0;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
   const bool mergeInstances = selectedTypes.front().mergeInstances;
@@ -13045,13 +13045,13 @@ obelisk_rt_status queryAllItemConfigurations(CoverageState &coverage,
     if (type.mergeInstances != mergeInstances ||
         type.typeItemGoals.front() != typeGoal ||
         type.typeItemWeights.front() != typeWeight)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
 
   result = {};
   if (mergeInstances) {
-    obelisk_rt_status status =
+    talos_rt_status status =
         queryMergedFunctionalItem(coverage, typeID, selectedTypes, result);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
   } else {
     std::vector<const FunctionalCoverageTypeState *> projectedTypes;
@@ -13059,9 +13059,9 @@ obelisk_rt_status queryAllItemConfigurations(CoverageState &coverage,
     for (const auto &type : selectedTypes)
       projectedTypes.push_back(&type);
     IndexMap<uint64_t, uint64_t> cumulativeAtLeast;
-    obelisk_rt_status thresholdStatus = collectCumulativeAtLeast(
+    talos_rt_status thresholdStatus = collectCumulativeAtLeast(
         coverage, typeID, projectedTypes, cumulativeAtLeast);
-    if (thresholdStatus != OBELISK_RT_OK)
+    if (thresholdStatus != TALOS_RT_OK)
       return thresholdStatus;
     const std::optional<uint64_t> itemAtLeast =
         cumulativeAtLeast.count(templateItem)
@@ -13072,9 +13072,9 @@ obelisk_rt_status queryAllItemConfigurations(CoverageState &coverage,
     for (const auto &type : selectedTypes) {
       uint64_t instanceWeight = 0;
       CoverageResult current;
-      obelisk_rt_status status = queryFunctionalItemType(
+      talos_rt_status status = queryFunctionalItemType(
           coverage, typeID, type, current, &instanceWeight, itemAtLeast);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       if (current.contributes && instanceWeight) {
         weightedPercentage +=
@@ -13094,18 +13094,18 @@ obelisk_rt_status queryAllItemConfigurations(CoverageState &coverage,
     }
   }
   makeFunctionalCountsConsistent(result);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status writeResult(const CoverageResult &result,
+talos_rt_status writeResult(const CoverageResult &result,
                               double *outPercentage, int32_t *outCovered,
                               int32_t *outTotal) {
   if (!outPercentage || !outCovered || !outTotal)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outPercentage = std::max(0.0, std::min(100.0, result.percentage));
   *outCovered = saturateI32(result.covered);
   *outTotal = saturateI32(result.total);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 } // namespace
@@ -13115,24 +13115,24 @@ struct FunctionalCoveragePreparedConstruction {
   std::unique_ptr<PreparedFunctionalConstruction> state;
 };
 
-obelisk_rt_status obelisk_rt_coverage_prepare_construction(
-    obelisk_rt_context *context, uint64_t typeID,
-    const obelisk_rt_functional_value_v1 *expressions, uint64_t expressionCount,
+talos_rt_status talos_rt_coverage_prepare_construction(
+    talos_rt_context *context, uint64_t typeID,
+    const talos_rt_functional_value_v1 *expressions, uint64_t expressionCount,
     uint64_t *outToken) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   if (!context || !typeID || !outToken || (expressionCount && !expressions))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, true);
     if (!coverage->schema)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     auto status = ensureFunctionalConstructionSchemas(*coverage);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     auto construction = coverage->constructionSchemas->types.find(typeID);
     if (construction == coverage->constructionSchemas->types.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto &schema = *construction->second;
     size_t supplied = 0;
     for (const auto *expression :
@@ -13156,11 +13156,11 @@ obelisk_rt_status obelisk_rt_coverage_prepare_construction(
               functionalDefaultAggregateType(*coverage, expression->owner),
               functionalDefaultClassType(*coverage, expression->owner),
               formalValueType(*coverage, expression->owner)))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       ++supplied;
     }
     if (supplied != expressionCount)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     auto prepared = std::make_shared<FunctionalCoveragePreparedConstruction>();
     prepared->state = std::make_unique<PreparedFunctionalConstruction>();
     Database pending;
@@ -13168,7 +13168,7 @@ obelisk_rt_status obelisk_rt_coverage_prepare_construction(
     status = resolveStaticFunctionalType(
         context, pending, typeID, expressions, expressionCount, unused,
         *coverage->constructionSchemas, prepared->state.get(), &schema);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     uint64_t stamp =
         nextCoveragePreparationStamp.load(std::memory_order_relaxed);
@@ -13177,7 +13177,7 @@ obelisk_rt_status obelisk_rt_coverage_prepare_construction(
                stamp, stamp + 1, std::memory_order_relaxed)) {
     }
     if (stamp > UINT32_MAX)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     prepared->stamp = stamp;
     uint32_t slot = 0;
     if (!coverage->freePreparations.empty()) {
@@ -13186,33 +13186,33 @@ obelisk_rt_status obelisk_rt_coverage_prepare_construction(
       coverage->freePreparations.pop_back();
     } else {
       if (coverage->preparations.size() >= UINT32_MAX)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       slot = coverage->preparations.size();
       coverage->preparations.push_back(std::move(prepared));
     }
     *outToken = (stamp << 32) | (uint64_t{slot} + 1);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-obelisk_rt_status obelisk_rt_coverage_prepared_candidates(
-    obelisk_rt_context *context, uint64_t token, uint64_t selector,
+talos_rt_status talos_rt_coverage_prepared_candidates(
+    talos_rt_context *context, uint64_t token, uint64_t selector,
     uint32_t maximumCandidates, CoverageTupleQueueSnapshot &output) {
   if (!context || !token || !static_cast<uint32_t>(token) || !selector ||
-      maximumCandidates > obelisk::coverage::MaxFunctionalCrossWithCandidates)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+      maximumCandidates > talos::coverage::MaxFunctionalCrossWithCandidates)
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     uint32_t slot = static_cast<uint32_t>(token) - 1;
     if (!coverage || slot >= coverage->preparations.size() ||
         !coverage->preparations[slot] ||
         coverage->preparations[slot]->stamp != token >> 32)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto &prepared = *coverage->preparations[slot]->state;
     auto &queries = prepared.query();
     const auto &schema = prepared.database();
@@ -13226,7 +13226,7 @@ obelisk_rt_status obelisk_rt_coverage_prepared_candidates(
                               schema.resolvedFunctionalItems, root->cross)
              : nullptr;
     if (!root || !plan || !cross)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     std::vector<uint64_t> targets;
     for (uint32_t ordinal = 0; ordinal != plan->targetCount; ++ordinal)
       targets.push_back(
@@ -13242,59 +13242,59 @@ obelisk_rt_status obelisk_rt_coverage_prepared_candidates(
     return found->second->candidates(*plan, *root, cross->id, maximumCandidates,
                                      output);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-obelisk_rt_status
-obelisk_rt_coverage_release_preparation(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_coverage_release_preparation(talos_rt_context *context,
                                         uint64_t token) {
   if (!context || !token || !static_cast<uint32_t>(token))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     uint32_t slot = static_cast<uint32_t>(token) - 1;
     if (!coverage || slot >= coverage->preparations.size() ||
         !coverage->preparations[slot] ||
         coverage->preparations[slot]->stamp != token >> 32)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     coverage->freePreparations.push_back(slot);
     coverage->preparations[slot].reset();
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_prepare(
-    obelisk_rt_context *context, uint64_t typeID,
-    const obelisk_rt_functional_value_v1 *expressions, uint64_t expressionCount,
+extern "C" talos_rt_status talos_rt_v1_covergroup_prepare(
+    talos_rt_context *context, uint64_t typeID,
+    const talos_rt_functional_value_v1 *expressions, uint64_t expressionCount,
     uint64_t *outToken) {
-  return obelisk_rt_coverage_prepare_construction(context, typeID, expressions,
+  return talos_rt_coverage_prepare_construction(context, typeID, expressions,
                                                   expressionCount, outToken);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_covergroup_bind_with(obelisk_rt_context *context, uint64_t token,
+extern "C" talos_rt_status
+talos_rt_v1_covergroup_bind_with(talos_rt_context *context, uint64_t token,
                                    uint64_t selector,
-                                   obelisk_rt_object_v1 *queue) {
-  using namespace obelisk::coverage;
+                                   talos_rt_object_v1 *queue) {
+  using namespace talos::coverage;
   if (!context || !token || !static_cast<uint32_t>(token) || !selector ||
       !queue)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     uint32_t slot = static_cast<uint32_t>(token) - 1;
     if (!coverage || slot >= coverage->preparations.size() ||
         !coverage->preparations[slot] ||
         coverage->preparations[slot]->stamp != token >> 32)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto &prepared = *coverage->preparations[slot]->state;
     auto &queries = prepared.query();
     const auto &schema = prepared.database();
@@ -13308,13 +13308,13 @@ obelisk_rt_v1_covergroup_bind_with(obelisk_rt_context *context, uint64_t token,
                               schema.resolvedFunctionalItems, root->cross)
              : nullptr;
     if (!root || !plan || !cross || !root->withExpression)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     CoverageTupleQueueSnapshot snapshot;
-    auto status = obelisk_rt_coverage_tuple_queue_snapshot(
+    auto status = talos_rt_coverage_tuple_queue_snapshot(
         context, queue, plan->tupleElementType, plan->tupleProvenanceSpan,
         (plan->tupleFlags & CrossTupleFourState) != 0,
         MaxFunctionalCrossWithCandidates, snapshot);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     std::vector<uint64_t> targets;
     for (uint32_t ordinal = 0; ordinal != plan->targetCount; ++ordinal)
@@ -13330,33 +13330,33 @@ obelisk_rt_v1_covergroup_bind_with(obelisk_rt_context *context, uint64_t token,
     }
     return found->second->bind(*plan, *root, cross->id, snapshot);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_covergroup_release_preparation(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_covergroup_release_preparation(talos_rt_context *context,
                                              uint64_t token) {
-  return obelisk_rt_coverage_release_preparation(context, token);
+  return talos_rt_coverage_release_preparation(context, token);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_candidates(
-    obelisk_rt_context *context, uint64_t token, uint64_t selector,
-    obelisk_rt_object_v1 *queue, uint32_t maximumCandidates) {
+extern "C" talos_rt_status talos_rt_v1_covergroup_candidates(
+    talos_rt_context *context, uint64_t token, uint64_t selector,
+    talos_rt_object_v1 *queue, uint32_t maximumCandidates) {
   if (!context || !token || !static_cast<uint32_t>(token) || !selector ||
       !queue ||
-      maximumCandidates > obelisk::coverage::MaxFunctionalCrossWithCandidates)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+      maximumCandidates > talos::coverage::MaxFunctionalCrossWithCandidates)
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     uint32_t slot = static_cast<uint32_t>(token) - 1;
     if (!coverage || slot >= coverage->preparations.size() ||
         !coverage->preparations[slot] ||
         coverage->preparations[slot]->stamp != token >> 32)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto &prepared = *coverage->preparations[slot]->state;
     auto &queries = prepared.query();
     const auto &schema = prepared.database();
@@ -13366,48 +13366,48 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_candidates(
                                              schema.crossPlans, root->cross)
                             : nullptr;
     if (!plan)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     CoverageTupleQueueSnapshot empty;
-    obelisk_rt_status status = obelisk_rt_coverage_tuple_queue_snapshot(
+    talos_rt_status status = talos_rt_coverage_tuple_queue_snapshot(
         context, queue, plan->tupleElementType, plan->tupleProvenanceSpan,
-        (plan->tupleFlags & obelisk::coverage::CrossTupleFourState) != 0, 0,
+        (plan->tupleFlags & talos::coverage::CrossTupleFourState) != 0, 0,
         empty);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     CoverageTupleQueueSnapshot values;
-    status = obelisk_rt_coverage_prepared_candidates(context, token, selector,
+    status = talos_rt_coverage_prepared_candidates(context, token, selector,
                                                      maximumCandidates, values);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     ManagedExecutionScope execution(context);
-    if (execution.getStatus() != OBELISK_RT_OK)
+    if (execution.getStatus() != TALOS_RT_OK)
       return execution.getStatus();
-    obelisk_rt_gc_root_v1 rootGuard{};
+    talos_rt_gc_root_v1 rootGuard{};
     status =
-        obelisk_rt_v1_gc_root_push(execution.getLane(), &rootGuard, &queue);
-    if (status != OBELISK_RT_OK)
+        talos_rt_v1_gc_root_push(execution.getLane(), &rootGuard, &queue);
+    if (status != TALOS_RT_OK)
       return status;
     for (uint64_t ordinal = 0; ordinal != values.count; ++ordinal) {
-      status = obelisk_rt_v1_container_write(
+      status = talos_rt_v1_container_write(
           execution.getLane(), queue, ordinal,
           values.value.data() + ordinal * values.valueSize,
           values.fourState ? values.unknown.data() + ordinal * values.valueSize
                            : nullptr);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         break;
     }
-    obelisk_rt_status pop =
-        obelisk_rt_v1_gc_root_pop(execution.getLane(), &rootGuard);
-    return status == OBELISK_RT_OK ? pop : status;
+    talos_rt_status pop =
+        talos_rt_v1_gc_root_pop(execution.getLane(), &rootGuard);
+    return status == TALOS_RT_OK ? pop : status;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-bool obelisk_rt_coverage_tracks_static_state_unlocked(
-    const obelisk_rt_context *context, uint32_t staticID) {
+bool talos_rt_coverage_tracks_static_state_unlocked(
+    const talos_rt_context *context, uint32_t staticID) {
   if (!context || !context->coverage || !context->coverage->finalized)
     return false;
   auto found = context->coverage->toggleBindings.find(staticID);
@@ -13416,7 +13416,7 @@ bool obelisk_rt_coverage_tracks_static_state_unlocked(
          context->coverage->fsmWatches.count(staticID) != 0;
 }
 
-void obelisk_rt_coverage_record_transition_unlocked(obelisk_rt_context *context,
+void talos_rt_coverage_record_transition_unlocked(talos_rt_context *context,
                                                     uint64_t stableID,
                                                     uint64_t bitWidth,
                                                     const uint8_t *changed,
@@ -13492,66 +13492,66 @@ void obelisk_rt_coverage_record_transition_unlocked(obelisk_rt_context *context,
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
-    obelisk_rt_context *context, uint64_t typeID,
-    const obelisk_rt_functional_value_v1 *formals, uint64_t formalCount,
-    const obelisk_rt_functional_value_v1 *expressions, uint64_t expressionCount,
-    obelisk_rt_covergroup_v1 *outHandle) {
+extern "C" talos_rt_status talos_rt_v1_covergroup_create(
+    talos_rt_context *context, uint64_t typeID,
+    const talos_rt_functional_value_v1 *formals, uint64_t formalCount,
+    const talos_rt_functional_value_v1 *expressions, uint64_t expressionCount,
+    talos_rt_covergroup_v1 *outHandle) {
   if (!context || !typeID || !outHandle || (formalCount && !formals) ||
       (expressionCount && !expressions))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, true);
     if (!coverage->schema)
-      return OBELISK_RT_INVALID_DESIGN;
-    obelisk_rt_status templateStatus =
+      return TALOS_RT_INVALID_DESIGN;
+    talos_rt_status templateStatus =
         ensureFunctionalConstructionSchemas(*coverage);
-    if (templateStatus != OBELISK_RT_OK)
+    if (templateStatus != TALOS_RT_OK)
       return templateStatus;
     auto construction = coverage->constructionSchemas->types.find(typeID);
     if (construction == coverage->constructionSchemas->types.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto &templateSchema = *construction->second;
     auto expectedFormals =
         schemaOrdered(templateSchema.functionalFormals, typeID, true);
     auto expectedExpressions =
         schemaOrdered(templateSchema.functionalExpressions, typeID, true);
     if (formalCount != expectedFormals.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     for (size_t index = 0; index != expectedFormals.size(); ++index) {
       const auto &formal = *expectedFormals[index];
       bool reference =
-          formal.direction == obelisk::coverage::FunctionalFormalDirection::Ref;
+          formal.direction == talos::coverage::FunctionalFormalDirection::Ref;
       if (formals[index].id != formal.id ||
           !validateValue(
               context, formals[index], formal.resultKind,
               formal.resultKind ==
-                      obelisk::coverage::FunctionalExpressionResultKind::Real
+                      talos::coverage::FunctionalExpressionResultKind::Real
                   ? 64
                   : formal.bitWidth,
               reference, functionalContainerType(*coverage, formal.valueType),
               functionalAggregateType(*coverage, formal.valueType),
               functionalClassType(*coverage, formal.valueType),
               formal.valueType))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       if (reference && formals[index].argument_ref_kind != 0) {
-        if (obelisk_rt_managed_object_context(formals[index].owner) != context)
-          return OBELISK_RT_INVALID_HANDLE;
-        obelisk_rt_managed_kind_v1 expectedKind =
+        if (talos_rt_managed_object_context(formals[index].owner) != context)
+          return TALOS_RT_INVALID_HANDLE;
+        talos_rt_managed_kind_v1 expectedKind =
             formals[index].argument_ref_kind == 2
-                ? OBELISK_RT_MANAGED_REFERENCE_PATH
-                : OBELISK_RT_MANAGED_CLASS;
-        if (obelisk_rt_managed_object_kind(formals[index].owner) !=
+                ? TALOS_RT_MANAGED_REFERENCE_PATH
+                : TALOS_RT_MANAGED_CLASS;
+        if (talos_rt_managed_object_kind(formals[index].owner) !=
             expectedKind)
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
       }
     }
     size_t supplied = 0;
     for (const auto *expression : expectedExpressions) {
       bool isDefault =
           expression->role ==
-          obelisk::coverage::FunctionalExpressionRole::FormalDefault;
+          talos::coverage::FunctionalExpressionRole::FormalDefault;
       if (isDefault && (supplied == expressionCount ||
                         expressions[supplied].id != expression->id))
         continue;
@@ -13560,7 +13560,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
           !validateValue(
               context, expressions[supplied], expression->resultKind,
               expression->resultKind ==
-                      obelisk::coverage::FunctionalExpressionResultKind::Real
+                      talos::coverage::FunctionalExpressionResultKind::Real
                   ? 64
                   : expression->bitWidth,
               false,
@@ -13568,21 +13568,21 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
               functionalDefaultAggregateType(*coverage, expression->owner),
               functionalDefaultClassType(*coverage, expression->owner),
               formalValueType(*coverage, expression->owner)))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       ++supplied;
     }
     if (supplied != expressionCount)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     FunctionalCoverageTypeState *type = nullptr;
-    obelisk_rt_status status = bindFunctionalType(
+    talos_rt_status status = bindFunctionalType(
         context, *coverage, typeID, type, expressions, expressionCount);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     const auto &schema = type->configurationSchema ? *type->configurationSchema
                                                    : *coverage->schema;
     uint64_t handle = coverage->nextInstance;
     if (!handle)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     FunctionalCoverageInstanceState instance;
     instance.typeID = typeID;
     instance.configuration = type->configuration;
@@ -13597,9 +13597,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
     for (const FunctionalCoverageCrossState &cross : type->crosses)
       instance.crossAtLeast.emplace(cross.id, cross.atLeast);
     for (const auto &option : schema.functionalConfigurationOptions) {
-      using Owner = obelisk::coverage::FunctionalConfigurationOptionOwnerKind;
-      using Option = obelisk::coverage::FunctionalConfigurationOptionKind;
-      using Scope = obelisk::coverage::FunctionalOptionScopeKind;
+      using Owner = talos::coverage::FunctionalConfigurationOptionOwnerKind;
+      using Option = talos::coverage::FunctionalConfigurationOptionKind;
+      using Scope = talos::coverage::FunctionalOptionScopeKind;
       if (option.type != typeID ||
           option.configuration != type->configuration ||
           option.scope != Scope::Instance)
@@ -13618,13 +13618,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
       const auto &metadata = *type->queryMetadata;
       auto position = metadata.itemPositions.find(option.owner);
       if (position == metadata.itemPositions.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       const auto *resolved = &metadata.items[position->second];
       if (option.option == Option::AtLeast)
         instance.explicitAtLeastItems.insert(resolved->templateItem);
       else if (option.option == Option::CrossNumPrintMissing) {
-        if (resolved->kind != obelisk::coverage::FunctionalItemKind::Cross)
-          return OBELISK_RT_INVALID_DESIGN;
+        if (resolved->kind != talos::coverage::FunctionalItemKind::Cross)
+          return TALOS_RT_INVALID_DESIGN;
         instance.crossNumPrintMissing[resolved->templateItem] = option.value;
         instance.explicitCrossNumPrintMissingItems.insert(
             resolved->templateItem);
@@ -13634,22 +13634,22 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
     bool hasExplicitName = false;
     for (const auto &plan : schema.functionalOptionPlans) {
       if (plan.owner != typeID ||
-          plan.ownerKind != obelisk::coverage::
+          plan.ownerKind != talos::coverage::
                                 FunctionalConfigurationOptionOwnerKind::Group ||
           plan.option !=
-              obelisk::coverage::FunctionalConfigurationOptionKind::Name)
+              talos::coverage::FunctionalConfigurationOptionKind::Name)
         continue;
       auto value = std::find_if(
           expressions, expressions + expressionCount,
           [&](const auto &entry) { return entry.id == plan.expression; });
       if (value == expressions + expressionCount ||
-          value->kind != OBELISK_RT_FUNCTIONAL_VALUE_STRING)
-        return OBELISK_RT_INVALID_DESIGN;
+          value->kind != TALOS_RT_FUNCTIONAL_VALUE_STRING)
+        return TALOS_RT_INVALID_DESIGN;
       status = copyManagedCoverageString(value->payload, instance.name);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
-      if (!obelisk::coverage::isValidUtf8(instance.name))
-        return OBELISK_RT_INVALID_DESIGN;
+      if (!talos::coverage::isValidUtf8(instance.name))
+        return TALOS_RT_INVALID_DESIGN;
       hasExplicitName = true;
       break;
     }
@@ -13664,7 +13664,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
       instance.formals.emplace(value.id, std::move(value));
     }
     if (type->instances.size() == type->instances.max_size())
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     if (type->instances.size() == type->instances.capacity())
       type->instances.reserve(
           std::max(type->instances.size() + 1,
@@ -13674,16 +13674,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
     retainedAutomaticRefs.reserve(instance.formals.size());
     auto insertion = coverage->instances.emplace(handle, std::move(instance));
     if (!insertion.second)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     for (const auto &[id, formal] : insertion.first->second.formals) {
       (void)id;
-      if (formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF ||
+      if (formal.kind != TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF ||
           formal.argumentRefKind != 0)
         continue;
-      status = obelisk_rt_v1_native_state_retain(context, formal.payload);
-      if (status != OBELISK_RT_OK) {
+      status = talos_rt_v1_native_state_retain(context, formal.payload);
+      if (status != TALOS_RT_OK) {
         for (uint64_t payload : retainedAutomaticRefs)
-          (void)obelisk_rt_v1_native_state_release(context, payload, 0);
+          (void)talos_rt_v1_native_state_release(context, payload, 0);
         coverage->instances.erase(insertion.first);
         return status;
       }
@@ -13695,210 +13695,210 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
     ++coverage->nextInstance;
     *outHandle = handle;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_covergroup_set_enabled(obelisk_rt_context *context,
-                                     obelisk_rt_covergroup_v1 handle,
+extern "C" talos_rt_status
+talos_rt_v1_covergroup_set_enabled(talos_rt_context *context,
+                                     talos_rt_covergroup_v1 handle,
                                      uint64_t itemID, uint32_t enabled) {
   if (!context || enabled > 1)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto found = coverage->instances.find(handle);
     if (!handle || found == coverage->instances.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (!itemID) {
       found->second.enabled = enabled != 0;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     auto type = coverage->types.find(
         {found->second.typeID, found->second.configuration});
     if (type == coverage->types.end() || !coverage->schema)
-      return OBELISK_RT_INVALID_DESIGN;
-    const obelisk::coverage::ResolvedFunctionalItem *resolved =
+      return TALOS_RT_INVALID_DESIGN;
+    const talos::coverage::ResolvedFunctionalItem *resolved =
         findResolvedFunctionalItem(*coverage, found->second.typeID,
                                    found->second.configuration, itemID);
     if (!resolved ||
         std::find(type->second.items.begin(), type->second.items.end(),
                   resolved->id) == type->second.items.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (enabled)
       found->second.disabledItems.erase(resolved->templateItem);
     else
       found->second.disabledItems.insert(resolved->templateItem);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_covergroup_set_name(obelisk_rt_context *context,
-                                  obelisk_rt_covergroup_v1 handle,
-                                  obelisk_rt_string_v1 name) {
+extern "C" talos_rt_status
+talos_rt_v1_covergroup_set_name(talos_rt_context *context,
+                                  talos_rt_covergroup_v1 handle,
+                                  talos_rt_string_v1 name) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_status ownership = obelisk_rt_validate_string(context, name);
-  if (ownership != OBELISK_RT_OK)
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_status ownership = talos_rt_validate_string(context, name);
+  if (ownership != TALOS_RT_OK)
     return ownership;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::string copied;
-    obelisk_rt_status status = copyManagedCoverageString(name, copied);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = copyManagedCoverageString(name, copied);
+    if (status != TALOS_RT_OK)
       return status;
-    if (!obelisk::coverage::isValidUtf8(copied))
-      return OBELISK_RT_INVALID_ARGUMENT;
+    if (!talos::coverage::isValidUtf8(copied))
+      return TALOS_RT_INVALID_ARGUMENT;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto found = coverage->instances.find(handle);
     if (!handle || found == coverage->instances.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     found->second.name = std::move(copied);
     found->second.generatedName = false;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-obelisk_rt_status obelisk_rt_covergroup_validate_option_reference(
-    obelisk_rt_context *context, uint64_t handle, uint64_t typeID,
+talos_rt_status talos_rt_covergroup_validate_option_reference(
+    talos_rt_context *context, uint64_t handle, uint64_t typeID,
     uint64_t itemID, uint32_t option) {
   if (!context || ((handle == 0) == (typeID == 0)))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->schema)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (typeID) {
-      if (option != OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
-          option != OBELISK_RT_COVERGROUP_OPTION_GOAL &&
-          option != OBELISK_RT_COVERGROUP_OPTION_COMMENT &&
-          ((option != OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES &&
-            option != OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST) ||
+      if (option != TALOS_RT_COVERGROUP_OPTION_WEIGHT &&
+          option != TALOS_RT_COVERGROUP_OPTION_GOAL &&
+          option != TALOS_RT_COVERGROUP_OPTION_COMMENT &&
+          ((option != TALOS_RT_COVERGROUP_OPTION_MERGE_INSTANCES &&
+            option != TALOS_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST) ||
            itemID))
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       return validateFunctionalTypeOptionOwner(*coverage, typeID, itemID);
     }
     auto instance = coverage->instances.find(handle);
     if (instance == coverage->instances.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     const auto *item =
         itemID
             ? findResolvedFunctionalItem(*coverage, instance->second.typeID,
                                          instance->second.configuration, itemID)
             : nullptr;
     if (itemID && !item)
-      return OBELISK_RT_INVALID_DESIGN;
-    if (option == OBELISK_RT_COVERGROUP_OPTION_WEIGHT ||
-        option == OBELISK_RT_COVERGROUP_OPTION_GOAL ||
-        option == OBELISK_RT_COVERGROUP_OPTION_AT_LEAST ||
-        option == OBELISK_RT_COVERGROUP_OPTION_COMMENT ||
-        (option == OBELISK_RT_COVERGROUP_OPTION_NAME && !item) ||
-        (option == OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING &&
-         (!item || item->kind == obelisk::coverage::FunctionalItemKind::Cross)))
-      return OBELISK_RT_OK;
-    return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_DESIGN;
+    if (option == TALOS_RT_COVERGROUP_OPTION_WEIGHT ||
+        option == TALOS_RT_COVERGROUP_OPTION_GOAL ||
+        option == TALOS_RT_COVERGROUP_OPTION_AT_LEAST ||
+        option == TALOS_RT_COVERGROUP_OPTION_COMMENT ||
+        (option == TALOS_RT_COVERGROUP_OPTION_NAME && !item) ||
+        (option == TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING &&
+         (!item || item->kind == talos::coverage::FunctionalItemKind::Cross)))
+      return TALOS_RT_OK;
+    return TALOS_RT_INVALID_ARGUMENT;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_set_integer_option(
-    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
-    uint64_t itemID, obelisk_rt_covergroup_instance_option_v1 option,
+extern "C" talos_rt_status talos_rt_v1_covergroup_set_integer_option(
+    talos_rt_context *context, talos_rt_covergroup_v1 handle,
+    uint64_t itemID, talos_rt_covergroup_instance_option_v1 option,
     int64_t value) {
   if (!context || value < 0 ||
-      (option != OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
-       option != OBELISK_RT_COVERGROUP_OPTION_GOAL &&
-       option != OBELISK_RT_COVERGROUP_OPTION_AT_LEAST &&
-       option != OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING) ||
-      (option == OBELISK_RT_COVERGROUP_OPTION_GOAL && value > 100) ||
-      (option == OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
+      (option != TALOS_RT_COVERGROUP_OPTION_WEIGHT &&
+       option != TALOS_RT_COVERGROUP_OPTION_GOAL &&
+       option != TALOS_RT_COVERGROUP_OPTION_AT_LEAST &&
+       option != TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING) ||
+      (option == TALOS_RT_COVERGROUP_OPTION_GOAL && value > 100) ||
+      (option == TALOS_RT_COVERGROUP_OPTION_WEIGHT &&
        static_cast<uint64_t>(value) > UINT32_MAX) ||
-      (option == OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING &&
+      (option == TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING &&
        value > INT32_MAX))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->schema)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto found = coverage->instances.find(handle);
     if (!handle || found == coverage->instances.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     FunctionalCoverageInstanceState &instance = found->second;
     auto type = coverage->types.find({instance.typeID, instance.configuration});
     if (type == coverage->types.end() || !type->second.queryMetadata)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto &metadata = *type->second.queryMetadata;
     if (instance.itemAtLeast.size() != metadata.items.size() ||
         instance.itemGoals.size() != metadata.items.size() ||
         instance.itemWeights.size() != metadata.items.size() ||
         instance.bins.size() != metadata.bins.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
 
-    const obelisk::coverage::ResolvedFunctionalItem *resolved = nullptr;
+    const talos::coverage::ResolvedFunctionalItem *resolved = nullptr;
     size_t itemIndex = 0;
     if (itemID) {
       resolved = findResolvedFunctionalItem(*coverage, instance.typeID,
                                             instance.configuration, itemID);
       if (!resolved)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       auto position = metadata.itemPositions.find(resolved->id);
       if (position == metadata.itemPositions.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       itemIndex = position->second;
       if (itemIndex >= instance.itemGoals.size() ||
           itemIndex >= instance.itemWeights.size() ||
           itemIndex >= instance.itemAtLeast.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
 
     const uint64_t unsignedValue = static_cast<uint64_t>(value);
-    if (option == OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING) {
+    if (option == TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING) {
       if (resolved) {
-        if (resolved->kind != obelisk::coverage::FunctionalItemKind::Cross)
-          return OBELISK_RT_INVALID_ARGUMENT;
+        if (resolved->kind != talos::coverage::FunctionalItemKind::Cross)
+          return TALOS_RT_INVALID_ARGUMENT;
         instance.crossNumPrintMissing[resolved->templateItem] = unsignedValue;
         instance.explicitCrossNumPrintMissingItems.insert(
             resolved->templateItem);
       } else {
         instance.groupCrossNumPrintMissing = unsignedValue;
       }
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
-    if (option == OBELISK_RT_COVERGROUP_OPTION_WEIGHT) {
+    if (option == TALOS_RT_COVERGROUP_OPTION_WEIGHT) {
       if (resolved)
         instance.itemWeights[itemIndex] = static_cast<uint32_t>(unsignedValue);
       else
         instance.instanceWeight = static_cast<uint32_t>(unsignedValue);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
-    if (option == OBELISK_RT_COVERGROUP_OPTION_GOAL) {
+    if (option == TALOS_RT_COVERGROUP_OPTION_GOAL) {
       if (resolved)
         instance.itemGoals[itemIndex] = static_cast<uint32_t>(unsignedValue);
       else
         instance.instanceGoal = static_cast<uint32_t>(unsignedValue);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
 
     auto applyAtLeast = [&](size_t index, uint64_t threshold) {
@@ -13912,7 +13912,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_set_integer_option(
       instance.explicitAtLeastItems.insert(resolved->templateItem);
       instance.itemAtLeast[itemIndex] = unsignedValue;
       applyAtLeast(itemIndex, unsignedValue);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     instance.groupAtLeast = unsignedValue;
     // Item bin lists partition the instance bins. Updating a group default
@@ -13925,78 +13925,78 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_set_integer_option(
         applyAtLeast(itemIndex, unsignedValue);
       }
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_get_integer_option(
-    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
-    uint64_t itemID, obelisk_rt_covergroup_instance_option_v1 option,
+extern "C" talos_rt_status talos_rt_v1_covergroup_get_integer_option(
+    talos_rt_context *context, talos_rt_covergroup_v1 handle,
+    uint64_t itemID, talos_rt_covergroup_instance_option_v1 option,
     int64_t *outValue) {
   if (!context || !outValue ||
-      (option != OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
-       option != OBELISK_RT_COVERGROUP_OPTION_GOAL &&
-       option != OBELISK_RT_COVERGROUP_OPTION_AT_LEAST &&
-       option != OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING &&
-       !(option >= OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX &&
-         option <= OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS)))
-    return OBELISK_RT_INVALID_ARGUMENT;
+      (option != TALOS_RT_COVERGROUP_OPTION_WEIGHT &&
+       option != TALOS_RT_COVERGROUP_OPTION_GOAL &&
+       option != TALOS_RT_COVERGROUP_OPTION_AT_LEAST &&
+       option != TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING &&
+       !(option >= TALOS_RT_COVERGROUP_OPTION_AUTO_BIN_MAX &&
+         option <= TALOS_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS)))
+    return TALOS_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
   if (!coverage || !coverage->schema)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   auto found = coverage->instances.find(handle);
   if (!handle || found == coverage->instances.end())
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   FunctionalCoverageInstanceState &instance = found->second;
   auto type = coverage->types.find({instance.typeID, instance.configuration});
   if (type == coverage->types.end() || !type->second.queryMetadata)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
 
-  const obelisk::coverage::ResolvedFunctionalItem *resolved = nullptr;
+  const talos::coverage::ResolvedFunctionalItem *resolved = nullptr;
   size_t itemIndex = 0;
   if (itemID) {
     resolved = findResolvedFunctionalItem(*coverage, instance.typeID,
                                           instance.configuration, itemID);
     if (!resolved)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     auto position =
         type->second.queryMetadata->itemPositions.find(resolved->id);
     if (position == type->second.queryMetadata->itemPositions.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     itemIndex = position->second;
   }
 
   uint64_t value = 0;
-  if (option == OBELISK_RT_COVERGROUP_OPTION_WEIGHT) {
+  if (option == TALOS_RT_COVERGROUP_OPTION_WEIGHT) {
     if (resolved) {
       if (itemIndex >= instance.itemWeights.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       value = instance.itemWeights[itemIndex];
     } else
       value = instance.instanceWeight;
-  } else if (option == OBELISK_RT_COVERGROUP_OPTION_GOAL) {
+  } else if (option == TALOS_RT_COVERGROUP_OPTION_GOAL) {
     if (resolved) {
       if (itemIndex >= instance.itemGoals.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       value = instance.itemGoals[itemIndex];
     } else
       value = instance.instanceGoal;
-  } else if (option == OBELISK_RT_COVERGROUP_OPTION_AT_LEAST) {
+  } else if (option == TALOS_RT_COVERGROUP_OPTION_AT_LEAST) {
     if (resolved) {
       if (itemIndex >= instance.itemAtLeast.size())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       value = instance.itemAtLeast[itemIndex];
     } else
       value = instance.groupAtLeast;
-  } else if (option == OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING) {
+  } else if (option == TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING) {
     if (resolved) {
-      if (resolved->kind != obelisk::coverage::FunctionalItemKind::Cross)
-        return OBELISK_RT_INVALID_ARGUMENT;
+      if (resolved->kind != talos::coverage::FunctionalItemKind::Cross)
+        return TALOS_RT_INVALID_ARGUMENT;
       auto explicitValue =
           instance.crossNumPrintMissing.find(resolved->templateItem);
       value = explicitValue == instance.crossNumPrintMissing.end()
@@ -14007,160 +14007,160 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_get_integer_option(
   } else {
     const auto &metadata = *type->second.queryMetadata;
     if (resolved && itemIndex >= metadata.itemOptions.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto &construction =
         resolved ? metadata.itemOptions[itemIndex] : metadata.groupOptions;
     const bool point =
         resolved &&
-        resolved->kind == obelisk::coverage::FunctionalItemKind::Coverpoint;
+        resolved->kind == talos::coverage::FunctionalItemKind::Coverpoint;
     const bool cross =
         resolved &&
-        resolved->kind == obelisk::coverage::FunctionalItemKind::Cross;
-    if (option == OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX) {
+        resolved->kind == talos::coverage::FunctionalItemKind::Cross;
+    if (option == TALOS_RT_COVERGROUP_OPTION_AUTO_BIN_MAX) {
       if (cross)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       value = construction.autoBinMax;
-    } else if (option == OBELISK_RT_COVERGROUP_OPTION_DETECT_OVERLAP) {
+    } else if (option == TALOS_RT_COVERGROUP_OPTION_DETECT_OVERLAP) {
       if (cross)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       value = construction.detectOverlap;
-    } else if (option == OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS) {
+    } else if (option == TALOS_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS) {
       if (point)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       value = construction.crossRetainAutoBins;
     } else {
       if (resolved)
-        return OBELISK_RT_INVALID_ARGUMENT;
-      value = option == OBELISK_RT_COVERGROUP_OPTION_PER_INSTANCE
+        return TALOS_RT_INVALID_ARGUMENT;
+      value = option == TALOS_RT_COVERGROUP_OPTION_PER_INSTANCE
                   ? construction.perInstance
                   : type->second.getInstCoverage;
     }
   }
   if (value > static_cast<uint64_t>(INT64_MAX))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   *outValue = static_cast<int64_t>(value);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_set_string_option(
-    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
-    uint64_t itemID, obelisk_rt_covergroup_instance_option_v1 option,
-    obelisk_rt_string_v1 value) {
-  if (!context || option != OBELISK_RT_COVERGROUP_OPTION_COMMENT)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_status ownership = obelisk_rt_validate_string(context, value);
-  if (ownership != OBELISK_RT_OK)
+extern "C" talos_rt_status talos_rt_v1_covergroup_set_string_option(
+    talos_rt_context *context, talos_rt_covergroup_v1 handle,
+    uint64_t itemID, talos_rt_covergroup_instance_option_v1 option,
+    talos_rt_string_v1 value) {
+  if (!context || option != TALOS_RT_COVERGROUP_OPTION_COMMENT)
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_status ownership = talos_rt_validate_string(context, value);
+  if (ownership != TALOS_RT_OK)
     return ownership;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::string copied;
-    obelisk_rt_status status = copyManagedCoverageString(value, copied);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = copyManagedCoverageString(value, copied);
+    if (status != TALOS_RT_OK)
       return status;
-    if (!obelisk::coverage::isValidUtf8(copied))
-      return OBELISK_RT_INVALID_ARGUMENT;
+    if (!talos::coverage::isValidUtf8(copied))
+      return TALOS_RT_INVALID_ARGUMENT;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->schema)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto found = coverage->instances.find(handle);
     if (!handle || found == coverage->instances.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (itemID) {
-      const obelisk::coverage::ResolvedFunctionalItem *resolved =
+      const talos::coverage::ResolvedFunctionalItem *resolved =
           findResolvedFunctionalItem(*coverage, found->second.typeID,
                                      found->second.configuration, itemID);
       if (!resolved)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       found->second.comments[resolved->templateItem] = std::move(copied);
     } else
       found->second.comments[0] = std::move(copied);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_get_string_option(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_covergroup_v1 handle,
-    uint64_t itemID, obelisk_rt_covergroup_instance_option_v1 option,
-    obelisk_rt_string_v1 *outValue) {
-  obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
+extern "C" talos_rt_status talos_rt_v1_covergroup_get_string_option(
+    talos_rt_gc_lane_v1 *lane, talos_rt_covergroup_v1 handle,
+    uint64_t itemID, talos_rt_covergroup_instance_option_v1 option,
+    talos_rt_string_v1 *outValue) {
+  talos_rt_context *context = talos_rt_managed_lane_context(lane);
   if (!context || !outValue ||
-      (option != OBELISK_RT_COVERGROUP_OPTION_COMMENT &&
-       (option != OBELISK_RT_COVERGROUP_OPTION_NAME || itemID)))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+      (option != TALOS_RT_COVERGROUP_OPTION_COMMENT &&
+       (option != TALOS_RT_COVERGROUP_OPTION_NAME || itemID)))
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->schema)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto found = coverage->instances.find(handle);
     if (!handle || found == coverage->instances.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t owner = 0;
     if (itemID) {
       const auto *item = findResolvedFunctionalItem(
           *coverage, found->second.typeID, found->second.configuration, itemID);
       if (!item)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       owner = item->templateItem;
     }
     const std::string *text = &found->second.name;
     const std::string empty;
-    if (option == OBELISK_RT_COVERGROUP_OPTION_COMMENT) {
+    if (option == TALOS_RT_COVERGROUP_OPTION_COMMENT) {
       auto comment = found->second.comments.find(owner);
       text =
           comment == found->second.comments.end() ? &empty : &comment->second;
     }
-    return obelisk_rt_v1_string_create(lane, text->data(), text->size(),
+    return talos_rt_v1_string_create(lane, text->data(), text->size(),
                                        outValue);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_covergroup_set_type_integer_option(
-    obelisk_rt_context *context, uint64_t typeID, uint64_t itemID,
-    obelisk_rt_covergroup_instance_option_v1 option, int64_t value) {
+extern "C" talos_rt_status
+talos_rt_v1_covergroup_set_type_integer_option(
+    talos_rt_context *context, uint64_t typeID, uint64_t itemID,
+    talos_rt_covergroup_instance_option_v1 option, int64_t value) {
   if (!context || !typeID || value < 0 ||
-      (option != OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
-       option != OBELISK_RT_COVERGROUP_OPTION_GOAL &&
-       option != OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES &&
-       option != OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST) ||
-      (option == OBELISK_RT_COVERGROUP_OPTION_GOAL && value > 100) ||
-      (option == OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
+      (option != TALOS_RT_COVERGROUP_OPTION_WEIGHT &&
+       option != TALOS_RT_COVERGROUP_OPTION_GOAL &&
+       option != TALOS_RT_COVERGROUP_OPTION_MERGE_INSTANCES &&
+       option != TALOS_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST) ||
+      (option == TALOS_RT_COVERGROUP_OPTION_GOAL && value > 100) ||
+      (option == TALOS_RT_COVERGROUP_OPTION_WEIGHT &&
        static_cast<uint64_t>(value) > UINT32_MAX) ||
-      ((option == OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES ||
-        option == OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST) &&
+      ((option == TALOS_RT_COVERGROUP_OPTION_MERGE_INSTANCES ||
+        option == TALOS_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST) &&
        (itemID || value > 1)))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->schema)
-      return OBELISK_RT_INVALID_HANDLE;
-    obelisk_rt_status status =
+      return TALOS_RT_INVALID_HANDLE;
+    talos_rt_status status =
         validateFunctionalTypeOptionOwner(*coverage, typeID, itemID);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
 
     FunctionalCoverageTypeOptions &overrides = coverage->typeOptions[typeID];
-    if (option == OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST) {
+    if (option == TALOS_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST) {
       overrides.distributeFirst = value != 0;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     const uint32_t unsignedValue = static_cast<uint32_t>(value);
-    if (option == OBELISK_RT_COVERGROUP_OPTION_GOAL) {
+    if (option == TALOS_RT_COVERGROUP_OPTION_GOAL) {
       if (itemID)
         overrides.itemGoals[itemID] = unsignedValue;
       else
         overrides.goal = unsignedValue;
-    } else if (option == OBELISK_RT_COVERGROUP_OPTION_WEIGHT) {
+    } else if (option == TALOS_RT_COVERGROUP_OPTION_WEIGHT) {
       if (itemID)
         overrides.itemWeights[itemID] = unsignedValue;
       else
@@ -14174,133 +14174,133 @@ obelisk_rt_v1_covergroup_set_type_integer_option(
     indexFunctionalConfigurations(*coverage);
     auto configurations = coverage->configurationsByType.find(typeID);
     if (configurations == coverage->configurationsByType.end())
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     for (const auto &configuration : configurations->second) {
       auto bound = coverage->types.find({typeID, configuration});
       if (bound == coverage->types.end())
         continue;
       auto &type = bound->second;
       if (!itemID) {
-        if (option == OBELISK_RT_COVERGROUP_OPTION_GOAL)
+        if (option == TALOS_RT_COVERGROUP_OPTION_GOAL)
           type.typeGoal = unsignedValue;
-        else if (option == OBELISK_RT_COVERGROUP_OPTION_WEIGHT)
+        else if (option == TALOS_RT_COVERGROUP_OPTION_WEIGHT)
           type.typeWeight = unsignedValue;
         else
           type.mergeInstances = value != 0;
         continue;
       }
       if (!type.queryMetadata)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       auto position = type.queryMetadata->templateItemPositions.find(itemID);
       if (position == type.queryMetadata->templateItemPositions.end() ||
           position->second >= type.typeItemGoals.size() ||
           position->second >= type.typeItemWeights.size())
-        return OBELISK_RT_INVALID_DESIGN;
-      if (option == OBELISK_RT_COVERGROUP_OPTION_GOAL)
+        return TALOS_RT_INVALID_DESIGN;
+      if (option == TALOS_RT_COVERGROUP_OPTION_GOAL)
         type.typeItemGoals[position->second] = unsignedValue;
       else
         type.typeItemWeights[position->second] = unsignedValue;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_covergroup_set_type_string_option(
-    obelisk_rt_context *context, uint64_t typeID, uint64_t itemID,
-    obelisk_rt_covergroup_instance_option_v1 option,
-    obelisk_rt_string_v1 value) {
-  if (!context || !typeID || option != OBELISK_RT_COVERGROUP_OPTION_COMMENT)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_status ownership = obelisk_rt_validate_string(context, value);
-  if (ownership != OBELISK_RT_OK)
+extern "C" talos_rt_status
+talos_rt_v1_covergroup_set_type_string_option(
+    talos_rt_context *context, uint64_t typeID, uint64_t itemID,
+    talos_rt_covergroup_instance_option_v1 option,
+    talos_rt_string_v1 value) {
+  if (!context || !typeID || option != TALOS_RT_COVERGROUP_OPTION_COMMENT)
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_status ownership = talos_rt_validate_string(context, value);
+  if (ownership != TALOS_RT_OK)
     return ownership;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::string copied;
-    obelisk_rt_status status = copyManagedCoverageString(value, copied);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = copyManagedCoverageString(value, copied);
+    if (status != TALOS_RT_OK)
       return status;
-    if (!obelisk::coverage::isValidUtf8(copied))
-      return OBELISK_RT_INVALID_ARGUMENT;
+    if (!talos::coverage::isValidUtf8(copied))
+      return TALOS_RT_INVALID_ARGUMENT;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->schema)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     status = validateFunctionalTypeOptionOwner(*coverage, typeID, itemID);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     coverage->typeOptions[typeID].comments[itemID] = std::move(copied);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_covergroup_sample_enabled(obelisk_rt_context *context,
-                                        obelisk_rt_covergroup_v1 handle,
+extern "C" talos_rt_status
+talos_rt_v1_covergroup_sample_enabled(talos_rt_context *context,
+                                        talos_rt_covergroup_v1 handle,
                                         uint32_t *outEnabled) {
   if (!context || !outEnabled)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
   if (!coverage)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   auto found = coverage->instances.find(handle);
   if (!handle || found == coverage->instances.end())
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   *outEnabled = found->second.enabled;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_covergroup_strobe_unlocked(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_covergroup_strobe_unlocked(talos_rt_context *context,
                                       uint64_t handle, bool &strobe) {
   if (!context || !handle)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   CoverageState *coverage = coverageState(context, false);
   if (!coverage)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   auto instance = coverage->instances.find(handle);
   if (instance == coverage->instances.end())
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   strobe = instance->second.strobe;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
-    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
-    const obelisk_rt_functional_value_v1 *expressions,
+extern "C" talos_rt_status talos_rt_v1_covergroup_sample(
+    talos_rt_context *context, talos_rt_covergroup_v1 handle,
+    const talos_rt_functional_value_v1 *expressions,
     uint64_t expressionCount) {
   if (!context || (expressionCount && !expressions))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->schema)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto found = coverage->instances.find(handle);
     if (!handle || found == coverage->instances.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     FunctionalCoverageInstanceState &instance = found->second;
     auto type = coverage->types.find({instance.typeID, instance.configuration});
     if (type == coverage->types.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (!type->second.configurationSchema || !type->second.queryMetadata)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const auto &schema = *type->second.configurationSchema;
     const auto &metadata = *type->second.queryMetadata;
     if (metadata.sampleItems.size() != metadata.items.size() ||
         metadata.binIffs.size() != instance.bins.size() ||
         metadata.binValueSets.size() != instance.bins.size())
-      return OBELISK_RT_INVALID_DESIGN;
-    std::vector<const obelisk_rt_functional_value_v1 *> sampleExpressions(
+      return TALOS_RT_INVALID_DESIGN;
+    std::vector<const talos_rt_functional_value_v1 *> sampleExpressions(
         metadata.sampleExpressions.size());
     size_t supplied = 0;
     for (size_t index = 0; index != metadata.sampleExpressions.size();
@@ -14308,7 +14308,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       const auto *entry = metadata.sampleExpressions[index];
       bool isDefault =
           entry->role ==
-          obelisk::coverage::FunctionalExpressionRole::FormalDefault;
+          talos::coverage::FunctionalExpressionRole::FormalDefault;
       if (isDefault && (supplied == expressionCount ||
                         expressions[supplied].id != entry->id))
         continue;
@@ -14317,23 +14317,23 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           !validateValue(
               context, expressions[supplied], entry->resultKind,
               entry->resultKind ==
-                      obelisk::coverage::FunctionalExpressionResultKind::Real
+                      talos::coverage::FunctionalExpressionResultKind::Real
                   ? 64
                   : entry->bitWidth,
               false, functionalDefaultContainerType(*coverage, entry->owner),
               functionalDefaultAggregateType(*coverage, entry->owner),
               functionalDefaultClassType(*coverage, entry->owner),
               formalValueType(*coverage, entry->owner)))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       sampleExpressions[index] = &expressions[supplied];
       ++supplied;
     }
     if (supplied != expressionCount)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (!instance.enabled)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     if (instance.transitionActive.size() != metadata.transitionSlotCount)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
 
     std::vector<size_t> pendingBinIncrements;
     IndexSet<size_t> pendingExplicitBinIncrements;
@@ -14351,7 +14351,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
          ++itemIndex) {
       const auto *item = &metadata.items[itemIndex];
       const uint64_t resolvedItem = item->id;
-      if (item->kind != obelisk::coverage::FunctionalItemKind::Coverpoint)
+      if (item->kind != talos::coverage::FunctionalItemKind::Coverpoint)
         continue;
       if (instance.disabledItems.count(item->templateItem))
         continue;
@@ -14368,7 +14368,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       // Interpret it only once for this coverpoint's sample value.
       IndexMap<uint64_t, bool> matchedSets;
       auto matchesSet =
-          [&](const obelisk::coverage::ResolvedFunctionalValueSet *set) {
+          [&](const talos::coverage::ResolvedFunctionalValueSet *set) {
             if (!set)
               return false;
             auto cached = matchedSets.find(set->id);
@@ -14387,11 +14387,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       std::vector<size_t> defaults;
       for (size_t binIndex : metadata.itemBins[itemIndex]) {
         auto &bin = instance.bins[binIndex];
-        if (bin.kind == obelisk::coverage::FunctionalBinKind::Transition ||
-            (bin.flags & obelisk::coverage::FunctionalBinEmpty))
+        if (bin.kind == talos::coverage::FunctionalBinKind::Transition ||
+            (bin.flags & talos::coverage::FunctionalBinEmpty))
           continue;
         bool binEnabled = binIsEnabled(binIndex);
-        if (bin.flags & obelisk::coverage::FunctionalBinDefault) {
+        if (bin.flags & talos::coverage::FunctionalBinDefault) {
           if (binEnabled &&
               (!bin.valueSet || matchesSet(metadata.binValueSets[binIndex])))
             defaults.push_back(binIndex);
@@ -14404,11 +14404,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
         // its iff is false; only the counter update is disabled (IEEE 1800-2017
         // 19.5).
         matchedNonDefault = true;
-        if (bin.flags & obelisk::coverage::FunctionalBinIllegal) {
+        if (bin.flags & talos::coverage::FunctionalBinIllegal) {
           excluded = true;
           if (binEnabled)
             illegalBins.insert(bin.id);
-        } else if (bin.flags & obelisk::coverage::FunctionalBinIgnore)
+        } else if (bin.flags & talos::coverage::FunctionalBinIgnore)
           excluded = true;
         else if (binEnabled)
           ordinary.push_back(binIndex);
@@ -14419,9 +14419,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       if (!matchedNonDefault) {
         for (size_t binIndex : defaults) {
           auto &bin = instance.bins[binIndex];
-          if (bin.flags & obelisk::coverage::FunctionalBinIllegal)
+          if (bin.flags & talos::coverage::FunctionalBinIllegal)
             illegalBins.insert(bin.id);
-          else if (bin.flags & obelisk::coverage::FunctionalBinIgnore)
+          else if (bin.flags & talos::coverage::FunctionalBinIgnore)
             excluded = true;
           else
             ordinary.push_back(binIndex);
@@ -14437,11 +14437,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           const auto &bin = instance.bins[binIndex];
           pendingBinIncrements.push_back(binIndex);
           constexpr uint32_t omittedFromCross =
-              obelisk::coverage::FunctionalBinDefault |
-              obelisk::coverage::FunctionalBinDefaultSequence |
-              obelisk::coverage::FunctionalBinIgnore |
-              obelisk::coverage::FunctionalBinIllegal |
-              obelisk::coverage::FunctionalBinEmpty;
+              talos::coverage::FunctionalBinDefault |
+              talos::coverage::FunctionalBinDefaultSequence |
+              talos::coverage::FunctionalBinIgnore |
+              talos::coverage::FunctionalBinIllegal |
+              talos::coverage::FunctionalBinEmpty;
           if (!(bin.flags & omittedFromCross))
             sampledBins[resolvedItem].push_back(bin.id);
         }
@@ -14469,17 +14469,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
         const auto &alternative = *binding.resolved;
         const size_t binIndex = binding.bin;
         const auto *bin = &instance.bins[binIndex];
-        if (bin->flags & obelisk::coverage::FunctionalBinEmpty)
+        if (bin->flags & talos::coverage::FunctionalBinEmpty)
           continue;
-        if (!(bin->flags & (obelisk::coverage::FunctionalBinIgnore |
-                            obelisk::coverage::FunctionalBinIllegal)) &&
+        if (!(bin->flags & (talos::coverage::FunctionalBinIgnore |
+                            talos::coverage::FunctionalBinIllegal)) &&
             type->second.suppressedTransitionAlternatives.count(alternative.id))
           continue;
         bool binEnabled = binIsEnabled(binIndex);
         auto &active = pendingTransitionActive[binding.activeSlot];
         const bool exclusion =
-            bin->flags & (obelisk::coverage::FunctionalBinIgnore |
-                          obelisk::coverage::FunctionalBinIllegal);
+            bin->flags & (talos::coverage::FunctionalBinIgnore |
+                          talos::coverage::FunctionalBinIllegal);
         if (!binEnabled && !exclusion) {
           if (active)
             previousPendingRemains = true;
@@ -14537,7 +14537,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
                 schema.transitionSteps[templateAlternative.firstStep +
                                        activeState.gapForbiddenOrdinal]
                         .repetition !=
-                    obelisk::coverage::TransitionRepetitionKind::Nonconsecutive)
+                    talos::coverage::TransitionRepetitionKind::Nonconsecutive)
               return false;
             if (!matchesStep(activeState.gapForbiddenOrdinal)) {
               recordHit();
@@ -14552,12 +14552,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           const auto repetition =
               schema.transitionSteps[templateAlternative.firstStep + ordinal]
                   .repetition;
-          if (repetition != obelisk::coverage::TransitionRepetitionKind::Once &&
+          if (repetition != talos::coverage::TransitionRepetitionKind::Once &&
               repetition !=
-                  obelisk::coverage::TransitionRepetitionKind::Consecutive &&
-              repetition != obelisk::coverage::TransitionRepetitionKind::Goto &&
+                  talos::coverage::TransitionRepetitionKind::Consecutive &&
+              repetition != talos::coverage::TransitionRepetitionKind::Goto &&
               repetition !=
-                  obelisk::coverage::TransitionRepetitionKind::Nonconsecutive)
+                  talos::coverage::TransitionRepetitionKind::Nonconsecutive)
             return false;
           if (!step.lowerBound || step.upperBound < step.lowerBound ||
               repetitionsConsumed >= step.upperBound)
@@ -14572,9 +14572,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
               retain(sampledState, fromPrevious);
           } else if (!matched &&
                      (repetition ==
-                          obelisk::coverage::TransitionRepetitionKind::Goto ||
+                          talos::coverage::TransitionRepetitionKind::Goto ||
                       repetition ==
-                          obelisk::coverage::TransitionRepetitionKind::
+                          talos::coverage::TransitionRepetitionKind::
                               Nonconsecutive)) {
             retain(sampledState, fromPrevious);
           }
@@ -14585,13 +14585,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
             if (ordinal + 1 == alternative.stepCount) {
               recordHit();
               if (repetition ==
-                  obelisk::coverage::TransitionRepetitionKind::Nonconsecutive)
+                  talos::coverage::TransitionRepetitionKind::Nonconsecutive)
                 retain({alternative.stepCount, ordinal, 0, activeState.excluded,
                         sampledState.samplesConsumed},
                        fromPrevious);
             } else
               retain({ordinal + 1,
-                      repetition == obelisk::coverage::
+                      repetition == talos::coverage::
                                         TransitionRepetitionKind::Nonconsecutive
                           ? ordinal
                           : UINT32_MAX,
@@ -14607,16 +14607,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
         if (active)
           for (const ActiveState &state : *active)
             if (!advance(state, true))
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
         if (!advance({0, UINT32_MAX, 0, false}, false))
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         active = std::move(next);
-        if (!(bin->flags & (obelisk::coverage::FunctionalBinIgnore |
-                            obelisk::coverage::FunctionalBinIllegal)))
+        if (!(bin->flags & (talos::coverage::FunctionalBinIgnore |
+                            talos::coverage::FunctionalBinIllegal)))
           ordinaryTransitionSlots.push_back(binding.activeSlot);
         if (hit) {
-          if (bin->flags & (obelisk::coverage::FunctionalBinIgnore |
-                            obelisk::coverage::FunctionalBinIllegal)) {
+          if (bin->flags & (talos::coverage::FunctionalBinIgnore |
+                            talos::coverage::FunctionalBinIllegal)) {
             transitionHits.insert(binIndex);
             exclusionHitLengths.push_back(shortestHit);
           } else {
@@ -14665,9 +14665,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           !previousPendingRemains) {
         for (size_t binIndex : metadata.itemBins[itemIndex]) {
           const auto &bin = instance.bins[binIndex];
-          if (bin.kind != obelisk::coverage::FunctionalBinKind::Transition ||
-              !(bin.flags & obelisk::coverage::FunctionalBinDefaultSequence) ||
-              (bin.flags & obelisk::coverage::FunctionalBinEmpty))
+          if (bin.kind != talos::coverage::FunctionalBinKind::Transition ||
+              !(bin.flags & talos::coverage::FunctionalBinDefaultSequence) ||
+              (bin.flags & talos::coverage::FunctionalBinEmpty))
             continue;
           if (binIsEnabled(binIndex))
             pendingBinIncrements.push_back(binIndex);
@@ -14678,10 +14678,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
         const auto &bin = instance.bins[binIndex];
         if (!binIsEnabled(binIndex))
           continue;
-        if (bin.flags & obelisk::coverage::FunctionalBinIllegal) {
+        if (bin.flags & talos::coverage::FunctionalBinIllegal) {
           uint64_t &increment = pendingIllegalIncrements[bin.id];
           increment = saturatingAdd(increment, 1);
-        } else if (!(bin.flags & obelisk::coverage::FunctionalBinIgnore)) {
+        } else if (!(bin.flags & talos::coverage::FunctionalBinIgnore)) {
           pendingBinIncrements.push_back(binIndex);
           sampledBins[resolvedItem].push_back(bin.id);
         }
@@ -14693,7 +14693,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
         continue;
       auto crossItem = metadata.itemPositions.find(cross.id);
       if (crossItem == metadata.itemPositions.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       size_t crossIff = metadata.sampleItems[crossItem->second].iff;
       bool crossEnabled = crossIff == SIZE_MAX ||
                           functionalBooleanTrue(*sampleExpressions[crossIff]);
@@ -14715,7 +14715,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       size_t tupleCount = 1;
       for (const auto *hits : targetHits) {
         if (tupleCount > SIZE_MAX / hits->size())
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         tupleCount *= hits->size();
       }
       // Decode each complete tuple directly. Growing and copying every
@@ -14761,7 +14761,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           selectedByExplicitBin = true;
           auto binPosition = metadata.binPositions.find(explicitBin.bin);
           if (binPosition == metadata.binPositions.end())
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           size_t binIndex = binPosition->second;
           const auto *bin = &instance.bins[binIndex];
           bool binEnabled = binIsEnabled(binIndex);
@@ -14771,12 +14771,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           // and a guarded ignore or illegal bin still excludes it; a disabled
           // illegal bin only skips its run-time error (IEEE 1800-2023 19.5,
           // 19.6.2-19.6.3).
-          if (bin->flags & obelisk::coverage::FunctionalBinIllegal) {
+          if (bin->flags & talos::coverage::FunctionalBinIllegal) {
             if (binEnabled)
               illegalBins.insert(bin->id);
             else
               ignored = true;
-          } else if (bin->flags & obelisk::coverage::FunctionalBinIgnore) {
+          } else if (bin->flags & talos::coverage::FunctionalBinIgnore) {
             ignored = true;
           } else if (binEnabled) {
             ordinaryBins.insert(binIndex);
@@ -14830,18 +14830,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       }
     }
 
-    std::vector<obelisk::coverage::IllegalBinDiagnostic> pendingNewDiagnostics;
+    std::vector<talos::coverage::IllegalBinDiagnostic> pendingNewDiagnostics;
     std::vector<std::pair<size_t, uint64_t>> pendingDiagnosticIncrements;
     std::vector<std::string> pendingIllegalHierarchies;
     pendingIllegalHierarchies.reserve(pendingIllegalIncrements.size());
-    const obelisk::coverage::UUID currentRun = makeRunUUID(context, *coverage);
+    const talos::coverage::UUID currentRun = makeRunUUID(context, *coverage);
     auto *diagnostics = pendingIllegalIncrements.empty()
                             ? nullptr
                             : &indexFunctionalDiagnostics(*coverage);
     for (const auto &[bin, increment] : pendingIllegalIncrements) {
       auto resolvedBin = metadata.binPositions.find(bin);
       if (resolvedBin == metadata.binPositions.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       pendingIllegalHierarchies.push_back(
           metadata.bins[resolvedBin->second].hierarchy);
       auto diagnostic = diagnostics->positions.find(
@@ -14856,7 +14856,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
     if (diagnostics) {
       auto &rows = diagnostics->rows;
       if (pendingNewDiagnostics.size() > rows.max_size() - rows.size())
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       const size_t required = rows.size() + pendingNewDiagnostics.size();
       if (required > rows.capacity()) {
         const size_t grown =
@@ -14889,7 +14889,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       auto &diagnostic = diagnostics->rows[position];
       if (increment > UINT64_MAX - diagnostic.count) {
         diagnostic.count = UINT64_MAX;
-        diagnostic.flags |= obelisk::coverage::IllegalBinDiagnosticOverflow;
+        diagnostic.flags |= talos::coverage::IllegalBinDiagnosticOverflow;
       } else
         diagnostic.count += increment;
     }
@@ -14903,51 +14903,51 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
                    static_cast<unsigned long long>(context->schedulerTime));
     if (!pendingIllegalHierarchies.empty())
       latchSchedulerErrorUnlocked(context);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
-    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
-    uint64_t formalID, obelisk_rt_functional_value_kind_v1 kind,
+extern "C" talos_rt_status talos_rt_v1_covergroup_formal_read(
+    talos_rt_context *context, talos_rt_covergroup_v1 handle,
+    uint64_t formalID, talos_rt_functional_value_kind_v1 kind,
     uint64_t bitWidth, uint64_t valueSize, const uint8_t *globalValue,
     const uint8_t *globalUnknown, uint64_t globalBitCount, void *outValue,
     void *outUnknown) {
   if (!context || !formalID || !outValue)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->schema)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto found = coverage->instances.find(handle);
     if (!handle || found == coverage->instances.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto position = found->second.formals.find(formalID);
     if (position == found->second.formals.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const FunctionalCoverageValue &formal = position->second;
     bool covergroup =
         formal.resultKind ==
-        obelisk::coverage::FunctionalExpressionResultKind::Covergroup;
+        talos::coverage::FunctionalExpressionResultKind::Covergroup;
     bool process = formal.resultKind ==
-                   obelisk::coverage::FunctionalExpressionResultKind::Process;
+                   talos::coverage::FunctionalExpressionResultKind::Process;
     bool virtualInterface =
         formal.resultKind ==
-        obelisk::coverage::FunctionalExpressionResultKind::VirtualInterface;
+        talos::coverage::FunctionalExpressionResultKind::VirtualInterface;
     bool semaphore =
         formal.resultKind ==
-        obelisk::coverage::FunctionalExpressionResultKind::Semaphore;
+        talos::coverage::FunctionalExpressionResultKind::Semaphore;
     bool mailbox = formal.resultKind ==
-                   obelisk::coverage::FunctionalExpressionResultKind::Mailbox;
+                   talos::coverage::FunctionalExpressionResultKind::Mailbox;
     auto validHandle = [&](uint64_t word) {
       if (semaphore || mailbox) {
-        auto *object = obelisk_rt_object_from_managed_word(word);
-        return obelisk_rt_managed_word_from_object(object) == word &&
+        auto *object = talos_rt_object_from_managed_word(word);
+        return talos_rt_managed_word_from_object(object) == word &&
                (semaphore
                     ? validateSemaphoreFormal(context, object)
                     : validateContainerFormal(
@@ -14977,133 +14977,133 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
                            : context->nativeStateValue
                                ? context->nativeStateBitCount
                                : context->stateValue.size() * uint64_t{64};
-      return obelisk_rt_v1_argument_ref_load(
+      return talos_rt_v1_argument_ref_load(
           context, stateValue, stateUnknown, stateBits, formal.owner,
           formal.payload, formal.argumentRefKind, width, size, fourState,
           valueKind, value, unknown);
     };
-    if (kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF) {
-      if ((formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&
-           formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE) ||
+    if (kind == TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF) {
+      if ((formal.kind != TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&
+           formal.kind != TALOS_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE) ||
           bitWidth != 192 || valueSize != 24 || outUnknown)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       if (covergroup || process || virtualInterface || semaphore || mailbox) {
         uint64_t word = 0;
-        obelisk_rt_status status =
+        talos_rt_status status =
             loadReference(64, 8, 0,
-                          semaphore || mailbox ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                                               : OBELISK_RT_ARGUMENT_VALUE_BITS,
+                          semaphore || mailbox ? TALOS_RT_ARGUMENT_VALUE_CLASS
+                                               : TALOS_RT_ARGUMENT_VALUE_BITS,
                           &word, nullptr);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
         if (!validHandle(word))
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
       }
       std::array<uint64_t, 3> reference{
-          obelisk_rt_managed_word_from_object(formal.owner), formal.payload,
-          formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE
+          talos_rt_managed_word_from_object(formal.owner), formal.payload,
+          formal.kind == TALOS_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE
               ? uint64_t{2}
               : formal.argumentRefKind};
       std::memcpy(outValue, reference.data(), sizeof(reference));
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     bool string = formal.resultKind ==
-                  obelisk::coverage::FunctionalExpressionResultKind::String;
+                  talos::coverage::FunctionalExpressionResultKind::String;
     bool container =
         formal.resultKind ==
-        obelisk::coverage::FunctionalExpressionResultKind::Container;
+        talos::coverage::FunctionalExpressionResultKind::Container;
     bool classHandle =
         formal.resultKind ==
-        obelisk::coverage::FunctionalExpressionResultKind::ClassHandle;
+        talos::coverage::FunctionalExpressionResultKind::ClassHandle;
     bool chandle = formal.resultKind ==
-                   obelisk::coverage::FunctionalExpressionResultKind::Chandle;
+                   talos::coverage::FunctionalExpressionResultKind::Chandle;
     bool event = formal.resultKind ==
-                 obelisk::coverage::FunctionalExpressionResultKind::Event;
-    if (obelisk::coverage::isRealResultKind(formal.resultKind)) {
+                 talos::coverage::FunctionalExpressionResultKind::Event;
+    if (talos::coverage::isRealResultKind(formal.resultKind)) {
       uint32_t expected =
           formal.resultKind ==
-                  obelisk::coverage::FunctionalExpressionResultKind::ShortReal
-              ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
-              : OBELISK_RT_FUNCTIONAL_VALUE_REAL;
+                  talos::coverage::FunctionalExpressionResultKind::ShortReal
+              ? TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL
+              : TALOS_RT_FUNCTIONAL_VALUE_REAL;
       uint32_t width =
-          obelisk::coverage::getRealResultBitWidth(formal.resultKind);
+          talos::coverage::getRealResultBitWidth(formal.resultKind);
       if (kind != expected || bitWidth != width || valueSize != width / 8 ||
           outUnknown)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     } else if (chandle || event || covergroup || process || virtualInterface) {
       if (kind != (virtualInterface
-                       ? OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
-                   : process    ? OBELISK_RT_FUNCTIONAL_VALUE_PROCESS
-                   : covergroup ? OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP
-                   : event      ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
-                                : OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE) ||
+                       ? TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
+                   : process    ? TALOS_RT_FUNCTIONAL_VALUE_PROCESS
+                   : covergroup ? TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP
+                   : event      ? TALOS_RT_FUNCTIONAL_VALUE_EVENT
+                                : TALOS_RT_FUNCTIONAL_VALUE_CHANDLE) ||
           bitWidth != 64 || valueSize != 8 || outUnknown)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     } else if (container || classHandle || semaphore || mailbox) {
-      uint32_t expected = mailbox     ? OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX
-                          : semaphore ? OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE
+      uint32_t expected = mailbox     ? TALOS_RT_FUNCTIONAL_VALUE_MAILBOX
+                          : semaphore ? TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE
                           : classHandle
-                              ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
-                              : OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
+                              ? TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
+                              : TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
       if (kind != expected || bitWidth != 64 || valueSize != 8 || outUnknown)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     } else if (string) {
-      if (kind != OBELISK_RT_FUNCTIONAL_VALUE_STRING ||
-          bitWidth != sizeof(obelisk_rt_string_v1) * 8 ||
-          valueSize != sizeof(obelisk_rt_string_v1) || outUnknown)
-        return OBELISK_RT_INVALID_DESIGN;
+      if (kind != TALOS_RT_FUNCTIONAL_VALUE_STRING ||
+          bitWidth != sizeof(talos_rt_string_v1) * 8 ||
+          valueSize != sizeof(talos_rt_string_v1) || outUnknown)
+        return TALOS_RT_INVALID_DESIGN;
     } else if (isFunctionalRealValueKind(kind) ||
-               kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING ||
-               kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
-               kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
-               kind == OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE ||
-               kind == OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX ||
-               kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
-               kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT ||
-               kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP ||
-               kind == OBELISK_RT_FUNCTIONAL_VALUE_PROCESS ||
-               kind == OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE ||
+               kind == TALOS_RT_FUNCTIONAL_VALUE_STRING ||
+               kind == TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
+               kind == TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
+               kind == TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE ||
+               kind == TALOS_RT_FUNCTIONAL_VALUE_MAILBOX ||
+               kind == TALOS_RT_FUNCTIONAL_VALUE_CHANDLE ||
+               kind == TALOS_RT_FUNCTIONAL_VALUE_EVENT ||
+               kind == TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP ||
+               kind == TALOS_RT_FUNCTIONAL_VALUE_PROCESS ||
+               kind == TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE ||
                formal.bitWidth != bitWidth || formal.valueSize != valueSize)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     uint32_t storedKind = formal.kind;
-    if (storedKind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF) {
-      uint32_t fourState = kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE;
-      if (kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL && !fourState &&
+    if (storedKind == TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF) {
+      uint32_t fourState = kind == TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE;
+      if (kind != TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL && !fourState &&
           !isFunctionalRealValueKind(kind) && !string && !container &&
           !classHandle && !chandle && !event && !covergroup && !process &&
           !virtualInterface && !semaphore && !mailbox)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       if (covergroup || process || virtualInterface || semaphore || mailbox) {
         uint64_t word = 0;
-        obelisk_rt_status status =
+        talos_rt_status status =
             loadReference(64, 8, 0,
-                          semaphore || mailbox ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                                               : OBELISK_RT_ARGUMENT_VALUE_BITS,
+                          semaphore || mailbox ? TALOS_RT_ARGUMENT_VALUE_CLASS
+                                               : TALOS_RT_ARGUMENT_VALUE_BITS,
                           &word, nullptr);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
         if (!validHandle(word))
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
         std::memcpy(outValue, &word, sizeof(word));
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       return loadReference(bitWidth, valueSize, fourState,
-                           string ? OBELISK_RT_ARGUMENT_VALUE_STRING
+                           string ? TALOS_RT_ARGUMENT_VALUE_STRING
                            : container || classHandle
-                               ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                               : OBELISK_RT_ARGUMENT_VALUE_BITS,
+                               ? TALOS_RT_ARGUMENT_VALUE_CLASS
+                               : TALOS_RT_ARGUMENT_VALUE_BITS,
                            outValue, outUnknown);
     }
     if (storedKind != kind ||
-        (kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE && !outUnknown))
-      return OBELISK_RT_INVALID_DESIGN;
+        (kind == TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE && !outUnknown))
+      return TALOS_RT_INVALID_DESIGN;
     if (container || classHandle || semaphore || mailbox) {
-      uint64_t word = obelisk_rt_managed_word_from_object(formal.owner);
+      uint64_t word = talos_rt_managed_word_from_object(formal.owner);
       std::memcpy(outValue, &word, sizeof(word));
     } else if (string) {
-      obelisk_rt_status status =
-          obelisk_rt_validate_string(context, formal.payload);
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status =
+          talos_rt_validate_string(context, formal.payload);
+      if (status != TALOS_RT_OK)
         return status;
       std::memcpy(outValue, &formal.payload, sizeof(formal.payload));
     } else if (chandle || event || covergroup || process || virtualInterface)
@@ -15117,43 +15117,43 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
         std::memcpy(outUnknown, formal.unknown.data(),
                     static_cast<size_t>(valueSize));
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_instance_query(
-    obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
+extern "C" talos_rt_status talos_rt_v1_covergroup_instance_query(
+    talos_rt_context *context, talos_rt_covergroup_v1 handle,
     uint64_t itemID, double *outPercentage, int32_t *outCovered,
     int32_t *outTotal) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto found = coverage->instances.find(handle);
     if (!handle || found == coverage->instances.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     auto type = coverage->types.find(
         {found->second.typeID, found->second.configuration});
     if (type == coverage->types.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (itemID) {
       FunctionalCoverageTypeState selected;
       uint64_t effectiveTemplateItem = 0;
       if (!selectFunctionalItem(*coverage, found->second.typeID, itemID,
                                 type->second, selected, &effectiveTemplateItem))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       if (type->second.mergeInstances && !type->second.getInstCoverage) {
         CoverageResult result;
-        obelisk_rt_status status = queryAllItemConfigurations(
+        talos_rt_status status = queryAllItemConfigurations(
             *coverage, found->second.typeID, effectiveTemplateItem, result);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
         return writeResult(result, outPercentage, outCovered, outTotal);
       }
@@ -15166,56 +15166,56 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_instance_query(
     if (type->second.mergeInstances && !type->second.getInstCoverage) {
       CoverageResult result;
       uint64_t instanceCount = 0;
-      obelisk_rt_status status = queryAllTypeConfigurations(
+      talos_rt_status status = queryAllTypeConfigurations(
           *coverage, found->second.typeID, result, instanceCount);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       return writeResult(result, outPercentage, outCovered, outTotal);
     }
     return writeResult(queryInstance(found->second, type->second),
                        outPercentage, outCovered, outTotal);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_type_query(
-    obelisk_rt_context *context, uint64_t typeID, uint64_t itemID,
+extern "C" talos_rt_status talos_rt_v1_covergroup_type_query(
+    talos_rt_context *context, uint64_t typeID, uint64_t itemID,
     double *outPercentage, int32_t *outCovered, int32_t *outTotal) {
   if (!context || !typeID || !outPercentage || !outCovered || !outTotal)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, true);
     CoverageResult result;
     if (itemID) {
-      obelisk_rt_status status =
+      talos_rt_status status =
           queryAllItemConfigurations(*coverage, typeID, itemID, result);
-      return status == OBELISK_RT_OK
+      return status == TALOS_RT_OK
                  ? writeResult(result, outPercentage, outCovered, outTotal)
                  : status;
     }
     uint64_t instanceCount = 0;
-    obelisk_rt_status status =
+    talos_rt_status status =
         queryAllTypeConfigurations(*coverage, typeID, result, instanceCount);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     return writeResult(result, outPercentage, outCovered, outTotal);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_functional_coverage_get(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_functional_coverage_get(talos_rt_context *context,
                                       double *outPercentage) {
   if (!context || !outPercentage)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, true);
     std::set<uint64_t> typeIDs;
@@ -15233,9 +15233,9 @@ obelisk_rt_v1_functional_coverage_get(obelisk_rt_context *context,
       uint64_t instanceCount = 0;
       uint64_t typeWeight = 0;
       CoverageResult result;
-      obelisk_rt_status status = queryAllTypeConfigurations(
+      talos_rt_status status = queryAllTypeConfigurations(
           *coverage, typeID, result, instanceCount, &typeWeight);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       if (!instanceCount || !result.contributes || !typeWeight)
         continue;
@@ -15247,100 +15247,100 @@ obelisk_rt_v1_functional_coverage_get(obelisk_rt_context *context,
     // contributing nonzero-weight types.
     *outPercentage =
         totalWeight ? weighted / static_cast<double>(totalWeight) : 100.0;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_functional_coverage_set_db_name(obelisk_rt_context *context,
-                                              obelisk_rt_string_v1 name) {
+extern "C" talos_rt_status
+talos_rt_v1_functional_coverage_set_db_name(talos_rt_context *context,
+                                              talos_rt_string_v1 name) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(name, scratch, &bytes, &size);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(name, scratch, &bytes, &size);
+  if (status != TALOS_RT_OK)
     return status;
   if (size > SIZE_MAX)
-    return OBELISK_RT_OUT_OF_RESOURCES;
-  OBELISK_RT_TRY {
+    return TALOS_RT_OUT_OF_RESOURCES;
+  TALOS_RT_TRY {
     std::string path(bytes, static_cast<size_t>(size));
     if (path.empty())
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, true);
     coverage->outputPath = std::move(path);
     coverage->outputExplicit = true;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_functional_coverage_load_db(obelisk_rt_context *context,
-                                          obelisk_rt_string_v1 name) {
+extern "C" talos_rt_status
+talos_rt_v1_functional_coverage_load_db(talos_rt_context *context,
+                                          talos_rt_string_v1 name) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(name, scratch, &bytes, &size);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(name, scratch, &bytes, &size);
+  if (status != TALOS_RT_OK)
     return status;
   if (size > SIZE_MAX)
-    return OBELISK_RT_OUT_OF_RESOURCES;
-  return obelisk_rt_v1_coverage_load(context, bytes, size);
+    return TALOS_RT_OUT_OF_RESOURCES;
+  return talos_rt_v1_coverage_load(context, bytes, size);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
-    obelisk_rt_context *context, uint64_t lineCount, uint64_t toggleBitCount,
+extern "C" talos_rt_status talos_rt_v1_coverage_finalize(
+    talos_rt_context *context, uint64_t lineCount, uint64_t toggleBitCount,
     const uint8_t *initialValue, const uint8_t *initialUnknown,
     uint32_t persistenceMask) {
   constexpr uint64_t maxToggleBits =
       static_cast<uint64_t>(SIZE_MAX / sizeof(uint64_t) / 4);
   if (!context || (toggleBitCount && (!initialValue || !initialUnknown)) ||
-      (persistenceMask & ~OBELISK_RT_COVERAGE_PERSIST_ALL) != 0 ||
+      (persistenceMask & ~TALOS_RT_COVERAGE_PERSIST_ALL) != 0 ||
       lineCount >
           static_cast<uint64_t>(SIZE_MAX / sizeof(std::atomic<uint64_t>)) ||
       toggleBitCount > (UINT64_MAX - 7) / 8 || toggleBitCount > maxToggleBits)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, true);
     if (coverage->finalized)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    static_assert(OBELISK_RT_COVERAGE_PERSIST_LINE ==
-                  obelisk::coverage::RunContainsLine);
-    static_assert(OBELISK_RT_COVERAGE_PERSIST_TOGGLE ==
-                  obelisk::coverage::RunContainsToggle);
-    static_assert(OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL ==
-                  obelisk::coverage::RunContainsFunctional);
-    static_assert(OBELISK_RT_COVERAGE_PERSIST_ASSERTION ==
-                  obelisk::coverage::RunContainsAssertion);
-    static_assert(OBELISK_RT_COVERAGE_PERSIST_FSM ==
-                  obelisk::coverage::RunContainsFSM);
+      return TALOS_RT_INVALID_LIFECYCLE;
+    static_assert(TALOS_RT_COVERAGE_PERSIST_LINE ==
+                  talos::coverage::RunContainsLine);
+    static_assert(TALOS_RT_COVERAGE_PERSIST_TOGGLE ==
+                  talos::coverage::RunContainsToggle);
+    static_assert(TALOS_RT_COVERAGE_PERSIST_FUNCTIONAL ==
+                  talos::coverage::RunContainsFunctional);
+    static_assert(TALOS_RT_COVERAGE_PERSIST_ASSERTION ==
+                  talos::coverage::RunContainsAssertion);
+    static_assert(TALOS_RT_COVERAGE_PERSIST_FSM ==
+                  talos::coverage::RunContainsFSM);
     coverage->persistedRunFlags = persistenceMask;
     if (coverage->schema) {
       uint64_t schemaToggleBits = 0;
-      for (const obelisk::coverage::ToggleObject &object :
+      for (const talos::coverage::ToggleObject &object :
            coverage->schema->toggleObjects) {
         if (object.bitWidth > UINT64_MAX - schemaToggleBits)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         schemaToggleBits += object.bitWidth;
       }
       if (lineCount != coverage->schema->linePoints.size() ||
           toggleBitCount != schemaToggleBits)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
     if (lineCount) {
       coverage->lineCounters =
@@ -15377,7 +15377,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
     size_t fsmStateCount =
         coverage->schema ? coverage->schema->fsmStates.size() : 0;
     if (fsmStateCount > UINT32_MAX)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     coverage->fsmCounters.assign(fsmStateCount, 0);
     coverage->fsmOverflow.assign(fsmStateCount, 0);
     coverage->fsmEnabled.assign(fsmStateCount, 1);
@@ -15385,7 +15385,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
     coverage->fsmMachines.clear();
     coverage->fsmWatches.clear();
     for (size_t index = 0; index != fsmStateCount; ++index) {
-      const obelisk::coverage::FSMState &state =
+      const talos::coverage::FSMState &state =
           coverage->schema->fsmStates[index];
       CoverageFSMMachine &machine = coverage->fsmMachines[state.machine];
       machine.states.push_back(static_cast<uint32_t>(index));
@@ -15413,15 +15413,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
       std::unordered_set<uint64_t> excludedToggles;
       std::unordered_set<uint64_t> excludedAssertions;
       std::unordered_set<uint64_t> excludedFSMStates;
-      for (const obelisk::coverage::Exclusion &exclusion :
+      for (const talos::coverage::Exclusion &exclusion :
            coverage->schema->exclusions) {
-        if (exclusion.metric == obelisk::coverage::MetricKind::Line)
+        if (exclusion.metric == talos::coverage::MetricKind::Line)
           excludedLines.insert(exclusion.entity);
-        else if (exclusion.metric == obelisk::coverage::MetricKind::Toggle)
+        else if (exclusion.metric == talos::coverage::MetricKind::Toggle)
           excludedToggles.insert(exclusion.entity);
-        else if (exclusion.metric == obelisk::coverage::MetricKind::Assertion)
+        else if (exclusion.metric == talos::coverage::MetricKind::Assertion)
           excludedAssertions.insert(exclusion.entity);
-        else if (exclusion.metric == obelisk::coverage::MetricKind::FSM)
+        else if (exclusion.metric == talos::coverage::MetricKind::FSM)
           excludedFSMStates.insert(exclusion.entity);
       }
       for (size_t index = 0; index != fsmStateCount; ++index)
@@ -15435,7 +15435,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
             excludedAssertions.count(
                 coverage->schema->assertionPoints[index].id) != 0;
       uint64_t base = 0;
-      for (const obelisk::coverage::ToggleObject &object :
+      for (const talos::coverage::ToggleObject &object :
            coverage->schema->toggleObjects) {
         if (excludedToggles.count(object.id))
           std::fill(coverage->toggleExcluded.begin() + base,
@@ -15445,7 +15445,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
       }
       coverage->scopeParents.clear();
       coverage->definitionScopes.clear();
-      for (const obelisk::coverage::Scope &scope : coverage->schema->scopes) {
+      for (const talos::coverage::Scope &scope : coverage->schema->scopes) {
         coverage->scopeParents.emplace(scope.id, scope.parent);
         if (!scope.definition.empty())
           coverage->definitionScopes[scope.definition].push_back(scope.id);
@@ -15455,183 +15455,183 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
     }
     coverage->finalized = true;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_coverage_point_hit(obelisk_rt_context *context, uint64_t point,
+extern "C" talos_rt_status
+talos_rt_v1_coverage_point_hit(talos_rt_context *context, uint64_t point,
                                  uint32_t enabled) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   CoverageState *coverage = context->coverage.get();
   if (!coverage || !coverage->finalized)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   if (point >= coverage->lineCount) {
     // Assertion success points follow the line points.
     uint64_t assertion = point - coverage->lineCount;
     if (assertion >= coverage->assertionCount)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     if (!enabled ||
         !coverage->assertionEnabled[assertion].load(
             std::memory_order_relaxed) ||
         coverage->assertionExcluded[assertion])
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     if (atomicSaturatingIncrement(coverage->assertionCounters[assertion]))
       coverage->assertionOverflow[assertion].store(1,
                                                    std::memory_order_relaxed);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (!enabled ||
       !coverage->lineEnabled[point].load(std::memory_order_relaxed) ||
       coverage->lineExcluded[point])
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (atomicSaturatingIncrement(coverage->lineCounters[point]))
     coverage->lineOverflow[point].store(1, std::memory_order_relaxed);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_coverage_toggle_transition(
-    obelisk_rt_context *context, uint64_t firstBit, uint64_t bitCount,
+extern "C" talos_rt_status talos_rt_v1_coverage_toggle_transition(
+    talos_rt_context *context, uint64_t firstBit, uint64_t bitCount,
     const uint8_t *value, const uint8_t *unknown) {
   if (!context || (bitCount && (!value || !unknown)))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
   if (!coverage || !coverage->finalized)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   if (firstBit > coverage->toggleBitCount ||
       bitCount > coverage->toggleBitCount - firstBit)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   for (uint64_t local = 0; local != bitCount; ++local) {
     uint64_t index = firstBit + local;
     bool newValue = bit(value, local);
     bool newUnknown = bit(unknown, local);
     recordToggleBit(*coverage, index, newValue, newUnknown);
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_coverage_toggle_seal(obelisk_rt_context *context) {
+extern "C" talos_rt_status
+talos_rt_v1_coverage_toggle_seal(talos_rt_context *context) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
   if (!coverage || !coverage->finalized || coverage->toggleBindingsSealed)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   for (uint64_t index = 0; index != coverage->toggleBitCount; ++index)
     if (!coverage->toggleExcluded[index] && !coverage->toggleBound[index])
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
   coverage->toggleBindingsSealed = true;
   coverage->toggleBound.clear();
   // Each FSM is in its initial state when simulation starts.
   for (const auto &[key, machine] : coverage->fsmMachines)
     recordFSMMachine(context, *coverage, machine, UINT32_MAX, 0, 0, nullptr,
                      nullptr);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_coverage_fsm_bind(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_coverage_fsm_bind(talos_rt_context *context,
                                 uint64_t machineKey, uint64_t shift,
                                 uint64_t bitCount, uint64_t stateHandle) {
   if (!context || bitCount == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->finalized || coverage->toggleBindingsSealed)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     auto machine = coverage->fsmMachines.find(machineKey);
     if (machine == coverage->fsmMachines.end() ||
         shift > machine->second.width ||
         bitCount > machine->second.width - shift)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     uint32_t staticID = 0;
     int64_t signedLow = 0;
     if (!decodeNativeStatic(stateHandle, staticID, signedLow) || signedLow < 0)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     const NativeStaticState *state = findNativeStaticState(context, staticID);
     uint64_t stateLow = static_cast<uint64_t>(signedLow);
     if (!state || stateLow > state->bitWidth ||
         bitCount > state->bitWidth - stateLow)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     machine->second.segments.push_back({staticID, stateLow, bitCount, shift});
     std::vector<uint64_t> &watchers = coverage->fsmWatches[staticID];
     if (std::find(watchers.begin(), watchers.end(), machineKey) ==
         watchers.end())
       watchers.push_back(machineKey);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_coverage_toggle_bind(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_coverage_toggle_bind(talos_rt_context *context,
                                    uint64_t firstBit, uint64_t bitCount,
                                    uint64_t stateHandle) {
   if (!context || bitCount == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
   if (!coverage || !coverage->finalized)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   if (coverage->toggleBindingsSealed)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   if (firstBit > coverage->toggleBitCount ||
       bitCount > coverage->toggleBitCount - firstBit)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint32_t staticID = 0;
   int64_t signedLow = 0;
   if (!decodeNativeStatic(stateHandle, staticID, signedLow) || signedLow < 0)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   const NativeStaticState *state = findNativeStaticState(context, staticID);
   uint64_t stateLow = static_cast<uint64_t>(signedLow);
   if (!state || stateLow > state->bitWidth ||
       bitCount > state->bitWidth - stateLow)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   for (uint64_t index = firstBit; index != firstBit + bitCount; ++index)
     if (coverage->toggleBound[index])
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
   std::fill(coverage->toggleBound.begin() + firstBit,
             coverage->toggleBound.begin() + firstBit + bitCount, 1);
   coverage->toggleBindings[staticID].push_back({firstBit, stateLow, bitCount});
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_coverage_reset(obelisk_rt_context *context, uint32_t metric,
+extern "C" talos_rt_status
+talos_rt_v1_coverage_reset(talos_rt_context *context, uint32_t metric,
                              const uint8_t *currentValue,
                              const uint8_t *currentUnknown) {
-  if (!context || (metric != OBELISK_RT_COVERAGE_STATEMENT &&
-                   metric != OBELISK_RT_COVERAGE_TOGGLE &&
-                   metric != OBELISK_RT_COVERAGE_ASSERTION &&
-                   metric != OBELISK_RT_COVERAGE_FSM))
-    return OBELISK_RT_INVALID_ARGUMENT;
+  if (!context || (metric != TALOS_RT_COVERAGE_STATEMENT &&
+                   metric != TALOS_RT_COVERAGE_TOGGLE &&
+                   metric != TALOS_RT_COVERAGE_ASSERTION &&
+                   metric != TALOS_RT_COVERAGE_FSM))
+    return TALOS_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
   if (!coverage || !coverage->finalized)
-    return OBELISK_RT_INVALID_LIFECYCLE;
-  if (metric == OBELISK_RT_COVERAGE_STATEMENT) {
+    return TALOS_RT_INVALID_LIFECYCLE;
+  if (metric == TALOS_RT_COVERAGE_STATEMENT) {
     for (uint64_t index = 0; index != coverage->lineCount; ++index) {
       coverage->lineCounters[index].store(0, std::memory_order_relaxed);
       coverage->lineOverflow[index].store(0, std::memory_order_relaxed);
     }
-  } else if (metric == OBELISK_RT_COVERAGE_ASSERTION) {
+  } else if (metric == TALOS_RT_COVERAGE_ASSERTION) {
     for (uint64_t index = 0; index != coverage->assertionCount; ++index) {
       coverage->assertionCounters[index].store(0, std::memory_order_relaxed);
       coverage->assertionOverflow[index].store(0, std::memory_order_relaxed);
     }
-  } else if (metric == OBELISK_RT_COVERAGE_FSM) {
+  } else if (metric == TALOS_RT_COVERAGE_FSM) {
     std::fill(coverage->fsmCounters.begin(), coverage->fsmCounters.end(), 0);
     std::fill(coverage->fsmOverflow.begin(), coverage->fsmOverflow.end(), 0);
   } else {
     if (coverage->toggleBitCount && (!currentValue || !currentUnknown))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     std::fill(coverage->toggleCounters.begin(), coverage->toggleCounters.end(),
               0);
     std::fill(coverage->toggleOverflow.begin(), coverage->toggleOverflow.end(),
@@ -15648,40 +15648,40 @@ obelisk_rt_v1_coverage_reset(obelisk_rt_context *context, uint32_t metric,
     coverage->schema->counters.erase(
         std::remove_if(coverage->schema->counters.begin(),
                        coverage->schema->counters.end(),
-                       [&](const obelisk::coverage::Counter &counter) {
+                       [&](const talos::coverage::Counter &counter) {
                          return static_cast<uint32_t>(counter.metric) == metric;
                        }),
         coverage->schema->counters.end());
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_coverage_query(obelisk_rt_context *context, uint32_t metric,
+extern "C" talos_rt_status
+talos_rt_v1_coverage_query(talos_rt_context *context, uint32_t metric,
                              uint64_t *outCovered, uint64_t *outTotal,
                              double *outPercentage) {
   if (!context || !outCovered || !outTotal || !outPercentage ||
-      (metric != OBELISK_RT_COVERAGE_STATEMENT &&
-       metric != OBELISK_RT_COVERAGE_TOGGLE &&
-       metric != OBELISK_RT_COVERAGE_ASSERTION &&
-       metric != OBELISK_RT_COVERAGE_FSM))
-    return OBELISK_RT_INVALID_ARGUMENT;
+      (metric != TALOS_RT_COVERAGE_STATEMENT &&
+       metric != TALOS_RT_COVERAGE_TOGGLE &&
+       metric != TALOS_RT_COVERAGE_ASSERTION &&
+       metric != TALOS_RT_COVERAGE_FSM))
+    return TALOS_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
   if (!coverage || !coverage->finalized)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   uint64_t covered = 0, total = 0;
-  auto loaded = [&](obelisk::coverage::MetricKind loadedMetric, uint64_t entity,
+  auto loaded = [&](talos::coverage::MetricKind loadedMetric, uint64_t entity,
                     uint32_t subindex) {
     uint64_t value = 0;
     if (!coverage->schema)
       return value;
-    for (const obelisk::coverage::Counter &counter : coverage->schema->counters)
+    for (const talos::coverage::Counter &counter : coverage->schema->counters)
       if (counter.metric == loadedMetric && counter.entity == entity &&
           counter.subindex == subindex)
         value = saturatingAdd(value, counter.value);
     return value;
   };
-  if (metric == OBELISK_RT_COVERAGE_STATEMENT) {
+  if (metric == TALOS_RT_COVERAGE_STATEMENT) {
     for (uint64_t index = 0; index != coverage->lineCount; ++index) {
       if (coverage->lineExcluded[index])
         continue;
@@ -15690,25 +15690,25 @@ obelisk_rt_v1_coverage_query(obelisk_rt_context *context, uint32_t metric,
           coverage->schema ? coverage->schema->linePoints[index].id : index;
       covered +=
           coverage->lineCounters[index].load(std::memory_order_relaxed) != 0 ||
-          loaded(obelisk::coverage::MetricKind::Line, entity, 0) != 0;
+          loaded(talos::coverage::MetricKind::Line, entity, 0) != 0;
     }
-  } else if (metric == OBELISK_RT_COVERAGE_FSM) {
+  } else if (metric == TALOS_RT_COVERAGE_FSM) {
     for (size_t index = 0; index != coverage->fsmCounters.size(); ++index) {
       if (coverage->fsmExcluded[index])
         continue;
       ++total;
       covered += coverage->fsmCounters[index] != 0 ||
-                 loaded(obelisk::coverage::MetricKind::FSM,
+                 loaded(talos::coverage::MetricKind::FSM,
                         coverage->schema->fsmStates[index].id, 0) != 0;
     }
-  } else if (metric == OBELISK_RT_COVERAGE_ASSERTION) {
+  } else if (metric == TALOS_RT_COVERAGE_ASSERTION) {
     for (uint64_t index = 0; index != coverage->assertionCount; ++index) {
       if (coverage->assertionExcluded[index])
         continue;
       ++total;
       covered += coverage->assertionCounters[index].load(
                      std::memory_order_relaxed) != 0 ||
-                 loaded(obelisk::coverage::MetricKind::Assertion,
+                 loaded(talos::coverage::MetricKind::Assertion,
                         coverage->schema->assertionPoints[index].id, 0) != 0;
     }
   } else {
@@ -15723,20 +15723,20 @@ obelisk_rt_v1_coverage_query(obelisk_rt_context *context, uint32_t metric,
       *outPercentage = total ? 100.0 * static_cast<double>(covered) /
                                    static_cast<double>(total)
                              : 0.0;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     uint64_t base = 0;
-    for (const obelisk::coverage::ToggleObject &object :
+    for (const talos::coverage::ToggleObject &object :
          coverage->schema->toggleObjects) {
       for (uint64_t bitIndex = 0; bitIndex != object.bitWidth; ++bitIndex) {
         if (coverage->toggleExcluded[base + bitIndex])
           continue;
         total += 2;
         covered += coverage->toggleCounters[(base + bitIndex) * 4] != 0 ||
-                   loaded(obelisk::coverage::MetricKind::Toggle, object.id,
+                   loaded(talos::coverage::MetricKind::Toggle, object.id,
                           static_cast<uint32_t>(bitIndex * 4)) != 0;
         covered += coverage->toggleCounters[(base + bitIndex) * 4 + 1] != 0 ||
-                   loaded(obelisk::coverage::MetricKind::Toggle, object.id,
+                   loaded(talos::coverage::MetricKind::Toggle, object.id,
                           static_cast<uint32_t>(bitIndex * 4 + 1)) != 0;
       }
       base += object.bitWidth;
@@ -15747,253 +15747,253 @@ obelisk_rt_v1_coverage_query(obelisk_rt_context *context, uint32_t metric,
   *outPercentage =
       total ? 100.0 * static_cast<double>(covered) / static_cast<double>(total)
             : 0.0;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_coverage_control_definition(
-    obelisk_rt_context *context, int32_t control, int32_t coverageType,
-    int32_t scopeDefinition, obelisk_rt_string_v1 definition,
+extern "C" talos_rt_status talos_rt_v1_coverage_control_definition(
+    talos_rt_context *context, int32_t control, int32_t coverageType,
+    int32_t scopeDefinition, talos_rt_string_v1 definition,
     int32_t *outStatus) {
   if (!context || !outStatus)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(definition, scratch, &bytes, &size);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(definition, scratch, &bytes, &size);
+  if (status != TALOS_RT_OK)
     return status;
   if (size > SIZE_MAX)
-    return OBELISK_RT_OUT_OF_RESOURCES;
-  OBELISK_RT_TRY {
+    return TALOS_RT_OUT_OF_RESOURCES;
+  TALOS_RT_TRY {
     std::string name =
         size ? std::string(bytes, static_cast<size_t>(size)) : std::string();
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->finalized)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     auto found = coverage->definitionScopes.find(name);
     if (found == coverage->definitionScopes.end()) {
       *outStatus = SVCovError;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     *outStatus = controlSelectedCoverage(*coverage, control, coverageType,
                                          scopeDefinition, found->second);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-obelisk_rt_status
-obelisk_rt_coverage_scope_for_path(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_coverage_scope_for_path(talos_rt_context *context,
                                    std::string_view path, uint64_t &scopeID) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
   if (!coverage || !coverage->finalized || !coverage->schema)
-    return OBELISK_RT_INVALID_LIFECYCLE;
-  for (const obelisk::coverage::Scope &scope : coverage->schema->scopes)
+    return TALOS_RT_INVALID_LIFECYCLE;
+  for (const talos::coverage::Scope &scope : coverage->schema->scopes)
     if (scope.name == path) {
       scopeID = scope.id;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
-  return OBELISK_RT_INVALID_ARGUMENT;
+  return TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_coverage_control_instance(
-    obelisk_rt_context *context, int32_t control, int32_t coverageType,
+extern "C" talos_rt_status talos_rt_v1_coverage_control_instance(
+    talos_rt_context *context, int32_t control, int32_t coverageType,
     int32_t scopeDefinition, uint64_t coverageScopeID, int32_t *outStatus) {
   if (!context || !outStatus || !coverageScopeID)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->finalized)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     if (!coverage->scopeParents.count(coverageScopeID)) {
       *outStatus = SVCovError;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     std::vector<uint64_t> roots{coverageScopeID};
     *outStatus = controlSelectedCoverage(*coverage, control, coverageType,
                                          scopeDefinition, roots);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_coverage_query_definition(
-    obelisk_rt_context *context, int32_t coverageType, int32_t scopeDefinition,
-    obelisk_rt_string_v1 definition, uint32_t maximum, int32_t *outValue) {
+extern "C" talos_rt_status talos_rt_v1_coverage_query_definition(
+    talos_rt_context *context, int32_t coverageType, int32_t scopeDefinition,
+    talos_rt_string_v1 definition, uint32_t maximum, int32_t *outValue) {
   if (!context || !outValue || maximum > 1)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(definition, scratch, &bytes, &size);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(definition, scratch, &bytes, &size);
+  if (status != TALOS_RT_OK)
     return status;
   if (size > SIZE_MAX)
-    return OBELISK_RT_OUT_OF_RESOURCES;
-  OBELISK_RT_TRY {
+    return TALOS_RT_OUT_OF_RESOURCES;
+  TALOS_RT_TRY {
     std::string name =
         size ? std::string(bytes, static_cast<size_t>(size)) : std::string();
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->finalized)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     auto found = coverage->definitionScopes.find(name);
     if (found == coverage->definitionScopes.end()) {
       *outValue = SVCovError;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     *outValue = querySelectedCoverage(*coverage, coverageType, scopeDefinition,
                                       found->second, maximum != 0);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_coverage_query_instance(
-    obelisk_rt_context *context, int32_t coverageType, int32_t scopeDefinition,
+extern "C" talos_rt_status talos_rt_v1_coverage_query_instance(
+    talos_rt_context *context, int32_t coverageType, int32_t scopeDefinition,
     uint64_t coverageScopeID, uint32_t maximum, int32_t *outValue) {
   if (!context || !outValue || !coverageScopeID || maximum > 1)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->finalized)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     if (!coverage->scopeParents.count(coverageScopeID)) {
       *outValue = SVCovError;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     std::vector<uint64_t> roots{coverageScopeID};
     *outValue = querySelectedCoverage(*coverage, coverageType, scopeDefinition,
                                       roots, maximum != 0);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_coverage_database_save(
-    obelisk_rt_context *context, int32_t coverageType,
-    obelisk_rt_string_v1 name, int32_t *outStatus) {
+extern "C" talos_rt_status talos_rt_v1_coverage_database_save(
+    talos_rt_context *context, int32_t coverageType,
+    talos_rt_string_v1 name, int32_t *outStatus) {
   if (!context || !outStatus)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outStatus = SVCovError;
   std::string path;
   FailedCoverageSaveCleanup cleanup{path};
-  OBELISK_RT_TRY {
-    obelisk_rt_status status = copyManagedCoverageString(name, path);
-    if (status != OBELISK_RT_OK)
+  TALOS_RT_TRY {
+    talos_rt_status status = copyManagedCoverageString(name, path);
+    if (status != TALOS_RT_OK)
       return status;
     if (path.empty())
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     if (!isValidSVCoverageType(coverageType)) {
       cleanup.armed = true;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     std::optional<PersistentCoverageMetric> selected =
         persistentCoverageMetric(coverageType);
     if (!selected) {
       *outStatus = SVCovNoCoverage;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     cleanup.armed = true;
 
-    obelisk::coverage::Database snapshot;
+    talos::coverage::Database snapshot;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       CoverageState *coverage = coverageState(context, false);
       if (!coverage || !coverage->finalized)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
       if (!(availableRunCoverage(*coverage) & selected->runFlag)) {
         cleanup.armed = false;
         *outStatus = SVCovNoCoverage;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       status =
           makeSnapshot(context, *coverage, 0, context->schedulerTime, snapshot);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       retainPersistentMetric(snapshot, *selected);
     }
-    obelisk::coverage::Diagnostic diagnostic;
-    obelisk::coverage::Status writeStatus =
-        obelisk::coverage::writeFileAtomically(path, snapshot, &diagnostic);
-    if (writeStatus == obelisk::coverage::Status::OutOfMemory)
-      return OBELISK_RT_OUT_OF_MEMORY;
+    talos::coverage::Diagnostic diagnostic;
+    talos::coverage::Status writeStatus =
+        talos::coverage::writeFileAtomically(path, snapshot, &diagnostic);
+    if (writeStatus == talos::coverage::Status::OutOfMemory)
+      return TALOS_RT_OUT_OF_MEMORY;
     *outStatus =
-        writeStatus == obelisk::coverage::Status::Ok ? SVCovOK : SVCovError;
-    cleanup.armed = writeStatus != obelisk::coverage::Status::Ok;
-    return OBELISK_RT_OK;
+        writeStatus == talos::coverage::Status::Ok ? SVCovOK : SVCovError;
+    cleanup.armed = writeStatus != talos::coverage::Status::Ok;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_coverage_database_merge(
-    obelisk_rt_context *context, int32_t coverageType,
-    obelisk_rt_string_v1 name, int32_t *outStatus) {
+extern "C" talos_rt_status talos_rt_v1_coverage_database_merge(
+    talos_rt_context *context, int32_t coverageType,
+    talos_rt_string_v1 name, int32_t *outStatus) {
   if (!context || !outStatus)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outStatus = SVCovError;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     if (!isValidSVCoverageType(coverageType))
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     std::string path;
-    obelisk_rt_status status = copyManagedCoverageString(name, path);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = copyManagedCoverageString(name, path);
+    if (status != TALOS_RT_OK)
       return status;
     if (path.empty())
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
 
-    obelisk::coverage::Database incoming;
-    obelisk::coverage::Diagnostic diagnostic;
-    obelisk::coverage::Status readStatus =
-        obelisk::coverage::readFile(path, incoming, {}, &diagnostic);
-    if (readStatus == obelisk::coverage::Status::OutOfMemory)
-      return OBELISK_RT_OUT_OF_MEMORY;
-    if (readStatus != obelisk::coverage::Status::Ok)
-      return OBELISK_RT_OK;
+    talos::coverage::Database incoming;
+    talos::coverage::Diagnostic diagnostic;
+    talos::coverage::Status readStatus =
+        talos::coverage::readFile(path, incoming, {}, &diagnostic);
+    if (readStatus == talos::coverage::Status::OutOfMemory)
+      return TALOS_RT_OUT_OF_MEMORY;
+    if (readStatus != talos::coverage::Status::Ok)
+      return TALOS_RT_OK;
 
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->schema || !coverage->finalized)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     if (incoming.schemaFingerprint != coverage->schema->schemaFingerprint)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     std::optional<PersistentCoverageMetric> selected =
         persistentCoverageMetric(coverageType);
     if (!selected || !(availableRunCoverage(*coverage) & selected->runFlag)) {
       *outStatus = SVCovNoCoverage;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     bool containsMetric =
         std::any_of(incoming.runs.begin(), incoming.runs.end(),
-                    [&](const obelisk::coverage::Run &run) {
+                    [&](const talos::coverage::Run &run) {
                       return (run.flags & selected->runFlag) != 0;
                     });
     if (!containsMetric) {
       *outStatus = SVCovNoCoverage;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     // IEEE 1800-2023 40.3.2.4 lets the saving simulation merge its own data
     // back, for example after resetting its counters. That slice joins the
@@ -16003,55 +16003,55 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_database_merge(
         std::any_of(coverage->runUUID.begin(), coverage->runUUID.end(),
                     [](uint8_t byte) { return byte != 0; });
     if (currentRunInitialized) {
-      obelisk::coverage::UUID merged = coverage->runUUID;
+      talos::coverage::UUID merged = coverage->runUUID;
       merged.back() ^= 0xff;
-      for (obelisk::coverage::Run &run : incoming.runs)
+      for (talos::coverage::Run &run : incoming.runs)
         if (run.uuid == coverage->runUUID)
           run.uuid = merged;
-      for (obelisk::coverage::Counter &counter : incoming.counters)
+      for (talos::coverage::Counter &counter : incoming.counters)
         if (counter.run == coverage->runUUID)
           counter.run = merged;
     }
     retainPersistentMetric(incoming, *selected);
-    obelisk::coverage::Database combined = *coverage->schema;
-    obelisk::coverage::Status canonicalStatus =
-        obelisk::coverage::canonicalizeFunctionalConfigurations(combined,
+    talos::coverage::Database combined = *coverage->schema;
+    talos::coverage::Status canonicalStatus =
+        talos::coverage::canonicalizeFunctionalConfigurations(combined,
                                                                 &diagnostic);
-    if (canonicalStatus != obelisk::coverage::Status::Ok)
+    if (canonicalStatus != talos::coverage::Status::Ok)
       return mapCoverageStatus(canonicalStatus);
-    obelisk::coverage::Status mergeStatus =
+    talos::coverage::Status mergeStatus =
         mergePersistentMetricSlice(combined, incoming, *selected);
-    if (mergeStatus == obelisk::coverage::Status::OutOfMemory)
-      return OBELISK_RT_OUT_OF_MEMORY;
-    if (mergeStatus != obelisk::coverage::Status::Ok)
-      return OBELISK_RT_OK;
+    if (mergeStatus == talos::coverage::Status::OutOfMemory)
+      return TALOS_RT_OUT_OF_MEMORY;
+    if (mergeStatus != talos::coverage::Status::Ok)
+      return TALOS_RT_OK;
     coverage->schema =
-        std::make_unique<obelisk::coverage::Database>(std::move(combined));
+        std::make_unique<talos::coverage::Database>(std::move(combined));
     coverage->constructionSchemas.reset();
     coverage->loadedConfigurationSchemas.reset();
     coverage->loadedData.reset();
     coverage->configurationIndexSchema = nullptr;
     *outStatus = SVCovOK;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_coverage_load(obelisk_rt_context *context, const char *path,
+extern "C" talos_rt_status
+talos_rt_v1_coverage_load(talos_rt_context *context, const char *path,
                             uint64_t pathSize) {
   if (!context || !path || !pathSize || pathSize > SIZE_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::string pathText(path, static_cast<size_t>(pathSize));
-    obelisk::coverage::Database incoming;
-    obelisk::coverage::Diagnostic diagnostic;
-    obelisk::coverage::Status status =
-        obelisk::coverage::readFile(pathText, incoming, {}, &diagnostic);
-    if (status != obelisk::coverage::Status::Ok)
+    talos::coverage::Database incoming;
+    talos::coverage::Diagnostic diagnostic;
+    talos::coverage::Status status =
+        talos::coverage::readFile(pathText, incoming, {}, &diagnostic);
+    if (status != talos::coverage::Status::Ok)
       return mapCoverageStatus(status);
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     CoverageState *coverage = coverageState(context, true);
@@ -16060,17 +16060,17 @@ obelisk_rt_v1_coverage_load(obelisk_rt_context *context, const char *path,
       if (!schemaCounts(incoming, incomingLines, incomingToggleBits) ||
           incomingLines != coverage->lineCount ||
           incomingToggleBits != coverage->toggleBitCount)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
-    obelisk::coverage::Database combined;
+    talos::coverage::Database combined;
     if (coverage->schema) {
       combined = *coverage->schema;
-      status = obelisk::coverage::canonicalizeFunctionalConfigurations(
+      status = talos::coverage::canonicalizeFunctionalConfigurations(
           combined, &diagnostic);
-      if (status != obelisk::coverage::Status::Ok)
+      if (status != talos::coverage::Status::Ok)
         return mapCoverageStatus(status);
-      status = obelisk::coverage::merge(combined, incoming, false, &diagnostic);
-      if (status != obelisk::coverage::Status::Ok) {
+      status = talos::coverage::merge(combined, incoming, false, &diagnostic);
+      if (status != talos::coverage::Status::Ok) {
         std::fprintf(stderr, "error: coverage load failed%s%s%s%s\n",
                      diagnostic.field ? " in " : "",
                      diagnostic.field ? diagnostic.field : "",
@@ -16089,32 +16089,32 @@ obelisk_rt_v1_coverage_load(obelisk_rt_context *context, const char *path,
       retainedConfigurations.insert({row.type, row.configuration});
     for (const auto &boundType : coverage->types) {
       if (!retainedConfigurations.count(boundType.first))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
     auto committedSchema =
-        std::make_unique<obelisk::coverage::Database>(std::move(combined));
+        std::make_unique<talos::coverage::Database>(std::move(combined));
     coverage->schema = std::move(committedSchema);
     coverage->constructionSchemas.reset();
     coverage->loadedConfigurationSchemas.reset();
     coverage->loadedData.reset();
     coverage->configurationIndexSchema = nullptr;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_coverage_save(obelisk_rt_context *context, const char *path,
+extern "C" talos_rt_status
+talos_rt_v1_coverage_save(talos_rt_context *context, const char *path,
                             uint64_t pathSize, uint32_t runStatus,
                             uint64_t simulationTime) {
   if (!context || !path || !pathSize || pathSize > SIZE_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::string pathText(path, static_cast<size_t>(pathSize));
-    obelisk::coverage::Database snapshot;
+    talos::coverage::Database snapshot;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       CoverageState *coverage = coverageState(context, false);
@@ -16122,27 +16122,27 @@ obelisk_rt_v1_coverage_save(obelisk_rt_context *context, const char *path,
         setLastErrorUnlocked(
             context, "failed to create coverage snapshot for '" + pathText +
                          "': " +
-                         obelisk_rt_v1_status_string(
-                             OBELISK_RT_INVALID_LIFECYCLE));
-        return OBELISK_RT_INVALID_LIFECYCLE;
+                         talos_rt_v1_status_string(
+                             TALOS_RT_INVALID_LIFECYCLE));
+        return TALOS_RT_INVALID_LIFECYCLE;
       }
-      obelisk_rt_status status =
+      talos_rt_status status =
           makeSnapshot(context, *coverage, runStatus, simulationTime, snapshot);
-      if (status != OBELISK_RT_OK) {
+      if (status != TALOS_RT_OK) {
         setLastErrorUnlocked(context,
                              "failed to create coverage snapshot for '" +
                                  pathText + "': " +
-                                 obelisk_rt_v1_status_string(status));
+                                 talos_rt_v1_status_string(status));
         return status;
       }
     }
-    obelisk::coverage::Diagnostic diagnostic;
-    obelisk::coverage::Status writeStatus =
-        obelisk::coverage::writeFileAtomically(pathText, snapshot, &diagnostic);
-    if (writeStatus != obelisk::coverage::Status::Ok) {
+    talos::coverage::Diagnostic diagnostic;
+    talos::coverage::Status writeStatus =
+        talos::coverage::writeFileAtomically(pathText, snapshot, &diagnostic);
+    if (writeStatus != talos::coverage::Status::Ok) {
       std::string message = "failed to write coverage database '" + pathText +
                             "': " +
-                            obelisk::coverage::statusName(writeStatus);
+                            talos::coverage::statusName(writeStatus);
       if (diagnostic.field) {
         message += " (";
         message += diagnostic.field;
@@ -16156,59 +16156,59 @@ obelisk_rt_v1_coverage_save(obelisk_rt_context *context, const char *path,
     }
     return mapCoverageStatus(writeStatus);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    OBELISK_RT_TRY {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    TALOS_RT_TRY {
       setLastError(context,
                    "failed to create coverage snapshot: runtime allocation "
                    "failed");
     }
-    OBELISK_RT_CATCH_ALL {}
-    return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH_ALL {}
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    OBELISK_RT_TRY {
+  TALOS_RT_CATCH(const std::length_error &) {
+    TALOS_RT_TRY {
       setLastError(context,
                    "failed to create coverage snapshot: resource limit "
                    "exceeded");
     }
-    OBELISK_RT_CATCH_ALL {}
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    TALOS_RT_CATCH_ALL {}
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_coverage_snapshot(obelisk_rt_context *context, uint32_t runStatus,
+extern "C" talos_rt_status
+talos_rt_v1_coverage_snapshot(talos_rt_context *context, uint32_t runStatus,
                                 uint64_t simulationTime) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::string output;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       CoverageState *coverage = coverageState(context, false);
       if (!coverage || coverage->dumpSuppressed)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       output = expandOutputPath(*coverage);
     }
-    return obelisk_rt_v1_coverage_save(context, output.data(), output.size(),
+    return talos_rt_v1_coverage_save(context, output.data(), output.size(),
                                        runStatus, simulationTime);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    OBELISK_RT_TRY {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    TALOS_RT_TRY {
       setLastError(context,
                    "failed to prepare coverage output path: runtime "
                    "allocation failed");
     }
-    OBELISK_RT_CATCH_ALL {}
-    return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH_ALL {}
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    OBELISK_RT_TRY {
+  TALOS_RT_CATCH(const std::length_error &) {
+    TALOS_RT_TRY {
       setLastError(context,
                    "failed to prepare coverage output path: resource limit "
                    "exceeded");
     }
-    OBELISK_RT_CATCH_ALL {}
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    TALOS_RT_CATCH_ALL {}
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
 }

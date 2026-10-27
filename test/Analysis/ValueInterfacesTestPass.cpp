@@ -1,10 +1,10 @@
 #include "AnalysisTestPasses.h"
-#include "obelisk/Analysis/DemandedBitAnalysis.h"
-#include "obelisk/Analysis/IntegerRangeIPO.h"
-#include "obelisk/Analysis/LogicBitAnalysis.h"
-#include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
-#include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/DemandedBitAnalysis.h"
+#include "talos/Analysis/IntegerRangeIPO.h"
+#include "talos/Analysis/LogicBitAnalysis.h"
+#include "talos/Analysis/ScopedIntegerRangeAnalysis.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -52,7 +52,7 @@ class ValueInterfacesTestPass final
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ValueInterfacesTestPass)
   StringRef getArgument() const final {
-    return "test-obelisk-value-interfaces";
+    return "test-talos-value-interfaces";
   }
   StringRef getDescription() const final {
     return "exercise value analyses through a second select interface model";
@@ -72,15 +72,15 @@ public:
       select.replaceAllUsesWith(replacement);
       select.erase();
     });
-    getOperation().walk([&](obelisk::sim::SimDesignOp design) {
-      auto domains = obelisk::StateDomainAnalysis::compute(design, false);
+    getOperation().walk([&](talos::sim::SimDesignOp design) {
+      auto domains = talos::StateDomainAnalysis::compute(design, false);
       if (failed(domains)) {
         signalPassFailure();
         return;
       }
-      design.walk([&](obelisk::sim::SimFuncOp function) {
-        obelisk::LogicBitAnalysis known(function);
-        obelisk::analysis::DemandedBitAnalysis demanded(function);
+      design.walk([&](talos::sim::SimFuncOp function) {
+        talos::LogicBitAnalysis known(function);
+        talos::analysis::DemandedBitAnalysis demanded(function);
         function.walk([&](Operation *op) {
           auto label = op->getAttrOfType<StringAttr>("test.fact");
           if (!label || op->getNumResults() != 1)
@@ -100,7 +100,7 @@ public:
             mask->print(llvm::errs(), false);
           }
           llvm::errs() << " domain="
-                       << obelisk::stringifyStateDomain(
+                       << talos::stringifyStateDomain(
                               domains->get(result).domain)
                        << '\n';
         });
@@ -114,7 +114,7 @@ class IntegerInterfacesTestPass final
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(IntegerInterfacesTestPass)
   StringRef getArgument() const final {
-    return "test-obelisk-integer-interfaces";
+    return "test-talos-integer-interfaces";
   }
   StringRef getDescription() const final {
     return "query Simulation operations using standard MLIR value interfaces";
@@ -160,27 +160,27 @@ class ScopedIntegerRangesTestPass final
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ScopedIntegerRangesTestPass)
   StringRef getArgument() const final {
-    return "test-obelisk-scoped-integer-ranges";
+    return "test-talos-scoped-integer-ranges";
   }
   StringRef getDescription() const final {
     return "query selector ranges and bound retained scoped facts";
   }
   void runOnOperation() final {
-    obelisk::analysis::prepareIntegerRangeIPO(getOperation());
-    getOperation().walk([&](obelisk::sim::SimFuncOp function) {
+    talos::analysis::prepareIntegerRangeIPO(getOperation());
+    getOperation().walk([&](talos::sim::SimFuncOp function) {
       DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
       solver.load<dataflow::DeadCodeAnalysis>();
       solver.load<dataflow::SparseConstantPropagation>();
       solver.load<dataflow::IntegerRangeAnalysis>();
       auto *analysis =
-          solver.load<obelisk::analysis::ScopedIntegerRangeAnalysis>(function);
+          solver.load<talos::analysis::ScopedIntegerRangeAnalysis>(function);
       if (failed(solver.initializeAndRun(function))) {
         signalPassFailure();
         return;
       }
       size_t largest = 0;
       function.walk([&](Operation *op) {
-        auto *state = solver.lookupState<obelisk::analysis::ScopedRangeLattice>(
+        auto *state = solver.lookupState<talos::analysis::ScopedRangeLattice>(
             solver.getProgramPointBefore(op));
         if (!state || !state->reachable)
           return;
@@ -216,18 +216,18 @@ public:
         }
     });
     getOperation().walk([&](Operation *op) {
-      obelisk::sim::remove<obelisk::sim::metadata::ResultRanges>(op);
-      obelisk::sim::remove<obelisk::sim::metadata::ResultExprs>(op);
-      if (auto function = dyn_cast<obelisk::sim::SimFuncOp>(op))
+      talos::sim::remove<talos::sim::metadata::ResultRanges>(op);
+      talos::sim::remove<talos::sim::metadata::ResultExprs>(op);
+      if (auto function = dyn_cast<talos::sim::SimFuncOp>(op))
         for (unsigned i = 0; i < function.getNumArguments(); ++i)
           function.removeArgAttr(
-              i, obelisk::sim::metadata::IntegerRange::getNameStr());
+              i, talos::sim::metadata::IntegerRange::getNameStr());
     });
   }
 };
 } // namespace
 
-void obelisk::registerValueInterfacesTestPass() {
+void talos::registerValueInterfacesTestPass() {
   PassRegistration<ValueInterfacesTestPass>();
   PassRegistration<IntegerInterfacesTestPass>();
   PassRegistration<ScopedIntegerRangesTestPass>();

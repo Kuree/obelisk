@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --verify-diagnostics
+// RUN: talos-opt %s --verify-diagnostics
 
 func.func @numeric(%a: i64) -> i1 {
   // expected-error@+1 {{operand #0 must be}}

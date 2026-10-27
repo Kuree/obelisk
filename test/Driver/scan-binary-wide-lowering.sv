@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-sim -O0 --vpi=off %s | FileCheck %s
+// RUN: talos -emit-sim -O0 --vpi=off %s | FileCheck %s
 
 // Destination width determines the transfer size without manufacturing one
 // operation per bit or word. A 4097-bit %z field is represented by one typed

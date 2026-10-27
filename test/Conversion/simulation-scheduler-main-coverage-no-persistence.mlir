@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --obelisk-sim-prepare-coverage \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --talos-sim-prepare-coverage \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
 // A schema may be present solely to support direct covergroup language
@@ -15,7 +15,7 @@ module attributes {
   simulation.design @design attributes {
     compute_graph = #schedule.graph<
       version = 1, vpi = off, workers = 1,
-      nodes = [#schedule.fragment<id = 0, function = @__obelisk_root, block = 0, region = active, action = terminate, tier = native, cost = 1, lane = 0, twoState = true, effects = []>],
+      nodes = [#schedule.fragment<id = 0, function = @__talos_root, block = 0, region = active, action = terminate, tier = native, cost = 1, lane = 0, twoState = true, effects = []>],
       edges = [],
       regions = [
         #schedule.region<kind = active, groups = [#schedule.group<fragments = [0], schedule = acyclic, feedback = []>]>,
@@ -30,8 +30,8 @@ module attributes {
       dpi_precision_femtoseconds = 1000000 : i64,
       dpi_unit_femtoseconds = 1000000 : i64
     }
-    simulation.code_unit.decl 832639515527371617 in 0 root_initializer hierarchy "__obelisk_root" debug "root initializer"
-    simulation.func @__obelisk_root(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {
+    simulation.code_unit.decl 832639515527371617 in 0 root_initializer hierarchy "__talos_root" debug "root initializer"
+    simulation.func @__talos_root(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {
       code_unit_id = 832639515527371617 : i64,
       domain = 0 : i32,
       effect_summary = [],
@@ -46,10 +46,10 @@ module attributes {
 
 // CHECK: runtime.coverage_schema_blob
 // CHECK-LABEL: llvm.func @main
-// CHECK:      llvm.call @obelisk_rt_v1_native_state_initialize
+// CHECK:      llvm.call @talos_rt_v1_native_state_initialize
 // CHECK:      %[[LINE_COUNT:.*]] = llvm.mlir.constant(0 : i64) : i64
 // CHECK-NEXT: %[[TOGGLE_COUNT:.*]] = llvm.mlir.constant(0 : i64) : i64
 // CHECK-NEXT: %[[PERSIST:.*]] = llvm.mlir.constant(0 : i32) : i32
-// CHECK-NEXT: %[[FINALIZE:.*]] = llvm.call @obelisk_rt_v1_coverage_finalize(%{{.*}}, %[[LINE_COUNT]], %[[TOGGLE_COUNT]], %{{.*}}, %{{.*}}, %[[PERSIST]])
-// CHECK:      llvm.call @obelisk_rt_v1_scheduler_run
-// CHECK-NOT:  obelisk_rt_v1_coverage_snapshot
+// CHECK-NEXT: %[[FINALIZE:.*]] = llvm.call @talos_rt_v1_coverage_finalize(%{{.*}}, %[[LINE_COUNT]], %[[TOGGLE_COUNT]], %{{.*}}, %{{.*}}, %[[PERSIST]])
+// CHECK:      llvm.call @talos_rt_v1_scheduler_run
+// CHECK-NOT:  talos_rt_v1_coverage_snapshot

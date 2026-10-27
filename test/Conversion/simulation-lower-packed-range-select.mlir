@@ -1,13 +1,13 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // Fixed packed ranges use the declared source indices, including bounds that
 // the prepare pass froze from elaborated parameters. Cover the write and read
 // paths directly without involving the driver, scheduler, or execution tiers.
 
-!logic = !obelisk.integral<1, false, true, 0 : 0, logic>
-!int = !obelisk.integral<32, true, false, 31 : 0, int>
-!data = !obelisk.ranged_packed_array<31 : 0 x !logic>
-!slice = !obelisk.ranged_packed_array<16 : 8 x !logic>
+!logic = !talos.integral<1, false, true, 0 : 0, logic>
+!int = !talos.integral<32, true, false, 31 : 0, int>
+!data = !talos.ranged_packed_array<31 : 0 x !logic>
+!slice = !talos.ranged_packed_array<16 : 8 x !logic>
 
 module {
   simulation.design @packed_range_select {
@@ -62,56 +62,56 @@ module {
           ],
           code_unit_id = 9600001 : i64
         } {
-      obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 1 : i64} {
+        talos.sv.expression.assignment attributes {
             node_id = 2 : i64, assignment_kind = 0 : i32,
             semantic_type = !slice} {
-          obelisk.sv.expression.range_select attributes {
+          talos.sv.expression.range_select attributes {
               node_id = 3 : i64, selection_kind = 0 : i32,
               semantic_type = !slice} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 4 : i64, referenced_path = "top.data",
                 referenced_symbol = @data, semantic_type = !data} {
             }
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 5 : i64, referenced_path = "top.HIGH",
                 referenced_symbol = @HIGH, semantic_type = !int,
                 simulation.constant_value = "16"} {
             }
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 6 : i64, referenced_path = "top.LOW",
                 referenced_symbol = @LOW, semantic_type = !int,
                 simulation.constant_value = "8"} {
             }
           }
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               node_id = 7 : i64, constant_value = "9'h1ab",
               semantic_type = !slice} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 8 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 8 : i64} {
+        talos.sv.expression.assignment attributes {
             node_id = 9 : i64, assignment_kind = 0 : i32,
             semantic_type = !slice} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 10 : i64, referenced_path = "top.parameter_result",
               referenced_symbol = @parameter_result,
               semantic_type = !slice} {
           }
-          obelisk.sv.expression.range_select attributes {
+          talos.sv.expression.range_select attributes {
               node_id = 11 : i64, selection_kind = 0 : i32,
               semantic_type = !slice} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 12 : i64, referenced_path = "top.data",
                 referenced_symbol = @data, semantic_type = !data} {
             }
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 13 : i64, referenced_path = "top.HIGH",
                 referenced_symbol = @HIGH, semantic_type = !int,
                 simulation.constant_value = "16"} {
             }
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 14 : i64, referenced_path = "top.LOW",
                 referenced_symbol = @LOW, semantic_type = !int,
                 simulation.constant_value = "8"} {
@@ -119,28 +119,28 @@ module {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {
+      talos.sv.statement.expression_statement attributes {
           node_id = 15 : i64} {
-        obelisk.sv.expression.assignment attributes {
+        talos.sv.expression.assignment attributes {
             node_id = 16 : i64, assignment_kind = 0 : i32,
             semantic_type = !slice} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 17 : i64, referenced_path = "top.literal_result",
               referenced_symbol = @literal_result,
               semantic_type = !slice} {
           }
-          obelisk.sv.expression.range_select attributes {
+          talos.sv.expression.range_select attributes {
               node_id = 18 : i64, selection_kind = 0 : i32,
               semantic_type = !slice} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 19 : i64, referenced_path = "top.data",
                 referenced_symbol = @data, semantic_type = !data} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 20 : i64, constant_value = "16",
                 semantic_type = !int} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 21 : i64, constant_value = "8",
                 semantic_type = !int} {
             }

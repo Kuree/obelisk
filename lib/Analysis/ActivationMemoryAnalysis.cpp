@@ -1,5 +1,5 @@
 //===- ActivationMemoryAnalysis.cpp - Context-partitioned memory facts ----===//
-#include "obelisk/Analysis/ActivationMemoryAnalysis.h"
+#include "talos/Analysis/ActivationMemoryAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -7,12 +7,12 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "obelisk/Analysis/BoundedLoopAnalysis.h"
-#include "obelisk/Analysis/NativeStorageLayout.h"
-#include "obelisk/Analysis/RangeSet.h"
-#include "obelisk/Analysis/SSAValueAnalysis.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/SimulationEffectAnalysis.h"
+#include "talos/Analysis/BoundedLoopAnalysis.h"
+#include "talos/Analysis/NativeStorageLayout.h"
+#include "talos/Analysis/RangeSet.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/SimulationEffectAnalysis.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
@@ -23,7 +23,7 @@
 #include <numeric>
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 using Range = ActivationMemoryAnalysis::Range;
 using Ranges = ActivationMemoryAnalysis::Ranges;
@@ -2254,4 +2254,4 @@ ActivationMemoryAnalysis::ActivationMemoryAnalysis(
 bool ActivationMemoryAnalysis::hasCompleteWrites() const {
   return valid && subtract(mayWrites, mustWrites).empty();
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

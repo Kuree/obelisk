@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=read},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // Read-only VPI retains safe-point visibility but cannot mutate state, so the
 // generated plan remains the canonical plane and fixed net handles may read it
@@ -110,20 +110,20 @@ module attributes {
 }
 
 // No path dispatcher or checkpoint callback is built for the declined owner.
-// CHECK-NOT: llvm.func @__obelisk_eval_path_dispatch_v1_
-// CHECK-NOT: llvm.func @__obelisk_eval_four_state_fallback_v1_
-// CHECK-NOT: llvm.func @__obelisk_eval_checkpoint_body_v1_
+// CHECK-NOT: llvm.func @__talos_eval_path_dispatch_v1_
+// CHECK-NOT: llvm.func @__talos_eval_four_state_fallback_v1_
+// CHECK-NOT: llvm.func @__talos_eval_checkpoint_body_v1_
 
 // The activation keeps its canonical body, but its fixed net read addresses
 // the generated canonical planes directly; no runtime state helper is in the
 // hot activation. The display leaf stays inline.
-// CHECK-LABEL: llvm.func @guarded.__obelisk_coro_ramp
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
-// CHECK: llvm.mlir.addressof @__obelisk_state_value
+// CHECK-LABEL: llvm.func @guarded.__talos_coro_ramp
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_load_plane
+// CHECK: llvm.mlir.addressof @__talos_state_value
 // CHECK: llvm.load
-// CHECK: llvm.mlir.addressof @__obelisk_state_unknown
+// CHECK: llvm.mlir.addressof @__talos_state_unknown
 // CHECK: llvm.load
-// CHECK: llvm.call @obelisk_rt_v1_display
+// CHECK: llvm.call @talos_rt_v1_display
 
 // -----
 
@@ -131,7 +131,7 @@ module attributes {
 // fixed canonical net read.
 // CHECK-LABEL: // {{-----}}
 // CHECK: schedule.eval.generated
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_load_plane
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

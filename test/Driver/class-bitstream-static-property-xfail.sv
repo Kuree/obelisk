@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: obelisk --std=1800-2023 -emit-obelisk %s -o /dev/null
+// RUN: talos --std=1800-2023 -emit-talos %s -o /dev/null
 
 // Slang includes static class properties when checking the bit-stream width,
 // although only instance properties belong to the object bit stream.

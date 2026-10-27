@@ -1,12 +1,12 @@
 // RUN: %split-file %s %t
-// RUN: obelisk --clocked-kernels=immediate -O3 -emit-sim %t/fused-ssa.sv -o %t/fused-ssa.mlir
+// RUN: talos --clocked-kernels=immediate -O3 -emit-sim %t/fused-ssa.sv -o %t/fused-ssa.mlir
 // RUN: FileCheck %s --check-prefix=FUSED-SSA < %t/fused-ssa.mlir
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=read -emit-sim %t/fused-ssa.sv -o %t/fused-ssa-read.mlir
+// RUN: talos --clocked-kernels=immediate -O3 --vpi=read -emit-sim %t/fused-ssa.sv -o %t/fused-ssa-read.mlir
 // RUN: FileCheck %s --check-prefix=READ-FUSED-SSA < %t/fused-ssa-read.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-fused-ssa.test.
 
-// FUSED-SSA: simulation.func private @__obelisk_fused_
+// FUSED-SSA: simulation.func private @__talos_fused_
 // FUSED-SSA-NOT: simulation.termination.requested
 // FUSED-SSA-NOT: simulation.ref.store
 // FUSED-SSA: arith.select
@@ -15,7 +15,7 @@
 // FUSED-SSA: arith.select
 // FUSED-SSA-NOT: simulation.termination.requested
 // FUSED-SSA-NOT: simulation.ref.store
-// READ-FUSED-SSA: simulation.func private @__obelisk_fused_
+// READ-FUSED-SSA: simulation.func private @__talos_fused_
 // READ-FUSED-SSA-COUNT-2: simulation.ref.store
 // READ-FUSED-SSA-NOT: schedule.eval.discardable_store
 

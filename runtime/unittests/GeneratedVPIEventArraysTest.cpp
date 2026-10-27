@@ -7,9 +7,9 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -20,7 +20,7 @@
 #include <vector>
 
 namespace {
-using namespace obelisk::reflection;
+using namespace talos::reflection;
 
 uint64_t imageChecksum(const std::vector<uint8_t> &bytes) {
   uint64_t hash = UINT64_C(14695981039346656037);
@@ -32,24 +32,24 @@ uint64_t imageChecksum(const std::vector<uint8_t> &bytes) {
 }
 
 TEST(GeneratedDesignDatabase, EventArrays) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -66,28 +66,28 @@ TEST(GeneratedDesignDatabase, EventArrays) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
   auto lookup = [&](const char *name) {
-    obelisk_rt_design_cursor_v1 cursor{};
-    EXPECT_EQ(obelisk_rt_cached_design_lookup(
+    talos_rt_design_cursor_v1 cursor{};
+    EXPECT_EQ(talos_rt_cached_design_lookup(
                   runtime, reinterpret_cast<const uint8_t *>(name),
                   std::strlen(name), &cursor),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     return cursor;
   };
   const std::array<const char *, 4> names{
       "top.events[2][-1]", "top.events[2][0]", "top.events[1][-1]",
       "top.events[1][0]"};
-  std::array<obelisk_rt_design_cursor_v1, 4> cursors{};
+  std::array<talos_rt_design_cursor_v1, 4> cursors{};
   std::array<VPIEventCellBinding, 4> cells{};
   for (size_t index = 0; index != names.size(); ++index) {
     cursors[index] = lookup(names[index]);
-    ASSERT_EQ(obelisk_rt_cached_vpi_event_array_cell(runtime, cursors[index],
+    ASSERT_EQ(talos_rt_cached_vpi_event_array_cell(runtime, cursors[index],
                                                      &cells[index]),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(cells[index].storage.offset, cells[0].storage.offset);
     EXPECT_EQ(cells[index].bitOffset, index * 64);
   }
@@ -96,48 +96,48 @@ TEST(GeneratedDesignDatabase, EventArrays) {
   EXPECT_NE(arrayCursor.offset, cells[0].storage.offset);
   VPIEventCellBinding absent = cells[0];
   EXPECT_EQ(
-      obelisk_rt_cached_vpi_event_array_cell(runtime, scalarCursor, &absent),
-      OBELISK_RT_EOF);
+      talos_rt_cached_vpi_event_array_cell(runtime, scalarCursor, &absent),
+      TALOS_RT_EOF);
   EXPECT_EQ(absent.storage.offset, 0u);
   EXPECT_EQ(absent.bitOffset, 0u);
-  EXPECT_EQ(obelisk_rt_cached_vpi_event_array_cell(runtime, {}, &absent),
-            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(talos_rt_cached_vpi_event_array_cell(runtime, {}, &absent),
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(
-      obelisk_rt_cached_vpi_event_array_cell(runtime, cursors[0], nullptr),
-      OBELISK_RT_INVALID_ARGUMENT);
+      talos_rt_cached_vpi_event_array_cell(runtime, cursors[0], nullptr),
+      TALOS_RT_INVALID_ARGUMENT);
   VPIEventCellBinding other{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_event_array_cell(
+  ASSERT_EQ(talos_rt_cached_vpi_event_array_cell(
                 runtime, lookup("top.other[4]"), &other),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint64_t, 4> words{0, 7, UINT64_MAX, 0};
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, cells[0].storage, words.data(),
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, cells[0].storage, words.data(),
                                        nullptr, 256),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   const std::array<uint64_t, 2> otherWords{7, UINT64_MAX};
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, other.storage,
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, other.storage,
                                        otherWords.data(), nullptr, 128),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
   auto initial =
       std::find_if(encoded->functions.begin(), encoded->functions.end(),
                    [](const auto &f) { return f.symbol == "initial"; });
   ASSERT_NE(initial, encoded->functions.end());
-  obelisk_rt_design_bytecode_entry_v1 entry{&execution, initial->index, 0};
+  talos_rt_design_bytecode_entry_v1 entry{&execution, initial->index, 0};
   uint64_t scratchSize = 0, scratchAlignment = 0;
-  ASSERT_EQ(obelisk_rt_validate_design_bytecode(entry, runtime, &scratchSize,
+  ASSERT_EQ(talos_rt_validate_design_bytecode(entry, runtime, &scratchSize,
                                                 &scratchAlignment),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_LE(scratchAlignment, alignof(uint64_t));
   std::vector<uint64_t> frame((scratchSize + 7) / 8);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_execute_design_bytecode(entry, runtime, frame.data(),
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_execute_design_bytecode(entry, runtime, frame.data(),
                                                frame.size() * 8, 0, scratchSize,
                                                0, 0, &action),
-            OBELISK_RT_OK);
-  ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(runtime), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(runtime), TALOS_RT_OK);
   ASSERT_EQ(runtime->scheduledDesignTasks.size(), 2u);
   std::vector<vpiHandle> retained;
   auto keep = [&](vpiHandle handle) {
@@ -207,22 +207,22 @@ TEST(GeneratedDesignDatabase, EventArrays) {
     waiters(leaves[index], index == 2 ? 0 : 1);
   waiters(named("top.other[4]"), 1);
   words[0] = 7;
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, cells[0].storage, words.data(),
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, cells[0].storage, words.data(),
                                        nullptr, 256),
-            OBELISK_RT_OK);
-  obelisk_rt_v1_scheduler_event(runtime, 0, 0);
+            TALOS_RT_OK);
+  talos_rt_v1_scheduler_event(runtime, 0, 0);
   waiters(leaves[0],
           1); // Reads the retargeted cell, not its ordinal or anchor ID.
   waiters(leaves[3], 0);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(runtime), OBELISK_RT_OK);
-  obelisk_rt_v1_scheduler_event(runtime, 7, 0);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(runtime), TALOS_RT_OK);
+  talos_rt_v1_scheduler_event(runtime, 7, 0);
   for (auto leaf : leaves)
     waiters(leaf, 0);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(runtime), TALOS_RT_OK);
   EXPECT_TRUE(runtime->scheduledDesignTasks.empty());
   for (auto handle : retained)
     (void)vpi_release_handle(handle);
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 
   const auto &image = encoded->designDatabase;
   HeaderView header(image.data());
@@ -243,8 +243,8 @@ TEST(GeneratedDesignDatabase, EventArrays) {
     HeaderWriter(bytes.data()).setChecksum(imageChecksum(bytes));
     auto invalid = execution;
     invalid.design_database = bytes.data();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&invalid),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&invalid),
+              TALOS_RT_INVALID_DESIGN);
   };
   rejects([&](auto &bytes) {
     SemanticDirectoryWriter(bytes.data() + header.getReserved())
@@ -266,12 +266,12 @@ TEST(GeneratedDesignDatabase, EventArrays) {
   });
   rejects([&](auto &bytes) {
     ObjectWriter(bytes.data() + storageOffset)
-        .setCaps(storage.getCaps() & ~OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR);
+        .setCaps(storage.getCaps() & ~TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR);
   });
   rejects([&](auto &bytes) {
     ObjectWriter(bytes.data() + scalarCursor.offset)
         .setCaps(ObjectView(bytes.data() + scalarCursor.offset).getCaps() |
-                 OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR);
+                 TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR);
   });
   rejects([&](auto &bytes) {
     ObjectWriter(bytes.data() + storageOffset)
@@ -302,9 +302,9 @@ TEST(GeneratedDesignDatabase, EventArrays) {
   auto paddedExecution = execution;
   paddedExecution.design_database = padded.data();
   paddedExecution.state_bit_count += 512;
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&paddedExecution), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&paddedExecution, &runtime),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&paddedExecution), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&paddedExecution, &runtime),
+            TALOS_RT_OK);
   const std::array<uint64_t, 4> offsets{0, 96, 256, 352};
   std::array<uint64_t, 8> paddedWords{};
   for (size_t index = 0; index != offsets.size(); ++index) {
@@ -314,22 +314,22 @@ TEST(GeneratedDesignDatabase, EventArrays) {
     if (shift)
       paddedWords[offsets[index] / 64 + 1] |= value >> (64 - shift);
   }
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, cells[0].storage,
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, cells[0].storage,
                                        paddedWords.data(), nullptr, 512),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   for (size_t index = 0; index != offsets.size(); ++index) {
     VPIEventCellBinding cell{};
     ASSERT_EQ(
-        obelisk_rt_cached_vpi_event_array_cell(runtime, cursors[index], &cell),
-        OBELISK_RT_OK);
+        talos_rt_cached_vpi_event_array_cell(runtime, cursors[index], &cell),
+        TALOS_RT_OK);
     EXPECT_EQ(cell.bitOffset, offsets[index]);
     uint64_t value = 0, unknown = 0;
-    ASSERT_EQ(obelisk_rt_read_design_slice(
+    ASSERT_EQ(talos_rt_read_design_slice(
                   runtime, cell.storage, cell.bitOffset, 64, &value, &unknown),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(value, UINT64_C(0x123456789abc0000) + index);
     EXPECT_EQ(unknown, 0u);
   }
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 }
 } // namespace

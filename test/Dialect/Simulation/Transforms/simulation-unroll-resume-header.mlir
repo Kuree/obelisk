@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops)))' -o %t.unrolled
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-unroll-bounded-loops)))' -o %t.unrolled
 // RUN: FileCheck %s < %t.unrolled
-// RUN: obelisk-opt %t.unrolled --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops)))' -o %t.twice && diff -u %t.unrolled %t.twice
-// RUN: obelisk-opt %s -o %t.original
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-loop-size=1})))' -o %t.small && diff -u %t.original %t.small
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops)))' -o %t.serial && diff -u %t.unrolled %t.serial
+// RUN: talos-opt %t.unrolled --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-unroll-bounded-loops)))' -o %t.twice && diff -u %t.unrolled %t.twice
+// RUN: talos-opt %s -o %t.original
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-unroll-bounded-loops{maximum-loop-size=1})))' -o %t.small && diff -u %t.original %t.small
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-unroll-bounded-loops)))' -o %t.serial && diff -u %t.unrolled %t.serial
 
 // IEEE 1800-2023 4.6, 9.4.2 and 12.7.1: a repeated process resets its
 // procedural induction after each suspension. Its other carried values need

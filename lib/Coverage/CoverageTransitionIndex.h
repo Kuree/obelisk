@@ -1,12 +1,12 @@
 //===- CoverageTransitionIndex.h - symbolic transition subtraction --------===//
 
-#ifndef OBELISK_LIB_COVERAGE_COVERAGETRANSITIONINDEX_H
-#define OBELISK_LIB_COVERAGE_COVERAGETRANSITIONINDEX_H
+#ifndef TALOS_LIB_COVERAGE_COVERAGETRANSITIONINDEX_H
+#define TALOS_LIB_COVERAGE_COVERAGETRANSITIONINDEX_H
 
 #include "CoverageDecisionIndex.h"
-#include "obelisk/Coverage/CoverageDatabase.h"
+#include "talos/Coverage/CoverageDatabase.h"
 
-namespace obelisk::coverage::detail {
+namespace talos::coverage::detail {
 
 /// Reachability in an ordinary transition language with finite excluded
 /// subsequences removed. Exclusion words share a prefix trie. A reduced
@@ -369,6 +369,6 @@ public:
   }
 };
 
-} // namespace obelisk::coverage::detail
+} // namespace talos::coverage::detail
 
-#endif // OBELISK_LIB_COVERAGE_COVERAGETRANSITIONINDEX_H
+#endif // TALOS_LIB_COVERAGE_COVERAGETRANSITIONINDEX_H

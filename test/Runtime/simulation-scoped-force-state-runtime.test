@@ -1,6 +1,6 @@
 // Runtime semantics for ../Conversion/simulation-scoped-force-state-runtime.mlir.
 
-// RUN: obelisk-opt %S/../Conversion/simulation-scoped-force-state-runtime.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),encode-obelisk-sim-to-bytecode,convert-obelisk-sim-processes-to-llvm-coroutines)' | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %S/../Conversion/simulation-scoped-force-state-runtime.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba),encode-talos-sim-to-bytecode,convert-talos-sim-processes-to-llvm-coroutines)' | talos-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe | FileCheck %s
 

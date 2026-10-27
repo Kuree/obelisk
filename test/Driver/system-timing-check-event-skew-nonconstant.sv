@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-obelisk %s -o %t 2>&1 | FileCheck %s
+// RUN: not talos -emit-talos %s -o %t 2>&1 | FileCheck %s
 
 module system_timing_check_event_skew_nonconstant(
     input wire reference, data, dynamic_flag);

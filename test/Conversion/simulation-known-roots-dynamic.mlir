@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},schedule-version-known-activations{minimum-benefit=1},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},schedule-version-known-activations{minimum-benefit=1},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // A store at a run-time index into a summarized root reports the root
 // through the range its lowering records for the write: the original body's
@@ -8,8 +8,8 @@
 // stores both planes and reports the same way.
 
 // CHECK-LABEL: llvm.func @step(
-// CHECK-DAG: %[[UNKNOWN:.*]] = llvm.mlir.addressof @__obelisk_state_unknown :
-// CHECK-DAG: %[[SUMMARY:.*]] = llvm.mlir.addressof @__obelisk_state_unknown_summary_v1 :
+// CHECK-DAG: %[[UNKNOWN:.*]] = llvm.mlir.addressof @__talos_state_unknown :
+// CHECK-DAG: %[[SUMMARY:.*]] = llvm.mlir.addressof @__talos_state_unknown_summary_v1 :
 // CHECK: llvm.getelementptr %[[UNKNOWN]][%{{.*}}] : (!llvm.ptr, i64) -> !llvm.ptr, i8
 // CHECK: %[[ADDRESS:.*]] = llvm.getelementptr %[[UNKNOWN]][%{{.*}}] : (!llvm.ptr, i64) -> !llvm.ptr, i8
 // CHECK: llvm.store %[[X:.*]], %[[ADDRESS]]
@@ -39,7 +39,7 @@ module attributes {
     simulation.storage.decl 1 in 0 : !memory design hierarchy "top.mem"
     simulation.storage.decl 2 in 0 : !l8 design hierarchy "top.out"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %process = simulation.spawn @initial(%ctx) :

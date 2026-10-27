@@ -4,10 +4,10 @@
 
 #include <set>
 
-using obelisk::random::BooleanCircuit;
-using obelisk::random::PlanOpcode;
-using obelisk::runtime::ModelCount;
-using obelisk::runtime::ModelCounter;
+using talos::random::BooleanCircuit;
+using talos::random::PlanOpcode;
+using talos::runtime::ModelCount;
+using talos::runtime::ModelCounter;
 using ID = BooleanCircuit::ID;
 
 namespace {
@@ -113,7 +113,7 @@ TEST_F(RandModelCountTest, FullWideCubeAndRejectionSamplingPreservePrecision) {
   maximum.subtract(ModelCount(1));
   auto last = counter.assignment(maximum);
   EXPECT_EQ(std::count(last.begin(), last.end(), true), 4096);
-  obelisk_rt_random_state_v1 state{71, 15};
+  talos_rt_random_state_v1 state{71, 15};
   EXPECT_TRUE(ModelCount::randomBelow(ModelCount(1), state).zero());
   EXPECT_EQ(state.state, 71u);
   // A cardinality just above a power of two exercises repeated rejection,
@@ -219,7 +219,7 @@ TEST_F(RandModelCountTest, CountsCrossInlineStorage) {
 }
 
 TEST(RandomFlatMapTest, FindsEveryEntryAcrossGrowth) {
-  obelisk::random::FlatMap<uint64_t, uint32_t> map;
+  talos::random::FlatMap<uint64_t, uint32_t> map;
   for (uint32_t key = 0; key != 5000; ++key)
     ASSERT_TRUE(map.insert(uint64_t(key) * 7919, key).second);
   for (uint32_t key = 0; key != 5000; ++key) {

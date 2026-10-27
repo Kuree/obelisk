@@ -1,0 +1,251 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=3' -o /dev/null
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=3' '--encode-talos-sim-to-bytecode=vpi=off' -o /dev/null
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' -o %t.threaded
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' --mlir-disable-threading -o %t.serial
+// RUN: diff %t.threaded %t.serial
+
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
+  talos.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      talos.sv.symbol.instance_body @s4.top attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64} {
+        talos.sv.symbol.variable @s5.clk attributes {hierarchical_name = "top.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s6.rst attributes {hierarchical_name = "top.rst", lifetime = 1 : i32, name = "rst", node_id = 6 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s7.a attributes {hierarchical_name = "top.a", lifetime = 1 : i32, name = "a", node_id = 7 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s8.b attributes {hierarchical_name = "top.b", lifetime = 1 : i32, name = "b", node_id = 8 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s9.c attributes {hierarchical_name = "top.c", lifetime = 1 : i32, name = "c", node_id = 9 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+
+        // The two alternatives can carry the same property attempt at the
+        // same age. Strong EOS completion must report that attempt once.
+        talos.sv.symbol.procedural_block @s10 attributes {hierarchical_name = "top", node_id = 10 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 11 : i64} {
+            talos.sv.assertion.clocking attributes {node_id = 12 : i64} {
+              talos.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 13 : i64} {
+                talos.sv.expression.named_value attributes {node_id = 14 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              talos.sv.assertion.disable_iff attributes {node_id = 15 : i64} {
+                talos.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "top.rst", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.rst, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+                talos.sv.assertion.strong_weak attributes {node_id = 17 : i64, strength = 0 : i32} {
+                  talos.sv.assertion.binary attributes {node_id = 18 : i64, operator_kind = 1 : i32} {
+                    talos.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 19 : i64} {
+                      talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 20 : i64, repetition_is_unbounded = false} {
+                        talos.sv.expression.named_value attributes {node_id = 21 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                      talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 22 : i64, repetition_is_unbounded = false} {
+                        talos.sv.expression.named_value attributes {node_id = 23 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                    }
+                    talos.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 2 : i64}], node_id = 24 : i64} {
+                      talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 25 : i64, repetition_is_unbounded = false} {
+                        talos.sv.expression.named_value attributes {node_id = 26 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                      talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 27 : i64, repetition_is_unbounded = false} {
+                        talos.sv.expression.named_value attributes {node_id = 28 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s9.c, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Weak qualification completes every still-live property attempt with
+        // one vacuous success, despite duplication across alternatives.
+        talos.sv.symbol.procedural_block @s40 attributes {hierarchical_name = "top", node_id = 40 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 41 : i64} {
+            talos.sv.assertion.clocking attributes {node_id = 42 : i64} {
+              talos.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 43 : i64} {
+                talos.sv.expression.named_value attributes {node_id = 44 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              talos.sv.assertion.strong_weak attributes {node_id = 45 : i64, strength = 1 : i32} {
+                talos.sv.assertion.binary attributes {node_id = 60 : i64, operator_kind = 1 : i32} {
+                  talos.sv.assertion.first_match attributes {match_item_count = 0 : i64, node_id = 46 : i64} {
+                    talos.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 1 : i64}], node_id = 47 : i64} {
+                      talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 48 : i64, repetition_is_unbounded = false} {
+                        talos.sv.expression.named_value attributes {node_id = 49 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                      talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 50 : i64, repetition_is_unbounded = false} {
+                        talos.sv.expression.named_value attributes {node_id = 51 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                        }
+                      }
+                    }
+                  }
+                  talos.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 2 : i64}], node_id = 52 : i64} {
+                    talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 53 : i64, repetition_is_unbounded = false} {
+                      talos.sv.expression.named_value attributes {node_id = 54 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 55 : i64, repetition_is_unbounded = false} {
+                      talos.sv.expression.named_value attributes {node_id = 56 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s9.c, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            talos.sv.statement.expression_statement attributes {node_id = 57 : i64} {
+              talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 58 : i64, semantic_type = !talos.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+                talos.sv.expression.string_literal attributes {constant_value = "weak-branch-pass", node_id = 59 : i64, semantic_type = !talos.ranged_packed_array<127 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+                }
+              }
+            }
+          }
+        }
+
+        // A weak(sequence) evaluation is nonvacuous by IEEE 16.14.8(c).
+        // Both live-clock and successful EOS completion execute the cover
+        // property pass action.
+        talos.sv.symbol.procedural_block @s70 attributes {hierarchical_name = "top", node_id = 70 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.concurrent_assertion attributes {assertion_kind = 2 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 71 : i64} {
+            talos.sv.assertion.clocking attributes {node_id = 72 : i64} {
+              talos.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 73 : i64} {
+                talos.sv.expression.named_value attributes {node_id = 74 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              talos.sv.assertion.strong_weak attributes {node_id = 75 : i64, strength = 1 : i32} {
+                talos.sv.assertion.binary attributes {node_id = 76 : i64, operator_kind = 1 : i32} {
+                  talos.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 77 : i64} {
+                    talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 78 : i64, repetition_is_unbounded = false} {
+                      talos.sv.expression.named_value attributes {node_id = 79 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 80 : i64, repetition_is_unbounded = false} {
+                      talos.sv.expression.named_value attributes {node_id = 81 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                  talos.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 2 : i64, min = 2 : i64}], node_id = 82 : i64} {
+                    talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 83 : i64, repetition_is_unbounded = false} {
+                      talos.sv.expression.named_value attributes {node_id = 84 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                    talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 85 : i64, repetition_is_unbounded = false} {
+                      talos.sv.expression.named_value attributes {node_id = 86 : i64, referenced_path = "top.c", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s9.c, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            talos.sv.statement.expression_statement attributes {node_id = 87 : i64} {
+              talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 88 : i64, semantic_type = !talos.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+                talos.sv.expression.string_literal attributes {constant_value = "cover-weak-branch-pass", node_id = 89 : i64, semantic_type = !talos.ranged_packed_array<175 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+                }
+              }
+            }
+          }
+        }
+
+        // An all-one-cycle branching sequence is still explicitly strong,
+        // but no attempt can remain pending and no EOS state is needed.
+        talos.sv.symbol.procedural_block @s100 attributes {hierarchical_name = "top", node_id = 100 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 101 : i64} {
+            talos.sv.assertion.clocking attributes {node_id = 102 : i64} {
+              talos.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 103 : i64} {
+                talos.sv.expression.named_value attributes {node_id = 104 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              talos.sv.assertion.strong_weak attributes {node_id = 105 : i64, strength = 0 : i32} {
+                talos.sv.assertion.binary attributes {node_id = 106 : i64, operator_kind = 1 : i32} {
+                  talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 107 : i64, repetition_is_unbounded = false} {
+                    talos.sv.expression.named_value attributes {node_id = 108 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 109 : i64, repetition_is_unbounded = false} {
+                    talos.sv.expression.named_value attributes {node_id = 110 : i64, referenced_path = "top.b", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Strong branching EOS unions the two alternative state words. The two
+// possible live ages produce two report sites, not one site per alternative.
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_cancel.11(
+// Two alternative states plus one disable epoch are cleared/advanced.
+// CHECK-COUNT-3: simulation.ref.store
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos_report.11.strong(
+// CHECK-SAME: %[[EPOCH_REF:arg[0-9]+]]: !simulation.ref<i64>
+// CHECK-SAME: %[[EXPECTED:arg[0-9]+]]: i64
+// CHECK: %[[EPOCH:.*]] = simulation.ref.load %[[EPOCH_REF]]
+// CHECK: arith.cmpi eq, %[[EPOCH]], %[[EXPECTED]]
+// CHECK: concurrent assertion failed
+// CHECK-LABEL: simulation.func private @unit_0.$concurrent_eos.11.strong(
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK: arith.ori
+// CHECK-COUNT-2: simulation.spawn @unit_0.$concurrent_eos_report.11.strong
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_sequence_monitor
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK: simulation.spawn @unit_0.$concurrent_cancel.11
+// CHECK: simulation.spawn @unit_0.$concurrent_eos.11.strong
+
+// Weak assertion EOS dispatches one vacuous pass for each live start age.
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos_report.41.weak(
+// CHECK: simulation.bytes.constant "weak-branch-pass"
+// CHECK-LABEL: simulation.func private @unit_1.$concurrent_eos.41.weak(
+// CHECK: simulation.ref.load
+// CHECK: simulation.ref.load
+// CHECK: arith.ori
+// CHECK: simulation.ref.load
+// CHECK: arith.ori
+// CHECK-COUNT-2: simulation.spawn @unit_1.$concurrent_eos_report.41.weak
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 3 : i64
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.first_match_monitor
+// CHECK-SAME: simulation.first_match_priority_groups = 1 : i64
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK: simulation.spawn @unit_1.$concurrent_eos.41.weak
+
+// Weak cover-property completion dispatches one pass for each live start age.
+// The two alternative words are unioned first so overlapping source matches
+// still produce only one property result per attempt.
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos_report.71.weak(
+// CHECK: simulation.bytes.constant "cover-weak-branch-pass"
+// CHECK-LABEL: simulation.func private @unit_2.$concurrent_eos.71.weak(
+// CHECK-COUNT-2: simulation.ref.load
+// CHECK: arith.ori
+// CHECK-COUNT-2: simulation.spawn @unit_2.$concurrent_eos_report.71.weak
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.end_of_simulation_strength = "weak"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK-COUNT-2: simulation.ref.alloc
+// CHECK: simulation.spawn @unit_2.$concurrent_eos.71.weak
+
+// One-cycle alternatives retain strength metadata but allocate no monitor
+// state and outline no EOS coordinator.
+// CHECK-NOT: @unit_3.$concurrent_eos
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.end_of_simulation_strength = "strong"
+// CHECK-SAME: simulation.strong_weak_monitor
+// CHECK-NOT: simulation.ref.alloc
+// CHECK-NOT: $concurrent_eos

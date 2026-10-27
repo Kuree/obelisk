@@ -1,10 +1,10 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=eval %s -o %t.o0
+// RUN: talos -O0 --vpi=off --native-scheduler=eval %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval %s -o %t.o3
+// RUN: talos -O3 --vpi=off --native-scheduler=eval %s -o %t.o3
 // RUN: %t.o3 | FileCheck %s
-// RUN: obelisk -O3 --vpi=full --native-scheduler=eval %s -o %t.full
+// RUN: talos -O3 --vpi=full --native-scheduler=eval %s -o %t.full
 // RUN: %t.full | FileCheck %s
-// RUN: obelisk -O3 --vpi=full --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --vpi=full --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 // CHECK: containers passed
 

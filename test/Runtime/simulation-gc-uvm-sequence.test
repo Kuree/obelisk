@@ -1,7 +1,7 @@
-// RUN: obelisk -emit-slang %S/../Conversion/simulation-gc-uvm-sequence.sv | obelisk-opt --test-obelisk-native-backend='scheduler=auto sim-opt-level=3 stop-after=lowering' -o %t.sim.mlir
-// RUN: obelisk-opt %t.sim.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension)),encode-obelisk-sim-to-bytecode{vpi=off prune-native=true},simulation.design(obelisk-sim-optimize-native-regions),simulation.design(obelisk-sim-plan-native-partitions),convert-obelisk-sim-processes-to-llvm-coroutines,materialize-runtime-byte-globals)' | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.sequence.o
+// RUN: talos -emit-slang %S/../Conversion/simulation-gc-uvm-sequence.sv | talos-opt --test-talos-native-backend='scheduler=auto sim-opt-level=3 stop-after=lowering' -o %t.sim.mlir
+// RUN: talos-opt %t.sim.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension)),encode-talos-sim-to-bytecode{vpi=off prune-native=true},simulation.design(talos-sim-optimize-native-regions),simulation.design(talos-sim-plan-native-partitions),convert-talos-sim-processes-to-llvm-coroutines,materialize-runtime-byte-globals)' | talos-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.sequence.o
 // RUN: %target_cxx %t.sequence.o %runtime_link_flags -o %t.sequence.exe
-// RUN: env OBELISK_RT_GC_THRESHOLD=256 OBELISK_RT_GC_DIAGNOSTICS=1 %t.sequence.exe 2>&1 | FileCheck %s --check-prefix=SEQUENCE
+// RUN: env TALOS_RT_GC_THRESHOLD=256 TALOS_RT_GC_DIAGNOSTICS=1 %t.sequence.exe 2>&1 | FileCheck %s --check-prefix=SEQUENCE
 // RUN: %t.sequence.exe 2>&1 | FileCheck %s --check-prefix=SEQUENCE-RESULT
 
 // UVM-shaped class testbenches run with a GC threshold small enough that the
@@ -11,5 +11,5 @@
 // With a periodic clock, collections move to the designated point once per
 // cycle. Twenty transactions of data 3*id; the scoreboard keeps the last four.
 // SEQUENCE: {{^}}total=570 kept=4 last=19{{$}}
-// SEQUENCE: obelisk-gc-diagnostics collections={{[1-9][0-9]*}} designated={{[1-9][0-9]*}} {{.*}} polled=0
+// SEQUENCE: talos-gc-diagnostics collections={{[1-9][0-9]*}} designated={{[1-9][0-9]*}} {{.*}} polled=0
 // SEQUENCE-RESULT: {{^}}total=570 kept=4 last=19{{$}}

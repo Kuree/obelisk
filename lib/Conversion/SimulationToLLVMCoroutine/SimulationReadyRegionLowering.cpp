@@ -5,14 +5,14 @@
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/Mem2Reg.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/Transforms/NativeTransforms.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringSet.h"
 #include <map>
 
 using namespace mlir;
-namespace obelisk::detail {
+namespace talos::detail {
 
 bool isReadinessTransparentCallee(StringRef callee) {
   // Runtime leaves: each formats, latches or allocates on runtime-owned
@@ -22,18 +22,18 @@ bool isReadinessTransparentCallee(StringRef callee) {
   // and hints and update only proof latches, hints and the promotion-pending
   // mask. They activate no process and select only a value domain (IEEE
   // 1800-2023 4.3, 4.5, 6.3.1), so they cannot observe an activation.
-  return callee == "obelisk_rt_v1_eval_display" ||
-         callee == "obelisk_rt_v1_scheduler_fail" ||
-         callee == "obelisk_rt_v1_eval_nba_reserve" ||
-         callee == "obelisk_rt_v1_scheduler_termination_requested" ||
-         callee == "obelisk_rt_v1_scheduler_time" ||
-         callee == "obelisk_rt_v1_coverage_point_hit" ||
-         callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
-         callee == "obelisk_rt_v1_native_promotion_recheck_ranges" ||
-         callee == "obelisk_rt_v1_native_promotion_invalidate_buckets" ||
-         callee == "obelisk_rt_v1_native_promotion_recheck_buckets" ||
-         callee == "obelisk_rt_v1_native_state_mark_unknown" ||
-         callee == "obelisk_rt_v1_native_state_refresh_unknown_summary" ||
+  return callee == "talos_rt_v1_eval_display" ||
+         callee == "talos_rt_v1_scheduler_fail" ||
+         callee == "talos_rt_v1_eval_nba_reserve" ||
+         callee == "talos_rt_v1_scheduler_termination_requested" ||
+         callee == "talos_rt_v1_scheduler_time" ||
+         callee == "talos_rt_v1_coverage_point_hit" ||
+         callee == "talos_rt_v1_native_promotion_invalidate_ranges" ||
+         callee == "talos_rt_v1_native_promotion_recheck_ranges" ||
+         callee == "talos_rt_v1_native_promotion_invalidate_buckets" ||
+         callee == "talos_rt_v1_native_promotion_recheck_buckets" ||
+         callee == "talos_rt_v1_native_state_mark_unknown" ||
+         callee == "talos_rt_v1_native_state_refresh_unknown_summary" ||
          callee == kernelPromotionReadyName ||
          callee == groupPromotionReadyName;
 }
@@ -344,4 +344,4 @@ void lowerNativeReadyRegion(schedule::NativeReadyRegionOp region,
                                   dominance);
   }
 }
-} // namespace obelisk::detail
+} // namespace talos::detail

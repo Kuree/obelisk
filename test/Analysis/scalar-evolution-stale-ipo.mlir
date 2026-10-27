@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-scoped-integer-ranges 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-scoped-integer-ranges 2>&1 | FileCheck %s
 
 !array = !simulation.unpacked_array<0 : 15 x i8>
 module {

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics
+// RUN: talos-opt %s --split-input-file --verify-diagnostics
 
 #bus = #simulation.vpi_type<kind = virtual_interface, isSigned = false, isFourState = false, name = "bus", symbol = @bus, modport = "", range = [], children = [], childNames = []>
 module {

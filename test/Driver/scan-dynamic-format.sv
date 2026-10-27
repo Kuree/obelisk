@@ -1,18 +1,18 @@
-// RUN: obelisk -O3 --vpi=off --execution-tier=native \
+// RUN: talos -O3 --vpi=off --execution-tier=native \
 // RUN:   --native-scheduler=auto %s -o %t.o3.native
 // RUN: %t.o3.native +OUT=%t.o3.native.data | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --execution-tier=native \
+// RUN: talos -O3 --vpi=off --execution-tier=native \
 // RUN:   --native-scheduler=auto -emit-llvm %s -o - \
 // RUN:   | FileCheck %s --check-prefix=AUTO-LLVM
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: talos -O3 --vpi=off --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode +OUT=%t.o3.bytecode.data | FileCheck %s
 
 // Managed string state excludes this actor from the static AOT scheduler, but
 // auto still compiles the actor as native LLVM and calls the dynamic scan
 // services directly instead of silently falling back to design bytecode.
-// AUTO-LLVM: call i32 @obelisk_rt_v1_scan_dynamic_validate
-// AUTO-LLVM: call i32 @obelisk_rt_v1_string_scan_dynamic
-// AUTO-LLVM: call i32 @obelisk_rt_v1_file_scan_dynamic
+// AUTO-LLVM: call i32 @talos_rt_v1_scan_dynamic_validate
+// AUTO-LLVM: call i32 @talos_rt_v1_string_scan_dynamic
+// AUTO-LLVM: call i32 @talos_rt_v1_file_scan_dynamic
 
 module scan_dynamic_format;
   timeunit 1ns;

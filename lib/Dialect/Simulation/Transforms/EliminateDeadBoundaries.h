@@ -1,13 +1,13 @@
 //===- EliminateDeadBoundaries.h - Simulation boundary pruning -*- C++ -*-===//
 
-#ifndef OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_ELIMINATEDEADBOUNDARIES_H
-#define OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_ELIMINATEDEADBOUNDARIES_H
+#ifndef TALOS_LIB_DIALECT_SIMULATION_TRANSFORMS_ELIMINATEDEADBOUNDARIES_H
+#define TALOS_LIB_DIALECT_SIMULATION_TRANSFORMS_ELIMINATEDEADBOUNDARIES_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Pass/Pass.h"
 
-namespace obelisk {
+namespace talos {
 
 /// Optional pass-owned counters populated by the shared boundary eliminator.
 struct EliminationStatistics {
@@ -30,6 +30,6 @@ eliminateDeadSimulationBoundaries(sim::SimDesignOp design,
                                   bool eliminateResults, bool missedRemarks,
                                   EliminationStatistics statistics);
 
-} // namespace obelisk
+} // namespace talos
 
-#endif // OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_ELIMINATEDEADBOUNDARIES_H
+#endif // TALOS_LIB_DIALECT_SIMULATION_TRANSFORMS_ELIMINATEDEADBOUNDARIES_H

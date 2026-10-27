@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not talos -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
 module nested(input wire clock, gate, data, output logic q);
   always @(posedge clock) begin
     @(posedge gate);

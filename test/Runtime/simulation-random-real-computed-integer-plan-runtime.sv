@@ -1,7 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 -emit-sim %s -o %t.sim.mlir
+// RUN: %talos --std=1800-2023 -O0 -emit-sim %s -o %t.sim.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.sim.mlir
-// RUN: obelisk-opt %t.sim.mlir --obelisk-sim-compile-random-plans | diff %t.sim.mlir -
-// RUN: %obelisk --std=1800-2023 -O0 -o %t %s
+// RUN: talos-opt %t.sim.mlir --talos-sim-compile-random-plans | diff %t.sim.mlir -
+// RUN: %talos --std=1800-2023 -O0 -o %t %s
 // RUN: %t --seed=13 | FileCheck %s
 // REQUIRES: compiled-sampler
 

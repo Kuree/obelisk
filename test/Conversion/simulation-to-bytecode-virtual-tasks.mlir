@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines -o /dev/null
 
 !bundle = !simulation.unpacked_struct<[
   #simulation.field<name = "object", type = !simulation.class_handle<@Base>,

@@ -1,21 +1,21 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir 2>&1 | FileCheck %s --check-prefix=PROOF
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir 2>&1 | FileCheck %s --check-prefix=PROOF
 // RUN: FileCheck %s --check-prefix=LOWER < %t.mlir
 
 // An equal-value NBA is inert only if no earlier NBA is pending and no
 // blocking writer can intervene. Equality includes the X/Z plane, and a
 // partial store must ignore its neighboring bits. LRM 4.3, 4.6, 4.9.4, 10.4.2.
-// PROOF: obelisk native unchanged NBA roots: 2/3
-// LOWER-LABEL: llvm.func @writer.__obelisk_coro_ramp(
-// LOWER: llvm.mlir.addressof @__obelisk_state_value
-// LOWER: llvm.mlir.addressof @__obelisk_state_unknown
+// PROOF: talos native unchanged NBA roots: 2/3
+// LOWER-LABEL: llvm.func @writer.__talos_coro_ramp(
+// LOWER: llvm.mlir.addressof @__talos_state_value
+// LOWER: llvm.mlir.addressof @__talos_state_unknown
 // LOWER: %[[DELTA:.*]] = llvm.and
-// LOWER: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// LOWER: llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // LOWER: %[[PENDING:.*]] = llvm.and
 // LOWER: %[[NEEDED:.*]] = llvm.or %[[DELTA]], %[[PENDING]]
 // LOWER: llvm.icmp "ne" %[[NEEDED]],
 // LOWER: llvm.cond_br {{.*}}, ^[[STAGE:bb[0-9]+]], ^[[DONE:bb[0-9]+]]
 // LOWER-NEXT: ^[[STAGE]]:
-// LOWER: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
+// LOWER: llvm.mlir.addressof @__talos_aot_nba_accumulator_0
 // LOWER: llvm.br ^[[DONE]]
 
 !word = !simulation.logic<13>

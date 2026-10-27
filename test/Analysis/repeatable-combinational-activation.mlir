@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,test-obelisk-repeatable-activations))' -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,test-obelisk-repeatable-activations))' -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,test-obelisk-repeatable-activations))' -o /dev/null 2>&1 | FileCheck %s --check-prefix=FULL --implicit-check-not=' = 1'
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,test-talos-repeatable-activations))' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=read},talos-sim-verify-compute-graph,test-talos-repeatable-activations))' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,test-talos-repeatable-activations))' -o /dev/null 2>&1 | FileCheck %s --check-prefix=FULL --implicit-check-not=' = 1'
 
 // LRM 4.3 permits redundant evaluation only with identical observable effects.
 // Complete sensitivity and exclusive, single writes establish that unchanged

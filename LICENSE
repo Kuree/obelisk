@@ -1,14 +1,14 @@
-Obelisk
-Copyright 2026 Obelisk contributors
+Talos
+Copyright 2026 Talos contributors
 
 SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-Except as otherwise noted, original Obelisk source code and documentation are
+Except as otherwise noted, original Talos source code and documentation are
 licensed under the Apache License, Version 2.0, with the LLVM Exceptions. The
 complete terms follow this notice.
 
 Third-party software is not covered by this license and is not relicensed by
-its inclusion in an Obelisk source or binary distribution. In particular,
+its inclusion in an Talos source or binary distribution. In particular,
 self-contained Linux distributions include the GNU C Library (glibc), its
 dynamic loader, and related files under their respective copyright notices and
 licenses. Applicable third-party notices, license texts, and corresponding

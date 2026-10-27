@@ -1,7 +1,7 @@
 //===- ManagedHeap.cpp - Precise SystemVerilog class heap ----------------===//
 
 #include "RuntimeInternal.h"
-#include "obelisk/Runtime/DescriptorMap.h"
+#include "talos/Runtime/DescriptorMap.h"
 
 #include <array>
 #include <atomic>
@@ -13,20 +13,20 @@
 #include <shared_mutex>
 #include <unordered_set>
 
-struct obelisk_rt_object_v1 {};
+struct talos_rt_object_v1 {};
 
-struct obelisk_rt_random_graph_v1 {
+struct talos_rt_random_graph_v1 {
   struct ObjectBinding {
-    obelisk_rt_object_v1 *object = nullptr;
-    const obelisk_rt_class_descriptor_v1 *descriptor = nullptr;
+    talos_rt_object_v1 *object = nullptr;
+    const talos_rt_class_descriptor_v1 *descriptor = nullptr;
   };
 
   struct VariableBinding {
-    obelisk_rt_object_v1 *object = nullptr;
-    const obelisk_rt_random_variable_v1 *variable = nullptr;
+    talos_rt_object_v1 *object = nullptr;
+    const talos_rt_random_variable_v1 *variable = nullptr;
   };
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   std::vector<ObjectBinding> objects;
   std::vector<VariableBinding> variables;
 };
@@ -50,8 +50,8 @@ constexpr uint64_t kMaximumSmallSlot = 32 * 1024;
 constexpr unsigned kSizeClassCount = 11; // 32 bytes through 32 KiB.
 constexpr size_t kEmptyChunkCache = 2;
 constexpr uint32_t kRandomVariableFlags =
-    OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE | OBELISK_RT_RANDOM_VARIABLE_SIGNED |
-    OBELISK_RT_RANDOM_VARIABLE_RANDC;
+    TALOS_RT_RANDOM_VARIABLE_FOUR_STATE | TALOS_RT_RANDOM_VARIABLE_SIGNED |
+    TALOS_RT_RANDOM_VARIABLE_RANDC;
 
 static_assert(kSpansPerChunk == 32);
 
@@ -69,11 +69,11 @@ struct LargeAllocation;
 struct ObjectMetadata {
   class ManagedHeap *heap = nullptr;
   void *object = nullptr;
-  const obelisk_rt_class_descriptor_v1 *descriptor = nullptr;
+  const talos_rt_class_descriptor_v1 *descriptor = nullptr;
   uint64_t identity = 0;
   uint64_t extent = 0;
   uint64_t allocationSize = 0;
-  obelisk_rt_managed_kind_v1 kind = OBELISK_RT_MANAGED_INVALID;
+  talos_rt_managed_kind_v1 kind = TALOS_RT_MANAGED_INVALID;
   uint32_t alignment = 0;
   std::atomic<uint32_t> pins{0};
   std::atomic<uint32_t> nextTicket{0};
@@ -164,22 +164,22 @@ unsigned sizeClassFor(uint64_t size, uint32_t &classSize) {
 }
 
 std::shared_mutex metadataRegistryMutex;
-std::unordered_map<const obelisk_rt_object_v1 *, ObjectMetadata *>
+std::unordered_map<const talos_rt_object_v1 *, ObjectMetadata *>
     metadataRegistry;
 
 void registerMetadata(ObjectMetadata *metadata) {
   std::unique_lock<std::shared_mutex> lock(metadataRegistryMutex);
   metadataRegistry.emplace(
-      static_cast<const obelisk_rt_object_v1 *>(metadata->object), metadata);
+      static_cast<const talos_rt_object_v1 *>(metadata->object), metadata);
 }
 
 void unregisterMetadata(ObjectMetadata *metadata) {
   std::unique_lock<std::shared_mutex> lock(metadataRegistryMutex);
   metadataRegistry.erase(
-      static_cast<const obelisk_rt_object_v1 *>(metadata->object));
+      static_cast<const talos_rt_object_v1 *>(metadata->object));
 }
 
-ObjectMetadata *metadataFor(const obelisk_rt_object_v1 *object) {
+ObjectMetadata *metadataFor(const talos_rt_object_v1 *object) {
   if (!object)
     return nullptr;
   std::shared_lock<std::shared_mutex> lock(metadataRegistryMutex);
@@ -193,12 +193,12 @@ ObjectMetadata *metadataFor(const obelisk_rt_object_v1 *object) {
   return metadata;
 }
 
-obelisk_rt_object_v1 *
-managedWordObject(obelisk_rt_managed_word_v1 word) noexcept {
-  return obelisk_rt_object_from_managed_word(word);
+talos_rt_object_v1 *
+managedWordObject(talos_rt_managed_word_v1 word) noexcept {
+  return talos_rt_object_from_managed_word(word);
 }
 
-bool validImmediateManagedWord(obelisk_rt_managed_word_v1 word) noexcept {
+bool validImmediateManagedWord(talos_rt_managed_word_v1 word) noexcept {
   if ((word & UINT64_C(3)) != UINT64_C(1))
     return false;
   uint8_t control = static_cast<uint8_t>(word);
@@ -209,38 +209,38 @@ bool validImmediateManagedWord(obelisk_rt_managed_word_v1 word) noexcept {
   return usedBits == 64 || (word >> usedBits) == 0;
 }
 
-bool isCandidateSlotKind(obelisk_rt_managed_slot_kind_v1 kind) noexcept {
-  return (kind & OBELISK_RT_MANAGED_SLOT_CANDIDATE) != 0;
+bool isCandidateSlotKind(talos_rt_managed_slot_kind_v1 kind) noexcept {
+  return (kind & TALOS_RT_MANAGED_SLOT_CANDIDATE) != 0;
 }
 
-uint32_t candidateSlotMask(obelisk_rt_managed_slot_kind_v1 kind) noexcept {
-  return kind & ~OBELISK_RT_MANAGED_SLOT_CANDIDATE;
+uint32_t candidateSlotMask(talos_rt_managed_slot_kind_v1 kind) noexcept {
+  return kind & ~TALOS_RT_MANAGED_SLOT_CANDIDATE;
 }
 
-uint32_t managedKindMask(obelisk_rt_managed_kind_v1 kind) noexcept {
+uint32_t managedKindMask(talos_rt_managed_kind_v1 kind) noexcept {
   switch (kind) {
-  case OBELISK_RT_MANAGED_CLASS:
-    return OBELISK_RT_MANAGED_ROOT_KIND_CLASS;
-  case OBELISK_RT_MANAGED_STRING:
-    return OBELISK_RT_MANAGED_ROOT_KIND_STRING;
-  case OBELISK_RT_MANAGED_CONTAINER:
-    return OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER;
-  case OBELISK_RT_MANAGED_REFERENCE_PATH:
-    return OBELISK_RT_MANAGED_ROOT_KIND_REFERENCE_PATH;
+  case TALOS_RT_MANAGED_CLASS:
+    return TALOS_RT_MANAGED_ROOT_KIND_CLASS;
+  case TALOS_RT_MANAGED_STRING:
+    return TALOS_RT_MANAGED_ROOT_KIND_STRING;
+  case TALOS_RT_MANAGED_CONTAINER:
+    return TALOS_RT_MANAGED_ROOT_KIND_CONTAINER;
+  case TALOS_RT_MANAGED_REFERENCE_PATH:
+    return TALOS_RT_MANAGED_ROOT_KIND_REFERENCE_PATH;
   default:
     return 0;
   }
 }
 
 ObjectMetadata *candidateRootMetadata(ManagedHeap *heap,
-                                      obelisk_rt_managed_word_v1 word,
+                                      talos_rt_managed_word_v1 word,
                                       uint32_t allowedKinds) noexcept {
   if (allowedKinds == 0 ||
-      (allowedKinds & ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0)
+      (allowedKinds & ~TALOS_RT_MANAGED_ROOT_KIND_ALL) != 0)
     return nullptr;
   if (validImmediateManagedWord(word))
     return nullptr;
-  obelisk_rt_object_v1 *object = managedWordObject(word);
+  talos_rt_object_v1 *object = managedWordObject(word);
   if (!object)
     return nullptr;
   // Candidate words are arbitrary source bits. Keep the global registry read
@@ -322,7 +322,7 @@ void orderDescriptorRecords(std::vector<T> &records, Key key) {
 
 class TraceLayoutValidation {
 public:
-  bool validate(const obelisk_rt_trace_layout_v1 *layout,
+  bool validate(const talos_rt_trace_layout_v1 *layout,
                 uint64_t containingSize) {
     if (!layout || layout->size > containingSize)
       return false;
@@ -330,12 +330,12 @@ public:
     if (known != states.end())
       return known->second.complete;
     struct Frame {
-      const obelisk_rt_trace_layout_v1 *layout;
+      const talos_rt_trace_layout_v1 *layout;
       uint64_t entry = 0;
     };
     std::vector<Frame> stack;
-    auto enter = [&](const obelisk_rt_trace_layout_v1 *child) {
-      if (child->version != OBELISK_RT_VERSION || child->reserved != 0 ||
+    auto enter = [&](const talos_rt_trace_layout_v1 *child) {
+      if (child->version != TALOS_RT_VERSION || child->reserved != 0 ||
           !validPowerOfTwo(child->alignment) || child->alignment > 16 ||
           (child->entry_count == 0) != (child->entries == nullptr))
         return false;
@@ -357,29 +357,29 @@ public:
       const auto &entry = frame.layout->entries[frame.entry];
       if (entry.count == 0 || (entry.count > 1 && entry.stride == 0))
         return false;
-      uint64_t elementSize = sizeof(obelisk_rt_managed_word_v1);
-      uint64_t alignment = alignof(obelisk_rt_managed_word_v1);
-      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+      uint64_t elementSize = sizeof(talos_rt_managed_word_v1);
+      uint64_t alignment = alignof(talos_rt_managed_word_v1);
+      if (entry.kind == TALOS_RT_TRACE_EMBEDDED) {
         if (!entry.child_layout ||
-            entry.slot_kind != OBELISK_RT_MANAGED_SLOT_INVALID)
+            entry.slot_kind != TALOS_RT_MANAGED_SLOT_INVALID)
           return false;
         elementSize = entry.child_layout->size;
         alignment = entry.child_layout->alignment;
       } else {
         bool candidate = isCandidateSlotKind(entry.slot_kind);
         uint32_t mask = candidateSlotMask(entry.slot_kind);
-        if ((entry.kind != OBELISK_RT_TRACE_STRONG &&
-             entry.kind != OBELISK_RT_TRACE_WEAK) ||
+        if ((entry.kind != TALOS_RT_TRACE_STRONG &&
+             entry.kind != TALOS_RT_TRACE_WEAK) ||
             entry.child_layout ||
             (candidate
-                 ? entry.kind != OBELISK_RT_TRACE_STRONG || mask == 0 ||
-                       (mask & ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0
-                 : entry.slot_kind < OBELISK_RT_MANAGED_SLOT_CLASS ||
-                       entry.slot_kind > OBELISK_RT_MANAGED_SLOT_SEMAPHORE ||
-                       (entry.kind == OBELISK_RT_TRACE_WEAK &&
-                        entry.slot_kind != OBELISK_RT_MANAGED_SLOT_CLASS &&
+                 ? entry.kind != TALOS_RT_TRACE_STRONG || mask == 0 ||
+                       (mask & ~TALOS_RT_MANAGED_ROOT_KIND_ALL) != 0
+                 : entry.slot_kind < TALOS_RT_MANAGED_SLOT_CLASS ||
+                       entry.slot_kind > TALOS_RT_MANAGED_SLOT_SEMAPHORE ||
+                       (entry.kind == TALOS_RT_TRACE_WEAK &&
+                        entry.slot_kind != TALOS_RT_MANAGED_SLOT_CLASS &&
                         entry.slot_kind !=
-                            OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH)))
+                            TALOS_RT_MANAGED_SLOT_REFERENCE_PATH)))
           return false;
       }
       // Validate embedded alignment before taking a remainder: malformed
@@ -393,7 +393,7 @@ public:
       uint64_t last = entry.offset + (entry.count - 1) * entry.stride;
       if (!checkedRange(last, elementSize, frame.layout->size))
         return false;
-      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+      if (entry.kind == TALOS_RT_TRACE_EMBEDDED) {
         auto child = states.find(entry.child_layout);
         if (child == states.end()) {
           if (!enter(entry.child_layout))
@@ -406,18 +406,18 @@ public:
         state.hasWeakHandles |= child->second.hasWeakHandles;
       } else {
         state.hasHandles = true;
-        state.hasWeakHandles |= entry.kind == OBELISK_RT_TRACE_WEAK;
+        state.hasWeakHandles |= entry.kind == TALOS_RT_TRACE_WEAK;
       }
       ++frame.entry;
     }
     return true;
   }
 
-  bool hasHandles(const obelisk_rt_trace_layout_v1 *layout) const {
+  bool hasHandles(const talos_rt_trace_layout_v1 *layout) const {
     return states.at(layout).hasHandles;
   }
 
-  bool hasWeakHandles(const obelisk_rt_trace_layout_v1 *layout) const {
+  bool hasWeakHandles(const talos_rt_trace_layout_v1 *layout) const {
     return states.at(layout).hasWeakHandles;
   }
 
@@ -435,27 +435,27 @@ private:
     bool hasHandles = false;
     bool hasWeakHandles = false;
   };
-  std::unordered_map<const obelisk_rt_trace_layout_v1 *, State> states;
-  std::vector<const obelisk_rt_trace_layout_v1 *> additions;
+  std::unordered_map<const talos_rt_trace_layout_v1 *, State> states;
+  std::vector<const talos_rt_trace_layout_v1 *> additions;
 };
 
-bool layoutHasStrongHandleAt(const obelisk_rt_trace_layout_v1 *layout,
+bool layoutHasStrongHandleAt(const talos_rt_trace_layout_v1 *layout,
                              uint64_t baseOffset, uint64_t wantedOffset,
-                             obelisk_rt_managed_slot_kind_v1 wantedKind =
-                                 OBELISK_RT_MANAGED_SLOT_INVALID) {
+                             talos_rt_managed_slot_kind_v1 wantedKind =
+                                 TALOS_RT_MANAGED_SLOT_INVALID) {
   if (!layout)
     return false;
   for (uint64_t index = 0; index != layout->entry_count; ++index) {
-    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
+    const talos_rt_trace_entry_v1 &entry = layout->entries[index];
     for (uint64_t item = 0; item != entry.count; ++item) {
       uint64_t offset = baseOffset + entry.offset + item * entry.stride;
-      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+      if (entry.kind == TALOS_RT_TRACE_EMBEDDED) {
         if (layoutHasStrongHandleAt(entry.child_layout, offset, wantedOffset,
                                     wantedKind))
           return true;
-      } else if (entry.kind == OBELISK_RT_TRACE_STRONG &&
+      } else if (entry.kind == TALOS_RT_TRACE_STRONG &&
                  offset == wantedOffset &&
-                 (wantedKind == OBELISK_RT_MANAGED_SLOT_INVALID ||
+                 (wantedKind == TALOS_RT_MANAGED_SLOT_INVALID ||
                   entry.slot_kind == wantedKind)) {
         return true;
       }
@@ -466,8 +466,8 @@ bool layoutHasStrongHandleAt(const obelisk_rt_trace_layout_v1 *layout,
 
 struct TraceHandle {
   uint64_t offset = 0;
-  obelisk_rt_trace_kind kind = 0;
-  obelisk_rt_managed_slot_kind_v1 slotKind = 0;
+  talos_rt_trace_kind kind = 0;
+  talos_rt_managed_slot_kind_v1 slotKind = 0;
 
   bool operator==(const TraceHandle &other) const {
     return offset == other.offset && kind == other.kind &&
@@ -476,7 +476,7 @@ struct TraceHandle {
 };
 
 struct TraceHandleIndex {
-  obelisk::runtime::DescriptorMap<TraceHandle> slots;
+  talos::runtime::DescriptorMap<TraceHandle> slots;
   uint64_t offset = 0;
 
   size_t size() const { return slots.size(); }
@@ -496,12 +496,12 @@ struct TraceHandleIndex {
     return result;
   }
   bool overlaps(uint64_t key, uint64_t size) const {
-    uint64_t begin = key >= sizeof(obelisk_rt_managed_word_v1) - 1
-                         ? key - (sizeof(obelisk_rt_managed_word_v1) - 1)
+    uint64_t begin = key >= sizeof(talos_rt_managed_word_v1) - 1
+                         ? key - (sizeof(talos_rt_managed_word_v1) - 1)
                          : 0;
     auto overlaps = [&](const TraceHandle *handle) {
       return handle && rangesOverlap(key, size, handle->offset + offset,
-                                     sizeof(obelisk_rt_managed_word_v1));
+                                     sizeof(talos_rt_managed_word_v1));
     };
     return overlaps(slots.lowerBound(begin - offset)) ||
            overlaps(slots.first());
@@ -516,7 +516,7 @@ struct TraceHandleIndex {
 
 class ClassLayoutValidation {
 public:
-  const TraceHandleIndex *get(const obelisk_rt_trace_layout_v1 *layout) {
+  const TraceHandleIndex *get(const talos_rt_trace_layout_v1 *layout) {
     if (!layout)
       return &empty;
     auto known = handles.find(layout);
@@ -525,10 +525,10 @@ public:
     if (!validation.validate(layout, layout->size))
       return nullptr;
     struct Frame {
-      const obelisk_rt_trace_layout_v1 *layout;
+      const talos_rt_trace_layout_v1 *layout;
       uint64_t entry = 0;
     };
-    auto store = [&](const obelisk_rt_trace_layout_v1 *child,
+    auto store = [&](const talos_rt_trace_layout_v1 *child,
                      TraceHandleIndex result) {
       additions.push_back(child);
       handles.emplace(child, std::move(result));
@@ -543,7 +543,7 @@ public:
       }
       if (frame.entry != frame.layout->entry_count) {
         const auto &entry = frame.layout->entries[frame.entry++];
-        if (entry.kind == OBELISK_RT_TRACE_EMBEDDED &&
+        if (entry.kind == TALOS_RT_TRACE_EMBEDDED &&
             validation.hasHandles(entry.child_layout) &&
             handles.find(entry.child_layout) == handles.end())
           stack.push_back({entry.child_layout});
@@ -556,7 +556,7 @@ public:
       TraceHandleIndex result;
       for (uint64_t index = 0; index != current->entry_count; ++index) {
         const auto &entry = current->entries[index];
-        if (entry.kind != OBELISK_RT_TRACE_EMBEDDED || entry.count != 1)
+        if (entry.kind != TALOS_RT_TRACE_EMBEDDED || entry.count != 1)
           continue;
         const auto &child = handles.at(entry.child_layout);
         if (child.size() <= result.size())
@@ -570,7 +570,7 @@ public:
         if (!valid)
           return;
         if (result.overlaps(handle.offset,
-                            sizeof(obelisk_rt_managed_word_v1))) {
+                            sizeof(talos_rt_managed_word_v1))) {
           valid = false;
           return;
         }
@@ -583,7 +583,7 @@ public:
         if (index == sharedEntry)
           continue;
         const auto &entry = current->entries[index];
-        if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+        if (entry.kind == TALOS_RT_TRACE_EMBEDDED) {
           const auto &child = handles.at(entry.child_layout);
           for (uint64_t item = 0; item != entry.count && valid; ++item) {
             uint64_t offset = entry.offset + item * entry.stride;
@@ -619,31 +619,31 @@ public:
 
 private:
   TraceLayoutValidation validation;
-  std::unordered_map<const obelisk_rt_trace_layout_v1 *, TraceHandleIndex>
+  std::unordered_map<const talos_rt_trace_layout_v1 *, TraceHandleIndex>
       handles;
-  std::vector<const obelisk_rt_trace_layout_v1 *> additions;
+  std::vector<const talos_rt_trace_layout_v1 *> additions;
   TraceHandleIndex empty;
 };
 
 class InterfaceValidation {
 public:
-  using Requirements = obelisk::runtime::DescriptorMap<uint64_t>;
-  using Bindings = obelisk::runtime::DescriptorMap<
-      const obelisk_rt_interface_descriptor_v1 *>;
+  using Requirements = talos::runtime::DescriptorMap<uint64_t>;
+  using Bindings = talos::runtime::DescriptorMap<
+      const talos_rt_interface_descriptor_v1 *>;
   struct Inventory {
-    obelisk_rt_interface_descriptor_v1 descriptor{};
+    talos_rt_interface_descriptor_v1 descriptor{};
     Requirements requirements;
     Bindings bindings;
     bool complete = false;
   };
-  const Inventory *get(const obelisk_rt_interface_descriptor_v1 *interface) {
+  const Inventory *get(const talos_rt_interface_descriptor_v1 *interface) {
     auto equivalent = [](const auto &left, const auto &right) {
       return left.interface_id == right.interface_id &&
              left.method_signatures == right.method_signatures &&
              left.method_count == right.method_count &&
              left.bases == right.bases && left.base_count == right.base_count;
     };
-    auto enter = [&](const obelisk_rt_interface_descriptor_v1 *current) {
+    auto enter = [&](const talos_rt_interface_descriptor_v1 *current) {
       if (!current || !current->interface_id ||
           (current->method_count == 0) !=
               (current->method_signatures == nullptr) ||
@@ -673,7 +673,7 @@ public:
     if (!enter(interface))
       return nullptr;
     struct Frame {
-      const obelisk_rt_interface_descriptor_v1 *interface;
+      const talos_rt_interface_descriptor_v1 *interface;
       uint64_t base = 0;
     };
     std::vector<Frame> stack{{interface}};
@@ -738,21 +738,21 @@ private:
 class ClassMethodValidation {
 public:
   using Methods =
-      obelisk::runtime::DescriptorMap<const obelisk_rt_method_descriptor_v1 *>;
+      talos::runtime::DescriptorMap<const talos_rt_method_descriptor_v1 *>;
   struct Inventory {
     Methods slots, signatures;
-    obelisk::runtime::DescriptorMap<const obelisk_rt_class_descriptor_v1 *>
+    talos::runtime::DescriptorMap<const talos_rt_class_descriptor_v1 *>
         ancestors;
     InterfaceValidation::Requirements requirements;
     InterfaceValidation::Bindings interfaces;
     size_t pure = 0, missing = 0;
   };
   const Inventory *
-  lookup(const obelisk_rt_class_descriptor_v1 *descriptor) const {
+  lookup(const talos_rt_class_descriptor_v1 *descriptor) const {
     auto found = inventories.find(descriptor);
     return found == inventories.end() ? nullptr : &found->second;
   }
-  const Inventory *get(const obelisk_rt_class_descriptor_v1 *descriptor) {
+  const Inventory *get(const talos_rt_class_descriptor_v1 *descriptor) {
     if (const Inventory *known = lookup(descriptor))
       return known;
     Inventory result;
@@ -764,24 +764,24 @@ public:
     }
     result.ancestors = result.ancestors.set(descriptor->class_id, descriptor);
     constexpr uint32_t validFlags =
-        OBELISK_RT_METHOD_TASK | OBELISK_RT_METHOD_PURE;
+        TALOS_RT_METHOD_TASK | TALOS_RT_METHOD_PURE;
     for (uint64_t index = 0; index != descriptor->method_count; ++index) {
       const auto &method = descriptor->methods[index];
       if (!method.signature_id || method.slot >= UINT32_MAX ||
           (index && descriptor->methods[index - 1].slot >= method.slot) ||
           (method.flags & ~validFlags) != 0 ||
           (!method.native_entry &&
-           method.bytecode_function == OBELISK_RT_METHOD_NO_BYTECODE &&
-           !(method.flags & OBELISK_RT_METHOD_PURE)))
+           method.bytecode_function == TALOS_RT_METHOD_NO_BYTECODE &&
+           !(method.flags & TALOS_RT_METHOD_PURE)))
         return nullptr;
       auto inherited = result.slots.find(method.slot);
       if (inherited) {
         if ((*inherited)->signature_id != method.signature_id ||
-            (((*inherited)->flags ^ method.flags) & OBELISK_RT_METHOD_TASK))
+            (((*inherited)->flags ^ method.flags) & TALOS_RT_METHOD_TASK))
           return nullptr;
-        result.pure -= !!((*inherited)->flags & OBELISK_RT_METHOD_PURE);
+        result.pure -= !!((*inherited)->flags & TALOS_RT_METHOD_PURE);
       }
-      result.pure += !!(method.flags & OBELISK_RT_METHOD_PURE);
+      result.pure += !!(method.flags & TALOS_RT_METHOD_PURE);
       result.slots = result.slots.set(method.slot, &method);
       const auto *previous = result.signatures.find(method.signature_id);
       if (!previous || (*previous)->slot >= method.slot) {
@@ -806,10 +806,10 @@ public:
         result.requirements.countMatches(
             result.signatures, matches,
             [](uint64_t, const auto *implementation) {
-              return !(implementation->flags & OBELISK_RT_METHOD_PURE);
+              return !(implementation->flags & TALOS_RT_METHOD_PURE);
             });
     if (!(descriptor->flags &
-          (OBELISK_RT_CLASS_ABSTRACT | OBELISK_RT_CLASS_INTERFACE)) &&
+          (TALOS_RT_CLASS_ABSTRACT | TALOS_RT_CLASS_INTERFACE)) &&
         (result.pure || result.missing))
       return nullptr;
     additions.push_back(descriptor);
@@ -830,28 +830,28 @@ public:
 
 private:
   InterfaceValidation interfaceValidation;
-  obelisk::runtime::DescriptorMatchCache matches;
-  std::unordered_map<const obelisk_rt_class_descriptor_v1 *, Inventory>
+  talos::runtime::DescriptorMatchCache matches;
+  std::unordered_map<const talos_rt_class_descriptor_v1 *, Inventory>
       inventories;
-  std::vector<const obelisk_rt_class_descriptor_v1 *> additions;
+  std::vector<const talos_rt_class_descriptor_v1 *> additions;
 };
 
 using ValidatedClasses =
-    std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>;
+    std::unordered_map<uint64_t, const talos_rt_class_descriptor_v1 *>;
 
-obelisk_rt_status validateClassDescriptor(
-    const obelisk_rt_class_descriptor_v1 *descriptor,
+talos_rt_status validateClassDescriptor(
+    const talos_rt_class_descriptor_v1 *descriptor,
     const ValidatedClasses *validated = nullptr,
-    std::vector<const obelisk_rt_class_descriptor_v1 *> *pending = nullptr,
+    std::vector<const talos_rt_class_descriptor_v1 *> *pending = nullptr,
     ClassLayoutValidation *sharedLayouts = nullptr,
     ClassMethodValidation *sharedMethods = nullptr);
 
-bool validateRandomLayout(const obelisk_rt_class_descriptor_v1 *descriptor,
+bool validateRandomLayout(const talos_rt_class_descriptor_v1 *descriptor,
                           const TraceHandleIndex &handles) {
   const auto *random = descriptor->random_layout;
   if (!random)
     return true;
-  if (random->version != OBELISK_RT_VERSION || random->reserved != 0 ||
+  if (random->version != TALOS_RT_VERSION || random->reserved != 0 ||
       (random->edge_count == 0) != (random->edges == nullptr) ||
       (random->variable_count == 0) != (random->variables == nullptr) ||
       (random->edge_count == 0 && random->variable_count == 0))
@@ -869,9 +869,9 @@ bool validateRandomLayout(const obelisk_rt_class_descriptor_v1 *descriptor,
   std::vector<uint64_t> edges;
   for (uint64_t index = 0; index != random->edge_count; ++index) {
     const auto &edge = random->edges[index];
-    if (edge.handle_offset % alignof(obelisk_rt_managed_word_v1) != 0 ||
+    if (edge.handle_offset % alignof(talos_rt_managed_word_v1) != 0 ||
         edge.mode_offset % alignof(uint64_t) != 0 ||
-        !checkedRange(edge.handle_offset, sizeof(obelisk_rt_managed_word_v1),
+        !checkedRange(edge.handle_offset, sizeof(talos_rt_managed_word_v1),
                       descriptor->instance_size) ||
         !checkedRange(edge.mode_offset, sizeof(uint64_t),
                       descriptor->instance_size) ||
@@ -885,16 +885,16 @@ bool validateRandomLayout(const obelisk_rt_class_descriptor_v1 *descriptor,
     if (index != 0 && edges[index - 1] == edges[index])
       return false;
     auto handle = handles.find(edges[index]);
-    if (!handle || handle->kind != OBELISK_RT_TRACE_STRONG ||
-        handle->slotKind != OBELISK_RT_MANAGED_SLOT_CLASS)
+    if (!handle || handle->kind != TALOS_RT_TRACE_STRONG ||
+        handle->slotKind != TALOS_RT_MANAGED_SLOT_CLASS)
       return false;
   }
   for (uint64_t index = 0; index != random->variable_count; ++index) {
     const auto &variable = random->variables[index];
-    bool isRandC = (variable.flags & OBELISK_RT_RANDOM_VARIABLE_RANDC) != 0;
+    bool isRandC = (variable.flags & TALOS_RT_RANDOM_VARIABLE_RANDC) != 0;
     uint64_t valueSize = (uint64_t(variable.bit_width) + 7) / 8;
     uint64_t storageSize =
-        (variable.flags & OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE) != 0
+        (variable.flags & TALOS_RT_RANDOM_VARIABLE_FOUR_STATE) != 0
             ? valueSize * 2
             : valueSize;
     if (variable.bit_width == 0 ||
@@ -956,20 +956,20 @@ bool validateRandomLayout(const obelisk_rt_class_descriptor_v1 *descriptor,
   return true;
 }
 
-bool layoutOverlapsHandle(const obelisk_rt_trace_layout_v1 *layout,
+bool layoutOverlapsHandle(const talos_rt_trace_layout_v1 *layout,
                           uint64_t baseOffset, uint64_t offset, uint64_t size) {
   if (!layout)
     return false;
   for (uint64_t index = 0; index != layout->entry_count; ++index) {
-    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
+    const talos_rt_trace_entry_v1 &entry = layout->entries[index];
     for (uint64_t item = 0; item != entry.count; ++item) {
       uint64_t fieldOffset = baseOffset + entry.offset + item * entry.stride;
-      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+      if (entry.kind == TALOS_RT_TRACE_EMBEDDED) {
         if (layoutOverlapsHandle(entry.child_layout, fieldOffset, offset, size))
           return true;
         continue;
       }
-      uint64_t fieldEnd = fieldOffset + sizeof(obelisk_rt_managed_word_v1);
+      uint64_t fieldEnd = fieldOffset + sizeof(talos_rt_managed_word_v1);
       uint64_t end = offset + size;
       if (offset < fieldEnd && fieldOffset < end)
         return true;
@@ -979,30 +979,30 @@ bool layoutOverlapsHandle(const obelisk_rt_trace_layout_v1 *layout,
 }
 
 bool validateLayoutHandleWrite(
-    const obelisk_rt_trace_layout_v1 *layout, uint64_t baseOffset,
+    const talos_rt_trace_layout_v1 *layout, uint64_t baseOffset,
     uint64_t offset, uint64_t size, const uint8_t *data, ManagedHeap *heap,
-    std::vector<obelisk_rt_object_v1 *> *referents = nullptr) {
+    std::vector<talos_rt_object_v1 *> *referents = nullptr) {
   if (!layout)
     return true;
   uint64_t end = offset + size;
   for (uint64_t index = 0; index != layout->entry_count; ++index) {
-    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
+    const talos_rt_trace_entry_v1 &entry = layout->entries[index];
     for (uint64_t item = 0; item != entry.count; ++item) {
       uint64_t fieldOffset = baseOffset + entry.offset + item * entry.stride;
-      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+      if (entry.kind == TALOS_RT_TRACE_EMBEDDED) {
         if (!validateLayoutHandleWrite(entry.child_layout, fieldOffset, offset,
                                        size, data, heap, referents))
           return false;
         continue;
       }
-      uint64_t fieldEnd = fieldOffset + sizeof(obelisk_rt_managed_word_v1);
+      uint64_t fieldEnd = fieldOffset + sizeof(talos_rt_managed_word_v1);
       if (offset >= fieldEnd || fieldOffset >= end)
         continue;
       // Never admit a torn managed pointer, even from a trusted generated
       // aggregate store.
       if (fieldOffset < offset || fieldEnd > end)
         return false;
-      obelisk_rt_managed_word_v1 word = 0;
+      talos_rt_managed_word_v1 word = 0;
       std::memcpy(&word, data + fieldOffset - offset, sizeof(word));
       if (word == 0)
         continue;
@@ -1011,32 +1011,32 @@ bool validateLayoutHandleWrite(
                 heap, word, candidateSlotMask(entry.slot_kind));
             candidate && referents)
           referents->push_back(
-              static_cast<obelisk_rt_object_v1 *>(candidate->object));
+              static_cast<talos_rt_object_v1 *>(candidate->object));
         continue;
       }
-      if (entry.slot_kind == OBELISK_RT_MANAGED_SLOT_STRING &&
+      if (entry.slot_kind == TALOS_RT_MANAGED_SLOT_STRING &&
           validImmediateManagedWord(word))
         continue;
-      obelisk_rt_object_v1 *referent = managedWordObject(word);
+      talos_rt_object_v1 *referent = managedWordObject(word);
       ObjectMetadata *referentMetadata = metadataFor(referent);
-      obelisk_rt_managed_kind_v1 expectedKind =
-          entry.slot_kind == OBELISK_RT_MANAGED_SLOT_CLASS
-              ? OBELISK_RT_MANAGED_CLASS
-              : (entry.slot_kind == OBELISK_RT_MANAGED_SLOT_STRING
-                     ? OBELISK_RT_MANAGED_STRING
-                     : (entry.slot_kind == OBELISK_RT_MANAGED_SLOT_CONTAINER
-                            ? OBELISK_RT_MANAGED_CONTAINER
-                            : OBELISK_RT_MANAGED_REFERENCE_PATH));
-      bool builtinSlot = entry.slot_kind == OBELISK_RT_MANAGED_SLOT_MAILBOX ||
-                         entry.slot_kind == OBELISK_RT_MANAGED_SLOT_SEMAPHORE;
+      talos_rt_managed_kind_v1 expectedKind =
+          entry.slot_kind == TALOS_RT_MANAGED_SLOT_CLASS
+              ? TALOS_RT_MANAGED_CLASS
+              : (entry.slot_kind == TALOS_RT_MANAGED_SLOT_STRING
+                     ? TALOS_RT_MANAGED_STRING
+                     : (entry.slot_kind == TALOS_RT_MANAGED_SLOT_CONTAINER
+                            ? TALOS_RT_MANAGED_CONTAINER
+                            : TALOS_RT_MANAGED_REFERENCE_PATH));
+      bool builtinSlot = entry.slot_kind == TALOS_RT_MANAGED_SLOT_MAILBOX ||
+                         entry.slot_kind == TALOS_RT_MANAGED_SLOT_SEMAPHORE;
       if (!referentMetadata || referentMetadata->heap != heap)
         return false;
       if (builtinSlot) {
         BuiltinClassKind expected =
-            entry.slot_kind == OBELISK_RT_MANAGED_SLOT_MAILBOX
+            entry.slot_kind == TALOS_RT_MANAGED_SLOT_MAILBOX
                 ? BuiltinClassKind::Mailbox
                 : BuiltinClassKind::Semaphore;
-        if (obelisk_rt_builtin_class_kind_unlocked(referent) != expected)
+        if (talos_rt_builtin_class_kind_unlocked(referent) != expected)
           return false;
       } else if (referentMetadata->kind != expectedKind) {
         return false;
@@ -1058,15 +1058,15 @@ struct ManagedClassValidationCache {
   ClassMethodValidation methods;
 };
 
-struct obelisk_rt_gc_lane_v1 {
+struct talos_rt_gc_lane_v1 {
   ManagedHeap *heap = nullptr;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   std::atomic<uintptr_t> owner{0};
   std::atomic<LaneState> state{LaneState::Inactive};
-  std::atomic<obelisk_rt_gc_root_v1 *> roots{nullptr};
-  std::atomic<obelisk_rt_gc_root_range_v1 *> rootRanges{nullptr};
-  std::atomic<obelisk_rt_gc_managed_root_v1 *> managedRoots{nullptr};
-  std::atomic<obelisk_rt_gc_managed_root_range_v1 *> managedRootRanges{nullptr};
+  std::atomic<talos_rt_gc_root_v1 *> roots{nullptr};
+  std::atomic<talos_rt_gc_root_range_v1 *> rootRanges{nullptr};
+  std::atomic<talos_rt_gc_managed_root_v1 *> managedRoots{nullptr};
+  std::atomic<talos_rt_gc_managed_root_range_v1 *> managedRootRanges{nullptr};
   std::atomic<ManagedRootProvider *> providers{nullptr};
 };
 
@@ -1077,7 +1077,7 @@ struct ThreadAllocationCache {
   uint64_t heapID = 0;
   uint64_t epoch = 0;
   std::array<Span *, kSizeClassCount> spans{};
-  std::array<const obelisk_rt_class_descriptor_v1 *, 8> validatedDescriptors{};
+  std::array<const talos_rt_class_descriptor_v1 *, 8> validatedDescriptors{};
   uint32_t nextValidatedDescriptor = 0;
 };
 
@@ -1104,7 +1104,7 @@ acquireMonotonicIdentity(std::atomic<uint64_t> &source) {
 uint64_t acquireHeapIdentity() {
   std::optional<uint64_t> identity = acquireMonotonicIdentity(nextHeapID);
   if (!identity)
-    obelisk_rt_out_of_memory();
+    talos_rt_out_of_memory();
   return *identity;
 }
 
@@ -1131,21 +1131,21 @@ ThreadAllocationCache &allocationCache(ManagedHeap *heap, uint64_t heapID,
 
 class ManagedHeap {
 public:
-  explicit ManagedHeap(obelisk_rt_context *context)
+  explicit ManagedHeap(talos_rt_context *context)
       : context(context), id(acquireHeapIdentity()) {}
 
   ~ManagedHeap() {
     enumerateAllocated(
         [](ObjectMetadata *metadata) { unregisterMetadata(metadata); });
-    for (obelisk_rt_gc_lane_v1 *lane : lanes)
+    for (talos_rt_gc_lane_v1 *lane : lanes)
       delete lane;
   }
 
-  obelisk_rt_status createLane(obelisk_rt_gc_lane_v1 **outLane) {
+  talos_rt_status createLane(talos_rt_gc_lane_v1 **outLane) {
     if (!outLane)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     *outLane = nullptr;
-    auto lane = std::make_unique<obelisk_rt_gc_lane_v1>();
+    auto lane = std::make_unique<talos_rt_gc_lane_v1>();
     lane->heap = this;
     lane->context = context;
     {
@@ -1154,23 +1154,23 @@ public:
       lanes.push_back(lane.get());
     }
     *outLane = lane.release();
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status destroyLane(obelisk_rt_gc_lane_v1 *lane) {
+  talos_rt_status destroyLane(talos_rt_gc_lane_v1 *lane) {
     if (!owns(lane))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     LaneState expected = LaneState::Inactive;
     if (!lane->state.compare_exchange_strong(expected, LaneState::Destroying,
                                              std::memory_order_acq_rel))
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     if (lane->roots.load(std::memory_order_acquire) ||
         lane->rootRanges.load(std::memory_order_acquire) ||
         lane->managedRoots.load(std::memory_order_acquire) ||
         lane->managedRootRanges.load(std::memory_order_acquire) ||
         lane->providers.load(std::memory_order_acquire)) {
       lane->state.store(LaneState::Inactive, std::memory_order_release);
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     }
     {
       std::lock_guard<std::mutex> worldLock(worldMutex);
@@ -1178,37 +1178,37 @@ public:
       auto found = std::find(lanes.begin(), lanes.end(), lane);
       if (found == lanes.end()) {
         lane->state.store(LaneState::Inactive, std::memory_order_release);
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       }
       lanes.erase(found);
     }
     delete lane;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status enter(obelisk_rt_gc_lane_v1 *lane) {
+  talos_rt_status enter(talos_rt_gc_lane_v1 *lane) {
     if (!owns(lane))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     LaneState expected = LaneState::Inactive;
     if (!lane->state.compare_exchange_strong(expected, LaneState::Active,
                                              std::memory_order_acq_rel))
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     lane->owner.store(currentLaneOwnerToken(), std::memory_order_release);
     return safepoint(lane);
   }
 
-  obelisk_rt_status leave(obelisk_rt_gc_lane_v1 *lane) {
+  talos_rt_status leave(talos_rt_gc_lane_v1 *lane) {
     if (!activeOwner(lane))
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_status status = safepoint(lane);
-    if (status != OBELISK_RT_OK)
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_status status = safepoint(lane);
+    if (status != TALOS_RT_OK)
       return status;
     if (lane->roots.load(std::memory_order_acquire) ||
         lane->rootRanges.load(std::memory_order_acquire) ||
         lane->managedRoots.load(std::memory_order_acquire) ||
         lane->managedRootRanges.load(std::memory_order_acquire) ||
         lane->providers.load(std::memory_order_acquire))
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     {
       // A collector evaluates lane states under worldMutex before waiting.
       // Publish the transition under that mutex too; otherwise it can land
@@ -1219,129 +1219,129 @@ public:
       lane->state.store(LaneState::Inactive, std::memory_order_release);
     }
     worldCondition.notify_all();
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status safepoint(obelisk_rt_gc_lane_v1 *lane) {
+  talos_rt_status safepoint(talos_rt_gc_lane_v1 *lane) {
     if (!activeOwner(lane))
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     if (!collectionRequested.load(std::memory_order_acquire))
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     std::unique_lock<std::mutex> lock(worldMutex);
     if (!collectionRequested.load(std::memory_order_acquire))
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     lane->state.store(LaneState::Parked, std::memory_order_release);
     worldCondition.notify_all();
     worldCondition.wait(lock, [&] {
       return !collectionRequested.load(std::memory_order_acquire);
     });
     lane->state.store(LaneState::Active, std::memory_order_release);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status pushRoot(obelisk_rt_gc_lane_v1 *lane,
-                             obelisk_rt_gc_root_v1 *root,
-                             obelisk_rt_object_v1 **slot) {
+  talos_rt_status pushRoot(talos_rt_gc_lane_v1 *lane,
+                             talos_rt_gc_root_v1 *root,
+                             talos_rt_object_v1 **slot) {
     if (!activeOwner(lane) || !root || !slot || root->cookie != 0)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     root->slot = slot;
     root->previous = lane->roots.load(std::memory_order_relaxed);
     root->cookie = kRootCookie ^ reinterpret_cast<uintptr_t>(lane);
     lane->roots.store(root, std::memory_order_release);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status popRoot(obelisk_rt_gc_lane_v1 *lane,
-                            obelisk_rt_gc_root_v1 *root) {
+  talos_rt_status popRoot(talos_rt_gc_lane_v1 *lane,
+                            talos_rt_gc_root_v1 *root) {
     if (!activeOwner(lane) || !root ||
         root->cookie != (kRootCookie ^ reinterpret_cast<uintptr_t>(lane)) ||
         lane->roots.load(std::memory_order_acquire) != root)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     lane->roots.store(root->previous, std::memory_order_release);
     root->slot = nullptr;
     root->previous = nullptr;
     root->cookie = 0;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status pushRootRange(obelisk_rt_gc_lane_v1 *lane,
-                                  obelisk_rt_gc_root_range_v1 *range,
-                                  obelisk_rt_object_v1 **slots,
+  talos_rt_status pushRootRange(talos_rt_gc_lane_v1 *lane,
+                                  talos_rt_gc_root_range_v1 *range,
+                                  talos_rt_object_v1 **slots,
                                   uint64_t count) {
     if (!activeOwner(lane) || !range || (!slots && count != 0) ||
         range->cookie != 0)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     range->slots = slots;
     range->count = count;
     range->previous = lane->rootRanges.load(std::memory_order_relaxed);
     range->cookie = kRootCookie ^ reinterpret_cast<uintptr_t>(lane) ^
                     reinterpret_cast<uintptr_t>(range);
     lane->rootRanges.store(range, std::memory_order_release);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status popRootRange(obelisk_rt_gc_lane_v1 *lane,
-                                 obelisk_rt_gc_root_range_v1 *range) {
+  talos_rt_status popRootRange(talos_rt_gc_lane_v1 *lane,
+                                 talos_rt_gc_root_range_v1 *range) {
     if (!activeOwner(lane) || !range ||
         range->cookie != (kRootCookie ^ reinterpret_cast<uintptr_t>(lane) ^
                           reinterpret_cast<uintptr_t>(range)) ||
         lane->rootRanges.load(std::memory_order_acquire) != range)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     lane->rootRanges.store(range->previous, std::memory_order_release);
     range->slots = nullptr;
     range->count = 0;
     range->previous = nullptr;
     range->cookie = 0;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  bool validManagedRootWord(obelisk_rt_managed_word_v1 word) const {
+  bool validManagedRootWord(talos_rt_managed_word_v1 word) const {
     if (word == 0 || validImmediateManagedWord(word))
       return true;
-    obelisk_rt_object_v1 *object = managedWordObject(word);
+    talos_rt_object_v1 *object = managedWordObject(word);
     ObjectMetadata *metadata = metadataFor(object);
     return metadata && metadata->heap == this;
   }
 
-  obelisk_rt_status pushManagedRoot(obelisk_rt_gc_lane_v1 *lane,
-                                    obelisk_rt_gc_managed_root_v1 *root,
-                                    obelisk_rt_managed_word_v1 *slot) {
+  talos_rt_status pushManagedRoot(talos_rt_gc_lane_v1 *lane,
+                                    talos_rt_gc_managed_root_v1 *root,
+                                    talos_rt_managed_word_v1 *slot) {
     if (!activeOwner(lane) || !root || !slot || root->cookie != 0)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     if (!validManagedRootWord(*slot))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     root->slot = slot;
     root->previous = lane->managedRoots.load(std::memory_order_relaxed);
     root->cookie = kRootCookie ^ reinterpret_cast<uintptr_t>(lane) ^
                    UINT64_C(0x4d414e41474544);
     lane->managedRoots.store(root, std::memory_order_release);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status popManagedRoot(obelisk_rt_gc_lane_v1 *lane,
-                                   obelisk_rt_gc_managed_root_v1 *root) {
+  talos_rt_status popManagedRoot(talos_rt_gc_lane_v1 *lane,
+                                   talos_rt_gc_managed_root_v1 *root) {
     if (!activeOwner(lane) || !root ||
         root->cookie != (kRootCookie ^ reinterpret_cast<uintptr_t>(lane) ^
                          UINT64_C(0x4d414e41474544)) ||
         lane->managedRoots.load(std::memory_order_acquire) != root)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     lane->managedRoots.store(root->previous, std::memory_order_release);
     root->slot = nullptr;
     root->previous = nullptr;
     root->cookie = 0;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status
-  pushManagedRootRange(obelisk_rt_gc_lane_v1 *lane,
-                       obelisk_rt_gc_managed_root_range_v1 *range,
-                       obelisk_rt_managed_word_v1 *slots, uint64_t count) {
+  talos_rt_status
+  pushManagedRootRange(talos_rt_gc_lane_v1 *lane,
+                       talos_rt_gc_managed_root_range_v1 *range,
+                       talos_rt_managed_word_v1 *slots, uint64_t count) {
     if (!activeOwner(lane) || !range || (!slots && count != 0) ||
         range->cookie != 0)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     for (uint64_t index = 0; index != count; ++index)
       if (!validManagedRootWord(slots[index]))
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
     range->slots = slots;
     range->count = count;
     range->previous = lane->managedRootRanges.load(std::memory_order_relaxed);
@@ -1349,77 +1349,77 @@ public:
                     reinterpret_cast<uintptr_t>(range) ^
                     UINT64_C(0x4d414e41474544);
     lane->managedRootRanges.store(range, std::memory_order_release);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status
-  popManagedRootRange(obelisk_rt_gc_lane_v1 *lane,
-                      obelisk_rt_gc_managed_root_range_v1 *range) {
+  talos_rt_status
+  popManagedRootRange(talos_rt_gc_lane_v1 *lane,
+                      talos_rt_gc_managed_root_range_v1 *range) {
     if (!activeOwner(lane) || !range ||
         range->cookie !=
             (kRootCookie ^ reinterpret_cast<uintptr_t>(lane) ^
              reinterpret_cast<uintptr_t>(range) ^ UINT64_C(0x4d414e41474544)) ||
         lane->managedRootRanges.load(std::memory_order_acquire) != range)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     lane->managedRootRanges.store(range->previous, std::memory_order_release);
     range->slots = nullptr;
     range->count = 0;
     range->previous = nullptr;
     range->cookie = 0;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status pushProvider(obelisk_rt_gc_lane_v1 *lane,
+  talos_rt_status pushProvider(talos_rt_gc_lane_v1 *lane,
                                  ManagedRootProvider *provider,
                                  ManagedRootEnumerate enumerate,
                                  void *environment) {
     if (!activeOwner(lane) || !provider || !enumerate || provider->previous ||
         provider->cookie != 0)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     provider->enumerate = enumerate;
     provider->environment = environment;
     provider->previous = lane->providers.load(std::memory_order_relaxed);
     provider->cookie = kProviderCookie ^ reinterpret_cast<uintptr_t>(lane);
     lane->providers.store(provider, std::memory_order_release);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status popProvider(obelisk_rt_gc_lane_v1 *lane,
+  talos_rt_status popProvider(talos_rt_gc_lane_v1 *lane,
                                 ManagedRootProvider *provider) {
     if (!activeOwner(lane) || !provider ||
         provider->cookie !=
             (kProviderCookie ^ reinterpret_cast<uintptr_t>(lane)) ||
         lane->providers.load(std::memory_order_acquire) != provider)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     lane->providers.store(provider->previous, std::memory_order_release);
     provider->enumerate = nullptr;
     provider->environment = nullptr;
     provider->previous = nullptr;
     provider->cookie = 0;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status registerStatic(obelisk_rt_object_v1 **slot,
+  talos_rt_status registerStatic(talos_rt_object_v1 **slot,
                                    bool activeCaller) {
     if (!slot)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     std::unique_lock<std::mutex> worldLock(worldMutex, std::defer_lock);
     if (!activeCaller)
       worldLock.lock();
     std::lock_guard<std::mutex> rootLock(rootMutex);
     if (std::find(staticRoots.begin(), staticRoots.end(), slot) !=
         staticRoots.end())
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     staticRoots.push_back(slot);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status registerCandidateStatic(obelisk_rt_managed_word_v1 *slot,
+  talos_rt_status registerCandidateStatic(talos_rt_managed_word_v1 *slot,
                                             uint32_t allowedKinds,
                                             bool activeCaller) {
     if (!slot || allowedKinds == 0 ||
-        (allowedKinds & ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0)
-      return OBELISK_RT_INVALID_ARGUMENT;
+        (allowedKinds & ~TALOS_RT_MANAGED_ROOT_KIND_ALL) != 0)
+      return TALOS_RT_INVALID_ARGUMENT;
     std::unique_lock<std::mutex> worldLock(worldMutex, std::defer_lock);
     if (!activeCaller)
       worldLock.lock();
@@ -1427,27 +1427,27 @@ public:
     if (std::any_of(
             candidateStaticRoots.begin(), candidateStaticRoots.end(),
             [&](const CandidateStaticRoot &root) { return root.slot == slot; }))
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     candidateStaticRoots.push_back({slot, allowedKinds});
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status unregisterStatic(obelisk_rt_object_v1 **slot,
+  talos_rt_status unregisterStatic(talos_rt_object_v1 **slot,
                                      bool activeCaller) {
     if (!slot)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     std::unique_lock<std::mutex> worldLock(worldMutex, std::defer_lock);
     if (!activeCaller)
       worldLock.lock();
     std::lock_guard<std::mutex> rootLock(rootMutex);
     auto found = std::find(staticRoots.begin(), staticRoots.end(), slot);
     if (found == staticRoots.end())
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     staticRoots.erase(found);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status pin(obelisk_rt_object_v1 *object, bool activeCaller) {
+  talos_rt_status pin(talos_rt_object_v1 *object, bool activeCaller) {
     // Pins are external roots. Serialize their publication with the
     // stop-the-world snapshot so a successful pin is either visible to the
     // current collection or begins after that collection has completed. An
@@ -1458,38 +1458,38 @@ public:
       worldLock.lock();
     ObjectMetadata *metadata = metadataFor(object);
     if (!metadata || metadata->heap != this)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint32_t current = metadata->pins.load(std::memory_order_relaxed);
     do {
       if (current == UINT32_MAX)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
     } while (!metadata->pins.compare_exchange_weak(current, current + 1,
                                                    std::memory_order_acq_rel));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status unpin(obelisk_rt_object_v1 *object, bool activeCaller) {
+  talos_rt_status unpin(talos_rt_object_v1 *object, bool activeCaller) {
     std::unique_lock<std::mutex> worldLock(worldMutex, std::defer_lock);
     if (!activeCaller)
       worldLock.lock();
     ObjectMetadata *metadata = metadataFor(object);
     if (!metadata || metadata->heap != this)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint32_t current = metadata->pins.load(std::memory_order_relaxed);
     do {
       if (current == 0)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
     } while (!metadata->pins.compare_exchange_weak(current, current - 1,
                                                    std::memory_order_acq_rel));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status allocate(obelisk_rt_gc_lane_v1 *lane,
-                             const obelisk_rt_class_descriptor_v1 *descriptor,
-                             obelisk_rt_object_v1 **outObject) noexcept {
+  talos_rt_status allocate(talos_rt_gc_lane_v1 *lane,
+                             const talos_rt_class_descriptor_v1 *descriptor,
+                             talos_rt_object_v1 **outObject) noexcept {
     return guarded(context, [&] {
       if (!descriptor)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       uint64_t currentEpoch = allocatorEpoch.load(std::memory_order_acquire);
       ThreadAllocationCache &validationCache =
           allocationCache(this, id, currentEpoch);
@@ -1506,10 +1506,10 @@ public:
           }
         }
         if (!registered) {
-          obelisk_rt_status status = obelisk_rt_v1_class_validate(descriptor);
-          if (status != OBELISK_RT_OK)
-            return status == OBELISK_RT_INVALID_DESIGN
-                       ? OBELISK_RT_INVALID_ARGUMENT
+          talos_rt_status status = talos_rt_v1_class_validate(descriptor);
+          if (status != TALOS_RT_OK)
+            return status == TALOS_RT_INVALID_DESIGN
+                       ? TALOS_RT_INVALID_ARGUMENT
                        : status;
         }
         validationCache
@@ -1520,34 +1520,34 @@ public:
             validationCache.validatedDescriptors.size();
       }
       if ((descriptor->flags &
-           (OBELISK_RT_CLASS_ABSTRACT | OBELISK_RT_CLASS_INTERFACE)) != 0)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+           (TALOS_RT_CLASS_ABSTRACT | TALOS_RT_CLASS_INTERFACE)) != 0)
+        return TALOS_RT_INVALID_LIFECYCLE;
       return allocateImpl(
-          lane, OBELISK_RT_MANAGED_CLASS, descriptor->instance_size,
+          lane, TALOS_RT_MANAGED_CLASS, descriptor->instance_size,
           descriptor->instance_alignment, descriptor, outObject);
     });
   }
 
-  obelisk_rt_status allocateManaged(obelisk_rt_gc_lane_v1 *lane,
-                                    obelisk_rt_managed_kind_v1 kind,
+  talos_rt_status allocateManaged(talos_rt_gc_lane_v1 *lane,
+                                    talos_rt_managed_kind_v1 kind,
                                     uint64_t extent, uint64_t alignment,
                                     const void *runtimeDescriptor,
-                                    obelisk_rt_object_v1 **outObject) noexcept {
+                                    talos_rt_object_v1 **outObject) noexcept {
     return guarded(context, [&] {
-      if (kind <= OBELISK_RT_MANAGED_CLASS ||
-          kind > OBELISK_RT_MANAGED_REFERENCE_PATH || !runtimeDescriptor ||
+      if (kind <= TALOS_RT_MANAGED_CLASS ||
+          kind > TALOS_RT_MANAGED_REFERENCE_PATH || !runtimeDescriptor ||
           extent < sizeof(void *) || !validPowerOfTwo(alignment) ||
           alignment > UINT32_MAX)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       return allocateImpl(lane, kind, extent, alignment, runtimeDescriptor,
                           outObject);
     });
   }
 
-  OBELISK_RT_FEATURE_TEXT obelisk_rt_status allocateManagedWithoutSafepoint(
-      obelisk_rt_gc_lane_v1 *lane, obelisk_rt_managed_kind_v1 kind,
+  TALOS_RT_FEATURE_TEXT talos_rt_status allocateManagedWithoutSafepoint(
+      talos_rt_gc_lane_v1 *lane, talos_rt_managed_kind_v1 kind,
       uint64_t extent, uint64_t alignment, const void *runtimeDescriptor,
-      obelisk_rt_object_v1 **outObject) noexcept;
+      talos_rt_object_v1 **outObject) noexcept;
 
 private:
   static uint64_t deferredLimit(uint64_t threshold) {
@@ -1557,30 +1557,30 @@ private:
                : threshold * kDeferredCollectionFactor;
   }
 
-  obelisk_rt_status allocateImpl(obelisk_rt_gc_lane_v1 *lane,
-                                 obelisk_rt_managed_kind_v1 kind,
+  talos_rt_status allocateImpl(talos_rt_gc_lane_v1 *lane,
+                                 talos_rt_managed_kind_v1 kind,
                                  uint64_t extent, uint64_t alignment,
                                  const void *runtimeDescriptor,
-                                 obelisk_rt_object_v1 **outObject) {
+                                 talos_rt_object_v1 **outObject) {
     if (!outObject)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     *outObject = nullptr;
     if (!activeOwner(lane))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     uint64_t objectOffset = roundUp(sizeof(SlotPrefix), alignment);
     uint64_t allocationAlignment = std::max<uint64_t>(16, alignment);
     if (extent > std::numeric_limits<uint64_t>::max() - objectOffset ||
         objectOffset + extent >
             std::numeric_limits<uint64_t>::max() - allocationAlignment + 1)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
 
     // Under polled collection the caller's managed values are registered
     // only at polls, so allocation neither parks nor collects: it records
     // pressure for the next poll or point between activations.
     bool polledCollection = polled.load(std::memory_order_acquire);
-    obelisk_rt_status status =
-        polledCollection ? OBELISK_RT_OK : safepoint(lane);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status =
+        polledCollection ? TALOS_RT_OK : safepoint(lane);
+    if (status != TALOS_RT_OK)
       return status;
     uint64_t allocated =
         allocatedSinceCollection.load(std::memory_order_relaxed);
@@ -1594,7 +1594,7 @@ private:
         collectionPending.store(true, std::memory_order_release);
       } else {
         status = collect(lane);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       }
     }
@@ -1603,7 +1603,7 @@ private:
         roundUp(objectOffset + extent, allocationAlignment);
     std::optional<uint64_t> objectIdentity = acquireObjectIdentity();
     if (!objectIdentity)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     // A safepoint above may have participated in a collection, invalidating
     // every cached span. Reacquire the TLS cache at the post-safepoint epoch
     // before dereferencing a span pointer.
@@ -1648,15 +1648,15 @@ private:
 
     std::memset(slotMemory, 0, allocationSize);
     auto *object =
-        reinterpret_cast<obelisk_rt_object_v1 *>(slotMemory + objectOffset);
+        reinterpret_cast<talos_rt_object_v1 *>(slotMemory + objectOffset);
     auto *prefix = reinterpret_cast<SlotPrefix *>(
         reinterpret_cast<uint8_t *>(object) - sizeof(SlotPrefix));
     prefix->metadata = metadata;
     prefix->magic = kObjectMagic;
     metadata->object = object;
     metadata->descriptor =
-        kind == OBELISK_RT_MANAGED_CLASS
-            ? static_cast<const obelisk_rt_class_descriptor_v1 *>(
+        kind == TALOS_RT_MANAGED_CLASS
+            ? static_cast<const talos_rt_class_descriptor_v1 *>(
                   runtimeDescriptor)
             : nullptr;
     metadata->identity = *objectIdentity;
@@ -1678,20 +1678,20 @@ private:
     liveObjects.fetch_add(1, std::memory_order_relaxed);
     liveBytes.fetch_add(allocationSize, std::memory_order_relaxed);
     *outObject = object;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
 public:
-  obelisk_rt_status collect(obelisk_rt_gc_lane_v1 *requester) {
+  talos_rt_status collect(talos_rt_gc_lane_v1 *requester) {
     if (!activeOwner(requester))
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
 
     // An active lane must not block behind another collector: the current
     // collector is waiting for every active lane to park. Poll the safepoint
     // protocol while contending for collector ownership instead.
     while (!collectorMutex.try_lock()) {
-      obelisk_rt_status status = safepoint(requester);
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status = safepoint(requester);
+      if (status != TALOS_RT_OK)
         return status;
       std::this_thread::yield();
     }
@@ -1701,7 +1701,7 @@ public:
     requester->state.store(LaneState::Collecting, std::memory_order_release);
     worldCondition.notify_all();
     worldCondition.wait(worldLock, [&] {
-      for (obelisk_rt_gc_lane_v1 *lane : lanes) {
+      for (talos_rt_gc_lane_v1 *lane : lanes) {
         if (lane == requester)
           continue;
         LaneState state = lane->state.load(std::memory_order_acquire);
@@ -1711,18 +1711,18 @@ public:
       return true;
     });
 
-    obelisk_rt_status status = OBELISK_RT_OK;
-    OBELISK_RT_TRY {
+    talos_rt_status status = TALOS_RT_OK;
+    TALOS_RT_TRY {
       std::lock_guard<std::mutex> allocatorLock(allocatorMutex);
       markAndSweep();
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      status = OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      status = TALOS_RT_OUT_OF_MEMORY;
       std::lock_guard<std::mutex> allocatorLock(allocatorMutex);
       clearMarks();
     }
-    OBELISK_RT_CATCH_ALL {
-      status = OBELISK_RT_IO_ERROR;
+    TALOS_RT_CATCH_ALL {
+      status = TALOS_RT_IO_ERROR;
       std::lock_guard<std::mutex> allocatorLock(allocatorMutex);
       clearMarks();
     }
@@ -1743,7 +1743,7 @@ public:
     designated.store(true, std::memory_order_release);
   }
   /// The executing code roots its managed values only at polls and calls
-  /// that may reach one (OBELISK_RT_EXECUTION_POLLED_COLLECTION).
+  /// that may reach one (TALOS_RT_EXECUTION_POLLED_COLLECTION).
   void pollCollections() { polled.store(true, std::memory_order_release); }
   bool collectionsPolled() const {
     return polled.load(std::memory_order_acquire);
@@ -1762,9 +1762,9 @@ public:
   /// A compiled poll: every managed value of the calling activations is
   /// registered, so the lane may park for another collector and reclaim
   /// pending pressure itself.
-  obelisk_rt_status poll(obelisk_rt_gc_lane_v1 *lane) {
-    obelisk_rt_status status = safepoint(lane);
-    if (status != OBELISK_RT_OK || !undesignatedCollectionDue())
+  talos_rt_status poll(talos_rt_gc_lane_v1 *lane) {
+    talos_rt_status status = safepoint(lane);
+    if (status != TALOS_RT_OK || !undesignatedCollectionDue())
       return status;
     return collect(lane);
   }
@@ -1781,15 +1781,15 @@ public:
   /// Collections made at designated collection points.
   std::atomic<uint64_t> designatedCollections{0};
 
-  obelisk_rt_status setThreshold(uint64_t bytes) {
+  talos_rt_status setThreshold(uint64_t bytes) {
     if (bytes == 0)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     configuredThreshold.store(bytes, std::memory_order_relaxed);
     nextCollectionBytes.store(bytes, std::memory_order_relaxed);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  void statistics(obelisk_rt_gc_statistics_v1 &statistics) {
+  void statistics(talos_rt_gc_statistics_v1 &statistics) {
     statistics.live_objects = liveObjects.load(std::memory_order_relaxed);
     statistics.live_bytes = liveBytes.load(std::memory_order_relaxed);
     statistics.allocated_objects =
@@ -1808,11 +1808,11 @@ public:
         nextCollectionBytes.load(std::memory_order_relaxed);
   }
 
-  bool owns(obelisk_rt_gc_lane_v1 *lane) const {
+  bool owns(talos_rt_gc_lane_v1 *lane) const {
     return lane && lane->heap == this;
   }
 
-  bool activeOwner(obelisk_rt_gc_lane_v1 *lane) const {
+  bool activeOwner(talos_rt_gc_lane_v1 *lane) const {
     return owns(lane) &&
            lane->owner.load(std::memory_order_acquire) ==
                currentLaneOwnerToken() &&
@@ -1822,7 +1822,7 @@ public:
   bool hasActiveCaller() {
     std::lock_guard<std::mutex> laneLock(laneMutex);
     return std::any_of(lanes.begin(), lanes.end(),
-                       [&](obelisk_rt_gc_lane_v1 *lane) {
+                       [&](talos_rt_gc_lane_v1 *lane) {
                          return lane->owner.load(std::memory_order_acquire) ==
                                     currentLaneOwnerToken() &&
                                 lane->state.load(std::memory_order_acquire) ==
@@ -1830,43 +1830,43 @@ public:
                        });
   }
 
-  obelisk_rt_status retainScheduled(obelisk_rt_gc_lane_v1 *lane,
-                                    obelisk_rt_object_v1 *object) {
+  talos_rt_status retainScheduled(talos_rt_gc_lane_v1 *lane,
+                                    talos_rt_object_v1 *object) {
     // The active lane keeps the object alive until this increment is
     // published: a collector cannot pass that lane before its next safepoint.
     // This avoids taking worldMutex while the scheduler transaction lock is
     // held and therefore preserves the global GC/context lock order.
     if (!activeOwner(lane))
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     ObjectMetadata *metadata = metadataFor(object);
     if (!metadata || metadata->heap != this)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint32_t current = metadata->pins.load(std::memory_order_relaxed);
     do {
       if (current == UINT32_MAX)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
     } while (!metadata->pins.compare_exchange_weak(current, current + 1,
                                                    std::memory_order_release,
                                                    std::memory_order_relaxed));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
-  obelisk_rt_status releaseScheduled(obelisk_rt_object_v1 *object) {
+  talos_rt_status releaseScheduled(talos_rt_object_v1 *object) {
     ObjectMetadata *metadata = metadataFor(object);
     if (!metadata || metadata->heap != this)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint32_t current = metadata->pins.load(std::memory_order_relaxed);
     do {
       if (current == 0)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
     } while (!metadata->pins.compare_exchange_weak(current, current - 1,
                                                    std::memory_order_release,
                                                    std::memory_order_relaxed));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
   uint64_t identity() const { return id; }
-  obelisk_rt_context *ownerContext() const { return context; }
+  talos_rt_context *ownerContext() const { return context; }
 
   // Process class objects use scheduler tokens rather than heap allocations,
   // but their public object identities share this namespace.
@@ -1933,35 +1933,35 @@ private:
     pending.push_back(metadata);
   }
 
-  void markObject(obelisk_rt_object_v1 *object,
+  void markObject(talos_rt_object_v1 *object,
                   std::vector<ObjectMetadata *> &pending) {
     mark(metadataFor(object), pending);
   }
 
   struct WeakSlot {
     ObjectMetadata *owner;
-    obelisk_rt_managed_word_v1 *slot;
+    talos_rt_managed_word_v1 *slot;
   };
 
-  void traceLayout(uint8_t *base, const obelisk_rt_trace_layout_v1 *layout,
+  void traceLayout(uint8_t *base, const talos_rt_trace_layout_v1 *layout,
                    ObjectMetadata *owner,
                    std::vector<ObjectMetadata *> &pending,
                    std::vector<WeakSlot> &weakSlots) {
     if (!layout)
       return;
     for (uint64_t index = 0; index != layout->entry_count; ++index) {
-      const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
+      const talos_rt_trace_entry_v1 &entry = layout->entries[index];
       for (uint64_t item = 0; item != entry.count; ++item) {
         uint8_t *address = base + entry.offset + item * entry.stride;
-        if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+        if (entry.kind == TALOS_RT_TRACE_EMBEDDED) {
           traceLayout(address, entry.child_layout, owner, pending, weakSlots);
           continue;
         }
-        if (entry.kind == OBELISK_RT_TRACE_WEAK)
+        if (entry.kind == TALOS_RT_TRACE_WEAK)
           weakSlots.push_back(
-              {owner, reinterpret_cast<obelisk_rt_managed_word_v1 *>(address)});
+              {owner, reinterpret_cast<talos_rt_managed_word_v1 *>(address)});
         else {
-          obelisk_rt_managed_word_v1 word = 0;
+          talos_rt_managed_word_v1 word = 0;
           std::memcpy(&word, address, sizeof(word));
           if (isCandidateSlotKind(entry.slot_kind))
             mark(candidateRootMetadata(this, word,
@@ -1998,25 +1998,25 @@ private:
     for (size_t index = 0; index != availableSpans.size(); ++index)
       availableSpans[index].reserve(assignedSpans[index]);
 
-    for (obelisk_rt_gc_lane_v1 *lane : lanes)
-      for (obelisk_rt_gc_root_v1 *root =
+    for (talos_rt_gc_lane_v1 *lane : lanes)
+      for (talos_rt_gc_root_v1 *root =
                lane->roots.load(std::memory_order_acquire);
            root; root = root->previous)
         markObject(root->slot ? *root->slot : nullptr, pending);
-    for (obelisk_rt_gc_lane_v1 *lane : lanes)
-      for (obelisk_rt_gc_root_range_v1 *range =
+    for (talos_rt_gc_lane_v1 *lane : lanes)
+      for (talos_rt_gc_root_range_v1 *range =
                lane->rootRanges.load(std::memory_order_acquire);
            range; range = range->previous)
         for (uint64_t index = 0; index != range->count; ++index)
           markObject(range->slots ? range->slots[index] : nullptr, pending);
-    for (obelisk_rt_gc_lane_v1 *lane : lanes)
-      for (obelisk_rt_gc_managed_root_v1 *root =
+    for (talos_rt_gc_lane_v1 *lane : lanes)
+      for (talos_rt_gc_managed_root_v1 *root =
                lane->managedRoots.load(std::memory_order_acquire);
            root; root = root->previous)
         markObject(root->slot ? managedWordObject(*root->slot) : nullptr,
                    pending);
-    for (obelisk_rt_gc_lane_v1 *lane : lanes)
-      for (obelisk_rt_gc_managed_root_range_v1 *range =
+    for (talos_rt_gc_lane_v1 *lane : lanes)
+      for (talos_rt_gc_managed_root_range_v1 *range =
                lane->managedRootRanges.load(std::memory_order_acquire);
            range; range = range->previous)
         for (uint64_t index = 0; index != range->count; ++index)
@@ -2028,11 +2028,11 @@ private:
       std::vector<ObjectMetadata *> *pending;
     } providerVisitor{this, &pending};
     auto visitProviderRoot = [](void *environment,
-                                obelisk_rt_object_v1 **slot) {
+                                talos_rt_object_v1 **slot) {
       auto *visitor = static_cast<ProviderVisitor *>(environment);
       visitor->heap->markObject(slot ? *slot : nullptr, *visitor->pending);
     };
-    for (obelisk_rt_gc_lane_v1 *lane : lanes)
+    for (talos_rt_gc_lane_v1 *lane : lanes)
       for (ManagedRootProvider *provider =
                lane->providers.load(std::memory_order_acquire);
            provider; provider = provider->previous)
@@ -2058,14 +2058,14 @@ private:
                context->assignMask[word] == UINT64_MAX &&
                word < context->assignValue.size();
       };
-      for (obelisk_rt_object_v1 **slot : staticRoots) {
+      for (talos_rt_object_v1 **slot : staticRoots) {
         markObject(slot ? *slot : nullptr, pending);
         std::optional<size_t> word = designWordIndex(slot);
         if (word && hiddenAssignActive(*word))
           markObject(managedWordObject(context->assignValue[*word]), pending);
       }
       for (const CandidateStaticRoot &root : candidateStaticRoots) {
-        obelisk_rt_managed_word_v1 word = root.slot ? *root.slot : 0;
+        talos_rt_managed_word_v1 word = root.slot ? *root.slot : 0;
         mark(candidateRootMetadata(this, word, root.allowedKinds), pending);
         std::optional<size_t> index = designWordIndex(root.slot);
         if (index && hiddenAssignActive(*index))
@@ -2074,7 +2074,7 @@ private:
                pending);
       }
     }
-    obelisk_rt_enumerate_design_managed_roots(context, visitProviderRoot,
+    talos_rt_enumerate_design_managed_roots(context, visitProviderRoot,
                                               &providerVisitor);
     enumerateAllocated([&](ObjectMetadata *metadata) {
       if (metadata->pins.load(std::memory_order_acquire) != 0)
@@ -2085,7 +2085,7 @@ private:
       ObjectMetadata *metadata = pending.back();
       pending.pop_back();
       ObjectLock lock(metadata);
-      if (metadata->kind == OBELISK_RT_MANAGED_CLASS) {
+      if (metadata->kind == TALOS_RT_MANAGED_CLASS) {
         traceLayout(static_cast<uint8_t *>(metadata->object),
                     metadata->descriptor->layout, metadata, pending, weakSlots);
       } else {
@@ -2093,13 +2093,13 @@ private:
           ManagedHeap *heap;
           std::vector<ObjectMetadata *> *pending;
         } visitor{this, &pending};
-        auto visit = [](void *environment, obelisk_rt_object_v1 *object) {
+        auto visit = [](void *environment, talos_rt_object_v1 *object) {
           auto *visitor = static_cast<RuntimeTraceVisitor *>(environment);
-          obelisk_rt_managed_word_v1 word =
+          talos_rt_managed_word_v1 word =
               static_cast<uint64_t>(reinterpret_cast<uintptr_t>(object));
           visitor->heap->markObject(managedWordObject(word), *visitor->pending);
         };
-        obelisk_rt_managed_trace_runtime_object(
+        talos_rt_managed_trace_runtime_object(
             metadata->kind, static_cast<uint8_t *>(metadata->object),
             metadata->extent, visit, &visitor);
       }
@@ -2221,7 +2221,7 @@ private:
         std::memory_order_relaxed);
   }
 
-  obelisk_rt_context *context;
+  talos_rt_context *context;
   const uint64_t id;
   std::mutex allocatorMutex;
   std::mutex collectorMutex;
@@ -2234,10 +2234,10 @@ private:
   std::atomic<bool> collectionPending{false};
   std::atomic<bool> designated{false};
   std::atomic<bool> polled{false};
-  std::vector<obelisk_rt_gc_lane_v1 *> lanes;
-  std::vector<obelisk_rt_object_v1 **> staticRoots;
+  std::vector<talos_rt_gc_lane_v1 *> lanes;
+  std::vector<talos_rt_object_v1 **> staticRoots;
   struct CandidateStaticRoot {
-    obelisk_rt_managed_word_v1 *slot;
+    talos_rt_managed_word_v1 *slot;
     uint32_t allowedKinds;
   };
   std::vector<CandidateStaticRoot> candidateStaticRoots;
@@ -2259,38 +2259,38 @@ private:
   std::atomic<uint64_t> cachedEmptyChunks{0};
 };
 
-OBELISK_RT_FEATURE_TEXT obelisk_rt_status
+TALOS_RT_FEATURE_TEXT talos_rt_status
 ManagedHeap::allocateManagedWithoutSafepoint(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_managed_kind_v1 kind,
+    talos_rt_gc_lane_v1 *lane, talos_rt_managed_kind_v1 kind,
     uint64_t extent, uint64_t alignment, const void *runtimeDescriptor,
-    obelisk_rt_object_v1 **outObject) noexcept {
+    talos_rt_object_v1 **outObject) noexcept {
   // Keep this implementation in the named feature section without a closure.
   // GCC emits inline members and closure call operators as COMDAT functions
   // and cannot mix them with ordinary functions in one explicitly named ELF
   // section.
-  OBELISK_RT_TRY {
-    if (kind <= OBELISK_RT_MANAGED_CLASS ||
-        kind > OBELISK_RT_MANAGED_REFERENCE_PATH || !runtimeDescriptor ||
+  TALOS_RT_TRY {
+    if (kind <= TALOS_RT_MANAGED_CLASS ||
+        kind > TALOS_RT_MANAGED_REFERENCE_PATH || !runtimeDescriptor ||
         extent < sizeof(void *) || !validPowerOfTwo(alignment) ||
         alignment > UINT32_MAX)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     if (!outObject)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     *outObject = nullptr;
     if (!activeOwner(lane))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     uint64_t objectOffset = roundUp(sizeof(SlotPrefix), alignment);
     uint64_t allocationAlignment = std::max<uint64_t>(16, alignment);
     if (extent > std::numeric_limits<uint64_t>::max() - objectOffset ||
         objectOffset + extent >
             std::numeric_limits<uint64_t>::max() - allocationAlignment + 1)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
 
     uint64_t allocationSize =
         roundUp(objectOffset + extent, allocationAlignment);
     std::optional<uint64_t> objectIdentity = acquireObjectIdentity();
     if (!objectIdentity)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     uint64_t currentEpoch = allocatorEpoch.load(std::memory_order_acquire);
     ThreadAllocationCache &cache = allocationCache(this, id, currentEpoch);
     ObjectMetadata *metadata = nullptr;
@@ -2332,15 +2332,15 @@ ManagedHeap::allocateManagedWithoutSafepoint(
 
     std::memset(slotMemory, 0, allocationSize);
     auto *object =
-        reinterpret_cast<obelisk_rt_object_v1 *>(slotMemory + objectOffset);
+        reinterpret_cast<talos_rt_object_v1 *>(slotMemory + objectOffset);
     auto *prefix = reinterpret_cast<SlotPrefix *>(
         reinterpret_cast<uint8_t *>(object) - sizeof(SlotPrefix));
     prefix->metadata = metadata;
     prefix->magic = kObjectMagic;
     metadata->object = object;
     metadata->descriptor =
-        kind == OBELISK_RT_MANAGED_CLASS
-            ? static_cast<const obelisk_rt_class_descriptor_v1 *>(
+        kind == TALOS_RT_MANAGED_CLASS
+            ? static_cast<const talos_rt_class_descriptor_v1 *>(
                   runtimeDescriptor)
             : nullptr;
     metadata->identity = *objectIdentity;
@@ -2362,23 +2362,23 @@ ManagedHeap::allocateManagedWithoutSafepoint(
     liveObjects.fetch_add(1, std::memory_order_relaxed);
     liveBytes.fetch_add(allocationSize, std::memory_order_relaxed);
     *outObject = object;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     setLastError(context, "runtime allocation failed");
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     setLastError(context, "unexpected runtime exception");
-    return OBELISK_RT_IO_ERROR;
+    return TALOS_RT_IO_ERROR;
   }
 }
 
-ManagedHeap *obelisk_rt_managed_heap_create(obelisk_rt_context *context) {
+ManagedHeap *talos_rt_managed_heap_create(talos_rt_context *context) {
   return new ManagedHeap(context);
 }
 
-void obelisk_rt_managed_heap_destroy(ManagedHeap *heap) noexcept {
+void talos_rt_managed_heap_destroy(ManagedHeap *heap) noexcept {
   delete heap;
 }
 
@@ -2387,119 +2387,119 @@ namespace {
 struct ThreadExecutionLane {
   ManagedHeap *heap = nullptr;
   uint64_t heapID = 0;
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
 };
 
 thread_local std::vector<ThreadExecutionLane> executionLanes;
 
-ManagedHeap *heapFor(obelisk_rt_context *context) {
+ManagedHeap *heapFor(talos_rt_context *context) {
   return context ? context->managedHeap : nullptr;
 }
 
-obelisk_rt_status threadExecutionLane(ManagedHeap *heap,
-                                      obelisk_rt_gc_lane_v1 **outLane) {
+talos_rt_status threadExecutionLane(ManagedHeap *heap,
+                                      talos_rt_gc_lane_v1 **outLane) {
   if (!heap || !outLane)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outLane = nullptr;
   for (ThreadExecutionLane &entry : executionLanes) {
     // The id prevents a stale TLS entry from matching if an allocator reuses
     // the address of a context that was destroyed on another thread.
     if (entry.heap == heap && entry.heapID == heap->identity()) {
       *outLane = entry.lane;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
   }
 
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  obelisk_rt_status status = heap->createLane(&lane);
-  if (status != OBELISK_RT_OK)
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_status status = heap->createLane(&lane);
+  if (status != TALOS_RT_OK)
     return status;
-  OBELISK_RT_TRY { executionLanes.push_back({heap, heap->identity(), lane}); }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_TRY { executionLanes.push_back({heap, heap->identity(), lane}); }
+  TALOS_RT_CATCH_ALL {
     (void)heap->destroyLane(lane);
-    OBELISK_RT_RETHROW;
+    TALOS_RT_RETHROW;
   }
   *outLane = lane;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-const obelisk_rt_class_descriptor_v1 *
-descriptorFor(const obelisk_rt_object_v1 *object) {
+const talos_rt_class_descriptor_v1 *
+descriptorFor(const talos_rt_object_v1 *object) {
   ObjectMetadata *metadata = metadataFor(object);
-  return metadata && metadata->kind == OBELISK_RT_MANAGED_CLASS
+  return metadata && metadata->kind == TALOS_RT_MANAGED_CLASS
              ? metadata->descriptor
              : nullptr;
 }
 
 } // namespace
 
-obelisk_rt_status obelisk_rt_managed_identity_reserve(
-    obelisk_rt_context *context, uint64_t *outIdentity) noexcept {
+talos_rt_status talos_rt_managed_identity_reserve(
+    talos_rt_context *context, uint64_t *outIdentity) noexcept {
   if (!outIdentity)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outIdentity = 0;
   ManagedHeap *heap = heapFor(context);
   if (!heap)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::optional<uint64_t> identity = heap->acquireObjectIdentity();
   if (!identity)
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
   *outIdentity = *identity;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_managed_execution_enter(obelisk_rt_context *context,
-                                   obelisk_rt_gc_lane_v1 **outLane,
+talos_rt_status
+talos_rt_managed_execution_enter(talos_rt_context *context,
+                                   talos_rt_gc_lane_v1 **outLane,
                                    bool *outEntered) {
   if (!outLane || !outEntered)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outLane = nullptr;
   *outEntered = false;
   ManagedHeap *heap = heapFor(context);
   if (!heap)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
-    obelisk_rt_gc_lane_v1 *lane = nullptr;
-    obelisk_rt_status status = threadExecutionLane(heap, &lane);
-    if (status != OBELISK_RT_OK)
+    talos_rt_gc_lane_v1 *lane = nullptr;
+    talos_rt_status status = threadExecutionLane(heap, &lane);
+    if (status != TALOS_RT_OK)
       return status;
     if (heap->activeOwner(lane)) {
       *outLane = lane;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     status = heap->enter(lane);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     *outLane = lane;
     *outEntered = true;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   });
 }
 
-void obelisk_rt_managed_execution_leave(obelisk_rt_gc_lane_v1 *lane,
+void talos_rt_managed_execution_leave(talos_rt_gc_lane_v1 *lane,
                                         bool entered) {
   if (entered && lane && lane->heap)
     (void)lane->heap->leave(lane);
 }
 
-obelisk_rt_status obelisk_rt_managed_roots_push(obelisk_rt_gc_lane_v1 *lane,
+talos_rt_status talos_rt_managed_roots_push(talos_rt_gc_lane_v1 *lane,
                                                 ManagedRootProvider *provider,
                                                 ManagedRootEnumerate enumerate,
                                                 void *environment) {
   return lane && lane->heap
              ? lane->heap->pushProvider(lane, provider, enumerate, environment)
-             : OBELISK_RT_INVALID_ARGUMENT;
+             : TALOS_RT_INVALID_ARGUMENT;
 }
 
-obelisk_rt_status obelisk_rt_managed_roots_pop(obelisk_rt_gc_lane_v1 *lane,
+talos_rt_status talos_rt_managed_roots_pop(talos_rt_gc_lane_v1 *lane,
                                                ManagedRootProvider *provider) {
   return lane && lane->heap ? lane->heap->popProvider(lane, provider)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
-const obelisk_rt_class_descriptor_v1 *
-obelisk_rt_managed_class_lookup(obelisk_rt_context *context, uint64_t classID) {
+const talos_rt_class_descriptor_v1 *
+talos_rt_managed_class_lookup(talos_rt_context *context, uint64_t classID) {
   if (!context || classID == 0)
     return nullptr;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -2507,8 +2507,8 @@ obelisk_rt_managed_class_lookup(obelisk_rt_context *context, uint64_t classID) {
   return found == context->managedClasses.end() ? nullptr : found->second;
 }
 
-bool obelisk_rt_managed_object_belongs_to(
-    obelisk_rt_context *context, obelisk_rt_object_v1 *object) noexcept {
+bool talos_rt_managed_object_belongs_to(
+    talos_rt_context *context, talos_rt_object_v1 *object) noexcept {
   if (!object)
     return true;
   ManagedHeap *heap = heapFor(context);
@@ -2516,13 +2516,13 @@ bool obelisk_rt_managed_object_belongs_to(
   return heap && metadata && metadata->heap == heap;
 }
 
-obelisk_rt_context *
-obelisk_rt_managed_lane_context(const obelisk_rt_gc_lane_v1 *lane) noexcept {
+talos_rt_context *
+talos_rt_managed_lane_context(const talos_rt_gc_lane_v1 *lane) noexcept {
   return lane ? lane->context : nullptr;
 }
 
-const obelisk_rt_element_type_v1 *
-obelisk_rt_managed_element_type_lookup(obelisk_rt_context *context,
+const talos_rt_element_type_v1 *
+talos_rt_managed_element_type_lookup(talos_rt_context *context,
                                        uint64_t typeID) {
   if (!context || typeID == 0)
     return nullptr;
@@ -2531,63 +2531,63 @@ obelisk_rt_managed_element_type_lookup(obelisk_rt_context *context,
   return found == context->managedElementTypes.end() ? nullptr : found->second;
 }
 
-obelisk_rt_status
-obelisk_rt_managed_allocate(obelisk_rt_gc_lane_v1 *lane,
-                            obelisk_rt_managed_kind_v1 kind, uint64_t extent,
+talos_rt_status
+talos_rt_managed_allocate(talos_rt_gc_lane_v1 *lane,
+                            talos_rt_managed_kind_v1 kind, uint64_t extent,
                             uint64_t alignment, const void *runtimeDescriptor,
-                            obelisk_rt_object_v1 **outObject) {
+                            talos_rt_object_v1 **outObject) {
   return lane && lane->heap
              ? lane->heap->allocateManaged(lane, kind, extent, alignment,
                                            runtimeDescriptor, outObject)
-             : OBELISK_RT_INVALID_ARGUMENT;
+             : TALOS_RT_INVALID_ARGUMENT;
 }
 
-OBELISK_RT_FEATURE_HELPER obelisk_rt_status
-obelisk_rt_managed_allocate_without_safepoint(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_managed_kind_v1 kind,
+TALOS_RT_FEATURE_HELPER talos_rt_status
+talos_rt_managed_allocate_without_safepoint(
+    talos_rt_gc_lane_v1 *lane, talos_rt_managed_kind_v1 kind,
     uint64_t extent, uint64_t alignment, const void *runtimeDescriptor,
-    obelisk_rt_object_v1 **outObject) {
+    talos_rt_object_v1 **outObject) {
   return lane && lane->heap
              ? lane->heap->allocateManagedWithoutSafepoint(
                    lane, kind, extent, alignment, runtimeDescriptor, outObject)
-             : OBELISK_RT_INVALID_ARGUMENT;
+             : TALOS_RT_INVALID_ARGUMENT;
 }
 
-obelisk_rt_status obelisk_rt_managed_object_access(
-    obelisk_rt_object_v1 *object, obelisk_rt_managed_kind_v1 expectedKind,
+talos_rt_status talos_rt_managed_object_access(
+    talos_rt_object_v1 *object, talos_rt_managed_kind_v1 expectedKind,
     ManagedObjectAccess access, void *environment) {
   if (!access)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ObjectMetadata *metadata = metadataFor(object);
   if (!metadata)
-    return OBELISK_RT_INVALID_HANDLE;
-  if (expectedKind != OBELISK_RT_MANAGED_INVALID &&
+    return TALOS_RT_INVALID_HANDLE;
+  if (expectedKind != TALOS_RT_MANAGED_INVALID &&
       metadata->kind != expectedKind)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   ObjectLock lock(metadata);
   return access(environment, static_cast<uint8_t *>(metadata->object),
                 metadata->extent);
 }
 
-OBELISK_RT_FEATURE_HELPER obelisk_rt_status obelisk_rt_managed_object_acquire(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *object,
-    obelisk_rt_managed_kind_v1 expectedKind, ManagedObjectLease *outLease) {
+TALOS_RT_FEATURE_HELPER talos_rt_status talos_rt_managed_object_acquire(
+    talos_rt_gc_lane_v1 *lane, talos_rt_object_v1 *object,
+    talos_rt_managed_kind_v1 expectedKind, ManagedObjectLease *outLease) {
   if (!outLease || outLease->metadata)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (!lane || !lane->heap || !lane->heap->activeOwner(lane))
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   ObjectMetadata *metadata = nullptr;
   {
     std::shared_lock<std::shared_mutex> lock(metadataRegistryMutex);
     auto found = metadataRegistry.find(object);
     if (found == metadataRegistry.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     metadata = found->second;
     if (metadata->object != object || metadata->heap != lane->heap ||
         !metadata->allocated.load(std::memory_order_acquire) ||
-        (expectedKind != OBELISK_RT_MANAGED_INVALID &&
+        (expectedKind != TALOS_RT_MANAGED_INVALID &&
          metadata->kind != expectedKind))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
   }
   uint32_t ticket =
       metadata->nextTicket.fetch_add(1, std::memory_order_relaxed);
@@ -2595,20 +2595,20 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status obelisk_rt_managed_object_acquire(
     std::this_thread::yield();
   if (metadata->object != object || metadata->heap != lane->heap ||
       !metadata->allocated.load(std::memory_order_acquire) ||
-      (expectedKind != OBELISK_RT_MANAGED_INVALID &&
+      (expectedKind != TALOS_RT_MANAGED_INVALID &&
        metadata->kind != expectedKind)) {
     metadata->servingTicket.store(ticket + 1, std::memory_order_release);
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   }
   outLease->metadata = metadata;
   outLease->object = static_cast<uint8_t *>(metadata->object);
   outLease->extent = metadata->extent;
   outLease->ticket = ticket;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-OBELISK_RT_FEATURE_HELPER void
-obelisk_rt_managed_object_release(ManagedObjectLease *lease) noexcept {
+TALOS_RT_FEATURE_HELPER void
+talos_rt_managed_object_release(ManagedObjectLease *lease) noexcept {
   if (!lease || !lease->metadata)
     return;
   auto *metadata = static_cast<ObjectMetadata *>(lease->metadata);
@@ -2619,89 +2619,89 @@ obelisk_rt_managed_object_release(ManagedObjectLease *lease) noexcept {
   lease->ticket = 0;
 }
 
-obelisk_rt_managed_kind_v1
-obelisk_rt_managed_object_kind(const obelisk_rt_object_v1 *object) noexcept {
+talos_rt_managed_kind_v1
+talos_rt_managed_object_kind(const talos_rt_object_v1 *object) noexcept {
   ObjectMetadata *metadata = metadataFor(object);
   return metadata ? metadata->kind
-                  : static_cast<obelisk_rt_managed_kind_v1>(
-                        OBELISK_RT_MANAGED_INVALID);
+                  : static_cast<talos_rt_managed_kind_v1>(
+                        TALOS_RT_MANAGED_INVALID);
 }
 
 uint64_t
-obelisk_rt_managed_object_extent(const obelisk_rt_object_v1 *object) noexcept {
+talos_rt_managed_object_extent(const talos_rt_object_v1 *object) noexcept {
   ObjectMetadata *metadata = metadataFor(object);
   return metadata ? metadata->extent : 0;
 }
 
-obelisk_rt_context *
-obelisk_rt_managed_object_context(const obelisk_rt_object_v1 *object) noexcept {
+talos_rt_context *
+talos_rt_managed_object_context(const talos_rt_object_v1 *object) noexcept {
   ObjectMetadata *metadata = metadataFor(object);
   return metadata && metadata->heap ? metadata->heap->ownerContext() : nullptr;
 }
 
-const obelisk_rt_class_descriptor_v1 *
-obelisk_rt_managed_object_class_descriptor(
-    const obelisk_rt_object_v1 *object) noexcept {
+const talos_rt_class_descriptor_v1 *
+talos_rt_managed_object_class_descriptor(
+    const talos_rt_object_v1 *object) noexcept {
   ObjectMetadata *metadata = metadataFor(object);
-  return metadata && metadata->kind == OBELISK_RT_MANAGED_CLASS
+  return metadata && metadata->kind == TALOS_RT_MANAGED_CLASS
              ? metadata->descriptor
              : nullptr;
 }
 
 BuiltinClassKind
-obelisk_rt_builtin_class_kind_unlocked(obelisk_rt_object_v1 *object) noexcept {
+talos_rt_builtin_class_kind_unlocked(talos_rt_object_v1 *object) noexcept {
   ObjectMetadata *metadata = metadataFor(object);
   if (!metadata)
     return BuiltinClassKind::None;
-  if (metadata->kind == OBELISK_RT_MANAGED_CONTAINER)
-    return obelisk_rt_builtin_container_kind(
+  if (metadata->kind == TALOS_RT_MANAGED_CONTAINER)
+    return talos_rt_builtin_container_kind(
         static_cast<const uint8_t *>(metadata->object), metadata->extent);
-  if (metadata->kind == OBELISK_RT_MANAGED_CLASS)
+  if (metadata->kind == TALOS_RT_MANAGED_CLASS)
     for (const auto *descriptor = metadata->descriptor; descriptor;
          descriptor = descriptor->base)
-      if (descriptor->builtin_base_kind != OBELISK_RT_BUILTIN_CLASS_NONE)
+      if (descriptor->builtin_base_kind != TALOS_RT_BUILTIN_CLASS_NONE)
         return static_cast<BuiltinClassKind>(descriptor->builtin_base_kind);
   return BuiltinClassKind::None;
 }
 
 namespace {
-obelisk_rt_status validateClassDescriptor(
-    const obelisk_rt_class_descriptor_v1 *descriptor,
+talos_rt_status validateClassDescriptor(
+    const talos_rt_class_descriptor_v1 *descriptor,
     const ValidatedClasses *validated,
-    std::vector<const obelisk_rt_class_descriptor_v1 *> *pending,
+    std::vector<const talos_rt_class_descriptor_v1 *> *pending,
     ClassLayoutValidation *sharedLayouts,
     ClassMethodValidation *sharedMethods) {
   constexpr uint32_t validFlags =
-      OBELISK_RT_CLASS_ABSTRACT | OBELISK_RT_CLASS_INTERFACE |
-      OBELISK_RT_CLASS_FINAL | OBELISK_RT_CLASS_WEAK_WRAPPER;
+      TALOS_RT_CLASS_ABSTRACT | TALOS_RT_CLASS_INTERFACE |
+      TALOS_RT_CLASS_FINAL | TALOS_RT_CLASS_WEAK_WRAPPER;
   if (!descriptor)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
 
   // Stop at a validated immutable ancestor. This also avoids rewalking
   // the entire chain when registering successive subclasses.
-  const obelisk_rt_class_descriptor_v1 *trustedBase = nullptr;
-  std::unordered_set<const obelisk_rt_class_descriptor_v1 *> seen;
-  std::vector<const obelisk_rt_class_descriptor_v1 *> unvalidated;
+  const talos_rt_class_descriptor_v1 *trustedBase = nullptr;
+  std::unordered_set<const talos_rt_class_descriptor_v1 *> seen;
+  std::vector<const talos_rt_class_descriptor_v1 *> unvalidated;
   std::vector<uint64_t> classIDs;
   for (const auto *current = descriptor; current; current = current->base) {
     if (validated) {
       auto known = validated->find(current->class_id);
       if (known != validated->end()) {
         if (known->second != current)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         trustedBase = current;
         break;
       }
     }
     if (!seen.insert(current).second)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     unvalidated.push_back(current);
     classIDs.push_back(current->class_id);
   }
   orderDescriptorRecords(classIDs, [](uint64_t id) { return id; });
   for (size_t index = 1; index < classIDs.size(); ++index)
     if (classIDs[index - 1] == classIDs[index])
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
 
   ClassLayoutValidation localLayouts;
   ClassLayoutValidation &layouts =
@@ -2710,12 +2710,12 @@ obelisk_rt_status validateClassDescriptor(
   ClassMethodValidation &methods =
       sharedMethods ? *sharedMethods : localMethods;
   if (trustedBase && !methods.lookup(trustedBase))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   for (auto iterator = unvalidated.rbegin(); iterator != unvalidated.rend();
        ++iterator) {
     const auto *current = *iterator;
     const auto *base = current->base;
-    if (current->version != OBELISK_RT_VERSION || current->class_id == 0 ||
+    if (current->version != TALOS_RT_VERSION || current->class_id == 0 ||
         current->instance_size < sizeof(current) ||
         !validPowerOfTwo(current->instance_alignment) ||
         current->instance_alignment > 16 ||
@@ -2724,126 +2724,126 @@ obelisk_rt_status validateClassDescriptor(
         (current->method_count == 0) != (current->methods == nullptr) ||
         (current->debug_name_size == 0) != (current->debug_name == nullptr) ||
         (current->copy_reset_count == 0) != (current->copy_resets == nullptr) ||
-        (base && ((base->flags & OBELISK_RT_CLASS_FINAL) != 0 ||
+        (base && ((base->flags & TALOS_RT_CLASS_FINAL) != 0 ||
                   current->instance_size < base->instance_size ||
                   current->instance_alignment < base->instance_alignment)))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     const TraceHandleIndex *currentHandles = layouts.get(current->layout);
     if (!currentHandles ||
         (!currentHandles->empty() &&
          currentHandles->first().offset < sizeof(void *)) ||
         (current->layout && current->layout->size != current->instance_size))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (current->builtin_base_reserved != 0 ||
-        current->builtin_base_kind > OBELISK_RT_BUILTIN_CLASS_SEMAPHORE)
-      return OBELISK_RT_INVALID_DESIGN;
-    if (current->builtin_base_kind == OBELISK_RT_BUILTIN_CLASS_NONE) {
+        current->builtin_base_kind > TALOS_RT_BUILTIN_CLASS_SEMAPHORE)
+      return TALOS_RT_INVALID_DESIGN;
+    if (current->builtin_base_kind == TALOS_RT_BUILTIN_CLASS_NONE) {
       if (current->builtin_base_offset != 0)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     } else {
       if (base ||
           (current->flags &
-           (OBELISK_RT_CLASS_INTERFACE | OBELISK_RT_CLASS_WEAK_WRAPPER)) != 0 ||
+           (TALOS_RT_CLASS_INTERFACE | TALOS_RT_CLASS_WEAK_WRAPPER)) != 0 ||
           current->builtin_base_offset < sizeof(void *) ||
-          current->builtin_base_offset % alignof(obelisk_rt_managed_word_v1) ||
+          current->builtin_base_offset % alignof(talos_rt_managed_word_v1) ||
           !checkedRange(current->builtin_base_offset,
-                        sizeof(obelisk_rt_managed_word_v1),
+                        sizeof(talos_rt_managed_word_v1),
                         current->instance_size))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       auto payload = currentHandles->find(current->builtin_base_offset);
       uint32_t expectedSlot =
-          current->builtin_base_kind == OBELISK_RT_BUILTIN_CLASS_MAILBOX
-              ? OBELISK_RT_MANAGED_SLOT_MAILBOX
-              : OBELISK_RT_MANAGED_SLOT_SEMAPHORE;
-      if (!payload || payload->kind != OBELISK_RT_TRACE_STRONG ||
+          current->builtin_base_kind == TALOS_RT_BUILTIN_CLASS_MAILBOX
+              ? TALOS_RT_MANAGED_SLOT_MAILBOX
+              : TALOS_RT_MANAGED_SLOT_SEMAPHORE;
+      if (!payload || payload->kind != TALOS_RT_TRACE_STRONG ||
           payload->slotKind != expectedSlot)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
     if (base) {
       const TraceHandleIndex *baseHandles = layouts.get(base->layout);
       if (!baseHandles)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       if (current->layout != base->layout) {
         bool embedsBase = false;
         if (current->layout)
           for (uint64_t index = 0; index != current->layout->entry_count;
                ++index) {
             const auto &entry = current->layout->entries[index];
-            bool inherited = entry.kind == OBELISK_RT_TRACE_EMBEDDED &&
+            bool inherited = entry.kind == TALOS_RT_TRACE_EMBEDDED &&
                              entry.offset == 0 && entry.count == 1 &&
                              entry.child_layout == base->layout;
             if (!inherited && entry.offset < base->instance_size)
-              return OBELISK_RT_INVALID_DESIGN;
+              return TALOS_RT_INVALID_DESIGN;
             embedsBase |= inherited;
           }
         if (!baseHandles->empty() && !embedsBase)
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
       }
     }
     if (!methods.get(current) ||
         !validateRandomLayout(current, *currentHandles))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     for (uint64_t index = 0; index != current->copy_reset_count; ++index) {
-      const obelisk_rt_byte_range_v1 &range = current->copy_resets[index];
+      const talos_rt_byte_range_v1 &range = current->copy_resets[index];
       if (range.size == 0 || range.offset < sizeof(void *) ||
           range.size > current->instance_size ||
           range.offset > current->instance_size - range.size)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
-    if ((current->flags & OBELISK_RT_CLASS_WEAK_WRAPPER) != 0 &&
+    if ((current->flags & TALOS_RT_CLASS_WEAK_WRAPPER) != 0 &&
         (currentHandles->empty() ||
-         currentHandles->first().offset != sizeof(obelisk_rt_managed_word_v1) ||
-         currentHandles->first().kind != OBELISK_RT_TRACE_WEAK))
-      return OBELISK_RT_INVALID_DESIGN;
+         currentHandles->first().offset != sizeof(talos_rt_managed_word_v1) ||
+         currentHandles->first().kind != TALOS_RT_TRACE_WEAK))
+      return TALOS_RT_INVALID_DESIGN;
   }
   if (pending)
     *pending = std::move(unvalidated);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 } // namespace
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
+extern "C" talos_rt_status
+talos_rt_v1_class_validate(const talos_rt_class_descriptor_v1 *descriptor) {
   // Validation now builds bounded-width indexes; exceptions must not cross
   // the C ABI, including failures while validating untrusted metadata.
   return guarded(nullptr, [&] { return validateClassDescriptor(descriptor); });
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_lane_create(obelisk_rt_context *context,
-                             obelisk_rt_gc_lane_v1 **outLane) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_lane_create(talos_rt_context *context,
+                             talos_rt_gc_lane_v1 **outLane) {
   ManagedHeap *heap = heapFor(context);
   if (!heap)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   return guarded(context, [&] { return heap->createLane(outLane); });
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_lane_destroy(obelisk_rt_gc_lane_v1 *lane) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_lane_destroy(talos_rt_gc_lane_v1 *lane) {
   return lane && lane->heap ? lane->heap->destroyLane(lane)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_lane_enter(obelisk_rt_gc_lane_v1 *lane) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_lane_enter(talos_rt_gc_lane_v1 *lane) {
   return lane && lane->heap ? lane->heap->enter(lane)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_lane_leave(obelisk_rt_gc_lane_v1 *lane) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_lane_leave(talos_rt_gc_lane_v1 *lane) {
   return lane && lane->heap ? lane->heap->leave(lane)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_safepoint(obelisk_rt_gc_lane_v1 *lane) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_safepoint(talos_rt_gc_lane_v1 *lane) {
   return lane && lane->heap ? lane->heap->poll(lane)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_gc_lane_v1 *
-obelisk_rt_v1_gc_current_lane(obelisk_rt_context *context) {
+extern "C" talos_rt_gc_lane_v1 *
+talos_rt_v1_gc_current_lane(talos_rt_context *context) {
   ManagedHeap *heap = heapFor(context);
   if (!heap)
     return nullptr;
@@ -2855,90 +2855,90 @@ obelisk_rt_v1_gc_current_lane(obelisk_rt_context *context) {
   return nullptr;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_root_push(obelisk_rt_gc_lane_v1 *lane,
-                           obelisk_rt_gc_root_v1 *root,
-                           obelisk_rt_object_v1 **slot) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_root_push(talos_rt_gc_lane_v1 *lane,
+                           talos_rt_gc_root_v1 *root,
+                           talos_rt_object_v1 **slot) {
   return lane && lane->heap ? lane->heap->pushRoot(lane, root, slot)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_root_pop(obelisk_rt_gc_lane_v1 *lane,
-                          obelisk_rt_gc_root_v1 *root) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_root_pop(talos_rt_gc_lane_v1 *lane,
+                          talos_rt_gc_root_v1 *root) {
   return lane && lane->heap ? lane->heap->popRoot(lane, root)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_root_range_push(obelisk_rt_gc_lane_v1 *lane,
-                                 obelisk_rt_gc_root_range_v1 *range,
-                                 obelisk_rt_object_v1 **slots, uint64_t count) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_root_range_push(talos_rt_gc_lane_v1 *lane,
+                                 talos_rt_gc_root_range_v1 *range,
+                                 talos_rt_object_v1 **slots, uint64_t count) {
   return lane && lane->heap
              ? lane->heap->pushRootRange(lane, range, slots, count)
-             : OBELISK_RT_INVALID_ARGUMENT;
+             : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_root_range_pop(obelisk_rt_gc_lane_v1 *lane,
-                                obelisk_rt_gc_root_range_v1 *range) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_root_range_pop(talos_rt_gc_lane_v1 *lane,
+                                talos_rt_gc_root_range_v1 *range) {
   return lane && lane->heap ? lane->heap->popRootRange(lane, range)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_managed_root_push(obelisk_rt_gc_lane_v1 *lane,
-                                   obelisk_rt_gc_managed_root_v1 *root,
-                                   obelisk_rt_managed_word_v1 *slot) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_managed_root_push(talos_rt_gc_lane_v1 *lane,
+                                   talos_rt_gc_managed_root_v1 *root,
+                                   talos_rt_managed_word_v1 *slot) {
   return lane && lane->heap ? lane->heap->pushManagedRoot(lane, root, slot)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_managed_root_pop(obelisk_rt_gc_lane_v1 *lane,
-                                  obelisk_rt_gc_managed_root_v1 *root) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_managed_root_pop(talos_rt_gc_lane_v1 *lane,
+                                  talos_rt_gc_managed_root_v1 *root) {
   return lane && lane->heap ? lane->heap->popManagedRoot(lane, root)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_gc_managed_root_range_push(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_gc_managed_root_range_v1 *range,
-    obelisk_rt_managed_word_v1 *slots, uint64_t count) {
+extern "C" talos_rt_status talos_rt_v1_gc_managed_root_range_push(
+    talos_rt_gc_lane_v1 *lane, talos_rt_gc_managed_root_range_v1 *range,
+    talos_rt_managed_word_v1 *slots, uint64_t count) {
   return lane && lane->heap
              ? lane->heap->pushManagedRootRange(lane, range, slots, count)
-             : OBELISK_RT_INVALID_ARGUMENT;
+             : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_gc_managed_root_range_pop(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_gc_managed_root_range_v1 *range) {
+extern "C" talos_rt_status talos_rt_v1_gc_managed_root_range_pop(
+    talos_rt_gc_lane_v1 *lane, talos_rt_gc_managed_root_range_v1 *range) {
   return lane && lane->heap ? lane->heap->popManagedRootRange(lane, range)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_managed_word_v1 obelisk_rt_v1_gc_candidate_root(
-    obelisk_rt_context *context, obelisk_rt_managed_word_v1 word,
-    obelisk_rt_managed_root_kind_mask_v1 allowedKinds) {
-  if ((allowedKinds & OBELISK_RT_MANAGED_ROOT_KIND_STRING) != 0 &&
+extern "C" talos_rt_managed_word_v1 talos_rt_v1_gc_candidate_root(
+    talos_rt_context *context, talos_rt_managed_word_v1 word,
+    talos_rt_managed_root_kind_mask_v1 allowedKinds) {
+  if ((allowedKinds & TALOS_RT_MANAGED_ROOT_KIND_STRING) != 0 &&
       validImmediateManagedWord(word))
     return word;
   ManagedHeap *heap = heapFor(context);
   return heap && candidateRootMetadata(heap, word, allowedKinds) ? word : 0;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_static_root_register(obelisk_rt_context *context,
-                                      obelisk_rt_object_v1 **slot) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_static_root_register(talos_rt_context *context,
+                                      talos_rt_object_v1 **slot) {
   ManagedHeap *heap = heapFor(context);
   bool activeCaller = heap && heap->hasActiveCaller();
   return heap
              ? guarded(context,
                        [&] { return heap->registerStatic(slot, activeCaller); })
-             : OBELISK_RT_INVALID_ARGUMENT;
+             : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_gc_candidate_static_root_register(
-    obelisk_rt_context *context, obelisk_rt_managed_word_v1 *slot,
-    obelisk_rt_managed_root_kind_mask_v1 allowedKinds) {
+extern "C" talos_rt_status talos_rt_v1_gc_candidate_static_root_register(
+    talos_rt_context *context, talos_rt_managed_word_v1 *slot,
+    talos_rt_managed_root_kind_mask_v1 allowedKinds) {
   ManagedHeap *heap = heapFor(context);
   bool activeCaller = heap && heap->hasActiveCaller();
   return heap ? guarded(context,
@@ -2946,38 +2946,38 @@ extern "C" obelisk_rt_status obelisk_rt_v1_gc_candidate_static_root_register(
                           return heap->registerCandidateStatic(
                               slot, allowedKinds, activeCaller);
                         })
-              : OBELISK_RT_INVALID_ARGUMENT;
+              : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_static_root_unregister(obelisk_rt_context *context,
-                                        obelisk_rt_object_v1 **slot) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_static_root_unregister(talos_rt_context *context,
+                                        talos_rt_object_v1 **slot) {
   ManagedHeap *heap = heapFor(context);
   bool activeCaller = heap && heap->hasActiveCaller();
   return heap ? heap->unregisterStatic(slot, activeCaller)
-              : OBELISK_RT_INVALID_ARGUMENT;
+              : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_pin(obelisk_rt_context *context,
-                     obelisk_rt_object_v1 *object) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_pin(talos_rt_context *context,
+                     talos_rt_object_v1 *object) {
   ManagedHeap *heap = heapFor(context);
   bool activeCaller = heap && heap->hasActiveCaller();
-  return heap ? heap->pin(object, activeCaller) : OBELISK_RT_INVALID_ARGUMENT;
+  return heap ? heap->pin(object, activeCaller) : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_unpin(obelisk_rt_context *context,
-                       obelisk_rt_object_v1 *object) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_unpin(talos_rt_context *context,
+                       talos_rt_object_v1 *object) {
   ManagedHeap *heap = heapFor(context);
   bool activeCaller = heap && heap->hasActiveCaller();
-  return heap ? heap->unpin(object, activeCaller) : OBELISK_RT_INVALID_ARGUMENT;
+  return heap ? heap->unpin(object, activeCaller) : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_collect(obelisk_rt_gc_lane_v1 *lane) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_collect(talos_rt_gc_lane_v1 *lane) {
   return lane && lane->heap ? lane->heap->collect(lane)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
 namespace {
@@ -2986,102 +2986,102 @@ namespace {
 /// runtime root, never in an unregistered activation. A call from inside an
 /// activation leaves the work to the next collection point. A point the
 /// schedule did not designate reclaims only pressure that is due there.
-obelisk_rt_status collectPendingAtQuiescentPoint(obelisk_rt_context *context,
+talos_rt_status collectPendingAtQuiescentPoint(talos_rt_context *context,
                                                  ManagedHeap *heap,
                                                  bool designatedPoint) {
   if (designatedPoint ? !heap->collectionIsPending()
                       : !heap->undesignatedCollectionDue())
-    return OBELISK_RT_OK;
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+    return TALOS_RT_OK;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  obelisk_rt_status status =
-      obelisk_rt_managed_execution_enter(context, &lane, &entered);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_managed_execution_enter(context, &lane, &entered);
+  if (status != TALOS_RT_OK)
     return status;
   if (entered) {
     status = heap->collect(lane);
-    if (status == OBELISK_RT_OK && designatedPoint)
+    if (status == TALOS_RT_OK && designatedPoint)
       heap->designatedCollections.fetch_add(1, std::memory_order_relaxed);
   }
-  obelisk_rt_managed_execution_leave(lane, entered);
+  talos_rt_managed_execution_leave(lane, entered);
   return status;
 }
 } // namespace
 
-uint64_t obelisk_rt_managed_heap_designated_collections(ManagedHeap *heap) {
+uint64_t talos_rt_managed_heap_designated_collections(ManagedHeap *heap) {
   return heap ? heap->designatedCollections.load(std::memory_order_relaxed) : 0;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_collect_pending(obelisk_rt_context *context) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_collect_pending(talos_rt_context *context) {
   ManagedHeap *heap = heapFor(context);
   return heap ? collectPendingAtQuiescentPoint(context, heap,
                                               /*designatedPoint=*/true)
-              : OBELISK_RT_OK;
+              : TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_managed_heap_collect_between_activations(obelisk_rt_context *context) {
+talos_rt_status
+talos_rt_managed_heap_collect_between_activations(talos_rt_context *context) {
   ManagedHeap *heap = heapFor(context);
   return heap && heap->collectionIsPending()
              ? collectPendingAtQuiescentPoint(context, heap,
                                               /*designatedPoint=*/false)
-             : OBELISK_RT_OK;
+             : TALOS_RT_OK;
 }
 
-void obelisk_rt_managed_heap_poll_collections(ManagedHeap *heap) {
+void talos_rt_managed_heap_poll_collections(ManagedHeap *heap) {
   if (heap)
     heap->pollCollections();
 }
 
-bool obelisk_rt_managed_heap_collection_requested(ManagedHeap *heap) {
+bool talos_rt_managed_heap_collection_requested(ManagedHeap *heap) {
   return heap && heap->collectionIsRequested();
 }
 
-bool obelisk_rt_managed_heap_collections_polled(ManagedHeap *heap) {
+bool talos_rt_managed_heap_collections_polled(ManagedHeap *heap) {
   return heap && heap->collectionsPolled();
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_designate(obelisk_rt_context *context) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_designate(talos_rt_context *context) {
   if (ManagedHeap *heap = heapFor(context))
     heap->designateCollections();
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-bool obelisk_rt_managed_heap_collections_designated(ManagedHeap *heap) {
+bool talos_rt_managed_heap_collections_designated(ManagedHeap *heap) {
   return heap && heap->collectionsDesignated();
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_set_threshold(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_gc_set_threshold(talos_rt_context *context,
                                uint64_t allocationBytes) {
   ManagedHeap *heap = heapFor(context);
   return heap ? heap->setThreshold(allocationBytes)
-              : OBELISK_RT_INVALID_ARGUMENT;
+              : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_statistics(obelisk_rt_context *context,
-                            obelisk_rt_gc_statistics_v1 *outStatistics) {
+extern "C" talos_rt_status
+talos_rt_v1_gc_statistics(talos_rt_context *context,
+                            talos_rt_gc_statistics_v1 *outStatistics) {
   ManagedHeap *heap = heapFor(context);
   if (!heap || !outStatistics)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   heap->statistics(*outStatistics);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_class_register(obelisk_rt_context *context,
-                             const obelisk_rt_class_descriptor_v1 *descriptor) {
+extern "C" talos_rt_status
+talos_rt_v1_class_register(talos_rt_context *context,
+                             const talos_rt_class_descriptor_v1 *descriptor) {
   if (!context || !descriptor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     auto found = context->managedClasses.find(descriptor->class_id);
     if (found != context->managedClasses.end())
-      return found->second == descriptor ? OBELISK_RT_OK
-                                         : OBELISK_RT_INVALID_DESIGN;
+      return found->second == descriptor ? TALOS_RT_OK
+                                         : TALOS_RT_INVALID_DESIGN;
     auto cache = context->managedClassValidation;
     if (!cache)
       cache = std::make_shared<ManagedClassValidationCache>();
@@ -3101,12 +3101,12 @@ obelisk_rt_v1_class_register(obelisk_rt_context *context,
         committed = true;
       }
     } transaction{cache->layouts, cache->methods};
-    std::vector<const obelisk_rt_class_descriptor_v1 *> pending;
-    obelisk_rt_status status =
+    std::vector<const talos_rt_class_descriptor_v1 *> pending;
+    talos_rt_status status =
         validateClassDescriptor(descriptor, &cache->classes, &pending,
                                 &cache->layouts, &cache->methods);
-    if (status != OBELISK_RT_OK)
-      return status == OBELISK_RT_INVALID_DESIGN ? OBELISK_RT_INVALID_ARGUMENT
+    if (status != TALOS_RT_OK)
+      return status == TALOS_RT_INVALID_DESIGN ? TALOS_RT_INVALID_ARGUMENT
                                                  : status;
     // Stage allocations before publishing the registration. A failed call
     // must not retain pointers to descriptors the caller is free to discard.
@@ -3124,28 +3124,28 @@ obelisk_rt_v1_class_register(obelisk_rt_context *context,
     cache->classes.merge(additions);
     transaction.commit();
     context->managedClassValidation = std::move(cache);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   });
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_random_graph_discover(obelisk_rt_gc_lane_v1 *lane,
-                                    obelisk_rt_object_v1 *root,
-                                    obelisk_rt_random_graph_v1 **outGraph) {
+extern "C" talos_rt_status
+talos_rt_v1_random_graph_discover(talos_rt_gc_lane_v1 *lane,
+                                    talos_rt_object_v1 *root,
+                                    talos_rt_random_graph_v1 **outGraph) {
   if (!outGraph)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outGraph = nullptr;
   if (!lane || !lane->heap || !lane->heap->activeOwner(lane) || !root)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ObjectMetadata *rootMetadata = metadataFor(root);
   if (!rootMetadata || rootMetadata->heap != lane->heap ||
-      rootMetadata->kind != OBELISK_RT_MANAGED_CLASS)
-    return OBELISK_RT_INVALID_HANDLE;
+      rootMetadata->kind != TALOS_RT_MANAGED_CLASS)
+    return TALOS_RT_INVALID_HANDLE;
 
-  std::unique_ptr<obelisk_rt_random_graph_v1> graph;
-  OBELISK_RT_TRY { graph = std::make_unique<obelisk_rt_random_graph_v1>(); }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  std::unique_ptr<talos_rt_random_graph_v1> graph;
+  TALOS_RT_TRY { graph = std::make_unique<talos_rt_random_graph_v1>(); }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
   graph->context = lane->context;
   std::unordered_set<uint64_t> seen;
   auto rollback = [&] {
@@ -3153,48 +3153,48 @@ obelisk_rt_v1_random_graph_discover(obelisk_rt_gc_lane_v1 *lane,
       (void)lane->heap->unpin(binding.object, /*activeCaller=*/true);
     graph->objects.clear();
   };
-  auto append = [&](obelisk_rt_object_v1 *object,
-                    const obelisk_rt_class_descriptor_v1 *descriptor)
-      -> obelisk_rt_status {
-    obelisk_rt_status status = lane->heap->pin(object, /*activeCaller=*/true);
-    if (status != OBELISK_RT_OK)
+  auto append = [&](talos_rt_object_v1 *object,
+                    const talos_rt_class_descriptor_v1 *descriptor)
+      -> talos_rt_status {
+    talos_rt_status status = lane->heap->pin(object, /*activeCaller=*/true);
+    if (status != TALOS_RT_OK)
       return status;
-    OBELISK_RT_TRY { graph->objects.push_back({object, descriptor}); }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_TRY { graph->objects.push_back({object, descriptor}); }
+    TALOS_RT_CATCH_ALL {
       (void)lane->heap->unpin(object, /*activeCaller=*/true);
-      OBELISK_RT_RETHROW;
+      TALOS_RT_RETHROW;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   };
 
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     seen.insert(rootMetadata->identity);
-    obelisk_rt_status status = append(root, rootMetadata->descriptor);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = append(root, rootMetadata->descriptor);
+    if (status != TALOS_RT_OK)
       return status;
     for (size_t cursor = 0; cursor != graph->objects.size(); ++cursor) {
       const auto &binding = graph->objects[cursor];
-      obelisk_rt_object_v1 *object = binding.object;
+      talos_rt_object_v1 *object = binding.object;
       ObjectMetadata *metadata = metadataFor(object);
       if (!metadata || metadata->heap != lane->heap ||
-          metadata->kind != OBELISK_RT_MANAGED_CLASS ||
+          metadata->kind != TALOS_RT_MANAGED_CLASS ||
           metadata->descriptor != binding.descriptor) {
         rollback();
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       }
-      std::vector<const obelisk_rt_class_descriptor_v1 *> hierarchy;
-      for (const obelisk_rt_class_descriptor_v1 *descriptor =
+      std::vector<const talos_rt_class_descriptor_v1 *> hierarchy;
+      for (const talos_rt_class_descriptor_v1 *descriptor =
                metadata->descriptor;
            descriptor; descriptor = descriptor->base)
         hierarchy.push_back(descriptor);
       for (auto descriptorIt = hierarchy.rbegin();
            descriptorIt != hierarchy.rend(); ++descriptorIt) {
-        const obelisk_rt_class_descriptor_v1 *descriptor = *descriptorIt;
-        const obelisk_rt_random_layout_v1 *random = descriptor->random_layout;
+        const talos_rt_class_descriptor_v1 *descriptor = *descriptorIt;
+        const talos_rt_random_layout_v1 *random = descriptor->random_layout;
         if (!random)
           continue;
         for (uint64_t index = 0; index != random->variable_count; ++index) {
-          const obelisk_rt_random_variable_v1 &variable =
+          const talos_rt_random_variable_v1 &variable =
               random->variables[index];
           uint64_t mode = 0;
           {
@@ -3206,9 +3206,9 @@ obelisk_rt_v1_random_graph_discover(obelisk_rt_gc_lane_v1 *lane,
             graph->variables.push_back({object, &variable});
         }
         for (uint64_t index = 0; index != random->edge_count; ++index) {
-          const obelisk_rt_random_edge_v1 &edge = random->edges[index];
+          const talos_rt_random_edge_v1 &edge = random->edges[index];
           uint64_t mode = 0;
-          obelisk_rt_managed_word_v1 childWord = 0;
+          talos_rt_managed_word_v1 childWord = 0;
           {
             ObjectLock lock(metadata);
             const uint8_t *bytes = reinterpret_cast<const uint8_t *>(object);
@@ -3216,23 +3216,23 @@ obelisk_rt_v1_random_graph_discover(obelisk_rt_gc_lane_v1 *lane,
             std::memcpy(&childWord, bytes + edge.handle_offset,
                         sizeof(childWord));
           }
-          obelisk_rt_object_v1 *child = managedWordObject(childWord);
-          if (childWord != obelisk_rt_managed_word_from_object(child)) {
+          talos_rt_object_v1 *child = managedWordObject(childWord);
+          if (childWord != talos_rt_managed_word_from_object(child)) {
             rollback();
-            return OBELISK_RT_INVALID_HANDLE;
+            return TALOS_RT_INVALID_HANDLE;
           }
           if ((mode & edge.mode_mask) != 0 || !child)
             continue;
           ObjectMetadata *childMetadata = metadataFor(child);
           if (!childMetadata || childMetadata->heap != lane->heap ||
-              childMetadata->kind != OBELISK_RT_MANAGED_CLASS) {
+              childMetadata->kind != TALOS_RT_MANAGED_CLASS) {
             rollback();
-            return OBELISK_RT_INVALID_HANDLE;
+            return TALOS_RT_INVALID_HANDLE;
           }
           if (!seen.insert(childMetadata->identity).second)
             continue;
           status = append(child, childMetadata->descriptor);
-          if (status != OBELISK_RT_OK) {
+          if (status != TALOS_RT_OK) {
             rollback();
             return status;
           }
@@ -3240,77 +3240,77 @@ obelisk_rt_v1_random_graph_discover(obelisk_rt_gc_lane_v1 *lane,
       }
     }
     *outGraph = graph.release();
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     rollback();
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     rollback();
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
 extern "C" void
-obelisk_rt_v1_random_graph_destroy(obelisk_rt_random_graph_v1 *graph) {
+talos_rt_v1_random_graph_destroy(talos_rt_random_graph_v1 *graph) {
   if (!graph)
     return;
   for (const auto &binding : graph->objects)
-    (void)obelisk_rt_v1_gc_unpin(graph->context, binding.object);
+    (void)talos_rt_v1_gc_unpin(graph->context, binding.object);
   delete graph;
 }
 
 extern "C" uint64_t
-obelisk_rt_v1_random_graph_size(const obelisk_rt_random_graph_v1 *graph) {
+talos_rt_v1_random_graph_size(const talos_rt_random_graph_v1 *graph) {
   return graph ? graph->objects.size() : 0;
 }
 
-extern "C" obelisk_rt_object_v1 *
-obelisk_rt_v1_random_graph_object(const obelisk_rt_random_graph_v1 *graph,
+extern "C" talos_rt_object_v1 *
+talos_rt_v1_random_graph_object(const talos_rt_random_graph_v1 *graph,
                                   uint64_t index) {
   return graph && index < graph->objects.size() ? graph->objects[index].object
                                                 : nullptr;
 }
 
-extern "C" const obelisk_rt_class_descriptor_v1 *
-obelisk_rt_v1_random_graph_object_descriptor(
-    const obelisk_rt_random_graph_v1 *graph, uint64_t index) {
+extern "C" const talos_rt_class_descriptor_v1 *
+talos_rt_v1_random_graph_object_descriptor(
+    const talos_rt_random_graph_v1 *graph, uint64_t index) {
   return graph && index < graph->objects.size()
              ? graph->objects[index].descriptor
              : nullptr;
 }
 
-extern "C" uint64_t obelisk_rt_v1_random_graph_variable_count(
-    const obelisk_rt_random_graph_v1 *graph) {
+extern "C" uint64_t talos_rt_v1_random_graph_variable_count(
+    const talos_rt_random_graph_v1 *graph) {
   return graph ? graph->variables.size() : 0;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_random_graph_variable(
-    const obelisk_rt_random_graph_v1 *graph, uint64_t index,
-    obelisk_rt_object_v1 **outObject,
-    const obelisk_rt_random_variable_v1 **outVariable) {
+extern "C" talos_rt_status talos_rt_v1_random_graph_variable(
+    const talos_rt_random_graph_v1 *graph, uint64_t index,
+    talos_rt_object_v1 **outObject,
+    const talos_rt_random_variable_v1 **outVariable) {
   if (!outObject || !outVariable)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outObject = nullptr;
   *outVariable = nullptr;
   if (!graph || index >= graph->variables.size())
-    return OBELISK_RT_INVALID_ARGUMENT;
-  const obelisk_rt_random_graph_v1::VariableBinding &binding =
+    return TALOS_RT_INVALID_ARGUMENT;
+  const talos_rt_random_graph_v1::VariableBinding &binding =
       graph->variables[index];
   *outObject = binding.object;
   *outVariable = binding.variable;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_random_graph_resolve_variable(
-    const obelisk_rt_random_graph_v1 *graph, uint64_t originIndex,
-    const obelisk_rt_random_variable_reference_v1 *reference,
-    obelisk_rt_object_v1 **outObject,
-    const obelisk_rt_random_variable_v1 **outVariable,
+extern "C" talos_rt_status talos_rt_v1_random_graph_resolve_variable(
+    const talos_rt_random_graph_v1 *graph, uint64_t originIndex,
+    const talos_rt_random_variable_reference_v1 *reference,
+    talos_rt_object_v1 **outObject,
+    const talos_rt_random_variable_v1 **outVariable,
     uint64_t *outGraphIndex) {
   if (!outObject || !outVariable || !outGraphIndex)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outObject = nullptr;
   *outVariable = nullptr;
   *outGraphIndex = UINT64_MAX;
@@ -3319,42 +3319,42 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_graph_resolve_variable(
           (reference->handle_offsets == nullptr) ||
       reference->bit_width == 0 ||
       (reference->flags & ~kRandomVariableFlags) != 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
 
-  obelisk_rt_object_v1 *object = graph->objects[originIndex].object;
+  talos_rt_object_v1 *object = graph->objects[originIndex].object;
   for (uint64_t index = 0; index != reference->handle_count; ++index) {
     ObjectMetadata *metadata = metadataFor(object);
     uint64_t offset = reference->handle_offsets[index];
     if (!metadata || !metadata->heap ||
         metadata->heap->ownerContext() != graph->context ||
-        metadata->kind != OBELISK_RT_MANAGED_CLASS || !metadata->descriptor ||
+        metadata->kind != TALOS_RT_MANAGED_CLASS || !metadata->descriptor ||
         !layoutHasStrongHandleAt(metadata->descriptor->layout, 0, offset,
-                                 OBELISK_RT_MANAGED_SLOT_CLASS))
-      return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_managed_word_v1 nextWord = 0;
+                                 TALOS_RT_MANAGED_SLOT_CLASS))
+      return TALOS_RT_INVALID_ARGUMENT;
+    talos_rt_managed_word_v1 nextWord = 0;
     {
       ObjectLock lock(metadata);
       const uint8_t *bytes = reinterpret_cast<const uint8_t *>(object);
       std::memcpy(&nextWord, bytes + offset, sizeof(nextWord));
     }
-    obelisk_rt_object_v1 *next = managedWordObject(nextWord);
-    if (nextWord != obelisk_rt_managed_word_from_object(next))
-      return OBELISK_RT_INVALID_HANDLE;
+    talos_rt_object_v1 *next = managedWordObject(nextWord);
+    if (nextWord != talos_rt_managed_word_from_object(next))
+      return TALOS_RT_INVALID_HANDLE;
     if (!next)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     ObjectMetadata *nextMetadata = metadataFor(next);
     if (!nextMetadata || !nextMetadata->heap ||
         nextMetadata->heap->ownerContext() != graph->context ||
-        nextMetadata->kind != OBELISK_RT_MANAGED_CLASS)
-      return OBELISK_RT_INVALID_HANDLE;
+        nextMetadata->kind != TALOS_RT_MANAGED_CLASS)
+      return TALOS_RT_INVALID_HANDLE;
     object = next;
   }
 
   ObjectMetadata *metadata = metadataFor(object);
   if (!metadata || !metadata->heap ||
       metadata->heap->ownerContext() != graph->context ||
-      metadata->kind != OBELISK_RT_MANAGED_CLASS || !metadata->descriptor)
-    return OBELISK_RT_INVALID_HANDLE;
+      metadata->kind != TALOS_RT_MANAGED_CLASS || !metadata->descriptor)
+    return TALOS_RT_INVALID_HANDLE;
   bool activeObject = false;
   for (const auto &binding : graph->objects)
     if (binding.object == object) {
@@ -3362,15 +3362,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_graph_resolve_variable(
       break;
     }
   if (!activeObject)
-    return OBELISK_RT_INVALID_HANDLE;
-  const obelisk_rt_random_variable_v1 *resolved = nullptr;
-  for (const obelisk_rt_class_descriptor_v1 *descriptor = metadata->descriptor;
+    return TALOS_RT_INVALID_HANDLE;
+  const talos_rt_random_variable_v1 *resolved = nullptr;
+  for (const talos_rt_class_descriptor_v1 *descriptor = metadata->descriptor;
        descriptor && !resolved; descriptor = descriptor->base) {
-    const obelisk_rt_random_layout_v1 *random = descriptor->random_layout;
+    const talos_rt_random_layout_v1 *random = descriptor->random_layout;
     if (!random)
       continue;
     for (uint64_t index = 0; index != random->variable_count; ++index) {
-      const obelisk_rt_random_variable_v1 &candidate = random->variables[index];
+      const talos_rt_random_variable_v1 &candidate = random->variables[index];
       if (candidate.value_offset == reference->value_offset &&
           candidate.bit_width == reference->bit_width &&
           candidate.flags == reference->flags) {
@@ -3380,7 +3380,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_graph_resolve_variable(
     }
   }
   if (!resolved)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
 
   for (uint64_t index = 0; index != graph->variables.size(); ++index) {
     const auto &binding = graph->variables[index];
@@ -3391,13 +3391,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_graph_resolve_variable(
   }
   *outObject = object;
   *outVariable = resolved;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 namespace {
 
-bool traceLayoutsEquivalent(const obelisk_rt_trace_layout_v1 *left,
-                            const obelisk_rt_trace_layout_v1 *right) {
+bool traceLayoutsEquivalent(const talos_rt_trace_layout_v1 *left,
+                            const talos_rt_trace_layout_v1 *right) {
   if (left == right)
     return true;
   if (!left || !right || left->version != right->version ||
@@ -3416,8 +3416,8 @@ bool traceLayoutsEquivalent(const obelisk_rt_trace_layout_v1 *left,
   return true;
 }
 
-bool elementTypesEquivalent(const obelisk_rt_element_type_v1 *left,
-                            const obelisk_rt_element_type_v1 *right) {
+bool elementTypesEquivalent(const talos_rt_element_type_v1 *left,
+                            const talos_rt_element_type_v1 *right) {
   return left == right ||
          (left && right && left->version == right->version &&
           left->kind == right->kind && left->type_id == right->type_id &&
@@ -3432,152 +3432,152 @@ bool elementTypesEquivalent(const obelisk_rt_element_type_v1 *left,
                 left->default_image, right->default_image,
                 static_cast<size_t>(
                     left->value_size *
-                    ((left->flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1))) ==
+                    ((left->flags & TALOS_RT_ELEMENT_FOUR_STATE) ? 2 : 1))) ==
                 0)));
 }
 
 } // namespace
 
 namespace {
-obelisk_rt_status
-validateElementTypeDescriptor(const obelisk_rt_element_type_v1 *descriptor) {
+talos_rt_status
+validateElementTypeDescriptor(const talos_rt_element_type_v1 *descriptor) {
   constexpr uint32_t validFlags =
-      OBELISK_RT_ELEMENT_FOUR_STATE | OBELISK_RT_ELEMENT_SIGNED;
-  if (!descriptor || descriptor->version != OBELISK_RT_VERSION ||
+      TALOS_RT_ELEMENT_FOUR_STATE | TALOS_RT_ELEMENT_SIGNED;
+  if (!descriptor || descriptor->version != TALOS_RT_VERSION ||
       descriptor->type_id == 0 || descriptor->reserved != 0 ||
-      descriptor->kind < OBELISK_RT_ELEMENT_BITS ||
-      descriptor->kind > OBELISK_RT_ELEMENT_EVENT ||
+      descriptor->kind < TALOS_RT_ELEMENT_BITS ||
+      descriptor->kind > TALOS_RT_ELEMENT_EVENT ||
       (descriptor->flags & ~validFlags) != 0 || descriptor->value_size == 0 ||
       descriptor->value_size > UINT64_MAX - 64 ||
       !validPowerOfTwo(descriptor->alignment) || descriptor->alignment > 16 ||
       descriptor->value_size % descriptor->alignment != 0 ||
-      ((descriptor->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0 &&
+      ((descriptor->flags & TALOS_RT_ELEMENT_FOUR_STATE) != 0 &&
        descriptor->value_size > UINT64_MAX / 2))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   // All managed element kinds occupy the fixed-width managed-word ABI. Heap
   // objects use tag zero; strings may use an immediate tagged encoding.
   bool objectHandleKind =
-      descriptor->kind == OBELISK_RT_ELEMENT_CLASS_HANDLE ||
-      descriptor->kind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
-  bool stringKind = descriptor->kind == OBELISK_RT_ELEMENT_STRING;
-  uint64_t handleSize = sizeof(obelisk_rt_managed_word_v1);
+      descriptor->kind == TALOS_RT_ELEMENT_CLASS_HANDLE ||
+      descriptor->kind == TALOS_RT_ELEMENT_CONTAINER_HANDLE;
+  bool stringKind = descriptor->kind == TALOS_RT_ELEMENT_STRING;
+  uint64_t handleSize = sizeof(talos_rt_managed_word_v1);
   if ((objectHandleKind || stringKind) &&
       (descriptor->value_size != handleSize || descriptor->bit_width != 0 ||
        !descriptor->trace))
-    return OBELISK_RT_INVALID_DESIGN;
-  if ((descriptor->kind == OBELISK_RT_ELEMENT_REAL ||
-       descriptor->kind == OBELISK_RT_ELEMENT_CLASS_HANDLE ||
-       descriptor->kind == OBELISK_RT_ELEMENT_STRING ||
-       descriptor->kind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE ||
-       descriptor->kind == OBELISK_RT_ELEMENT_EVENT) &&
-      (descriptor->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0)
-    return OBELISK_RT_INVALID_DESIGN;
-  if ((descriptor->kind == OBELISK_RT_ELEMENT_BITS ||
-       descriptor->kind == OBELISK_RT_ELEMENT_LOGIC) &&
+    return TALOS_RT_INVALID_DESIGN;
+  if ((descriptor->kind == TALOS_RT_ELEMENT_REAL ||
+       descriptor->kind == TALOS_RT_ELEMENT_CLASS_HANDLE ||
+       descriptor->kind == TALOS_RT_ELEMENT_STRING ||
+       descriptor->kind == TALOS_RT_ELEMENT_CONTAINER_HANDLE ||
+       descriptor->kind == TALOS_RT_ELEMENT_EVENT) &&
+      (descriptor->flags & TALOS_RT_ELEMENT_FOUR_STATE) != 0)
+    return TALOS_RT_INVALID_DESIGN;
+  if ((descriptor->kind == TALOS_RT_ELEMENT_BITS ||
+       descriptor->kind == TALOS_RT_ELEMENT_LOGIC) &&
       (descriptor->bit_width == 0 || descriptor->value_size > UINT64_MAX / 8 ||
        descriptor->bit_width > descriptor->value_size * 8))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   if (descriptor->trace) {
     TraceLayoutValidation validation;
     if (descriptor->trace->size != descriptor->value_size ||
         !validation.validate(descriptor->trace, descriptor->value_size) ||
         validation.hasWeakHandles(descriptor->trace))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 } // namespace
 
-extern "C" obelisk_rt_status obelisk_rt_v1_element_type_validate(
-    const obelisk_rt_element_type_v1 *descriptor) {
+extern "C" talos_rt_status talos_rt_v1_element_type_validate(
+    const talos_rt_element_type_v1 *descriptor) {
   return guarded(nullptr,
                  [&] { return validateElementTypeDescriptor(descriptor); });
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_element_type_register(
-    obelisk_rt_context *context, const obelisk_rt_element_type_v1 *descriptor) {
+extern "C" talos_rt_status talos_rt_v1_element_type_register(
+    talos_rt_context *context, const talos_rt_element_type_v1 *descriptor) {
   if (!context || !descriptor)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_status status = obelisk_rt_v1_element_type_validate(descriptor);
-  if (status != OBELISK_RT_OK)
-    return status == OBELISK_RT_INVALID_DESIGN ? OBELISK_RT_INVALID_ARGUMENT
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_status status = talos_rt_v1_element_type_validate(descriptor);
+  if (status != TALOS_RT_OK)
+    return status == TALOS_RT_INVALID_DESIGN ? TALOS_RT_INVALID_ARGUMENT
                                                : status;
   return guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     auto [found, inserted] = context->managedElementTypes.try_emplace(
         descriptor->type_id, descriptor);
     return inserted || elementTypesEquivalent(found->second, descriptor)
-               ? OBELISK_RT_OK
-               : OBELISK_RT_INVALID_DESIGN;
+               ? TALOS_RT_OK
+               : TALOS_RT_INVALID_DESIGN;
   });
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_gc_design_root_register(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_gc_design_root_register(talos_rt_context *context,
                                       uint64_t bitOffset) {
   ManagedHeap *heap = heapFor(context);
   if (!heap || bitOffset % 64 != 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint64_t word = bitOffset / 64;
   if (word >= context->stateValue.size())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   return guarded(context, [&] {
-    auto *slot = reinterpret_cast<obelisk_rt_managed_word_v1 *>(
+    auto *slot = reinterpret_cast<talos_rt_managed_word_v1 *>(
         context->stateValue.data() + word);
     bool activeCaller = heap->hasActiveCaller();
     return heap->registerCandidateStatic(
-        slot, OBELISK_RT_MANAGED_ROOT_KIND_CLASS, activeCaller);
+        slot, TALOS_RT_MANAGED_ROOT_KIND_CLASS, activeCaller);
   });
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_gc_design_candidate_root_register(
-    obelisk_rt_context *context, uint64_t bitOffset,
-    obelisk_rt_managed_root_kind_mask_v1 allowedKinds) {
+extern "C" talos_rt_status talos_rt_v1_gc_design_candidate_root_register(
+    talos_rt_context *context, uint64_t bitOffset,
+    talos_rt_managed_root_kind_mask_v1 allowedKinds) {
   ManagedHeap *heap = heapFor(context);
   if (!heap || bitOffset % 64 != 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint64_t word = bitOffset / 64;
   if (word >= context->stateValue.size())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   return guarded(context, [&] {
-    auto *slot = reinterpret_cast<obelisk_rt_managed_word_v1 *>(
+    auto *slot = reinterpret_cast<talos_rt_managed_word_v1 *>(
         context->stateValue.data() + word);
     return heap->registerCandidateStatic(slot, allowedKinds,
                                          heap->hasActiveCaller());
   });
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_object_allocate(obelisk_rt_gc_lane_v1 *lane,
-                              const obelisk_rt_class_descriptor_v1 *descriptor,
-                              obelisk_rt_object_v1 **outObject) {
+extern "C" talos_rt_status
+talos_rt_v1_object_allocate(talos_rt_gc_lane_v1 *lane,
+                              const talos_rt_class_descriptor_v1 *descriptor,
+                              talos_rt_object_v1 **outObject) {
   return lane && lane->heap ? lane->heap->allocate(lane, descriptor, outObject)
-                            : OBELISK_RT_INVALID_ARGUMENT;
+                            : TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_object_shallow_copy(
-    obelisk_rt_gc_lane_v1 *lane,
-    const obelisk_rt_class_descriptor_v1 *staticDescriptor,
-    obelisk_rt_object_v1 *source, obelisk_rt_object_v1 **outObject) {
+extern "C" talos_rt_status talos_rt_v1_object_shallow_copy(
+    talos_rt_gc_lane_v1 *lane,
+    const talos_rt_class_descriptor_v1 *staticDescriptor,
+    talos_rt_object_v1 *source, talos_rt_object_v1 **outObject) {
   if (!outObject)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outObject = nullptr;
   if (!lane || !lane->heap || !source ||
-      !obelisk_rt_v1_object_is_instance(source, staticDescriptor))
-    return OBELISK_RT_INVALID_ARGUMENT;
+      !talos_rt_v1_object_is_instance(source, staticDescriptor))
+    return TALOS_RT_INVALID_ARGUMENT;
   ObjectMetadata *sourceMetadata = metadataFor(source);
   if (!sourceMetadata || sourceMetadata->heap != lane->heap ||
       !sourceMetadata->descriptor)
-    return OBELISK_RT_INVALID_HANDLE;
-  const obelisk_rt_class_descriptor_v1 *dynamicDescriptor =
+    return TALOS_RT_INVALID_HANDLE;
+  const talos_rt_class_descriptor_v1 *dynamicDescriptor =
       sourceMetadata->descriptor;
-  obelisk_rt_gc_root_v1 sourceRoot{};
-  obelisk_rt_status status = lane->heap->pushRoot(lane, &sourceRoot, &source);
-  if (status != OBELISK_RT_OK)
+  talos_rt_gc_root_v1 sourceRoot{};
+  talos_rt_status status = lane->heap->pushRoot(lane, &sourceRoot, &source);
+  if (status != TALOS_RT_OK)
     return status;
   status = lane->heap->allocate(lane, dynamicDescriptor, outObject);
-  if (status != OBELISK_RT_OK) {
+  if (status != TALOS_RT_OK) {
     (void)lane->heap->popRoot(lane, &sourceRoot);
     return status;
   }
@@ -3596,18 +3596,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_object_shallow_copy(
                   0, current->copy_resets[index].size);
   // IEEE 1800-2023 8.12 copies every property variable. Object handles are
   // shared, but a container property is a value and gets its own copy.
-  obelisk_rt_gc_root_v1 copyRoot{};
+  talos_rt_gc_root_v1 copyRoot{};
   status = lane->heap->pushRoot(lane, &copyRoot, outObject);
-  if (status == OBELISK_RT_OK) {
-    status = obelisk_rt_clone_traced_containers(
+  if (status == TALOS_RT_OK) {
+    status = talos_rt_clone_traced_containers(
         lane, reinterpret_cast<uint8_t *>(*outObject),
         dynamicDescriptor->layout);
-    obelisk_rt_status popStatus = lane->heap->popRoot(lane, &copyRoot);
-    if (status == OBELISK_RT_OK)
+    talos_rt_status popStatus = lane->heap->popRoot(lane, &copyRoot);
+    if (status == TALOS_RT_OK)
       status = popStatus;
   }
-  obelisk_rt_status popStatus = lane->heap->popRoot(lane, &sourceRoot);
-  if (status != OBELISK_RT_OK) {
+  talos_rt_status popStatus = lane->heap->popRoot(lane, &sourceRoot);
+  if (status != TALOS_RT_OK) {
     *outObject = nullptr;
     return status;
   }
@@ -3623,7 +3623,7 @@ bool managedOverrideActive(ObjectMetadata *metadata, uint64_t offset,
   if (publishingManagedOverride || !metadata || !metadata->heap ||
       metadata->identity == 0)
     return false;
-  obelisk_rt_context *context = metadata->heap->ownerContext();
+  talos_rt_context *context = metadata->heap->ownerContext();
   if (!context ||
       !context->managedValueOverridePossible.load(std::memory_order_relaxed))
     return false;
@@ -3656,23 +3656,23 @@ private:
 
 } // namespace
 
-bool obelisk_rt_managed_value_mutation_masked(
-    obelisk_rt_object_v1 *object) noexcept {
+bool talos_rt_managed_value_mutation_masked(
+    talos_rt_object_v1 *object) noexcept {
   ObjectMetadata *metadata = metadataFor(object);
-  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CONTAINER ||
+  if (!metadata || metadata->kind != TALOS_RT_MANAGED_CONTAINER ||
       !metadata->heap)
     return false;
-  obelisk_rt_context *context = metadata->heap->ownerContext();
+  talos_rt_context *context = metadata->heap->ownerContext();
   if (!context ||
       !context->managedValueOverridePossible.load(std::memory_order_relaxed))
     return false;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     for (const auto &[identity, fields] : context->managedOverrides) {
       (void)identity;
       for (const auto &[offset, state] : fields) {
         (void)offset;
-        auto contains = [&](const std::vector<obelisk_rt_object_v1 *> &roots) {
+        auto contains = [&](const std::vector<talos_rt_object_v1 *> &roots) {
           return std::find(roots.begin(), roots.end(), object) != roots.end();
         };
         if ((state.forceActive && contains(state.forceRoots)) ||
@@ -3680,7 +3680,7 @@ bool obelisk_rt_managed_value_mutation_masked(
           return true;
       }
     }
-    obelisk_rt_managed_word_v1 word =
+    talos_rt_managed_word_v1 word =
         static_cast<uint64_t>(reinterpret_cast<uintptr_t>(object));
     size_t limbs = std::min(
         context->stateValue.size(),
@@ -3695,38 +3695,38 @@ bool obelisk_rt_managed_value_mutation_masked(
         return true;
     }
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     // Runtime mutation entry points are noexcept across this internal query.
   }
   return false;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_object_read(obelisk_rt_object_v1 *object, uint64_t offset,
+extern "C" talos_rt_status
+talos_rt_v1_object_read(talos_rt_object_v1 *object, uint64_t offset,
                           void *data, uint64_t size) {
   ObjectMetadata *metadata = metadataFor(object);
-  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CLASS ||
+  if (!metadata || metadata->kind != TALOS_RT_MANAGED_CLASS ||
       (!data && size != 0) ||
       !checkedRange(offset, size, metadata->descriptor->instance_size))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ObjectLock lock(metadata);
   std::memcpy(data, reinterpret_cast<uint8_t *>(object) + offset, size);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_object_write(obelisk_rt_object_v1 *object, uint64_t offset,
+extern "C" talos_rt_status
+talos_rt_v1_object_write(talos_rt_object_v1 *object, uint64_t offset,
                            const void *data, uint64_t size) {
   ObjectMetadata *metadata = metadataFor(object);
-  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CLASS ||
+  if (!metadata || metadata->kind != TALOS_RT_MANAGED_CLASS ||
       (!data && size != 0) || offset < sizeof(void *) ||
       !checkedRange(offset, size, metadata->descriptor->instance_size) ||
       !validateLayoutHandleWrite(metadata->descriptor->layout, 0, offset, size,
                                  static_cast<const uint8_t *>(data),
                                  metadata->heap))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (managedOverrideActive(metadata, offset, size))
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   bool changed = false;
   {
     ObjectLock lock(metadata);
@@ -3735,18 +3735,18 @@ obelisk_rt_v1_object_write(obelisk_rt_object_v1 *object, uint64_t offset,
     std::memcpy(destination, data, size);
   }
   if (changed)
-    obelisk_rt_notify_managed_watch(object, OBELISK_RT_MANAGED_WATCH_FIELD,
+    talos_rt_notify_managed_watch(object, TALOS_RT_MANAGED_WATCH_FIELD,
                                     offset, size);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_object_bits_insert(obelisk_rt_object_v1 *object, uint64_t offset,
+extern "C" talos_rt_status
+talos_rt_v1_object_bits_insert(talos_rt_object_v1 *object, uint64_t offset,
                                  uint64_t fieldBitWidth, int64_t lowBit,
                                  uint32_t valid, uint64_t replacement,
                                  uint32_t replacementWidth) {
   ObjectMetadata *metadata = metadataFor(object);
-  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CLASS ||
+  if (!metadata || metadata->kind != TALOS_RT_MANAGED_CLASS ||
       offset < sizeof(void *) || fieldBitWidth == 0 ||
       fieldBitWidth > static_cast<uint64_t>(INT64_MAX) ||
       replacementWidth == 0 || replacementWidth > 64 || valid > 1 ||
@@ -3754,14 +3754,14 @@ obelisk_rt_v1_object_bits_insert(obelisk_rt_object_v1 *object, uint64_t offset,
                     metadata->descriptor->instance_size) ||
       layoutOverlapsHandle(metadata->descriptor->layout, 0, offset,
                            (fieldBitWidth + 7) / 8))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (!valid)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (managedOverrideActive(metadata, offset, (fieldBitWidth + 7) / 8))
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (lowBit < -static_cast<int64_t>(replacementWidth - 1) ||
       lowBit >= static_cast<int64_t>(fieldBitWidth))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   bool changed = false;
   {
     ObjectLock lock(metadata);
@@ -3779,33 +3779,33 @@ obelisk_rt_v1_object_bits_insert(obelisk_rt_object_v1 *object, uint64_t offset,
     }
   }
   if (changed)
-    obelisk_rt_notify_managed_watch(object, OBELISK_RT_MANAGED_WATCH_FIELD,
+    talos_rt_notify_managed_watch(object, TALOS_RT_MANAGED_WATCH_FIELD,
                                     offset, (fieldBitWidth + 7) / 8);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_object_read_planes(obelisk_rt_object_v1 *object, uint64_t offset,
+extern "C" talos_rt_status
+talos_rt_v1_object_read_planes(talos_rt_object_v1 *object, uint64_t offset,
                                  void *value, void *unknown,
                                  uint64_t planeSize) {
   ObjectMetadata *metadata = metadataFor(object);
-  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CLASS || !value ||
+  if (!metadata || metadata->kind != TALOS_RT_MANAGED_CLASS || !value ||
       !unknown || planeSize == 0 || planeSize > UINT64_MAX / 2 ||
       !checkedRange(offset, planeSize * 2, metadata->descriptor->instance_size))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ObjectLock lock(metadata);
   const uint8_t *source = reinterpret_cast<const uint8_t *>(object) + offset;
   std::memcpy(value, source, planeSize);
   std::memcpy(unknown, source + planeSize, planeSize);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_object_write_planes(obelisk_rt_object_v1 *object, uint64_t offset,
+extern "C" talos_rt_status
+talos_rt_v1_object_write_planes(talos_rt_object_v1 *object, uint64_t offset,
                                   const void *value, const void *unknown,
                                   uint64_t planeSize) {
   ObjectMetadata *metadata = metadataFor(object);
-  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CLASS || !value ||
+  if (!metadata || metadata->kind != TALOS_RT_MANAGED_CLASS || !value ||
       !unknown || planeSize == 0 || offset < sizeof(void *) ||
       planeSize > UINT64_MAX / 2 ||
       !checkedRange(offset, planeSize * 2,
@@ -3816,9 +3816,9 @@ obelisk_rt_v1_object_write_planes(obelisk_rt_object_v1 *object, uint64_t offset,
       !validateLayoutHandleWrite(
           metadata->descriptor->layout, 0, offset + planeSize, planeSize,
           static_cast<const uint8_t *>(unknown), metadata->heap))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (managedOverrideActive(metadata, offset, planeSize * 2))
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   bool changed = false;
   {
     ObjectLock lock(metadata);
@@ -3829,54 +3829,54 @@ obelisk_rt_v1_object_write_planes(obelisk_rt_object_v1 *object, uint64_t offset,
     std::memcpy(destination + planeSize, unknown, planeSize);
   }
   if (changed)
-    obelisk_rt_notify_managed_watch(object, OBELISK_RT_MANAGED_WATCH_FIELD,
+    talos_rt_notify_managed_watch(object, TALOS_RT_MANAGED_WATCH_FIELD,
                                     offset, planeSize * 2);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_object_field_load(obelisk_rt_object_v1 *object, uint64_t offset,
-                                obelisk_rt_object_v1 **outValue) {
+extern "C" talos_rt_status
+talos_rt_v1_object_field_load(talos_rt_object_v1 *object, uint64_t offset,
+                                talos_rt_object_v1 **outValue) {
   if (!outValue)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outValue = nullptr;
   ObjectMetadata *metadata = metadataFor(object);
-  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CLASS ||
-      !checkedRange(offset, sizeof(obelisk_rt_managed_word_v1),
+  if (!metadata || metadata->kind != TALOS_RT_MANAGED_CLASS ||
+      !checkedRange(offset, sizeof(talos_rt_managed_word_v1),
                     metadata->descriptor->instance_size) ||
       !layoutHasStrongHandleAt(metadata->descriptor->layout, 0, offset,
-                               OBELISK_RT_MANAGED_SLOT_CLASS))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_managed_word_v1 word = 0;
+                               TALOS_RT_MANAGED_SLOT_CLASS))
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_managed_word_v1 word = 0;
   ObjectLock lock(metadata);
   std::memcpy(&word, reinterpret_cast<uint8_t *>(object) + offset,
               sizeof(word));
   *outValue = managedWordObject(word);
-  return word == obelisk_rt_managed_word_from_object(*outValue)
-             ? OBELISK_RT_OK
-             : OBELISK_RT_INVALID_HANDLE;
+  return word == talos_rt_managed_word_from_object(*outValue)
+             ? TALOS_RT_OK
+             : TALOS_RT_INVALID_HANDLE;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_object_field_store(obelisk_rt_object_v1 *object, uint64_t offset,
-                                 obelisk_rt_object_v1 *value) {
+extern "C" talos_rt_status
+talos_rt_v1_object_field_store(talos_rt_object_v1 *object, uint64_t offset,
+                                 talos_rt_object_v1 *value) {
   ObjectMetadata *metadata = metadataFor(object);
-  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CLASS ||
-      !checkedRange(offset, sizeof(obelisk_rt_managed_word_v1),
+  if (!metadata || metadata->kind != TALOS_RT_MANAGED_CLASS ||
+      !checkedRange(offset, sizeof(talos_rt_managed_word_v1),
                     metadata->descriptor->instance_size) ||
       !layoutHasStrongHandleAt(metadata->descriptor->layout, 0, offset,
-                               OBELISK_RT_MANAGED_SLOT_CLASS))
-    return OBELISK_RT_INVALID_ARGUMENT;
+                               TALOS_RT_MANAGED_SLOT_CLASS))
+    return TALOS_RT_INVALID_ARGUMENT;
   if (value) {
     ObjectMetadata *valueMetadata = metadataFor(value);
     if (!valueMetadata || valueMetadata->heap != metadata->heap ||
-        valueMetadata->kind != OBELISK_RT_MANAGED_CLASS)
-      return OBELISK_RT_INVALID_HANDLE;
+        valueMetadata->kind != TALOS_RT_MANAGED_CLASS)
+      return TALOS_RT_INVALID_HANDLE;
   }
   if (managedOverrideActive(metadata, offset,
-                            sizeof(obelisk_rt_managed_word_v1)))
-    return OBELISK_RT_OK;
-  obelisk_rt_managed_word_v1 word = obelisk_rt_managed_word_from_object(value);
+                            sizeof(talos_rt_managed_word_v1)))
+    return TALOS_RT_OK;
+  talos_rt_managed_word_v1 word = talos_rt_managed_word_from_object(value);
   bool changed = false;
   {
     ObjectLock lock(metadata);
@@ -3885,20 +3885,20 @@ obelisk_rt_v1_object_field_store(obelisk_rt_object_v1 *object, uint64_t offset,
     std::memcpy(destination, &word, sizeof(word));
   }
   if (changed)
-    obelisk_rt_notify_managed_watch(object, OBELISK_RT_MANAGED_WATCH_FIELD,
-                                    offset, sizeof(obelisk_rt_managed_word_v1));
-  return OBELISK_RT_OK;
+    talos_rt_notify_managed_watch(object, TALOS_RT_MANAGED_WATCH_FIELD,
+                                    offset, sizeof(talos_rt_managed_word_v1));
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_object_override(obelisk_rt_object_v1 *object, uint64_t offset,
+extern "C" talos_rt_status
+talos_rt_v1_object_override(talos_rt_object_v1 *object, uint64_t offset,
                               uint64_t planeSize, uint32_t fourState,
                               uint32_t assign, uint32_t dynamic,
                               uint64_t ownerProcess, uint32_t claim,
                               const void *value, const void *unknown) {
   ObjectMetadata *metadata = metadataFor(object);
-  std::vector<obelisk_rt_object_v1 *> referents;
-  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CLASS ||
+  std::vector<talos_rt_object_v1 *> referents;
+  if (!metadata || metadata->kind != TALOS_RT_MANAGED_CLASS ||
       !metadata->heap || metadata->identity == 0 || !value || planeSize == 0 ||
       fourState > 1 || assign > 1 || dynamic > 1 || claim > 1 ||
       (fourState && !unknown) || (dynamic && ownerProcess == 0) ||
@@ -3912,13 +3912,13 @@ obelisk_rt_v1_object_override(obelisk_rt_object_v1 *object, uint64_t offset,
        !validateLayoutHandleWrite(
            metadata->descriptor->layout, 0, offset + planeSize, planeSize,
            static_cast<const uint8_t *>(unknown), metadata->heap)))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_context *context = metadata->heap->ownerContext();
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_context *context = metadata->heap->ownerContext();
   if (!context)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   context->managedValueOverridePossible.store(true, std::memory_order_relaxed);
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<uint64_t> retiredOwners;
     std::vector<uint8_t> publishedValue;
     std::vector<uint8_t> publishedUnknown;
@@ -3928,7 +3928,7 @@ obelisk_rt_v1_object_override(obelisk_rt_object_v1 *object, uint64_t offset,
       auto &state = context->managedOverrides[metadata->identity][offset];
       if (state.planeSize != 0 &&
           (state.planeSize != planeSize || state.fourState != (fourState != 0)))
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       state.planeSize = planeSize;
       state.fourState = fourState != 0;
       bool &active = assign ? state.assignActive : state.forceActive;
@@ -3937,10 +3937,10 @@ obelisk_rt_v1_object_override(obelisk_rt_object_v1 *object, uint64_t offset,
           assign ? state.assignValue : state.forceValue;
       std::vector<uint8_t> &storedUnknown =
           assign ? state.assignUnknown : state.forceUnknown;
-      std::vector<obelisk_rt_object_v1 *> &storedRoots =
+      std::vector<talos_rt_object_v1 *> &storedRoots =
           assign ? state.assignRoots : state.forceRoots;
       if (dynamic && !claim && (!active || owner != ownerProcess))
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       if ((!dynamic || claim) && active && owner != 0 && owner != ownerProcess)
         retiredOwners.push_back(owner);
       if (!dynamic || claim) {
@@ -3963,35 +3963,35 @@ obelisk_rt_v1_object_override(obelisk_rt_object_v1 *object, uint64_t offset,
     }
     if (publish) {
       ManagedOverridePublication publication;
-      obelisk_rt_status status =
-          fourState ? obelisk_rt_v1_object_write_planes(
+      talos_rt_status status =
+          fourState ? talos_rt_v1_object_write_planes(
                           object, offset, publishedValue.data(),
                           publishedUnknown.data(), planeSize)
-                    : obelisk_rt_v1_object_write(
+                    : talos_rt_v1_object_write(
                           object, offset, publishedValue.data(), planeSize);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
     }
-    return obelisk_rt_retire_override_owners(context, std::move(retiredOwners));
+    return talos_rt_retire_override_owners(context, std::move(retiredOwners));
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_object_release_override(obelisk_rt_object_v1 *object,
+extern "C" talos_rt_status
+talos_rt_v1_object_release_override(talos_rt_object_v1 *object,
                                       uint64_t offset, uint64_t planeSize,
                                       uint32_t fourState, uint32_t assign) {
   ObjectMetadata *metadata = metadataFor(object);
-  if (!metadata || metadata->kind != OBELISK_RT_MANAGED_CLASS ||
+  if (!metadata || metadata->kind != TALOS_RT_MANAGED_CLASS ||
       !metadata->heap || metadata->identity == 0 || planeSize == 0 ||
       fourState > 1 || assign > 1)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_context *context = metadata->heap->ownerContext();
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_context *context = metadata->heap->ownerContext();
   if (!context)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<uint64_t> retiredOwners;
     std::vector<uint8_t> publishedValue;
     std::vector<uint8_t> publishedUnknown;
@@ -4001,13 +4001,13 @@ obelisk_rt_v1_object_release_override(obelisk_rt_object_v1 *object,
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       auto objectState = context->managedOverrides.find(metadata->identity);
       if (objectState == context->managedOverrides.end())
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       auto field = objectState->second.find(offset);
       if (field == objectState->second.end())
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       auto &state = field->second;
       if (state.planeSize != planeSize || state.fourState != (fourState != 0))
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       bool &active = assign ? state.assignActive : state.forceActive;
       uint64_t &owner = assign ? state.assignOwner : state.forceOwner;
       if (active && owner != 0)
@@ -4029,102 +4029,102 @@ obelisk_rt_v1_object_release_override(obelisk_rt_object_v1 *object,
     }
     if (publish) {
       ManagedOverridePublication publication;
-      obelisk_rt_status status =
-          fourState ? obelisk_rt_v1_object_write_planes(
+      talos_rt_status status =
+          fourState ? talos_rt_v1_object_write_planes(
                           object, offset, publishedValue.data(),
                           publishedUnknown.data(), planeSize)
-                    : obelisk_rt_v1_object_write(
+                    : talos_rt_v1_object_write(
                           object, offset, publishedValue.data(), planeSize);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
     }
-    return obelisk_rt_retire_override_owners(context, std::move(retiredOwners));
+    return talos_rt_retire_override_owners(context, std::move(retiredOwners));
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-static obelisk_rt_status
-scheduleManagedNBA(obelisk_rt_context *context,
-                   obelisk_rt_object_v1 *destination, uint64_t offset,
+static talos_rt_status
+scheduleManagedNBA(talos_rt_context *context,
+                   talos_rt_object_v1 *destination, uint64_t offset,
                    const void *value, const void *unknown, const void *mask,
                    uint64_t planeSize, uint64_t delay) {
   ManagedHeap *heap = heapFor(context);
   ObjectMetadata *destinationMetadata = metadataFor(destination);
   bool referencePath =
       destinationMetadata &&
-      destinationMetadata->kind == OBELISK_RT_MANAGED_REFERENCE_PATH &&
+      destinationMetadata->kind == TALOS_RT_MANAGED_REFERENCE_PATH &&
       offset == UINT64_MAX;
   if (!heap || !destinationMetadata ||
       (!referencePath &&
-       destinationMetadata->kind != OBELISK_RT_MANAGED_CLASS) ||
+       destinationMetadata->kind != TALOS_RT_MANAGED_CLASS) ||
       destinationMetadata->heap != heap || !value || planeSize == 0 ||
       planeSize > std::numeric_limits<size_t>::max())
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (referencePath) {
     if (planeSize > UINT64_MAX / 8)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
   }
-  const obelisk_rt_element_type_v1 *referenceElement = nullptr;
+  const talos_rt_element_type_v1 *referenceElement = nullptr;
   if (referencePath) {
-    obelisk_rt_status elementStatus =
-        obelisk_rt_reference_path_element(destination, &referenceElement);
-    if (elementStatus != OBELISK_RT_OK)
+    talos_rt_status elementStatus =
+        talos_rt_reference_path_element(destination, &referenceElement);
+    if (elementStatus != TALOS_RT_OK)
       return elementStatus;
     bool managed =
-        referenceElement->kind == OBELISK_RT_ELEMENT_STRING ||
-        referenceElement->kind == OBELISK_RT_ELEMENT_CLASS_HANDLE ||
-        referenceElement->kind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
+        referenceElement->kind == TALOS_RT_ELEMENT_STRING ||
+        referenceElement->kind == TALOS_RT_ELEMENT_CLASS_HANDLE ||
+        referenceElement->kind == TALOS_RT_ELEMENT_CONTAINER_HANDLE;
     // The NBA carries whole planes; a packed element's exact width occupies
     // the low bits of its value size.
     uint64_t bitWidth =
-        referenceElement->kind == OBELISK_RT_ELEMENT_BITS ||
-                referenceElement->kind == OBELISK_RT_ELEMENT_LOGIC
+        referenceElement->kind == TALOS_RT_ELEMENT_BITS ||
+                referenceElement->kind == TALOS_RT_ELEMENT_LOGIC
             ? referenceElement->bit_width
             : planeSize * 8;
     if (mask && managed)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_status shape = obelisk_rt_reference_path_shape(
+      return TALOS_RT_INVALID_ARGUMENT;
+    talos_rt_status shape = talos_rt_reference_path_shape(
         destination, planeSize, bitWidth, unknown != nullptr, managed);
-    if (shape != OBELISK_RT_OK)
+    if (shape != TALOS_RT_OK)
       return shape;
   }
-  const obelisk_rt_trace_layout_v1 *layout =
+  const talos_rt_trace_layout_v1 *layout =
       referencePath ? referenceElement->trace
                     : destinationMetadata->descriptor->layout;
-  std::vector<obelisk_rt_object_v1 *> referents;
+  std::vector<talos_rt_object_v1 *> referents;
   if (referencePath) {
     if (referenceElement->value_size != planeSize ||
         !validateLayoutHandleWrite(layout, 0, 0, planeSize,
                                    static_cast<const uint8_t *>(value), heap,
                                    &referents))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
   } else {
     if (!checkedRange(offset, planeSize,
                       destinationMetadata->descriptor->instance_size) ||
         !validateLayoutHandleWrite(layout, 0, offset, planeSize,
                                    static_cast<const uint8_t *>(value), heap,
                                    &referents))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     if (unknown &&
         (!checkedRange(offset + planeSize, planeSize,
                        destinationMetadata->descriptor->instance_size) ||
          !validateLayoutHandleWrite(layout, 0, offset + planeSize, planeSize,
                                     static_cast<const uint8_t *>(unknown),
                                     heap)))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
   }
 
-  obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+  talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
   if (!lane)
-    return OBELISK_RT_INVALID_LIFECYCLE;
-  obelisk_rt_status status = heap->retainScheduled(lane, destination);
-  if (status != OBELISK_RT_OK)
+    return TALOS_RT_INVALID_LIFECYCLE;
+  talos_rt_status status = heap->retainScheduled(lane, destination);
+  if (status != TALOS_RT_OK)
     return status;
   size_t retainedReferents = 0;
-  for (obelisk_rt_object_v1 *referent : referents) {
+  for (talos_rt_object_v1 *referent : referents) {
     status = heap->retainScheduled(lane, referent);
-    if (status != OBELISK_RT_OK) {
+    if (status != TALOS_RT_OK) {
       while (retainedReferents != 0)
         (void)heap->releaseScheduled(referents[--retainedReferents]);
       (void)heap->releaseScheduled(destination);
@@ -4138,7 +4138,7 @@ scheduleManagedNBA(obelisk_rt_context *context,
       (void)heap->releaseScheduled(referents[--retainedReferents]);
     (void)heap->releaseScheduled(destination);
   };
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ScheduledManagedNBA update;
     update.destination = destination;
     update.offset = offset;
@@ -4160,83 +4160,83 @@ scheduleManagedNBA(obelisk_rt_context *context,
     update.managedValues = referents;
     ContextTransaction transaction(context);
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    if (context->activeExecRegion == OBELISK_RT_REGION_POSTPONED) {
+    if (context->activeExecRegion == TALOS_RT_REGION_POSTPONED) {
       rollback();
-      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      context->schedulerStatus = TALOS_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     }
     if (context->nextSchedulerSequence == 0) {
       rollback();
-      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      context->schedulerStatus = TALOS_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
-    update.execRegion = obelisk_rt_commit_region(
+    update.execRegion = talos_rt_commit_region(
         context->activeHomeRegion == UINT32_MAX
-            ? static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE)
+            ? static_cast<uint32_t>(TALOS_RT_REGION_ACTIVE)
             : context->activeHomeRegion);
     if (update.execRegion == UINT32_MAX) {
       rollback();
-      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      context->schedulerStatus = TALOS_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     }
     update.sequence = context->nextSchedulerSequence++;
     update.dueTime = delay > UINT64_MAX - context->schedulerTime
                          ? UINT64_MAX
                          : context->schedulerTime + delay;
     context->scheduledManagedNBAs.push_back(std::move(update));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     rollback();
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
-    return OBELISK_RT_OUT_OF_MEMORY;
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_OUT_OF_MEMORY);
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     rollback();
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
-    return OBELISK_RT_INVALID_ARGUMENT;
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_INVALID_ARGUMENT);
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
-    obelisk_rt_context *context, obelisk_rt_object_v1 *destination,
+extern "C" talos_rt_status talos_rt_v1_scheduler_managed_nba(
+    talos_rt_context *context, talos_rt_object_v1 *destination,
     uint64_t offset, const void *value, const void *unknown, uint64_t planeSize,
     uint64_t delay) {
   return scheduleManagedNBA(context, destination, offset, value, unknown,
                             nullptr, planeSize, delay);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba_masked(
-    obelisk_rt_context *context, obelisk_rt_object_v1 *destination,
+extern "C" talos_rt_status talos_rt_v1_scheduler_managed_nba_masked(
+    talos_rt_context *context, talos_rt_object_v1 *destination,
     uint64_t offset, const void *value, const void *unknown, const void *mask,
     uint64_t planeSize, uint64_t delay) {
   if (!mask)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   return scheduleManagedNBA(context, destination, offset, value, unknown, mask,
                             planeSize, delay);
 }
 
-obelisk_rt_status
-obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_apply_managed_nba(talos_rt_context *context,
                              const ScheduledManagedNBA &update) {
   ManagedExecutionScope managedExecution(context);
-  if (managedExecution.getStatus() != OBELISK_RT_OK)
+  if (managedExecution.getStatus() != TALOS_RT_OK)
     return managedExecution.getStatus();
   ManagedHeap *heap = heapFor(context);
   if (!heap)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ObjectMetadata *destination = metadataFor(update.destination);
-  obelisk_rt_status status = OBELISK_RT_OK;
+  talos_rt_status status = TALOS_RT_OK;
   if (!destination ||
       (update.referencePath
-           ? destination->kind != OBELISK_RT_MANAGED_REFERENCE_PATH
-           : destination->kind != OBELISK_RT_MANAGED_CLASS) ||
+           ? destination->kind != TALOS_RT_MANAGED_REFERENCE_PATH
+           : destination->kind != TALOS_RT_MANAGED_CLASS) ||
       destination->heap != heap || update.value.size() != update.planeSize ||
       (!update.unknown.empty() && update.unknown.size() != update.planeSize) ||
       (!update.mask.empty() && update.mask.size() != update.planeSize)) {
-    status = OBELISK_RT_INVALID_HANDLE;
+    status = TALOS_RT_INVALID_HANDLE;
   } else if (update.referencePath) {
-    obelisk_rt_gc_lane_v1 *lane = managedExecution.getLane();
+    talos_rt_gc_lane_v1 *lane = managedExecution.getLane();
     const uint8_t *value = update.value.data();
     const uint8_t *unknown =
         update.unknown.empty() ? nullptr : update.unknown.data();
@@ -4244,10 +4244,10 @@ obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
     // value at commit; an absent element contributes its default.
     std::vector<uint8_t> merged;
     if (!update.mask.empty() && lane) {
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         merged.assign(update.value.size() + update.unknown.size(), 0);
         uint32_t present = 0;
-        status = obelisk_rt_v1_reference_path_load(
+        status = talos_rt_v1_reference_path_load(
             update.destination, merged.data(),
             unknown ? merged.data() + update.planeSize : nullptr, &present);
         auto mergePlane = [&](uint8_t *plane, const uint8_t *next) {
@@ -4263,14 +4263,14 @@ obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
         if (unknown)
           unknown = merged.data() + update.planeSize;
       }
-      OBELISK_RT_CATCH(const std::bad_alloc &) {
-        status = OBELISK_RT_OUT_OF_MEMORY;
+      TALOS_RT_CATCH(const std::bad_alloc &) {
+        status = TALOS_RT_OUT_OF_MEMORY;
       }
     }
-    if (status == OBELISK_RT_OK)
-      status = lane ? obelisk_rt_v1_reference_path_store(
+    if (status == TALOS_RT_OK)
+      status = lane ? talos_rt_v1_reference_path_store(
                           lane, update.destination, value, unknown)
-                    : OBELISK_RT_INVALID_LIFECYCLE;
+                    : TALOS_RT_INVALID_LIFECYCLE;
   } else {
     bool changed = false;
     {
@@ -4297,18 +4297,18 @@ obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
         commitPlane(base + update.offset + update.planeSize, update.unknown);
     }
     if (changed)
-      obelisk_rt_notify_managed_watch(
-          update.destination, OBELISK_RT_MANAGED_WATCH_FIELD, update.offset,
+      talos_rt_notify_managed_watch(
+          update.destination, TALOS_RT_MANAGED_WATCH_FIELD, update.offset,
           update.planeSize * (update.unknown.empty() ? 1 : 2));
   }
 
-  for (obelisk_rt_object_v1 *managedValue : update.managedValues) {
-    obelisk_rt_status released = heap->releaseScheduled(managedValue);
-    if (status == OBELISK_RT_OK && released != OBELISK_RT_OK)
+  for (talos_rt_object_v1 *managedValue : update.managedValues) {
+    talos_rt_status released = heap->releaseScheduled(managedValue);
+    if (status == TALOS_RT_OK && released != TALOS_RT_OK)
       status = released;
   }
-  obelisk_rt_status released = heap->releaseScheduled(update.destination);
-  if (status == OBELISK_RT_OK && released != OBELISK_RT_OK)
+  talos_rt_status released = heap->releaseScheduled(update.destination);
+  if (status == TALOS_RT_OK && released != TALOS_RT_OK)
     status = released;
   return status;
 }
@@ -4330,8 +4330,8 @@ struct DispatchMemoEntry {
   uint64_t first = 0;
   uint64_t second = 0;
   uint64_t third = 0;
-  obelisk_rt_status status = OBELISK_RT_OK;
-  const obelisk_rt_method_descriptor_v1 *method = nullptr;
+  talos_rt_status status = TALOS_RT_OK;
+  const talos_rt_method_descriptor_v1 *method = nullptr;
   uint32_t instance = 0;
 };
 
@@ -4358,36 +4358,36 @@ DispatchMemoEntry *findDispatchMemo(DispatchQuery query, const void *descriptor,
   return &entry;
 }
 
-uint32_t objectIsInstanceUncached(const obelisk_rt_object_v1 *object,
-                                  const obelisk_rt_class_descriptor_v1 *target);
-obelisk_rt_status
-resolveMethodUncached(obelisk_rt_object_v1 *receiver, uint64_t slot,
+uint32_t objectIsInstanceUncached(const talos_rt_object_v1 *object,
+                                  const talos_rt_class_descriptor_v1 *target);
+talos_rt_status
+resolveMethodUncached(talos_rt_object_v1 *receiver, uint64_t slot,
                       uint64_t signatureID,
-                      const obelisk_rt_method_descriptor_v1 **outMethod);
-obelisk_rt_status resolveInterfaceMethodUncached(
-    obelisk_rt_object_v1 *receiver, uint64_t interfaceID,
+                      const talos_rt_method_descriptor_v1 **outMethod);
+talos_rt_status resolveInterfaceMethodUncached(
+    talos_rt_object_v1 *receiver, uint64_t interfaceID,
     uint64_t interfaceOrdinal, uint64_t signatureID,
-    const obelisk_rt_method_descriptor_v1 **outMethod);
+    const talos_rt_method_descriptor_v1 **outMethod);
 
 } // namespace
 
-void obelisk_rt_retire_dispatch_memos() noexcept {
+void talos_rt_retire_dispatch_memos() noexcept {
   dispatchMemoEpoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
 extern "C" uint32_t
-obelisk_rt_v1_object_is_instance(const obelisk_rt_object_v1 *object,
-                                 const obelisk_rt_class_descriptor_v1 *target) {
+talos_rt_v1_object_is_instance(const talos_rt_object_v1 *object,
+                                 const talos_rt_class_descriptor_v1 *target) {
   if (!object || !target)
     return 0;
-  const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(object);
-  if (!descriptor || !obelisk_rt_managed_object_context(object))
+  const talos_rt_class_descriptor_v1 *descriptor = descriptorFor(object);
+  if (!descriptor || !talos_rt_managed_object_context(object))
     return objectIsInstanceUncached(object, target);
   // The answer depends on the target's identity, not on its address.
   bool hit = false;
   DispatchMemoEntry *memo = findDispatchMemo(
       DispatchQuery::Instance, descriptor, nullptr, target->class_id,
-      target->flags & OBELISK_RT_CLASS_INTERFACE, 0, hit);
+      target->flags & TALOS_RT_CLASS_INTERFACE, 0, hit);
   if (!hit)
     memo->instance = objectIsInstanceUncached(object, target);
   return memo->instance;
@@ -4395,30 +4395,30 @@ obelisk_rt_v1_object_is_instance(const obelisk_rt_object_v1 *object,
 
 namespace {
 uint32_t
-objectIsInstanceUncached(const obelisk_rt_object_v1 *object,
-                         const obelisk_rt_class_descriptor_v1 *target) {
-  const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(object);
+objectIsInstanceUncached(const talos_rt_object_v1 *object,
+                         const talos_rt_class_descriptor_v1 *target) {
+  const talos_rt_class_descriptor_v1 *descriptor = descriptorFor(object);
   if (!descriptor)
     return 0;
-  if (auto *context = obelisk_rt_managed_object_context(object)) {
-    OBELISK_RT_TRY {
+  if (auto *context = talos_rt_managed_object_context(object)) {
+    TALOS_RT_TRY {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       // The lock keeps the cache alive; copying its owner would add two
       // atomic updates to every check.
       if (const auto *cache = context->managedClassValidation.get())
         if (const auto *inventory = cache->methods.lookup(descriptor)) {
-          if (target->flags & OBELISK_RT_CLASS_INTERFACE)
+          if (target->flags & TALOS_RT_CLASS_INTERFACE)
             return inventory->interfaces.find(target->class_id) != nullptr;
           return inventory->ancestors.find(target->class_id) != nullptr;
         }
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       // The public predicate has no allocation-error result. Unregistered
       // descriptors and an unavailable index use the validated linear walk.
     }
   }
-  OBELISK_RT_TRY {
-    std::vector<const obelisk_rt_interface_descriptor_v1 *> pending;
+  TALOS_RT_TRY {
+    std::vector<const talos_rt_interface_descriptor_v1 *> pending;
     std::unordered_set<uint64_t> visited;
     for (const auto *current = descriptor; current; current = current->base) {
       if (current == target || current->class_id == target->class_id)
@@ -4437,46 +4437,46 @@ objectIsInstanceUncached(const obelisk_rt_object_v1 *object,
         pending.push_back(interface->bases[index]);
     }
   }
-  OBELISK_RT_CATCH_ALL {}
+  TALOS_RT_CATCH_ALL {}
   return 0;
 }
 } // namespace
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_object_cast(obelisk_rt_object_v1 *object,
-                          const obelisk_rt_class_descriptor_v1 *target,
-                          obelisk_rt_object_v1 **outObject) {
+extern "C" talos_rt_status
+talos_rt_v1_object_cast(talos_rt_object_v1 *object,
+                          const talos_rt_class_descriptor_v1 *target,
+                          talos_rt_object_v1 **outObject) {
   if (!target || !outObject)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (!object) {
     *outObject = nullptr;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (!metadataFor(object)) {
     *outObject = nullptr;
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   }
-  if (!obelisk_rt_v1_object_is_instance(object, target)) {
+  if (!talos_rt_v1_object_is_instance(object, target)) {
     *outObject = nullptr;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   *outObject = object;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 extern "C" uint64_t
-obelisk_rt_v1_object_id(const obelisk_rt_object_v1 *object) {
+talos_rt_v1_object_id(const talos_rt_object_v1 *object) {
   ObjectMetadata *metadata = metadataFor(object);
   return metadata ? metadata->identity : 0;
 }
 
 namespace {
 
-std::optional<uint64_t> managedWatchSelector(obelisk_rt_managed_watch_kind kind,
+std::optional<uint64_t> managedWatchSelector(talos_rt_managed_watch_kind kind,
                                              uint64_t selector) {
-  if (kind == OBELISK_RT_MANAGED_WATCH_FIELD)
+  if (kind == TALOS_RT_MANAGED_WATCH_FIELD)
     return selector;
-  if (kind == OBELISK_RT_MANAGED_WATCH_CONTAINER_SIZE)
+  if (kind == TALOS_RT_MANAGED_WATCH_CONTAINER_SIZE)
     return UINT64_MAX;
   return std::nullopt;
 }
@@ -4484,14 +4484,14 @@ std::optional<uint64_t> managedWatchSelector(obelisk_rt_managed_watch_kind kind,
 } // namespace
 
 extern "C" uint64_t
-obelisk_rt_v1_managed_watch(obelisk_rt_object_v1 *object,
-                            obelisk_rt_managed_watch_kind kind,
+talos_rt_v1_managed_watch(talos_rt_object_v1 *object,
+                            talos_rt_managed_watch_kind kind,
                             uint64_t selector) {
   ObjectMetadata *metadata = metadataFor(object);
   std::optional<uint64_t> key = managedWatchSelector(kind, selector);
   if (!metadata || !metadata->heap || !key)
     return 0;
-  obelisk_rt_context *context = metadata->heap->ownerContext();
+  talos_rt_context *context = metadata->heap->ownerContext();
   if (!context || metadata->identity == 0)
     return 0;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -4505,19 +4505,19 @@ obelisk_rt_v1_managed_watch(obelisk_rt_object_v1 *object,
   return token;
 }
 
-void obelisk_rt_notify_managed_watch(obelisk_rt_object_v1 *object,
-                                     obelisk_rt_managed_watch_kind kind,
+void talos_rt_notify_managed_watch(talos_rt_object_v1 *object,
+                                     talos_rt_managed_watch_kind kind,
                                      uint64_t selector, uint64_t size) {
   ObjectMetadata *metadata = metadataFor(object);
   std::optional<uint64_t> key = managedWatchSelector(kind, selector);
   if (!metadata || !metadata->heap || !key || metadata->identity == 0)
     return;
-  obelisk_rt_context *context = metadata->heap->ownerContext();
+  talos_rt_context *context = metadata->heap->ownerContext();
   if (!context)
     return;
   std::lock_guard<std::recursive_mutex> transaction(context->transactionMutex);
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
-  if (kind == OBELISK_RT_MANAGED_WATCH_FIELD && size != 0 &&
+  if (kind == TALOS_RT_MANAGED_WATCH_FIELD && size != 0 &&
       context->classBitstreamState && context->classBitstreamState->notifyRange)
     context->classBitstreamState->notifyRange(context->classBitstreamState,
                                               context, metadata->identity,
@@ -4528,18 +4528,18 @@ void obelisk_rt_notify_managed_watch(obelisk_rt_object_v1 *object,
   auto watched = objectWatch->second.find(*key);
   if (watched == objectWatch->second.end() || watched->second == 0)
     return;
-  if ((!obelisk_rt_notify_managed_waiters_unlocked(context, watched->second) ||
-       !obelisk_rt_notify_observer_managed_unlocked(context,
+  if ((!talos_rt_notify_managed_waiters_unlocked(context, watched->second) ||
+       !talos_rt_notify_observer_managed_unlocked(context,
                                                     watched->second)) &&
-      context->schedulerStatus == OBELISK_RT_OK)
-    context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
+      context->schedulerStatus == TALOS_RT_OK)
+    context->schedulerStatus = TALOS_RT_INVALID_ARGUMENT;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_method_resolve(
-    obelisk_rt_object_v1 *receiver, uint64_t slot, uint64_t signatureID,
-    const obelisk_rt_method_descriptor_v1 **outMethod) {
-  const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
-  if (!descriptor || !outMethod || !obelisk_rt_managed_object_context(receiver))
+extern "C" talos_rt_status talos_rt_v1_method_resolve(
+    talos_rt_object_v1 *receiver, uint64_t slot, uint64_t signatureID,
+    const talos_rt_method_descriptor_v1 **outMethod) {
+  const talos_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
+  if (!descriptor || !outMethod || !talos_rt_managed_object_context(receiver))
     return resolveMethodUncached(receiver, slot, signatureID, outMethod);
   bool hit = false;
   DispatchMemoEntry *memo = findDispatchMemo(
@@ -4547,18 +4547,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_method_resolve(
   if (!hit)
     memo->status =
         resolveMethodUncached(receiver, slot, signatureID, &memo->method);
-  if (memo->status == OBELISK_RT_OK)
+  if (memo->status == TALOS_RT_OK)
     *outMethod = memo->method;
   return memo->status;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_interface_method_resolve(
-    obelisk_rt_object_v1 *receiver, uint64_t interfaceID,
+extern "C" talos_rt_status talos_rt_v1_interface_method_resolve(
+    talos_rt_object_v1 *receiver, uint64_t interfaceID,
     uint64_t interfaceOrdinal, uint64_t signatureID,
-    const obelisk_rt_method_descriptor_v1 **outMethod) {
-  const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
+    const talos_rt_method_descriptor_v1 **outMethod) {
+  const talos_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
   if (!descriptor || !outMethod || interfaceID == 0 ||
-      !obelisk_rt_managed_object_context(receiver))
+      !talos_rt_managed_object_context(receiver))
     return resolveInterfaceMethodUncached(
         receiver, interfaceID, interfaceOrdinal, signatureID, outMethod);
   bool hit = false;
@@ -4568,21 +4568,21 @@ extern "C" obelisk_rt_status obelisk_rt_v1_interface_method_resolve(
   if (!hit)
     memo->status = resolveInterfaceMethodUncached(
         receiver, interfaceID, interfaceOrdinal, signatureID, &memo->method);
-  if (memo->status == OBELISK_RT_OK)
+  if (memo->status == TALOS_RT_OK)
     *outMethod = memo->method;
   return memo->status;
 }
 
 namespace {
-obelisk_rt_status
-resolveMethodUncached(obelisk_rt_object_v1 *receiver, uint64_t slot,
+talos_rt_status
+resolveMethodUncached(talos_rt_object_v1 *receiver, uint64_t slot,
                       uint64_t signatureID,
-                      const obelisk_rt_method_descriptor_v1 **outMethod) {
-  const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
+                      const talos_rt_method_descriptor_v1 **outMethod) {
+  const talos_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
   if (!descriptor || !outMethod)
-    return OBELISK_RT_INVALID_HANDLE;
-  const obelisk_rt_method_descriptor_v1 *method = nullptr;
-  if (auto *context = obelisk_rt_managed_object_context(receiver)) {
+    return TALOS_RT_INVALID_HANDLE;
+  const talos_rt_method_descriptor_v1 *method = nullptr;
+  if (auto *context = talos_rt_managed_object_context(receiver)) {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (const auto *cache = context->managedClassValidation.get())
       if (const auto *inventory = cache->methods.lookup(descriptor)) {
@@ -4593,7 +4593,7 @@ resolveMethodUncached(obelisk_rt_object_v1 *receiver, uint64_t slot,
           method = *entry;
         // The complete cached inventory also proves absence.
         if (!method)
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
       }
   }
   if (!method) {
@@ -4616,34 +4616,34 @@ resolveMethodUncached(obelisk_rt_object_v1 *receiver, uint64_t slot,
     }
   }
   if (!method)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   if (method->signature_id != signatureID)
-    return OBELISK_RT_LAYOUT_MISMATCH;
+    return TALOS_RT_LAYOUT_MISMATCH;
   *outMethod = method;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status resolveInterfaceMethodUncached(
-    obelisk_rt_object_v1 *receiver, uint64_t interfaceID,
+talos_rt_status resolveInterfaceMethodUncached(
+    talos_rt_object_v1 *receiver, uint64_t interfaceID,
     uint64_t interfaceOrdinal, uint64_t signatureID,
-    const obelisk_rt_method_descriptor_v1 **outMethod) {
-  const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
+    const talos_rt_method_descriptor_v1 **outMethod) {
+  const talos_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
   if (!descriptor || !outMethod || interfaceID == 0)
-    return OBELISK_RT_INVALID_HANDLE;
-  return guarded(obelisk_rt_managed_object_context(receiver), [&] {
-    const obelisk_rt_interface_descriptor_v1 *interface = nullptr;
-    if (auto *context = obelisk_rt_managed_object_context(receiver)) {
+    return TALOS_RT_INVALID_HANDLE;
+  return guarded(talos_rt_managed_object_context(receiver), [&] {
+    const talos_rt_interface_descriptor_v1 *interface = nullptr;
+    if (auto *context = talos_rt_managed_object_context(receiver)) {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       if (const auto *cache = context->managedClassValidation.get())
         if (const auto *inventory = cache->methods.lookup(descriptor)) {
           if (const auto *entry = inventory->interfaces.find(interfaceID))
             interface = *entry;
           else
-            return OBELISK_RT_INVALID_HANDLE;
+            return TALOS_RT_INVALID_HANDLE;
         }
     }
     if (!interface) {
-      std::vector<const obelisk_rt_interface_descriptor_v1 *> pending;
+      std::vector<const talos_rt_interface_descriptor_v1 *> pending;
       std::unordered_set<uint64_t> visited;
       for (const auto *current = descriptor; current; current = current->base)
         for (uint64_t index = 0; index != current->interface_count; ++index)
@@ -4662,230 +4662,230 @@ obelisk_rt_status resolveInterfaceMethodUncached(
       }
     }
     if (!interface || interfaceOrdinal >= interface->method_count)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (interface->method_signatures[interfaceOrdinal] != signatureID)
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
     return resolveMethodUncached(receiver, UINT32_MAX, signatureID, outMethod);
   });
 }
 } // namespace
 
-static obelisk_rt_status validateMethodInvocation(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver,
-    const obelisk_rt_method_argument_v1 *arguments, uint32_t argumentCount) {
+static talos_rt_status validateMethodInvocation(
+    talos_rt_gc_lane_v1 *lane, talos_rt_object_v1 *receiver,
+    const talos_rt_method_argument_v1 *arguments, uint32_t argumentCount) {
   if (!lane || !lane->heap || !lane->heap->activeOwner(lane) ||
       (!arguments && argumentCount != 0))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ObjectMetadata *metadata = metadataFor(receiver);
-  return metadata && metadata->heap == lane->heap ? OBELISK_RT_OK
-                                                  : OBELISK_RT_INVALID_HANDLE;
+  return metadata && metadata->heap == lane->heap ? TALOS_RT_OK
+                                                  : TALOS_RT_INVALID_HANDLE;
 }
 
-static obelisk_rt_status invokeResolvedMethod(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver,
-    const obelisk_rt_method_descriptor_v1 *method,
-    const obelisk_rt_method_argument_v1 *arguments, uint32_t argumentCount,
+static talos_rt_status invokeResolvedMethod(
+    talos_rt_gc_lane_v1 *lane, talos_rt_object_v1 *receiver,
+    const talos_rt_method_descriptor_v1 *method,
+    const talos_rt_method_argument_v1 *arguments, uint32_t argumentCount,
     void *result, uint64_t resultSize) {
-  if ((method->flags & OBELISK_RT_METHOD_TASK) != 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+  if ((method->flags & TALOS_RT_METHOD_TASK) != 0)
+    return TALOS_RT_INVALID_ARGUMENT;
   if (!method->native_entry)
-    return OBELISK_RT_TIER_UNAVAILABLE;
+    return TALOS_RT_TIER_UNAVAILABLE;
   // A foreign caller is not required to have placed the receiver in its own
   // root set. Keep it alive across allocations made by the method body.
-  obelisk_rt_gc_root_v1 receiverRoot{};
-  obelisk_rt_status status =
+  talos_rt_gc_root_v1 receiverRoot{};
+  talos_rt_status status =
       lane->heap->pushRoot(lane, &receiverRoot, &receiver);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
-  obelisk_rt_status callStatus = OBELISK_RT_OK;
-  OBELISK_RT_TRY {
+  talos_rt_status callStatus = TALOS_RT_OK;
+  TALOS_RT_TRY {
     callStatus = method->native_entry(lane->context, lane, receiver, arguments,
                                       argumentCount, result, resultSize);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    callStatus = OBELISK_RT_OUT_OF_MEMORY;
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    callStatus = TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL { callStatus = OBELISK_RT_INVALID_ARGUMENT; }
-  obelisk_rt_status popStatus = lane->heap->popRoot(lane, &receiverRoot);
-  return callStatus == OBELISK_RT_OK ? popStatus : callStatus;
+  TALOS_RT_CATCH_ALL { callStatus = TALOS_RT_INVALID_ARGUMENT; }
+  talos_rt_status popStatus = lane->heap->popRoot(lane, &receiverRoot);
+  return callStatus == TALOS_RT_OK ? popStatus : callStatus;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_method_invoke(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver, uint64_t slot,
-    uint64_t signatureID, const obelisk_rt_method_argument_v1 *arguments,
+extern "C" talos_rt_status talos_rt_v1_method_invoke(
+    talos_rt_gc_lane_v1 *lane, talos_rt_object_v1 *receiver, uint64_t slot,
+    uint64_t signatureID, const talos_rt_method_argument_v1 *arguments,
     uint32_t argumentCount, void *result, uint64_t resultSize) {
-  obelisk_rt_status status =
+  talos_rt_status status =
       validateMethodInvocation(lane, receiver, arguments, argumentCount);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
-  const obelisk_rt_method_descriptor_v1 *method = nullptr;
-  status = obelisk_rt_v1_method_resolve(receiver, slot, signatureID, &method);
-  if (status != OBELISK_RT_OK)
+  const talos_rt_method_descriptor_v1 *method = nullptr;
+  status = talos_rt_v1_method_resolve(receiver, slot, signatureID, &method);
+  if (status != TALOS_RT_OK)
     return status;
   return invokeResolvedMethod(lane, receiver, method, arguments, argumentCount,
                               result, resultSize);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_interface_method_invoke(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver,
+extern "C" talos_rt_status talos_rt_v1_interface_method_invoke(
+    talos_rt_gc_lane_v1 *lane, talos_rt_object_v1 *receiver,
     uint64_t interfaceID, uint64_t interfaceOrdinal, uint64_t signatureID,
-    const obelisk_rt_method_argument_v1 *arguments, uint32_t argumentCount,
+    const talos_rt_method_argument_v1 *arguments, uint32_t argumentCount,
     void *result, uint64_t resultSize) {
-  obelisk_rt_status status =
+  talos_rt_status status =
       validateMethodInvocation(lane, receiver, arguments, argumentCount);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
-  const obelisk_rt_method_descriptor_v1 *method = nullptr;
-  status = obelisk_rt_v1_interface_method_resolve(
+  const talos_rt_method_descriptor_v1 *method = nullptr;
+  status = talos_rt_v1_interface_method_resolve(
       receiver, interfaceID, interfaceOrdinal, signatureID, &method);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   return invokeResolvedMethod(lane, receiver, method, arguments, argumentCount,
                               result, resultSize);
 }
 
-static obelisk_rt_status
-activateResolvedMethod(obelisk_rt_gc_lane_v1 *lane,
-                       obelisk_rt_object_v1 *receiver,
-                       const obelisk_rt_method_descriptor_v1 *method,
-                       const obelisk_rt_method_argument_v1 *arguments,
+static talos_rt_status
+activateResolvedMethod(talos_rt_gc_lane_v1 *lane,
+                       talos_rt_object_v1 *receiver,
+                       const talos_rt_method_descriptor_v1 *method,
+                       const talos_rt_method_argument_v1 *arguments,
                        uint32_t argumentCount, uint64_t *outActivation) {
-  if ((method->flags & OBELISK_RT_METHOD_TASK) == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  if ((method->flags & OBELISK_RT_METHOD_PURE) != 0 || !method->native_entry)
-    return OBELISK_RT_TIER_UNAVAILABLE;
-  obelisk_rt_gc_root_v1 receiverRoot{};
-  obelisk_rt_status status =
+  if ((method->flags & TALOS_RT_METHOD_TASK) == 0)
+    return TALOS_RT_INVALID_ARGUMENT;
+  if ((method->flags & TALOS_RT_METHOD_PURE) != 0 || !method->native_entry)
+    return TALOS_RT_TIER_UNAVAILABLE;
+  talos_rt_gc_root_v1 receiverRoot{};
+  talos_rt_status status =
       lane->heap->pushRoot(lane, &receiverRoot, &receiver);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
-  obelisk_rt_status callStatus = OBELISK_RT_OK;
-  OBELISK_RT_TRY {
+  talos_rt_status callStatus = TALOS_RT_OK;
+  TALOS_RT_TRY {
     callStatus = method->native_entry(lane->context, lane, receiver, arguments,
                                       argumentCount, outActivation,
                                       sizeof(*outActivation));
-    if (callStatus == OBELISK_RT_OK && *outActivation == 0)
-      callStatus = OBELISK_RT_INVALID_HANDLE;
+    if (callStatus == TALOS_RT_OK && *outActivation == 0)
+      callStatus = TALOS_RT_INVALID_HANDLE;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    callStatus = OBELISK_RT_OUT_OF_MEMORY;
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    callStatus = TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL { callStatus = OBELISK_RT_INVALID_ARGUMENT; }
-  obelisk_rt_status popStatus = lane->heap->popRoot(lane, &receiverRoot);
-  if (callStatus != OBELISK_RT_OK)
+  TALOS_RT_CATCH_ALL { callStatus = TALOS_RT_INVALID_ARGUMENT; }
+  talos_rt_status popStatus = lane->heap->popRoot(lane, &receiverRoot);
+  if (callStatus != TALOS_RT_OK)
     return callStatus;
   // Once the thunk returns an activation, its frame owns the transferred
   // arguments. Preserve that ownership handoff even if root-stack cleanup
   // reports an internal error; returning failure would make the caller roll
   // back references already installed in the activation.
-  if (popStatus != OBELISK_RT_OK)
-    obelisk_rt_v1_scheduler_fail(lane->context, popStatus);
-  return OBELISK_RT_OK;
+  if (popStatus != TALOS_RT_OK)
+    talos_rt_v1_scheduler_fail(lane->context, popStatus);
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_method_task_activate(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver, uint64_t slot,
-    uint64_t signatureID, const obelisk_rt_method_argument_v1 *arguments,
+extern "C" talos_rt_status talos_rt_v1_method_task_activate(
+    talos_rt_gc_lane_v1 *lane, talos_rt_object_v1 *receiver, uint64_t slot,
+    uint64_t signatureID, const talos_rt_method_argument_v1 *arguments,
     uint32_t argumentCount, uint64_t *outActivation) {
   if (outActivation)
     *outActivation = 0;
   if (!outActivation)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_status status =
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_status status =
       validateMethodInvocation(lane, receiver, arguments, argumentCount);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
-  const obelisk_rt_method_descriptor_v1 *method = nullptr;
-  status = obelisk_rt_v1_method_resolve(receiver, slot, signatureID, &method);
-  if (status != OBELISK_RT_OK)
+  const talos_rt_method_descriptor_v1 *method = nullptr;
+  status = talos_rt_v1_method_resolve(receiver, slot, signatureID, &method);
+  if (status != TALOS_RT_OK)
     return status;
   return activateResolvedMethod(lane, receiver, method, arguments,
                                 argumentCount, outActivation);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_interface_method_task_activate(
-    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver,
+extern "C" talos_rt_status talos_rt_v1_interface_method_task_activate(
+    talos_rt_gc_lane_v1 *lane, talos_rt_object_v1 *receiver,
     uint64_t interfaceID, uint64_t interfaceOrdinal, uint64_t signatureID,
-    const obelisk_rt_method_argument_v1 *arguments, uint32_t argumentCount,
+    const talos_rt_method_argument_v1 *arguments, uint32_t argumentCount,
     uint64_t *outActivation) {
   if (outActivation)
     *outActivation = 0;
   if (!outActivation)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_status status =
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_status status =
       validateMethodInvocation(lane, receiver, arguments, argumentCount);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
-  const obelisk_rt_method_descriptor_v1 *method = nullptr;
-  status = obelisk_rt_v1_interface_method_resolve(
+  const talos_rt_method_descriptor_v1 *method = nullptr;
+  status = talos_rt_v1_interface_method_resolve(
       receiver, interfaceID, interfaceOrdinal, signatureID, &method);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   return activateResolvedMethod(lane, receiver, method, arguments,
                                 argumentCount, outActivation);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_weak_create(obelisk_rt_gc_lane_v1 *lane,
-                          const obelisk_rt_class_descriptor_v1 *descriptor,
-                          obelisk_rt_object_v1 *referent,
-                          obelisk_rt_object_v1 **outWeak) {
+extern "C" talos_rt_status
+talos_rt_v1_weak_create(talos_rt_gc_lane_v1 *lane,
+                          const talos_rt_class_descriptor_v1 *descriptor,
+                          talos_rt_object_v1 *referent,
+                          talos_rt_object_v1 **outWeak) {
   if (!outWeak)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outWeak = nullptr;
   if (!lane || !lane->heap || !descriptor ||
-      (descriptor->flags & OBELISK_RT_CLASS_WEAK_WRAPPER) == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+      (descriptor->flags & TALOS_RT_CLASS_WEAK_WRAPPER) == 0)
+    return TALOS_RT_INVALID_ARGUMENT;
   if (referent) {
     ObjectMetadata *metadata = metadataFor(referent);
     if (!metadata || metadata->heap != lane->heap)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
   }
-  obelisk_rt_gc_root_v1 referentRoot{};
-  obelisk_rt_status status =
+  talos_rt_gc_root_v1 referentRoot{};
+  talos_rt_status status =
       lane->heap->pushRoot(lane, &referentRoot, &referent);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   status = lane->heap->allocate(lane, descriptor, outWeak);
-  if (status != OBELISK_RT_OK) {
+  if (status != TALOS_RT_OK) {
     (void)lane->heap->popRoot(lane, &referentRoot);
     return status;
   }
-  obelisk_rt_managed_word_v1 referentWord =
-      obelisk_rt_managed_word_from_object(referent);
+  talos_rt_managed_word_v1 referentWord =
+      talos_rt_managed_word_from_object(referent);
   status =
-      obelisk_rt_v1_object_write(*outWeak, sizeof(obelisk_rt_managed_word_v1),
+      talos_rt_v1_object_write(*outWeak, sizeof(talos_rt_managed_word_v1),
                                  &referentWord, sizeof(referentWord));
-  obelisk_rt_status popStatus = lane->heap->popRoot(lane, &referentRoot);
-  return status == OBELISK_RT_OK ? popStatus : status;
+  talos_rt_status popStatus = lane->heap->popRoot(lane, &referentRoot);
+  return status == TALOS_RT_OK ? popStatus : status;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_weak_get(obelisk_rt_object_v1 *weak,
-                       obelisk_rt_object_v1 **outReferent) {
+extern "C" talos_rt_status
+talos_rt_v1_weak_get(talos_rt_object_v1 *weak,
+                       talos_rt_object_v1 **outReferent) {
   if (!outReferent)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outReferent = nullptr;
-  const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(weak);
-  if (!descriptor || (descriptor->flags & OBELISK_RT_CLASS_WEAK_WRAPPER) == 0)
-    return OBELISK_RT_INVALID_HANDLE;
-  obelisk_rt_managed_word_v1 word = 0;
-  obelisk_rt_status status = obelisk_rt_v1_object_read(
-      weak, sizeof(obelisk_rt_managed_word_v1), &word, sizeof(word));
-  if (status != OBELISK_RT_OK)
+  const talos_rt_class_descriptor_v1 *descriptor = descriptorFor(weak);
+  if (!descriptor || (descriptor->flags & TALOS_RT_CLASS_WEAK_WRAPPER) == 0)
+    return TALOS_RT_INVALID_HANDLE;
+  talos_rt_managed_word_v1 word = 0;
+  talos_rt_status status = talos_rt_v1_object_read(
+      weak, sizeof(talos_rt_managed_word_v1), &word, sizeof(word));
+  if (status != TALOS_RT_OK)
     return status;
-  *outReferent = obelisk_rt_object_from_managed_word(word);
-  return word == obelisk_rt_managed_word_from_object(*outReferent)
-             ? OBELISK_RT_OK
-             : OBELISK_RT_INVALID_HANDLE;
+  *outReferent = talos_rt_object_from_managed_word(word);
+  return word == talos_rt_managed_word_from_object(*outReferent)
+             ? TALOS_RT_OK
+             : TALOS_RT_INVALID_HANDLE;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_weak_clear(obelisk_rt_object_v1 *weak) {
-  const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(weak);
-  if (!descriptor || (descriptor->flags & OBELISK_RT_CLASS_WEAK_WRAPPER) == 0)
-    return OBELISK_RT_INVALID_HANDLE;
-  obelisk_rt_managed_word_v1 word = 0;
-  return obelisk_rt_v1_object_write(weak, sizeof(obelisk_rt_managed_word_v1),
+extern "C" talos_rt_status
+talos_rt_v1_weak_clear(talos_rt_object_v1 *weak) {
+  const talos_rt_class_descriptor_v1 *descriptor = descriptorFor(weak);
+  if (!descriptor || (descriptor->flags & TALOS_RT_CLASS_WEAK_WRAPPER) == 0)
+    return TALOS_RT_INVALID_HANDLE;
+  talos_rt_managed_word_v1 word = 0;
+  return talos_rt_v1_object_write(weak, sizeof(talos_rt_managed_word_v1),
                                     &word, sizeof(word));
 }

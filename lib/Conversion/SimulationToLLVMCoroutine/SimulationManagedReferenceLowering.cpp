@@ -2,11 +2,11 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Analysis/SimulationStorageAnalysis.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/SimulationStorageAnalysis.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -24,7 +24,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 namespace {
 
@@ -90,7 +90,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_vpi_frame_bind"),
+                               "talos_rt_v1_vpi_frame_bind"),
             ValueRange{context,
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), id.getInt()),
@@ -176,15 +176,15 @@ public:
       ownerReference = unpackArgumentReference(
           rewriter, op.getLoc(), adaptor.getOwnerReference().front());
       valueState = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
-                                             "__obelisk_state_value");
+                                             "__talos_state_value");
       unknownState = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
-                                               "__obelisk_state_unknown");
+                                               "__talos_state_unknown");
     }
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_reference_path_index_create"),
+                               "talos_rt_v1_reference_path_index_create"),
             ValueRange{lane,
                        managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getContainer().front()),
@@ -241,9 +241,9 @@ public:
       payload = reference.payload;
       managed = reference.managed;
       valueState = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                             "__obelisk_state_value");
+                                             "__talos_state_value");
       unknownState = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                               "__obelisk_state_unknown");
+                                               "__talos_state_unknown");
       bitCount = llvmConstant(rewriter, location, i64, stateBitCount);
     } else {
       handle = adaptor.getHandle().front();
@@ -255,7 +255,7 @@ public:
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(
                 rewriter.getContext(),
-                "obelisk_rt_v1_reference_path_covergroup_option_create"),
+                "talos_rt_v1_reference_path_covergroup_option_create"),
             ValueRange{lane, handle, type,
                        llvmConstant(rewriter, location, i64, op.getItem()),
                        llvmConstant(rewriter, location, rewriter.getI32Type(),
@@ -302,15 +302,15 @@ public:
     UnpackedArgumentReference ownerReference = unpackArgumentReference(
         rewriter, location, adaptor.getOwnerReference().front());
     Value valueState = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                 "__obelisk_state_value");
+                                                 "__talos_state_value");
     Value unknownState = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                   "__obelisk_state_unknown");
+                                                   "__talos_state_unknown");
     Value status =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(
                 rewriter.getContext(),
-                "obelisk_rt_v1_reference_path_string_character_create"),
+                "talos_rt_v1_reference_path_string_character_create"),
             ValueRange{
                 lane, adaptor.getString().front(), adaptor.getIndex().front(),
                 managedObjectPointer(rewriter, location, ownerReference.owner),
@@ -379,14 +379,14 @@ public:
     UnpackedArgumentReference ownerReference = unpackArgumentReference(
         rewriter, location, adaptor.getOwnerReference().front());
     Value valueState = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                 "__obelisk_state_value");
+                                                 "__talos_state_value");
     Value unknownState = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                   "__obelisk_state_unknown");
+                                                   "__talos_state_unknown");
     Value traceSlots = LLVM::ZeroOp::create(rewriter, location, pointer);
     if (!op.getTraceOffsets().empty())
       traceSlots = LLVM::AddressOfOp::create(
           rewriter, location, pointer,
-          "__obelisk_element_trace_" + std::to_string(op.getTypeId()));
+          "__talos_element_trace_" + std::to_string(op.getTypeId()));
     auto c32 = [&](uint32_t value) {
       return llvmConstant(rewriter, location, i32, value);
     };
@@ -411,7 +411,7 @@ public:
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(
                 rewriter.getContext(),
-                "obelisk_rt_v1_reference_path_aggregate_element_create"),
+                "talos_rt_v1_reference_path_aggregate_element_create"),
             ValueRange{
                 lane,
                 managedObjectPointer(rewriter, location, ownerReference.owner),
@@ -471,14 +471,14 @@ public:
     UnpackedArgumentReference ownerReference = unpackArgumentReference(
         rewriter, op.getLoc(), adaptor.getOwnerReference().front());
     Value valueState = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
-                                                 "__obelisk_state_value");
+                                                 "__talos_state_value");
     Value unknownState = LLVM::AddressOfOp::create(
-        rewriter, op.getLoc(), pointer, "__obelisk_state_unknown");
+        rewriter, op.getLoc(), pointer, "__talos_state_unknown");
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_reference_path_assoc_create"),
+                               "talos_rt_v1_reference_path_assoc_create"),
             ValueRange{lane,
                        managedObjectPointer(rewriter, op.getLoc(),
                                             adaptor.getArray().front()),
@@ -575,14 +575,14 @@ public:
           unknownOut, storage->alignment);
     }
     Value valueState = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                 "__obelisk_state_value");
+                                                 "__talos_state_value");
     Value unknownState = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                   "__obelisk_state_unknown");
+                                                   "__talos_state_unknown");
     Value status =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_argument_ref_load"),
+                               "talos_rt_v1_argument_ref_load"),
             ValueRange{
                 context, valueState, unknownState,
                 llvmConstant(rewriter, location, i64, stateBitCount),
@@ -594,10 +594,10 @@ public:
                 llvmConstant(
                     rewriter, location, i32,
                     isa<sim::StringType>(op.getResult().getType())
-                        ? OBELISK_RT_ARGUMENT_VALUE_STRING
+                        ? TALOS_RT_ARGUMENT_VALUE_STRING
                     : sim::isManagedHandleType(op.getResult().getType())
-                        ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                        : OBELISK_RT_ARGUMENT_VALUE_BITS),
+                        ? TALOS_RT_ARGUMENT_VALUE_CLASS
+                        : TALOS_RT_ARGUMENT_VALUE_BITS),
                 valueOut, unknownOut})
             .getResult();
     reportManagedStatus(rewriter, location, context, status);
@@ -652,9 +652,9 @@ public:
     auto [context, lane] = managedContextAndLane(rewriter, location);
     (void)lane;
     Value valueState = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                 "__obelisk_state_value");
+                                                 "__talos_state_value");
     Value unknownState = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                   "__obelisk_state_unknown");
+                                                   "__talos_state_unknown");
     SmallVector<Value> commonArguments{
         context,
         valueState,
@@ -668,10 +668,10 @@ public:
         llvmConstant(rewriter, location, i32, storage->fourState),
         llvmConstant(rewriter, location, i32,
                      isa<sim::StringType>(valueType)
-                         ? OBELISK_RT_ARGUMENT_VALUE_STRING
+                         ? TALOS_RT_ARGUMENT_VALUE_STRING
                      : sim::isManagedHandleType(valueType)
-                         ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                         : OBELISK_RT_ARGUMENT_VALUE_BITS)};
+                         ? TALOS_RT_ARGUMENT_VALUE_CLASS
+                         : TALOS_RT_ARGUMENT_VALUE_BITS)};
     Value valueIn =
         entryAlloca(rewriter, location, adaptor.getValue().front().getType(), 1,
                     storage->alignment);
@@ -691,7 +691,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, location, TypeRange{i32},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_argument_ref_store"),
+                                          "talos_rt_v1_argument_ref_store"),
                        storeArguments)
                        .getResult();
     reportManagedStatus(rewriter, location, context, status);
@@ -750,9 +750,9 @@ public:
     SmallVector<Value> arguments{
         object, baseOffset, outputs.front(),
         llvmConstant(rewriter, op.getLoc(), i64, storage->size)};
-    StringRef callee = "obelisk_rt_v1_object_read";
+    StringRef callee = "talos_rt_v1_object_read";
     if (outputs.size() == 2) {
-      callee = "obelisk_rt_v1_object_read_planes";
+      callee = "talos_rt_v1_object_read_planes";
       arguments.insert(arguments.end() - 1, outputs[1]);
     }
     Value status =
@@ -854,7 +854,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_object_bits_insert"),
+                               "talos_rt_v1_object_bits_insert"),
             ValueRange{object, adaptor.getReference()[1],
                        llvmConstant(rewriter, location, i64, *inputWidth),
                        lowI64, validI32, replacementI64,
@@ -906,9 +906,9 @@ public:
     SmallVector<Value> arguments{
         object, baseOffset, inputs.front(),
         llvmConstant(rewriter, op.getLoc(), i64, storage->size)};
-    StringRef callee = "obelisk_rt_v1_object_write";
+    StringRef callee = "talos_rt_v1_object_write";
     if (inputs.size() == 2) {
-      callee = "obelisk_rt_v1_object_write_planes";
+      callee = "talos_rt_v1_object_write_planes";
       arguments.insert(arguments.end() - 1, inputs[1]);
     }
     Value status =
@@ -985,7 +985,7 @@ public:
                         : adaptor.getDestination()[1];
     Value size = llvmConstant(rewriter, location, i64, storage->size);
     SmallVector<Value, 8> operands{context, object, offset, value, unknown};
-    StringRef callee = "obelisk_rt_v1_scheduler_managed_nba";
+    StringRef callee = "talos_rt_v1_scheduler_managed_nba";
     // A partial update carries the value plane of its mask.
     if constexpr (std::is_same_v<EnqueueOp,
                                  sim::SimManagedNBAEnqueueMaskedOp>) {
@@ -993,7 +993,7 @@ public:
         return failure();
       operands.push_back(
           savePlane(adaptor.getMask().front(), storage->alignment));
-      callee = "obelisk_rt_v1_scheduler_managed_nba_masked";
+      callee = "talos_rt_v1_scheduler_managed_nba_masked";
     }
     operands.append({size, delay});
     Value status =
@@ -1062,7 +1062,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_scheduler_managed_nba"),
+                               "talos_rt_v1_scheduler_managed_nba"),
             ValueRange{context,
                        managedObjectPointer(rewriter, location,
                                             adaptor.getDestination().front()),
@@ -1113,4 +1113,4 @@ void populateManagedReferenceToLLVMConversionPatterns(
                ReferencePathNBAConversion>(converter, context, dataLayout);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

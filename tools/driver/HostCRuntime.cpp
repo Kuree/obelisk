@@ -23,7 +23,7 @@
 using namespace llvm;
 using namespace mlir;
 
-namespace obelisk::driver {
+namespace talos::driver {
 namespace {
 
 class CapturingDiagnosticConsumer final : public clang::DiagnosticConsumer {
@@ -60,7 +60,7 @@ discoverHostCRuntime(StringRef triple, StringRef driverExecutablePath,
                                        /*ShouldOwnClient=*/false);
   std::string executable = driverExecutablePath.str();
   clang::driver::Driver driver(executable, triple, diagnostics,
-                               "obelisk host C-runtime discovery", vfs);
+                               "talos host C-runtime discovery", vfs);
   driver.setCheckInputsExist(false);
 
   std::string target = (Twine("--target=") + triple).str();
@@ -71,7 +71,7 @@ discoverHostCRuntime(StringRef triple, StringRef driverExecutablePath,
   std::unique_ptr<clang::driver::Compilation> compilation(
       driver.BuildCompilation(arguments));
   if (!compilation || diagnostics.hasErrorOccurred()) {
-    errs() << "obelisk: error: clang could not discover the host C runtime";
+    errs() << "talos: error: clang could not discover the host C runtime";
     if (!diagnosticConsumer.errors.empty())
       errs() << ": " << diagnosticConsumer.errors;
     errs() << '\n';
@@ -95,7 +95,7 @@ discoverHostCRuntime(StringRef triple, StringRef driverExecutablePath,
   if (result.dynamicLinker.empty() ||
       !sys::path::is_absolute(result.dynamicLinker) ||
       !vfs->exists(result.dynamicLinker)) {
-    errs() << "obelisk: error: clang's host link job has no usable dynamic "
+    errs() << "talos: error: clang's host link job has no usable dynamic "
               "linker";
     if (!result.dynamicLinker.empty())
       errs() << ": " << result.dynamicLinker;
@@ -134,7 +134,7 @@ discoverHostCRuntime(StringRef triple, StringRef driverExecutablePath,
   if (missing.empty())
     return result;
 
-  errs() << "obelisk: error: host C runtime is missing ";
+  errs() << "talos: error: host C runtime is missing ";
   for (size_t index = 0; index < missing.size(); ++index) {
     if (index)
       errs() << ", ";
@@ -149,4 +149,4 @@ discoverHostCRuntime(StringRef triple, StringRef driverExecutablePath,
   return failure();
 }
 
-} // namespace obelisk::driver
+} // namespace talos::driver

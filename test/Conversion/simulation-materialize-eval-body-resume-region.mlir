@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // Generated evaluation runs a resumed activation in the Active region, or in
 // Inactive for a deferred activation (IEEE 1800-2023 4.4.2.3). A clocking
@@ -25,7 +25,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
     // CHECK-LABEL: simulation.func @active(
-    // CHECK-SAME: schedule.eval.body = @active.__obelisk_eval_body_
+    // CHECK-SAME: schedule.eval.body = @active.__talos_eval_body_
     simulation.func @active(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %clk: !simulation.ref<i1> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64},
@@ -42,7 +42,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
     // CHECK-LABEL: simulation.func @inactive(
-    // CHECK-SAME: schedule.eval.body = @inactive.__obelisk_eval_body_
+    // CHECK-SAME: schedule.eval.body = @inactive.__talos_eval_body_
     simulation.func @inactive(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %clk: !simulation.ref<i1> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64},
@@ -77,4 +77,4 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
   }
 }
-// CHECK-NOT: @observed.__obelisk_eval_body
+// CHECK-NOT: @observed.__talos_eval_body

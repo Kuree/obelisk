@@ -1,5 +1,5 @@
-// RUN: not obelisk --std=1800-2023 -emit-sim -DMULTICYCLE %s 2>&1 | FileCheck %s --check-prefix=MULTICYCLE
-// RUN: not obelisk --std=1800-2023 -emit-sim -DCOVER %s 2>&1 | FileCheck %s --check-prefix=COVER
+// RUN: not talos --std=1800-2023 -emit-sim -DMULTICYCLE %s 2>&1 | FileCheck %s --check-prefix=MULTICYCLE
+// RUN: not talos --std=1800-2023 -emit-sim -DCOVER %s 2>&1 | FileCheck %s --check-prefix=COVER
 
 module global_sampled_unsupported;
   logic gclk, endpoint, a;

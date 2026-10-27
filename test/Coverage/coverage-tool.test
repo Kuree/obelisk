@@ -1,11 +1,11 @@
 # RUN: %coverage-fixture %t.a.obcov 1 alpha 1
 # RUN: %coverage-fixture %t.b.obcov 2 beta 0
-# RUN: not obelisk-cov report --format=xml %t.a.obcov 2>&1 | FileCheck %s --check-prefix=BAD-FORMAT
-# RUN: obelisk-cov inspect %t.a.obcov | FileCheck %s --check-prefix=INSPECT
-# RUN: obelisk-cov merge -o %t.merged.obcov %t.a.obcov %t.b.obcov
-# RUN: obelisk-cov report --format=text %t.merged.obcov | FileCheck %s --check-prefix=TEXT
-# RUN: obelisk-cov report --format=json --test=alpha %t.merged.obcov | FileCheck %s --check-prefix=JSON
-# RUN: obelisk-cov report --format=json %t.merged.obcov | FileCheck %s --check-prefix=MERGED
+# RUN: not talos-cov report --format=xml %t.a.obcov 2>&1 | FileCheck %s --check-prefix=BAD-FORMAT
+# RUN: talos-cov inspect %t.a.obcov | FileCheck %s --check-prefix=INSPECT
+# RUN: talos-cov merge -o %t.merged.obcov %t.a.obcov %t.b.obcov
+# RUN: talos-cov report --format=text %t.merged.obcov | FileCheck %s --check-prefix=TEXT
+# RUN: talos-cov report --format=json --test=alpha %t.merged.obcov | FileCheck %s --check-prefix=JSON
+# RUN: talos-cov report --format=json %t.merged.obcov | FileCheck %s --check-prefix=MERGED
 
 # Two runs, one hit and one miss, merge into one database that reports every
 # metric; the report format must be one of the supported ones.
@@ -38,7 +38,7 @@
 # TEXT: exclusions:
 # TEXT: line 31: generated
 
-# JSON: "format":"obelisk-coverage-report"
+# JSON: "format":"talos-coverage-report"
 # JSON: "runs":[{"uuid":"00000000-0000-0000-0000-000000000001","name":"alpha"
 # JSON: "functional_formals":[]
 
@@ -47,7 +47,7 @@
 # the functional metric is covered, the covered bin has one contributor from
 # the run that hit it, the line and toggle points keep only that run's counts,
 # and the generated line is an exclusion.
-# MERGED: {"format":"obelisk-coverage-report"
+# MERGED: {"format":"talos-coverage-report"
 # MERGED: "functional":{"available":true,"covered":1,"total":1,"partial":0,"percent":100.000000}},"runs"
 # MERGED: "line_points":[{"id":30,{{[^]]*}}"count":1,{{[^]]*}}"contributors":[{"uuid":"00000000-0000-0000-0000-000000000001","name":"alpha","count":1}]},{"id":31,
 # MERGED-SAME: {{[^]]*}}"excluded":true,"exclusion_reason":"generated"

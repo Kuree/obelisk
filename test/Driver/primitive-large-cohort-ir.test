@@ -1,3 +1,3 @@
 // Simulation IR for the primitive cohorts of primitive-large-cohort.sv.
-// RUN: obelisk -O0 --vpi=off --execution-tier=native -emit-sim %S/primitive-large-cohort.sv -o - | FileCheck %S/primitive-large-cohort.sv --check-prefix=KERNEL
-// RUN: obelisk -O3 --vpi=off -D AUTO_NMOS -emit-sim %S/primitive-large-cohort.sv -o - | FileCheck %S/primitive-large-cohort.sv --check-prefix=AUTO
+// RUN: talos -O0 --vpi=off --execution-tier=native -emit-sim %S/primitive-large-cohort.sv -o - | FileCheck %S/primitive-large-cohort.sv --check-prefix=KERNEL
+// RUN: talos -O3 --vpi=off -D AUTO_NMOS -emit-sim %S/primitive-large-cohort.sv -o - | FileCheck %S/primitive-large-cohort.sv --check-prefix=AUTO

@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-thread-runtime-statuses)' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-thread-runtime-statuses)' -o %t.threaded
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-thread-runtime-statuses)' --mlir-disable-threading -o %t.serial
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-thread-runtime-statuses)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-thread-runtime-statuses)' -o %t.threaded
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-thread-runtime-statuses)' --mlir-disable-threading -o %t.serial
 // RUN: diff %t.threaded %t.serial
 
 module {

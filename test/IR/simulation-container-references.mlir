@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s | talos-opt | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -110,17 +110,17 @@ module attributes {
 // CHECK: simulation.argument_ref.load
 // CHECK: simulation.argument_ref.store
 // CHECK: simulation.argument_ref.retype
-// NATIVE: llvm.call @obelisk_rt_v1_reference_path_index_create
-// NATIVE: llvm.call @obelisk_rt_v1_container_swap
-// NATIVE: llvm.call @obelisk_rt_v1_reference_path_string_character_create
-// NATIVE: llvm.call @obelisk_rt_v1_reference_path_aggregate_element_create
-// NATIVE: llvm.call @obelisk_rt_v1_container_import_fixed
-// NATIVE: llvm.call @obelisk_rt_v1_container_export_fixed
+// NATIVE: llvm.call @talos_rt_v1_reference_path_index_create
+// NATIVE: llvm.call @talos_rt_v1_container_swap
+// NATIVE: llvm.call @talos_rt_v1_reference_path_string_character_create
+// NATIVE: llvm.call @talos_rt_v1_reference_path_aggregate_element_create
+// NATIVE: llvm.call @talos_rt_v1_container_import_fixed
+// NATIVE: llvm.call @talos_rt_v1_container_export_fixed
 // NATIVE: %[[LOAD_KIND:.*]] = llvm.mlir.constant(1 : i32) : i32
-// NATIVE-NEXT: llvm.call @obelisk_rt_v1_argument_ref_load
+// NATIVE-NEXT: llvm.call @talos_rt_v1_argument_ref_load
 // NATIVE-SAME: %[[LOAD_KIND]]
 // NATIVE: %[[STORE_KIND:.*]] = llvm.mlir.constant(1 : i32) : i32
-// NATIVE: llvm.call @obelisk_rt_v1_argument_ref_store
+// NATIVE: llvm.call @talos_rt_v1_argument_ref_store
 // NATIVE-SAME: %[[STORE_KIND]]
 // NATIVE-NOT: simulation.argument_ref.retype
 // BYTECODE: runtime.bytecode_image

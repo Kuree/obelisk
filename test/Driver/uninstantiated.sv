@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt | FileCheck %s --check-prefix=SOURCE
-// RUN: obelisk -emit-obelisk %s | obelisk-opt | FileCheck %s --check-prefix=TARGET \
+// RUN: talos -emit-slang %s | talos-opt | FileCheck %s --check-prefix=SOURCE
+// RUN: talos -emit-talos %s | talos-opt | FileCheck %s --check-prefix=TARGET \
 // RUN:   --implicit-check-not='is_uninstantiated = true' \
 // RUN:   --implicit-check-not='name = "marker"'
 
@@ -19,8 +19,8 @@ endmodule
 // SOURCE: slang.symbol.instance_body
 // SOURCE: slang.symbol.variable @{{[^ ]+}} attributes {{.*}}name = "marker"
 
-// TARGET: obelisk.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "requires_parameter"
-// TARGET: obelisk.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "uninstantiated_test_top"
-// TARGET: obelisk.sv.symbol.instance @{{[^ ]+}} attributes {{.*}}is_uninstantiated = false
+// TARGET: talos.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "requires_parameter"
+// TARGET: talos.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "uninstantiated_test_top"
+// TARGET: talos.sv.symbol.instance @{{[^ ]+}} attributes {{.*}}is_uninstantiated = false
 // TARGET-SAME: referenced_path = "uninstantiated_test_top"
 // TARGET-NOT: slang.

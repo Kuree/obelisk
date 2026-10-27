@@ -1,8 +1,8 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval --mlir-timing %t/async.sv -o %t/async 2> %t/async.plan
+// RUN: talos -O3 --vpi=off --native-scheduler=eval --mlir-timing %t/async.sv -o %t/async 2> %t/async.plan
 // RUN: FileCheck %s --check-prefix=ASYNC-PLAN < %t/async.plan
 // RUN: %t/async | FileCheck %s --check-prefix=ASYNC
-// RUN: obelisk -O3 --vpi=off --mlir-timing %t/bootstrap.sv -o %t/bootstrap 2> %t/bootstrap.plan
+// RUN: talos -O3 --vpi=off --mlir-timing %t/bootstrap.sv -o %t/bootstrap 2> %t/bootstrap.plan
 // RUN: FileCheck %s --check-prefix=BOOTSTRAP-PLAN < %t/bootstrap.plan
 // RUN: %t/bootstrap | FileCheck %s --check-prefix=BOOTSTRAP
 
@@ -16,17 +16,17 @@
 // pending owner bit and gives deferred owners the highest bits, so the
 // sampler reads the old `q`: `seen` trails `q` by one.
 
-// ASYNC-PLAN: obelisk clocked kernel: __obelisk_clocked_{{[0-9_]+}} members=1 eligible=1 retained=0 snapshots=0 deferred=1
-// ASYNC-PLAN: obelisk eval owner: bit=0 {{.*}}executor={{[^ ]*}}{{$}}
-// ASYNC-PLAN-NEXT: obelisk eval owner: bit=1 {{.*}} deferred{{$}}
+// ASYNC-PLAN: talos clocked kernel: __talos_clocked_{{[0-9_]+}} members=1 eligible=1 retained=0 snapshots=0 deferred=1
+// ASYNC-PLAN: talos eval owner: bit=0 {{.*}}executor={{[^ ]*}}{{$}}
+// ASYNC-PLAN-NEXT: talos eval owner: bit=1 {{.*}} deferred{{$}}
 // ASYNC: {{^}}100 99{{$}}
 
 // The bootstrap reader is an `initial` loop, which stays runtime-owned. Its
 // check right after each edge must see the count from before that edge: the
 // coordinator drains runtime Active work before it runs the kernel.
 
-// BOOTSTRAP-PLAN: obelisk clocked kernel: __obelisk_clocked_{{[0-9_]+}} {{.*}}deferred=1
-// BOOTSTRAP-PLAN: obelisk native eligibility: eligible=1 fully_eligible=0
+// BOOTSTRAP-PLAN: talos clocked kernel: __talos_clocked_{{[0-9_]+}} {{.*}}deferred=1
+// BOOTSTRAP-PLAN: talos native eligibility: eligible=1 fully_eligible=0
 // BOOTSTRAP: {{^}}PASS{{$}}
 
 // Coordinator structure, including `$finish`, is checked at the MLIR level in

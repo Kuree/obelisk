@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 
 // IEEE 1800-2017 3.9.6 and 23.3.3: an output port continuously connects its
 // local source to the outside net. Fixed unpacked-array elements therefore
@@ -31,7 +31,7 @@ module attributes {
 
     // One resolved component is published to both its local and outside net.
     // NATIVE-LABEL: llvm.func @drive
-    // NATIVE-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_static_transition
+    // NATIVE-COUNT-2: llvm.call @talos_rt_v1_scheduler_static_transition
     // NATIVE: llvm.return
   }
 }

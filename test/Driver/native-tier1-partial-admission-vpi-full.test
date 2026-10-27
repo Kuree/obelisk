@@ -1,9 +1,9 @@
 // VPI full access keeps the partial Tier-1 admission of
 // native-tier1-partial-admission.sv and its generic-scheduler output.
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=full --mlir-timing -emit-llvm %S/native-tier1-partial-admission.sv -o %t.ll 2> %t.timing
+// RUN: talos --clocked-kernels=immediate -O3 --vpi=full --mlir-timing -emit-llvm %S/native-tier1-partial-admission.sv -o %t.ll 2> %t.timing
 // RUN: FileCheck %S/native-tier1-partial-admission.sv --check-prefix=ADMISSION < %t.timing
 // RUN: FileCheck %S/native-tier1-partial-admission.sv --check-prefix=EVAL < %t.ll
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=generic %S/native-tier1-partial-admission.sv -o %t.generic
+// RUN: talos --clocked-kernels=immediate -O3 --native-scheduler=generic %S/native-tier1-partial-admission.sv -o %t.generic
 // RUN: %t.generic > %t.generic.out
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=full %S/native-tier1-partial-admission.sv -o %t.full
+// RUN: talos --clocked-kernels=immediate -O3 --vpi=full %S/native-tier1-partial-admission.sv -o %t.full
 // RUN: %t.full | diff -u %t.generic.out -

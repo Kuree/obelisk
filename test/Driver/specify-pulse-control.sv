@@ -1,10 +1,10 @@
-// RUN: obelisk -O3 %s -o %t.native
+// RUN: talos -O3 %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
-// RUN: obelisk -O0 -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
-// RUN: obelisk -O0 -emit-sim --pulse-reject-percent=20 --pulse-error-percent=60 --pulse-style=ondetect --cancelled-pulses=show %s -o - | FileCheck %s --check-prefix=GLOBAL
+// RUN: talos -O0 -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
+// RUN: talos -O0 -emit-sim --pulse-reject-percent=20 --pulse-error-percent=60 --pulse-style=ondetect --cancelled-pulses=show %s -o - | FileCheck %s --check-prefix=GLOBAL
 
 `timescale 1ns / 1ps
 

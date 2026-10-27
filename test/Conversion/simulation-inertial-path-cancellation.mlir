@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode,convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.native.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode,convert-talos-sim-processes-to-llvm-coroutines)' -o %t.native.mlir
 // RUN: FileCheck %s --check-prefix=NATIVE < %t.native.mlir
 
 // Returning to each of 0, 1, X and Z cancels the pending default-inertial
@@ -8,8 +8,8 @@
 // Cancellation itself is the runtime's job (unit-tested by
 // Scheduler.InertialPathsCancelReturnToPublishedFourStateValue). Every drive,
 // including both members of the two-driver cancelling group, must reach it.
-// NATIVE-COUNT-6: llvm.call @obelisk_rt_v1_scheduler_inertial_path_driver(
-// NATIVE-NOT: llvm.call @obelisk_rt_v1_scheduler_inertial_path_driver(
+// NATIVE-COUNT-6: llvm.call @talos_rt_v1_scheduler_inertial_path_driver(
+// NATIVE-NOT: llvm.call @talos_rt_v1_scheduler_inertial_path_driver(
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"

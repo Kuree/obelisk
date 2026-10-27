@@ -1,26 +1,26 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.disable_two_state_specialization}"' | obelisk-opt --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --implicit-check-not='__obelisk_two_state' --implicit-check-not='schedule.eval.local_promotion_ranges'
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s '--test-talos-set-module-attributes=attrs="{native.disable_two_state_specialization}"' | talos-opt --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --implicit-check-not='__talos_two_state' --implicit-check-not='schedule.eval.local_promotion_ranges'
 
 // Net snapshots with ordinary formats do not carry net handles into the
 // direct output ABI. Literal v and escaped %%v are not strength queries.
 // Real strength queries and user-file channels retain the runtime ABI.
 // Disabling state specialization must preserve this domain-independent split.
-// CHECK-LABEL: llvm.func @safe.__obelisk_eval_body
-// CHECK-NOT: llvm.call @obelisk_rt_v1_display(
-// CHECK: llvm.call @obelisk_rt_v1_eval_display(
-// CHECK-LABEL: llvm.func @strength.__obelisk_eval_body
-// CHECK-NOT: llvm.call @obelisk_rt_v1_eval_display(
-// CHECK: llvm.call @obelisk_rt_v1_display(
-// CHECK-LABEL: llvm.func @channel.__obelisk_eval_body
-// CHECK-NOT: llvm.call @obelisk_rt_v1_eval_display(
-// CHECK: llvm.call @obelisk_rt_v1_display(
+// CHECK-LABEL: llvm.func @safe.__talos_eval_body
+// CHECK-NOT: llvm.call @talos_rt_v1_display(
+// CHECK: llvm.call @talos_rt_v1_eval_display(
+// CHECK-LABEL: llvm.func @strength.__talos_eval_body
+// CHECK-NOT: llvm.call @talos_rt_v1_eval_display(
+// CHECK: llvm.call @talos_rt_v1_display(
+// CHECK-LABEL: llvm.func @channel.__talos_eval_body
+// CHECK-NOT: llvm.call @talos_rt_v1_eval_display(
+// CHECK: llvm.call @talos_rt_v1_display(
 // An immediate assertion's $error only latches the final status (IEEE
 // 1800-2023 20.10), so its report stays in the generated body instead of
 // becoming a checkpoint leaf with path probes.
-// CHECK-LABEL: llvm.func @failed.__obelisk_eval_body_0(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_error(
-// CHECK: llvm.call @obelisk_rt_v1_eval_display(
-// CHECK-NOT: @failed.__obelisk_eval_body_0.__obelisk_checkpoint_path
+// CHECK-LABEL: llvm.func @failed.__talos_eval_body_0(
+// CHECK: llvm.call @talos_rt_v1_scheduler_error(
+// CHECK: llvm.call @talos_rt_v1_eval_display(
+// CHECK-NOT: @failed.__talos_eval_body_0.__talos_checkpoint_path
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

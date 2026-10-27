@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | obelisk-translate --mlir-to-llvmir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %s --pass-pipeline='builtin.module(encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | talos-translate --mlir-to-llvmir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: rm -rf %t.d && mkdir -p %t.d/valid %t.d/bad-bin %t.d/bad-hex && cp %S/Inputs/readmem-wide.hex %S/Inputs/readmem-wide.bin %t.d/valid && cp %S/Inputs/readmem-wide.hex %t.d/bad-bin && cp %S/Inputs/readmem-invalid.bin %t.d/bad-bin/readmem-wide.bin && cp %S/Inputs/readmem-wide.bin %t.d/bad-hex && cp %S/Inputs/readmem-invalid.hex %t.d/bad-hex/readmem-wide.hex
 // RUN: cd %t.d/valid && %t.exe | FileCheck %s

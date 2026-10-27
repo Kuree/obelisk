@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --obelisk-sim-compile-random-plans | FileCheck %s --check-prefix=PLAN
-// RUN: obelisk-opt %s --obelisk-sim-compile-random-plans --obelisk-sim-compile-random-plans --mlir-print-ir-after=obelisk-sim-compile-random-plans --mlir-print-ir-after-change -o /dev/null 2>&1 | FileCheck %s --check-prefix=ONCE --implicit-check-not='IR Dump After'
-// RUN: obelisk-opt %s --obelisk-sim-compile-random-plans '--encode-obelisk-sim-to-bytecode=vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s --obelisk-sim-compile-random-plans '--encode-obelisk-sim-to-bytecode=vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,cgscc(coro-split<reuse-storage>),coro-cleanup' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %s --talos-sim-compile-random-plans | FileCheck %s --check-prefix=PLAN
+// RUN: talos-opt %s --talos-sim-compile-random-plans --talos-sim-compile-random-plans --mlir-print-ir-after=talos-sim-compile-random-plans --mlir-print-ir-after-change -o /dev/null 2>&1 | FileCheck %s --check-prefix=ONCE --implicit-check-not='IR Dump After'
+// RUN: talos-opt %s --talos-sim-compile-random-plans '--encode-talos-sim-to-bytecode=vpi=off' --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --talos-sim-compile-random-plans '--encode-talos-sim-to-bytecode=vpi=off' --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,cgscc(coro-split<reuse-storage>),coro-cleanup' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe --seed=13 | FileCheck %s --check-prefix=RUNTIME
 // REQUIRES: compiled-sampler

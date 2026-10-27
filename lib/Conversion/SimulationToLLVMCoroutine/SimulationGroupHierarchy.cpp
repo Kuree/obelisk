@@ -1,10 +1,10 @@
 //===- SimulationGroupHierarchy.cpp - Refine collapsed execution groups ---===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
@@ -14,10 +14,10 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
-constexpr auto entryAttr = ::obelisk::schedule::Field::EvalActivationEntry;
+constexpr auto entryAttr = ::talos::schedule::Field::EvalActivationEntry;
 
 bool reproducibleSetup(Operation *operation) {
   // Pure/speculatable alone does not authorize duplication: e.g. freeze of
@@ -33,7 +33,7 @@ SmallVector<Operation *> entries(LLVM::LLVMFuncOp function,
   DenseMap<int32_t, Operation *> indexed;
   bool valid = true;
   function.walk([&](Operation *operation) {
-    if (auto owner = ::obelisk::schedule::get<entryAttr>(operation))
+    if (auto owner = ::talos::schedule::get<entryAttr>(operation))
       valid &= !owner.getValue().isNegative() &&
                owner.getValue().getActiveBits() <= 31 &&
                isa<LLVM::LoadOp>(operation) &&
@@ -111,18 +111,18 @@ LLVM::LLVMFuncOp outline(LLVM::LLVMFuncOp source,
   // SymbolTable owns unique names, including in user-authored pass fixtures.
   symbols.insert(child);
   auto members =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalRankedMembers>(
+      ::talos::schedule::get<::talos::schedule::Field::EvalRankedMembers>(
           source);
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRankedMembers>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalRankedMembers>(
       child, builder.getDenseI32ArrayAttr(
                  members.asArrayRef().slice(begin, end - begin)));
-  for (auto attr : {::obelisk::schedule::Field::EvalGroupIngress,
-                    ::obelisk::schedule::Field::EvalReadyWordCount})
+  for (auto attr : {::talos::schedule::Field::EvalGroupIngress,
+                    ::talos::schedule::Field::EvalReadyWordCount})
     if (Attribute value = schedule::getAttribute(source, attr))
       schedule::set(child, attr, value);
-  ::obelisk::schedule::set<schedule::metadata::evalCallClosureRoot>(
+  ::talos::schedule::set<schedule::metadata::evalCallClosureRoot>(
       child, builder.getUnitAttr());
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupParent>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalGroupParent>(
       child, FlatSymbolRefAttr::get(source));
   Block *entry = child.addEntryBlock(builder);
   builder.setInsertionPointToStart(entry);
@@ -232,18 +232,18 @@ SmallVector<LLVM::LLVMFuncOp> splitNativeEvalGroup(LLVM::LLVMFuncOp original,
                                                    SymbolTable &symbols,
                                                    uint64_t &budget) {
   auto members =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalRankedMembers>(
+      ::talos::schedule::get<::talos::schedule::Field::EvalRankedMembers>(
           original);
   if (!members || members.size() < 2 ||
       !isa<LLVM::LLVMVoidType>(original.getFunctionType().getReturnType()) ||
-      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalGroupChildren>(
+      ::talos::schedule::has<::talos::schedule::Field::EvalGroupChildren>(
           original))
     return {};
   // A publication from one member to an unconditional member of the same
   // candidate has been removed: the consumer runs whenever the candidate runs.
   // Children have their own entries, so such a pair must not be separated.
-  if (::obelisk::schedule::has<
-          ::obelisk::schedule::Field::EvalUnconditionalMembers>(candidate))
+  if (::talos::schedule::has<
+          ::talos::schedule::Field::EvalUnconditionalMembers>(candidate))
     return {};
   bool executionBoundary = false;
   candidate.walk([&](Operation *operation) {
@@ -294,9 +294,9 @@ SmallVector<LLVM::LLVMFuncOp> splitNativeEvalGroup(LLVM::LLVMFuncOp original,
       return {};
     }
     children.push_back(fast);
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalDataflowCandidate>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalDataflowCandidate>(
         fast, FlatSymbolRefAttr::get(slow));
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupParent>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalGroupParent>(
         fast, FlatSymbolRefAttr::get(original));
   }
 
@@ -314,4 +314,4 @@ SmallVector<LLVM::LLVMFuncOp> splitNativeEvalGroup(LLVM::LLVMFuncOp original,
   return children;
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

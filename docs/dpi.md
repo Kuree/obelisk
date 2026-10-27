@@ -1,6 +1,6 @@
 # DPI-C
 
-Obelisk supports DPI-C imported functions and tasks plus scope-specific
+Talos supports DPI-C imported functions and tasks plus scope-specific
 exported functions and suspending tasks.
 The native and embedded-bytecode execution tiers enter the same validated
 runtime boundary and invoke the same generated C thunk, so marshalling,
@@ -41,7 +41,7 @@ protocol propagates across nested calls and suppresses copy-out on disable.
 `ref` imports and open-array exports are rejected as required by the LRM.
 
 Pristine Slang v11 rejects a small set of otherwise legal queue and mixed
-fixed/dynamic open-array source bindings before Obelisk receives an AST. Those
+fixed/dynamic open-array source bindings before Talos receives an AST. Those
 cases remain explicit source-level XFAILs; the Simulation MLIR and runtime
 shape paths are tested independently without patching Slang.
 
@@ -51,22 +51,22 @@ Print the resource directory and generate prototypes from the elaborated DPI
 imports and exports:
 
 ```sh
-RESOURCE_DIR=$(obelisk --print-resource-dir)
-obelisk --emit-dpi-header design.sv -o design_dpi.h
+RESOURCE_DIR=$(talos --print-resource-dir)
+talos --emit-dpi-header design.sv -o design_dpi.h
 ```
 
 The resource include directory is `$RESOURCE_DIR/include` and contains the
 pinned `svdpi.h`.
 
-On Linux, compile C or C++ for the same host architecture and ABI as Obelisk,
+On Linux, compile C or C++ for the same host architecture and ABI as Talos,
 then pass the resulting object to the final link:
 
 ```sh
 cc -c dpi.c -I"$RESOURCE_DIR/include" -o dpi.o
-obelisk design.sv dpi.o -o simulator
+talos design.sv dpi.o -o simulator
 
 c++ -c dpi.cpp -I"$RESOURCE_DIR/include" -o dpi.o
-obelisk design.sv dpi.o -o simulator
+talos design.sv dpi.o -o simulator
 ```
 
 The generated header has `extern "C"` guards, so a C++ implementation should
@@ -76,10 +76,10 @@ Static archives and shared libraries are ordinary repeatable linker inputs:
 
 ```sh
 ar rcs libdpi.a dpi.o
-obelisk design.sv libdpi.a -o simulator
+talos design.sv libdpi.a -o simulator
 
 cc -shared -o libdpi.so dpi.pic.o
-obelisk design.sv libdpi.so -o simulator
+talos design.sv libdpi.so -o simulator
 ```
 
 Annex J discovery is also available. `-sv_root` establishes the relative
@@ -95,14 +95,14 @@ native link; text remains SystemVerilog input. Native inputs are rejected for
 linked by the caller.
 
 On Linux, every shared object is retained as a normal `DT_NEEDED` dependency
-under `--no-as-needed`. Obelisk never copies it. The supplied directory is added to
+under `--no-as-needed`. Talos never copies it. The supplied directory is added to
 the simulator's `DT_RUNPATH`: relative inputs use a literal `$ORIGIN`-relative
 entry and absolute inputs use their normalized absolute parent directory.
 SONAMEs become runtime loader identities. A no-SONAME library is linked by
 basename so an absolute build path is not recorded in `DT_NEEDED`. Duplicate
 loader identities and SONAMEs containing `/` are rejected.
 
-On Linux, Obelisk loads each shared object during compilation to validate it
+On Linux, Talos loads each shared object during compilation to validate it
 and probes its module handle for `vlog_startup_routines`. This can execute ELF
 constructors, so native inputs must be trusted. A shared object without that
 symbol is an ordinary DPI/helper dependency. A VPI startup object requires
@@ -111,13 +111,13 @@ symbol is an ordinary DPI/helper dependency. A VPI startup object requires
 Native DPI objects, static archives, and shared libraries remain supported at
 every optimization level. They are ordinary native linker inputs and do not
 participate in the optional Full-LTO optimization of generated code and the
-Obelisk runtime enabled by `-flto` at `-O1` through `-O3`.
+Talos runtime enabled by `-flto` at `-O1` through `-O3`.
 
-A DPI input may instead contain LLVM bitcode compatible with Obelisk's pinned
+A DPI input may instead contain LLVM bitcode compatible with Talos's pinned
 LLVM 22.1.6 unified Full-LTO pipeline. With `-flto`, such input participates in
 the same Full-LTO link and may be optimized with generated and runtime code.
 Bitcode is a build-internal compatibility surface, not a portable DPI distribution
-format. LLD reports incompatible LLVM bitcode directly; Obelisk never silently
+format. LLD reports incompatible LLVM bitcode directly; Talos never silently
 falls back to native or non-LTO linking.
 
 The wasm32 target has no host C ABI. It rejects DPI and Annex J inputs
@@ -138,12 +138,12 @@ own target triple in the support path:
 
 ```powershell
 $sdk = "$PWD/build-windows/sdk/Library/bin"
-$resource = & ./build-windows/tools/driver/obelisk.exe --print-resource-dir
+$resource = & ./build-windows/tools/driver/talos.exe --print-resource-dir
 & "$sdk/llvm-dlltool.exe" -m i386:x86-64 -D simulator.exe `
-  -d "$resource/targets/x86_64-pc-windows-msvc/obelisk-pi.def" -l host.lib
+  -d "$resource/targets/x86_64-pc-windows-msvc/talos-pi.def" -l host.lib
 & "$sdk/clang.exe" -fms-runtime-lib=dll -fuse-ld=lld -shared dpi.c `
   "-I$resource/include" host.lib -Xlinker /def:dpi.def -o dpi.dll
-./build-windows/tools/driver/obelisk.exe design.sv dpi.dll -o simulator.exe
+./build-windows/tools/driver/talos.exe design.sv dpi.dll -o simulator.exe
 ./simulator.exe
 ```
 
@@ -152,7 +152,7 @@ For VPI, also export `vlog_startup_routines DATA` and enable `--vpi=read` or
 `--vpi=full`. Additional exported SystemVerilog entry points can be listed in a
 second `.def` file and imported with another `llvm-dlltool` invocation.
 The `-D` image name must match the final executable basename, including `.exe`.
-Obelisk reads DLL exports and imports with LLVM, generates its DLL import
+Talos reads DLL exports and imports with LLVM, generates its DLL import
 libraries in process, and exports the host functions requested by the DLLs.
 It keeps each DLL loaded even when it provides only a VPI startup table.
 
@@ -169,13 +169,13 @@ module and bounds its null-terminated table by readable mapped storage.
 Native execution is the default:
 
 ```sh
-obelisk design.sv dpi.o -o simulator
+talos design.sv dpi.o -o simulator
 ```
 
 To embed and require the bytecode interpreter:
 
 ```sh
-obelisk --execution-tier=bytecode design.sv \
+talos --execution-tier=bytecode design.sv \
   dpi.o -o simulator
 ```
 

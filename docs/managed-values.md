@@ -1,10 +1,10 @@
 # Managed strings and containers
 
-Obelisk's precise, non-moving heap owns both SystemVerilog class instances and
+Talos's precise, non-moving heap owns both SystemVerilog class instances and
 runtime-sized values. Every allocation has an out-of-line managed kind, actual
 object extent, allocation extent, alignment, identity, pin count, and ticket
 lock. Only objects of kind `Class` contain and validate an
-`obelisk_rt_class_descriptor_v1`; runtime strings and containers use
+`talos_rt_class_descriptor_v1`; runtime strings and containers use
 runtime-owned descriptor tokens.
 
 The currently implemented shared-runtime surface includes:
@@ -12,7 +12,7 @@ The currently implemented shared-runtime surface includes:
 - immutable, non-interned tagged strings, with zero as the canonical empty
   string and inline storage for one through seven bytes;
 - stable-ID registration and validation for
-  `obelisk_rt_element_type_v1`;
+  `talos_rt_element_type_v1`;
 - contiguous dynamic arrays with prefix-preserving resize;
 - power-of-two queue ring buffers;
 - robin-hood associative arrays with signed/unsigned integral and string keys;
@@ -39,19 +39,19 @@ periodic-loop materializer places a `schedule.gc.collect` after every clock
 edge and at every slot end. `schedule-thin-gc-collections` then keeps only the
 rising edge of the fastest proven periodic clock, ahead of that edge's
 evaluation, so the heap reclaims at most once per cycle. The survivor lowers
-through `runtime.gc.collect` to `obelisk_rt_v1_gc_collect_pending`. Once the loop
-calls `obelisk_rt_v1_gc_designate`, allocation records pressure instead of
+through `runtime.gc.collect` to `talos_rt_v1_gc_collect_pending`. Once the loop
+calls `talos_rt_v1_gc_designate`, allocation records pressure instead of
 collecting, unless pressure runs four times past the threshold. The runtime
 scheduler's own time advances are designated points too. A designated point
 collects only where no managed activation runs on its thread, so its roots
 are static storage, process frames and runtime-held state. Without a periodic
-schedule, allocation keeps collecting. `OBELISK_RT_GC_THRESHOLD` sets the
-collection threshold in bytes, and `OBELISK_RT_GC_DIAGNOSTICS` reports
+schedule, allocation keeps collecting. `TALOS_RT_GC_THRESHOLD` sets the
+collection threshold in bytes, and `TALOS_RT_GC_DIAGNOSTICS` reports
 collections at exit.
 
 The native backend compiles for polled collection
-(`OBELISK_RT_EXECUTION_POLLED_COLLECTION`), so activations register managed
-roots only where a collection can observe them. `obelisk-sim-insert-gc-polls`
+(`TALOS_RT_EXECUTION_POLLED_COLLECTION`), so activations register managed
+roots only where a collection can observe them. `talos-sim-insert-gc-polls`
 places a `simulation.gc.safepoint` poll on every way to allocate repeatedly
 without returning to the scheduler:
 - before the first allocation of each block on a control-flow cycle that
@@ -76,7 +76,7 @@ parks. Reclamation happens at three kinds of point:
 Garbage between two collection opportunities stays bounded: such a stretch
 executes no cycle, recursion, or foreign loop that allocates.
 
-`obelisk_rt_managed_word_v1` and `obelisk_rt_string_v1` are 64-bit ABI words.
+`talos_rt_managed_word_v1` and `talos_rt_string_v1` are 64-bit ABI words.
 Tag `01` stores an explicit three-bit length and up to seven arbitrary bytes,
 including embedded NULs. Tag `00` is either zero or an aligned heap-string
 pointer. Inline encodings must be canonical: length zero and nonzero unused
@@ -88,9 +88,9 @@ descriptor and relaxed-atomic cached hash in their header; their explicit
 length comes from the collector's recorded allocation extent, and a trailing
 NUL supports C ABI consumers without changing SystemVerilog length semantics.
 
-`obelisk_rt_v1_string_view` replaces the old raw-byte contract. Callers supply
+`talos_rt_v1_string_view` replaces the old raw-byte contract. Callers supply
 eight bytes of scratch, which receives inline bytes; a heap view points into
-the immutable rooted allocation. `obelisk_rt_v1_string_concat_many` validates
+the immutable rooted allocation. `talos_rt_v1_string_concat_many` validates
 and roots every source, computes the exact result extent, and performs at most
 one managed allocation. Empty, single-input, and SSO results allocate nothing.
 

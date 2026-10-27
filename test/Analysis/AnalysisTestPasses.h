@@ -1,9 +1,9 @@
 //===- AnalysisTestPasses.h - Analysis test passes ------------*- C++ -*-===//
 
-#ifndef OBELISK_TEST_ANALYSIS_ANALYSISTESTPASSES_H
-#define OBELISK_TEST_ANALYSIS_ANALYSISTESTPASSES_H
+#ifndef TALOS_TEST_ANALYSIS_ANALYSISTESTPASSES_H
+#define TALOS_TEST_ANALYSIS_ANALYSISTESTPASSES_H
 
-namespace obelisk {
+namespace talos {
 
 void registerAccessFootprintAnalysisTestPass();
 void registerActivationMemoryAnalysisTestPass();
@@ -32,6 +32,6 @@ void registerModuleTestPasses();
 void registerNativeBackendTestPipeline();
 void registerValueInterfacesTestPass();
 
-} // namespace obelisk
+} // namespace talos
 
-#endif // OBELISK_TEST_ANALYSIS_ANALYSISTESTPASSES_H
+#endif // TALOS_TEST_ANALYSIS_ANALYSISTESTPASSES_H

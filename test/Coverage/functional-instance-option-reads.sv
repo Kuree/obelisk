@@ -1,10 +1,10 @@
 // XFAIL: *
 // IEEE 1800-2023 19.4.1 allows a derived cross to replace a base cross
 // with the same name. Slang v11.0 diagnoses this as a redefinition.
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s --check-prefix=READ
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
 
 // IEEE 19.7 defaults apply to lower owners except weight, goal, comment and
 // per_instance. IEEE 19.10 includes construction-only fields in option structs.

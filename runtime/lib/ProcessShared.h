@@ -2,13 +2,13 @@
 //
 // Declarations shared between the process/scheduler translation units that
 // were split out of Process.cpp (ProcessAOT.cpp, ProcessNBA.cpp,
-// ProcessNativeState.cpp).  Everything here has internal-to-libobelisk_rt
+// ProcessNativeState.cpp).  Everything here has internal-to-libtalos_rt
 // linkage; nothing is part of the public runtime ABI.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef OBELISK_RUNTIME_LIB_PROCESSSHARED_H
-#define OBELISK_RUNTIME_LIB_PROCESSSHARED_H
+#ifndef TALOS_RUNTIME_LIB_PROCESSSHARED_H
+#define TALOS_RUNTIME_LIB_PROCESSSHARED_H
 
 #include "GeneratedNBAStorage.h"
 #include "RuntimeInternal.h"
@@ -20,7 +20,7 @@
 #include <vector>
 
 constexpr uint64_t kNativeLogicalProcessTag =
-    OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+    TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG;
 
 extern std::mutex nativeScheduleRegistryMutex;
 extern std::unordered_set<const void *> installedNativeScheduleStates;
@@ -29,15 +29,15 @@ extern std::unordered_set<const void *> installedNativeScheduleStates;
 // leaf operations, but does not waive the mutex contract of public runtime
 // entry points: observers may temporarily release that mutex while callbacks
 // run.
-extern thread_local obelisk_rt_context *activeNativeAOTContext;
+extern thread_local talos_rt_context *activeNativeAOTContext;
 // A static AOT frame may retain the real context mutex across the generated
 // kernel. Nested runtime entry points then inherit that exclusion instead of
 // repeatedly acquiring the same recursive mutex.
-extern thread_local obelisk_rt_context *lockedNativeAOTContext;
+extern thread_local talos_rt_context *lockedNativeAOTContext;
 
 class NativeAOTMutexScope {
 public:
-  explicit NativeAOTMutexScope(obelisk_rt_context *context)
+  explicit NativeAOTMutexScope(talos_rt_context *context)
       : previous(lockedNativeAOTContext), lock(context->mutex) {
     lockedNativeAOTContext = context;
   }
@@ -46,13 +46,13 @@ public:
   ~NativeAOTMutexScope() { lockedNativeAOTContext = previous; }
 
 private:
-  obelisk_rt_context *previous;
+  talos_rt_context *previous;
   std::unique_lock<std::recursive_mutex> lock;
 };
 
 class NativeAOTContextScope {
 public:
-  explicit NativeAOTContextScope(obelisk_rt_context *context)
+  explicit NativeAOTContextScope(talos_rt_context *context)
       : previous(activeNativeAOTContext) {
     activeNativeAOTContext = context;
   }
@@ -61,29 +61,29 @@ public:
   ~NativeAOTContextScope() { activeNativeAOTContext = previous; }
 
 private:
-  obelisk_rt_context *previous;
+  talos_rt_context *previous;
 };
 
-inline bool isStaticControlAOT(const obelisk_rt_context *context) {
+inline bool isStaticControlAOT(const talos_rt_context *context) {
   return activeNativeAOTContext == context && context->nativeSchedulePlan &&
          (context->nativeSchedulePlan->flags &
-          OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL) != 0;
+          TALOS_RT_NATIVE_SCHEDULE_STATIC_CONTROL) != 0;
 }
 
 //===----------------------------------------------------------------------===//
 // Process frame bookkeeping (Process.cpp)
 //===----------------------------------------------------------------------===//
 
-void unregisterManagedFrameRoots(obelisk_rt_process_instance_v1 *instance);
-void releaseOwnedNativeStates(obelisk_rt_context *context,
-                              obelisk_rt_process_instance_v1 *instance);
+void unregisterManagedFrameRoots(talos_rt_process_instance_v1 *instance);
+void releaseOwnedNativeStates(talos_rt_context *context,
+                              talos_rt_process_instance_v1 *instance);
 
 //===----------------------------------------------------------------------===//
 // Native state planes and dirty-root tracking (ProcessNativeState.cpp)
 //===----------------------------------------------------------------------===//
 
 const NativeStaticState *
-findNativeStaticState(const obelisk_rt_context *context, uint32_t id);
+findNativeStaticState(const talos_rt_context *context, uint32_t id);
 // These leaf accesses also serve bytecode publication and NBA boundaries.
 // Keep their bodies visible to callers without requiring whole-runtime LTO.
 inline bool byteBit(const uint8_t *bytes, uint64_t bit) {
@@ -101,53 +101,53 @@ inline void setByteBit(uint8_t *bytes, uint64_t bit, bool value) {
 }
 bool nativeMaskIntersectsRange(const std::vector<uint64_t> &mask,
                                uint64_t bitOffset, uint64_t bitWidth);
-bool importNativeStatePlanesUnlocked(obelisk_rt_context *context,
+bool importNativeStatePlanesUnlocked(talos_rt_context *context,
                                      const uint8_t *value,
                                      const uint8_t *unknown, uint64_t bitCount);
-bool importNativeRootInitializerPlanesUnlocked(obelisk_rt_context *context);
-bool exportNativeStatePlanesUnlocked(const obelisk_rt_context *context,
+bool importNativeRootInitializerPlanesUnlocked(talos_rt_context *context);
+bool exportNativeStatePlanesUnlocked(const talos_rt_context *context,
                                      uint8_t *value, uint8_t *unknown,
                                      uint64_t bitCount);
 bool reconcileNativeRootToPlanesUnlocked(
-    const obelisk_rt_context *context,
-    const obelisk_rt_native_schedule_plan *plan, uint32_t id);
+    const talos_rt_context *context,
+    const talos_rt_native_schedule_plan *plan, uint32_t id);
 bool reconcileNativeDirtyRootsToPlanesUnlocked(
-    const obelisk_rt_context *context,
-    const obelisk_rt_native_schedule_plan *plan);
-bool nativeStaticRootDirty(const obelisk_rt_context *context,
+    const talos_rt_context *context,
+    const talos_rt_native_schedule_plan *plan);
+bool nativeStaticRootDirty(const talos_rt_context *context,
                            uint32_t staticState);
 bool nativeStaticSpecializationEnvironmentClean(
-    const obelisk_rt_context *context);
-bool nativePeriodicAOTEnvironmentClean(const obelisk_rt_context *context);
-void markNativeDirtyRootUnlocked(obelisk_rt_context *context, uint32_t id,
+    const talos_rt_context *context);
+bool nativePeriodicAOTEnvironmentClean(const talos_rt_context *context);
+void markNativeDirtyRootUnlocked(talos_rt_context *context, uint32_t id,
                                  bool persistent);
-void clearNativeDirtyRootUnlocked(obelisk_rt_context *context, uint32_t id,
+void clearNativeDirtyRootUnlocked(talos_rt_context *context, uint32_t id,
                                   bool persistent);
 void invalidateNativeStaticSpecializationFastUnlocked(
-    obelisk_rt_context *context);
-void invalidateNativeTwoStatePromotionUnlocked(obelisk_rt_context *context);
-void invalidateNativeTwoStatePromotionRangeUnlocked(obelisk_rt_context *context,
+    talos_rt_context *context);
+void invalidateNativeTwoStatePromotionUnlocked(talos_rt_context *context);
+void invalidateNativeTwoStatePromotionRangeUnlocked(talos_rt_context *context,
                                                     uint64_t bitOffset,
                                                     uint64_t bitWidth);
 void publishNativeKnownnessChangeUnlocked(
-    const obelisk_rt_native_schedule_plan *plan, uint64_t bitOffset,
+    const talos_rt_native_schedule_plan *plan, uint64_t bitOffset,
     uint64_t bitWidth, uint64_t oldUnknown, uint64_t newUnknown);
 // The generated unknown summary: every runtime write into the generated
 // unknown plane reports the roots it may have made differ from their
 // patterns before generated code runs again. `Range` marks every root it
 // overlaps; `Bits` marks only the roots whose pattern differs from `unknown`
 // (bit 0 at `bitOffset`, at most 64 bits) in a `written` bit.
-void markNativeUnknownRangeUnlocked(const obelisk_rt_context *context,
+void markNativeUnknownRangeUnlocked(const talos_rt_context *context,
                                     uint64_t bitOffset, uint64_t bitWidth);
-void markNativeUnknownBitsUnlocked(const obelisk_rt_context *context,
+void markNativeUnknownBitsUnlocked(const talos_rt_context *context,
                                    uint64_t bitOffset, uint64_t bitWidth,
                                    uint64_t unknown,
                                    uint64_t written = UINT64_MAX);
-void markNativeUnknownAllUnlocked(const obelisk_rt_context *context);
-void verifyNativeUnknownSummaryUnlocked(const obelisk_rt_context *context);
-void refreshNativeStaticSpecializationFastUnlocked(obelisk_rt_context *context);
+void markNativeUnknownAllUnlocked(const talos_rt_context *context);
+void verifyNativeUnknownSummaryUnlocked(const talos_rt_context *context);
+void refreshNativeStaticSpecializationFastUnlocked(talos_rt_context *context);
 bool storeNativeScheduleStateUnlocked(
-    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
+    talos_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t value, uint64_t unknown,
     std::optional<uint64_t> previousUnknown = std::nullopt);
 
@@ -156,29 +156,29 @@ bool storeNativeScheduleStateUnlocked(
 //===----------------------------------------------------------------------===//
 
 inline bool isReactiveSchedulerRegion(uint32_t region) {
-  return region >= OBELISK_RT_REGION_REACTIVE &&
-         region <= OBELISK_RT_REGION_RE_NBA;
+  return region >= TALOS_RT_REGION_REACTIVE &&
+         region <= TALOS_RT_REGION_RE_NBA;
 }
 
-inline bool schedulerRegionEligible(const obelisk_rt_context *context,
+inline bool schedulerRegionEligible(const talos_rt_context *context,
                                     uint32_t region) {
   return !context->schedulerDrainingReactive ||
          isReactiveSchedulerRegion(region);
 }
 
-inline uint32_t nativeNBABarrierLowerBound(const obelisk_rt_context *context) {
+inline uint32_t nativeNBABarrierLowerBound(const talos_rt_context *context) {
   // IEEE 1800-2023 4.4.2.4, 4.4.2.8: the compiler's runtime-calendar
   // certificate stages static roots only in NBA/Re-NBA. Keep the general
   // inventory contract for plans without that compiler proof.
   bool certified = context->nativeSchedulePlan &&
                    (context->nativeSchedulePlan->flags &
-                    OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL);
+                    TALOS_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL);
   if (context->schedulerDrainingReactive)
-    return certified ? OBELISK_RT_REGION_RE_NBA : OBELISK_RT_REGION_REACTIVE;
-  return certified ? OBELISK_RT_REGION_NBA : OBELISK_RT_REGION_ACTIVE;
+    return certified ? TALOS_RT_REGION_RE_NBA : TALOS_RT_REGION_REACTIVE;
+  return certified ? TALOS_RT_REGION_NBA : TALOS_RT_REGION_ACTIVE;
 }
 
-inline void setSchedulerDrainingReactive(obelisk_rt_context *context,
+inline void setSchedulerDrainingReactive(talos_rt_context *context,
                                          bool draining) {
   if (context->schedulerDrainingReactive == draining)
     return;
@@ -188,39 +188,39 @@ inline void setSchedulerDrainingReactive(obelisk_rt_context *context,
     context->schedulerSelectionGeneration = 1;
 }
 
-bool nativeProcessReady(obelisk_rt_context &context,
+bool nativeProcessReady(talos_rt_context &context,
                         const ScheduledProcess &process);
-inline const obelisk_rt_wait_record_v1 *
+inline const talos_rt_wait_record_v1 *
 designTaskCurrentWait(const ScheduledDesignTask &task) {
-  if (task.waitSize < sizeof(obelisk_rt_wait_record_v1) ||
+  if (task.waitSize < sizeof(talos_rt_wait_record_v1) ||
       task.waitOffset > task.frame.size() ||
       task.waitSize > task.frame.size() - task.waitOffset)
     return nullptr;
-  return reinterpret_cast<const obelisk_rt_wait_record_v1 *>(task.frame.data() +
+  return reinterpret_cast<const talos_rt_wait_record_v1 *>(task.frame.data() +
                                                              task.waitOffset);
 }
 inline uint32_t designTaskOrderingRegion(const ScheduledDesignTask &task,
                                          bool signalResume) {
-  if (signalResume && obelisk_rt_is_slot_final_clock_occurrence_wait(
+  if (signalResume && talos_rt_is_slot_final_clock_occurrence_wait(
                           designTaskCurrentWait(task)))
-    return OBELISK_RT_REGION_POSTPONED;
-  return task.queuedRegion == OBELISK_RT_REGION_POSTPONED
-             ? OBELISK_RT_REGION_POSTPONED + 1
+    return TALOS_RT_REGION_POSTPONED;
+  return task.queuedRegion == TALOS_RT_REGION_POSTPONED
+             ? TALOS_RT_REGION_POSTPONED + 1
              : task.queuedRegion;
 }
-void indexScheduledProcessDelayUnlocked(obelisk_rt_context *context,
+void indexScheduledProcessDelayUnlocked(talos_rt_context *context,
                                         const ScheduledProcess &process);
 std::optional<uint64_t>
-nextScheduledProcessDelayUnlocked(obelisk_rt_context *context);
-void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context);
+nextScheduledProcessDelayUnlocked(talos_rt_context *context);
+void rebuildNativeSchedulerIndexUnlocked(talos_rt_context *context);
 uint32_t nativeAOTContinuationRank(const ScheduledProcess &scheduled,
                                    uint32_t continuation);
 void updateNativeAOTContinuationRank(ScheduledProcess &scheduled,
                                      uint32_t continuation);
-obelisk_rt_status
-adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
+talos_rt_status
+adoptScheduledSuspendUnlocked(talos_rt_context *context,
                               ScheduledProcess &scheduled,
-                              const obelisk_rt_fragment_action_v1 &action);
+                              const talos_rt_fragment_action_v1 &action);
 struct SchedulerRunOptions {
   // Select installed compiled executors for plan-owned actors. Other actors
   // and design tasks still execute under the same region arbitration.
@@ -248,75 +248,75 @@ struct SchedulerRunOptions {
   bool stopBeforeUnscopedActors = false;
 };
 static_assert(sizeof(SchedulerRunOptions) <= 16);
-obelisk_rt_status runScheduler(obelisk_rt_context *context,
+talos_rt_status runScheduler(talos_rt_context *context,
                                SchedulerRunOptions options = {});
-obelisk_rt_status executeNativeAOTNodeUnlocked(obelisk_rt_context *context,
+talos_rt_status executeNativeAOTNodeUnlocked(talos_rt_context *context,
                                                uint32_t actorSlot);
-obelisk_rt_status runPreponedHooks(obelisk_rt_context *context);
+talos_rt_status runPreponedHooks(talos_rt_context *context);
 // Initialize the current slot once, regardless of which executor entered it.
 // Reentry in the same slot preserves its sampled state and progress cursor.
-obelisk_rt_status enterSchedulerTimeSlotUnlocked(obelisk_rt_context *context);
+talos_rt_status enterSchedulerTimeSlotUnlocked(talos_rt_context *context);
 bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
-                             const obelisk_rt_wait_record_v1 *wait);
-uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
+                             const talos_rt_wait_record_v1 *wait);
+uint32_t nextDueNBABarrierRegionUnlocked(const talos_rt_context *context,
                                          bool includeGenerated = true);
 
 //===----------------------------------------------------------------------===//
 // Signal fanout and transitions (Process.cpp)
 //===----------------------------------------------------------------------===//
 
-bool canUseStaticAOTFanout(const obelisk_rt_context *context);
-bool canUseIndexedExternalAOTFanout(const obelisk_rt_context *context);
-bool nativeAOTTransientBoundaryClean(const obelisk_rt_context *context);
-bool validNativeStatePlanesUnlocked(const obelisk_rt_context *context,
+bool canUseStaticAOTFanout(const talos_rt_context *context);
+bool canUseIndexedExternalAOTFanout(const talos_rt_context *context);
+bool nativeAOTTransientBoundaryClean(const talos_rt_context *context);
+bool validNativeStatePlanesUnlocked(const talos_rt_context *context,
                                     const uint8_t *value,
                                     const uint8_t *unknown, uint64_t bitCount);
 bool publishStaticAOTSignalTransitionUnlocked(
-    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+    talos_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     uint64_t *outSequence, bool indexedExternalDeposit = false);
 // `establishesOverride` marks the publication that installs a force or assign
 // procedural continuous assignment. Every other publication is filtered
 // against the override masks; that one is the write the masks describe.
 bool publishNativeSignalTransitionUnlocked(
-    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
+    talos_rt_context *context, uint64_t bitOffset, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
     const uint8_t *newUnknown, bool establishesOverride = false);
-void publishOverrideTransition(obelisk_rt_context *context, uint64_t bitOffset,
+void publishOverrideTransition(talos_rt_context *context, uint64_t bitOffset,
                                uint64_t bitWidth, const uint8_t *oldValue,
                                const uint8_t *oldUnknown,
                                const uint8_t *newValue,
                                const uint8_t *newUnknown);
-void wakeMonitorProcessUnlocked(obelisk_rt_context *context,
+void wakeMonitorProcessUnlocked(talos_rt_context *context,
                                 uint64_t logicalToken);
 
 //===----------------------------------------------------------------------===//
 // AOT deadline heap and readiness (ProcessAOT.cpp)
 //===----------------------------------------------------------------------===//
 
-bool markNativeAOTActorReadyUnlocked(obelisk_rt_context *context,
+bool markNativeAOTActorReadyUnlocked(talos_rt_context *context,
                                      uint32_t actorSlot);
-obelisk_rt_status
-suspendNativeAOTTaskCallerUnlocked(obelisk_rt_context *context,
+talos_rt_status
+suspendNativeAOTTaskCallerUnlocked(talos_rt_context *context,
                                    ScheduledProcess &scheduled);
-void clearNativeAOTNodeReadyUnlocked(obelisk_rt_context *context,
+void clearNativeAOTNodeReadyUnlocked(talos_rt_context *context,
                                      uint32_t node);
-void setNativeAOTDeadlineUnlocked(obelisk_rt_context *context,
+void setNativeAOTDeadlineUnlocked(talos_rt_context *context,
                                   uint32_t actorSlot, uint64_t deadline);
-void removeNativeAOTDeadlineUnlocked(obelisk_rt_context *context,
+void removeNativeAOTDeadlineUnlocked(talos_rt_context *context,
                                      uint32_t actorSlot);
-bool markDueNativeAOTDeadlinesUnlocked(obelisk_rt_context *context);
-uint32_t findNativeAOTNodeUnlocked(const obelisk_rt_context *context,
+bool markDueNativeAOTDeadlinesUnlocked(talos_rt_context *context);
+uint32_t findNativeAOTNodeUnlocked(const talos_rt_context *context,
                                    uint32_t actorSlot, uint32_t continuation);
-obelisk_rt_status
-refreshNativeAOTReadyPhaseUnlocked(obelisk_rt_context *context);
-obelisk_rt_status
-initializeNativeAOTNodesUnlocked(obelisk_rt_context *context,
-                                 const obelisk_rt_native_schedule_node *nodes,
+talos_rt_status
+refreshNativeAOTReadyPhaseUnlocked(talos_rt_context *context);
+talos_rt_status
+initializeNativeAOTNodesUnlocked(talos_rt_context *context,
+                                 const talos_rt_native_schedule_node *nodes,
                                  uint32_t nodeCount);
 bool nativeClockOccurrencePrimaryReadsGeneratedState(
-    const obelisk_rt_context *context,
+    const talos_rt_context *context,
     const std::unordered_set<uint32_t> &generatedWritableStates);
 
 //===----------------------------------------------------------------------===//
@@ -326,24 +326,24 @@ bool nativeClockOccurrencePrimaryReadsGeneratedState(
 // Shared native pending-update selection for every execution policy. With an
 // installed dirty index, retained generated payloads are not pending work.
 uint32_t
-nextDueNativeNBABarrierRegionUnlocked(const obelisk_rt_context *context,
+nextDueNativeNBABarrierRegionUnlocked(const talos_rt_context *context,
                                       bool includeGenerated);
 
 bool hasGeneratedNBAStages(const GeneratedNBAStorage &generated);
-bool hasGeneratedNBASlots(const obelisk_rt_static_nba_root &root);
-void markStaticNBAAccumulatorPending(obelisk_rt_context *context,
+bool hasGeneratedNBASlots(const talos_rt_static_nba_root &root);
+void markStaticNBAAccumulatorPending(talos_rt_context *context,
                                      uint32_t rootIndex,
                                      StaticNBAAccumulator &accumulator);
-void refreshStaticNBAAccumulatorsPending(obelisk_rt_context *context);
-bool staticNBARootNeedsTransitions(const obelisk_rt_context *context,
+void refreshStaticNBAAccumulatorsPending(talos_rt_context *context);
+bool staticNBARootNeedsTransitions(const talos_rt_context *context,
                                    uint32_t rootIndex);
-obelisk_rt_status
-commitStaticNBAAccumulatorsUnlocked(obelisk_rt_context *context,
+talos_rt_status
+commitStaticNBAAccumulatorsUnlocked(talos_rt_context *context,
                                     uint32_t barrierRegion, bool &changed);
-obelisk_rt_status
-resolveClockingDriveConflictsUnlocked(obelisk_rt_context *context,
+talos_rt_status
+resolveClockingDriveConflictsUnlocked(talos_rt_context *context,
                                       uint32_t barrierRegion);
-obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
-    obelisk_rt_context *context, uint32_t rootIndex, uint32_t execRegion);
+talos_rt_status materializeGeneratedNBAAccumulatorUnlocked(
+    talos_rt_context *context, uint32_t rootIndex, uint32_t execRegion);
 
-#endif // OBELISK_RUNTIME_LIB_PROCESSSHARED_H
+#endif // TALOS_RUNTIME_LIB_PROCESSSHARED_H

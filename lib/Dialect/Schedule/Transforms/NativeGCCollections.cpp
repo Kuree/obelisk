@@ -10,11 +10,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Dialect/Runtime/RuntimeTypes.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Runtime/RuntimeTypes.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -27,11 +27,11 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
 #define GEN_PASS_DEF_THINNATIVEGCCOLLECTIONSPASS
 #define GEN_PASS_DEF_LOWERNATIVEGCCOLLECTIONSPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 
@@ -41,7 +41,7 @@ namespace {
 void removeCollection(schedule::NativeGCCollectOp collection) {
   OpBuilder builder(collection);
   Value ok = arith::ConstantOp::create(
-      builder, collection.getLoc(), builder.getI32IntegerAttr(OBELISK_RT_OK));
+      builder, collection.getLoc(), builder.getI32IntegerAttr(TALOS_RT_OK));
   collection.getStatus().replaceAllUsesWith(ok);
   collection.erase();
   // A folded branch is erased, and it may also forward the status or the
@@ -146,7 +146,7 @@ class LowerNativeGCCollectionsPass final
         head->getParent()->getBlocks().insert(Region::iterator(join), collect);
         builder.setInsertionPoint(collection);
         Value ok = arith::ConstantOp::create(
-            builder, location, builder.getI32IntegerAttr(OBELISK_RT_OK));
+            builder, location, builder.getI32IntegerAttr(TALOS_RT_OK));
         cf::CondBranchOp::create(builder, location, edge, collect, ValueRange{},
                                  join, ValueRange{ok});
         builder.setInsertionPointToStart(collect);
@@ -171,4 +171,4 @@ class LowerNativeGCCollectionsPass final
 };
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

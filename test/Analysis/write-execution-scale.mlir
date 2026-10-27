@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-unroll-loops --test-obelisk-storage-writes -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-unroll-loops --test-talos-storage-writes -o /dev/null 2>&1 | FileCheck %s
 
 // Preserve path exclusivity, repeated execution, and conservative call effects
 // with more than one word of tracked writes and long identity-transfer spans:

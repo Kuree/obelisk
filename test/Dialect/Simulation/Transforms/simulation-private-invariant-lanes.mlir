@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=off},simulation.func(canonicalize,mem2reg,canonicalize)))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=read}))' | FileCheck %s --check-prefix=READ
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=off},simulation.func(canonicalize,mem2reg,canonicalize,obelisk-sim-thread-suspension)),test-obelisk-activation-regions)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=REGION
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-simplify-bodies{vpi=off},simulation.func(canonicalize,mem2reg,canonicalize)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-simplify-bodies{vpi=read}))' | FileCheck %s --check-prefix=READ
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-simplify-bodies{vpi=off},simulation.func(canonicalize,mem2reg,canonicalize,talos-sim-thread-suspension)),test-talos-activation-regions)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=REGION
 // REGION: regions @writer valid=1
 // IEEE 1800-2023 6.8 Table 6-7: unwritten four-state lanes remain X;
 // two-state lanes remain zero. Private fields need no copy-in or flush when

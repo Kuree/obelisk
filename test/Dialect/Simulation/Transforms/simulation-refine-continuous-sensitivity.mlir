@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-refine-continuous-sensitivity{vpi=off}))' -o %t.threaded
-// RUN: obelisk-opt %s --split-input-file --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-refine-continuous-sensitivity{vpi=off}))' -o %t.serial
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-refine-continuous-sensitivity{vpi=off}))' -o %t.threaded
+// RUN: talos-opt %s --split-input-file --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(talos-sim-refine-continuous-sensitivity{vpi=off}))' -o %t.serial
 // RUN: diff %t.threaded %t.serial
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-refine-continuous-sensitivity{vpi=read}))' | FileCheck %s --check-prefix=KEEP
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-refine-continuous-sensitivity{vpi=off}))' | FileCheck %s
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-refine-continuous-sensitivity{vpi=full}))' | FileCheck %s --check-prefix=KEEP
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-refine-continuous-sensitivity{vpi=read}))' | FileCheck %s --check-prefix=KEEP
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-refine-continuous-sensitivity{vpi=off}))' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-refine-continuous-sensitivity{vpi=full}))' | FileCheck %s --check-prefix=KEEP
 
 // The dynamic inner selection watches the entire fixed outer element, plus
 // the index. A runtime selector must never be frozen into the watch identity.

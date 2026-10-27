@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba),convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s
 
 // Direct fixed state is an addressing capability, not an AOT-scheduler
@@ -44,6 +44,6 @@ module attributes {
 // CHECK-LABEL: llvm.func @process
 // CHECK-NOT: llvm.load {{.*}} : !llvm.ptr -> i128
 // CHECK: llvm.intr.memcpy
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_store_plane
-// CHECK-LABEL: llvm.func @process.__obelisk_spawn
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_load_plane
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_store_plane
+// CHECK-LABEL: llvm.func @process.__talos_spawn

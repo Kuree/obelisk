@@ -1,7 +1,7 @@
-// RUN: obelisk-opt --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' %s | FileCheck %s
+// RUN: talos-opt --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' %s | FileCheck %s
 
 // CHECK: module attributes {{.*}}schedule.eval.generated
-// CHECK: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path
+// CHECK: llvm.func @work.__talos_eval_body_0.__talos_checkpoint_path
 
 // A dynamic select is bounded by its fixed physical root. The adjacent overlap test checks
 // that a store to another root can be discarded, while a possibly aliasing

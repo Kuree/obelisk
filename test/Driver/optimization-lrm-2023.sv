@@ -1,10 +1,10 @@
-// RUN: obelisk -O0 --vpi=off %s -o %t.o0
+// RUN: talos -O0 --vpi=off %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off %s -o %t.o3
+// RUN: talos -O3 --vpi=off %s -o %t.o3
 // RUN: %t.o3 | FileCheck %s
-// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.bc0
+// RUN: talos -O0 --vpi=off --execution-tier=bytecode %s -o %t.bc0
 // RUN: %t.bc0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.bc3
+// RUN: talos -O3 --vpi=off --execution-tier=bytecode %s -o %t.bc3
 // RUN: %t.bc3 | FileCheck %s
 
 // IEEE 1800-2023 6.8, 11.4.6, 11.4.10, 11.5.1, 12.7.1.

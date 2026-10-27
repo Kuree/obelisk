@@ -1,12 +1,12 @@
 // REQUIRES: native-elf
-// RUN: env PATH=/nonexistent %obelisk %s -o %t.exe
+// RUN: env PATH=/nonexistent %talos %s -o %t.exe
 // RUN: llvm-readelf -h -l -d %t.exe | FileCheck %s --check-prefix=ELF --implicit-check-not='(RPATH)' --implicit-check-not='(RUNPATH)'
-// RUN: llvm-strings %t.exe | FileCheck %s --check-prefix=PATHS --implicit-check-not='/glibc/' --implicit-check-not='workspace/obelisk' --implicit-check-not='/home/runner/'
+// RUN: llvm-strings %t.exe | FileCheck %s --check-prefix=PATHS --implicit-check-not='/glibc/' --implicit-check-not='workspace/talos' --implicit-check-not='/home/runner/'
 // RUN: %t.exe > %t.exe.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.exe.out
-// RUN: obelisk -c %s -o %t.o
+// RUN: talos -c %s -o %t.o
 // RUN: llvm-readelf -h %t.o | FileCheck %s --check-prefix=OBJECT
-// RUN: obelisk -emit-llvm %s -o - | FileCheck %s --check-prefix=LLVM
+// RUN: talos -emit-llvm %s -o - | FileCheck %s --check-prefix=LLVM
 
 module native_driver;
   logic [7:0] value;
@@ -35,20 +35,20 @@ endmodule
 // ELF: FLAGS_1
 // ELF-SAME: PIE
 
-// PATHS: obelisk_rt_v1_scheduler_run
+// PATHS: talos_rt_v1_scheduler_run
 
 // The non-LTO runtime uses one ELF section per function so the linker can
 // retain scheduler support without pulling unrelated container or VPI APIs.
-// GC-SECTIONS: obelisk_rt_v1_scheduler_run_aot
+// GC-SECTIONS: talos_rt_v1_scheduler_run_aot
 
 // LLVM: target triple = "{{.*}}-unknown-linux-gnu"
-// LLVM-DAG: @unit_0.__obelisk_schedule_ranks = internal constant [1 x i32] [i32 2]
-// LLVM-DAG: @__obelisk_aot_schedule_plan_v1
-// LLVM-DAG: call i64 @obelisk_rt_v1_process_spawn
+// LLVM-DAG: @unit_0.__talos_schedule_ranks = internal constant [1 x i32] [i32 2]
+// LLVM-DAG: @__talos_aot_schedule_plan_v1
+// LLVM-DAG: call i64 @talos_rt_v1_process_spawn
 // LLVM: define i32 @main(i32
 // LLVM-SAME: ptr
-// LLVM: call i32 @obelisk_rt_v1_scheduler_install_aot
-// LLVM: call i32 @obelisk_rt_v1_scheduler_run_aot
+// LLVM: call i32 @talos_rt_v1_scheduler_install_aot
+// LLVM: call i32 @talos_rt_v1_scheduler_run_aot
 
 // THREADS: native executable generation currently requires --threads=1
 // SYSROOT: --sysroot is only valid with --target=wasm32

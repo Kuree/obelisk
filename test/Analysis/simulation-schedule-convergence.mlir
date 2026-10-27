@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %S/../Conversion/simulation-ranked-group-routing.mlir -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-simulation-schedule-analysis)' \
+// RUN: talos-opt %S/../Conversion/simulation-ranked-group-routing.mlir -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-simulation-schedule-analysis)' \
 // RUN:   2>&1 | FileCheck %s
 
 // Use the executable configured-routing fixture, which also compares native

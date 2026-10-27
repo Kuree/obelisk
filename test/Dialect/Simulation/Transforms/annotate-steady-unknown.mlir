@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-annotate-steady-unknown{vpi=off}))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-annotate-steady-unknown{vpi=full}))' | FileCheck %s --check-prefix=WRITABLE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-annotate-steady-unknown{vpi=off}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-annotate-steady-unknown{vpi=full}))' | FileCheck %s --check-prefix=WRITABLE
 
 // The high byte of `half` is never written, so it keeps its initial X
 // (IEEE 1800-2023 6.8): its steady pattern. The stale fact on `flag`, which

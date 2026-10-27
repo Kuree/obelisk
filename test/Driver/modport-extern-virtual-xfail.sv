@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: obelisk --std=1800-2023 -emit-obelisk %s -o /dev/null
+// RUN: talos --std=1800-2023 -emit-talos %s -o /dev/null
 
 // Slang currently requires an implementation on the compile-time-only
 // virtual-interface type instance, even though the executable interface has a

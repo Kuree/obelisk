@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp))' > %t.threaded
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp))' > %t.serial
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-sccp))' > %t.threaded
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(talos-sim-sccp))' > %t.serial
 // RUN: diff -u %t.serial %t.threaded
 // RUN: FileCheck %s < %t.threaded
-// RUN: obelisk-opt %s --verify-each=false --pass-pipeline='builtin.module(simulation.design(test-obelisk-erase-marked-sim-function,obelisk-sim-sccp))' | FileCheck %s --check-prefix=UNRESOLVED
+// RUN: talos-opt %s --verify-each=false --pass-pipeline='builtin.module(simulation.design(test-talos-erase-marked-sim-function,talos-sim-sccp))' | FileCheck %s --check-prefix=UNRESOLVED
 
 module {
   simulation.design @sccp {
@@ -388,7 +388,7 @@ module {
       simulation.return %result : i32
     }
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32} {
       %four = arith.constant 4 : i32

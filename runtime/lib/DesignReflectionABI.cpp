@@ -1,66 +1,66 @@
 //===- DesignReflectionABI.cpp - generated schema ABI checks -------------===//
 
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Runtime/Runtime.h"
 
 #include <cstddef>
 #include <cstdint>
 
-using namespace obelisk::reflection;
+using namespace talos::reflection;
 
 static_assert(HeaderLayout.size ==
-              sizeof(obelisk_rt_design_database_header_v1));
-static_assert(HeaderLayout.size == OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+              sizeof(talos_rt_design_database_header_v1));
+static_assert(HeaderLayout.size == TALOS_RT_DESIGN_DATABASE_HEADER_SIZE);
 static_assert(field::HeaderMagic ==
-              offsetof(obelisk_rt_design_database_header_v1, magic));
+              offsetof(talos_rt_design_database_header_v1, magic));
 static_assert(field::HeaderVersion ==
-              offsetof(obelisk_rt_design_database_header_v1, version));
+              offsetof(talos_rt_design_database_header_v1, version));
 static_assert(field::HeaderReserved ==
-              offsetof(obelisk_rt_design_database_header_v1, reserved));
+              offsetof(talos_rt_design_database_header_v1, reserved));
 static_assert(field::HeaderProfile ==
-              offsetof(obelisk_rt_design_database_header_v1, profile));
+              offsetof(talos_rt_design_database_header_v1, profile));
 static_assert(field::HeaderHeaderSize ==
-              offsetof(obelisk_rt_design_database_header_v1, header_size));
+              offsetof(talos_rt_design_database_header_v1, header_size));
 static_assert(field::HeaderImageSize ==
-              offsetof(obelisk_rt_design_database_header_v1, image_size));
+              offsetof(talos_rt_design_database_header_v1, image_size));
 static_assert(field::HeaderChecksum ==
-              offsetof(obelisk_rt_design_database_header_v1, checksum));
+              offsetof(talos_rt_design_database_header_v1, checksum));
 static_assert(field::HeaderRoot ==
-              offsetof(obelisk_rt_design_database_header_v1, root_offset));
+              offsetof(talos_rt_design_database_header_v1, root_offset));
 static_assert(field::HeaderScopeOffset ==
-              offsetof(obelisk_rt_design_database_header_v1, scope_offset));
+              offsetof(talos_rt_design_database_header_v1, scope_offset));
 static_assert(field::HeaderScopeCount ==
-              offsetof(obelisk_rt_design_database_header_v1, scope_count));
+              offsetof(talos_rt_design_database_header_v1, scope_count));
 static_assert(field::HeaderObjectOffset ==
-              offsetof(obelisk_rt_design_database_header_v1, object_offset));
+              offsetof(talos_rt_design_database_header_v1, object_offset));
 static_assert(field::HeaderObjectCount ==
-              offsetof(obelisk_rt_design_database_header_v1, object_count));
+              offsetof(talos_rt_design_database_header_v1, object_count));
 static_assert(field::HeaderTypeOffset ==
-              offsetof(obelisk_rt_design_database_header_v1, type_offset));
+              offsetof(talos_rt_design_database_header_v1, type_offset));
 static_assert(field::HeaderTypeCount ==
-              offsetof(obelisk_rt_design_database_header_v1, type_count));
+              offsetof(talos_rt_design_database_header_v1, type_count));
 static_assert(field::HeaderStringOffset ==
-              offsetof(obelisk_rt_design_database_header_v1, string_offset));
+              offsetof(talos_rt_design_database_header_v1, string_offset));
 static_assert(field::HeaderStringSize ==
-              offsetof(obelisk_rt_design_database_header_v1, string_size));
+              offsetof(talos_rt_design_database_header_v1, string_size));
 static_assert(field::HeaderIndexOffset ==
-              offsetof(obelisk_rt_design_database_header_v1, index_offset));
+              offsetof(talos_rt_design_database_header_v1, index_offset));
 static_assert(field::HeaderIndexCount ==
-              offsetof(obelisk_rt_design_database_header_v1, index_count));
+              offsetof(talos_rt_design_database_header_v1, index_count));
 static_assert(field::HeaderStatementOffset ==
-              offsetof(obelisk_rt_design_database_header_v1, statement_offset));
+              offsetof(talos_rt_design_database_header_v1, statement_offset));
 static_assert(field::HeaderStatementCount ==
-              offsetof(obelisk_rt_design_database_header_v1, statement_count));
+              offsetof(talos_rt_design_database_header_v1, statement_count));
 static_assert(field::HeaderStatementSiteOffset ==
-              offsetof(obelisk_rt_design_database_header_v1,
+              offsetof(talos_rt_design_database_header_v1,
                        statement_site_offset));
 static_assert(field::HeaderStatementSiteCount ==
-              offsetof(obelisk_rt_design_database_header_v1,
+              offsetof(talos_rt_design_database_header_v1,
                        statement_site_count));
 static_assert(field::HeaderRelationOffset ==
-              offsetof(obelisk_rt_design_database_header_v1, relation_offset));
+              offsetof(talos_rt_design_database_header_v1, relation_offset));
 static_assert(field::HeaderRelationCount ==
-              offsetof(obelisk_rt_design_database_header_v1, relation_count));
+              offsetof(talos_rt_design_database_header_v1, relation_count));
 
 static_assert(ScopeLayout.size == 64);
 static_assert(ObjectLayout.size == 96);
@@ -218,19 +218,19 @@ static_assert(unpackTableIndexKind((uint32_t{2} << 30) | 17) ==
               TableKind::Statement);
 static_assert(unpackTableIndex((uint32_t{2} << 30) | 17) == 17);
 
-static_assert(uint32_t(RecordKind::Scope) == OBELISK_RT_DESIGN_RECORD_SCOPE);
+static_assert(uint32_t(RecordKind::Scope) == TALOS_RT_DESIGN_RECORD_SCOPE);
 static_assert(uint32_t(RecordKind::Storage) ==
-              OBELISK_RT_DESIGN_RECORD_STORAGE);
-static_assert(uint32_t(RecordKind::Net) == OBELISK_RT_DESIGN_RECORD_NET);
-static_assert(uint32_t(RecordKind::Driver) == OBELISK_RT_DESIGN_RECORD_DRIVER);
+              TALOS_RT_DESIGN_RECORD_STORAGE);
+static_assert(uint32_t(RecordKind::Net) == TALOS_RT_DESIGN_RECORD_NET);
+static_assert(uint32_t(RecordKind::Driver) == TALOS_RT_DESIGN_RECORD_DRIVER);
 static_assert(uint32_t(RecordKind::Process) ==
-              OBELISK_RT_DESIGN_RECORD_PROCESS);
-static_assert(uint32_t(RecordKind::Type) == OBELISK_RT_DESIGN_RECORD_TYPE);
+              TALOS_RT_DESIGN_RECORD_PROCESS);
+static_assert(uint32_t(RecordKind::Type) == TALOS_RT_DESIGN_RECORD_TYPE);
 static_assert(uint32_t(RecordKind::Function) ==
-              OBELISK_RT_DESIGN_RECORD_FUNCTION);
-static_assert(uint32_t(RecordKind::Port) == OBELISK_RT_DESIGN_RECORD_PORT);
+              TALOS_RT_DESIGN_RECORD_FUNCTION);
+static_assert(uint32_t(RecordKind::Port) == TALOS_RT_DESIGN_RECORD_PORT);
 static_assert(uint32_t(RecordKind::StaticObject) ==
-              OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT);
+              TALOS_RT_DESIGN_RECORD_STATIC_OBJECT);
 
 constexpr bool recordKindPackingIsStable() {
   uint32_t packed = 0;
@@ -245,14 +245,14 @@ constexpr bool recordKindPackingIsStable() {
 }
 static_assert(recordKindPackingIsStable());
 
-static_assert(obelisk::reflection::InitializerBindingLayout.size == 16);
+static_assert(talos::reflection::InitializerBindingLayout.size == 16);
 
-static_assert(obelisk::reflection::ExpressionRootBindingLayout.size == 20);
-static_assert(obelisk::reflection::ExpressionTemplateLayout.size == 28);
-static_assert(obelisk::reflection::ExpressionNodeLayout.size == 32);
-static_assert(obelisk::reflection::ExpressionOperandLayout.size == 4);
-static_assert(obelisk::reflection::ExpressionLeafLayout.size == 4);
-static_assert(obelisk::reflection::ExpressionBoundMemberLayout.size == 8);
-static_assert(obelisk::reflection::ExpressionLeafShapeLayout.size == 12);
+static_assert(talos::reflection::ExpressionRootBindingLayout.size == 20);
+static_assert(talos::reflection::ExpressionTemplateLayout.size == 28);
+static_assert(talos::reflection::ExpressionNodeLayout.size == 32);
+static_assert(talos::reflection::ExpressionOperandLayout.size == 4);
+static_assert(talos::reflection::ExpressionLeafLayout.size == 4);
+static_assert(talos::reflection::ExpressionBoundMemberLayout.size == 8);
+static_assert(talos::reflection::ExpressionLeafShapeLayout.size == 12);
 
-static_assert(obelisk::reflection::TerminalDriverBindingLayout.size == 16);
+static_assert(talos::reflection::TerminalDriverBindingLayout.size == 16);

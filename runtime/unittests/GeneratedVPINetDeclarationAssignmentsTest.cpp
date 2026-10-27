@@ -3,10 +3,10 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Runtime/Runtime.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -19,21 +19,21 @@
 #include <vector>
 namespace {
 TEST(GeneratedDesignDatabase, NetDeclarationAssignments) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
-  obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_VERSION;
+  talos_rt_execution_descriptor_v1 execution{};
+  execution.version = TALOS_RT_VERSION;
   execution.flags = encoded->executionFlags;
   execution.bytecode = encoded->bytecode.data();
   execution.bytecode_size = encoded->bytecode.size();
@@ -42,15 +42,15 @@ TEST(GeneratedDesignDatabase, NetDeclarationAssignments) {
   execution.state_bit_count = encoded->stateBitCount;
   for (unsigned byte = 0; byte != 8; ++byte)
     execution.checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *raw = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &raw),
-            OBELISK_RT_OK);
-  std::unique_ptr<obelisk_rt_context, decltype(&obelisk_rt_v1_context_destroy)>
-      runtime(raw, obelisk_rt_v1_context_destroy);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(raw, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(raw), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(raw), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *raw = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &raw),
+            TALOS_RT_OK);
+  std::unique_ptr<talos_rt_context, decltype(&talos_rt_v1_context_destroy)>
+      runtime(raw, talos_rt_v1_context_destroy);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(raw, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(raw), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(raw), TALOS_RT_OK);
   std::vector<vpiHandle> handles;
   auto keep = [&](vpiHandle handle) {
     if (handle)
@@ -183,23 +183,23 @@ TEST(GeneratedDesignDatabase, NetDeclarationAssignments) {
   }
   for (auto handle : handles)
     EXPECT_EQ(vpi_free_object(handle), 1);
-  EXPECT_EQ(obelisk_rt_v1_vpi_end_simulation(raw), OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_v1_vpi_end_simulation(raw), TALOS_RT_OK);
 
   // The declaration form adds one sparse Boolean fact, not another object
   // representation or a default-false row on every continuous assignment.
   auto baseline = mlir::OwningOpRef<mlir::ModuleOp>(module->clone());
-  auto baselineDesign = *baseline->getOps<obelisk::sim::SimDesignOp>().begin();
+  auto baselineDesign = *baseline->getOps<talos::sim::SimDesignOp>().begin();
   unsigned removed = 0;
   for (auto statement :
-       baselineDesign.getOps<obelisk::sim::SimStatementDeclOp>()) {
+       baselineDesign.getOps<talos::sim::SimStatementDeclOp>()) {
     auto properties =
-        statement->getAttrOfType<obelisk::sim::VPIPropertySetAttr>(
+        statement->getAttrOfType<talos::sim::VPIPropertySetAttr>(
             "vpi_properties");
     if (!properties)
       continue;
     llvm::SmallVector<mlir::Attribute> remaining;
     for (auto attribute : properties.getProperties()) {
-      auto property = mlir::cast<obelisk::sim::VPIPropertyAttr>(attribute);
+      auto property = mlir::cast<talos::sim::VPIPropertyAttr>(attribute);
       if (property.getSelector().getInt() == vpiNetDeclAssign) {
         EXPECT_TRUE(mlir::cast<mlir::BoolAttr>(property.getValue()).getValue());
         ++removed;
@@ -209,25 +209,25 @@ TEST(GeneratedDesignDatabase, NetDeclarationAssignments) {
     }
     statement->setAttr(
         "vpi_properties",
-        obelisk::sim::VPIPropertySetAttr::get(
+        talos::sim::VPIPropertySetAttr::get(
             &context, mlir::ArrayAttr::get(&context, remaining)));
   }
   ASSERT_EQ(removed, 4u);
-  auto baselineImage = obelisk::encodeSimulationDesign(baselineDesign, options);
+  auto baselineImage = talos::encodeSimulationDesign(baselineDesign, options);
   ASSERT_TRUE(mlir::succeeded(baselineImage));
   auto baselineExecution = execution;
   baselineExecution.design_database = baselineImage->designDatabase.data();
   baselineExecution.design_database_size = baselineImage->designDatabase.size();
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&baselineExecution), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&baselineExecution), TALOS_RT_OK);
   EXPECT_EQ(encoded->designDatabase.size() -
                 baselineImage->designDatabase.size(),
-            4u * obelisk::reflection::FixedPropertyLayout.size);
+            4u * talos::reflection::FixedPropertyLayout.size);
   options.vpi = "off";
-  auto withoutVPI = obelisk::encodeSimulationDesign(design, options);
+  auto withoutVPI = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(withoutVPI));
   EXPECT_TRUE(withoutVPI->designDatabase.empty());
-  EXPECT_EQ(withoutVPI->executionFlags & (OBELISK_RT_EXECUTION_VPI_READ |
-                                          OBELISK_RT_EXECUTION_VPI_WRITE),
+  EXPECT_EQ(withoutVPI->executionFlags & (TALOS_RT_EXECUTION_VPI_READ |
+                                          TALOS_RT_EXECUTION_VPI_WRITE),
             0u);
 }
 } // namespace

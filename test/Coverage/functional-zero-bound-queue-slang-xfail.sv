@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk --std=1800-2023 -O0 --target=native --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --target=native --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
 
 // IEEE 1800-2023 7.10.1 and 7.10.5 limit a [$:N] queue to N+1 entries.

@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(test-obelisk-simulation-schedule-analysis)' \
+// RUN: talos-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(test-talos-simulation-schedule-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=FALLBACK
-// RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-simulation-schedule-analysis)' \
+// RUN: talos-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-simulation-schedule-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=GRAPH
 
 // The fallback preserves semantic IR order. Printing is name-sorted so these

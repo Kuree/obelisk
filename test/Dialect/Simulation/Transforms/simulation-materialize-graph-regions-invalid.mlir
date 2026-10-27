@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --verify-diagnostics --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions))'
+// RUN: talos-opt %s --verify-diagnostics --pass-pipeline='builtin.module(simulation.design(talos-sim-materialize-graph-regions))'
 
 module {
   // expected-error @below {{graph-region materialization requires a verified compute graph}}

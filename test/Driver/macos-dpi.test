@@ -1,8 +1,8 @@
 // REQUIRES: native-macho
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
 // RUN: %target_clang -dynamiclib -Wl,-undefined,dynamic_lookup -Wl,-install_name,@rpath/libdpi.dylib %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.dir/lib/libdpi.dylib
-// RUN: cd %t.dir && %obelisk %S/dpi.sv lib/libdpi.dylib -o bin/simulator && ./bin/simulator | FileCheck %S/dpi-shared.test --check-prefix=OUTPUT
-// RUN: cd %t.dir && %obelisk -flto %S/dpi.sv lib/libdpi.dylib -o bin/simulator-lto && ./bin/simulator-lto | FileCheck %S/dpi-shared.test --check-prefix=OUTPUT
+// RUN: cd %t.dir && %talos %S/dpi.sv lib/libdpi.dylib -o bin/simulator && ./bin/simulator | FileCheck %S/dpi-shared.test --check-prefix=OUTPUT
+// RUN: cd %t.dir && %talos -flto %S/dpi.sv lib/libdpi.dylib -o bin/simulator-lto && ./bin/simulator-lto | FileCheck %S/dpi-shared.test --check-prefix=OUTPUT
 // RUN: %llvm_dist/bin/llvm-objdump --macho --private-headers %t.dir/bin/simulator | FileCheck %s
 // RUN: rm -rf %t.moved && cp -R %t.dir %t.moved && %t.moved/bin/simulator | FileCheck %S/dpi-shared.test --check-prefix=OUTPUT
 

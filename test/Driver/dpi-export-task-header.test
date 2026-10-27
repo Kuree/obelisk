@@ -1,5 +1,5 @@
 // The DPI header generated for dpi-export-task.sv declares its imports and
 // compiles as C.
-// RUN: obelisk --emit-dpi-header %S/dpi-export-task.sv -o %t.h
+// RUN: talos --emit-dpi-header %S/dpi-export-task.sv -o %t.h
 // RUN: FileCheck %S/dpi-export-task.sv --check-prefix=HEADER < %t.h
 // RUN: %llvm_dist/bin/clang -x c -fsyntax-only -include %t.h -I%resource_dir/include /dev/null

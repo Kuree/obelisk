@@ -1,13 +1,13 @@
 //===- SimulationProcessCoroutineLowering.h - Native process lowering -===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSCOROUTINELOWERING_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSCOROUTINELOWERING_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSCOROUTINELOWERING_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSCOROUTINELOWERING_H
 
 #include "SimulationProcessWrapperLowering.h"
 #include "SimulationTableProcess.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 struct PreparedSuspendableProcess {
   mlir::ModuleOp module;
@@ -35,6 +35,6 @@ mlir::LogicalResult
 lowerSuspendableProcess(sim::SimFuncOp function,
                         const SimulationProcessFrameAnalysis &analysis);
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSCOROUTINELOWERING_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSCOROUTINELOWERING_H

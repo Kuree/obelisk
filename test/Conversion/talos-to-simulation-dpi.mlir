@@ -1,0 +1,110 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0 vpi=full' '--encode-talos-sim-to-bytecode=vpi=full' -o /dev/null
+// RUN: talos-opt %s --talos-sim-prepare=preserve-vpi-method-bindings | FileCheck %s --check-prefix=VPI
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0 vpi=full' | FileCheck %s
+
+module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
+  talos.sv.symbol.definition @s0.dpi_imports attributes {definition_kind = 0 : i32, hierarchical_name = "dpi_imports", name = "dpi_imports", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.dpi_imports attributes {hierarchical_name = "dpi_imports", is_uninstantiated = false, name = "dpi_imports", node_id = 3 : i64, referenced_path = "dpi_imports", referenced_symbol = @s0.dpi_imports} {
+      talos.sv.symbol.instance_body @s4.dpi_imports attributes {hierarchical_name = "dpi_imports", name = "dpi_imports", node_id = 4 : i64} {
+        talos.sv.symbol.subroutine @s5.sv_add attributes {dpi_c_identifier = "c_add", hierarchical_name = "dpi_imports.sv_add", is_dpi_import, is_pure, name = "sv_add", node_id = 5 : i64, semantic_type = !talos.subroutine<(!talos.integral<32, true, false, 31 : 0, int>) -> !talos.integral<32, true, false, 31 : 0, int>, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.list attributes {node_id = 6 : i64} {
+          }
+          talos.sv.symbol.formal_argument @s6.value attributes {direction = 0 : i32, hierarchical_name = "dpi_imports.sv_add.value", name = "value", node_id = 7 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+          }
+        }
+        talos.sv.symbol.subroutine @s7.update attributes {dpi_c_identifier = "update", hierarchical_name = "dpi_imports.update", is_dpi_context, is_dpi_import, name = "update", node_id = 8 : i64, semantic_type = !talos.subroutine<(!talos.ranged_packed_array<64 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>, !talos.ranged_packed_array<32 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>) -> (), true>, subroutine_kind = 1 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.list attributes {node_id = 9 : i64} {
+          }
+          talos.sv.symbol.formal_argument @s8.source attributes {direction = 0 : i32, hierarchical_name = "dpi_imports.update.source", name = "source", node_id = 10 : i64, semantic_type = !talos.ranged_packed_array<64 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+          }
+          talos.sv.symbol.formal_argument @s9.destination attributes {direction = 2 : i32, hierarchical_name = "dpi_imports.update.destination", name = "destination", node_id = 11 : i64, semantic_type = !talos.ranged_packed_array<32 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+          }
+        }
+        talos.sv.symbol.subroutine @s100.notify attributes {dpi_c_identifier = "notify", hierarchical_name = "dpi_imports.notify", is_dpi_import, name = "notify", node_id = 100 : i64, semantic_type = !talos.subroutine<(!talos.integral<32, true, false, 31 : 0, int>) -> !talos.void, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.list attributes {node_id = 101 : i64} {
+          }
+          talos.sv.symbol.formal_argument @s101.value attributes {direction = 0 : i32, hierarchical_name = "dpi_imports.notify.value", name = "value", node_id = 102 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+          }
+        }
+        talos.sv.symbol.variable @s10.result attributes {hierarchical_name = "dpi_imports.result", lifetime = 1 : i32, name = "result", node_id = 12 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+        }
+        talos.sv.symbol.variable @s11.source attributes {hierarchical_name = "dpi_imports.source", lifetime = 1 : i32, name = "source", node_id = 13 : i64, semantic_type = !talos.ranged_packed_array<64 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+        }
+        talos.sv.symbol.variable @s12.destination attributes {hierarchical_name = "dpi_imports.destination", lifetime = 1 : i32, name = "destination", node_id = 14 : i64, semantic_type = !talos.ranged_packed_array<32 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+        }
+        talos.sv.symbol.procedural_block @s13 attributes {hierarchical_name = "dpi_imports", node_id = 15 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.block attributes {node_id = 16 : i64} {
+            talos.sv.statement.list attributes {node_id = 17 : i64} {
+              talos.sv.statement.expression_statement attributes {node_id = 18 : i64} {
+                talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 19 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                  talos.sv.expression.named_value attributes {node_id = 20 : i64, referenced_path = "dpi_imports.result", referenced_symbol = @s1.$root::@s3.dpi_imports::@s4.dpi_imports::@s10.result, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                  }
+                  talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "sv_add", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = false, node_id = 21 : i64, referenced_path = "dpi_imports.sv_add", referenced_symbol = @s1.$root::@s3.dpi_imports::@s4.dpi_imports::@s5.sv_add, semantic_type = !talos.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32} {
+                    talos.sv.expression.integer_literal attributes {constant_value = "7", node_id = 22 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 23 : i64} {
+                talos.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "update", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_super_class = false, is_system_call = false, node_id = 24 : i64, referenced_path = "dpi_imports.update", referenced_symbol = @s1.$root::@s3.dpi_imports::@s4.dpi_imports::@s7.update, semantic_type = !talos.void, subroutine_kind = 1 : i32} {
+                  talos.sv.expression.named_value attributes {node_id = 25 : i64, referenced_path = "dpi_imports.source", referenced_symbol = @s1.$root::@s3.dpi_imports::@s4.dpi_imports::@s11.source, semantic_type = !talos.ranged_packed_array<64 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                  }
+                  talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 26 : i64, semantic_type = !talos.ranged_packed_array<32 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+                    talos.sv.expression.named_value attributes {node_id = 27 : i64, referenced_path = "dpi_imports.destination", referenced_symbol = @s1.$root::@s3.dpi_imports::@s4.dpi_imports::@s12.destination, semantic_type = !talos.ranged_packed_array<32 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+                    }
+                    talos.sv.expression.empty_argument attributes {node_id = 28 : i64, semantic_type = !talos.ranged_packed_array<32 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+                    }
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 103 : i64} {
+                talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "notify", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = false, node_id = 104 : i64, referenced_path = "dpi_imports.notify", referenced_symbol = @s1.$root::@s3.dpi_imports::@s4.dpi_imports::@s100.notify, semantic_type = !talos.void, subroutine_kind = 0 : i32} {
+                  talos.sv.expression.integer_literal attributes {constant_value = "9", node_id = 105 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// CHECK-NOT: dpi.has_exports
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.sv_add" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>{{.*}}>
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 59 {{.*}} hierarchy "dpi_imports.update" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>{{.*}}>
+// CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.notify" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 4 : i32, value = 0 : i32>, #simulation.vpi_property<selector = 50 : i32, value = true>{{.*}}>
+// CHECK: simulation.dpi.call "c_add" id {{-?[0-9]+}} scope 1
+// CHECK-SAME: context
+// CHECK-SAME: kind = int
+// CHECK-SAME: direction = result
+// CHECK-SAME: is_pure = true
+// CHECK-NEXT: simulation.status.check
+// CHECK: simulation.dpi.call "update" id {{-?[0-9]+}} scope 1
+// CHECK-SAME: kind = logic_vector
+// CHECK-SAME: width = 65
+// CHECK-SAME: kind = bit_vector
+// CHECK-SAME: direction = inout
+// CHECK-SAME: width = 33
+// CHECK-SAME: is_context = true
+// CHECK-SAME: is_task = true
+// CHECK-NEXT: simulation.status.check
+// CHECK: simulation.dpi.call "notify" id {{-?[0-9]+}} scope 1
+// CHECK-SAME: kind = int
+// CHECK-SAME: direction = input
+// CHECK-NOT: direction = result
+// CHECK-NEXT: simulation.status.check
+// CHECK-NOT: talos.sv.
+// CHECK-NOT: dpi.has_exports
+
+// VPI-DAG: simulation.vpi_object.anchor @[[ADD:[^ ]+]] {{.*}}type 20 {{.*}}hierarchy "dpi_imports.sv_add"
+// VPI-DAG: simulation.vpi_object.anchor @[[UPDATE:[^ ]+]] {{.*}}type 59 {{.*}}hierarchy "dpi_imports.update"
+// VPI-DAG: simulation.vpi_object.anchor @[[NOTIFY:[^ ]+]] {{.*}}type 20 {{.*}}hierarchy "dpi_imports.notify"
+// VPI-DAG: simulation.vpi_code_unit_scope.bind {{[0-9]+}} to @[[ADD]]
+// VPI-DAG: simulation.vpi_code_unit_scope.bind {{[0-9]+}} to @[[UPDATE]]
+// VPI-DAG: simulation.vpi_code_unit_scope.bind {{[0-9]+}} to @[[NOTIFY]]

@@ -1,21 +1,21 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
 // The writer runs twice before the NBA barrier: src=1 stages one, then a
 // different actor resets src and stages zero at the SAME semantic site.
 // The final value is zero, but a posedge observer must still run (LRM 4.6).
-// PLAN: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
+// PLAN: llvm.mlir.global internal @__talos_eval_ordered_nba_queue_v1
 // Each same-site enqueue appends a new ordered entry, growing the queue
 // through the runtime when full, instead of overwriting one pending slot.
-// PLAN-LABEL: llvm.func @writer.__obelisk_eval_body_0(
-// PLAN: %[[QUEUE:.*]] = llvm.mlir.addressof @__obelisk_eval_ordered_nba_queue_v1
+// PLAN-LABEL: llvm.func @writer.__talos_eval_body_0(
+// PLAN: %[[QUEUE:.*]] = llvm.mlir.addressof @__talos_eval_ordered_nba_queue_v1
 // PLAN-NEXT: %[[COUNT_PTR:.*]] = llvm.getelementptr %[[QUEUE]][0, 1]
 // PLAN-NEXT: %[[COUNT:.*]] = llvm.load %[[COUNT_PTR]]
-// PLAN: llvm.call @obelisk_rt_v1_eval_nba_reserve(
+// PLAN: llvm.call @talos_rt_v1_eval_nba_reserve(
 // PLAN: llvm.getelementptr %{{.*}}[%{{.*}}] : (!llvm.ptr, i64) -> !llvm.ptr, !llvm.array<4 x i64>
 // PLAN: %[[NEXT:.*]] = llvm.add %[[COUNT]], %{{.*}} : i32
 // PLAN: llvm.store %[[NEXT]], %{{.*}} : i32, !llvm.ptr
-// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1
+// PLAN-LABEL: llvm.func @__talos_eval_dispatch_v1
 
 !bit = !simulation.logic<1>
 !ref = !simulation.ref<!bit>

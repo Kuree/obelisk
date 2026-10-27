@@ -1,4 +1,4 @@
-# Obelisk native runtime
+# Talos native runtime
 
 See [Managed strings and containers](../docs/managed-values.md) for the
 variable-sized managed-object ABI and its current implementation status.
@@ -6,14 +6,14 @@ See [Randomization support](../docs/randomization-support.md) for the
 process-stream ABI and the executable constrained-randomization boundary.
 
 The native target build produces three forms of the same support code for the
-configured host-native Linux triple. `libobelisk_rt.a` contains native ELF
+configured host-native Linux triple. `libtalos_rt.a` contains native ELF
 objects used by default executable links at every optimization level;
-`libobelisk_rt_lto.a` contains pinned-LLVM bitcode used by unified Full-LTO
-links with `-flto`; and `libobelisk_rt_prelinked.a` contains a Full-LTO-optimized
+`libtalos_rt_lto.a` contains pinned-LLVM bitcode used by unified Full-LTO
+links with `-flto`; and `libtalos_rt_prelinked.a` contains a Full-LTO-optimized
 runtime for partitioned ThinLTO design links with `-flto`. The wasm target
-instead produces one `libobelisk_rt.a` containing optimized wasm32 objects,
+instead produces one `libtalos_rt.a` containing optimized wasm32 objects,
 used at every optimization level so the browser never recompiles runtime bitcode. The host
-CMake `obelisk_rt` target remains a native standalone C++17 archive for runtime
+CMake `talos_rt` target remains a native standalone C++17 archive for runtime
 unit tests. All forms expose the same lockstep C ABI; MLIR, slang, and
 GoogleTest are not runtime dependencies.
 
@@ -25,14 +25,14 @@ together while each runtime area remains independently testable.
 ## Compiler/runtime compatibility
 
 The runtime ABI is an internal contract between components built from the same
-Obelisk source revision, not a backward-compatible SDK. Updating the compiler
+Talos source revision, not a backward-compatible SDK. Updating the compiler
 requires regenerating all native objects, bytecode, descriptors, and generated
 drivers, then relinking them with the runtime from that same build. Loading or
-linking artifacts produced by another Obelisk revision is unsupported. The
+linking artifacts produced by another Talos revision is unsupported. The
 native LTO archive is also coupled to the pinned LLVM 22.1.6 bitcode format and
 unified Full-LTO pipeline and is not a stable SDK library.
 
-The `_v1` names and the single `OBELISK_RT_VERSION` identify the current
+The `_v1` names and the single `TALOS_RT_VERSION` identify the current
 prototype schema. Native descriptors, bytecode, the design database, import
 sites, frame layouts, and wait records all carry version 1. They do not
 establish a compatibility window or require a new namespace whenever the
@@ -66,7 +66,7 @@ formatting/file, DPI, VPI-backdoor, and immediate-assertion services used by
 native lowering. The interpreter validates instruction size, register types
 and indices, branch destinations, frame ranges, intrinsic signatures, resource
 lifetimes, and terminal actions. Malformed programs return
-`OBELISK_RT_INVALID_BYTECODE`; they do not read or write outside the supplied
+`TALOS_RT_INVALID_BYTECODE`; they do not read or write outside the supplied
 process frame.
 
 Validation covers the entire instruction encoding plus reachable control-flow
@@ -82,8 +82,8 @@ one service site may not overlap any other operand's frame range.
 
 A backward branch is well-formed, so validation cannot reject a fragment that
 never terminates — `while (1)` is legal SystemVerilog. Differential and fuzzing
-harnesses can use `obelisk_rt_v1_bytecode_execute_bounded`, which reports
-`OBELISK_RT_STEP_LIMIT` after a caller-supplied instruction limit. The ordinary
+harnesses can use `talos_rt_v1_bytecode_execute_bounded`, which reports
+`TALOS_RT_STEP_LIMIT` after a caller-supplied instruction limit. The ordinary
 production dispatch remains unbounded. Bytecode v1 also carries validated
 constant-pool and service-site metadata for format, display, and file calls.
 
@@ -153,9 +153,9 @@ executables are discovered by a dedicated LLVM-style
 `lit.formats.GoogleTest` configuration:
 
 ```sh
-ninja -C build check-obelisk-runtime-units
-ninja -C build check-obelisk
+ninja -C build check-talos-runtime-units
+ninja -C build check-talos
 ```
 
 Release-only configurations can omit all test targets and avoid fetching
-GoogleTest with `-DOBELISK_INCLUDE_TESTS=OFF`.
+GoogleTest with `-DTALOS_INCLUDE_TESTS=OFF`.

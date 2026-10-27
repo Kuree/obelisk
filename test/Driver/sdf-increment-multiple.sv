@@ -1,9 +1,9 @@
-// RUN: cd %S && obelisk -emit-slang %s -o - | FileCheck %s --check-prefix=MLIR --check-prefix=NO-SDF
-// RUN: cd %S && obelisk -O3 --native-scheduler=auto -emit-llvm %s -o - | FileCheck %s --check-prefix=AOT-NO-SDF
-// RUN: cd %S && obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: cd %S && talos -emit-slang %s -o - | FileCheck %s --check-prefix=MLIR --check-prefix=NO-SDF
+// RUN: cd %S && talos -O3 --native-scheduler=auto -emit-llvm %s -o - | FileCheck %s --check-prefix=AOT-NO-SDF
+// RUN: cd %S && talos -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.generic > %t.generic.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.generic.out
-// RUN: cd %S && obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: cd %S && talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.generic.out -
 
 `timescale 1ns / 1ns
@@ -54,10 +54,10 @@ endmodule
 // MLIR: timing_delay_count = 12 : i64
 // MLIR: timing_delay_fs = array<i64: 8000000, 7000000, 8000000, 8000000, 7000000, 7000000, 8000000, 8000000, 7000000, 7000000, 12000000, 7000000>
 // NO-SDF-NOT: slang.symbol.sdf
-// NO-SDF-NOT: obelisk.sdf.table
-// NO-SDF-NOT: obelisk_sdf.
-// AOT-NO-SDF-NOT: @__obelisk_sdf
-// AOT-NO-SDF-NOT: @obelisk_rt_v1_sdf
+// NO-SDF-NOT: talos.sdf.table
+// NO-SDF-NOT: talos_sdf.
+// AOT-NO-SDF-NOT: @__talos_sdf
+// AOT-NO-SDF-NOT: @talos_rt_v1_sdf
 // AOT-NO-SDF-NOT: sdf_annotate
-// AOT-NO-SDF-NOT: obelisk_sdf.
+// AOT-NO-SDF-NOT: talos_sdf.
 // OUTPUT: SDF INCREMENT PASSED

@@ -1,4 +1,4 @@
-// RUN: obelisk-sim-standard-api-test %s \
+// RUN: talos-sim-standard-api-test %s \
 // RUN:   | FileCheck %s --implicit-check-not=simulation \
 // RUN:       --implicit-check-not=unrealized_conversion_cast
 

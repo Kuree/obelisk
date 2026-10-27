@@ -1,13 +1,13 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=GROUP
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-set-module-attributes{attrs="{schedule.native_scheduler = 0 : i32}"},simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=GROUP
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | obelisk-translate --mlir-to-llvmir | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=GROUP
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-set-module-attributes{attrs="{schedule.native_scheduler = 0 : i32}"},simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=GROUP
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion,simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | talos-translate --mlir-to-llvmir | FileCheck %s --check-prefix=NATIVE
 
 // The common loop runs the task that drives the clock and owns both NBA
 // barriers. The two compute actors share one compiled activation even though
 // this design is not eligible for a closed generated evaluator. The bytecode
 // oracle deliberately skips body fusion. Backedge variants are in
 // simulation-local-group-task-backedge.mlir.
-// GROUP: simulation.spawn @__obelisk_fused_
+// GROUP: simulation.spawn @__talos_fused_
 // GROUP-NOT: simulation.func private @a(
 // GROUP-NOT: simulation.func private @b(
 // GROUP: simulation.func private @driver(
@@ -17,17 +17,17 @@
 // GROUP: simulation.func private @consumer(
 // GROUP: simulation.suspend.any
 // GROUP: simulation.nba.enqueue
-// GROUP: simulation.func private @__obelisk_fused_
+// GROUP: simulation.func private @__talos_fused_
 // GROUP-SAME: schedule.native.region_body
 // GROUP: simulation.suspend.edge posedge
 // GROUP: simulation.nba.enqueue
 // GROUP: simulation.nba.enqueue
 // GROUP-NOT: simulation.suspend.edge
-// NATIVE: @__obelisk_fused_{{[0-9_]+}}.__obelisk_process_descriptor = constant
-// NATIVE-SAME: ptr @__obelisk_native_zero_requirements_v1
-// NATIVE-SAME: ptr @obelisk_rt_v1_table_process_execute
-// NATIVE-SAME: ptr @__obelisk_native_noop_destroy_v1
-// NATIVE: define i32 @__obelisk_fused_{{[0-9_]+}}.__obelisk_table_body(
+// NATIVE: @__talos_fused_{{[0-9_]+}}.__talos_process_descriptor = constant
+// NATIVE-SAME: ptr @__talos_native_zero_requirements_v1
+// NATIVE-SAME: ptr @talos_rt_v1_table_process_execute
+// NATIVE-SAME: ptr @__talos_native_noop_destroy_v1
+// NATIVE: define i32 @__talos_fused_{{[0-9_]+}}.__talos_table_body(
 // NATIVE-NOT: llvm.coro
 // NATIVE: ret i32
 

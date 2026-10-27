@@ -3,14 +3,14 @@
 
 #include "SimulationVerifiers.h"
 #include "mlir/IR/SymbolTable.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationVPI.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationVPI.h"
+#include "talos/Reflection/VPIObjectModel.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 
 using namespace mlir;
-using namespace obelisk::sim;
+using namespace talos::sim;
 
 namespace {
 LogicalResult verifyOwner(Operation *op) {
@@ -127,7 +127,7 @@ LogicalResult SimVPIInterfaceCallDispatchOp::verifySymbolUses(
   return success();
 }
 
-LogicalResult obelisk::sim::verifyVPIInterfaceDispatch(SimDesignOp design) {
+LogicalResult talos::sim::verifyVPIInterfaceDispatch(SimDesignOp design) {
   llvm::DenseMap<uint64_t, SimScopeDeclOp> scopes;
   llvm::DenseMap<uint64_t, SimCodeUnitDeclOp> units;
   llvm::DenseMap<uint64_t, SimVPICallableDeclOp> callables;
@@ -157,7 +157,7 @@ LogicalResult obelisk::sim::verifyVPIInterfaceDispatch(SimDesignOp design) {
             "duplicates a member of the same nominal interface");
     }
   }
-  using Kind = obelisk::reflection::VPIObjectKind;
+  using Kind = talos::reflection::VPIObjectKind;
   for (auto binding :
        design.getBody().front().getOps<SimVPIInterfaceInstanceBindingOp>()) {
     auto scope = scopes.lookup(binding.getScopeId());

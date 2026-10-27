@@ -2,7 +2,7 @@
 
 #include "../lib/RuntimeInternal.h"
 
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "GeneratedSymbol.h"
 #include "sv_vpi_user.h"
@@ -11,8 +11,8 @@
 
 #include <array>
 
-extern "C" const obelisk_rt_process_descriptor_v1 initialDescriptor asm(
-    OBELISK_TEST_SYMBOL("initial.__obelisk_process_descriptor"));
+extern "C" const talos_rt_process_descriptor_v1 initialDescriptor asm(
+    TALOS_TEST_SYMBOL("initial.__talos_process_descriptor"));
 
 namespace {
 
@@ -22,27 +22,27 @@ public:
     EXPECT_NE(initialDescriptor.execution, nullptr);
     if (!initialDescriptor.execution)
       return;
-    EXPECT_EQ(obelisk_rt_v1_design_validate(initialDescriptor.execution),
-              OBELISK_RT_OK);
-    EXPECT_EQ(obelisk_rt_v1_context_create_for_design(
+    EXPECT_EQ(talos_rt_v1_design_validate(initialDescriptor.execution),
+              TALOS_RT_OK);
+    EXPECT_EQ(talos_rt_v1_context_create_for_design(
                   initialDescriptor.execution, &context),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     if (!context)
       return;
-    EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    EXPECT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    EXPECT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    EXPECT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   }
 
   ~GeneratedNettypeContext() {
     if (context)
-      obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_context_destroy(context);
   }
 
   vpiHandle byName(const char *name) {
     return vpi_handle_by_name(const_cast<char *>(name), nullptr);
   }
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
 };
 
 TEST(GeneratedVPINettypes, TraversesDeclarationsAliasesTypesAndResolvers) {

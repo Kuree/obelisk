@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-mark-bounded-loops)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-mark-bounded-loops)))' | FileCheck %s
 
 // Canonicalization folds the empty join of `if (en) q <= 0;` into the header
 // of a following `for` loop, which then has two entry edges. Both start the

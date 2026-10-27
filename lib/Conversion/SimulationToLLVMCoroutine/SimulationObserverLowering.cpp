@@ -1,12 +1,12 @@
 //===- SimulationObserverLowering.cpp - Native observer lowering ----------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -16,7 +16,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 LogicalResult makeNativeObserverThunk(ModuleOp module,
@@ -59,7 +59,7 @@ LogicalResult makeNativeObserverThunk(ModuleOp module,
 
   OpBuilder builder(module.getContext());
   std::string thunkName =
-      (evaluator.getSymName() + ".__obelisk_observer").str();
+      (evaluator.getSymName() + ".__talos_observer").str();
   auto thunk = module.lookupSymbol<LLVM::LLVMFuncOp>(thunkName);
   if (!thunk)
     return evaluator.emitError(
@@ -74,7 +74,7 @@ LogicalResult makeNativeObserverThunk(ModuleOp module,
     arguments.push_back(LLVM::LoadOp::create(
         builder, location, inputs[index + 1],
         byteGEP(builder, location, captures,
-                uint64_t{index} * sizeof(obelisk_rt_computed_capture_v1)),
+                uint64_t{index} * sizeof(talos_rt_computed_capture_v1)),
         8));
   auto call = LLVM::CallOp::create(
       builder, location, TypeRange{returnType},
@@ -159,10 +159,10 @@ LogicalResult serializeComputedObserverRecord(
           "converted observer inventory exceeds v1 count fields");
     captureCountWide += captures;
     dependencyCountWide += dependencies;
-    auto width = ::obelisk::schedule::get<
-        ::obelisk::schedule::Field::NativeObserverWidth>(binding);
-    auto fourState = ::obelisk::schedule::get<
-        ::obelisk::schedule::Field::NativeObserverFourState>(binding);
+    auto width = ::talos::schedule::get<
+        ::talos::schedule::Field::NativeObserverWidth>(binding);
+    auto fourState = ::talos::schedule::get<
+        ::talos::schedule::Field::NativeObserverFourState>(binding);
     if (!width || !fourState || width.getValue().isNegative() ||
         width.getValue().isZero() || width.getValue().getActiveBits() > 32)
       return binding->emitOpError(
@@ -180,19 +180,19 @@ LogicalResult serializeComputedObserverRecord(
   uint32_t dependencyCount = static_cast<uint32_t>(dependencyCountWide);
   uint32_t previousLimbs = static_cast<uint32_t>(previousLimbsWide);
 
-  uint64_t observersOffset = sizeof(obelisk_rt_computed_wait_record_v1);
+  uint64_t observersOffset = sizeof(talos_rt_computed_wait_record_v1);
   uint64_t capturesOffset =
       observersOffset +
-      uint64_t{observerCount} * sizeof(obelisk_rt_computed_observer_v1);
+      uint64_t{observerCount} * sizeof(talos_rt_computed_observer_v1);
   uint64_t dependenciesOffset =
       capturesOffset +
-      uint64_t{captureCount} * sizeof(obelisk_rt_computed_capture_v1);
+      uint64_t{captureCount} * sizeof(talos_rt_computed_capture_v1);
   uint64_t clausesOffset =
       dependenciesOffset +
-      uint64_t{dependencyCount} * sizeof(obelisk_rt_computed_dependency_v1);
+      uint64_t{dependencyCount} * sizeof(talos_rt_computed_dependency_v1);
   uint64_t previousValueOffset =
       clausesOffset +
-      uint64_t{primaryCount} * sizeof(obelisk_rt_computed_clause_v1);
+      uint64_t{primaryCount} * sizeof(talos_rt_computed_clause_v1);
   uint64_t totalSize =
       previousValueOffset + uint64_t{previousLimbs} * sizeof(uint64_t) * 2;
   if (totalSize > UINT32_MAX)
@@ -210,9 +210,9 @@ LogicalResult serializeComputedObserverRecord(
     storeAt(builder, location, wait, offset,
             llvmConstant(builder, location, i64, value), 8);
   };
-  storeI32(0, OBELISK_RT_VERSION);
-  storeI32(4, OBELISK_RT_SUSPEND_OBSERVER);
-  storeI32(8, OBELISK_RT_COMPUTED_WAIT_INTERLEAVED);
+  storeI32(0, TALOS_RT_VERSION);
+  storeI32(4, TALOS_RT_SUSPEND_OBSERVER);
+  storeI32(8, TALOS_RT_COMPUTED_WAIT_INTERLEAVED);
   storeI32(12, primaryCount);
   storeI32(16, observerCount);
   storeI32(20, captureCount);
@@ -233,14 +233,14 @@ LogicalResult serializeComputedObserverRecord(
   llvm::SetVector<Operation *> uniqueBindings;
   for (auto [index, binding] : llvm::enumerate(bindings)) {
     auto observerID =
-        ::obelisk::schedule::get<::obelisk::schedule::Field::NativeObserverId>(
+        ::talos::schedule::get<::talos::schedule::Field::NativeObserverId>(
             binding);
-    auto dependencyKinds = ::obelisk::schedule::get<
-        ::obelisk::schedule::Field::NativeDependencyKinds>(binding);
-    auto dependencyWidths = ::obelisk::schedule::get<
-        ::obelisk::schedule::Field::NativeDependencyWidths>(binding);
-    auto dependencyCaptureIndices = ::obelisk::schedule::get<
-        ::obelisk::schedule::Field::NativeDependencyCaptureIndices>(binding);
+    auto dependencyKinds = ::talos::schedule::get<
+        ::talos::schedule::Field::NativeDependencyKinds>(binding);
+    auto dependencyWidths = ::talos::schedule::get<
+        ::talos::schedule::Field::NativeDependencyWidths>(binding);
+    auto dependencyCaptureIndices = ::talos::schedule::get<
+        ::talos::schedule::Field::NativeDependencyCaptureIndices>(binding);
     if (!observerID || !dependencyKinds || !dependencyWidths ||
         !dependencyCaptureIndices ||
         static_cast<size_t>(dependencyKinds.size()) !=
@@ -252,7 +252,7 @@ LogicalResult serializeComputedObserverRecord(
       return binding->emitOpError(
           "has malformed converted dependency metadata");
     uint64_t entry =
-        observersOffset + index * sizeof(obelisk_rt_computed_observer_v1);
+        observersOffset + index * sizeof(talos_rt_computed_observer_v1);
     storeI64(entry, observerID.getValue().getZExtValue());
     storeI32(entry + 8, captureCursor);
     storeI32(entry + 12, getConvertedObserverCaptureCount(binding));
@@ -268,7 +268,7 @@ LogicalResult serializeComputedObserverRecord(
     for (Value capture : getConvertedObserverCaptures(binding)) {
       uint64_t captureOffset =
           capturesOffset +
-          uint64_t{captureCursor++} * sizeof(obelisk_rt_computed_capture_v1);
+          uint64_t{captureCursor++} * sizeof(talos_rt_computed_capture_v1);
       auto integer = dyn_cast<IntegerType>(capture.getType());
       if (!integer || (integer.getWidth() != 64 && integer.getWidth() != 192))
         return binding->emitOpError(
@@ -284,10 +284,10 @@ LogicalResult serializeComputedObserverRecord(
          llvm::enumerate(getConvertedObserverDependencies(binding))) {
       uint64_t dependencyOffset =
           dependenciesOffset + uint64_t{dependencyCursor++} *
-                                   sizeof(obelisk_rt_computed_dependency_v1);
+                                   sizeof(talos_rt_computed_dependency_v1);
       int32_t captureIndex = dependencyCaptureIndices[dependencyIndex];
       if (dependencyKinds[dependencyIndex] ==
-          OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF) {
+          TALOS_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF) {
         if (captureIndex < 0 || static_cast<uint32_t>(captureIndex) >=
                                     getConvertedObserverCaptureCount(binding))
           return binding->emitOpError(
@@ -311,26 +311,26 @@ LogicalResult serializeComputedObserverRecord(
   llvm::append_range(observerBindings, uniqueBindings);
 
   bool levelTrue =
-      ::obelisk::schedule::has<
-          ::obelisk::schedule::Field::ConcurrentCancelLevelTrue>(operation) ||
-      ::obelisk::schedule::has<
-          ::obelisk::schedule::Field::ConcurrentAbortLevelTrue>(operation);
+      ::talos::schedule::has<
+          ::talos::schedule::Field::ConcurrentCancelLevelTrue>(operation) ||
+      ::talos::schedule::has<
+          ::talos::schedule::Field::ConcurrentAbortLevelTrue>(operation);
 
   for (uint32_t index = 0; index != primaryCount; ++index) {
     uint64_t clause =
-        clausesOffset + uint64_t{index} * sizeof(obelisk_rt_computed_clause_v1);
+        clausesOffset + uint64_t{index} * sizeof(talos_rt_computed_clause_v1);
     int32_t conditionIndex = conditionIndices[index];
     storeI32(clause, index);
     storeI32(clause + 4,
              conditionIndex < 0
-                 ? OBELISK_RT_OBSERVER_CONDITION_NONE
+                 ? TALOS_RT_OBSERVER_CONDITION_NONE
                  : primaryCount + static_cast<uint32_t>(conditionIndex));
     storeI32(clause + 8, edges[index]);
     storeI32(clause + 12,
-             ::obelisk::schedule::has<::obelisk::schedule::Field::EventPrimary>(
+             ::talos::schedule::has<::talos::schedule::Field::EventPrimary>(
                  bindings[index])
-                 ? OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY
-                 : (levelTrue ? OBELISK_RT_COMPUTED_CLAUSE_LEVEL_TRUE : 0));
+                 ? TALOS_RT_COMPUTED_CLAUSE_EVENT_PRIMARY
+                 : (levelTrue ? TALOS_RT_COMPUTED_CLAUSE_LEVEL_TRUE : 0));
   }
   for (uint32_t limb = 0; limb != previousLimbs * 2; ++limb)
     storeI64(previousValueOffset + uint64_t{limb} * 8, 0);
@@ -361,10 +361,10 @@ serializeComputedObserverWait(Operation *operation, Value wait,
   if (!observe)
     return operation->emitError("expected an observer suspension");
   const uint32_t primaryCount = observe.getEdges().size();
-  auto planeCounts = ::obelisk::schedule::get<
-      ::obelisk::schedule::Field::NativeInitialPlaneCounts>(operation);
-  auto conditionBegin = ::obelisk::schedule::get<
-      ::obelisk::schedule::Field::NativeConditionOperandBegin>(operation);
+  auto planeCounts = ::talos::schedule::get<
+      ::talos::schedule::Field::NativeInitialPlaneCounts>(operation);
+  auto conditionBegin = ::talos::schedule::get<
+      ::talos::schedule::Field::NativeConditionOperandBegin>(operation);
   if (!planeCounts || planeCounts.size() != primaryCount || !conditionBegin)
     return operation->emitError("missing converted observer operand metadata");
   SmallVector<Operation *> bindings;
@@ -405,7 +405,7 @@ serializeComputedObserverWait(Operation *operation, Value wait,
 
 LogicalResult materializeNativeObserverThunks(ModuleOp module) {
   SmallVector<LLVM::LLVMFuncOp> evaluators;
-  ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
+  ::talos::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
       module, [&](LLVM::LLVMFuncOp function) {
         if (native::has<native::ObserverWidth>(function))
           evaluators.push_back(function);
@@ -423,4 +423,4 @@ LogicalResult materializeNativeObserverThunks(ModuleOp module) {
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

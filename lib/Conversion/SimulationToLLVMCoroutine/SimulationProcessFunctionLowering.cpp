@@ -2,15 +2,15 @@
 
 #include "SimulationProcessFunctionLowering.h"
 #include "SimulationProcessWrapperLowering.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
-#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
-#include "obelisk/Conversion/SimulationTimeLowering.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/SimulationProcessFrameAnalysis.h"
+#include "talos/Conversion/SimulationTimeLowering.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -20,7 +20,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 namespace {
 
@@ -82,13 +82,13 @@ LogicalResult lowerCallableProcessControls(func::FuncOp function) {
     Value disposition = entryAlloca(rewriter, location, i32, 1, 4);
     LLVM::StoreOp::create(rewriter, location,
                           llvmConstant(rewriter, location, i32,
-                                       OBELISK_RT_PROCESS_CONTROL_CONTINUE),
+                                       TALOS_RT_PROCESS_CONTROL_CONTINUE),
                           disposition, 4);
     Value context = managedContextAndLane(rewriter, location).first;
     Value current = LLVM::CallOp::create(
                         rewriter, location, TypeRange{rewriter.getI64Type()},
                         SymbolRefAttr::get(rewriter.getContext(),
-                                           "obelisk_rt_v1_process_current"),
+                                           "talos_rt_v1_process_current"),
                         ValueRange{context})
                         .getResult();
     Value targetsCurrent =
@@ -104,7 +104,7 @@ LogicalResult lowerCallableProcessControls(func::FuncOp function) {
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_process_control"),
+                               "talos_rt_v1_process_control"),
             ValueRange{context, controlledProcess,
                        llvmConstant(rewriter, location, i32,
                                     static_cast<uint32_t>(controlKind)),
@@ -112,7 +112,7 @@ LogicalResult lowerCallableProcessControls(func::FuncOp function) {
             .getResult();
     Value succeeded = arith::CmpIOp::create(
         rewriter, location, arith::CmpIPredicate::eq, status,
-        llvmConstant(rewriter, location, i32, OBELISK_RT_OK));
+        llvmConstant(rewriter, location, i32, TALOS_RT_OK));
     cf::CondBranchOp::create(rewriter, location, succeeded, dispatch,
                              ValueRange{}, failureBlock, ValueRange{status});
 
@@ -122,7 +122,7 @@ LogicalResult lowerCallableProcessControls(func::FuncOp function) {
     Value canContinue = arith::CmpIOp::create(
         rewriter, location, arith::CmpIPredicate::eq, selected,
         llvmConstant(rewriter, location, i32,
-                     OBELISK_RT_PROCESS_CONTROL_CONTINUE));
+                     TALOS_RT_PROCESS_CONTROL_CONTINUE));
     cf::CondBranchOp::create(rewriter, location, canContinue, continueAction,
                              ValueRange{}, unsupportedAction, ValueRange{});
 
@@ -133,7 +133,7 @@ LogicalResult lowerCallableProcessControls(func::FuncOp function) {
     rewriter.setInsertionPointToStart(unsupportedAction);
     if (failed(
             makeReturn(location, llvmConstant(rewriter, location, i32,
-                                              OBELISK_RT_INVALID_LIFECYCLE))))
+                                              TALOS_RT_INVALID_LIFECYCLE))))
       return failure();
 
     rewriter.setInsertionPointToStart(failureBlock);
@@ -274,35 +274,35 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
   uint32_t entryKind = static_cast<uint32_t>(function.getEntryKind());
   bool observer =
       function.getEntryKind() == sim::EntryKind::Observer &&
-      !::obelisk::schedule::has<::obelisk::schedule::Field::OverrideEvaluator>(
+      !::talos::schedule::has<::talos::schedule::Field::OverrideEvaluator>(
           function);
   auto observerWidth =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::ObserverWidth>(
+      ::talos::schedule::get<::talos::schedule::Field::ObserverWidth>(
           function);
   auto observerFourState =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::ObserverFourState>(
+      ::talos::schedule::get<::talos::schedule::Field::ObserverFourState>(
           function);
   auto evalFourStateSource =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalFourStateSource>(
+      ::talos::schedule::get<::talos::schedule::Field::EvalFourStateSource>(
           function);
-  auto evalPromotionRanges = ::obelisk::schedule::get<
-      ::obelisk::schedule::Field::EvalLocalPromotionRanges>(function);
-  auto evalConditionallyTwoState = ::obelisk::schedule::get<
-      ::obelisk::schedule::Field::EvalConditionallyTwoState>(function);
+  auto evalPromotionRanges = ::talos::schedule::get<
+      ::talos::schedule::Field::EvalLocalPromotionRanges>(function);
+  auto evalConditionallyTwoState = ::talos::schedule::get<
+      ::talos::schedule::Field::EvalConditionallyTwoState>(function);
   auto evalPathKnownProbe =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalPathKnownProbe>(
+      ::talos::schedule::get<::talos::schedule::Field::EvalPathKnownProbe>(
           function);
-  auto evalPathKnownPredicate = ::obelisk::schedule::get<
-      ::obelisk::schedule::Field::EvalPathKnownPredicate>(function);
+  auto evalPathKnownPredicate = ::talos::schedule::get<
+      ::talos::schedule::Field::EvalPathKnownPredicate>(function);
   auto evalInfallible =
-      ::obelisk::schedule::get<schedule::Field::EvalInfallible>(function);
+      ::talos::schedule::get<schedule::Field::EvalInfallible>(function);
   auto evalRawCaptures =
-      ::obelisk::schedule::get<schedule::Field::EvalRawCaptures>(function);
-  auto evalSelectedTwoState = ::obelisk::schedule::get<
-      ::obelisk::schedule::Field::EvalSelectedTwoState>(function);
+      ::talos::schedule::get<schedule::Field::EvalRawCaptures>(function);
+  auto evalSelectedTwoState = ::talos::schedule::get<
+      ::talos::schedule::Field::EvalSelectedTwoState>(function);
   ArrayAttr outlinedPassthrough;
-  if (::obelisk::schedule::has<
-          ::obelisk::schedule::Field::OutlinedPrimitiveMember>(function)) {
+  if (::talos::schedule::has<
+          ::talos::schedule::Field::OutlinedPrimitiveMember>(function)) {
     outlinedPassthrough = function->getAttrOfType<ArrayAttr>("passthrough");
     if (!outlinedPassthrough || outlinedPassthrough.size() != 1 ||
         outlinedPassthrough[0] !=
@@ -328,31 +328,31 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
   if (outlinedPassthrough)
     replacement->setAttr("passthrough", outlinedPassthrough);
   if (evalFourStateSource)
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalFourStateSource>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalFourStateSource>(
         replacement, evalFourStateSource);
   if (evalPromotionRanges)
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::EvalLocalPromotionRanges>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::EvalLocalPromotionRanges>(
         replacement, evalPromotionRanges);
   if (evalConditionallyTwoState)
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::EvalConditionallyTwoState>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::EvalConditionallyTwoState>(
         replacement, evalConditionallyTwoState);
   if (evalPathKnownProbe)
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalPathKnownProbe>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalPathKnownProbe>(
         replacement, evalPathKnownProbe);
   if (evalPathKnownPredicate)
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::EvalPathKnownPredicate>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::EvalPathKnownPredicate>(
         replacement, evalPathKnownPredicate);
   if (evalInfallible)
-    ::obelisk::schedule::set<schedule::Field::EvalInfallible>(replacement,
+    ::talos::schedule::set<schedule::Field::EvalInfallible>(replacement,
                                                               evalInfallible);
   if (evalRawCaptures)
-    ::obelisk::schedule::set<schedule::Field::EvalRawCaptures>(replacement,
+    ::talos::schedule::set<schedule::Field::EvalRawCaptures>(replacement,
                                                                evalRawCaptures);
   if (evalSelectedTwoState)
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSelectedTwoState>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalSelectedTwoState>(
         replacement, evalSelectedTwoState);
   replacement.getBody().takeBody(function.getBody());
   function.erase();
@@ -399,4 +399,4 @@ LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function) {
   return lowerPreparedOrdinaryFunction(*prepared);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

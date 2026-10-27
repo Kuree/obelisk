@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.diag
+// RUN: talos -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.diag
 // RUN: FileCheck %s --check-prefix=PROOF < %t.diag
-// RUN: FileCheck %s --check-prefix=IR --implicit-check-not='call i32 @obelisk_rt_v1_scheduler_execute_aot_actor' --implicit-check-not='call i32 @obelisk_rt_v1_scheduler_packed_slice_nba' < %t.ll
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
+// RUN: FileCheck %s --check-prefix=IR --implicit-check-not='call i32 @talos_rt_v1_scheduler_execute_aot_actor' --implicit-check-not='call i32 @talos_rt_v1_scheduler_packed_slice_nba' < %t.ll
+// RUN: talos -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: %t.auto | FileCheck %s --check-prefix=OUTPUT
 
 // The generated ordered queue owns repeated writes, including a bounded
@@ -38,9 +38,9 @@ module native_partial_auto_fallback_ordered_nba;
 endmodule
 
 // PROOF-NOT: ordered NBA boundary:
-// PROOF: obelisk fusion planning:
+// PROOF: talos fusion planning:
 // PROOF-NOT: ordered NBA boundary:
 // PROOF-NOT: partial eval disabled
-// IR: @__obelisk_eval_ordered_nba_queue_v1 = internal global
-// IR: define {{.*}}i32 @__obelisk_eval_dispatch_v1
+// IR: @__talos_eval_ordered_nba_queue_v1 = internal global
+// IR: define {{.*}}i32 @__talos_eval_dispatch_v1
 // OUTPUT: ordered low=4f500000 high=4 low_edges=4 upper_edges=2

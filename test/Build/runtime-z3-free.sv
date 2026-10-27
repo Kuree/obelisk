@@ -7,7 +7,7 @@
 // CHECK-NOT: Z3_
 // CHECK-NOT: _ZN2z3
 // CHECK-NOT: libz3
-// CHECK: obelisk_rt_v1_context_create
+// CHECK: talos_rt_v1_context_create
 // CHECK-NOT: Z3_
 // CHECK-NOT: _ZN2z3
 // CHECK-NOT: libz3

@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s --check-prefix=IR
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' -o /dev/null
+// RUN: talos-opt %s | talos-opt | FileCheck %s --check-prefix=IR
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' -o /dev/null
 
 // IEEE 1800-2023 6.16.10: atoreal reads only real-constant syntax (5.7.2), so
 // it keeps a runtime entry of its own. A $sscanf floating-point field still
@@ -31,5 +31,5 @@ module attributes {
 // IR: simulation.string.parse_real %{{.*}} : (!simulation.string) -> f64
 
 // CHECK-LABEL: llvm.func @process(
-// CHECK: llvm.call @obelisk_rt_v1_string_parse_real_constant(
-// CHECK: llvm.call @obelisk_rt_v1_string_parse_real(
+// CHECK: llvm.call @talos_rt_v1_string_parse_real_constant(
+// CHECK: llvm.call @talos_rt_v1_string_parse_real(

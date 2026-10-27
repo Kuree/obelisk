@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-native-state-layout-analysis 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-native-state-layout-analysis 2>&1 | FileCheck %s
 
 // IEEE 1800-2017 6.17: every event variable holds its own synchronization
 // object, and that object's identity is a whole simulation handle. An array of

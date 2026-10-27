@@ -1,6 +1,6 @@
 // Produces a small, fully populated .obcov file for codec/tool regressions.
 
-#include "obelisk/Coverage/CoverageDatabase.h"
+#include "talos/Coverage/CoverageDatabase.h"
 
 #include <algorithm>
 #include <array>
@@ -10,7 +10,7 @@
 #include <tuple>
 #include <vector>
 
-using namespace obelisk::coverage;
+using namespace talos::coverage;
 
 int main(int argc, char **argv) {
   if (argc < 5 || argc > 14) {

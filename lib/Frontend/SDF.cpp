@@ -2,8 +2,8 @@
 
 #include "SDF.h"
 
-#include "obelisk/Dialect/SDF/SDFOps.h"
-#include "obelisk/Frontend/SDF.h"
+#include "talos/Dialect/SDF/SDFOps.h"
+#include "talos/Frontend/SDF.h"
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Verifier.h"
@@ -46,7 +46,7 @@
 
 using namespace llvm;
 
-namespace obelisk::frontend {
+namespace talos::frontend {
 namespace {
 
 struct SDFNode {
@@ -1788,7 +1788,7 @@ private:
 mlir::FailureOr<mlir::OwningOpRef<mlir::ModuleOp>>
 importSDF(StringRef sourceName, StringRef contents, mlir::MLIRContext &context,
           bool verifyIR, uint64_t maxInputBytes) {
-  context.getOrLoadDialect<sdf::ObeliskSDFDialect>();
+  context.getOrLoadDialect<sdf::TalosSDFDialect>();
   std::optional<SDFNode> root =
       SDFParser(sourceName, contents, maxInputBytes).parse();
   if (!root)
@@ -2145,7 +2145,7 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
         continue;
       }
       parsedSDFCacheBytes += sourceBytes;
-      // Production and obelisk-translate share this exact typed Clause 32
+      // Production and talos-translate share this exact typed Clause 32
       // normalization boundary. The database consumes that transient IR and
       // retains no SDF operation or runtime state.
       auto sdfModule =
@@ -2324,4 +2324,4 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
   return result;
 }
 
-} // namespace obelisk::frontend
+} // namespace talos::frontend

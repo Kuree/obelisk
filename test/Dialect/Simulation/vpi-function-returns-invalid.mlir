@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics -o /dev/null
+// RUN: talos-opt %s --split-input-file --verify-diagnostics -o /dev/null
 #word = #simulation.vpi_type<kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>
 module {
  simulation.design @test {

@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-obelisk %s -o - | FileCheck %s
+// RUN: talos -emit-talos %s -o - | FileCheck %s
 
 `timescale 1ns / 1ps
 
@@ -47,5 +47,5 @@ endmodule
 // CHECK-DAG: timing_check_arg_edge_descriptors = {{.*}}"01"{{.*}}"0x"{{.*}}"x1"
 // CHECK-DAG: time_unit_fs = 1000000 : i64
 // CHECK-DAG: time_precision_fs = 1000 : i64
-// CHECK-DAG: obelisk.sv.expression.unary_op
+// CHECK-DAG: talos.sv.expression.unary_op
 // CHECK-DAG: referenced_path = "system_timing_check_semantic.condition"

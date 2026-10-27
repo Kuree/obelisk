@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --split-input-file -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
+// RUN: talos-opt %s --split-input-file -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=CHECK --check-prefix=NATIVE
-// RUN: obelisk-opt %s --split-input-file -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
+// RUN: talos-opt %s --split-input-file -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=read},talos-sim-verify-compute-graph),test-talos-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=CHECK --check-prefix=NATIVE
-// RUN: obelisk-opt %s --split-input-file -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
+// RUN: talos-opt %s --split-input-file -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph),test-talos-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=CHECK --check-prefix=WRITABLE
 
 // IEEE 1800-2023 35.5.3: a context import may call any export of the design.

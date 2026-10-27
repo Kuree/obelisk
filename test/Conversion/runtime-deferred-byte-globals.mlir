@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --convert-obelisk-runtime-to-llvm -o %t.pending
-// RUN: FileCheck %s --check-prefix=PENDING --implicit-check-not='llvm.mlir.global internal constant @__obelisk_rt_bytes' < %t.pending
-// RUN: obelisk-opt %t.pending --symbol-dce --materialize-runtime-byte-globals -o %t.live
+// RUN: talos-opt %s --convert-talos-runtime-to-llvm -o %t.pending
+// RUN: FileCheck %s --check-prefix=PENDING --implicit-check-not='llvm.mlir.global internal constant @__talos_rt_bytes' < %t.pending
+// RUN: talos-opt %t.pending --symbol-dce --materialize-runtime-byte-globals -o %t.live
 // RUN: FileCheck %s --check-prefix=LIVE --implicit-check-not='dead literal' --implicit-check-not=schedule.bytes.address < %t.live
-// RUN: obelisk-opt %t.live --materialize-runtime-byte-globals -o %t.again
+// RUN: talos-opt %t.live --materialize-runtime-byte-globals -o %t.again
 // RUN: diff %t.live %t.again
 
 module attributes {native.closed_executable,
@@ -30,7 +30,7 @@ module attributes {native.closed_executable,
 // PENDING: schedule.bytes.address {{.*}} = "A\00B" alignment 1 : !llvm.ptr
 // PENDING: schedule.bytes.address {{.*}} = "dead literal" alignment 1 : !llvm.ptr
 // LIVE-COUNT-1: llvm.mlir.global internal constant @shared("same")
-// LIVE: llvm.mlir.global internal constant @__obelisk_rt_bytes.0("A\00B")
-// LIVE: llvm.mlir.addressof @__obelisk_rt_bytes.0
+// LIVE: llvm.mlir.global internal constant @__talos_rt_bytes.0("A\00B")
+// LIVE: llvm.mlir.addressof @__talos_rt_bytes.0
 // LIVE: llvm.mlir.addressof @shared
 // LIVE: llvm.mlir.addressof @shared

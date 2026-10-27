@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions | FileCheck %s
-// RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --talos-sim-plan-native-partitions | FileCheck %s
+// RUN: talos-opt %s --talos-sim-plan-native-partitions \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   -o %t.parallel
 // RUN: FileCheck %s --check-prefix=LOWERED < %t.parallel
-// RUN: obelisk-opt %s --mlir-disable-threading --obelisk-sim-plan-native-partitions \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.serial
+// RUN: talos-opt %s --mlir-disable-threading --talos-sim-plan-native-partitions \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines -o %t.serial
 // RUN: diff %t.parallel %t.serial
 
 // Native partition identity follows semantic ownership, not source order.
@@ -113,7 +113,7 @@ module attributes {
 // LOWERED-SAME: #native.partition<id = "primary", owners = ["primary"], members = [@root], imports = [@a, @b, @class_first, @class_second, @leaf], exports = [], dependencies = ["scc:6:unit:26:unit:3", "unit:4", "unit:5", "unit:6"]>
 // LOWERED-SAME: ]>]
 // LOWERED-SAME: native.physical_partition_manifest = [
-// LOWERED-SAME: #native.partition<id = "unit:4", members = [@class_first], imports = [@__obelisk_current_context, @leaf], exports = [@class_first], dependencies = ["primary", "unit:6"]>
+// LOWERED-SAME: #native.partition<id = "unit:4", members = [@class_first], imports = [@__talos_current_context, @leaf], exports = [@class_first], dependencies = ["primary", "unit:6"]>
 // LOWERED-SAME: #native.partition<id = "unit:5", members = [@class_second], imports = [], exports = [], dependencies = []>
 // LOWERED-SAME: #native.partition<id = "unit:6", members = [@leaf], imports = [], exports = [@leaf], dependencies = []>
 // LOWERED: llvm.func @leaf
@@ -124,9 +124,9 @@ module attributes {
 // LOWERED-SAME: native.partition = "unit:5"
 // LOWERED: llvm.func @root
 // LOWERED-SAME: native.partition = "primary"
-// LOWERED: llvm.func @root.__obelisk_native_execute
+// LOWERED: llvm.func @root.__talos_native_execute
 // LOWERED-SAME: native.partition = "primary"
-// LOWERED: llvm.func @root.__obelisk_spawn
+// LOWERED: llvm.func @root.__talos_spawn
 // LOWERED-SAME: native.partition = "primary"
 // LOWERED: llvm.func @class_first
 // LOWERED-SAME: native.partition = "unit:4"

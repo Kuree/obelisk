@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.func(schedule-optimize-native-aggregates))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.func(schedule-optimize-native-aggregates{eval-only=true}))' | FileCheck %s --check-prefix=FRAME
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.func(schedule-optimize-native-aggregates))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.func(schedule-optimize-native-aggregates{eval-only=true}))' | FileCheck %s --check-prefix=FRAME
 !packed = !simulation.packed_array<0 : 1 x i8>
 module {
   // Both values of an unsigned one-bit index are in this ascending array.

@@ -9,27 +9,27 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
+#include "talos/Conversion/SimulationToLLVMCoroutine.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
-#include "obelisk/Analysis/ParallelWalk.h"
+#include "talos/Analysis/ParallelWalk.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
 #define GEN_PASS_DEF_ADDRESSNATIVESTATETHROUGHBASESPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "talos/Conversion/Passes.h.inc"
 
 LogicalResult addressNativeStateThroughBases(ModuleOp module) {
-  static constexpr StringLiteral planes[] = {"__obelisk_state_value",
-                                             "__obelisk_state_unknown"};
+  static constexpr StringLiteral planes[] = {"__talos_state_value",
+                                             "__talos_state_unknown"};
   MLIRContext *context = module.getContext();
   SymbolTable symbols(module);
   OpBuilder builder(context);
@@ -182,4 +182,4 @@ class AddressNativeStateThroughBasesPass final
 };
 } // namespace
 
-} // namespace obelisk
+} // namespace talos

@@ -2,13 +2,13 @@
 // The harness interposes runtime calls with the ELF linker's --wrap option.
 // Runtime semantics for ../Conversion/simulation-vpi-write-tier2-runtime.mlir.
 
-// RUN: obelisk-opt %S/../Conversion/simulation-vpi-write-tier2-runtime.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full prune-native=true},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
-// RUN: obelisk-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %S/../Conversion/simulation-vpi-write-tier2-runtime.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=full prune-native=true},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang -I%S/../Conversion/../../runtime/include -I%resource_dir/include -c %S/Inputs/vpi-write-tier1.c -o %t.helper.o
-// RUN: %target_cxx %t.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run_aot -Wl,--wrap=obelisk_rt_v1_display %runtime_link_flags -o %t.exe
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diag
+// RUN: %target_cxx %t.o %t.helper.o -Wl,--wrap=talos_rt_v1_scheduler_run_aot -Wl,--wrap=talos_rt_v1_display %runtime_link_flags -o %t.exe
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diag
 // RUN: FileCheck %s < %t.out
-// RUN: env OBELISK_TEST_IMMEDIATE_NET_RELEASE=1 %t.exe | FileCheck %s
+// RUN: env TALOS_TEST_IMMEDIATE_NET_RELEASE=1 %t.exe | FileCheck %s
 
 // CHECK: before 0 000001f4
 // CHECK-NEXT: after 0 00000029

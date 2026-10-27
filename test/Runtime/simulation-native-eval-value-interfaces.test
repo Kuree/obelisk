@@ -2,7 +2,7 @@
 // a C harness that checks the packed partial, conditional, observer and
 // canonical value-lane ABI.
 
-// RUN: obelisk-opt %S/../Conversion/simulation-native-eval-value-interfaces.mlir --test-obelisk-unroll-loops --obelisk-materialize-native-eval-groups | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %S/../Conversion/simulation-native-eval-value-interfaces.mlir --test-talos-unroll-loops --talos-materialize-native-eval-groups | talos-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang %S/Inputs/native-eval-value-interfaces.c %t.o -o %t.exe
 // RUN: %t.exe | FileCheck %s
 

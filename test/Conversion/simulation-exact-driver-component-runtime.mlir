@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
 
 // A selected stateful-cohort publication may bound the raw driver interval,
 // but it must still resolve and notify every net bit in the selected bit's
@@ -9,8 +9,8 @@
 // ../Runtime/simulation-exact-driver-component-runtime.test.
 // LLVM: %[[BEGIN:.*]] = llvm.mlir.constant(16 : i64) : i64
 // LLVM-NEXT: %[[END:.*]] = llvm.mlir.constant(17 : i64) : i64
-// LLVM-NEXT: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers(%{{.*}}, %[[BEGIN]], %[[END]])
-// LLVM-NOT: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers
+// LLVM-NEXT: llvm.call @talos_rt_v1_scheduler_resolve_drivers(%{{.*}}, %[[BEGIN]], %[[END]])
+// LLVM-NOT: llvm.call @talos_rt_v1_scheduler_resolve_drivers
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -28,7 +28,7 @@ module attributes {
     simulation.code_unit.decl 1 in 0 root_initializer hierarchy "top.root"
     simulation.code_unit.decl 2 in 0 initial hierarchy "top.member"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %driver = simulation.context.driver %ctx[0] :

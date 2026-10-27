@@ -1,4 +1,4 @@
-// RUN: obelisk -O0 -emit-sim %s | FileCheck %s
+// RUN: talos -O0 -emit-sim %s | FileCheck %s
 
 module top;
   lowering_program p();

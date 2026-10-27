@@ -1,9 +1,9 @@
 //===- ManagedClassLayoutAnalysis.cpp - Shared managed class layout -------===//
 
-#include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
-#include "obelisk/Analysis/DescriptorOrdering.h"
+#include "talos/Analysis/ManagedClassLayoutAnalysis.h"
+#include "talos/Analysis/DescriptorOrdering.h"
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/DataLayout.h"
@@ -15,7 +15,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
 bool checkedAlignTo(uint64_t value, uint32_t alignment, uint64_t &result) {
@@ -261,4 +261,4 @@ LogicalResult materializeManagedClassFieldOffsets(
   return success();
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

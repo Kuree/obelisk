@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // Backedge variants of simulation-local-group-task-runtime.mlir, reduced to
 // its two clocked actors, which share one activation unchanged. Entry values
@@ -8,12 +8,12 @@
 
 // A changing backedge value keeps both clocked actors separate.
 // CHECK-LABEL: simulation.design @changing
-// CHECK-NOT: __obelisk_fused_
+// CHECK-NOT: __talos_fused_
 // CHECK: simulation.func private @a(
 // CHECK: arith.addi
 // CHECK: simulation.func private @b(
 // CHECK: arith.addi
-// CHECK-NOT: __obelisk_fused_
+// CHECK-NOT: __talos_fused_
 
 !ref = !simulation.ref<i32>
 !clockref = !simulation.ref<i1>
@@ -65,12 +65,12 @@ module attributes {schedule.native_scheduler = 1 : i32} {
 
 // Requesting Eval does not make the changing entry value invariant.
 // CHECK-LABEL: simulation.design @changing_eval
-// CHECK-NOT: __obelisk_fused_
+// CHECK-NOT: __talos_fused_
 // CHECK: simulation.func private @a(
 // CHECK: arith.addi
 // CHECK: simulation.func private @b(
 // CHECK: arith.addi
-// CHECK-NOT: __obelisk_fused_
+// CHECK-NOT: __talos_fused_
 
 !ref = !simulation.ref<i32>
 !clockref = !simulation.ref<i1>
@@ -122,10 +122,10 @@ module attributes {schedule.native_scheduler = 3 : i32} {
 
 // Both edges of a conditional backedge carry the same invariant value.
 // CHECK-LABEL: simulation.design @duplicate
-// CHECK: simulation.spawn @__obelisk_fused_
+// CHECK: simulation.spawn @__talos_fused_
 // CHECK-NOT: simulation.func private @a(
 // CHECK-NOT: simulation.func private @b(
-// CHECK: simulation.func private @__obelisk_fused_
+// CHECK: simulation.func private @__talos_fused_
 // CHECK-SAME: schedule.native.region_body
 
 !ref = !simulation.ref<i32>
@@ -178,12 +178,12 @@ module attributes {schedule.native_scheduler = 1 : i32} {
 
 // One edge of a conditional backedge carries the changing value.
 // CHECK-LABEL: simulation.design @conflicting
-// CHECK-NOT: __obelisk_fused_
+// CHECK-NOT: __talos_fused_
 // CHECK: simulation.func private @a(
 // CHECK: arith.addi
 // CHECK: simulation.func private @b(
 // CHECK: arith.addi
-// CHECK-NOT: __obelisk_fused_
+// CHECK-NOT: __talos_fused_
 
 !ref = !simulation.ref<i32>
 !clockref = !simulation.ref<i1>
@@ -235,12 +235,12 @@ module attributes {schedule.native_scheduler = 1 : i32} {
 
 // An actor that writes its own clock cannot be rearmed by the group.
 // CHECK-LABEL: simulation.design @clock_write
-// CHECK-NOT: __obelisk_fused_
+// CHECK-NOT: __talos_fused_
 // CHECK: simulation.func private @a(
 // CHECK: arith.addi
 // CHECK: simulation.func private @b(
 // CHECK: arith.addi
-// CHECK-NOT: __obelisk_fused_
+// CHECK-NOT: __talos_fused_
 
 !ref = !simulation.ref<i32>
 !clockref = !simulation.ref<i1>

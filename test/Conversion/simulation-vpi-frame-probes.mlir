@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3}))' | FileCheck %s --check-prefix=INLINE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=LLVM
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=3}))' | FileCheck %s --check-prefix=INLINE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=full' --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=LLVM
 module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   simulation.design @frames {
     simulation.scope.decl 0 hierarchy "$root"
@@ -39,12 +39,12 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
 // BYTECODE-DAG: id=0x00011013 inputs=1 outputs=0 flags=0
 // BYTECODE-DAG: id=0x00011014 inputs=1 outputs=0 flags=0
 // BYTECODE-DAG: id=0x00011015 inputs=1 outputs=0 flags=0
-// LLVM-DAG: llvm.call @obelisk_rt_v1_vpi_call_prepare
-// LLVM-DAG: llvm.call @obelisk_rt_v1_vpi_frame_enter_prepared
-// LLVM-DAG: llvm.call @obelisk_rt_v1_vpi_frame_enter
-// LLVM-DAG: llvm.call @obelisk_rt_v1_vpi_frame_checkpoint
-// LLVM-DAG: llvm.call @obelisk_rt_v1_vpi_frame_leave
-// LLVM-DAG: llvm.call @obelisk_rt_v1_vpi_call_finish
+// LLVM-DAG: llvm.call @talos_rt_v1_vpi_call_prepare
+// LLVM-DAG: llvm.call @talos_rt_v1_vpi_frame_enter_prepared
+// LLVM-DAG: llvm.call @talos_rt_v1_vpi_frame_enter
+// LLVM-DAG: llvm.call @talos_rt_v1_vpi_frame_checkpoint
+// LLVM-DAG: llvm.call @talos_rt_v1_vpi_frame_leave
+// LLVM-DAG: llvm.call @talos_rt_v1_vpi_call_finish
 // LLVM-NOT: simulation.vpi.
 
 // INLINE: simulation.call @worker

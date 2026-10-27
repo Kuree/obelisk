@@ -1,0 +1,220 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
+  talos.sv.symbol.definition @s0.bus_if attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.definition @s1.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 1 : i64} {
+  }
+  talos.sv.symbol.root @s2.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64} {
+    talos.sv.symbol.compilation_unit @s3 attributes {hierarchical_name = "$unit", node_id = 3 : i64} {
+    }
+    talos.sv.symbol.instance @s4.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 4 : i64, referenced_path = "top", referenced_symbol = @s1.top} {
+      talos.sv.symbol.instance_body @s5.top attributes {hierarchical_name = "top", name = "top", node_id = 5 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        talos.sv.symbol.instance @s6.a attributes {hierarchical_name = "top.a", is_uninstantiated = false, name = "a", node_id = 6 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if} {
+          talos.sv.symbol.instance_body @s7.bus_if attributes {hierarchical_name = "top.a", name = "bus_if", node_id = 7 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s6.a} {
+            talos.sv.symbol.variable @s8.x attributes {hierarchical_name = "top.a.x", lifetime = 1 : i32, name = "x", node_id = 8 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+            }
+          }
+        }
+        talos.sv.symbol.instance @s9.b attributes {hierarchical_name = "top.b", is_uninstantiated = false, name = "b", node_id = 9 : i64, referenced_path = "bus_if", referenced_symbol = @s0.bus_if} {
+          talos.sv.symbol.instance_body @s10.bus_if attributes {hierarchical_name = "top.b", name = "bus_if", node_id = 10 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64, virtual_interface_identity = @s2.$root::@s5.top::@s6.a} {
+            talos.sv.symbol.variable @s11.x attributes {hierarchical_name = "top.b.x", lifetime = 1 : i32, name = "x", node_id = 11 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+            }
+          }
+        }
+        talos.sv.symbol.variable @s12.fixed attributes {hierarchical_name = "top.fixed", lifetime = 1 : i32, name = "fixed", node_id = 12 : i64, semantic_type = !talos.ranged_unpacked_array<0 : 1 x !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
+        }
+        talos.sv.symbol.variable @s13.dyn attributes {hierarchical_name = "top.dyn", lifetime = 1 : i32, name = "dyn", node_id = 13 : i64, semantic_type = !talos.dynarray<!talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
+        }
+        talos.sv.symbol.variable @s14.queue attributes {hierarchical_name = "top.queue", lifetime = 1 : i32, name = "queue", node_id = 14 : i64, semantic_type = !talos.queue<!talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, 0>} {
+        }
+        talos.sv.symbol.variable @s15.assoc attributes {hierarchical_name = "top.assoc", lifetime = 1 : i32, name = "assoc", node_id = 15 : i64, semantic_type = !talos.assoc<!talos.integral<32, true, false, 31 : 0, int>, !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, false>} {
+        }
+        talos.sv.symbol.subroutine @s16.exchange attributes {hierarchical_name = "top.exchange", name = "exchange", node_id = 16 : i64, semantic_type = !talos.subroutine<(!talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">) -> (), true>, subroutine_kind = 1 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.list attributes {node_id = 17 : i64} {
+            talos.sv.statement.expression_statement attributes {node_id = 18 : i64} {
+              talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 19 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 20 : i64, referenced_path = "top.exchange.o", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s16.exchange::@s18.o, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                }
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 21 : i64, referenced_path = "top.exchange.i", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s16.exchange::@s17.i, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                }
+              }
+            }
+            talos.sv.statement.expression_statement attributes {node_id = 22 : i64} {
+              talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 23 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 24 : i64, referenced_path = "top.exchange.io", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s16.exchange::@s19.io, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                }
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 25 : i64, referenced_path = "top.exchange.r", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s16.exchange::@s20.r, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                }
+              }
+            }
+            talos.sv.statement.expression_statement attributes {node_id = 26 : i64} {
+              talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 27 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 28 : i64, referenced_path = "top.exchange.r", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s16.exchange::@s20.r, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                }
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 29 : i64, referenced_path = "top.exchange.i", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s16.exchange::@s17.i, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                }
+              }
+            }
+          }
+          talos.sv.symbol.formal_argument @s17.i attributes {direction = 0 : i32, hierarchical_name = "top.exchange.i", name = "i", node_id = 30 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+          }
+          talos.sv.symbol.formal_argument @s18.o attributes {direction = 1 : i32, hierarchical_name = "top.exchange.o", name = "o", node_id = 31 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+          }
+          talos.sv.symbol.formal_argument @s19.io attributes {direction = 2 : i32, hierarchical_name = "top.exchange.io", name = "io", node_id = 32 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+          }
+          talos.sv.symbol.formal_argument @s20.r attributes {direction = 3 : i32, hierarchical_name = "top.exchange.r", name = "r", node_id = 33 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+          }
+        }
+        talos.sv.symbol.procedural_block @s21 attributes {hierarchical_name = "top", node_id = 34 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.block attributes {node_id = 35 : i64} {
+            talos.sv.statement.list attributes {node_id = 36 : i64} {
+              talos.sv.statement.expression_statement attributes {node_id = 37 : i64} {
+                talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 38 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                  talos.sv.expression.element_select attributes {is_signed = false, node_id = 39 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 40 : i64, referenced_path = "top.fixed", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s12.fixed, semantic_type = !talos.ranged_unpacked_array<0 : 1 x !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
+                    }
+                    talos.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 41 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                  talos.sv.expression.arbitrary_symbol attributes {is_signed = false, node_id = 42 : i64, referenced_path = "top.a", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.a, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 43 : i64} {
+                talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 44 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                  talos.sv.expression.element_select attributes {is_signed = false, node_id = 45 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 46 : i64, referenced_path = "top.fixed", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s12.fixed, semantic_type = !talos.ranged_unpacked_array<0 : 1 x !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
+                    }
+                    talos.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 47 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                  talos.sv.expression.arbitrary_symbol attributes {is_signed = false, node_id = 48 : i64, referenced_path = "top.b", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s9.b, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 49 : i64} {
+                talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 50 : i64, semantic_type = !talos.dynarray<!talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
+                  talos.sv.expression.named_value attributes {is_signed = false, node_id = 51 : i64, referenced_path = "top.dyn", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s13.dyn, semantic_type = !talos.dynarray<!talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
+                  }
+                  talos.sv.expression.new_array attributes {is_signed = false, node_id = 52 : i64, semantic_type = !talos.dynarray<!talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
+                    talos.sv.expression.integer_literal attributes {constant_value = "2", is_declared_unsized = true, is_signed = true, node_id = 53 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 54 : i64} {
+                talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 55 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                  talos.sv.expression.element_select attributes {is_signed = false, node_id = 56 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 57 : i64, referenced_path = "top.dyn", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s13.dyn, semantic_type = !talos.dynarray<!talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
+                    }
+                    talos.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 58 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                  talos.sv.expression.element_select attributes {is_signed = false, node_id = 59 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 60 : i64, referenced_path = "top.fixed", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s12.fixed, semantic_type = !talos.ranged_unpacked_array<0 : 1 x !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
+                    }
+                    talos.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 61 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 62 : i64} {
+                talos.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "push_back", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 63 : i64, semantic_type = !talos.void, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s2.$root::@s4.top::@s5.top} {
+                  talos.sv.expression.named_value attributes {is_signed = false, node_id = 64 : i64, referenced_path = "top.queue", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s14.queue, semantic_type = !talos.queue<!talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, 0>} {
+                  }
+                  talos.sv.expression.arbitrary_symbol attributes {is_signed = false, node_id = 65 : i64, referenced_path = "top.a", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s6.a, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 66 : i64} {
+                talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 67 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                  talos.sv.expression.element_select attributes {is_signed = false, node_id = 68 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 69 : i64, referenced_path = "top.assoc", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s15.assoc, semantic_type = !talos.assoc<!talos.integral<32, true, false, 31 : 0, int>, !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, false>} {
+                    }
+                    talos.sv.expression.integer_literal attributes {constant_value = "3", is_declared_unsized = true, is_signed = true, node_id = 70 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                  talos.sv.expression.arbitrary_symbol attributes {is_signed = false, node_id = 71 : i64, referenced_path = "top.b", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s9.b, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 72 : i64} {
+                talos.sv.expression.call attributes {argument_count = 4 : i64, callee_name = "exchange", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = false, node_id = 73 : i64, referenced_path = "top.exchange", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s16.exchange, semantic_type = !talos.void, subroutine_kind = 1 : i32} {
+                  talos.sv.expression.element_select attributes {is_signed = false, node_id = 74 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 75 : i64, referenced_path = "top.fixed", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s12.fixed, semantic_type = !talos.ranged_unpacked_array<0 : 1 x !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
+                    }
+                    talos.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 76 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                  talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 77 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                    talos.sv.expression.element_select attributes {is_signed = false, node_id = 78 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                      talos.sv.expression.named_value attributes {is_signed = false, node_id = 79 : i64, referenced_path = "top.fixed", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s12.fixed, semantic_type = !talos.ranged_unpacked_array<0 : 1 x !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
+                      }
+                      talos.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 80 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                      }
+                    }
+                    talos.sv.expression.empty_argument attributes {is_signed = false, node_id = 81 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                    }
+                  }
+                  talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 82 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                    talos.sv.expression.element_select attributes {is_signed = false, node_id = 83 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                      talos.sv.expression.named_value attributes {is_signed = false, node_id = 84 : i64, referenced_path = "top.dyn", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s13.dyn, semantic_type = !talos.dynarray<!talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">>} {
+                      }
+                      talos.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 85 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                      }
+                    }
+                    talos.sv.expression.empty_argument attributes {is_signed = false, node_id = 86 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                    }
+                  }
+                  talos.sv.expression.element_select attributes {is_signed = false, node_id = 87 : i64, semantic_type = !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 88 : i64, referenced_path = "top.assoc", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s15.assoc, semantic_type = !talos.assoc<!talos.integral<32, true, false, 31 : 0, int>, !talos.virtual_interface<@s2.$root::@s5.top::@s6.a, "">, false>} {
+                    }
+                    talos.sv.expression.integer_literal attributes {constant_value = "3", is_declared_unsized = true, is_signed = true, node_id = 89 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// CHECK-DAG: !simulation.dynamic_array<!simulation.virtual_interface
+// CHECK-DAG: !simulation.queue<!simulation.virtual_interface
+// CHECK-DAG: !simulation.assoc_array<i32, !simulation.virtual_interface
+// CHECK-DAG: !simulation.unpacked_array<0 : 1 x !simulation.virtual_interface
+// CHECK-LABEL: simulation.func private @unit_0(
+// IEEE 1800-2017 13.5 gives input copy-in, output copy-out, inout copy-in/out,
+// and ref aliasing semantics. The unused output copy-in value is pruned while
+// its copy-out destination remains live.
+// CHECK-SAME: %arg1: !simulation.virtual_interface
+// CHECK-SAME: %arg2: !simulation.ref<!simulation.virtual_interface
+// CHECK-SAME: %arg3: !simulation.ref<!simulation.virtual_interface
+// CHECK-SAME: %arg4: !simulation.argument_ref<!simulation.virtual_interface
+// CHECK: [[REF:%.*]] = simulation.argument_ref.load %arg4
+// CHECK: simulation.argument_ref.store %arg1 to %arg4
+// CHECK: simulation.ref.store %arg1 to %arg2
+// CHECK: simulation.ref.store [[REF]] to %arg3
+// CHECK-LABEL: simulation.func private @unit_1(
+// Distinct elaborated instances must not be commoned merely because binds are
+// pure handle constants.
+// CHECK: simulation.virtual_interface.bind 2
+// CHECK: simulation.virtual_interface.bind 3
+// CHECK: simulation.container.create {{.*}}bit_width = 64 : i64{{.*}}element_kind = #simulation.element_kind<bits>
+// CHECK: simulation.container.write
+// CHECK: simulation.assoc.write
+// CHECK: simulation.reference_path.assoc
+// CHECK: simulation.task.call @unit_0
+// CHECK: simulation.reference_path.index
+// CHECK: simulation.argument_ref.store
+// CHECK-NOT: talos.sv.
+// BYTECODE: runtime.bytecode_image = array<i8:
+// BYTECODE: runtime.state_bits = 384 : i64
+// NATIVE: llvm.func
+// NATIVE-NOT: simulation.virtual_interface

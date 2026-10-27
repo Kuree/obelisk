@@ -1,5 +1,5 @@
 # RUN: %coverage-fixture %t.obcov 20 '</ScRiPt><script id=pwned>' 1
-# RUN: obelisk-cov report --format=html --source-root=%S/Inputs -o %t.html %t.obcov
+# RUN: talos-cov report --format=html --source-root=%S/Inputs -o %t.html %t.obcov
 # RUN: FileCheck %s < %t.html
 
 # A test name cannot close the payload script element: the embedded JSON

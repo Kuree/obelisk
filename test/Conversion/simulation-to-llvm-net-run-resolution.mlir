@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --cse | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines --cse | FileCheck %s
 
 // IEEE 1800-2017 6.7.1 and 28.12 resolve every net bit on its own, so bits
 // with the same drivers, strengths and net kind share one resolution function.
@@ -32,7 +32,7 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @drive_full
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // The low run is this drive's own slice of the stored value.
 // CHECK: %[[LOWV:.*]] = llvm.trunc %arg1 : i128 to i64
 // CHECK-NEXT: %[[LOWU:.*]] = llvm.trunc %arg2 : i128 to i64
@@ -42,10 +42,10 @@ module attributes {
 // CHECK: %[[OTHERV:.*]] = llvm.load %{{.*}} : !llvm.ptr -> i64
 // CHECK: %[[HIGHV:.*]] = llvm.and %[[OTHERV]], %[[OWNV]] : i64
 // CHECK: %[[LOWW:.*]] = llvm.mlir.constant(64 : i64) : i64
-// CHECK-NEXT: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %{{.*}}, %[[LOWW]], %{{.*}}, %{{.*}}, %[[LOWV]], %[[LOWU]])
+// CHECK-NEXT: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %{{.*}}, %[[LOWW]], %{{.*}}, %{{.*}}, %[[LOWV]], %[[LOWU]])
 // CHECK: %[[HIGH:.*]] = llvm.mlir.constant(64 : i64) : i64
 // CHECK-NEXT: llvm.mlir.constant(1 : i32) : i32
-// CHECK-NEXT: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[HIGH]], %[[HIGH]], %{{.*}}, %{{.*}}, %[[HIGHV]], %{{.*}})
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NEXT: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[HIGH]], %[[HIGH]], %{{.*}}, %{{.*}}, %[[HIGHV]], %{{.*}})
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: llvm.return

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // IEEE 1800-2017 7.3 spells its union example `union { int i; shortreal f; }`,
 // so a real shares an unpacked union's single piece of storage with the

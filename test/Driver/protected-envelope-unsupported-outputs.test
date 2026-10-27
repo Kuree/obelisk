@@ -1,5 +1,5 @@
 // Unsupported protected envelopes in protected-envelope-unsupported.sv leave no
 // executable behind. Preprocessing is protected-envelope-preprocess-slang-xfail.sv.
-// RUN: not obelisk %S/protected-envelope-unsupported.sv -o %t.exe 2> %t.native.stderr
+// RUN: not talos %S/protected-envelope-unsupported.sv -o %t.exe 2> %t.native.stderr
 // RUN: FileCheck %S/protected-envelope-unsupported.sv --input-file=%t.native.stderr
 // RUN: test ! -e %t.exe

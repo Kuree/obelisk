@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},schedule-version-known-activations{minimum-benefit=1},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=DIRECT
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},schedule-version-known-activations{minimum-benefit=1},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=RUNTIME
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},schedule-version-known-activations{minimum-benefit=1},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=DIRECT
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off},schedule-version-known-activations{minimum-benefit=1},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=RUNTIME
 
 // The entry check of a gated activation copy (schedule.known.roots) tests
 // one bit of the generated unknown summary per root, one summary word at a
@@ -15,17 +15,17 @@
 // stores go through the runtime, which reports X/Z writes itself, and the
 // copy again stores only the value plane.
 
-// DIRECT: llvm.mlir.global internal @__obelisk_state_unknown_summary_v1(dense<7> : tensor<1xi64>)
-// DIRECT-NEXT: llvm.mlir.global internal constant @__obelisk_state_unknown_summary_roots_v1(dense<[0, 8, 0, 8, 100, 0, 112, 8, 0]> : tensor<9xi64>)
-// DIRECT-NEXT: llvm.mlir.global internal constant @__obelisk_state_unknown_summary_patterns_v1(dense<0> : tensor<2xi64>)
-// DIRECT-NEXT: llvm.mlir.global internal @__obelisk_state_unknown_summary_backoff_v1(dense<0> : tensor<1xi64>)
+// DIRECT: llvm.mlir.global internal @__talos_state_unknown_summary_v1(dense<7> : tensor<1xi64>)
+// DIRECT-NEXT: llvm.mlir.global internal constant @__talos_state_unknown_summary_roots_v1(dense<[0, 8, 0, 8, 100, 0, 112, 8, 0]> : tensor<9xi64>)
+// DIRECT-NEXT: llvm.mlir.global internal constant @__talos_state_unknown_summary_patterns_v1(dense<0> : tensor<2xi64>)
+// DIRECT-NEXT: llvm.mlir.global internal @__talos_state_unknown_summary_backoff_v1(dense<0> : tensor<1xi64>)
 // DIRECT-LABEL: llvm.func @step(
 // DIRECT-DAG: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64) : i64
 // DIRECT-DAG: %[[MASK:.*]] = llvm.mlir.constant(7 : i64) : i64
 // DIRECT-DAG: %[[OUTBIT:.*]] = llvm.mlir.constant(4 : i64) : i64
-// DIRECT-DAG: %[[PLANE:.*]] = llvm.mlir.addressof @__obelisk_state_unknown :
-// DIRECT-DAG: %[[SUMMARY:.*]] = llvm.mlir.addressof @__obelisk_state_unknown_summary_v1
-// DIRECT-DAG: %[[BACKOFF:.*]] = llvm.mlir.addressof @__obelisk_state_unknown_summary_backoff_v1
+// DIRECT-DAG: %[[PLANE:.*]] = llvm.mlir.addressof @__talos_state_unknown :
+// DIRECT-DAG: %[[SUMMARY:.*]] = llvm.mlir.addressof @__talos_state_unknown_summary_v1
+// DIRECT-DAG: %[[BACKOFF:.*]] = llvm.mlir.addressof @__talos_state_unknown_summary_backoff_v1
 // DIRECT-DAG: %[[PAIRS:.*]] = llvm.alloca %{{.*}} x i64
 // DIRECT: %[[WORD:.*]] = llvm.load %[[SUMMARY]] {alignment = 8 : i64} : !llvm.ptr -> i64
 // DIRECT-NEXT: %[[DIRTY:.*]] = llvm.and %[[WORD]], %[[MASK]]
@@ -43,7 +43,7 @@
 // DIRECT: ^[[CALL]]:
 // DIRECT-NEXT: llvm.store %[[ZERO]], %[[PAIRS]]
 // DIRECT: llvm.store %[[MASK]], %{{.*}}
-// DIRECT: %[[R:.*]] = llvm.call @obelisk_rt_v1_native_state_refresh_unknown_summary(%{{.*}}, %[[PAIRS]], %{{.*}}, %[[BACKOFF]])
+// DIRECT: %[[R:.*]] = llvm.call @talos_rt_v1_native_state_refresh_unknown_summary(%{{.*}}, %[[PAIRS]], %{{.*}}, %[[BACKOFF]])
 // DIRECT-NEXT: %[[OK:.*]] = llvm.icmp "ne" %[[R]], %{{.*}} : i32
 // DIRECT-NEXT: llvm.br ^[[DECIDE]](%[[OK]] : i1)
 // DIRECT: ^[[DECIDE]](%[[KNOWN:.*]]: i1):
@@ -60,17 +60,17 @@
 // DIRECT-NOT: %[[PLANE]]
 // DIRECT: llvm.return
 // DIRECT: llvm.func @main(
-// DIRECT: llvm.call @obelisk_rt_v1_native_state_bind_unknown_summary(
+// DIRECT: llvm.call @talos_rt_v1_native_state_bind_unknown_summary(
 
 // RUNTIME-LABEL: llvm.func @step(
-// RUNTIME-DAG: %[[PLANE:.*]] = llvm.mlir.addressof @__obelisk_state_unknown :
-// RUNTIME-DAG: %[[SUMMARY:.*]] = llvm.mlir.addressof @__obelisk_state_unknown_summary_v1
+// RUNTIME-DAG: %[[PLANE:.*]] = llvm.mlir.addressof @__talos_state_unknown :
+// RUNTIME-DAG: %[[SUMMARY:.*]] = llvm.mlir.addressof @__talos_state_unknown_summary_v1
 // RUNTIME: llvm.load %[[SUMMARY]]
-// RUNTIME: llvm.call @obelisk_rt_v1_native_state_refresh_unknown_summary(
+// RUNTIME: llvm.call @talos_rt_v1_native_state_refresh_unknown_summary(
 // RUNTIME: llvm.cond_br %{{.*}} weights([1048575, 1]), ^[[COPY:bb[0-9]+]], ^
-// RUNTIME: llvm.call @obelisk_rt_v1_native_state_store_plane(%{{.*}}, %[[PLANE]],
+// RUNTIME: llvm.call @talos_rt_v1_native_state_store_plane(%{{.*}}, %[[PLANE]],
 // RUNTIME: ^[[COPY]]:
-// RUNTIME-NOT: llvm.call @obelisk_rt_v1_native_state_store_plane(%{{.*}}, %[[PLANE]],
+// RUNTIME-NOT: llvm.call @talos_rt_v1_native_state_store_plane(%{{.*}}, %[[PLANE]],
 // RUNTIME: llvm.return
 
 !l4 = !simulation.logic<4>
@@ -91,7 +91,7 @@ module attributes {
     simulation.storage.decl 1 in 0 : !l100 design hierarchy "top.wide"
     simulation.storage.decl 2 in 0 : !l8 design hierarchy "top.out"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %process = simulation.spawn @initial(%ctx) :

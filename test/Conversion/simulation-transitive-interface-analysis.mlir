@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --obelisk-sim-devirtualize-class-calls | FileCheck %s --check-prefix=DEVIRT
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp))' | FileCheck %s --check-prefix=SCCP
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s --check-prefix=GRAPH
+// RUN: talos-opt %s --talos-sim-devirtualize-class-calls | FileCheck %s --check-prefix=DEVIRT
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-sccp))' | FileCheck %s --check-prefix=SCCP
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s --check-prefix=GRAPH
 
 module {
   simulation.design @transitive_interfaces {

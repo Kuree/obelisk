@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt --test-obelisk-native-backend='scheduler=auto sim-opt-level=3 stop-after=lowering' -o %t.mlir
+// RUN: talos -emit-slang %s | talos-opt --test-talos-native-backend='scheduler=auto sim-opt-level=3 stop-after=lowering' -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=KERNELS < %t.mlir
 
@@ -56,7 +56,7 @@ endmodule
 
 // The stages and `count`, clocked through port copies of one clock, run in one
 // kernel that stores their registers directly.
-// CHECK: simulation.spawn @[[KERNEL:__obelisk_clocked_[0-9_]+]](
+// CHECK: simulation.spawn @[[KERNEL:__talos_clocked_[0-9_]+]](
 // CHECK: simulation.task.call
 // CHECK: simulation.func private @[[KERNEL]](
 // CHECK: simulation.suspend.edge posedge
@@ -69,5 +69,5 @@ endmodule
 // CHECK-NOT: simulation.nba.enqueue
 // CHECK: }
 
-// KERNELS-COUNT-1: simulation.spawn @__obelisk_clocked_
-// KERNELS-NOT: simulation.spawn @__obelisk_clocked_
+// KERNELS-COUNT-1: simulation.spawn @__talos_clocked_
+// KERNELS-NOT: simulation.spawn @__talos_clocked_

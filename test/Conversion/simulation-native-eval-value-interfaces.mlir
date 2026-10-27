@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --test-obelisk-unroll-loops --obelisk-materialize-native-eval-groups -o %t.mlir
+// RUN: talos-opt %s --test-talos-unroll-loops --talos-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk-opt %s --mlir-disable-threading --test-obelisk-unroll-loops --obelisk-materialize-native-eval-groups | diff %t.mlir -
+// RUN: talos-opt %s --mlir-disable-threading --test-talos-unroll-loops --talos-materialize-native-eval-groups | diff %t.mlir -
 
 // The existing growth budget keeps these helpers outlined (each does 300
 // additions once its loop is unrolled). Their selected packed lanes cross
 // the call as values; observers still publish/reacquire.
-// CHECK-LABEL: llvm.func internal @lane_write.__obelisk_eval_values(
+// CHECK-LABEL: llvm.func internal @lane_write.__talos_eval_values(
 // CHECK-SAME: i16
 // CHECK-SAME: schedule.eval.value_lanes = array<i64: 0, 0, 2, 1, 1, 0, 2, 1>
 // CHECK-NOT: llvm.load {{.*}} -> i16
@@ -17,36 +17,36 @@
 // CHECK: llvm.return
 // CHECK-LABEL: llvm.func @lane_write(
 // CHECK: llvm.load
-// CHECK: llvm.call @lane_write.__obelisk_eval_values
+// CHECK: llvm.call @lane_write.__talos_eval_values
 // CHECK: llvm.store
-// CHECK-LABEL: llvm.func internal @lane_read.__obelisk_eval_values(
+// CHECK-LABEL: llvm.func internal @lane_read.__talos_eval_values(
 // CHECK-SAME: schedule.eval.value_lanes = array<i64: 1, 0, 2, 0, 0, 0, 2, 0>
 // CHECK-NOT: llvm.load
 // CHECK: llvm.mlir.addressof @checksum
 // CHECK: llvm.return
 // CHECK-LABEL: llvm.func @lane_read(
-// CHECK: llvm.call @lane_read.__obelisk_eval_values
+// CHECK: llvm.call @lane_read.__talos_eval_values
 // CHECK-LABEL: llvm.func @lane_run(
 // CHECK-SAME: schedule.eval.ssa_unknown_ranges = 1 : i64
 // CHECK-SAME: schedule.eval.ssa_value_ranges = 1 : i64
 // CHECK: llvm.load
 // CHECK: llvm.load
-// CHECK: llvm.call @lane_write.__obelisk_eval_values
+// CHECK: llvm.call @lane_write.__talos_eval_values
 // CHECK-NOT: llvm.load
 // CHECK-NOT: llvm.store
-// CHECK: llvm.call @lane_read.__obelisk_eval_values
+// CHECK: llvm.call @lane_read.__talos_eval_values
 // CHECK: llvm.store
 // CHECK: llvm.store
 // CHECK: llvm.call @observer
 // CHECK: llvm.load
 // CHECK: llvm.load
-// CHECK: llvm.call @lane_read.__obelisk_eval_values
+// CHECK: llvm.call @lane_read.__talos_eval_values
 // ../Runtime/simulation-native-eval-value-interfaces.test executes this module
 // against its C ABI harness.
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", schedule.native.max_inline_ops = 256 : i64} {
-  llvm.mlir.global @__obelisk_state_value(dense<[52, 18, 77]> : tensor<3xi8>) : !llvm.array<3 x i8>
-  llvm.mlir.global @__obelisk_state_unknown(dense<0> : tensor<3xi8>) : !llvm.array<3 x i8>
+  llvm.mlir.global @__talos_state_value(dense<[52, 18, 77]> : tensor<3xi8>) : !llvm.array<3 x i8>
+  llvm.mlir.global @__talos_state_unknown(dense<0> : tensor<3xi8>) : !llvm.array<3 x i8>
   llvm.mlir.global internal @checksum(0 : i16) : i16
   llvm.mlir.global internal @context() : !llvm.ptr {
     %null = llvm.mlir.zero : !llvm.ptr
@@ -58,8 +58,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
   }
   llvm.func @observer(i16, i16) -> i1
   llvm.func @lane_write(%take: i1 {simulation.capture_kind = 1 : i32}) attributes {schedule.eval.raw_captures, passthrough = ["noinline"]} {
-    %v = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %x = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %v = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %x = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     %old = llvm.load %v {alignment = 1 : i64} : !llvm.ptr -> i16
     %oldx = llvm.load %x {alignment = 1 : i64} : !llvm.ptr -> i16
     %ctx = llvm.mlir.addressof @context : !llvm.ptr
@@ -94,8 +94,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.return
   }
   llvm.func @lane_read(%expected: i16 {simulation.capture_kind = 1 : i32}, %expected_x: i16) -> i1 attributes {schedule.eval.infallible, passthrough = ["noinline"]} {
-    %v = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %x = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %v = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %x = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     %current = llvm.load %v {alignment = 1 : i64} : !llvm.ptr -> i16
     %current_x = llvm.load %x {alignment = 1 : i64} : !llvm.ptr -> i16
     %one = llvm.mlir.constant(1 : i16) : i16

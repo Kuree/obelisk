@@ -13,20 +13,20 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "obelisk/Analysis/HandleDataflowAnalysis.h"
-#include "obelisk/Analysis/StorageWriteAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Analysis/HandleDataflowAnalysis.h"
+#include "talos/Analysis/StorageWriteAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SCCIterator.h"
 
 using namespace mlir;
-namespace obelisk {
-#define GEN_PASS_DEF_OBELISKSIMREFINECONTINUOUSSENSITIVITYPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+namespace talos {
+#define GEN_PASS_DEF_TALOSSIMREFINECONTINUOUSSENSITIVITYPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 namespace {
 using analysis::HandleFact;
 using Range = std::pair<uint64_t, uint64_t>;
@@ -85,9 +85,9 @@ bool planViews(Type type, uint64_t low, uint64_t width,
   return true;
 }
 
-struct ObeliskSimRefineContinuousSensitivityPass
-    : impl::ObeliskSimRefineContinuousSensitivityPassBase<
-          ObeliskSimRefineContinuousSensitivityPass> {
+struct TalosSimRefineContinuousSensitivityPass
+    : impl::TalosSimRefineContinuousSensitivityPassBase<
+          TalosSimRefineContinuousSensitivityPass> {
   using Base::Base;
   void runOnOperation() override {
     auto design = getOperation();
@@ -443,8 +443,8 @@ struct ObeliskSimRefineContinuousSensitivityPass
     numRefined += refined;
     if (native::has<native::DebugTiming>(design->getParentOfType<ModuleOp>()))
       emitRemark(design.getLoc())
-          << "obelisk continuous sensitivity: refined=" << uint64_t(refined);
+          << "talos continuous sensitivity: refined=" << uint64_t(refined);
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

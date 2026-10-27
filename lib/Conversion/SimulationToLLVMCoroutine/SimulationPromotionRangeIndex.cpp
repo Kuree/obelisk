@@ -2,11 +2,11 @@
 
 #include "SimulationAOTPlanning.h"
 #include "SimulationPackedLowering.h"
-#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Conversion/SimulationToLLVMCoroutine.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
-#include "obelisk/Runtime/PromotionRangeIndex.h"
+#include "talos/Runtime/PromotionRangeIndex.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Matchers.h"
@@ -16,17 +16,17 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_MATERIALIZENATIVEPROMOTIONRANGEINDEXPASS
-#include "obelisk/Conversion/Passes.h.inc"
-} // namespace obelisk
+#include "talos/Conversion/Passes.h.inc"
+} // namespace talos
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
                                                    uint64_t bucketMinEntries) {
   auto hook = module.lookupSymbol<LLVM::LLVMFuncOp>(
-      "__obelisk_eval_promotion_invalidate_range_v1");
+      "__talos_eval_promotion_invalidate_range_v1");
   if (!hook)
     return success();
   if (!hook.empty())
@@ -48,16 +48,16 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
   };
   SmallVector<Certificate> certificates;
   constexpr auto kernelAttr =
-      ::obelisk::schedule::Field::EvalKernelProofDependencies;
+      ::talos::schedule::Field::EvalKernelProofDependencies;
   constexpr auto routeAttr =
-      ::obelisk::schedule::Field::EvalRouteProofDependencies;
-  constexpr auto nbaAttr = ::obelisk::schedule::Field::EvalNbaProofDependencies;
+      ::talos::schedule::Field::EvalRouteProofDependencies;
+  constexpr auto nbaAttr = ::talos::schedule::Field::EvalNbaProofDependencies;
   constexpr auto groupAttr =
-      ::obelisk::schedule::Field::EvalGroupProofDependencies;
+      ::talos::schedule::Field::EvalGroupProofDependencies;
   auto pending = module.lookupSymbol<LLVM::GlobalOp>(
-      "__obelisk_eval_promotion_pending_mask_v1");
+      "__talos_eval_promotion_pending_mask_v1");
   auto routePending = module.lookupSymbol<LLVM::GlobalOp>(
-      "__obelisk_eval_route_promotion_pending_v1");
+      "__talos_eval_route_promotion_pending_v1");
   for (auto global : module.getOps<LLVM::GlobalOp>()) {
     if (auto groups = schedule::get<groupAttr>(global)) {
       if (global.getSymName() != groupPromotionLatchName)
@@ -69,12 +69,12 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
       }
       schedule::remove<groupAttr>(global);
     }
-    if (auto kernels = ::obelisk::schedule::get<kernelAttr>(global)) {
+    if (auto kernels = ::talos::schedule::get<kernelAttr>(global)) {
       auto latchType = dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType());
       auto pendingType =
           pending ? dyn_cast<LLVM::LLVMArrayType>(pending.getGlobalType())
                   : LLVM::LLVMArrayType{};
-      if (global.getSymName() != "__obelisk_eval_kernel_promotion_latched_v1" ||
+      if (global.getSymName() != "__talos_eval_kernel_promotion_latched_v1" ||
           !latchType || !latchType.getElementType().isInteger(8) ||
           !pendingType || !pendingType.getElementType().isInteger(64))
         return global.emitError("kernel proof index has invalid latch storage");
@@ -91,11 +91,11 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
         certificates.push_back(
             {global, latch.getUInt(), bit.getUInt(), ranges});
       }
-      ::obelisk::schedule::remove<kernelAttr>(global);
+      ::talos::schedule::remove<kernelAttr>(global);
     }
-    if (auto roots = ::obelisk::schedule::get<nbaAttr>(global)) {
+    if (auto roots = ::talos::schedule::get<nbaAttr>(global)) {
       auto wordType = dyn_cast<LLVM::LLVMArrayType>(global.getGlobalType());
-      if (global.getSymName() != "__obelisk_eval_fast_nba_roots_v1" ||
+      if (global.getSymName() != "__talos_eval_fast_nba_roots_v1" ||
           !wordType || !wordType.getElementType().isInteger(64))
         return global.emitError(
             "NBA proof index has invalid knownness storage");
@@ -108,9 +108,9 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
               "NBA proof index has invalid certificate identity");
         certificates.push_back({global, bit.getUInt(), 0, ranges, true});
       }
-      ::obelisk::schedule::remove<nbaAttr>(global);
+      ::talos::schedule::remove<nbaAttr>(global);
     }
-    if (auto route = ::obelisk::schedule::get<routeAttr>(global)) {
+    if (auto route = ::talos::schedule::get<routeAttr>(global)) {
       auto ranges = route.getRanges();
       auto pendingBit = route.getPendingBit();
       auto pendingType =
@@ -118,7 +118,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
               ? dyn_cast<LLVM::LLVMArrayType>(routePending.getGlobalType())
               : LLVM::LLVMArrayType{};
       if (!global.getSymName().starts_with(
-              "__obelisk_eval_selected_variant_v1_") ||
+              "__talos_eval_selected_variant_v1_") ||
           !ranges || !pendingBit || !pendingType ||
           !pendingType.getElementType().isInteger(64) ||
           pendingBit.getUInt() / 64 >= pendingType.getNumElements() ||
@@ -127,7 +127,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
             "route proof index has invalid selector storage");
       certificates.push_back(
           {global, 0, pendingBit.getUInt(), ranges, false, true});
-      ::obelisk::schedule::remove<routeAttr>(global);
+      ::talos::schedule::remove<routeAttr>(global);
     }
   }
   // Stable dense certificate IDs are independent of scheduler owner bits.
@@ -135,7 +135,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
     return std::tuple{a.global.getSymName(), a.latch} <
            std::tuple{b.global.getSymName(), b.latch};
   });
-  std::vector<obelisk_rt_native_promotion_dependency> entries;
+  std::vector<talos_rt_native_promotion_dependency> entries;
   for (auto [id, certificate] : llvm::enumerate(certificates)) {
     auto values = certificate.ranges.asArrayRef();
     if (values.size() % 2)
@@ -165,7 +165,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
                 builder.getArrayAttr({builder.getStringAttr("cold"),
                                       builder.getStringAttr("noinline")}));
   auto recheck = getOrDeclareLLVMFunction(
-      module, "__obelisk_eval_promotion_recheck_range_v1", voidType,
+      module, "__talos_eval_promotion_recheck_range_v1", voidType,
       {i64, i64});
   if (!recheck.empty())
     return recheck.emitError("range recheck was materialized twice");
@@ -197,7 +197,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
   builder.setInsertionPointToStart(module.getBody());
   auto dependencies = LLVM::GlobalOp::create(
       builder, location, dependencyArray, true, LLVM::Linkage::Internal,
-      "__obelisk_eval_proof_dependencies_v1",
+      "__talos_eval_proof_dependencies_v1",
       DenseIntElementsAttr::get(denseType, ArrayRef<uint64_t>(dependencyWords)),
       8);
   // The publication pass consumes this union of the same verified index.
@@ -214,7 +214,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
       coverage.push_back(dependency.end);
     }
   }
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalProofCoverage>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalProofCoverage>(
       dependencies, builder.getDenseI64ArrayAttr(coverage));
 
   // Pointer fields use the target LLVM layout; only packed bit positions and
@@ -225,7 +225,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
       LLVM::LLVMArrayType::get(certificateType, certificates.size());
   auto actions = makeConstantGlobal(
       module, location, certificateArray,
-      "__obelisk_eval_proof_certificates_v1", LLVM::Linkage::Internal, 8,
+      "__talos_eval_proof_certificates_v1", LLVM::Linkage::Internal, 8,
       [&](OpBuilder &b) {
         Value array = LLVM::ZeroOp::create(b, location, certificateArray);
         for (auto [index, certificate] : llvm::enumerate(certificates)) {
@@ -281,16 +281,16 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
   // disturbed. Per-kernel latches and per-route selectors remain independent;
   // the lookup helper changes only those in its exact overlap result.
   auto reset = getOrDeclareLLVMFunction(
-      module, "__obelisk_eval_proof_aggregate_invalidate_v1", voidType, {});
+      module, "__talos_eval_proof_aggregate_invalidate_v1", voidType, {});
   builder.setInsertionPointToStart(reset.addEntryBlock(builder));
-  for (StringRef name : {"__obelisk_eval_promotion_latched_v1"})
+  for (StringRef name : {"__talos_eval_promotion_latched_v1"})
     if (auto global = module.lookupSymbol<LLVM::GlobalOp>(name))
       LLVM::StoreOp::create(
           builder, location,
           LLVM::ZeroOp::create(builder, location, global.getGlobalType()),
           LLVM::AddressOfOp::create(builder, location, pointer, name));
   if (auto dirty = module.lookupSymbol<LLVM::GlobalOp>(
-          "__obelisk_eval_route_promotion_dirty_v1"))
+          "__talos_eval_route_promotion_dirty_v1"))
     LLVM::StoreOp::create(
         builder, location,
         llvmConstant(builder, location, builder.getI8Type(), 1),
@@ -299,11 +299,11 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
   LLVM::ReturnOp::create(builder, location, ValueRange{});
 
   auto request = getOrDeclareLLVMFunction(
-      module, "__obelisk_eval_proof_aggregate_recheck_v1", voidType, {});
+      module, "__talos_eval_proof_aggregate_recheck_v1", voidType, {});
   builder.setInsertionPointToStart(request.addEntryBlock(builder));
   // A gain in knownness cannot invalidate a positive proof. Only cached
   // failed scans need to become eligible for another boundary check.
-  for (StringRef name : {"__obelisk_eval_route_promotion_dirty_v1"})
+  for (StringRef name : {"__talos_eval_route_promotion_dirty_v1"})
     if (auto global = module.lookupSymbol<LLVM::GlobalOp>(name))
       LLVM::StoreOp::create(
           builder, location,
@@ -312,7 +312,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
   LLVM::ReturnOp::create(builder, location, ValueRange{});
   builder.setInsertionPointToStart(recheckEntry);
   auto recheckLookup = getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_promotion_recheck_ranges", voidType,
+      module, "talos_rt_v1_native_promotion_recheck_ranges", voidType,
       {pointer, i64, pointer, pointer, i64, i64});
   LLVM::CallOp::create(
       builder, location, recheckLookup,
@@ -327,7 +327,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
   LLVM::ReturnOp::create(builder, location, ValueRange{});
 
   auto lookup = getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_promotion_invalidate_ranges", voidType,
+      module, "talos_rt_v1_native_promotion_invalidate_ranges", voidType,
       {pointer, i64, pointer, pointer, i64, i64});
   builder.setInsertionPointToStart(entry);
   LLVM::CallOp::create(
@@ -355,7 +355,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
     auto i32 = builder.getI32Type();
     auto starts = LLVM::GlobalOp::create(
         builder, location, LLVM::LLVMArrayType::get(i32, buckets.starts.size()),
-        true, LLVM::Linkage::Internal, "__obelisk_eval_proof_bucket_starts_v1",
+        true, LLVM::Linkage::Internal, "__talos_eval_proof_bucket_starts_v1",
         DenseIntElementsAttr::get(
             RankedTensorType::get({int64_t(buckets.starts.size())}, i32),
             ArrayRef<uint32_t>(buckets.starts)),
@@ -363,7 +363,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
     auto records = LLVM::GlobalOp::create(
         builder, location,
         LLVM::LLVMArrayType::get(i64, buckets.records.size()), true,
-        LLVM::Linkage::Internal, "__obelisk_eval_proof_bucket_records_v1",
+        LLVM::Linkage::Internal, "__talos_eval_proof_bucket_records_v1",
         DenseIntElementsAttr::get(
             RankedTensorType::get({int64_t(buckets.records.size())}, i64),
             ArrayRef<uint64_t>(buckets.records)),
@@ -398,9 +398,9 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module,
       LLVM::ReturnOp::create(builder, location, ValueRange{});
     };
     specialize(hook, entry, reset,
-               "obelisk_rt_v1_native_promotion_invalidate_buckets");
+               "talos_rt_v1_native_promotion_invalidate_buckets");
     specialize(recheck, recheckEntry, request,
-               "obelisk_rt_v1_native_promotion_recheck_buckets");
+               "talos_rt_v1_native_promotion_recheck_buckets");
   }
   return success();
 }
@@ -410,9 +410,9 @@ struct NativeProofPublicationInputs {
   explicit NativeProofPublicationInputs(Operation *operation) {
     auto module = cast<ModuleOp>(operation);
     auto hook = module.lookupSymbol<LLVM::LLVMFuncOp>(
-        "__obelisk_eval_promotion_invalidate_range_v1");
+        "__talos_eval_promotion_invalidate_range_v1");
     auto dependencies = module.lookupSymbol<LLVM::GlobalOp>(
-        "__obelisk_eval_proof_dependencies_v1");
+        "__talos_eval_proof_dependencies_v1");
     active = hook && dependencies;
     if (!active)
       return;
@@ -463,8 +463,8 @@ struct NativeFunctionProofPublications {
     };
     auto bits = inputs.bits;
     auto disjointStore = [&](LLVM::StoreOp store) {
-      if (auto range = ::obelisk::schedule::get<
-              ::obelisk::schedule::Field::EvalUnknownWriteRange>(store)) {
+      if (auto range = ::talos::schedule::get<
+              ::talos::schedule::Field::EvalUnknownWriteRange>(store)) {
         // The generated dynamic store's clipped mask proves containment.
         // Missing or malformed evidence is conservative, never a guessed lane.
         if (bits && range.size() == 2 && range[0] >= 0 && range[1] > 0 &&
@@ -503,7 +503,7 @@ struct NativeFunctionProofPublications {
       while (auto gep = address.getDefiningOp<LLVM::GEPOp>())
         address = gep.getBase();
       auto global = address.getDefiningOp<LLVM::AddressOfOp>();
-      if (!global || global.getGlobalName() != "__obelisk_state_unknown" ||
+      if (!global || global.getGlobalName() != "__talos_state_unknown" ||
           disjointStore(store))
         continue;
       if (!isa<IntegerType>(store.getValue().getType())) {
@@ -569,7 +569,7 @@ public:
       Value delta =
           LLVM::XOrOp::create(builder, location, old, store.getValue());
       Value base = LLVM::AddressOfOp::create(builder, location, pointer,
-                                             "__obelisk_state_unknown");
+                                             "__talos_state_unknown");
       Value bytes = LLVM::SubOp::create(
           builder, location,
           LLVM::PtrToIntOp::create(builder, location, i64, store.getAddr()),
@@ -619,7 +619,7 @@ public:
         LLVM::CallOp::create(
             builder, location, TypeRange{},
             SymbolRefAttr::get(context,
-                               "__obelisk_eval_promotion_publish_unknown_v1"),
+                               "__talos_eval_promotion_publish_unknown_v1"),
             ValueRange{offset, chunk, nextChunk})
             .setCConv(LLVM::cconv::CConv::PreserveMost);
         LLVM::BrOp::create(builder, location, ValueRange{}, continuation);
@@ -632,17 +632,17 @@ public:
 
 LogicalResult materializeNativePromotionWrites(ModuleOp module) {
   auto hook = module.lookupSymbol<LLVM::LLVMFuncOp>(
-      "__obelisk_eval_promotion_invalidate_range_v1");
+      "__talos_eval_promotion_invalidate_range_v1");
   auto dependencies = module.lookupSymbol<LLVM::GlobalOp>(
-      "__obelisk_eval_proof_dependencies_v1");
+      "__talos_eval_proof_dependencies_v1");
   if (!hook || !dependencies)
     return success();
   auto coverage =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalProofCoverage>(
+      ::talos::schedule::get<::talos::schedule::Field::EvalProofCoverage>(
           dependencies);
   if (!coverage || coverage.size() % 2)
     return dependencies.emitError("missing verified proof coverage");
-  ::obelisk::schedule::remove<::obelisk::schedule::Field::EvalProofCoverage>(
+  ::talos::schedule::remove<::talos::schedule::Field::EvalProofCoverage>(
       dependencies);
   MLIRContext *context = module.getContext();
   OpBuilder builder(context);
@@ -650,7 +650,7 @@ LogicalResult materializeNativePromotionWrites(ModuleOp module) {
   Type i64 = builder.getI64Type();
   Type voidType = LLVM::LLVMVoidType::get(context);
   auto maskHook = getOrDeclareLLVMFunction(
-      module, "__obelisk_eval_promotion_invalidate_mask_v1", voidType,
+      module, "__talos_eval_promotion_invalidate_mask_v1", voidType,
       {i64, i64});
   maskHook->setAttr("passthrough",
                     builder.getArrayAttr({builder.getStringAttr("cold"),
@@ -696,13 +696,13 @@ LogicalResult materializeNativePromotionWrites(ModuleOp module) {
   builder.setInsertionPointAfter(maskHook);
   auto recheckMask =
       cast<LLVM::LLVMFuncOp>(builder.clone(*maskHook.getOperation()));
-  recheckMask.setSymName("__obelisk_eval_promotion_recheck_mask_v1");
+  recheckMask.setSymName("__talos_eval_promotion_recheck_mask_v1");
   recheckMask.walk([&](LLVM::CallOp call) {
     if (call.getCallee() == hook.getSymName())
-      call.setCallee("__obelisk_eval_promotion_recheck_range_v1");
+      call.setCallee("__talos_eval_promotion_recheck_range_v1");
   });
   auto publish = getOrDeclareLLVMFunction(
-      module, "__obelisk_eval_promotion_publish_unknown_v1", voidType,
+      module, "__talos_eval_promotion_publish_unknown_v1", voidType,
       {i64, i64, i64});
   // All state inputs are explicit old/new unknown-mask deltas. The callees
   // invalidate/recheck proof metadata without acquiring state or running an
@@ -743,9 +743,9 @@ std::unique_ptr<Pass> createPublishNativeFunctionProofsPass() {
   return std::make_unique<PublishNativeFunctionProofsPass>();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-namespace obelisk {
+namespace talos {
 namespace {
 class MaterializeNativePromotionRangeIndexPass final
     : public impl::MaterializeNativePromotionRangeIndexPassBase<
@@ -760,4 +760,4 @@ public:
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

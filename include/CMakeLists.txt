@@ -1,1 +1,1 @@
-add_subdirectory(obelisk)
+add_subdirectory(talos)

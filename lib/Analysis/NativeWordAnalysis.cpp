@@ -1,15 +1,15 @@
-#include "obelisk/Analysis/NativeWordAnalysis.h"
+#include "talos/Analysis/NativeWordAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/ScopedIntegerRangeAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 bool isWordReferenceIdentity(Operation *op) {
   if (!isa<sim::SimRefExtractOp, sim::SimRefSubelementOp>(op))
     return false;
@@ -598,4 +598,4 @@ NativeWordAnalysis::NativeWordAnalysis(sim::SimFuncOp function,
   };
   forEachLoopValue(loop, record);
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

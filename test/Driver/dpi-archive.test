@@ -1,6 +1,6 @@
 // RUN: %target_clang %target_pic -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
 // RUN: %llvm_dist/bin/llvm-ar rcs %t.a %t.o
-// RUN: obelisk %S/dpi.sv %t.a -o %t.archive
+// RUN: talos %S/dpi.sv %t.a -o %t.archive
 // RUN: %t.archive | FileCheck %s --check-prefix=OUTPUT
 
 // OUTPUT: vector-ok

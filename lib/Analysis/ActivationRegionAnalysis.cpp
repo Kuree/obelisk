@@ -1,5 +1,5 @@
 //===- ActivationRegionAnalysis.cpp - CFG activation regions -------------===//
-#include "obelisk/Analysis/ActivationRegionAnalysis.h"
+#include "talos/Analysis/ActivationRegionAnalysis.h"
 #include "mlir/Analysis/CFGLoopInfo.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -12,19 +12,19 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/RegionUtils.h"
-#include "obelisk/Analysis/ActivationControlFlow.h"
-#include "obelisk/Analysis/BoundedLoopAnalysis.h"
-#include "obelisk/Analysis/LocalStorageAnalysis.h"
-#include "obelisk/Analysis/SSAValueAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Analysis/ActivationControlFlow.h"
+#include "talos/Analysis/BoundedLoopAnalysis.h"
+#include "talos/Analysis/LocalStorageAnalysis.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/SetVector.h"
 #include <queue>
 #include <set>
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 using Ranges = ActivationMemoryAnalysis::Ranges;
 
@@ -33,7 +33,7 @@ using Ranges = ActivationMemoryAnalysis::Ranges;
 LogicalResult canonicalizeControl(Operation *operation) {
   RewritePatternSet patterns(operation->getContext());
   operation->getContext()
-      ->getLoadedDialect<sim::ObeliskSimulationDialect>()
+      ->getLoadedDialect<sim::TalosSimulationDialect>()
       ->getCanonicalizationPatterns(patterns);
   for (RegisteredOperationName name :
        operation->getContext()->getRegisteredOperations())
@@ -1474,4 +1474,4 @@ OwningOpRef<sim::SimFuncOp> cloneActivationSlice(const ActivationSlice &slice,
   return cloneSliceWithTemporaries(slice, mapping ? *mapping : localMapping,
                                    temporaries);
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

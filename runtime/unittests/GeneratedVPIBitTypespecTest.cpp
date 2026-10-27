@@ -5,8 +5,8 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -16,24 +16,24 @@
 
 namespace {
 TEST(GeneratedDesignDatabase, BitTypespec) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -50,14 +50,14 @@ TEST(GeneratedDesignDatabase, BitTypespec) {
       0,
       nullptr,
       0};
-  obelisk_rt_context *raw = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &raw),
-            OBELISK_RT_OK);
-  std::unique_ptr<obelisk_rt_context, decltype(&obelisk_rt_v1_context_destroy)>
-      runtime(raw, obelisk_rt_v1_context_destroy);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(raw, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(raw), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(raw), OBELISK_RT_OK);
+  talos_rt_context *raw = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &raw),
+            TALOS_RT_OK);
+  std::unique_ptr<talos_rt_context, decltype(&talos_rt_v1_context_destroy)>
+      runtime(raw, talos_rt_v1_context_destroy);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(raw, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(raw), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(raw), TALOS_RT_OK);
   struct Case {
     const char *name;
     int index;

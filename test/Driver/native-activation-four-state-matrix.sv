@@ -1,8 +1,8 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
+// RUN: talos -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O3 --vpi=off --native-scheduler=generic %s -o %t.generic
 // RUN: %t.generic | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.eval 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: talos -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.eval 2>&1 | FileCheck %s --check-prefix=PLAN
 // RUN: %t.eval | FileCheck %s
 // LRM 4.6/4.7: independent publications may be sliced, but the temporary's
 // saved value precedes its overwrite. LRM 11.4.11 preserves the per-bit X/Z
@@ -10,8 +10,8 @@
 // instead retains state for unknown selectors (12.5 and 9.2.2.2.1).
 // Exercise all 1024 combinations, with a sequential reference calculation
 // that does not share the request/response scheduling graph.
-// PLAN: obelisk statement scheduling: eligible=2 cohorts=1 plans=1 dataflow=1
-// PLAN-NOT: checkpoint admission: {{.*}}__obelisk_region_kernel
+// PLAN: talos statement scheduling: eligible=2 cohorts=1 plans=1 dataflow=1
+// PLAN-NOT: checkpoint admission: {{.*}}__talos_region_kernel
 // CHECK: checked 1024 four-state activations
 module top;
   logic [1:0] seed, mask;

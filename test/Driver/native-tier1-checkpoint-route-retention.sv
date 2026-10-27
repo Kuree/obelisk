@@ -1,8 +1,8 @@
-// RUN: obelisk -O3 --native-scheduler=eval --top=clockless_top %s -o %t.clockless
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.clockless 2> %t.clockless.trace | FileCheck %s
+// RUN: talos -O3 --native-scheduler=eval --top=clockless_top %s -o %t.clockless
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.clockless 2> %t.clockless.trace | FileCheck %s
 // RUN: FileCheck %s --check-prefix=EVAL < %t.clockless.trace
-// RUN: obelisk -O3 --native-scheduler=eval --top=periodic_top %s -o %t.periodic
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.periodic 2> %t.periodic.trace | FileCheck %s
+// RUN: talos -O3 --native-scheduler=eval --top=periodic_top %s -o %t.periodic
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.periodic 2> %t.periodic.trace | FileCheck %s
 // RUN: FileCheck %s --check-prefix=PERIODIC < %t.periodic.trace
 
 // IEEE 1800-2023 6.8, 10.4.2: retaining an eval route across a runtime

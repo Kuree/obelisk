@@ -1,13 +1,13 @@
 // Bind provenance is useful independently of configuration selection. The
 // target, inserted instance, and inserted descendants are distinguished.
-// RUN: obelisk -emit-bindings %s \
+// RUN: talos -emit-bindings %s \
 // RUN:   | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk -emit-slang -emit-bindings %s \
+// RUN: talos -emit-slang -emit-bindings %s \
 // RUN:   | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk -emit-bindings -emit-slang %s \
+// RUN: talos -emit-bindings -emit-slang %s \
 // RUN:   | FileCheck %s --check-prefix=LAST-SLANG
-// RUN: obelisk -emit-obelisk %s \
-// RUN:   | FileCheck %s --check-prefix=OBELISK \
+// RUN: talos -emit-talos %s \
+// RUN:   | FileCheck %s --check-prefix=TALOS \
 // RUN:       --implicit-check-not=is_from_bind \
 // RUN:       --implicit-check-not=is_below_bind \
 // RUN:       --implicit-check-not=selected_cell
@@ -51,5 +51,5 @@ bind target bound_checker inserted_checker();
 
 // The checker inventory survives semantic conversion, while opt-in report
 // provenance does not enter executable IR.
-// OBELISK: obelisk.sv.symbol.checker_instance
-// OBELISK: obelisk.sv.symbol.checker_instance
+// TALOS: talos.sv.symbol.checker_instance
+// TALOS: talos.sv.symbol.checker_instance

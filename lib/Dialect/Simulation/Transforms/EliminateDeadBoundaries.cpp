@@ -1,10 +1,10 @@
 //===- EliminateDeadBoundaries.cpp - Prune simulation boundaries --------===//
 
 #include "EliminateDeadBoundaries.h"
-#include "obelisk/Conversion/SimulationToSchedule/Utils.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Conversion/SimulationToSchedule/Utils.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
 
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
@@ -19,14 +19,14 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMELIMINATEDEADBOUNDARIESPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMELIMINATEDEADBOUNDARIESPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 
-using namespace obelisk::simlowering;
+using namespace talos::simlowering;
 
 struct BoundarySite {
   Operation *operation;
@@ -1065,15 +1065,15 @@ eliminateDeadSimulationBoundaries(sim::SimDesignOp design,
 
 namespace {
 
-class ObeliskSimEliminateDeadBoundariesPass final
-    : public impl::ObeliskSimEliminateDeadBoundariesPassBase<
-          ObeliskSimEliminateDeadBoundariesPass> {
+class TalosSimEliminateDeadBoundariesPass final
+    : public impl::TalosSimEliminateDeadBoundariesPassBase<
+          TalosSimEliminateDeadBoundariesPass> {
 public:
-  using Base = impl::ObeliskSimEliminateDeadBoundariesPassBase<
-      ObeliskSimEliminateDeadBoundariesPass>;
+  using Base = impl::TalosSimEliminateDeadBoundariesPassBase<
+      TalosSimEliminateDeadBoundariesPass>;
   using Base::Base;
-  ObeliskSimEliminateDeadBoundariesPass(
-      const ObeliskSimEliminateDeadBoundariesPass &other)
+  TalosSimEliminateDeadBoundariesPass(
+      const TalosSimEliminateDeadBoundariesPass &other)
       : Base(other) {}
 
   void runOnOperation() override {
@@ -1113,4 +1113,4 @@ private:
 };
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

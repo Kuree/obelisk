@@ -1,10 +1,10 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O3 -emit-sim %t/random.sv -o %t/random.mlir
+// RUN: talos -O3 -emit-sim %t/random.sv -o %t/random.mlir
 // RUN: FileCheck %s --check-prefix=REJECTED < %t/random.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-random.test.
 
-// REJECTED-NOT: __obelisk_fused_
+// REJECTED-NOT: __talos_fused_
 
 //--- random.sv
 module process_random;

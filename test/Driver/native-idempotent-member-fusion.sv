@@ -1,11 +1,11 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
+// RUN: talos -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.eval 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: talos -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.eval 2>&1 | FileCheck %s --check-prefix=PLAN
 // RUN: %t.eval | FileCheck %s
 // A conditional hold participates in the request/response cycle. Its old state
 // and response publication must stay in one slice, including for X/Z controls.
-// PLAN: obelisk statement scheduling: eligible=2 cohorts=1 plans=1 dataflow=1
-// PLAN-NOT: checkpoint admission: {{.*}}function=__obelisk_region_kernel
+// PLAN: talos statement scheduling: eligible=2 cohorts=1 plans=1 dataflow=1
+// PLAN-NOT: checkpoint admission: {{.*}}function=__talos_region_kernel
 // CHECK: result=xx
 // CHECK-NEXT: result=10
 // CHECK-NEXT: result=10

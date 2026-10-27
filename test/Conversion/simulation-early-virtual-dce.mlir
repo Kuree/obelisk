@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(symbol-dce,obelisk-sim-devirtualize-class-calls))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(symbol-dce,talos-sim-devirtualize-class-calls))' | FileCheck %s
 
 module {
   simulation.design @classes {

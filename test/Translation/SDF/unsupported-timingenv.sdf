@@ -1,5 +1,5 @@
-// RUN: obelisk-translate --import-sdf %s | FileCheck %s
-// RUN: obelisk-translate --import-sdf %s | obelisk-opt | FileCheck %s
+// RUN: talos-translate --import-sdf %s | FileCheck %s
+// RUN: talos-translate --import-sdf %s | talos-opt | FileCheck %s
 
 (DELAYFILE
   (SDFVERSION "4.0")
@@ -11,13 +11,13 @@
     (TIMINGCHECK (SETUP source (posedge destination) (1)))))
 
 // IEEE 1800-2017 32.3 requires TIMINGENV data unrelated to SystemVerilog
-// timing to be ignored without warning. Obelisk
+// timing to be ignored without warning. Talos
 // deliberately omits unsupported environment constraints from the transient
 // import dialect while retaining supported CELL data for static application.
-// CHECK: obelisk_sdf.delay_file
+// CHECK: talos_sdf.delay_file
 // CHECK-NOT: PATHCONSTRAINT
 // CHECK-NOT: timing_env
-// CHECK: obelisk_sdf.cell
+// CHECK: talos_sdf.cell
 // CHECK-SAME: "dut"
 // CHECK-SAME: instance "top/dut"
-// CHECK: obelisk_sdf.timing_check setup
+// CHECK: talos_sdf.timing_check setup

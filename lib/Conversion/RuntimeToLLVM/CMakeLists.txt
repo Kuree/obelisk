@@ -1,4 +1,4 @@
-add_mlir_library(ObeliskRuntimeToLLVM
+add_mlir_library(TalosRuntimeToLLVM
   EmbeddedDesign.cpp
   PrepareRuntimeToLLVM.cpp
   RuntimeToLLVM.cpp
@@ -6,12 +6,12 @@ add_mlir_library(ObeliskRuntimeToLLVM
   RuntimeToLLVMPatterns.cpp
 
   DEPENDS
-  ObeliskConversionPassIncGen
+  TalosConversionPassIncGen
 
   LINK_LIBS PUBLIC
-  ObeliskRuntimeIR
-  ObeliskSimulationAnalysis
-  ObeliskSimulationIR
+  TalosRuntimeIR
+  TalosSimulationAnalysis
+  TalosSimulationIR
   MLIRFuncDialect
   MLIRFuncTransforms
   MLIRIR
@@ -21,6 +21,6 @@ add_mlir_library(ObeliskRuntimeToLLVM
   MLIRTransforms
 )
 
-target_include_directories(ObeliskRuntimeToLLVM PRIVATE
+target_include_directories(TalosRuntimeToLLVM PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )

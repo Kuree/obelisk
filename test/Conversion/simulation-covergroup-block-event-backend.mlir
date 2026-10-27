@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s '--encode-obelisk-sim-to-bytecode=vpi=off' \
-// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
+// RUN: talos-opt %s '--encode-talos-sim-to-bytecode=vpi=off' \
+// RUN:   --test-talos-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
@@ -74,13 +74,13 @@ module attributes {
   }
 }
 
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_covergroup_block_event_register(!llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, i32, !llvm.ptr, !llvm.ptr, i32) -> i32
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_covergroup_block_event_fire(!llvm.ptr, i64, i32, !llvm.ptr) -> i32
+// NATIVE-DAG: llvm.func @talos_rt_v1_covergroup_block_event_register(!llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, i32, !llvm.ptr, !llvm.ptr, i32) -> i32
+// NATIVE-DAG: llvm.func @talos_rt_v1_covergroup_block_event_fire(!llvm.ptr, i64, i32, !llvm.ptr) -> i32
 // NATIVE-LABEL: llvm.func @run(
 // NATIVE: llvm.mlir.constant(101 : i64)
 // NATIVE: llvm.mlir.constant(102 : i64)
-// NATIVE: llvm.call @obelisk_rt_v1_covergroup_block_event_register
-// NATIVE-COUNT-2: llvm.call @obelisk_rt_v1_covergroup_block_event_fire
+// NATIVE: llvm.call @talos_rt_v1_covergroup_block_event_register
+// NATIVE-COUNT-2: llvm.call @talos_rt_v1_covergroup_block_event_fire
 // NATIVE-NOT: simulation.covergroup.block_event
 
 // BYTECODE: intrinsic {{.*}}id=0x00010474 inputs=11 outputs=0 flags=0

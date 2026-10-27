@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s 2>&1 | FileCheck %s
+// RUN: not talos-opt %s 2>&1 | FileCheck %s
 
 !bytes = !simulation.unpacked_array<0 : 1 x i8>
 

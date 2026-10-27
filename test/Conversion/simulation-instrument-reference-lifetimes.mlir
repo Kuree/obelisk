@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-instrument-reference-lifetimes)))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-instrument-reference-lifetimes,obelisk-sim-instrument-reference-lifetimes)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-instrument-reference-lifetimes)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-instrument-reference-lifetimes,talos-sim-instrument-reference-lifetimes)))' | FileCheck %s
 
 module {
   simulation.design @reference_lifetimes {

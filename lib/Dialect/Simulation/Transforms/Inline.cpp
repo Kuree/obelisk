@@ -1,10 +1,10 @@
-//===- Inline.cpp - Obelisk-owned simulation inlining policy ------------===//
+//===- Inline.cpp - Talos-owned simulation inlining policy ------------===//
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Analysis/CallGraph.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -30,10 +30,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMINLINEPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMINLINEPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 
@@ -154,18 +154,18 @@ computeRecursiveFunctions(const llvm::StringMap<sim::SimFuncOp> &functions) {
   return recursive;
 }
 
-class ObeliskSimInlinePass final
-    : public impl::ObeliskSimInlinePassBase<ObeliskSimInlinePass> {
+class TalosSimInlinePass final
+    : public impl::TalosSimInlinePassBase<TalosSimInlinePass> {
 public:
-  using Base = impl::ObeliskSimInlinePassBase<ObeliskSimInlinePass>;
+  using Base = impl::TalosSimInlinePassBase<TalosSimInlinePass>;
   using Base::Base;
-  ObeliskSimInlinePass(const ObeliskSimInlinePass &other) : Base(other) {}
+  TalosSimInlinePass(const TalosSimInlinePass &other) : Base(other) {}
 
   void runOnOperation() override;
 
   static LogicalResult runPipelineHelper(Pass &pass, OpPassManager &pipeline,
                                          Operation *operation) {
-    return cast<ObeliskSimInlinePass>(pass).runPipeline(pipeline, operation);
+    return cast<TalosSimInlinePass>(pass).runPipeline(pipeline, operation);
   }
 
 private:
@@ -182,7 +182,7 @@ private:
                            "profitable calls rejected by growth budgets"};
 };
 
-void ObeliskSimInlinePass::runOnOperation() {
+void TalosSimInlinePass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   if (optLevel > 3) {
     design.emitOpError("inliner optimization level must be between 0 and 3");
@@ -332,7 +332,7 @@ void ObeliskSimInlinePass::runOnOperation() {
   DenseMap<Operation *, bool> leafCache;
   llvm::DenseSet<uint64_t> selectedInlineIDs;
   static constexpr StringLiteral selectedInlineAttr =
-      "__obelisk_inline_selection";
+      "__talos_inline_selection";
 
   CallGraph &callGraph = getAnalysis<CallGraph>();
   llvm::DenseSet<Operation *> recursiveFunctions =
@@ -418,7 +418,7 @@ void ObeliskSimInlinePass::runOnOperation() {
   // MLIR rejects some calls (notably self-recursive calls and declarations)
   // before consulting the profitability callback. Classify the original call
   // inventory up front so every SimCall contributes deterministic policy
-  // statistics and every legality miss can produce an Obelisk remark.
+  // statistics and every legality miss can produce an Talos remark.
   llvm::SmallPtrSet<Operation *, 32> initialCalls;
   llvm::SmallPtrSet<Operation *, 32> initiallyRejected;
   for (sim::SimFuncOp function :
@@ -561,8 +561,8 @@ void ObeliskSimInlinePass::runOnOperation() {
     // callees have already passed the normal tiny/specialization threshold;
     // allow a bounded instance body to form while leaving genuinely large RTL
     // processes outlined.
-    if (::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalInstanceCoordinator>(caller))
+    if (::talos::schedule::has<
+            ::talos::schedule::Field::EvalInstanceCoordinator>(caller))
       callerLimit = std::max(
           callerLimit,
           addSaturating(callerBaselines.lookup(caller.getOperation()), 4096));
@@ -679,4 +679,4 @@ void ObeliskSimInlinePass::runOnOperation() {
 }
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

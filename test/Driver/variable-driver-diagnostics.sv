@@ -1,4 +1,4 @@
-// RUN: not obelisk --std=1800-2017 -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not talos --std=1800-2017 -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
 
 // IEEE 1800-2017 Clause 6.5: variables may be written by one continuous
 // assignment, one primitive output, or one module/interface output, but those

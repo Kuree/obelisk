@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --mlir-timing %s -o %t.runtime-calendar 2> %t.timing
+// RUN: talos -O3 --mlir-timing %s -o %t.runtime-calendar 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
-// RUN: obelisk -O3 -DGENERATED_CALENDAR %s -o %t.generated-calendar
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
+// RUN: talos -O3 -DGENERATED_CALENDAR %s -o %t.generated-calendar
+// RUN: talos -O0 --native-scheduler=generic %s -o %t.reference
 // RUN: %t.reference > %t.reference.out 2>&1
 // RUN: %t.runtime-calendar > %t.runtime-calendar.out 2>&1 && diff -u %t.reference.out %t.runtime-calendar.out
 // RUN: %t.generated-calendar > %t.generated-calendar.out 2>&1 && diff -u %t.reference.out %t.generated-calendar.out
@@ -55,7 +55,7 @@ module native_eval_deferred_violation_report;
   end
 endmodule
 
-// TIER: obelisk eval executor inventory: {{.*}} runtime_checkpoints=0
+// TIER: talos eval executor inventory: {{.*}} runtime_checkpoints=0
 // CHECK: :43:5: warning: unique case violation: no match
 // CHECK-NEXT: :48:5: warning: priority case violation: no match
 // CHECK-NEXT: :43:5: warning: unique case violation: multiple matches

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics -o /dev/null
+// RUN: talos-opt %s --split-input-file --verify-diagnostics -o /dev/null
 
 // Valid parameter anchors reach symbol-use verification as well as the
 // attribute verifier. Both package and subroutine declaration scopes own them.

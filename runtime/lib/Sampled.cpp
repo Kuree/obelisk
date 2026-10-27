@@ -2,7 +2,7 @@
 
 #include "RuntimeInternal.h"
 
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include <cstring>
 #include <limits>
@@ -31,9 +31,9 @@ bool checkedBytes(uint64_t bits, size_t &bytes) {
   return true;
 }
 
-const obelisk_rt_execution_extension_v1 *
-executionExtension(const obelisk_rt_execution_descriptor_v1 &execution) {
-  return reinterpret_cast<const obelisk_rt_execution_extension_v1 *>(
+const talos_rt_execution_extension_v1 *
+executionExtension(const talos_rt_execution_descriptor_v1 &execution) {
+  return reinterpret_cast<const talos_rt_execution_extension_v1 *>(
       reinterpret_cast<const uint8_t *>(&execution) + execution.reserved);
 }
 
@@ -53,15 +53,15 @@ void copyPackedRange(uint8_t *destination, const uint8_t *source,
     destination[bytes - 1] &= static_cast<uint8_t>((1u << (bitWidth % 8)) - 1);
 }
 
-bool resolveCanonicalRange(const obelisk_rt_context *context, uint64_t handle,
+bool resolveCanonicalRange(const talos_rt_context *context, uint64_t handle,
                            uint64_t width, uint64_t &start) {
-  obelisk_rt_stable_handle_v1 decoded{};
-  if (!obelisk_rt_stable_handle_decode(handle, &decoded) || decoded.offset < 0)
+  talos_rt_stable_handle_v1 decoded{};
+  if (!talos_rt_stable_handle_decode(handle, &decoded) || decoded.offset < 0)
     return false;
   uint64_t offset = static_cast<uint64_t>(decoded.offset);
-  if (decoded.kind == OBELISK_RT_STABLE_HANDLE_GLOBAL) {
+  if (decoded.kind == TALOS_RT_STABLE_HANDLE_GLOBAL) {
     start = offset;
-  } else if (decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC) {
+  } else if (decoded.kind == TALOS_RT_STABLE_HANDLE_STATIC) {
     const NativeStaticState *state = nullptr;
     if (decoded.id < context->nativeScheduleStaticStateIndex.size() &&
         context->nativeScheduleStaticStateIndex[decoded.id].bitWidth != 0)
@@ -79,11 +79,11 @@ bool resolveCanonicalRange(const obelisk_rt_context *context, uint64_t handle,
   return start <= total && width <= total - start;
 }
 
-bool resolveSnapshotRange(const obelisk_rt_context *context,
+bool resolveSnapshotRange(const talos_rt_context *context,
                           uint64_t canonicalStart, uint64_t width,
                           uint64_t &snapshotStart) {
-  const obelisk_rt_execution_descriptor_v1 *execution = context->execution;
-  const obelisk_rt_execution_extension_v1 *extension =
+  const talos_rt_execution_descriptor_v1 *execution = context->execution;
+  const talos_rt_execution_extension_v1 *extension =
       execution ? executionExtension(*execution) : nullptr;
   uint64_t low = 0, high = extension ? extension->sampled_range_count : 0;
   while (low < high) {
@@ -95,7 +95,7 @@ bool resolveSnapshotRange(const obelisk_rt_context *context,
   }
   if (low == 0)
     return false;
-  const obelisk_rt_sampled_range_v1 &range = extension->sampled_ranges[low - 1];
+  const talos_rt_sampled_range_v1 &range = extension->sampled_ranges[low - 1];
   uint64_t relative = canonicalStart - range.source_bit_offset;
   if (relative > range.bit_width || width > range.bit_width - relative)
     return false;
@@ -105,18 +105,18 @@ bool resolveSnapshotRange(const obelisk_rt_context *context,
 
 } // namespace
 
-obelisk_rt_status
-obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
+talos_rt_status
+talos_rt_capture_preponed_unlocked(talos_rt_context *context) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (!context->execution ||
-      (context->execution->flags & OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT) == 0)
-    return OBELISK_RT_OK;
-  OBELISK_RT_TRY {
-    const obelisk_rt_execution_descriptor_v1 &execution = *context->execution;
-    const obelisk_rt_execution_extension_v1 &extension =
+      (context->execution->flags & TALOS_RT_EXECUTION_PREPONED_SNAPSHOT) == 0)
+    return TALOS_RT_OK;
+  TALOS_RT_TRY {
+    const talos_rt_execution_descriptor_v1 &execution = *context->execution;
+    const talos_rt_execution_extension_v1 &extension =
         *executionExtension(execution);
-    const obelisk_rt_sampled_range_v1 &last =
+    const talos_rt_sampled_range_v1 &last =
         extension.sampled_ranges[extension.sampled_range_count - 1];
     uint64_t snapshotBytes =
         last.snapshot_byte_offset + (last.bit_width + 7) / 8;
@@ -141,7 +141,7 @@ obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
           static_cast<size_t>((execution.state_bit_count + 63) / 64);
       if (context->stateValue.size() != stateWords ||
           context->stateUnknown.size() != stateWords)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       value = reinterpret_cast<const uint8_t *>(context->stateValue.data());
       unknown = reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
     }
@@ -151,7 +151,7 @@ obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
         reinterpret_cast<uint8_t *>(context->preponedUnknown.data());
     uint64_t stateBytes = (execution.state_bit_count + 7) / 8;
     for (uint64_t index = 0; index != extension.sampled_range_count; ++index) {
-      const obelisk_rt_sampled_range_v1 &range =
+      const talos_rt_sampled_range_v1 &range =
           extension.sampled_ranges[index];
       copyPackedRange(sampledValue + range.snapshot_byte_offset, value,
                       stateBytes, range.source_bit_offset, range.bit_width);
@@ -159,26 +159,26 @@ obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
         copyPackedRange(sampledUnknown + range.snapshot_byte_offset, unknown,
                         stateBytes, range.source_bit_offset, range.bit_width);
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-obelisk_rt_status obelisk_rt_recapture_initialized_preponed_unlocked(
-    obelisk_rt_context *context) {
+talos_rt_status talos_rt_recapture_initialized_preponed_unlocked(
+    talos_rt_context *context) {
   if (context->schedulerTime != 0 || context->preponedValue.empty())
-    return OBELISK_RT_OK;
-  return obelisk_rt_capture_preponed_unlocked(context);
+    return TALOS_RT_OK;
+  return talos_rt_capture_preponed_unlocked(context);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_sampled_read(obelisk_rt_context *context, uint64_t stableID,
+extern "C" talos_rt_status
+talos_rt_v1_sampled_read(talos_rt_context *context, uint64_t stableID,
                            uint64_t bitWidth, uint8_t *outValue,
                            uint8_t *outUnknown) {
   size_t bytes = 0;
   if (!context || !outValue || !outUnknown || !checkedBytes(bitWidth, bytes))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   // Fixed-array selection uses this sentinel for an unknown or out-of-range
   // index. Its read is X (zero after conversion to two-state), just as an
   // ordinary invalid array read; it is not a missing runtime object.
@@ -188,10 +188,10 @@ obelisk_rt_v1_sampled_read(obelisk_rt_context *context, uint64_t stableID,
     if (bitWidth % 8)
       outUnknown[bytes - 1] &=
           static_cast<uint8_t>((1u << (bitWidth % 8)) - 1);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     uint64_t canonicalStart = 0, snapshotStart = 0;
     if (!resolveCanonicalRange(context, stableID, bitWidth, canonicalStart) ||
@@ -199,7 +199,7 @@ obelisk_rt_v1_sampled_read(obelisk_rt_context *context, uint64_t stableID,
                               snapshotStart) ||
         context->preponedValue.empty() ||
         (context->preponedUnknown.empty() && !context->twoState()))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     std::memset(outValue, 0, bytes);
     std::memset(outUnknown, 0, bytes);
     const uint8_t *values =
@@ -210,13 +210,13 @@ obelisk_rt_v1_sampled_read(obelisk_rt_context *context, uint64_t stableID,
       setBit(outValue, bit, getBit(values, snapshotStart + bit));
       setBit(outUnknown, bit, getBit(unknowns, snapshotStart + bit));
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_sampled_history(
-    obelisk_rt_context *context, uint64_t siteID, uint64_t bitWidth,
+extern "C" talos_rt_status talos_rt_v1_sampled_history(
+    talos_rt_context *context, uint64_t siteID, uint64_t bitWidth,
     uint64_t depth, uint32_t fourState, uint32_t gate,
     const uint8_t *currentValue, const uint8_t *currentUnknown,
     uint8_t *outValue, uint8_t *outUnknown) {
@@ -225,12 +225,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_sampled_history(
       !currentValue || (fourState && !currentUnknown) || !outValue ||
       !outUnknown || !checkedBytes(bitWidth, bytes) ||
       depth > std::numeric_limits<size_t>::max() / bytes)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (context->activeLogicalProcessToken == 0)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     SampledHistoryState &history =
         context->sampledHistories[context->activeLogicalProcessToken][siteID];
     if (history.bitWidth == 0) {
@@ -245,7 +245,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_sampled_history(
           history.unknown[index * bytes + bytes - 1] &=
               static_cast<uint8_t>((1u << (bitWidth % 8)) - 1);
     } else if (history.bitWidth != bitWidth || history.depth != depth) {
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
     }
 
     uint64_t selected = history.count < depth ? history.count : history.next;
@@ -264,14 +264,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_sampled_history(
       if (history.count < depth)
         ++history.count;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_update(
-    obelisk_rt_context *context, uint64_t siteID, uint64_t bitWidth,
+extern "C" talos_rt_status talos_rt_v1_clocked_sample_update(
+    talos_rt_context *context, uint64_t siteID, uint64_t bitWidth,
     uint64_t depth, uint32_t fourState, uint32_t gate,
     const uint8_t *currentValue, const uint8_t *currentUnknown) {
   size_t bytes = 0;
@@ -279,9 +279,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_update(
       gate > 1 || !currentValue || (fourState && !currentUnknown) ||
       !checkedBytes(bitWidth, bytes) ||
       depth + 1 > std::numeric_limits<size_t>::max() / bytes)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     uint64_t capacity = depth + 1;
     SampledHistoryState &history = context->clockedSampleHistories[siteID];
@@ -297,10 +297,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_update(
           history.unknown[index * bytes + bytes - 1] &=
               static_cast<uint8_t>((1u << (bitWidth % 8)) - 1);
     } else if (history.bitWidth != bitWidth || history.depth != capacity) {
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
     }
     if (!gate)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     std::memcpy(history.value.data() + history.next * bytes, currentValue,
                 bytes);
     if (fourState)
@@ -309,14 +309,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_clocked_sample_update(
     history.next = (history.next + 1) % capacity;
     if (history.count < capacity)
       ++history.count;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_clocked_sample_read(obelisk_rt_context *context, uint64_t siteID,
+extern "C" talos_rt_status
+talos_rt_v1_clocked_sample_read(talos_rt_context *context, uint64_t siteID,
                                   uint64_t bitWidth, uint64_t depth,
                                   uint64_t age, uint32_t fourState,
                                   uint8_t *outValue, uint8_t *outUnknown) {
@@ -324,9 +324,9 @@ obelisk_rt_v1_clocked_sample_read(obelisk_rt_context *context, uint64_t siteID,
   if (!context || siteID == 0 || depth == UINT64_MAX || age > depth ||
       fourState > 1 || !outValue || !outUnknown ||
       !checkedBytes(bitWidth, bytes))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     std::memset(outValue, 0, bytes);
     std::memset(outUnknown, fourState ? UINT8_MAX : 0, bytes);
@@ -334,18 +334,18 @@ obelisk_rt_v1_clocked_sample_read(obelisk_rt_context *context, uint64_t siteID,
       outUnknown[bytes - 1] &= static_cast<uint8_t>((1u << (bitWidth % 8)) - 1);
     auto found = context->clockedSampleHistories.find(siteID);
     if (found == context->clockedSampleHistories.end())
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     const SampledHistoryState &history = found->second;
     uint64_t capacity = depth + 1;
     if (history.bitWidth != bitWidth || history.depth != capacity)
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
     if (age >= history.count)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     uint64_t index = (history.next + capacity - 1 - age) % capacity;
     std::memcpy(outValue, history.value.data() + index * bytes, bytes);
     if (fourState)
       std::memcpy(outUnknown, history.unknown.data() + index * bytes, bytes);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }

@@ -1,17 +1,17 @@
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/Transforms/InliningUtils.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
 
-#include "obelisk/Dialect/Schedule/ScheduleDialect.cpp.inc"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.cpp.inc"
-namespace obelisk::schedule {
+#include "talos/Dialect/Schedule/ScheduleDialect.cpp.inc"
+#include "talos/Dialect/Schedule/ScheduleEnums.cpp.inc"
+namespace talos::schedule {
 static FailureOr<SmallVector<uint64_t>> parseCoveragePoints(AsmParser &parser) {
   SmallVector<uint64_t> points;
   if (failed(parser.parseCommaSeparatedList(AsmParser::Delimiter::Square, [&] {
@@ -24,10 +24,10 @@ static FailureOr<SmallVector<uint64_t>> parseCoveragePoints(AsmParser &parser) {
     return failure();
   return points;
 }
-} // namespace obelisk::schedule
+} // namespace talos::schedule
 #define GET_ATTRDEF_CLASSES
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.cpp.inc"
-namespace obelisk::schedule {
+#include "talos/Dialect/Schedule/ScheduleAttrs.cpp.inc"
+namespace talos::schedule {
 namespace {
 struct ReadyInlinerInterface final : DialectInlinerInterface {
   using DialectInlinerInterface::DialectInlinerInterface;
@@ -44,11 +44,11 @@ void ScheduleDialect::initialize() {
   addInterfaces<ReadyInlinerInterface>();
   addOperations<
 #define GET_OP_LIST
-#include "obelisk/Dialect/Schedule/ScheduleOps.cpp.inc"
+#include "talos/Dialect/Schedule/ScheduleOps.cpp.inc"
       >();
   addAttributes<
 #define GET_ATTRDEF_LIST
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.cpp.inc"
+#include "talos/Dialect/Schedule/ScheduleAttrs.cpp.inc"
       >();
 }
-} // namespace obelisk::schedule
+} // namespace talos::schedule

@@ -1,10 +1,10 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -emit-slang %t/computed.sv | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -O0 -emit-sim %t/computed.sv > %t/computed.mlir
+// RUN: talos -emit-slang %t/computed.sv | FileCheck %s --check-prefix=SLANG
+// RUN: talos -O0 -emit-sim %t/computed.sv > %t/computed.mlir
 // RUN: FileCheck %s --check-prefix=SIM --implicit-check-not=dynamic_extract < %t/computed.mlir
 // RUN: FileCheck %s --check-prefix=COMPUTED < %t/computed.mlir
-// RUN: obelisk -emit-slang %t/literal.sv | FileCheck %s --check-prefix=LITERAL
-// RUN: obelisk -O0 -emit-sim %t/literal.sv | FileCheck %s --check-prefix=SIM --implicit-check-not=dynamic_extract
+// RUN: talos -emit-slang %t/literal.sv | FileCheck %s --check-prefix=LITERAL
+// RUN: talos -O0 -emit-sim %t/literal.sv | FileCheck %s --check-prefix=SIM --implicit-check-not=dynamic_extract
 
 // A part-select bound and a replication count must be constant, and
 // elaboration folds them. Carrying that folded value across means arithmetic

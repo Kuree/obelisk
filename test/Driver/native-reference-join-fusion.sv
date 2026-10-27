@@ -1,11 +1,11 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
+// RUN: talos -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.eval 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: talos -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.eval 2>&1 | FileCheck %s --check-prefix=PLAN
 // RUN: %t.eval | FileCheck %s
 // Merging two stores into a reference-phi block must not introduce a runtime
 // checkpoint in the fused evaluator. Dynamic invalid/X selectors are no-ops.
-// PLAN: obelisk statement scheduling: eligible=2 cohorts=1 plans=1 dataflow=1
-// PLAN-NOT: checkpoint admission: {{.*}}function=__obelisk_region_kernel
+// PLAN: talos statement scheduling: eligible=2 cohorts=1 plans=1 dataflow=1
+// PLAN-NOT: checkpoint admission: {{.*}}function=__talos_region_kernel
 // CHECK: result=03,00
 // CHECK-NEXT: result=00,16
 // CHECK-NEXT: result=00,00

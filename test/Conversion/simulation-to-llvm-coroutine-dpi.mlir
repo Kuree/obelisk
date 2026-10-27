@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | obelisk-translate --allow-unregistered-dialect --mlir-to-llvmir \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
+// RUN:   | talos-translate --allow-unregistered-dialect --mlir-to-llvmir \
 // RUN:   | opt -passes=verify -disable-output
 
 module attributes {
@@ -226,36 +226,36 @@ module attributes {
 // IEEE 1800-2017 Annex H.8 passes scalar input values directly and output or
 // inout formals by pointer. real/realtime use C double; shortreal uses C float.
 // CHECK: llvm.func @transform(f64, f32, !llvm.ptr, !llvm.ptr) -> f32
-// CHECK-LABEL: llvm.func internal @__obelisk_dpi_thunk_22(
+// CHECK-LABEL: llvm.func internal @__talos_dpi_thunk_22(
 // CHECK: llvm.load %{{.*}} : !llvm.ptr -> f64
 // CHECK: llvm.load %{{.*}} : !llvm.ptr -> f32
 // CHECK: llvm.call @transform
 // CHECK: llvm.store %{{.*}}, %{{.*}} : f32, !llvm.ptr
 // CHECK: llvm.store %{{.*}}, %{{.*}} : f64, !llvm.ptr
-// CHECK-LABEL: llvm.func internal @__obelisk_dpi_thunk_21(
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
+// CHECK-LABEL: llvm.func internal @__talos_dpi_thunk_21(
+// CHECK: llvm.call @talos_rt_v1_gc_managed_root_range_push
 // CHECK: llvm.call @mutate
-// CHECK: llvm.call @obelisk_rt_v1_dpi_string_copy
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_pop
-// CHECK-LABEL: llvm.func internal @__obelisk_dpi_thunk_20(
+// CHECK: llvm.call @talos_rt_v1_dpi_string_copy
+// CHECK: llvm.call @talos_rt_v1_gc_managed_root_range_pop
+// CHECK-LABEL: llvm.func internal @__talos_dpi_thunk_20(
 // CHECK: llvm.inttoptr
 // CHECK: llvm.call @bounce_handle
 // CHECK: llvm.ptrtoint
-// CHECK: llvm.func @obelisk_rt_v1_dpi_string_copy
-// CHECK: llvm.func @obelisk_rt_v1_string_view
+// CHECK: llvm.func @talos_rt_v1_dpi_string_copy
+// CHECK: llvm.func @talos_rt_v1_string_view
 // CHECK: llvm.func @echo(!llvm.ptr) -> !llvm.ptr
-// CHECK-LABEL: llvm.func internal @__obelisk_dpi_thunk_19(
-// CHECK: llvm.call @obelisk_rt_v1_string_view
+// CHECK-LABEL: llvm.func internal @__talos_dpi_thunk_19(
+// CHECK: llvm.call @talos_rt_v1_string_view
 // CHECK: llvm.call @echo
-// CHECK: llvm.call @obelisk_rt_v1_dpi_string_copy
-// CHECK-LABEL: llvm.func internal @__obelisk_dpi_thunk_18(
+// CHECK: llvm.call @talos_rt_v1_dpi_string_copy
+// CHECK-LABEL: llvm.func internal @__talos_dpi_thunk_18(
 // CHECK: llvm.call @notify
 // CHECK: llvm.return
 // CHECK: llvm.func @c_add(i32) -> i32
-// CHECK-LABEL: llvm.func internal @__obelisk_dpi_thunk_17(
+// CHECK-LABEL: llvm.func internal @__talos_dpi_thunk_17(
 // CHECK: llvm.call @c_add
 // CHECK: llvm.return
 
 // CHECK-LABEL: llvm.func @call(
-// CHECK: llvm.call @obelisk_rt_v1_import_call
+// CHECK: llvm.call @talos_rt_v1_import_call
 // CHECK-NOT: simulation.dpi.call

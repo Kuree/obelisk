@@ -1,9 +1,9 @@
 // RUN: %split-file %s %t
-// RUN: obelisk-opt %t/positive.mlir \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-static-superstep))' \
+// RUN: talos-opt %t/positive.mlir \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-plan-static-superstep))' \
 // RUN:   | FileCheck %s --check-prefix=POSITIVE
-// RUN: obelisk-opt %t/residual-cycle.mlir \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-static-superstep{missed-remarks=true}))' \
+// RUN: talos-opt %t/residual-cycle.mlir \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-plan-static-superstep{missed-remarks=true}))' \
 // RUN:   > %t/residual-cycle.out 2> %t/residual-cycle.err
 // RUN: FileCheck %s --check-prefix=PARTIAL < %t/residual-cycle.out
 

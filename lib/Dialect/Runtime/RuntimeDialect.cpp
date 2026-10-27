@@ -1,9 +1,9 @@
 //===- RuntimeDialect.cpp - Typed runtime ABI dialect --------------------===//
 
-#include "obelisk/Dialect/Runtime/RuntimeABI.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Runtime/RuntimeABI.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
 
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
@@ -14,21 +14,21 @@
 
 using namespace mlir;
 
-#include "obelisk/Dialect/Runtime/RuntimeDialect.cpp.inc"
-#include "obelisk/Dialect/Runtime/RuntimeEnums.cpp.inc"
+#include "talos/Dialect/Runtime/RuntimeDialect.cpp.inc"
+#include "talos/Dialect/Runtime/RuntimeEnums.cpp.inc"
 
 #define GET_ATTRDEF_CLASSES
-#include "obelisk/Dialect/Runtime/RuntimeAttrs.cpp.inc"
+#include "talos/Dialect/Runtime/RuntimeAttrs.cpp.inc"
 
 #define GET_TYPEDEF_CLASSES
-#include "obelisk/Dialect/Runtime/RuntimeTypes.cpp.inc"
+#include "talos/Dialect/Runtime/RuntimeTypes.cpp.inc"
 
 #define GET_OP_CLASSES
-#include "obelisk/Dialect/Runtime/RuntimeOps.cpp.inc"
+#include "talos/Dialect/Runtime/RuntimeOps.cpp.inc"
 
-namespace obelisk::runtime {
+namespace talos::runtime {
 
-Operation *ObeliskRuntimeDialect::materializeConstant(OpBuilder &builder,
+Operation *TalosRuntimeDialect::materializeConstant(OpBuilder &builder,
                                                       Attribute value,
                                                       Type type,
                                                       Location location) {
@@ -43,32 +43,32 @@ OpFoldResult RTBytesConstantOp::fold(FoldAdaptor) { return getValueAttr(); }
 
 llvm::StringRef getRuntimeSymbol(RuntimeCall call) {
   switch (call) {
-#define OBELISK_RUNTIME_CALL(Name, Op, Symbol, Signature)                      \
+#define TALOS_RUNTIME_CALL(Name, Op, Symbol, Signature)                      \
   case RuntimeCall::Name:                                                      \
     return #Symbol;
-#include "obelisk/Dialect/Runtime/RuntimeABI.def"
-#undef OBELISK_RUNTIME_CALL
+#include "talos/Dialect/Runtime/RuntimeABI.def"
+#undef TALOS_RUNTIME_CALL
   }
   llvm_unreachable("unknown runtime call");
 }
 
 RuntimeSignature getRuntimeSignature(RuntimeCall call) {
   switch (call) {
-#define OBELISK_RUNTIME_CALL(Name, Op, Symbol, Signature)                      \
+#define TALOS_RUNTIME_CALL(Name, Op, Symbol, Signature)                      \
   case RuntimeCall::Name:                                                      \
     return RuntimeSignature::Signature;
-#include "obelisk/Dialect/Runtime/RuntimeABI.def"
-#undef OBELISK_RUNTIME_CALL
+#include "talos/Dialect/Runtime/RuntimeABI.def"
+#undef TALOS_RUNTIME_CALL
   }
   llvm_unreachable("unknown runtime call");
 }
 
 std::optional<RuntimeCall> getRuntimeCall(Operation *operation) {
-#define OBELISK_RUNTIME_CALL(Name, Op, Symbol, Signature)                      \
+#define TALOS_RUNTIME_CALL(Name, Op, Symbol, Signature)                      \
   if (isa<Op>(operation))                                                      \
     return RuntimeCall::Name;
-#include "obelisk/Dialect/Runtime/RuntimeABI.def"
-#undef OBELISK_RUNTIME_CALL
+#include "talos/Dialect/Runtime/RuntimeABI.def"
+#undef TALOS_RUNTIME_CALL
   return std::nullopt;
 }
 
@@ -92,76 +92,76 @@ bool isColdRuntimeCall(RuntimeCall call) {
 }
 
 static_assert(static_cast<uint32_t>(DescriptorKind::Invalid) ==
-              OBELISK_RT_DESCRIPTOR_INVALID);
+              TALOS_RT_DESCRIPTOR_INVALID);
 static_assert(static_cast<uint32_t>(DescriptorKind::Scope) ==
-              OBELISK_RT_DESCRIPTOR_SCOPE);
+              TALOS_RT_DESCRIPTOR_SCOPE);
 static_assert(static_cast<uint32_t>(DescriptorKind::Storage) ==
-              OBELISK_RT_DESCRIPTOR_STORAGE);
+              TALOS_RT_DESCRIPTOR_STORAGE);
 static_assert(static_cast<uint32_t>(DescriptorKind::Net) ==
-              OBELISK_RT_DESCRIPTOR_NET);
+              TALOS_RT_DESCRIPTOR_NET);
 static_assert(static_cast<uint32_t>(DescriptorKind::Driver) ==
-              OBELISK_RT_DESCRIPTOR_DRIVER);
+              TALOS_RT_DESCRIPTOR_DRIVER);
 static_assert(static_cast<uint32_t>(DescriptorKind::Event) ==
-              OBELISK_RT_DESCRIPTOR_EVENT);
+              TALOS_RT_DESCRIPTOR_EVENT);
 static_assert(static_cast<uint32_t>(DescriptorKind::Process) ==
-              OBELISK_RT_DESCRIPTOR_PROCESS);
+              TALOS_RT_DESCRIPTOR_PROCESS);
 static_assert(static_cast<uint32_t>(DescriptorKind::Fragment) ==
-              OBELISK_RT_DESCRIPTOR_FRAGMENT);
+              TALOS_RT_DESCRIPTOR_FRAGMENT);
 static_assert(static_cast<uint32_t>(DescriptorKind::Function) ==
-              OBELISK_RT_DESCRIPTOR_FUNCTION);
+              TALOS_RT_DESCRIPTOR_FUNCTION);
 
 static_assert(static_cast<uint32_t>(ActionKind::Continue) ==
-              OBELISK_RT_FRAGMENT_CONTINUE);
+              TALOS_RT_FRAGMENT_CONTINUE);
 static_assert(static_cast<uint32_t>(ActionKind::Suspend) ==
-              OBELISK_RT_FRAGMENT_SUSPEND);
+              TALOS_RT_FRAGMENT_SUSPEND);
 static_assert(static_cast<uint32_t>(ActionKind::Terminate) ==
-              OBELISK_RT_FRAGMENT_TERMINATE);
+              TALOS_RT_FRAGMENT_TERMINATE);
 
 static_assert(static_cast<uint32_t>(SuspensionKind::None) ==
-              OBELISK_RT_SUSPEND_NONE);
+              TALOS_RT_SUSPEND_NONE);
 static_assert(static_cast<uint32_t>(SuspensionKind::Delay) ==
-              OBELISK_RT_SUSPEND_DELAY);
+              TALOS_RT_SUSPEND_DELAY);
 static_assert(static_cast<uint32_t>(SuspensionKind::Change) ==
-              OBELISK_RT_SUSPEND_CHANGE);
+              TALOS_RT_SUSPEND_CHANGE);
 static_assert(static_cast<uint32_t>(SuspensionKind::Edge) ==
-              OBELISK_RT_SUSPEND_EDGE);
+              TALOS_RT_SUSPEND_EDGE);
 static_assert(static_cast<uint32_t>(SuspensionKind::Event) ==
-              OBELISK_RT_SUSPEND_EVENT);
+              TALOS_RT_SUSPEND_EVENT);
 static_assert(static_cast<uint32_t>(SuspensionKind::Await) ==
-              OBELISK_RT_SUSPEND_AWAIT);
+              TALOS_RT_SUSPEND_AWAIT);
 static_assert(static_cast<uint32_t>(SuspensionKind::Join) ==
-              OBELISK_RT_SUSPEND_JOIN);
+              TALOS_RT_SUSPEND_JOIN);
 static_assert(static_cast<uint32_t>(SuspensionKind::Forever) ==
-              OBELISK_RT_SUSPEND_FOREVER);
+              TALOS_RT_SUSPEND_FOREVER);
 static_assert(static_cast<uint32_t>(SuspensionKind::Frontier) ==
-              OBELISK_RT_SUSPEND_FRONTIER);
+              TALOS_RT_SUSPEND_FRONTIER);
 static_assert(static_cast<uint32_t>(SuspensionKind::EventOrder) ==
-              OBELISK_RT_SUSPEND_EVENT_ORDER);
+              TALOS_RT_SUSPEND_EVENT_ORDER);
 
 static_assert(static_cast<uint32_t>(ExecutionFlags::HasBytecode) ==
-              OBELISK_RT_EXECUTION_HAS_BYTECODE);
+              TALOS_RT_EXECUTION_HAS_BYTECODE);
 static_assert(static_cast<uint32_t>(ExecutionFlags::HasDesignDatabase) ==
-              OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE);
+              TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE);
 static_assert(static_cast<uint32_t>(ExecutionFlags::VPIRead) ==
-              OBELISK_RT_EXECUTION_VPI_READ);
+              TALOS_RT_EXECUTION_VPI_READ);
 static_assert(static_cast<uint32_t>(ExecutionFlags::VPIWrite) ==
-              OBELISK_RT_EXECUTION_VPI_WRITE);
+              TALOS_RT_EXECUTION_VPI_WRITE);
 static_assert(static_cast<uint32_t>(ExecutionFlags::RequireBytecode) ==
-              OBELISK_RT_EXECUTION_REQUIRE_BYTECODE);
+              TALOS_RT_EXECUTION_REQUIRE_BYTECODE);
 static_assert(static_cast<uint32_t>(ExecutionFlags::PreponedSnapshot) ==
-              OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT);
+              TALOS_RT_EXECUTION_PREPONED_SNAPSHOT);
 static_assert(static_cast<uint32_t>(ExecutionFlags::WaveformMetadata) ==
-              OBELISK_RT_EXECUTION_WAVEFORM_METADATA);
+              TALOS_RT_EXECUTION_WAVEFORM_METADATA);
 static_assert(static_cast<uint32_t>(ExecutionFlags::DPIExports) ==
-              OBELISK_RT_EXECUTION_DPI_EXPORTS);
+              TALOS_RT_EXECUTION_DPI_EXPORTS);
 static_assert(static_cast<uint32_t>(ExecutionFlags::ClassBitstream) ==
-              OBELISK_RT_EXECUTION_CLASS_BITSTREAM);
+              TALOS_RT_EXECUTION_CLASS_BITSTREAM);
 static_assert(static_cast<uint32_t>(ExecutionFlags::CoverageSchema) ==
-              OBELISK_RT_EXECUTION_COVERAGE_SCHEMA);
+              TALOS_RT_EXECUTION_COVERAGE_SCHEMA);
 static_assert(static_cast<uint32_t>(ExecutionFlags::PolledCollection) ==
-              OBELISK_RT_EXECUTION_POLLED_COLLECTION);
+              TALOS_RT_EXECUTION_POLLED_COLLECTION);
 static_assert(static_cast<uint32_t>(ExecutionFlags::TwoState) ==
-              OBELISK_RT_EXECUTION_TWO_STATE);
+              TALOS_RT_EXECUTION_TWO_STATE);
 
 ExecutionFlags getExecutionFlags(Operation *module) {
   ExecutionFlagsAttr flags = get<ExecutionFlagSet>(module);
@@ -188,7 +188,7 @@ void setFeatures(Operation *module, Features features, bool required) {
 }
 
 LogicalResult
-ObeliskRuntimeDialect::verifyOperationAttribute(Operation *operation,
+TalosRuntimeDialect::verifyOperationAttribute(Operation *operation,
                                                 NamedAttribute attribute) {
   if (failed(discardable::verify<
              BytecodeImage, DesignDatabase, ExecutionFlagSet, StateBits,
@@ -214,177 +214,177 @@ ObeliskRuntimeDialect::verifyOperationAttribute(Operation *operation,
   return success();
 }
 
-static_assert(static_cast<uint32_t>(Radix::Binary) == OBELISK_RT_RADIX_BINARY);
-static_assert(static_cast<uint32_t>(Radix::Octal) == OBELISK_RT_RADIX_OCTAL);
+static_assert(static_cast<uint32_t>(Radix::Binary) == TALOS_RT_RADIX_BINARY);
+static_assert(static_cast<uint32_t>(Radix::Octal) == TALOS_RT_RADIX_OCTAL);
 static_assert(static_cast<uint32_t>(Radix::Decimal) ==
-              OBELISK_RT_RADIX_DECIMAL);
-static_assert(static_cast<uint32_t>(Radix::Hex) == OBELISK_RT_RADIX_HEX);
+              TALOS_RT_RADIX_DECIMAL);
+static_assert(static_cast<uint32_t>(Radix::Hex) == TALOS_RT_RADIX_HEX);
 
-static_assert(static_cast<uint32_t>(SeekOrigin::Set) == OBELISK_RT_SEEK_SET);
+static_assert(static_cast<uint32_t>(SeekOrigin::Set) == TALOS_RT_SEEK_SET);
 static_assert(static_cast<uint32_t>(SeekOrigin::Current) ==
-              OBELISK_RT_SEEK_CUR);
-static_assert(static_cast<uint32_t>(SeekOrigin::End) == OBELISK_RT_SEEK_END);
+              TALOS_RT_SEEK_CUR);
+static_assert(static_cast<uint32_t>(SeekOrigin::End) == TALOS_RT_SEEK_END);
 static_assert(static_cast<uint32_t>(CodeKind::Native) ==
-              OBELISK_RT_FRAGMENT_NATIVE);
+              TALOS_RT_FRAGMENT_NATIVE);
 static_assert(static_cast<uint32_t>(CodeKind::Bytecode) ==
-              OBELISK_RT_FRAGMENT_BYTECODE);
+              TALOS_RT_FRAGMENT_BYTECODE);
 
 static_assert(static_cast<uint32_t>(BytecodeValueKind::None) ==
-              OBELISK_RT_BC_TYPE_NONE);
+              TALOS_RT_BC_TYPE_NONE);
 static_assert(static_cast<uint32_t>(BytecodeValueKind::U64) ==
-              OBELISK_RT_BC_TYPE_U64);
+              TALOS_RT_BC_TYPE_U64);
 static_assert(static_cast<uint32_t>(BytecodeValueKind::I64) ==
-              OBELISK_RT_BC_TYPE_I64);
+              TALOS_RT_BC_TYPE_I64);
 static_assert(static_cast<uint32_t>(BytecodeValueKind::Bool) ==
-              OBELISK_RT_BC_TYPE_BOOL);
+              TALOS_RT_BC_TYPE_BOOL);
 static_assert(static_cast<uint32_t>(BytecodeValueKind::Status) ==
-              OBELISK_RT_BC_TYPE_STATUS);
+              TALOS_RT_BC_TYPE_STATUS);
 static_assert(static_cast<uint32_t>(BytecodeValueKind::Resource) ==
-              OBELISK_RT_BC_TYPE_RESOURCE);
-static_assert(static_cast<uint32_t>(BytecodeOpcode::Nop) == OBELISK_RT_BC_NOP);
+              TALOS_RT_BC_TYPE_RESOURCE);
+static_assert(static_cast<uint32_t>(BytecodeOpcode::Nop) == TALOS_RT_BC_NOP);
 static_assert(static_cast<uint32_t>(BytecodeOpcode::Const) ==
-              OBELISK_RT_BC_CONST);
+              TALOS_RT_BC_CONST);
 static_assert(static_cast<uint32_t>(BytecodeOpcode::Move) ==
-              OBELISK_RT_BC_MOVE);
-static_assert(static_cast<uint32_t>(BytecodeOpcode::Add) == OBELISK_RT_BC_ADD);
-static_assert(static_cast<uint32_t>(BytecodeOpcode::Sub) == OBELISK_RT_BC_SUB);
-static_assert(static_cast<uint32_t>(BytecodeOpcode::Mul) == OBELISK_RT_BC_MUL);
-static_assert(static_cast<uint32_t>(BytecodeOpcode::And) == OBELISK_RT_BC_AND);
-static_assert(static_cast<uint32_t>(BytecodeOpcode::Or) == OBELISK_RT_BC_OR);
-static_assert(static_cast<uint32_t>(BytecodeOpcode::Xor) == OBELISK_RT_BC_XOR);
-static_assert(static_cast<uint32_t>(BytecodeOpcode::Not) == OBELISK_RT_BC_NOT);
-static_assert(static_cast<uint32_t>(BytecodeOpcode::Eq) == OBELISK_RT_BC_EQ);
-static_assert(static_cast<uint32_t>(BytecodeOpcode::Ult) == OBELISK_RT_BC_ULT);
-static_assert(static_cast<uint32_t>(BytecodeOpcode::Slt) == OBELISK_RT_BC_SLT);
+              TALOS_RT_BC_MOVE);
+static_assert(static_cast<uint32_t>(BytecodeOpcode::Add) == TALOS_RT_BC_ADD);
+static_assert(static_cast<uint32_t>(BytecodeOpcode::Sub) == TALOS_RT_BC_SUB);
+static_assert(static_cast<uint32_t>(BytecodeOpcode::Mul) == TALOS_RT_BC_MUL);
+static_assert(static_cast<uint32_t>(BytecodeOpcode::And) == TALOS_RT_BC_AND);
+static_assert(static_cast<uint32_t>(BytecodeOpcode::Or) == TALOS_RT_BC_OR);
+static_assert(static_cast<uint32_t>(BytecodeOpcode::Xor) == TALOS_RT_BC_XOR);
+static_assert(static_cast<uint32_t>(BytecodeOpcode::Not) == TALOS_RT_BC_NOT);
+static_assert(static_cast<uint32_t>(BytecodeOpcode::Eq) == TALOS_RT_BC_EQ);
+static_assert(static_cast<uint32_t>(BytecodeOpcode::Ult) == TALOS_RT_BC_ULT);
+static_assert(static_cast<uint32_t>(BytecodeOpcode::Slt) == TALOS_RT_BC_SLT);
 static_assert(static_cast<uint32_t>(BytecodeOpcode::LoadFrame) ==
-              OBELISK_RT_BC_LOAD_FRAME);
+              TALOS_RT_BC_LOAD_FRAME);
 static_assert(static_cast<uint32_t>(BytecodeOpcode::StoreFrame) ==
-              OBELISK_RT_BC_STORE_FRAME);
+              TALOS_RT_BC_STORE_FRAME);
 static_assert(static_cast<uint32_t>(BytecodeOpcode::Jump) ==
-              OBELISK_RT_BC_JUMP);
+              TALOS_RT_BC_JUMP);
 static_assert(static_cast<uint32_t>(BytecodeOpcode::BranchZero) ==
-              OBELISK_RT_BC_BRANCH_ZERO);
+              TALOS_RT_BC_BRANCH_ZERO);
 static_assert(static_cast<uint32_t>(BytecodeOpcode::Continue) ==
-              OBELISK_RT_BC_CONTINUE);
+              TALOS_RT_BC_CONTINUE);
 static_assert(static_cast<uint32_t>(BytecodeOpcode::Suspend) ==
-              OBELISK_RT_BC_SUSPEND);
+              TALOS_RT_BC_SUSPEND);
 static_assert(static_cast<uint32_t>(BytecodeOpcode::Terminate) ==
-              OBELISK_RT_BC_TERMINATE);
+              TALOS_RT_BC_TERMINATE);
 static_assert(static_cast<uint32_t>(BytecodeOpcode::CallService) ==
-              OBELISK_RT_BC_CALL_SERVICE);
+              TALOS_RT_BC_CALL_SERVICE);
 static_assert(static_cast<uint32_t>(BytecodeOpcode::Fail) ==
-              OBELISK_RT_BC_FAIL);
+              TALOS_RT_BC_FAIL);
 
 #define RT_ENUM_EQ(Enum, Case, Value)                                          \
   static_assert(static_cast<uint32_t>(Enum::Case) == Value)
-RT_ENUM_EQ(BytecodeOperandKind, Immediate, OBELISK_RT_BC_OPERAND_IMMEDIATE);
-RT_ENUM_EQ(BytecodeOperandKind, Register, OBELISK_RT_BC_OPERAND_REGISTER);
-RT_ENUM_EQ(BytecodeOperandKind, Frame, OBELISK_RT_BC_OPERAND_FRAME);
-RT_ENUM_EQ(BytecodeOperandKind, Constant, OBELISK_RT_BC_OPERAND_CONSTANT);
-RT_ENUM_EQ(BytecodeOperandKind, Resource, OBELISK_RT_BC_OPERAND_RESOURCE);
-RT_ENUM_EQ(BytecodeOperandDirection, Input, OBELISK_RT_BC_OPERAND_INPUT);
-RT_ENUM_EQ(BytecodeOperandDirection, Output, OBELISK_RT_BC_OPERAND_OUTPUT);
-RT_ENUM_EQ(BytecodeOperandDirection, InOut, OBELISK_RT_BC_OPERAND_INOUT);
+RT_ENUM_EQ(BytecodeOperandKind, Immediate, TALOS_RT_BC_OPERAND_IMMEDIATE);
+RT_ENUM_EQ(BytecodeOperandKind, Register, TALOS_RT_BC_OPERAND_REGISTER);
+RT_ENUM_EQ(BytecodeOperandKind, Frame, TALOS_RT_BC_OPERAND_FRAME);
+RT_ENUM_EQ(BytecodeOperandKind, Constant, TALOS_RT_BC_OPERAND_CONSTANT);
+RT_ENUM_EQ(BytecodeOperandKind, Resource, TALOS_RT_BC_OPERAND_RESOURCE);
+RT_ENUM_EQ(BytecodeOperandDirection, Input, TALOS_RT_BC_OPERAND_INPUT);
+RT_ENUM_EQ(BytecodeOperandDirection, Output, TALOS_RT_BC_OPERAND_OUTPUT);
+RT_ENUM_EQ(BytecodeOperandDirection, InOut, TALOS_RT_BC_OPERAND_INOUT);
 
-RT_ENUM_EQ(BytecodeServiceValueKind, None, OBELISK_RT_BC_VALUE_NONE);
-RT_ENUM_EQ(BytecodeServiceValueKind, U8, OBELISK_RT_BC_VALUE_U8);
-RT_ENUM_EQ(BytecodeServiceValueKind, U32, OBELISK_RT_BC_VALUE_U32);
-RT_ENUM_EQ(BytecodeServiceValueKind, I32, OBELISK_RT_BC_VALUE_I32);
-RT_ENUM_EQ(BytecodeServiceValueKind, U64, OBELISK_RT_BC_VALUE_U64);
-RT_ENUM_EQ(BytecodeServiceValueKind, I64, OBELISK_RT_BC_VALUE_I64);
-RT_ENUM_EQ(BytecodeServiceValueKind, Bytes, OBELISK_RT_BC_VALUE_BYTES);
+RT_ENUM_EQ(BytecodeServiceValueKind, None, TALOS_RT_BC_VALUE_NONE);
+RT_ENUM_EQ(BytecodeServiceValueKind, U8, TALOS_RT_BC_VALUE_U8);
+RT_ENUM_EQ(BytecodeServiceValueKind, U32, TALOS_RT_BC_VALUE_U32);
+RT_ENUM_EQ(BytecodeServiceValueKind, I32, TALOS_RT_BC_VALUE_I32);
+RT_ENUM_EQ(BytecodeServiceValueKind, U64, TALOS_RT_BC_VALUE_U64);
+RT_ENUM_EQ(BytecodeServiceValueKind, I64, TALOS_RT_BC_VALUE_I64);
+RT_ENUM_EQ(BytecodeServiceValueKind, Bytes, TALOS_RT_BC_VALUE_BYTES);
 RT_ENUM_EQ(BytecodeServiceValueKind, MutableBytes,
-           OBELISK_RT_BC_VALUE_MUTABLE_BYTES);
+           TALOS_RT_BC_VALUE_MUTABLE_BYTES);
 RT_ENUM_EQ(BytecodeServiceValueKind, ArgumentArray,
-           OBELISK_RT_BC_VALUE_ARGUMENT_ARRAY);
+           TALOS_RT_BC_VALUE_ARGUMENT_ARRAY);
 RT_ENUM_EQ(BytecodeServiceValueKind, FormatEnvironment,
-           OBELISK_RT_BC_VALUE_FORMAT_ENVIRONMENT);
-RT_ENUM_EQ(BytecodeServiceValueKind, Buffer, OBELISK_RT_BC_VALUE_BUFFER);
+           TALOS_RT_BC_VALUE_FORMAT_ENVIRONMENT);
+RT_ENUM_EQ(BytecodeServiceValueKind, Buffer, TALOS_RT_BC_VALUE_BUFFER);
 RT_ENUM_EQ(BytecodeServiceValueKind, ArgumentEmpty,
-           OBELISK_RT_BC_VALUE_ARGUMENT_EMPTY);
+           TALOS_RT_BC_VALUE_ARGUMENT_EMPTY);
 RT_ENUM_EQ(BytecodeServiceValueKind, ArgumentLogic,
-           OBELISK_RT_BC_VALUE_ARGUMENT_LOGIC);
+           TALOS_RT_BC_VALUE_ARGUMENT_LOGIC);
 RT_ENUM_EQ(BytecodeServiceValueKind, ArgumentString,
-           OBELISK_RT_BC_VALUE_ARGUMENT_STRING);
+           TALOS_RT_BC_VALUE_ARGUMENT_STRING);
 RT_ENUM_EQ(BytecodeServiceValueKind, ArgumentReal,
-           OBELISK_RT_BC_VALUE_ARGUMENT_REAL);
+           TALOS_RT_BC_VALUE_ARGUMENT_REAL);
 RT_ENUM_EQ(BytecodeServiceValueKind, ArgumentTime,
-           OBELISK_RT_BC_VALUE_ARGUMENT_TIME);
+           TALOS_RT_BC_VALUE_ARGUMENT_TIME);
 
-RT_ENUM_EQ(BytecodeService, Format, OBELISK_RT_BC_SERVICE_FORMAT);
-RT_ENUM_EQ(BytecodeService, Display, OBELISK_RT_BC_SERVICE_DISPLAY);
+RT_ENUM_EQ(BytecodeService, Format, TALOS_RT_BC_SERVICE_FORMAT);
+RT_ENUM_EQ(BytecodeService, Display, TALOS_RT_BC_SERVICE_DISPLAY);
 RT_ENUM_EQ(BytecodeService, BufferRelease,
-           OBELISK_RT_BC_SERVICE_BUFFER_RELEASE);
-RT_ENUM_EQ(BytecodeService, FileOpenMCD, OBELISK_RT_BC_SERVICE_FILE_OPEN_MCD);
-RT_ENUM_EQ(BytecodeService, FileOpen, OBELISK_RT_BC_SERVICE_FILE_OPEN);
-RT_ENUM_EQ(BytecodeService, FileClose, OBELISK_RT_BC_SERVICE_FILE_CLOSE);
-RT_ENUM_EQ(BytecodeService, FileFlush, OBELISK_RT_BC_SERVICE_FILE_FLUSH);
-RT_ENUM_EQ(BytecodeService, FileWrite, OBELISK_RT_BC_SERVICE_FILE_WRITE);
-RT_ENUM_EQ(BytecodeService, FileRead, OBELISK_RT_BC_SERVICE_FILE_READ);
-RT_ENUM_EQ(BytecodeService, FileGetc, OBELISK_RT_BC_SERVICE_FILE_GETC);
-RT_ENUM_EQ(BytecodeService, FileUngetc, OBELISK_RT_BC_SERVICE_FILE_UNGETC);
-RT_ENUM_EQ(BytecodeService, FileGetline, OBELISK_RT_BC_SERVICE_FILE_GETLINE);
-RT_ENUM_EQ(BytecodeService, FileEof, OBELISK_RT_BC_SERVICE_FILE_EOF);
-RT_ENUM_EQ(BytecodeService, FileError, OBELISK_RT_BC_SERVICE_FILE_ERROR);
-RT_ENUM_EQ(BytecodeService, FileSeek, OBELISK_RT_BC_SERVICE_FILE_SEEK);
-RT_ENUM_EQ(BytecodeService, FileTell, OBELISK_RT_BC_SERVICE_FILE_TELL);
-RT_ENUM_EQ(BytecodeService, FileRewind, OBELISK_RT_BC_SERVICE_FILE_REWIND);
-RT_ENUM_EQ(StatusCode, Ok, OBELISK_RT_OK);
-RT_ENUM_EQ(StatusCode, Eof, OBELISK_RT_EOF);
-RT_ENUM_EQ(StatusCode, InvalidArgument, OBELISK_RT_INVALID_ARGUMENT);
-RT_ENUM_EQ(StatusCode, InvalidHandle, OBELISK_RT_INVALID_HANDLE);
-RT_ENUM_EQ(StatusCode, IoError, OBELISK_RT_IO_ERROR);
-RT_ENUM_EQ(StatusCode, OutOfMemory, OBELISK_RT_OUT_OF_MEMORY);
-RT_ENUM_EQ(StatusCode, OutOfResources, OBELISK_RT_OUT_OF_RESOURCES);
-RT_ENUM_EQ(StatusCode, FormatError, OBELISK_RT_FORMAT_ERROR);
-RT_ENUM_EQ(StatusCode, ArgumentMismatch, OBELISK_RT_ARGUMENT_MISMATCH);
-RT_ENUM_EQ(StatusCode, InvalidBytecode, OBELISK_RT_INVALID_BYTECODE);
-RT_ENUM_EQ(StatusCode, StepLimit, OBELISK_RT_STEP_LIMIT);
-RT_ENUM_EQ(StatusCode, LayoutMismatch, OBELISK_RT_LAYOUT_MISMATCH);
-RT_ENUM_EQ(StatusCode, InvalidContinuation, OBELISK_RT_INVALID_CONTINUATION);
-RT_ENUM_EQ(StatusCode, TierUnavailable, OBELISK_RT_TIER_UNAVAILABLE);
-RT_ENUM_EQ(StatusCode, InvalidLifecycle, OBELISK_RT_INVALID_LIFECYCLE);
-RT_ENUM_EQ(StatusCode, InvalidFrame, OBELISK_RT_INVALID_FRAME);
-RT_ENUM_EQ(StatusCode, InvalidDesign, OBELISK_RT_INVALID_DESIGN);
-RT_ENUM_EQ(StatusCode, PermissionDenied, OBELISK_RT_PERMISSION_DENIED);
+           TALOS_RT_BC_SERVICE_BUFFER_RELEASE);
+RT_ENUM_EQ(BytecodeService, FileOpenMCD, TALOS_RT_BC_SERVICE_FILE_OPEN_MCD);
+RT_ENUM_EQ(BytecodeService, FileOpen, TALOS_RT_BC_SERVICE_FILE_OPEN);
+RT_ENUM_EQ(BytecodeService, FileClose, TALOS_RT_BC_SERVICE_FILE_CLOSE);
+RT_ENUM_EQ(BytecodeService, FileFlush, TALOS_RT_BC_SERVICE_FILE_FLUSH);
+RT_ENUM_EQ(BytecodeService, FileWrite, TALOS_RT_BC_SERVICE_FILE_WRITE);
+RT_ENUM_EQ(BytecodeService, FileRead, TALOS_RT_BC_SERVICE_FILE_READ);
+RT_ENUM_EQ(BytecodeService, FileGetc, TALOS_RT_BC_SERVICE_FILE_GETC);
+RT_ENUM_EQ(BytecodeService, FileUngetc, TALOS_RT_BC_SERVICE_FILE_UNGETC);
+RT_ENUM_EQ(BytecodeService, FileGetline, TALOS_RT_BC_SERVICE_FILE_GETLINE);
+RT_ENUM_EQ(BytecodeService, FileEof, TALOS_RT_BC_SERVICE_FILE_EOF);
+RT_ENUM_EQ(BytecodeService, FileError, TALOS_RT_BC_SERVICE_FILE_ERROR);
+RT_ENUM_EQ(BytecodeService, FileSeek, TALOS_RT_BC_SERVICE_FILE_SEEK);
+RT_ENUM_EQ(BytecodeService, FileTell, TALOS_RT_BC_SERVICE_FILE_TELL);
+RT_ENUM_EQ(BytecodeService, FileRewind, TALOS_RT_BC_SERVICE_FILE_REWIND);
+RT_ENUM_EQ(StatusCode, Ok, TALOS_RT_OK);
+RT_ENUM_EQ(StatusCode, Eof, TALOS_RT_EOF);
+RT_ENUM_EQ(StatusCode, InvalidArgument, TALOS_RT_INVALID_ARGUMENT);
+RT_ENUM_EQ(StatusCode, InvalidHandle, TALOS_RT_INVALID_HANDLE);
+RT_ENUM_EQ(StatusCode, IoError, TALOS_RT_IO_ERROR);
+RT_ENUM_EQ(StatusCode, OutOfMemory, TALOS_RT_OUT_OF_MEMORY);
+RT_ENUM_EQ(StatusCode, OutOfResources, TALOS_RT_OUT_OF_RESOURCES);
+RT_ENUM_EQ(StatusCode, FormatError, TALOS_RT_FORMAT_ERROR);
+RT_ENUM_EQ(StatusCode, ArgumentMismatch, TALOS_RT_ARGUMENT_MISMATCH);
+RT_ENUM_EQ(StatusCode, InvalidBytecode, TALOS_RT_INVALID_BYTECODE);
+RT_ENUM_EQ(StatusCode, StepLimit, TALOS_RT_STEP_LIMIT);
+RT_ENUM_EQ(StatusCode, LayoutMismatch, TALOS_RT_LAYOUT_MISMATCH);
+RT_ENUM_EQ(StatusCode, InvalidContinuation, TALOS_RT_INVALID_CONTINUATION);
+RT_ENUM_EQ(StatusCode, TierUnavailable, TALOS_RT_TIER_UNAVAILABLE);
+RT_ENUM_EQ(StatusCode, InvalidLifecycle, TALOS_RT_INVALID_LIFECYCLE);
+RT_ENUM_EQ(StatusCode, InvalidFrame, TALOS_RT_INVALID_FRAME);
+RT_ENUM_EQ(StatusCode, InvalidDesign, TALOS_RT_INVALID_DESIGN);
+RT_ENUM_EQ(StatusCode, PermissionDenied, TALOS_RT_PERMISSION_DENIED);
 RT_ENUM_EQ(StatusCode, DpiDisableUnsupported,
-           OBELISK_RT_DPI_DISABLE_UNSUPPORTED);
-RT_ENUM_EQ(StatusCode, Fatal, OBELISK_RT_FATAL);
-RT_ENUM_EQ(StatusCode, AotCheckpoint, OBELISK_RT_AOT_CHECKPOINT);
-RT_ENUM_EQ(StatusCode, AotTimedCheckpoint, OBELISK_RT_AOT_TIMED_CHECKPOINT);
+           TALOS_RT_DPI_DISABLE_UNSUPPORTED);
+RT_ENUM_EQ(StatusCode, Fatal, TALOS_RT_FATAL);
+RT_ENUM_EQ(StatusCode, AotCheckpoint, TALOS_RT_AOT_CHECKPOINT);
+RT_ENUM_EQ(StatusCode, AotTimedCheckpoint, TALOS_RT_AOT_TIMED_CHECKPOINT);
 RT_ENUM_EQ(StatusCode, AotGeneratedCheckpoint,
-           OBELISK_RT_AOT_GENERATED_CHECKPOINT);
-RT_ENUM_EQ(ArgumentKind, Empty, OBELISK_RT_ARG_EMPTY);
-RT_ENUM_EQ(ArgumentKind, Logic, OBELISK_RT_ARG_LOGIC);
-RT_ENUM_EQ(ArgumentKind, String, OBELISK_RT_ARG_STRING);
-RT_ENUM_EQ(ArgumentKind, Real, OBELISK_RT_ARG_REAL);
-RT_ENUM_EQ(ArgumentKind, Time, OBELISK_RT_ARG_TIME);
-RT_ENUM_EQ(ArgumentKind, ManagedString, OBELISK_RT_ARG_MANAGED_STRING);
-RT_ENUM_EQ(ArgumentKind, ManagedContainer, OBELISK_RT_ARG_MANAGED_CONTAINER);
-RT_ENUM_EQ(ArgumentKind, ManagedObject, OBELISK_RT_ARG_MANAGED_OBJECT);
-RT_ENUM_EQ(ArgumentKind, VirtualInterface, OBELISK_RT_ARG_VIRTUAL_INTERFACE);
-RT_ENUM_EQ(ArgumentKind, Process, OBELISK_RT_ARG_PROCESS);
-RT_ENUM_EQ(ArgumentKind, Enum, OBELISK_RT_ARG_ENUM);
-RT_ENUM_EQ(ArgumentKind, Net, OBELISK_RT_ARG_NET);
-RT_ENUM_EQ(ArgumentKind, RawAggregate, OBELISK_RT_ARG_RAW_AGGREGATE);
-RT_ENUM_EQ(ArgumentFlags, Signed, OBELISK_RT_ARG_SIGNED);
-RT_ENUM_EQ(ArgumentFlags, FormatString, OBELISK_RT_ARG_FORMAT_STRING);
-RT_ENUM_EQ(ArgumentFlags, DesignatedFormat, OBELISK_RT_ARG_DESIGNATED_FORMAT);
-RT_ENUM_EQ(ArgumentFlags, RealTime, OBELISK_RT_ARG_REAL_TIME);
+           TALOS_RT_AOT_GENERATED_CHECKPOINT);
+RT_ENUM_EQ(ArgumentKind, Empty, TALOS_RT_ARG_EMPTY);
+RT_ENUM_EQ(ArgumentKind, Logic, TALOS_RT_ARG_LOGIC);
+RT_ENUM_EQ(ArgumentKind, String, TALOS_RT_ARG_STRING);
+RT_ENUM_EQ(ArgumentKind, Real, TALOS_RT_ARG_REAL);
+RT_ENUM_EQ(ArgumentKind, Time, TALOS_RT_ARG_TIME);
+RT_ENUM_EQ(ArgumentKind, ManagedString, TALOS_RT_ARG_MANAGED_STRING);
+RT_ENUM_EQ(ArgumentKind, ManagedContainer, TALOS_RT_ARG_MANAGED_CONTAINER);
+RT_ENUM_EQ(ArgumentKind, ManagedObject, TALOS_RT_ARG_MANAGED_OBJECT);
+RT_ENUM_EQ(ArgumentKind, VirtualInterface, TALOS_RT_ARG_VIRTUAL_INTERFACE);
+RT_ENUM_EQ(ArgumentKind, Process, TALOS_RT_ARG_PROCESS);
+RT_ENUM_EQ(ArgumentKind, Enum, TALOS_RT_ARG_ENUM);
+RT_ENUM_EQ(ArgumentKind, Net, TALOS_RT_ARG_NET);
+RT_ENUM_EQ(ArgumentKind, RawAggregate, TALOS_RT_ARG_RAW_AGGREGATE);
+RT_ENUM_EQ(ArgumentFlags, Signed, TALOS_RT_ARG_SIGNED);
+RT_ENUM_EQ(ArgumentFlags, FormatString, TALOS_RT_ARG_FORMAT_STRING);
+RT_ENUM_EQ(ArgumentFlags, DesignatedFormat, TALOS_RT_ARG_DESIGNATED_FORMAT);
+RT_ENUM_EQ(ArgumentFlags, RealTime, TALOS_RT_ARG_REAL_TIME);
 #undef RT_ENUM_EQ
 
-void ObeliskRuntimeDialect::initialize() {
+void TalosRuntimeDialect::initialize() {
   addAttributes<
 #define GET_ATTRDEF_LIST
-#include "obelisk/Dialect/Runtime/RuntimeAttrs.cpp.inc"
+#include "talos/Dialect/Runtime/RuntimeAttrs.cpp.inc"
       >();
   addTypes<
 #define GET_TYPEDEF_LIST
-#include "obelisk/Dialect/Runtime/RuntimeTypes.cpp.inc"
+#include "talos/Dialect/Runtime/RuntimeTypes.cpp.inc"
       >();
   addOperations<
 #define GET_OP_LIST
-#include "obelisk/Dialect/Runtime/RuntimeOps.cpp.inc"
+#include "talos/Dialect/Runtime/RuntimeOps.cpp.inc"
       >();
 }
 
@@ -563,4 +563,4 @@ LogicalResult RTFileErrorOp::verify() {
   return verifyOwnedBuffer(*this, getMessage());
 }
 
-} // namespace obelisk::runtime
+} // namespace talos::runtime

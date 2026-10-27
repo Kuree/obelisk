@@ -1,23 +1,23 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-replicate,simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-replicate,simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // A wide NBA root with an edge observer must retain ordered update events
 // (IEEE 1800-2023 4.6(b), 9.4.2 and 10.4.2). An enqueue allocation failure
 // must stop the local loop before another owner runs. The outer dispatcher
 // propagates that same status instead of entering the NBA commit path.
-// CHECK: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// CHECK: %[[QUEUE:.*]] = llvm.mlir.addressof @__obelisk_eval_ordered_nba_queue_v1
+// CHECK: llvm.mlir.global internal @__talos_eval_ordered_nba_queue_v1
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// CHECK: %[[QUEUE:.*]] = llvm.mlir.addressof @__talos_eval_ordered_nba_queue_v1
 // CHECK: %[[STATUS_PTR:.*]] = llvm.getelementptr %[[QUEUE]][0, 3]
 // CHECK: %[[STATUS:.*]] = llvm.load %[[STATUS_PTR]]
 // CHECK: %[[ZERO:.*]] = llvm.mlir.constant(0 : i32)
 // CHECK: %[[OK:.*]] = llvm.icmp "eq" %[[STATUS]], %[[ZERO]]
 // CHECK-NEXT: llvm.cond_br %[[OK]], ^{{bb[0-9]+}}, ^[[RETURN:bb[0-9]+]](%[[STATUS]] : i32)
 // CHECK: ^[[RETURN]](%[[RESULT:.*]]: i32):
-// CHECK-NEXT: %[[BOUNDARY:.*]] = llvm.call @__obelisk_eval_route_promotion_boundary_v1(%[[RESULT]])
+// CHECK-NEXT: %[[BOUNDARY:.*]] = llvm.call @__talos_eval_route_promotion_boundary_v1(%[[RESULT]])
 // CHECK-NEXT: llvm.return %[[BOUNDARY]]
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1.segment_0(
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1.segment_0(
 // CHECK: %[[INSIDE:.*]] = llvm.icmp "ult"
-// CHECK: %[[QUEUE:.*]] = llvm.mlir.addressof @__obelisk_eval_ordered_nba_queue_v1
+// CHECK: %[[QUEUE:.*]] = llvm.mlir.addressof @__talos_eval_ordered_nba_queue_v1
 // CHECK: %[[STATUS_PTR:.*]] = llvm.getelementptr %[[QUEUE]][0, 3]
 // CHECK: %[[STATUS:.*]] = llvm.load %[[STATUS_PTR]]
 // CHECK: %[[ZERO:.*]] = llvm.mlir.constant(0 : i32)
@@ -30,9 +30,9 @@
 // CHECK: ^[[DONE]]:
 // CHECK-NEXT: %[[SUCCESS:.*]] = llvm.mlir.constant(0 : i32)
 // CHECK-NEXT: llvm.br ^{{bb[0-9]+}}(%[[SUCCESS]] : i32)
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1.segment_1(
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1.segment_1(
 // CHECK: %[[INSIDE:.*]] = llvm.icmp "ult"
-// CHECK: %[[QUEUE:.*]] = llvm.mlir.addressof @__obelisk_eval_ordered_nba_queue_v1
+// CHECK: %[[QUEUE:.*]] = llvm.mlir.addressof @__talos_eval_ordered_nba_queue_v1
 // CHECK: %[[STATUS_PTR:.*]] = llvm.getelementptr %[[QUEUE]][0, 3]
 // CHECK: %[[STATUS:.*]] = llvm.load %[[STATUS_PTR]]
 // CHECK: %[[ZERO:.*]] = llvm.mlir.constant(0 : i32)

@@ -2,14 +2,14 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Analysis/ManagedCollectionAnalysis.h"
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
+#include "talos/Analysis/ManagedCollectionAnalysis.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Dialect/Native/NativeDialect.h"
 
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -19,10 +19,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMINSTRUMENTMANAGEDROOTSPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMINSTRUMENTMANAGEDROOTSPASS
+#include "talos/Conversion/Passes.h.inc"
 
 namespace detail {
 namespace {
@@ -165,7 +165,7 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
           builder, location, slotsBase,
           llvmConstant(builder, location, builder.getI8Type(), 0),
           llvmConstant(builder, location, i64,
-                       handles.size() * sizeof(obelisk_rt_managed_word_v1)),
+                       handles.size() * sizeof(talos_rt_managed_word_v1)),
           /*isVolatile=*/false);
     } else {
       for (Value slot : slots)
@@ -228,7 +228,7 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
           llvmConstant(builder, collectionPoint->getLoc(), builder.getI8Type(),
                        0),
           llvmConstant(builder, collectionPoint->getLoc(), i64,
-                       handles.size() * sizeof(obelisk_rt_managed_word_v1)),
+                       handles.size() * sizeof(talos_rt_managed_word_v1)),
           /*isVolatile=*/false);
     for (auto [handle, slot] : llvm::zip_equal(handles, slots)) {
       bool isLive = live.contains(handle.value) &&
@@ -286,13 +286,13 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
 
 namespace {
 
-class ObeliskSimInstrumentManagedRootsPass
-    : public impl::ObeliskSimInstrumentManagedRootsPassBase<
-          ObeliskSimInstrumentManagedRootsPass> {
+class TalosSimInstrumentManagedRootsPass
+    : public impl::TalosSimInstrumentManagedRootsPassBase<
+          TalosSimInstrumentManagedRootsPass> {
 public:
-  using impl::ObeliskSimInstrumentManagedRootsPassBase<
-      ObeliskSimInstrumentManagedRootsPass>::
-      ObeliskSimInstrumentManagedRootsPassBase;
+  using impl::TalosSimInstrumentManagedRootsPassBase<
+      TalosSimInstrumentManagedRootsPass>::
+      TalosSimInstrumentManagedRootsPassBase;
   void runOnOperation() override {
     if (getOperation().isExternal())
       return;
@@ -303,4 +303,4 @@ public:
 };
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

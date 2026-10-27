@@ -1,10 +1,10 @@
 //===- SimulationVPIAnalysisTestPass.cpp - Print VPI facts --------------===//
 
 #include "AnalysisTestPasses.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
 
-#include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/SimulationVPIAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -22,23 +22,23 @@ public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SimulationVPIAnalysisTestPass)
 
   StringRef getArgument() const final {
-    return "test-obelisk-simulation-vpi-analysis";
+    return "test-talos-simulation-vpi-analysis";
   }
   StringRef getDescription() const final {
     return "print simulation VPI capability facts";
   }
 
   void runOnOperation() final {
-    getOperation().walk([&](obelisk::sim::SimDesignOp design) {
-      obelisk::analysis::SimulationVPIAnalysis analysis =
-          obelisk::analysis::SimulationVPIAnalysis::compute(design);
+    getOperation().walk([&](talos::sim::SimDesignOp design) {
+      talos::analysis::SimulationVPIAnalysis analysis =
+          talos::analysis::SimulationVPIAnalysis::compute(design);
       llvm::errs()
           << "vpi @" << design.getSymName()
           << " graph=" << (analysis.hasComputeGraph() ? "true" : "false")
           << " mode="
-          << obelisk::schedule::stringifyComputeVPIMode(analysis.getMode())
+          << talos::schedule::stringifyComputeVPIMode(analysis.getMode())
           << " observability="
-          << obelisk::schedule::stringifyComputeObservabilityKind(
+          << talos::schedule::stringifyComputeObservabilityKind(
                  analysis.getObservability())
           << " read=" << (analysis.allowsRead() ? "true" : "false")
           << " write=" << (analysis.allowsWrite() ? "true" : "false")
@@ -52,10 +52,10 @@ public:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 
 void registerSimulationVPIAnalysisTestPass() {
   PassRegistration<SimulationVPIAnalysisTestPass>();
 }
 
-} // namespace obelisk
+} // namespace talos

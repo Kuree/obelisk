@@ -1,7 +1,7 @@
 # Transient SDF IR
 
-`obelisk_sdf` is a frontend-only interchange dialect for normalized Standard
-Delay Format data. `obelisk-translate --import-sdf` exposes it for parser,
+`talos_sdf` is a frontend-only interchange dialect for normalized Standard
+Delay Format data. `talos-translate --import-sdf` exposes it for parser,
 verifier, and round-trip tests. It is deliberately absent from the simulation
 runtime and all native, bytecode, and AOT lowering pipelines.
 
@@ -24,6 +24,6 @@ explicit and retain distinct `empty` and `triple` forms, as required by Clause
 32.3, so ordered ABSOLUTE and INCREMENT application can retain
 preannotation values correctly.
 
-Production frontend code must consume and erase every `obelisk_sdf` operation
+Production frontend code must consume and erase every `talos_sdf` operation
 before semantic Simulation IR is returned. There is intentionally no SDF
 runtime operation, table, interpreter, ABI entry, or lowering pattern.

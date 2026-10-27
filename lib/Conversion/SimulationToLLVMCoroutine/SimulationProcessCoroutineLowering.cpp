@@ -3,19 +3,19 @@
 #include "SimulationProcessCoroutineLowering.h"
 #include "SimulationProcessRuntimeABI.h"
 #include "SimulationProcessWrapperLowering.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
-#include "obelisk/Conversion/SimulationRuntime.h"
-#include "obelisk/Conversion/SimulationTimeLowering.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/SimulationProcessFrameAnalysis.h"
+#include "talos/Conversion/SimulationRuntime.h"
+#include "talos/Conversion/SimulationTimeLowering.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -30,38 +30,38 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 namespace {
 
 uint32_t suspensionKind(Operation *operation) {
   return TypeSwitch<Operation *, uint32_t>(operation)
       .Case<schedule::NativeSuspendDelayOp>(
-          [](auto) { return OBELISK_RT_SUSPEND_DELAY; })
+          [](auto) { return TALOS_RT_SUSPEND_DELAY; })
       .Case<schedule::NativeSuspendChangeOp, schedule::NativeSuspendLevelOp>(
-          [](auto) { return OBELISK_RT_SUSPEND_CHANGE; })
+          [](auto) { return TALOS_RT_SUSPEND_CHANGE; })
       .Case<schedule::NativeSuspendEdgeOp, schedule::NativeSuspendEdgeIffOp,
             schedule::NativeSuspendAnyOp, schedule::NativeSuspendClockSetOp>(
-          [](auto) { return OBELISK_RT_SUSPEND_EDGE; })
+          [](auto) { return TALOS_RT_SUSPEND_EDGE; })
       .Case<schedule::NativeSuspendEventOp>(
-          [](auto) { return OBELISK_RT_SUSPEND_EVENT; })
+          [](auto) { return TALOS_RT_SUSPEND_EVENT; })
       .Case<schedule::NativeSuspendEventOrderOp>(
-          [](auto) { return OBELISK_RT_SUSPEND_EVENT_ORDER; })
+          [](auto) { return TALOS_RT_SUSPEND_EVENT_ORDER; })
       .Case<schedule::NativeSuspendMailboxOp>(
-          [](auto) { return OBELISK_RT_SUSPEND_MAILBOX; })
+          [](auto) { return TALOS_RT_SUSPEND_MAILBOX; })
       .Case<schedule::NativeSuspendSemaphoreOp>(
-          [](auto) { return OBELISK_RT_SUSPEND_SEMAPHORE; })
+          [](auto) { return TALOS_RT_SUSPEND_SEMAPHORE; })
       .Case<schedule::NativeSuspendAwaitOp>(
-          [](auto) { return OBELISK_RT_SUSPEND_AWAIT; })
+          [](auto) { return TALOS_RT_SUSPEND_AWAIT; })
       .Case<schedule::NativeSuspendJoinOp>(
-          [](auto) { return OBELISK_RT_SUSPEND_JOIN; })
+          [](auto) { return TALOS_RT_SUSPEND_JOIN; })
       .Case<schedule::NativeSuspendForeverOp>(
-          [](auto) { return OBELISK_RT_SUSPEND_FOREVER; })
+          [](auto) { return TALOS_RT_SUSPEND_FOREVER; })
       .Case<schedule::NativeSuspendChildrenOp>(
-          [](auto) { return OBELISK_RT_SUSPEND_CHILDREN; })
+          [](auto) { return TALOS_RT_SUSPEND_CHILDREN; })
       .Case<schedule::NativeSuspendObserveOp>(
-          [](auto) { return OBELISK_RT_SUSPEND_OBSERVER; })
-      .Default([](Operation *) { return OBELISK_RT_SUSPEND_NONE; });
+          [](auto) { return TALOS_RT_SUSPEND_OBSERVER; })
+      .Default([](Operation *) { return TALOS_RT_SUSPEND_NONE; });
 }
 
 void addFrameAttributes(LLVM::LLVMFuncOp ramp,
@@ -134,13 +134,13 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
   }
   auto branch = cast<BranchOpInterface>(operation);
   auto continuationAttr =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::NativeContinuation>(
+      ::talos::schedule::get<::talos::schedule::Field::NativeContinuation>(
           operation);
   auto waitOffsetAttr =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::NativeWaitOffset>(
+      ::talos::schedule::get<::talos::schedule::Field::NativeWaitOffset>(
           operation);
   auto waitSizeAttr =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::NativeWaitSize>(
+      ::talos::schedule::get<::talos::schedule::Field::NativeWaitSize>(
           operation);
   if (!continuationAttr || !waitOffsetAttr || !waitSizeAttr)
     return operation->emitError("missing coroutine frame analysis metadata");
@@ -177,7 +177,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     Value disposition = entryAlloca(builder, location, i32, 1, 4);
     LLVM::StoreOp::create(builder, location,
                           llvmConstant(builder, location, i32,
-                                       OBELISK_RT_PROCESS_CONTROL_CONTINUE),
+                                       TALOS_RT_PROCESS_CONTROL_CONTINUE),
                           disposition, 4);
     auto [context, lane] = managedContextAndLane(builder, location);
     (void)lane;
@@ -185,7 +185,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
             SymbolRefAttr::get(builder.getContext(),
-                               "obelisk_rt_v1_process_control"),
+                               "talos_rt_v1_process_control"),
             ValueRange{context, control.getProcess(),
                        llvmConstant(builder, location, i32,
                                     static_cast<uint32_t>(control.getKind())),
@@ -209,7 +209,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
 
     Value succeeded = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, status,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     LLVM::CondBrOp::create(builder, location, succeeded, dispatch, failed,
                            status);
 
@@ -217,16 +217,16 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     Value selected =
         LLVM::LoadOp::create(builder, location, i32, disposition, 4);
     SmallVector<APInt> cases{
-        APInt(32, OBELISK_RT_PROCESS_CONTROL_CONTINUE),
-        APInt(32, OBELISK_RT_PROCESS_CONTROL_SUSPEND_CURRENT),
-        APInt(32, OBELISK_RT_PROCESS_CONTROL_KILL_CURRENT)};
+        APInt(32, TALOS_RT_PROCESS_CONTROL_CONTINUE),
+        APInt(32, TALOS_RT_PROCESS_CONTROL_SUSPEND_CURRENT),
+        APInt(32, TALOS_RT_PROCESS_CONTROL_KILL_CURRENT)};
     SmallVector<Block *> destinations{continueAction, suspendAction,
                                       killAction};
     SmallVector<ValueRange> destinationOperands(3);
     LLVM::SwitchOp::create(
         builder, location, selected, failed,
         ValueRange{
-            llvmConstant(builder, location, i32, OBELISK_RT_INVALID_ARGUMENT)},
+            llvmConstant(builder, location, i32, TALOS_RT_INVALID_ARGUMENT)},
         cases, destinations, destinationOperands, ArrayRef<int32_t>{});
 
     builder.setInsertionPointToStart(continueAction);
@@ -234,21 +234,21 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
 
     builder.setInsertionPointToStart(suspendAction);
     publishAction(builder, location, instance,
-                  OBELISK_RT_FRAGMENT_PROCESS_SUSPEND, OBELISK_RT_SUSPEND_NONE,
-                  continuationID, OBELISK_RT_FRAGMENT_FLAGS_NONE,
+                  TALOS_RT_FRAGMENT_PROCESS_SUSPEND, TALOS_RT_SUSPEND_NONE,
+                  continuationID, TALOS_RT_FRAGMENT_FLAGS_NONE,
                   llvmConstant(builder, location, i64, 0), 0);
     LLVM::BrOp::create(builder, location, yield);
 
     builder.setInsertionPointToStart(killAction);
-    publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TERMINATE,
-                  OBELISK_RT_SUSPEND_NONE, 0, OBELISK_RT_FRAGMENT_FLAGS_NONE,
+    publishAction(builder, location, instance, TALOS_RT_FRAGMENT_TERMINATE,
+                  TALOS_RT_SUSPEND_NONE, 0, TALOS_RT_FRAGMENT_FLAGS_NONE,
                   llvmConstant(builder, location, i64, 0), 0);
     LLVM::BrOp::create(builder, location, yield);
 
     builder.setInsertionPointToStart(failed);
     LLVM::CallOp::create(builder, location, TypeRange{},
                          SymbolRefAttr::get(builder.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
+                                            "talos_rt_v1_scheduler_fail"),
                          ValueRange{context, failed->getArgument(0)});
     if (!blocks.terminate)
       return control.emitOpError("has no coroutine termination block");
@@ -279,14 +279,14 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
         LLVM::CallOp::create(
             builder, location, TypeRange{builder.getI32Type()},
             SymbolRefAttr::get(builder.getContext(),
-                               "obelisk_rt_v1_control_boundary"),
+                               "talos_rt_v1_control_boundary"),
             ValueRange{context, boundary.getActivation(),
                        llvmConstant(builder, location, builder.getI32Type(),
                                     continuationID)})
             .getResult();
     LLVM::CallOp::create(builder, location, TypeRange{},
                          SymbolRefAttr::get(builder.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
+                                            "talos_rt_v1_scheduler_fail"),
                          ValueRange{context, status});
     cf::BranchOp::create(builder, location, boundary.getBody());
     builder.eraseOp(operation);
@@ -362,11 +362,11 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
             static_cast<uint64_t>(argumentIndex) >= argumentStorage.size() ||
             byteOffset < 0 || sizesAttr[argumentIndex] < 0 || kindMask <= 0 ||
             static_cast<uint64_t>(kindMask) >
-                OBELISK_RT_MANAGED_ROOT_KIND_ALL ||
+                TALOS_RT_MANAGED_ROOT_KIND_ALL ||
             (conditional != 0 && conditional != 1) ||
             static_cast<uint64_t>(byteOffset) >
                 static_cast<uint64_t>(sizesAttr[argumentIndex]) ||
-            sizeof(obelisk_rt_managed_word_v1) >
+            sizeof(talos_rt_managed_word_v1) >
                 static_cast<uint64_t>(sizesAttr[argumentIndex]) -
                     static_cast<uint64_t>(byteOffset))
           return task.emitOpError("has an invalid native argument root");
@@ -379,7 +379,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
           root = LLVM::CallOp::create(
                      builder, location, TypeRange{i64},
                      SymbolRefAttr::get(builder.getContext(),
-                                        "obelisk_rt_v1_gc_candidate_root"),
+                                        "talos_rt_v1_gc_candidate_root"),
                      ValueRange{context, root,
                                 llvmConstant(builder, location, i32, kindMask)})
                      .getResult();
@@ -391,12 +391,12 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
               SymbolRefAttr::get(builder.getContext(),
-                                 "obelisk_rt_v1_gc_managed_root_range_push"),
+                                 "talos_rt_v1_gc_managed_root_range_push"),
               ValueRange{lane, rootRecord, rootSlots, count})
               .getResult();
       Value pushed = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::eq, pushStatus,
-          llvmConstant(builder, location, i32, OBELISK_RT_OK));
+          llvmConstant(builder, location, i32, TALOS_RT_OK));
       LLVM::CondBrOp::create(builder, location, pushed, dispatch, failed,
                              pushStatus);
     } else {
@@ -406,7 +406,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     builder.setInsertionPointToStart(dispatch);
     SmallVector<Value> activationArguments{
         lane, managedObjectPointer(builder, location, task.getReceiver())};
-    StringRef activationName = "obelisk_rt_v1_method_task_activate";
+    StringRef activationName = "talos_rt_v1_method_task_activate";
     auto method =
         SymbolTable::lookupNearestSymbolFrom<schedule::NativeMethodOp>(
             task, task.getMethodAttr());
@@ -419,7 +419,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     if (owner.getIsInterface()) {
       if (!method.getInterfaceOrdinalAttr())
         return task.emitOpError("interface task has no dispatch ordinal");
-      activationName = "obelisk_rt_v1_interface_method_task_activate";
+      activationName = "talos_rt_v1_interface_method_task_activate";
       activationArguments.push_back(
           llvmConstant(builder, location, i64, owner.getId()));
       activationArguments.push_back(
@@ -444,17 +444,17 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
               SymbolRefAttr::get(builder.getContext(),
-                                 "obelisk_rt_v1_gc_managed_root_range_pop"),
+                                 "talos_rt_v1_gc_managed_root_range_pop"),
               ValueRange{lane, rootRecord})
               .getResult();
       LLVM::CallOp::create(builder, location, TypeRange{},
                            SymbolRefAttr::get(builder.getContext(),
-                                              "obelisk_rt_v1_scheduler_fail"),
+                                              "talos_rt_v1_scheduler_fail"),
                            ValueRange{context, popStatus});
     }
     Value succeeded = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, status,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     LLVM::CondBrOp::create(builder, location, succeeded, activated, failed,
                            status);
 
@@ -466,18 +466,18 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
               SymbolRefAttr::get(builder.getContext(),
-                                 "obelisk_rt_v1_native_state_release"),
+                                 "talos_rt_v1_native_state_release"),
               ValueRange{context, task.getValues()[index],
                          llvmConstant(builder, location, i32, 0)})
               .getResult();
       LLVM::CallOp::create(builder, location, TypeRange{},
                            SymbolRefAttr::get(builder.getContext(),
-                                              "obelisk_rt_v1_scheduler_fail"),
+                                              "talos_rt_v1_scheduler_fail"),
                            ValueRange{context, releaseStatus});
     }
     LLVM::CallOp::create(builder, location, TypeRange{},
                          SymbolRefAttr::get(builder.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
+                                            "talos_rt_v1_scheduler_fail"),
                          ValueRange{context, failed->getArgument(0)});
     if (!blocks.terminate)
       return task.emitOpError("has no coroutine termination block");
@@ -486,9 +486,9 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     builder.setInsertionPointToStart(activated);
     Value activation =
         LLVM::LoadOp::create(builder, location, i64, outActivation, 8);
-    publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TASK_CALL,
-                  OBELISK_RT_SUSPEND_NONE, continuationID,
-                  OBELISK_RT_FRAGMENT_FLAGS_NONE, activation, 0);
+    publishAction(builder, location, instance, TALOS_RT_FRAGMENT_TASK_CALL,
+                  TALOS_RT_SUSPEND_NONE, continuationID,
+                  TALOS_RT_FRAGMENT_FLAGS_NONE, activation, 0);
     Value final = llvmConstant(builder, location, builder.getI1Type(), 0);
     Value save = LLVM::CoroSaveOp::create(
         builder, location, LLVM::LLVMTokenType::get(builder.getContext()),
@@ -511,15 +511,15 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     Type i64 = builder.getI64Type();
     storeAt(builder, location, instance, kInstanceContinuationField,
             llvmConstant(builder, location, i32, continuationID), 4);
-    std::string helper = (task.getCallee() + ".__obelisk_activate").str();
+    std::string helper = (task.getCallee() + ".__talos_activate").str();
     Value activation =
         LLVM::CallOp::create(builder, location, TypeRange{i64},
                              SymbolRefAttr::get(builder.getContext(), helper),
                              task.getArguments())
             .getResult();
-    publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TASK_CALL,
-                  OBELISK_RT_SUSPEND_NONE, continuationID,
-                  OBELISK_RT_FRAGMENT_FLAGS_NONE, activation, 0);
+    publishAction(builder, location, instance, TALOS_RT_FRAGMENT_TASK_CALL,
+                  TALOS_RT_SUSPEND_NONE, continuationID,
+                  TALOS_RT_FRAGMENT_FLAGS_NONE, activation, 0);
     // The task owns the next activation, not the caller's native stack.
     // Continuation operands have already been stored in the canonical frame.
     // Returning here lets the common driver execute/suspend the task and later
@@ -569,9 +569,9 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
   uint32_t actionFlags = getRuntimeResumeActionFlags(operation);
   if (actionFlags == UINT32_MAX)
     return operation->emitError("has no executable resume region");
-  publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_SUSPEND, kind,
+  publishAction(builder, location, instance, TALOS_RT_FRAGMENT_SUSPEND, kind,
                 continuationID,
-                OBELISK_RT_ACTION_FRAME_WAIT_RECORD | actionFlags,
+                TALOS_RT_ACTION_FRAME_WAIT_RECORD | actionFlags,
                 llvmConstant(builder, location, i64, waitOffset), waitSize);
 
   // A certified group ends at this semantic boundary. Its live continuation
@@ -669,7 +669,7 @@ FailureOr<PreparedSuspendableProcess> prepareSuspendableProcess(
       if ((schedule::has<schedule::metadata::topLevelWildcardWait>(op) ||
            schedule::has<schedule::metadata::proceduralEventWait>(op)) &&
           !schedule::has<schedule::metadata::repeatingAlwaysWait>(op))
-        wait.flags = OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+        wait.flags = TALOS_RT_WAIT_SUPPRESS_ACTIVE_SELF;
     });
     if (!valid || !llvm::all_of(seen, [](bool value) { return value; }))
       tableProcess.reset();
@@ -686,12 +686,12 @@ FailureOr<PreparedSuspendableProcess> prepareSuspendableProcess(
   // hold the whole fused body's state across runtime calls. Closed evaluators
   // that call tasks keep their coroutine fallback.
   bool hasEvalBody =
-      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalBody>(function);
+      ::talos::schedule::has<::talos::schedule::Field::EvalBody>(function);
   bool regionActivation =
       !(taskCaller && hasEvalBody) &&
-      ::obelisk::schedule::has<schedule::metadata::nativeRegionBody>(
+      ::talos::schedule::has<schedule::metadata::nativeRegionBody>(
           function) &&
-      ::obelisk::schedule::has<
+      ::talos::schedule::has<
           schedule::metadata::evalReconstructsContinuationArgs>(function) &&
       analysis.getSuspensions().size() == 1;
   bool directActivation =
@@ -721,9 +721,9 @@ FailureOr<PreparedSuspendableProcess> prepareSuspendableProcess(
   if (!directActivation)
     tableProcess.reset();
   std::string rampName =
-      baseName + (tableProcess       ? ".__obelisk_table_body"
-                  : directActivation ? ".__obelisk_group_body"
-                                     : ".__obelisk_coro_ramp");
+      baseName + (tableProcess       ? ".__talos_table_body"
+                  : directActivation ? ".__talos_group_body"
+                                     : ".__talos_coro_ramp");
   SmallVector<Type> parameters =
       tableProcess ? SmallVector<Type>{pointer, i32}
                    : SmallVector<Type>{pointer, i32, pointer, pointer};
@@ -819,7 +819,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
   Value instance = entry->getArgument(0);
   if (process.tableProcess) {
     Value currentContext = LLVM::AddressOfOp::create(
-        builder, location, pointer, "__obelisk_current_context");
+        builder, location, pointer, "__talos_current_context");
     LLVM::StoreOp::create(
         builder, location,
         loadAt(builder, location, instance, kInstanceContextField, pointer, 0),
@@ -881,7 +881,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
         builder, location,
         process.tableProcess
             ? ValueRange{llvmConstant(builder, location, i32,
-                                      OBELISK_RT_TABLE_TERMINATE)}
+                                      TALOS_RT_TABLE_TERMINATE)}
             : ValueRange{});
   } else {
     blocks.suspendReturn =
@@ -936,8 +936,8 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     size_t argumentIndex = 0;
     uint32_t continuationID = 0;
     for (Block *predecessor : continuation->getPredecessors())
-      if (auto id = ::obelisk::schedule::get<
-              ::obelisk::schedule::Field::NativeContinuation>(
+      if (auto id = ::talos::schedule::get<
+              ::talos::schedule::Field::NativeContinuation>(
               predecessor->getTerminator())) {
         uint32_t idValue = id.getInt();
         if (continuationID == 0)
@@ -1101,7 +1101,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
   ramp.getBody().push_back(invalid);
   builder.setInsertionPointToStart(invalid);
   storeAt(builder, location, instance, kInstanceStatusField,
-          llvmConstant(builder, location, i32, OBELISK_RT_INVALID_CONTINUATION),
+          llvmConstant(builder, location, i32, TALOS_RT_INVALID_CONTINUATION),
           4);
   cf::BranchOp::create(builder, location, blocks.cleanup);
   if (process.tableProcess) {
@@ -1142,15 +1142,15 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     // Funnel every semantic process return through this shared block.
     builder.setInsertionPointToStart(blocks.terminate);
     if (!process.tableProcess)
-      publishAction(builder, location, instance, OBELISK_RT_FRAGMENT_TERMINATE,
-                    OBELISK_RT_SUSPEND_NONE, 0, OBELISK_RT_FRAGMENT_FLAGS_NONE,
+      publishAction(builder, location, instance, TALOS_RT_FRAGMENT_TERMINATE,
+                    TALOS_RT_SUSPEND_NONE, 0, TALOS_RT_FRAGMENT_FLAGS_NONE,
                     llvmConstant(builder, location, i64, 0), 0);
     if (process.directActivation) {
       LLVM::ReturnOp::create(
           builder, location,
           process.tableProcess
               ? ValueRange{llvmConstant(builder, location, i32,
-                                        OBELISK_RT_TABLE_TERMINATE)}
+                                        TALOS_RT_TABLE_TERMINATE)}
               : ValueRange{});
     } else {
       Value final = llvmConstant(builder, location, builder.getI1Type(), 1);
@@ -1258,4 +1258,4 @@ lowerSuspendableProcess(sim::SimFuncOp function,
   return finishPreparedSuspendableProcess(*prepared, embeddedSymbols);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

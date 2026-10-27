@@ -1,8 +1,8 @@
-// RUN: obelisk -O0 --vpi=off %s -o %t.o0
+// RUN: talos -O0 --vpi=off %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=generic %s -o %t.o3
+// RUN: talos -O3 --vpi=off --native-scheduler=generic %s -o %t.o3
 // RUN: %t.o3 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.bc
+// RUN: talos -O3 --vpi=off --execution-tier=bytecode %s -o %t.bc
 // RUN: %t.bc | FileCheck %s
 
 // IEEE 1800-2023 6.8, 9.4.2, 10.6.2, 23.3.3.2: static initialization,

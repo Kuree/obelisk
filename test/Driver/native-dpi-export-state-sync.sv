@@ -1,8 +1,8 @@
-// RUN: obelisk -O3 --native-scheduler=eval -emit-llvm %s -o %t.ll
+// RUN: talos -O3 --native-scheduler=eval -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: talos -O3 --native-scheduler=eval %s -o %t.eval
 // RUN: %t.eval | FileCheck %s
-// RUN: obelisk --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 
 // IEEE 1800-2023 35.7: an unused DPI export must not change SV execution.
@@ -29,6 +29,6 @@ module native_dpi_export_state_sync;
 endmodule
 
 // LLVM-DAG: define {{.*}}i32 @read_ticks()
-// LLVM-DAG: call i32 @obelisk_rt_v1_native_state_bind_shared
-// LLVM-DAG: call i32 @obelisk_rt_v1_native_state_sync
+// LLVM-DAG: call i32 @talos_rt_v1_native_state_bind_shared
+// LLVM-DAG: call i32 @talos_rt_v1_native_state_sync
 // CHECK: DPI EXPORT STARTUP PASS ticks=4

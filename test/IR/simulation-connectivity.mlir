@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
+// RUN: talos-opt %s | talos-opt | FileCheck %s
 
 module {
   simulation.design @connectivity {

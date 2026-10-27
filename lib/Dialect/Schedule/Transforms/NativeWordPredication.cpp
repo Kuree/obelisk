@@ -4,14 +4,14 @@
 #include "mlir/IR/RegionGraphTraits.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "obelisk/Analysis/NativeWordAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/NativeWordAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/SetVector.h"
 #include <functional>
 
 using namespace mlir;
-namespace obelisk {
+namespace talos {
 namespace {
 // Push dispatch comparisons through the integer selects created by
 // if-conversion. This exposes the original boolean conditions, allowing the
@@ -544,4 +544,4 @@ bool predicateNativeWordLoop(analysis::BoundedLoop loop) {
   return succeeded(
       applyPatternsGreedily(function, std::move(simplifyCFG), config));
 }
-} // namespace obelisk
+} // namespace talos

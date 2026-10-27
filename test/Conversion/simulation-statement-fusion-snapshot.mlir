@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
 // IEEE 1800-2023 4.3, 4.6(a), 10.4.1: splitting the request from the response
 // must preserve the SSA snapshot of the first write, although the temporary
 // later contains 2. Recomputing the response slice from that final value
 // changes its output. Each slice must reconstruct the source-local versions.
 // CHECK-LABEL: simulation.design @source_snapshot
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn
-// CHECK-LABEL: simulation.func private @__obelisk_region_kernel_0_0
+// CHECK-LABEL: simulation.func private @__talos_region_kernel_0_0
 // CHECK-DAG: %[[ONE:.*]] = arith.constant 1 : i8
 // CHECK-DAG: %[[TWO:.*]] = arith.constant 2 : i8
 // CHECK: ^bb1:

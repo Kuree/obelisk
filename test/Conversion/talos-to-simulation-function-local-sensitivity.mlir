@@ -1,0 +1,95 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+// RUN: talos-opt %s --talos-sim-prepare | FileCheck %s --check-prefix=PREPARE
+
+module {
+  talos.sv.symbol.definition @s0.function_local_sensitivity attributes {definition_kind = 0 : i32, hierarchical_name = "function_local_sensitivity", name = "function_local_sensitivity", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.function_local_sensitivity attributes {hierarchical_name = "function_local_sensitivity", is_uninstantiated = false, name = "function_local_sensitivity", node_id = 3 : i64, referenced_path = "function_local_sensitivity", referenced_symbol = @s0.function_local_sensitivity} {
+      talos.sv.symbol.instance_body @s4.function_local_sensitivity attributes {hierarchical_name = "function_local_sensitivity", name = "function_local_sensitivity", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        talos.sv.symbol.variable @s5.source attributes {hierarchical_name = "function_local_sensitivity.source", lifetime = 1 : i32, name = "source", node_id = 5 : i64, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+        }
+        talos.sv.symbol.net @s6.destination attributes {hierarchical_name = "function_local_sensitivity.destination", is_implicit = false, name = "destination", net_kind = 1 : i32, node_id = 6 : i64, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+          talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "transform", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = false, node_id = 7 : i64, referenced_path = "function_local_sensitivity.transform", referenced_symbol = @s1.$root::@s3.function_local_sensitivity::@s4.function_local_sensitivity::@s7.transform, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>, subroutine_kind = 0 : i32} {
+            talos.sv.expression.named_value attributes {is_signed = false, node_id = 8 : i64, referenced_path = "function_local_sensitivity.source", referenced_symbol = @s1.$root::@s3.function_local_sensitivity::@s4.function_local_sensitivity::@s5.source, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+            }
+          }
+        }
+        talos.sv.symbol.subroutine @s7.transform attributes {default_lifetime = 1 : i32, hierarchical_name = "function_local_sensitivity.transform", name = "transform", node_id = 9 : i64, return_variable_path = "function_local_sensitivity.transform.transform", return_variable_symbol = @s1.$root::@s3.function_local_sensitivity::@s4.function_local_sensitivity::@s7.transform::@s9.transform, semantic_type = !talos.subroutine<(!talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>) -> !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>, false>, subroutine_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.list attributes {node_id = 10 : i64} {
+            talos.sv.statement.variable_declaration attributes {node_id = 11 : i64, referenced_path = "function_local_sensitivity.transform.scratch", referenced_symbol = @s1.$root::@s3.function_local_sensitivity::@s4.function_local_sensitivity::@s7.transform::@s10.scratch} {
+            }
+            talos.sv.statement.variable_declaration attributes {node_id = 28 : i64, referenced_path = "function_local_sensitivity.transform.read_only", referenced_symbol = @s1.$root::@s3.function_local_sensitivity::@s4.function_local_sensitivity::@s7.transform::@s11.read_only} {
+            }
+            talos.sv.statement.block attributes {node_id = 12 : i64} {
+              talos.sv.statement.list attributes {node_id = 13 : i64} {
+                talos.sv.statement.expression_statement attributes {node_id = 14 : i64} {
+                  talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 15 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                    talos.sv.expression.named_value attributes {is_signed = true, node_id = 16 : i64, referenced_path = "function_local_sensitivity.transform.scratch", referenced_symbol = @s1.$root::@s3.function_local_sensitivity::@s4.function_local_sensitivity::@s7.transform::@s10.scratch, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                    }
+                    talos.sv.expression.conversion attributes {is_signed = true, node_id = 17 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                      talos.sv.expression.conversion attributes {is_signed = false, node_id = 18 : i64, semantic_type = !talos.ranged_packed_array<31 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                        talos.sv.expression.named_value attributes {is_signed = false, node_id = 19 : i64, referenced_path = "function_local_sensitivity.transform.value", referenced_symbol = @s1.$root::@s3.function_local_sensitivity::@s4.function_local_sensitivity::@s7.transform::@s8.value, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                        }
+                      }
+                    }
+                  }
+                }
+                talos.sv.statement.expression_statement attributes {node_id = 20 : i64} {
+                  talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 21 : i64, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 22 : i64, referenced_path = "function_local_sensitivity.transform.transform", referenced_symbol = @s1.$root::@s3.function_local_sensitivity::@s4.function_local_sensitivity::@s7.transform::@s9.transform, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                    }
+                    talos.sv.expression.conversion attributes {is_signed = false, node_id = 23 : i64, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                      talos.sv.expression.binary_op attributes {is_signed = true, node_id = 29 : i64, operator_kind = 0 : i32, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                        talos.sv.expression.named_value attributes {is_signed = true, node_id = 24 : i64, referenced_path = "function_local_sensitivity.transform.scratch", referenced_symbol = @s1.$root::@s3.function_local_sensitivity::@s4.function_local_sensitivity::@s7.transform::@s10.scratch, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                        }
+                        talos.sv.expression.named_value attributes {is_signed = true, node_id = 30 : i64, referenced_path = "function_local_sensitivity.transform.read_only", referenced_symbol = @s1.$root::@s3.function_local_sensitivity::@s4.function_local_sensitivity::@s7.transform::@s11.read_only, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          talos.sv.symbol.formal_argument @s8.value attributes {direction = 0 : i32, hierarchical_name = "function_local_sensitivity.transform.value", lifetime = 1 : i32, name = "value", node_id = 25 : i64, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+          }
+          talos.sv.symbol.variable @s9.transform attributes {hierarchical_name = "function_local_sensitivity.transform.transform", is_compiler_generated, name = "transform", node_id = 26 : i64, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+          }
+          talos.sv.symbol.variable @s10.scratch attributes {hierarchical_name = "function_local_sensitivity.transform.scratch", lifetime = 1 : i32, name = "scratch", node_id = 27 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+          }
+          talos.sv.symbol.variable @s11.read_only attributes {hierarchical_name = "function_local_sensitivity.transform.read_only", lifetime = 1 : i32, name = "read_only", node_id = 31 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+          }
+          // Compile-time declarations may be direct subroutine children. They
+          // stay in this symbol table rather than being cloned into sim.func.
+          talos.sv.symbol.iterator @s12.i attributes {array_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>, hierarchical_name = "function_local_sensitivity.transform.i", index_method_name = "", is_const, name = "i", node_id = 32 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+          }
+          talos.sv.type.type_alias @s13.local_t attributes {hierarchical_name = "function_local_sensitivity.transform.local_t", name = "local_t", node_id = 33 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+          }
+        }
+      }
+    }
+  }
+}
+
+// PREPARE-LABEL: simulation.func private @unit_1
+// PREPARE-SAME: (%[[CONTEXT:arg[0-9]+]]: !simulation.context
+// PREPARE: simulation.bindings = [
+// PREPARE-SAME: #simulation.descriptor_binding<path = "function_local_sensitivity.transform.transform", descriptor = 2
+// PREPARE-SAME: #simulation.descriptor_binding<path = "function_local_sensitivity.transform.scratch", descriptor = 3, type = !simulation.ref<!simulation.logic<32>>>
+// PREPARE-SAME: #simulation.descriptor_binding<path = "function_local_sensitivity.transform.read_only", descriptor = 4, type = !simulation.ref<!simulation.logic<32>>>
+
+// IEEE 1800-2017 4.9.1 and 10.3.2 make a continuous assignment sensitive to
+// the source operands in its RHS expression. A function's hidden static state
+// is not an operand of the call; the lexical argument remains the only source.
+// CHECK: simulation.storage.decl {{[0-9]+}} {{.*}} hierarchy "function_local_sensitivity.source"
+// CHECK: simulation.storage.decl {{[0-9]+}} {{.*}} hierarchy "function_local_sensitivity.transform.transform"
+// CHECK: simulation.storage.decl {{[0-9]+}} {{.*}} hierarchy "function_local_sensitivity.transform.scratch"
+// CHECK: simulation.storage.decl {{[0-9]+}} {{.*}} hierarchy "function_local_sensitivity.transform.read_only"
+// CHECK-LABEL: simulation.func private @{{.*}}(
+// CHECK-SAME: %{{.*}}, %[[SOURCE_ARG:arg[0-9]+]]: {{.*}}, %{{.*}}) attributes {{.*}}entry_kind = 7 : i32
+// CHECK: simulation.call @{{.*}}(%{{.*}}, %{{.*}})
+// CHECK: simulation.suspend.change %[[SOURCE_ARG]]
+// CHECK-NOT: talos.sv.

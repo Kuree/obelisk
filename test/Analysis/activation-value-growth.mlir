@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=input-dependencies=true inputs=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=INPUT
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=reaching-values=true inputs=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=FULL
+// RUN: talos-opt %s '--test-talos-activation-regions=input-dependencies=true inputs=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=INPUT
+// RUN: talos-opt %s '--test-talos-activation-regions=reaching-values=true inputs=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=FULL
 
 // Entry capture handles need one value node, not a proxy at every CFG block.
 // The test.activation_max_value_nodes budget is linear in the 32 roots, so it

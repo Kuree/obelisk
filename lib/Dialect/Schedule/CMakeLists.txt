@@ -1,21 +1,21 @@
-add_mlir_library(ObeliskScheduleIR
+add_mlir_library(TalosScheduleIR
   ScheduleOps.cpp
   Export.cpp
   ScheduleDialect.cpp
   ScheduleAttributes.cpp
   ScheduleFields.cpp
   DEPENDS
-  ObeliskScheduleOpsIncGen
-  ObeliskScheduleFieldsIncGen
-  ObeliskScheduleDialectIncGen
-  ObeliskScheduleAttrsIncGen
-  ObeliskScheduleEnumsIncGen
+  TalosScheduleOpsIncGen
+  TalosScheduleFieldsIncGen
+  TalosScheduleDialectIncGen
+  TalosScheduleAttrsIncGen
+  TalosScheduleEnumsIncGen
   # ScheduleOps.cpp includes the Simulation ops it schedules.
-  ObeliskSimulationDialectIncGen
-  ObeliskSimulationEnumsIncGen
-  ObeliskSimulationAttrsIncGen
-  ObeliskSimulationOpsIncGen
-  ObeliskSimulationTypesIncGen
+  TalosSimulationDialectIncGen
+  TalosSimulationEnumsIncGen
+  TalosSimulationAttrsIncGen
+  TalosSimulationOpsIncGen
+  TalosSimulationTypesIncGen
   LINK_LIBS PUBLIC
   MLIRArithDialect
   MLIRControlFlowInterfaces
@@ -29,5 +29,5 @@ add_mlir_library(ObeliskScheduleIR
 # These dialects share typed scheduling sites and native process operands.
 # Record their mutual linkage on the static archives, not on the independent
 # object-library compilation targets created by add_mlir_library.
-target_link_libraries(ObeliskScheduleIR PUBLIC ObeliskSimulationIR)
+target_link_libraries(TalosScheduleIR PUBLIC TalosSimulationIR)
 add_subdirectory(Transforms)

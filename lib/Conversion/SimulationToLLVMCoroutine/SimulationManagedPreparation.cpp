@@ -2,15 +2,15 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Analysis/ClassDispatchAnalysis.h"
-#include "obelisk/Analysis/DescriptorOrdering.h"
-#include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
-#include "obelisk/Analysis/NativeStorageLayout.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/DescriptorMap.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/ClassDispatchAnalysis.h"
+#include "talos/Analysis/DescriptorOrdering.h"
+#include "talos/Analysis/ManagedClassLayoutAnalysis.h"
+#include "talos/Analysis/NativeStorageLayout.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/DescriptorMap.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -33,14 +33,14 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 namespace {
 
 struct ManagedTraceLayout {
   uint64_t offset = 0;
   bool weak = false;
-  uint32_t slotKind = OBELISK_RT_MANAGED_SLOT_CLASS;
+  uint32_t slotKind = TALOS_RT_MANAGED_SLOT_CLASS;
 };
 
 struct ManagedRandomEdge {
@@ -65,8 +65,8 @@ struct ManagedClassLayout {
   };
 
   sim::SimClassDeclOp declaration;
-  uint64_t size = sizeof(obelisk_rt_managed_word_v1);
-  uint32_t alignment = alignof(obelisk_rt_managed_word_v1);
+  uint64_t size = sizeof(talos_rt_managed_word_v1);
+  uint32_t alignment = alignof(talos_rt_managed_word_v1);
   SmallVector<ManagedTraceLayout> tracedFields;
   SmallVector<ManagedRandomEdge> randomEdges;
   SmallVector<ManagedRandomVariable> randomVariables;
@@ -74,7 +74,7 @@ struct ManagedClassLayout {
   SmallVector<std::pair<uint64_t, uint64_t>> copyResets;
   SmallVector<sim::SimClassMethodDeclOp> methods;
   SmallVector<Interface> interfaces;
-  uint32_t builtinBaseKind = OBELISK_RT_BUILTIN_CLASS_NONE;
+  uint32_t builtinBaseKind = TALOS_RT_BUILTIN_CLASS_NONE;
   uint64_t builtinBaseOffset = 0;
 };
 
@@ -182,7 +182,7 @@ prepareManagedClassInventory(ModuleOp module,
     layout.alignment = shared.alignment;
     if (shared.weakReferentOffset)
       layout.tracedFields.push_back(
-          {*shared.weakReferentOffset, true, OBELISK_RT_MANAGED_SLOT_CLASS});
+          {*shared.weakReferentOffset, true, TALOS_RT_MANAGED_SLOT_CLASS});
 
     auto getModeOffset =
         [&](sim::SimClassFieldDeclOp field,
@@ -210,8 +210,8 @@ prepareManagedClassInventory(ModuleOp module,
       if (shared.builtinBaseOffset &&
           *shared.builtinBaseOffset == sharedField.offset) {
         layout.builtinBaseKind = isa<sim::MailboxType>(field.getType())
-                                     ? OBELISK_RT_BUILTIN_CLASS_MAILBOX
-                                     : OBELISK_RT_BUILTIN_CLASS_SEMAPHORE;
+                                     ? TALOS_RT_BUILTIN_CLASS_MAILBOX
+                                     : TALOS_RT_BUILTIN_CLASS_SEMAPHORE;
         layout.builtinBaseOffset = sharedField.offset;
       }
       SmallVector<std::pair<uint64_t, uint32_t>, 2> traceSlots;
@@ -252,11 +252,11 @@ prepareManagedClassInventory(ModuleOp module,
         variable.modeMask = mode->second;
         variable.bitWidth = *width;
         if (sharedField.storage.fourState)
-          variable.flags |= OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE;
+          variable.flags |= TALOS_RT_RANDOM_VARIABLE_FOUR_STATE;
         if (signedness.getValue())
-          variable.flags |= OBELISK_RT_RANDOM_VARIABLE_SIGNED;
+          variable.flags |= TALOS_RT_RANDOM_VARIABLE_SIGNED;
         if (kind.getValue() == sim::RandomVariableKind::RandC) {
-          variable.flags |= OBELISK_RT_RANDOM_VARIABLE_RANDC;
+          variable.flags |= TALOS_RT_RANDOM_VARIABLE_RANDC;
           auto key = sim::get<sim::metadata::RandomCycleKeyField>(field);
           auto position =
               sim::get<sim::metadata::RandomCyclePositionField>(field);
@@ -337,7 +337,7 @@ prepareManagedClassInventory(ModuleOp module,
   // Validate concrete implementations without rescanning inherited contracts.
   // Interface requirements share Patricia subtrees just like runtime indexes.
   using Requirements =
-      obelisk::runtime::DescriptorMap<sim::SimClassMethodDeclOp>;
+      talos::runtime::DescriptorMap<sim::SimClassMethodDeclOp>;
   Requirements::MergeCache requirementMerges;
   llvm::StringMap<Requirements> interfaceRequirements;
   llvm::StringMap<uint8_t> interfaceState;
@@ -385,7 +385,7 @@ prepareManagedClassInventory(ModuleOp module,
   struct ContractState {
     Requirements requirements, signatures;
   };
-  obelisk::runtime::DescriptorMatchCache matches;
+  talos::runtime::DescriptorMatchCache matches;
   llvm::StringMap<ContractState> contracts;
   auto missingImplementation = [&](sim::SimClassDeclOp declaration,
                                    uint64_t signature) {
@@ -469,7 +469,7 @@ prepareManagedClassInventory(ModuleOp module,
     }
   }
   llvm::StringMap<uint32_t> bytecodeFunctions;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         if (auto index = runtime::get<runtime::BytecodeFunction>(function))
           bytecodeFunctions[function.getSymName()] =
@@ -482,7 +482,7 @@ prepareManagedClassInventory(ModuleOp module,
     Type arrayType = LLVM::LLVMArrayType::get(i64, entry.second.size());
     makeConstantGlobal(
         module, classes.front().getLoc(), arrayType,
-        entry.getKey().str() + ".__obelisk_interface_signatures",
+        entry.getKey().str() + ".__talos_interface_signatures",
         LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
           Location location = classes.front().getLoc();
           Value array = LLVM::ZeroOp::create(builder, location, arrayType);
@@ -507,7 +507,7 @@ prepareManagedClassInventory(ModuleOp module,
           builder, location, record,
           LLVM::AddressOfOp::create(builder, location, pointer,
                                     declaration.getSymName().str() +
-                                        ".__obelisk_interface_signatures"),
+                                        ".__talos_interface_signatures"),
           1);
     record =
         insertValue(builder, location, record,
@@ -518,7 +518,7 @@ prepareManagedClassInventory(ModuleOp module,
           builder, location, record,
           LLVM::AddressOfOp::create(builder, location, pointer,
                                     declaration.getSymName().str() +
-                                        ".__obelisk_interface_bases"),
+                                        ".__talos_interface_bases"),
           3);
     return insertValue(builder, location, record,
                        llvmConstant(builder, location, i64, bases.size()), 4);
@@ -531,7 +531,7 @@ prepareManagedClassInventory(ModuleOp module,
       Type arrayType = LLVM::LLVMArrayType::get(pointer, bases.size());
       makeConstantGlobal(
           module, declaration.getLoc(), arrayType,
-          declaration.getSymName().str() + ".__obelisk_interface_bases",
+          declaration.getSymName().str() + ".__talos_interface_bases",
           LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
             Location location = declaration.getLoc();
             Value array = LLVM::ZeroOp::create(builder, location, arrayType);
@@ -541,14 +541,14 @@ prepareManagedClassInventory(ModuleOp module,
                   builder, location, array,
                   LLVM::AddressOfOp::create(builder, location, pointer,
                                             baseDeclaration.getSymName().str() +
-                                                ".__obelisk_interface"),
+                                                ".__talos_interface"),
                   ArrayRef<int64_t>{static_cast<int64_t>(index)});
             }
             return array;
           });
     }
     makeConstantGlobal(module, declaration.getLoc(), interfaceType,
-                       declaration.getSymName().str() + ".__obelisk_interface",
+                       declaration.getSymName().str() + ".__talos_interface",
                        LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
                          return interfaceRecord(builder, declaration.getLoc(),
                                                 declaration);
@@ -563,16 +563,16 @@ prepareManagedClassInventory(ModuleOp module,
           sim::SimClassDeclOp declaration = shared->declaration;
           ManagedClassLayout &layout = layouts[declaration.getSymName()];
           std::string prefix = declaration.getSymName().str();
-          std::string entriesName = prefix + ".__obelisk_trace_entries";
-          std::string traceName = prefix + ".__obelisk_trace_layout";
-          std::string randomEdgesName = prefix + ".__obelisk_random_edges";
+          std::string entriesName = prefix + ".__talos_trace_entries";
+          std::string traceName = prefix + ".__talos_trace_layout";
+          std::string randomEdgesName = prefix + ".__talos_random_edges";
           std::string randomVariablesName =
-              prefix + ".__obelisk_random_variables";
-          std::string randomLayoutName = prefix + ".__obelisk_random_layout";
-          std::string methodsName = prefix + ".__obelisk_methods";
-          std::string interfacesName = prefix + ".__obelisk_interfaces";
-          std::string copyResetsName = prefix + ".__obelisk_copy_resets";
-          std::string debugName = prefix + ".__obelisk_debug_name";
+              prefix + ".__talos_random_variables";
+          std::string randomLayoutName = prefix + ".__talos_random_layout";
+          std::string methodsName = prefix + ".__talos_methods";
+          std::string interfacesName = prefix + ".__talos_interfaces";
+          std::string copyResetsName = prefix + ".__talos_copy_resets";
+          std::string debugName = prefix + ".__talos_debug_name";
           std::string descriptorName = managedClassDescriptorName(
               FlatSymbolRefAttr::get(context, declaration.getSymName()));
           Location location = declaration.getLoc();
@@ -596,13 +596,13 @@ prepareManagedClassInventory(ModuleOp module,
                                     llvmConstant(builder, location, i64, 1), 2);
                     entry = insertValue(builder, location, entry,
                                         llvmConstant(builder, location, i32,
-                                                     OBELISK_RT_TRACE_EMBEDDED),
+                                                     TALOS_RT_TRACE_EMBEDDED),
                                         3);
                     entry = insertValue(
                         builder, location, entry,
                         LLVM::AddressOfOp::create(
                             builder, location, pointer,
-                            base->str() + ".__obelisk_trace_layout"),
+                            base->str() + ".__talos_trace_layout"),
                         5);
                     array = LLVM::InsertValueOp::create(
                         builder, location, array, entry, ArrayRef<int64_t>{0});
@@ -620,8 +620,8 @@ prepareManagedClassInventory(ModuleOp module,
                     entry = insertValue(
                         builder, location, entry,
                         llvmConstant(builder, location, i32,
-                                     field.weak ? OBELISK_RT_TRACE_WEAK
-                                                : OBELISK_RT_TRACE_STRONG),
+                                     field.weak ? TALOS_RT_TRACE_WEAK
+                                                : TALOS_RT_TRACE_STRONG),
                         3);
                     entry = insertValue(
                         builder, location, entry,
@@ -641,7 +641,7 @@ prepareManagedClassInventory(ModuleOp module,
                     LLVM::ZeroOp::create(builder, location, traceLayoutType);
                 trace = insertValue(
                     builder, location, trace,
-                    llvmConstant(builder, location, i32, OBELISK_RT_VERSION),
+                    llvmConstant(builder, location, i32, TALOS_RT_VERSION),
                     0);
                 trace = insertValue(
                     builder, location, trace,
@@ -746,7 +746,7 @@ prepareManagedClassInventory(ModuleOp module,
                       LLVM::ZeroOp::create(builder, location, randomLayoutType);
                   random = insertValue(
                       builder, location, random,
-                      llvmConstant(builder, location, i32, OBELISK_RT_VERSION),
+                      llvmConstant(builder, location, i32, TALOS_RT_VERSION),
                       0);
                   if (!layout.randomEdges.empty())
                     random = insertValue(
@@ -790,9 +790,9 @@ prepareManagedClassInventory(ModuleOp module,
                                                      *method.getSignatureId()),
                                         0);
                     uint32_t flags =
-                        method.getIsTask() ? OBELISK_RT_METHOD_TASK : 0;
+                        method.getIsTask() ? TALOS_RT_METHOD_TASK : 0;
                     if (method.getIsPure())
-                      flags |= OBELISK_RT_METHOD_PURE;
+                      flags |= TALOS_RT_METHOD_PURE;
                     entry = insertValue(
                         builder, location, entry,
                         llvmConstant(builder, location, i32, flags), 1);
@@ -808,7 +808,7 @@ prepareManagedClassInventory(ModuleOp module,
                                 if (found != bytecodeFunctions.end())
                                   return found->second;
                               }
-                              return uint32_t{OBELISK_RT_METHOD_NO_BYTECODE};
+                              return uint32_t{TALOS_RT_METHOD_NO_BYTECODE};
                             }()),
                         2);
                     if (!method.getIsPure() && !bytecodeOnly)
@@ -885,16 +885,16 @@ prepareManagedClassInventory(ModuleOp module,
                     LLVM::ZeroOp::create(builder, location, classType);
                 descriptor = insertValue(
                     builder, location, descriptor,
-                    llvmConstant(builder, location, i32, OBELISK_RT_VERSION),
+                    llvmConstant(builder, location, i32, TALOS_RT_VERSION),
                     0);
                 uint32_t flags =
-                    declaration.getIsAbstract() ? OBELISK_RT_CLASS_ABSTRACT : 0;
+                    declaration.getIsAbstract() ? TALOS_RT_CLASS_ABSTRACT : 0;
                 if (declaration.getIsInterface())
-                  flags |= OBELISK_RT_CLASS_INTERFACE;
+                  flags |= TALOS_RT_CLASS_INTERFACE;
                 if (declaration.getIsFinal())
-                  flags |= OBELISK_RT_CLASS_FINAL;
+                  flags |= TALOS_RT_CLASS_FINAL;
                 if (declaration.getWeakReferentAttr())
-                  flags |= OBELISK_RT_CLASS_WEAK_WRAPPER;
+                  flags |= TALOS_RT_CLASS_WEAK_WRAPPER;
                 descriptor =
                     insertValue(builder, location, descriptor,
                                 llvmConstant(builder, location, i32, flags), 1);
@@ -1100,4 +1100,4 @@ LogicalResult prepareManagedLowering(ModuleOp module,
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

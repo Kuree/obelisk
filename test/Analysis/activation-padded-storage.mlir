@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=reaching-values=true inputs=true' -o %t.analyzed 2>&1 | FileCheck %s --check-prefix=CHECK
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=inputs=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ALL
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s '--test-talos-activation-regions=reaching-values=true inputs=true' -o %t.analyzed 2>&1 | FileCheck %s --check-prefix=CHECK
+// RUN: talos-opt %s '--test-talos-activation-regions=inputs=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ALL
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
 // Native byte padding does not contain retained SystemVerilog values.
 // Both physical offsets and the unwritten logical element remain significant.

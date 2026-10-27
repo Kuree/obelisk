@@ -2,18 +2,18 @@
 
 #include "../SimulationToLLVMCoroutine/SimulationAOTPlanning.h"
 #include "../SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "obelisk/Analysis/ClockInferenceAnalysis.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/ClockInferenceAnalysis.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/SimulationScheduleAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/StableHandle.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -29,7 +29,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
     ModuleOp module, const NativeStateLayout &stateLayout,
@@ -269,7 +269,7 @@ buildNativeClockInferencePlan(ModuleOp module, const NativeStateLayout &layout,
     if (fact.hasTickBound())
       periodic.insert(bit);
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk periodic signal proof: clocks=" << clocks.size()
+    llvm::errs() << "talos periodic signal proof: clocks=" << clocks.size()
                  << " copies=" << inference.getCopyCount()
                  << " cadence-outputs=" << inference.getCadenceCount()
                  << " periodic-bits=" << periodic.size() << '\n';
@@ -308,9 +308,9 @@ buildNativePeriodicAliasPlan(ModuleOp module,
     return std::nullopt;
   };
   auto decodeStaticRoot = [&](uint64_t handle) -> std::optional<uint32_t> {
-    obelisk_rt_stable_handle_v1 decoded{};
-    if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
-        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset != 0)
+    talos_rt_stable_handle_v1 decoded{};
+    if (!talos_rt_stable_handle_decode(handle, &decoded) ||
+        decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC || decoded.offset != 0)
       return std::nullopt;
     return decoded.id;
   };
@@ -570,7 +570,7 @@ buildNativePeriodicAliasPlan(ModuleOp module,
   }
   aliases = std::move(reachable);
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk periodic forwarding: aliases=" << aliases.size()
+    llvm::errs() << "talos periodic forwarding: aliases=" << aliases.size()
                  << '\n';
   llvm::sort(aliases, [](const NativePeriodicAlias &lhs,
                          const NativePeriodicAlias &rhs) {
@@ -600,18 +600,18 @@ buildNativePeriodicAliasPlan(ModuleOp module,
   return aliases;
 }
 
-FailureOr<SmallVector<obelisk_rt_static_actor_root>>
+FailureOr<SmallVector<talos_rt_static_actor_root>>
 buildNativeStaticActorRootPlan(
     ModuleOp module, const NativeStateLayout &stateLayout,
     const DenseMap<Operation *, uint32_t> &actorSlots,
     const DenseSet<uint64_t> &checkpointOnlyActors, bool writableVPI,
     SmallVectorImpl<uint32_t> &unscopedActors) {
-  SmallVector<obelisk_rt_static_actor_root> plan;
+  SmallVector<talos_rt_static_actor_root> plan;
   sim::SimDesignOp design;
   module.walk([&](sim::SimDesignOp candidate) { design = candidate; });
   auto specialization =
       design
-          ? ::obelisk::schedule::get<schedule::metadata::staticSpecialization>(
+          ? ::talos::schedule::get<schedule::metadata::staticSpecialization>(
                 design)
           : schedule::StaticSpecializationAttr{};
   if (!design || (!specialization && !writableVPI))
@@ -642,14 +642,14 @@ buildNativeStaticActorRootPlan(
       return module.emitError(
                  "static actor/root dependency references unknown storage"),
              failure();
-    obelisk_rt_stable_handle_v1 decoded{};
-    if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset != 0)
+    talos_rt_stable_handle_v1 decoded{};
+    if (!talos_rt_stable_handle_decode(handle->second, &decoded) ||
+        decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC || decoded.offset != 0)
       return module.emitError(
                  "static actor/root dependency has an invalid native handle"),
              failure();
-    uint32_t flags = (dependency.getRead() ? OBELISK_RT_STATIC_ROOT_READ : 0) |
-                     (dependency.getWrite() ? OBELISK_RT_STATIC_ROOT_WRITE : 0);
+    uint32_t flags = (dependency.getRead() ? TALOS_RT_STATIC_ROOT_READ : 0) |
+                     (dependency.getWrite() ? TALOS_RT_STATIC_ROOT_WRITE : 0);
     if (flags != 0)
       plan.push_back({actor->second, decoded.id, flags, 0});
   }
@@ -722,10 +722,10 @@ buildNativeStaticActorRootPlan(
                   ? stateLayout.storage
                   : stateLayout.nets;
           auto handle = handles.find(effect.getDescriptor());
-          obelisk_rt_stable_handle_v1 decoded{};
+          talos_rt_stable_handle_v1 decoded{};
           if (handle == handles.end() ||
-              !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-              decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+              !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+              decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC ||
               decoded.offset != 0) {
             complete = false;
             continue;
@@ -733,19 +733,19 @@ buildNativeStaticActorRootPlan(
           uint32_t flags = 0;
           if (effect.getEffect() == schedule::ComputeEffectKind::Read ||
               effect.getEffect() == schedule::ComputeEffectKind::Watch)
-            flags |= OBELISK_RT_STATIC_ROOT_READ;
+            flags |= TALOS_RT_STATIC_ROOT_READ;
           if (effect.getEffect() == schedule::ComputeEffectKind::Write ||
               effect.getEffect() == schedule::ComputeEffectKind::Drive ||
               effect.getEffect() == schedule::ComputeEffectKind::NBA)
-            flags |= OBELISK_RT_STATIC_ROOT_WRITE;
+            flags |= TALOS_RT_STATIC_ROOT_WRITE;
           if (flags)
             plan.push_back({slot, decoded.id, flags, 0});
         }
       if (!complete)
         unscopedActors.push_back(slot);
       plan.push_back({slot, 0,
-                      complete ? OBELISK_RT_STATIC_ROOT_COMPLETE
-                               : OBELISK_RT_STATIC_ROOT_UNSCOPED,
+                      complete ? TALOS_RT_STATIC_ROOT_COMPLETE
+                               : TALOS_RT_STATIC_ROOT_UNSCOPED,
                       0});
     }
     llvm::sort(unscopedActors);
@@ -873,8 +873,8 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
         continue;
       }
       if (runtimeOwnedFanoutActors.contains(function.getOperation()) &&
-          ::obelisk::schedule::has<
-              ::obelisk::schedule::Field::CovergroupClockingSampler>(
+          ::talos::schedule::has<
+              ::talos::schedule::Field::CovergroupClockingSampler>(
               function)) {
         // Computed covergroup primaries expose an abstract graph Watch: the
         // runtime indexes their exact static dependencies from the serialized
@@ -928,10 +928,10 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
                     ? stateLayout.storage
                     : stateLayout.nets;
             auto handle = handles.find(*found->second.descriptor);
-            obelisk_rt_stable_handle_v1 decoded{};
+            talos_rt_stable_handle_v1 decoded{};
             if (handle == handles.end() ||
-                !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-                decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+                !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+                decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC ||
                 decoded.offset != 0) {
               valid = false;
               break;
@@ -974,9 +974,9 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
           return block->getTerminator()->emitError(
                      "runtime fanout references unknown state"),
                  failure();
-        obelisk_rt_stable_handle_v1 decoded{};
-        if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-            decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+        talos_rt_stable_handle_v1 decoded{};
+        if (!talos_rt_stable_handle_decode(handle->second, &decoded) ||
+            decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC ||
             decoded.offset != 0)
           return block->getTerminator()->emitError(
                      "runtime fanout has an invalid native root"),
@@ -1050,9 +1050,9 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
         return terminator->emitError(
                    "static fanout references an unknown state descriptor"),
                failure();
-      obelisk_rt_stable_handle_v1 decoded{};
-      if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-          decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+      talos_rt_stable_handle_v1 decoded{};
+      if (!talos_rt_stable_handle_decode(handle->second, &decoded) ||
+          decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC ||
           decoded.offset != 0)
         return terminator->emitError(
                    "static fanout descriptor has an invalid native root"),
@@ -1072,36 +1072,36 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
       uint32_t edge;
       switch (effect.getTrigger()) {
       case schedule::ComputeTriggerKind::Change:
-        edge = OBELISK_RT_WAIT_EDGE_CHANGE;
+        edge = TALOS_RT_WAIT_EDGE_CHANGE;
         break;
       case schedule::ComputeTriggerKind::Posedge:
-        edge = OBELISK_RT_WAIT_EDGE_POSEDGE;
+        edge = TALOS_RT_WAIT_EDGE_POSEDGE;
         break;
       case schedule::ComputeTriggerKind::Negedge:
-        edge = OBELISK_RT_WAIT_EDGE_NEGEDGE;
+        edge = TALOS_RT_WAIT_EDGE_NEGEDGE;
         break;
       case schedule::ComputeTriggerKind::Both:
-        edge = OBELISK_RT_WAIT_EDGE_BOTH;
+        edge = TALOS_RT_WAIT_EDGE_BOTH;
         break;
       default:
         disableExactFanout("watch has unsupported trigger", function);
         continue;
       }
       bool suppressActiveSelf =
-          (::obelisk::schedule::has<schedule::metadata::proceduralEventWait>(
+          (::talos::schedule::has<schedule::metadata::proceduralEventWait>(
                terminator) ||
-           ::obelisk::schedule::has<schedule::metadata::topLevelWildcardWait>(
+           ::talos::schedule::has<schedule::metadata::topLevelWildcardWait>(
                terminator)) &&
-          !::obelisk::schedule::has<schedule::metadata::repeatingAlwaysWait>(
+          !::talos::schedule::has<schedule::metadata::repeatingAlwaysWait>(
               terminator);
       uint32_t flags =
-          suppressActiveSelf ? OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF : 0;
+          suppressActiveSelf ? TALOS_RT_FANOUT_SUPPRESS_ACTIVE_SELF : 0;
       // IEEE 1800-2017 9.4.2 defines a vector edge event in terms of the
       // expression's least significant bit. Keep the full watched range for
       // ordinary change sensitivity, but encode edge-sensitive fanout as its
       // single LSB so every static publication path shares that semantic.
       uint64_t fanoutWidth =
-          edge == OBELISK_RT_WAIT_EDGE_CHANGE ? effect.getWidth() : 1;
+          edge == TALOS_RT_WAIT_EDGE_CHANGE ? effect.getWidth() : 1;
       plan.entries.push_back({decoded.id, actor->second, site.getId(), edge,
                               UINT32_MAX, flags, effect.getLow(), fanoutWidth,
                               0, 0});
@@ -1135,7 +1135,7 @@ buildNativeThreeTierPlan(ModuleOp module,
   if (!design)
     return result;
   auto schedule =
-      ::obelisk::schedule::get<schedule::metadata::threeTierSchedule>(design);
+      ::talos::schedule::get<schedule::metadata::threeTierSchedule>(design);
   if (!schedule)
     return result;
   if (schedule.getSourceGraph() != design.getComputeGraphAttr())
@@ -1155,9 +1155,9 @@ buildNativeThreeTierPlan(ModuleOp module,
       return design.emitOpError(
                  "promotion closure references an unknown native root"),
              failure();
-    obelisk_rt_stable_handle_v1 decoded{};
-    if (!obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset != 0)
+    talos_rt_stable_handle_v1 decoded{};
+    if (!talos_rt_stable_handle_decode(handle->second, &decoded) ||
+        decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC || decoded.offset != 0)
       return design.emitOpError(
                  "promotion closure has a non-static native root"),
              failure();
@@ -1224,7 +1224,7 @@ buildNativeThreeTierPlan(ModuleOp module,
 }
 
 bool isNativePeriodicAliasEntry(ArrayRef<NativePeriodicAlias> periodicAliases,
-                                const obelisk_rt_static_fanout_entry &entry) {
+                                const talos_rt_static_fanout_entry &entry) {
   return llvm::any_of(periodicAliases, [&](const NativePeriodicAlias &alias) {
     // The planner proves this continuation has exactly one change wait on
     // its copied input. SourceStaticState is now the transitive calendar root;
@@ -1244,7 +1244,7 @@ buildNativeEvalOwnershipPlan(ModuleOp module,
   result.fanoutOwners.reserve(fanoutPlan.entries.size());
   result.periodicFanoutOwners.reserve(fanoutPlan.entries.size());
 
-  auto fragmentsFor = [&](const obelisk_rt_static_fanout_entry &entry) {
+  auto fragmentsFor = [&](const talos_rt_static_fanout_entry &entry) {
     auto fragments =
         fanoutPlan.fragments.find({entry.actor_slot, entry.continuation});
     return fragments == fanoutPlan.fragments.end()
@@ -1292,7 +1292,7 @@ buildNativeEvalOwnershipPlan(ModuleOp module,
              failure();
   }
 
-  for (const obelisk_rt_static_fanout_entry &entry : fanoutPlan.entries) {
+  for (const talos_rt_static_fanout_entry &entry : fanoutPlan.entries) {
     if (isNativePeriodicAliasEntry(periodicAliases, entry)) {
       NativeEvalFanoutOwner owner{NativeEvalFanoutOwnerKind::PeriodicAlias,
                                   UINT32_MAX};
@@ -1370,4 +1370,4 @@ buildNativeEvalOwnershipPlan(ModuleOp module,
   return result;
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

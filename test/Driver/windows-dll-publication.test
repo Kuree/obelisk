@@ -3,7 +3,7 @@
 // RUN: %target_clang -fuse-ld=lld -shared %t.dir/impl.c -Wl,/export:dpi_add -o %t.dir/dpi.dll
 // RUN: mkdir -p %t.dir/bundle/simulator.exe
 // RUN: cp %s %t.dir/bundle/dpi.dll
-// RUN: not obelisk %t.dir/design.sv %t.dir/dpi.dll -o %t.dir/bundle/simulator.exe 2>&1 | FileCheck %s
+// RUN: not talos %t.dir/design.sv %t.dir/dpi.dll -o %t.dir/bundle/simulator.exe 2>&1 | FileCheck %s
 // RUN: diff -u %s %t.dir/bundle/dpi.dll
 
 // A directory prevents EXE publication after its companions were staged. The

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // IEEE 1800-2017 10.6.2: the right-hand side of an intra-assignment event
 // control is evaluated before suspension. The forwarded value is coroutine
@@ -49,10 +49,10 @@ module attributes {schedule.native_scheduler = 3 : i32} {
   }
 }
 
-// CHECK-NOT: __obelisk_eval_body
+// CHECK-NOT: __talos_eval_body
 // CHECK-LABEL: simulation.func private @driver
 // CHECK: simulation.suspend.change
 // CHECK-SAME: to ^[[ACTIVATION:bb[0-9]+]]
 // CHECK: ^[[ACTIVATION]](%[[VALUE:.*]]: !simulation.logic<4>):
 // CHECK: simulation.ref.store %[[VALUE]]
-// CHECK-NOT: __obelisk_eval_body
+// CHECK-NOT: __talos_eval_body

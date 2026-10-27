@@ -2,15 +2,15 @@
 
 #pragma once
 
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
-#include "obelisk/Runtime/RandomSamplerPlan.h"
+#include "talos/Runtime/RandomSamplerPlan.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <vector>
 
-namespace obelisk::runtime {
+namespace talos::runtime {
 
 /// Little-endian words with two stored inline. Every decision-diagram node
 /// holds a count and ranking shifts them per input, while the counts of the
@@ -202,7 +202,7 @@ public:
   /// Rejection of ranks outside the exact cardinality avoids modulo bias.
   /// A singleton needs no draw. Rejection probability is always below 1/2.
   static ModelCount randomBelow(const ModelCount &bound,
-                                obelisk_rt_random_state_v1 &state) {
+                                talos_rt_random_state_v1 &state) {
     ModelCount maximum = bound;
     maximum.subtract(ModelCount(1));
     if (maximum.zero())
@@ -212,7 +212,7 @@ public:
     do {
       rank.words.resize(maximum.words.size());
       for (uint64_t &word : rank.words)
-        word = obelisk_rt_v1_random_state_next64(&state);
+        word = talos_rt_v1_random_state_next64(&state);
       if (highBits != 64)
         rank.words.back() &= (uint64_t{1} << highBits) - 1;
       rank.normalize();
@@ -809,4 +809,4 @@ private:
   random::FlatMap<random::BooleanCircuit::ID, ID> circuits;
 };
 
-} // namespace obelisk::runtime
+} // namespace talos::runtime

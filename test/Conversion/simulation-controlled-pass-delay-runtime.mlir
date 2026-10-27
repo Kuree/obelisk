@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --test-obelisk-print-bytecode=state=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off require-bytecode=true' --test-talos-print-bytecode=state=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 // Runtime behavior is checked in ../Runtime/simulation-controlled-pass-delay-runtime.test.
 
@@ -7,7 +7,7 @@
 // delays directly. Signals still cross an enabled channel immediately.
 // Turn-on is 3 ticks, turn-off is 5, and X/Z uses min(3,5). A rejected
 // one-tick enable pulse never changes connectivity.
-// LLVM: llvm.call @obelisk_rt_v1_pass_switch_control_delayed
+// LLVM: llvm.call @talos_rt_v1_pass_switch_control_delayed
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x0001023e
 
 module attributes {
@@ -25,7 +25,7 @@ module attributes {
     simulation.code_unit.decl 9970000 in 0 root_initializer hierarchy "top.root"
     simulation.code_unit.decl 9970001 in 0 initial hierarchy "top.initial"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9970000 : i64,
                     simulation.lowered} {

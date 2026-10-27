@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-source-memory-forwarding | FileCheck %s
+// RUN: talos-opt %s --test-talos-source-memory-forwarding | FileCheck %s
 !choice = !simulation.packed_union<fields = [#simulation.field<name = "bits", type = i8, ordinal = 0, packedOffset = 0>, #simulation.field<name = "logic", type = !simulation.logic<8>, ordinal = 1, packedOffset = 0>], isTagged = false>
 !pair = !simulation.packed_struct<[#simulation.field<name = "a", type = !choice, ordinal = 0, packedOffset = 8>, #simulation.field<name = "b", type = i8, ordinal = 1, packedOffset = 0>]>
 !pairs = !simulation.unpacked_array<0 : 1 x !pair>

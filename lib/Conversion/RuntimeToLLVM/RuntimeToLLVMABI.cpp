@@ -2,7 +2,7 @@
 
 #include "RuntimeToLLVMABI.h"
 
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
@@ -12,7 +12,7 @@
 
 using namespace mlir;
 
-namespace obelisk::runtimelowering {
+namespace talos::runtimelowering {
 
 FailureOr<ABIAlignments> validateTargetABI(ModuleOp module,
                                            const llvm::DataLayout &layout) {
@@ -46,7 +46,7 @@ FailureOr<ABIAlignments> validateTargetABI(ModuleOp module,
     if (size.isScalable() || size.getFixedValue() != expectedSize ||
         alignment != expectedAlignment) {
       module.emitError() << "LLVM data layout is incompatible with the "
-                            "Obelisk runtime ABI for "
+                            "Talos runtime ABI for "
                          << name << " (expected size/alignment " << expectedSize
                          << "/" << expectedAlignment << ")";
       return failure();
@@ -135,14 +135,14 @@ ABIAlignments getABIAlignments(const llvm::DataLayout &layout) {
 bool containsRuntimeType(Type type) {
   bool found = false;
   type.walk([&](Type nested) {
-    if (isa<runtime::ObeliskRuntimeDialect>(nested.getDialect()))
+    if (isa<runtime::TalosRuntimeDialect>(nested.getDialect()))
       found = true;
   });
   return found;
 }
 
 std::optional<Type> convertRuntimeType(Type type, const ABITypes &abi) {
-  using namespace obelisk::runtime;
+  using namespace talos::runtime;
   if (isa<ContextType, CStringType, FormatEnvironmentType,
           FragmentDescriptorType, ProcessDescriptorType, ProcessInstanceType,
           BytecodeProgramType>(type))
@@ -203,4 +203,4 @@ std::optional<Type> convertRuntimeType(Type type, const ABITypes &abi) {
   return type;
 }
 
-} // namespace obelisk::runtimelowering
+} // namespace talos::runtimelowering

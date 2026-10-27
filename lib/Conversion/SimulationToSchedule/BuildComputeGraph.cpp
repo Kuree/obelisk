@@ -7,14 +7,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Conversion/SimulationToSchedule/ComputeGraph.h"
-#include "obelisk/Conversion/SimulationToSchedule/Utils.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Conversion/SimulationToSchedule/ComputeGraph.h"
+#include "talos/Conversion/SimulationToSchedule/Utils.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
 
-#include "obelisk/Analysis/DPIEffectAnalysis.h"
-#include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Conversion/SimulationToSchedule.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/DPIEffectAnalysis.h"
+#include "talos/Analysis/SimulationVPIAnalysis.h"
+#include "talos/Conversion/SimulationToSchedule.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -22,24 +22,24 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMBUILDCOMPUTEGRAPHPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMBUILDCOMPUTEGRAPHPASS
+#include "talos/Conversion/Passes.h.inc"
 
 namespace {
 
-class ObeliskSimBuildComputeGraphPass
-    : public impl::ObeliskSimBuildComputeGraphPassBase<
-          ObeliskSimBuildComputeGraphPass> {
+class TalosSimBuildComputeGraphPass
+    : public impl::TalosSimBuildComputeGraphPassBase<
+          TalosSimBuildComputeGraphPass> {
 public:
-  ObeliskSimBuildComputeGraphPass() = default;
-  explicit ObeliskSimBuildComputeGraphPass(
-      ObeliskSimBuildComputeGraphPassOptions options,
+  TalosSimBuildComputeGraphPass() = default;
+  explicit TalosSimBuildComputeGraphPass(
+      TalosSimBuildComputeGraphPassOptions options,
       bool reuseKnownCurrentGraph = false)
       : Base(std::move(options)),
         reuseKnownCurrentGraph(reuseKnownCurrentGraph) {}
-  ObeliskSimBuildComputeGraphPass(const ObeliskSimBuildComputeGraphPass &other)
+  TalosSimBuildComputeGraphPass(const TalosSimBuildComputeGraphPass &other)
       : Base(other), reuseKnownCurrentGraph(other.reuseKnownCurrentGraph) {}
   void runOnOperation() override;
 
@@ -187,7 +187,7 @@ verifyVariableWriters(sim::SimDesignOp design,
   return failure(invalid);
 }
 
-void ObeliskSimBuildComputeGraphPass::runOnOperation() {
+void TalosSimBuildComputeGraphPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
 
   simlowering::ComputeGraphOptions options;
@@ -269,9 +269,9 @@ void ObeliskSimBuildComputeGraphPass::runOnOperation() {
 
 } // namespace
 
-std::unique_ptr<mlir::Pass> createObeliskSimBuildCurrentComputeGraphPass(
-    ObeliskSimBuildComputeGraphPassOptions options) {
-  return std::make_unique<ObeliskSimBuildComputeGraphPass>(std::move(options),
+std::unique_ptr<mlir::Pass> createTalosSimBuildCurrentComputeGraphPass(
+    TalosSimBuildComputeGraphPassOptions options) {
+  return std::make_unique<TalosSimBuildComputeGraphPass>(std::move(options),
                                                            true);
 }
-} // namespace obelisk
+} // namespace talos

@@ -1,6 +1,6 @@
 // Makes SystemVerilog code blocks on any website runnable.
 //
-//   <script src="https://keyizhang.com/obelisk/runner.js" defer></script>
+//   <script src="https://keyizhang.com/talos/runner.js" defer></script>
 //
 // Every SystemVerilog code block gets a Run button and an output panel. A block
 // is a `pre > code` carrying `language-systemverilog` or `language-sv`, either
@@ -13,11 +13,11 @@
 //                   60; 0 disables)
 //   data-highlight  "off" to leave code blocks uncolored
 //
-// A block can add `data-obelisk-args` for its own flags and
-// `data-obelisk-timeout` for its own limit, opt out of highlighting with
-// `data-obelisk-highlight="off"`, or opt out entirely with
-// `data-obelisk="off"`, on either the <code> or its <pre>. Pages that render
-// code after load call `ObeliskRunner.scan(root)`.
+// A block can add `data-talos-args` for its own flags and
+// `data-talos-timeout` for its own limit, opt out of highlighting with
+// `data-talos-highlight="off"`, or opt out entirely with
+// `data-talos="off"`, on either the <code> or its <pre>. Pages that render
+// code after load call `TalosRunner.scan(root)`.
 //
 // Blocks are highlighted only when nothing else has: the pass waits for the
 // page's load event, after highlight.js and Prism run their DOMContentLoaded
@@ -29,7 +29,7 @@
 // created on the first click so readers who never press Run download nothing.
 
 (() => {
-  if (window.ObeliskRunner) return;
+  if (window.TalosRunner) return;
 
   const script = document.currentScript;
   const base = new URL('.', script?.src ?? location.href);
@@ -59,7 +59,7 @@
     if (service) return service;
     const iframe = document.createElement('iframe');
     iframe.src = serviceUrl.href;
-    iframe.title = 'Obelisk compile service';
+    iframe.title = 'Talos compile service';
     iframe.setAttribute('aria-hidden', 'true');
     iframe.tabIndex = -1;
     iframe.style.cssText =
@@ -81,7 +81,7 @@
       if (event.source !== iframe.contentWindow ||
           event.origin !== serviceUrl.origin) return;
       const message = event.data;
-      if (message?.obelisk !== PROTOCOL) return;
+      if (message?.talos !== PROTOCOL) return;
       if (message.type === 'ready') {
         clearTimeout(timer);
         resolveReady();
@@ -94,7 +94,7 @@
     service = {
       ready,
       send: (message) => iframe.contentWindow.postMessage(
-        { obelisk: PROTOCOL, ...message }, serviceUrl.origin,
+        { talos: PROTOCOL, ...message }, serviceUrl.origin,
       ),
     };
     return service;
@@ -173,20 +173,20 @@
   // take the page's own ground, so only the token colors apply. :where() adds
   // no specificity, so a host stylesheet overrides any of them.
   const HIGHLIGHT_STYLE = `
-    :where(.obelisk-hl) :where(.obelisk-comment) { color: #6e7781; }
-    :where(.obelisk-hl) :where(.obelisk-string) { color: #0a3069; }
-    :where(.obelisk-hl) :where(.obelisk-keyword) { color: #cf222e; }
-    :where(.obelisk-hl) :where(.obelisk-type) { color: #953800; }
-    :where(.obelisk-hl) :where(.obelisk-number) { color: #0550ae; }
-    :where(.obelisk-hl) :where(.obelisk-system) { color: #8250df; }
-    :where(.obelisk-hl) :where(.obelisk-directive) { color: #116329; }
-    :where(.obelisk-hl-dark) :where(.obelisk-comment) { color: #8b949e; }
-    :where(.obelisk-hl-dark) :where(.obelisk-string) { color: #a5d6ff; }
-    :where(.obelisk-hl-dark) :where(.obelisk-keyword) { color: #ff7b72; }
-    :where(.obelisk-hl-dark) :where(.obelisk-type) { color: #ffa657; }
-    :where(.obelisk-hl-dark) :where(.obelisk-number) { color: #79c0ff; }
-    :where(.obelisk-hl-dark) :where(.obelisk-system) { color: #d2a8ff; }
-    :where(.obelisk-hl-dark) :where(.obelisk-directive) { color: #7ee787; }
+    :where(.talos-hl) :where(.talos-comment) { color: #6e7781; }
+    :where(.talos-hl) :where(.talos-string) { color: #0a3069; }
+    :where(.talos-hl) :where(.talos-keyword) { color: #cf222e; }
+    :where(.talos-hl) :where(.talos-type) { color: #953800; }
+    :where(.talos-hl) :where(.talos-number) { color: #0550ae; }
+    :where(.talos-hl) :where(.talos-system) { color: #8250df; }
+    :where(.talos-hl) :where(.talos-directive) { color: #116329; }
+    :where(.talos-hl-dark) :where(.talos-comment) { color: #8b949e; }
+    :where(.talos-hl-dark) :where(.talos-string) { color: #a5d6ff; }
+    :where(.talos-hl-dark) :where(.talos-keyword) { color: #ff7b72; }
+    :where(.talos-hl-dark) :where(.talos-type) { color: #ffa657; }
+    :where(.talos-hl-dark) :where(.talos-number) { color: #79c0ff; }
+    :where(.talos-hl-dark) :where(.talos-system) { color: #d2a8ff; }
+    :where(.talos-hl-dark) :where(.talos-directive) { color: #7ee787; }
   `;
 
   // The page's own text color says whether the block sits on a dark ground,
@@ -209,13 +209,13 @@
   let highlightStyled = false;
 
   function highlight(code) {
-    if (!config.highlight || attribute(code, 'obeliskHighlight') === 'off') return;
+    if (!config.highlight || attribute(code, 'talosHighlight') === 'off') return;
     // Another highlighter got here first, or the author wrote markup.
     if (code.firstElementChild || code.classList.contains('hljs')) return;
     if (!highlightStyled) {
       highlightStyled = true;
       const style = document.createElement('style');
-      style.dataset.obeliskRunner = '';
+      style.dataset.talosRunner = '';
       style.textContent = HIGHLIGHT_STYLE;
       document.head.appendChild(style);
     }
@@ -226,12 +226,12 @@
         continue;
       }
       const span = document.createElement('span');
-      span.className = `obelisk-${kind}`;
+      span.className = `talos-${kind}`;
       span.textContent = text;
       fragment.append(span);
     }
     code.replaceChildren(fragment);
-    code.classList.add(isDarkText(code) ? 'obelisk-hl-dark' : 'obelisk-hl');
+    code.classList.add(isDarkText(code) ? 'talos-hl-dark' : 'talos-hl');
   }
 
   // Deferred to the load event so page highlighters, which run on
@@ -292,14 +292,14 @@
   }
 
   function upgrade(code) {
-    if (code.dataset.obeliskRunner !== undefined) return;
-    if (attribute(code, 'obelisk') === 'off') return;
-    code.dataset.obeliskRunner = '';
+    if (code.dataset.talosRunner !== undefined) return;
+    if (attribute(code, 'talos') === 'off') return;
+    code.dataset.talosRunner = '';
     const block = code.closest('pre') ?? code;
     scheduleHighlight(code);
 
     const host = document.createElement('div');
-    host.className = 'obelisk-runner';
+    host.className = 'talos-runner';
     const root = host.attachShadow({ mode: 'open' });
     root.innerHTML = `<style>${STYLE}</style>
       <div class="bar">
@@ -381,9 +381,9 @@
       status.textContent = 'starting…';
 
       sent = false;
-      const timeout = attribute(code, 'obeliskTimeout');
+      const timeout = attribute(code, 'talosTimeout');
       timeoutMs = timeout === undefined ? config.timeoutMs : 1000 * (Number(timeout) || 0);
-      const args = [config.args, attribute(code, 'obeliskArgs') ?? ''].join(' ').trim();
+      const args = [config.args, attribute(code, 'talosArgs') ?? ''].join(' ').trim();
       const current = startService();
       try {
         await current.ready;
@@ -405,7 +405,7 @@
   }
 
   // tokenize is exposed for tests; scan is the supported entry point.
-  window.ObeliskRunner = { scan, tokenize };
+  window.TalosRunner = { scan, tokenize };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => scan());
   } else {

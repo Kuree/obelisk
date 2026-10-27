@@ -7,17 +7,17 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/Target/LLVMIR/TypeFromLLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "obelisk/Analysis/LocalStorageAnalysis.h"
-#include "obelisk/Analysis/NativeStorageLayout.h"
-#include "obelisk/Analysis/SSAValueAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Analysis/LocalStorageAnalysis.h"
+#include "talos/Analysis/NativeStorageLayout.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/MathExtras.h"
 
 using namespace mlir;
-namespace obelisk::detail {
+namespace talos::detail {
 
 LocalStorageLowering::LocalStorageLowering(
     ArrayRef<Operation *> functions, const llvm::DataLayout &targetLayout,
@@ -730,4 +730,4 @@ void populateLocalStorageConversionPatterns(
   patterns.add<LocalAllocConversion, LocalLoadConversion, LocalStoreConversion>(
       converter, patterns.getContext(), locals);
 }
-} // namespace obelisk::detail
+} // namespace talos::detail

@@ -1,0 +1,59 @@
+//===- SimulationToStandard.h - Lower packed simulation values -*- C++ -*-===//
+
+#ifndef TALOS_CONVERSION_SIMULATIONTOSTANDARD_H
+#define TALOS_CONVERSION_SIMULATIONTOSTANDARD_H
+
+#include "mlir/Transforms/DialectConversion.h"
+
+#include "llvm/ADT/DenseSet.h"
+
+namespace mlir {
+class RewritePatternSet;
+} // namespace mlir
+
+namespace talos {
+
+/// Lower exact word lane functions as shared Boolean word expressions.
+void populateNativeWordValuePatterns(const mlir::TypeConverter &converter,
+                                     mlir::RewritePatternSet &patterns);
+
+/// Converts an exact four-state packed value to its value and unknown planes.
+/// All non-logic types are deliberately preserved for composition with later
+/// runtime lowering. No materializations are registered: every logic boundary
+/// must be converted in the same dialect-conversion transaction.
+class SimulationToStandardTypeConverter : public mlir::TypeConverter {
+public:
+  SimulationToStandardTypeConverter();
+};
+
+/// Extend a composing converter so packed aggregate values use the same
+/// scalar value/unknown planes as `sim.packed.flatten` exposes.
+void addSimulationPackedAggregateTypeConversions(
+    mlir::TypeConverter &converter);
+
+/// Add identity view conversions for packed flatten/unflatten after their
+/// aggregate and scalar types have both been converted to scalar planes.
+void populateSimulationPackedAggregateViewPatterns(
+    const mlir::TypeConverter &converter, mlir::RewritePatternSet &patterns);
+
+/// Adds conversions for the pure simulation packed-value operations and the
+/// standard func/cf boundaries through which their 1:N values may flow.
+/// `converter` must map every `sim::LogicType<W>` to exactly two `iW` values.
+/// Function and call argument/result dictionaries are duplicated onto every
+/// converted component. Discardable attributes on pure value operations are
+/// not propagated because those operations expand into expression graphs with
+/// no single equivalent target operation; generated operations retain the
+/// source location for provenance.
+void populateSimulationToStandardPatterns(const mlir::TypeConverter &converter,
+                                          mlir::RewritePatternSet &patterns);
+
+/// As above, while allowing a composing whole-design conversion to replace
+/// the unknown plane of proven two-state operation results with zero. The
+/// operation set must remain alive throughout dialect conversion.
+void populateSimulationToStandardPatterns(
+    const mlir::TypeConverter &converter, mlir::RewritePatternSet &patterns,
+    const llvm::DenseSet<mlir::Operation *> &provenTwoStateOperations);
+
+} // namespace talos
+
+#endif // TALOS_CONVERSION_SIMULATIONTOSTANDARD_H

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-values-to-standard --canonicalize --cse | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-values-to-standard --canonicalize --cse | FileCheck %s
 
 // Every semantic assertion below is constant. Check that lowering and folding
 // prove all of them, without translating to LLVM or executing a JIT program.

@@ -1,10 +1,10 @@
-// RUN: obelisk -O2 --vpi=off -emit-sim %s -o %t.sim.mlir
+// RUN: talos -O2 --vpi=off -emit-sim %s -o %t.sim.mlir
 // RUN: FileCheck %s --check-prefix=LOOP < %t.sim.mlir
-// RUN: obelisk -O0 --execution-tier=native %s -o %t.o0
+// RUN: talos -O0 --execution-tier=native %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=native %s -o %t.o3
+// RUN: talos -O3 --execution-tier=native %s -o %t.o3
 // RUN: %t.o3 | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 
 // Below O3, keep the induction CFG available to dataflow and scheduling. A

@@ -1,7 +1,7 @@
 //===- DesignBytecodeNets.h - Bytecode net resolution ----------*- C++ -*-===//
 
-#ifndef OBELISK_RUNTIME_LIB_DESIGNBYTECODENETS_H
-#define OBELISK_RUNTIME_LIB_DESIGNBYTECODENETS_H
+#ifndef TALOS_RUNTIME_LIB_DESIGNBYTECODENETS_H
+#define TALOS_RUNTIME_LIB_DESIGNBYTECODENETS_H
 
 #include "DesignBytecodeImage.h"
 #include "SignalSemantics.h"
@@ -10,14 +10,14 @@
 #include <vector>
 
 struct NetAliasCache;
-struct obelisk_rt_context;
+struct talos_rt_context;
 
-obelisk_rt_status obelisk_rt_count_design_drivers(
-    obelisk_rt_context *context, uint64_t netHandle, uint32_t *outForced,
+talos_rt_status talos_rt_count_design_drivers(
+    talos_rt_context *context, uint64_t netHandle, uint32_t *outForced,
     uint32_t *outTotal, uint32_t *outZero, uint32_t *outOne,
     uint32_t *outUnknown, bool useNativeState) noexcept;
 
-obelisk_rt_status obelisk_rt_design_net_strength(obelisk_rt_context *context,
+talos_rt_status talos_rt_design_net_strength(talos_rt_context *context,
                                                  uint64_t netHandle,
                                                  uint16_t *outStrengths,
                                                  bool useNativeState) noexcept;
@@ -26,15 +26,15 @@ obelisk_rt_status obelisk_rt_design_net_strength(obelisk_rt_context *context,
 // UINT64_MAX for a single driver, or the matching bit in the explicitly
 // validated complementary bank. Net resolution, force, and other drivers do
 // not contribute. This query does not mutate scheduler or state ownership.
-obelisk_rt_status obelisk_rt_design_driver_strength(
-    obelisk_rt_context *context, uint64_t lowOffset, uint64_t highOffset,
+talos_rt_status talos_rt_design_driver_strength(
+    talos_rt_context *context, uint64_t lowOffset, uint64_t highOffset,
     uint16_t *outStrengths, bool useNativeState) noexcept;
 
-namespace obelisk::designbytecode {
+namespace talos::designbytecode {
 
-using obelisk::runtime::rangesOverlap;
-using obelisk::runtime::signalEdgeMatches;
-using obelisk::runtime::transitionEdges;
+using talos::runtime::rangesOverlap;
+using talos::runtime::signalEdgeMatches;
+using talos::runtime::transitionEdges;
 
 struct NetPublication {
   uint64_t destination;
@@ -45,29 +45,29 @@ struct NetPublication {
 };
 
 NetAliasCache *getNetAliasCache(const Image &image,
-                                obelisk_rt_context *context);
-bool isComplementaryDriverPair(const Image &image, obelisk_rt_context *context,
+                                talos_rt_context *context);
+bool isComplementaryDriverPair(const Image &image, talos_rt_context *context,
                                uint64_t lowOffset, uint64_t highOffset,
                                uint64_t width);
-bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
+bool publishNetBits(talos_rt_context *context, const NetAliasCache &cache,
                     std::vector<NetPublication> &publications, bool &changed);
-bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
+bool resolveNetRoots(const NetAliasCache &cache, talos_rt_context *context,
                      std::vector<uint64_t> roots, bool &changed);
-bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
+bool resolveNetRoots(const NetAliasCache &cache, talos_rt_context *context,
                      std::vector<uint64_t> roots, bool &changed,
                      bool useNativeState);
-bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
+bool resolveDrivenNets(const Image &image, talos_rt_context *context,
                        int64_t changedBegin, int64_t changedEnd, bool &changed);
-bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
+bool resolveDrivenNets(const Image &image, talos_rt_context *context,
                        int64_t changedBegin, int64_t changedEnd, bool &changed,
                        bool useNativeState);
-obelisk_rt_status applyPassSwitchControl(obelisk_rt_context *context,
+talos_rt_status applyPassSwitchControl(talos_rt_context *context,
                                          uint32_t passSwitchID,
                                          uint8_t nextState, bool &changed);
-obelisk_rt_status applyDelayedMosEvent(obelisk_rt_context *context,
+talos_rt_status applyDelayedMosEvent(talos_rt_context *context,
                                        uint64_t edgeKey, uint16_t strengths,
                                        bool &changed);
 
-} // namespace obelisk::designbytecode
+} // namespace talos::designbytecode
 
-#endif // OBELISK_RUNTIME_LIB_DESIGNBYTECODENETS_H
+#endif // TALOS_RUNTIME_LIB_DESIGNBYTECODENETS_H

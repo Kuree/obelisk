@@ -33,25 +33,25 @@
 #include "mlir/IR/RegionGraphTraits.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Pass/PassManager.h"
-#include "obelisk/Analysis/KnownVersioningAnalysis.h"
-#include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationTypes.h"
+#include "talos/Analysis/KnownVersioningAnalysis.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationTypes.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SetVector.h"
 #include <functional>
 #include <optional>
 
 using namespace mlir;
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_VERSIONKNOWNREGIONSPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 using analysis::KnownRegion;
@@ -572,7 +572,7 @@ public:
       std::string text;
       llvm::raw_string_ostream os(text);
       for (const KnownRegion &region : analysis.getRegions())
-        os << "obelisk known versioning: " << function.getSymName() << " "
+        os << "talos known versioning: " << function.getSymName() << " "
            << (region.kind == KnownRegionKind::Loop ? "loop" : "run")
            << " operations=" << region.operations
            << " benefit=" << region.benefit << " check=" << region.checkCost
@@ -680,4 +680,4 @@ public:
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

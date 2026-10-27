@@ -1,15 +1,15 @@
 // REQUIRES: windows
 // RUN: %split-file %S/Inputs/windows-pi.defs %t.dir
-// RUN: %llvm_dist/bin/llvm-dlltool -m %dlltool_machine -D simulator.exe -d %native_support/obelisk-pi.def -l %t.dir/host.lib
+// RUN: %llvm_dist/bin/llvm-dlltool -m %dlltool_machine -D simulator.exe -d %native_support/talos-pi.def -l %t.dir/host.lib
 // RUN: %target_clang -fuse-ld=lld -shared %S/Inputs/dpi_impl.c -I%resource_dir/include %t.dir/host.lib -Xlinker /def:%t.dir/dpi.def -o %t.dir/dpi.dll
-// RUN: obelisk -O1 -flto --compile-threads=4 --mlir-timing %s %t.dir/dpi.dll -o %t.dir/simulator.exe 2> %t.log
+// RUN: talos -O1 -flto --compile-threads=4 --mlir-timing %s %t.dir/dpi.dll -o %t.dir/simulator.exe 2> %t.log
 // RUN: FileCheck %s --check-prefix=PARTITIONS < %t.log
 // RUN: %t.dir/simulator.exe | FileCheck %s
 // RUN: test -d %t.dir/simulator.exe.thinlto-cache
 //
 // Enough live coroutine bodies to select partitioned ThinLTO rather than Full LTO.
-// PARTITIONS: obelisk backend timing: partition 0
-// PARTITIONS: obelisk backend timing: partition 1
+// PARTITIONS: talos backend timing: partition 0
+// PARTITIONS: talos backend timing: partition 1
 // CHECK: sum=656
 
 module windows_dpi_leaf #(parameter int ID = 0)(output int value);

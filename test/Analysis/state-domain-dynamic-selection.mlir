@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -o /dev/null --pass-pipeline='builtin.module(test-obelisk-sim-state-domain)' 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o /dev/null --pass-pipeline='builtin.module(test-talos-sim-state-domain)' 2>&1 | FileCheck %s
 
 // A dynamic selection with a valid index only moves known bits; an invalid
 // index selects X bits or the X element default (IEEE 1800-2023 7.4.6,

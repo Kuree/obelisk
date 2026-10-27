@@ -1,6 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov --coverage-test=cross-transition | FileCheck %s --check-prefix=QUERY
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 
 // IEEE 1800-2023 19.6.1.1: binsof() uses the last value of a transition
 // when a cross-bin select expression is applied to transition bins.

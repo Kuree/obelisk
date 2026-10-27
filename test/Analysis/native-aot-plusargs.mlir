@@ -1,8 +1,8 @@
 // RUN: %split-file %s %t
-// RUN: obelisk-opt %t/transient.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ELIGIBLE
-// RUN: obelisk-opt %t/persistent.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ELIGIBLE
-// RUN: obelisk-opt %t/suspended.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=MANAGED
-// RUN: obelisk-opt %t/unrelated.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ELIGIBLE
+// RUN: talos-opt %t/transient.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ELIGIBLE
+// RUN: talos-opt %t/persistent.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ELIGIBLE
+// RUN: talos-opt %t/suspended.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=MANAGED
+// RUN: talos-opt %t/unrelated.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-native-aot-analysis)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=ELIGIBLE
 
 // Native roots support both temporary and stored strings within an
 // activation. Only an actual suspension with managed live operands requires

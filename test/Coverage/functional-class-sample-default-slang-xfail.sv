@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk --std=1800-2023 --target=native --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 --target=native --coverage=functional -o %t %s
 // RUN: %t | FileCheck %s
 
 // IEEE 19.8.1 permits typed sample arguments with default values. Pristine

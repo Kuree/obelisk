@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --schedule-localize-private-eval-storage | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(schedule-localize-private-eval-storage,schedule-promote-eval-storage))' | FileCheck %s --check-prefix=SSA
+// RUN: talos-opt %s --schedule-localize-private-eval-storage | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(schedule-localize-private-eval-storage,schedule-promote-eval-storage))' | FileCheck %s --check-prefix=SSA
 
 // The paired canonical actor and borrowed evaluator have equivalent bodies.
 // The evaluator uses separate returns instead of the actor's common wait.

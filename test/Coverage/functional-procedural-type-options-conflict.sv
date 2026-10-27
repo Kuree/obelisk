@@ -1,11 +1,11 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov --coverage-test=type-options | FileCheck %s --check-prefix=QUERY
 // RUN: %t --coverage-output=%t.conflict.obcov --coverage-test=type-options-conflict +conflict | FileCheck %s --check-prefix=QUERY
 // RUN: %t --coverage-output=%t.default.obcov --coverage-test=type-options-default +defaults | FileCheck %s --check-prefix=DEFAULTS
-// RUN: not obelisk-cov report --format=text %t.obcov %t.conflict.obcov 2>&1 | FileCheck %s --check-prefix=CONFLICT
-// RUN: not obelisk-cov report --format=text %t.obcov %t.default.obcov 2>&1 | FileCheck %s --check-prefix=CONFLICT
-// RUN: obelisk-cov report --format=json --test=type-options %t.obcov %t.default.obcov | FileCheck %s --check-prefix=OVERRIDE
-// RUN: obelisk-cov report --format=json --test=type-options-default %t.obcov %t.default.obcov | FileCheck %s --check-prefix=DEFAULT-JSON
+// RUN: not talos-cov report --format=text %t.obcov %t.conflict.obcov 2>&1 | FileCheck %s --check-prefix=CONFLICT
+// RUN: not talos-cov report --format=text %t.obcov %t.default.obcov 2>&1 | FileCheck %s --check-prefix=CONFLICT
+// RUN: talos-cov report --format=json --test=type-options %t.obcov %t.default.obcov | FileCheck %s --check-prefix=OVERRIDE
+// RUN: talos-cov report --format=json --test=type-options-default %t.obcov %t.default.obcov | FileCheck %s --check-prefix=DEFAULT-JSON
 
 // IEEE 1800-2023 19.7.1 permits these type options to be changed at any
 // time. The pre-construction writes must affect configurations resolved by
@@ -73,7 +73,7 @@ endmodule
 
 // Merging runs that disagree on the type goal, whether both wrote it or one
 // kept the default, is a conflict.
-// CONFLICT: obelisk-cov: conflicting type goal for functional type
+// CONFLICT: talos-cov: conflicting type goal for functional type
 
 // Selecting only the run that wrote the options keeps its values; selecting
 // only the run that wrote none reports the defaults.

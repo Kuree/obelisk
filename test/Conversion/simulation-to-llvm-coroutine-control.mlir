@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --test-talos-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
@@ -44,29 +44,29 @@ module attributes {
   }
 }
 
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_control_enter
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_control_boundary
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_control_leave
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_control_disable
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_control_escape_pending
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_static_once
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_deferred_once
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_monitor_register_logical
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_monitor_control
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_monitor_current
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_scheduler_disable_children
+// NATIVE-DAG: llvm.func @talos_rt_v1_control_enter
+// NATIVE-DAG: llvm.func @talos_rt_v1_control_boundary
+// NATIVE-DAG: llvm.func @talos_rt_v1_control_leave
+// NATIVE-DAG: llvm.func @talos_rt_v1_control_disable
+// NATIVE-DAG: llvm.func @talos_rt_v1_control_escape_pending
+// NATIVE-DAG: llvm.func @talos_rt_v1_static_once
+// NATIVE-DAG: llvm.func @talos_rt_v1_deferred_once
+// NATIVE-DAG: llvm.func @talos_rt_v1_monitor_register_logical
+// NATIVE-DAG: llvm.func @talos_rt_v1_monitor_control
+// NATIVE-DAG: llvm.func @talos_rt_v1_monitor_current
+// NATIVE-DAG: llvm.func @talos_rt_v1_scheduler_disable_children
 // NATIVE: llvm.func @root
-// NATIVE: llvm.call @obelisk_rt_v1_control_enter
-// NATIVE: llvm.call @obelisk_rt_v1_control_boundary
-// NATIVE: llvm.call @obelisk_rt_v1_control_leave
-// NATIVE: llvm.call @obelisk_rt_v1_control_disable
-// NATIVE: llvm.call @obelisk_rt_v1_control_escape_pending
-// NATIVE: llvm.call @obelisk_rt_v1_static_once
-// NATIVE: llvm.call @obelisk_rt_v1_deferred_once
-// NATIVE: llvm.call @obelisk_rt_v1_monitor_register_logical
-// NATIVE: llvm.call @obelisk_rt_v1_monitor_control
-// NATIVE: llvm.call @obelisk_rt_v1_monitor_current
-// NATIVE: llvm.call @obelisk_rt_v1_scheduler_disable_children
+// NATIVE: llvm.call @talos_rt_v1_control_enter
+// NATIVE: llvm.call @talos_rt_v1_control_boundary
+// NATIVE: llvm.call @talos_rt_v1_control_leave
+// NATIVE: llvm.call @talos_rt_v1_control_disable
+// NATIVE: llvm.call @talos_rt_v1_control_escape_pending
+// NATIVE: llvm.call @talos_rt_v1_static_once
+// NATIVE: llvm.call @talos_rt_v1_deferred_once
+// NATIVE: llvm.call @talos_rt_v1_monitor_register_logical
+// NATIVE: llvm.call @talos_rt_v1_monitor_control
+// NATIVE: llvm.call @talos_rt_v1_monitor_current
+// NATIVE: llvm.call @talos_rt_v1_scheduler_disable_children
 // NATIVE-NOT: simulation.control
 // NATIVE-NOT: simulation.static.once
 // NATIVE-NOT: simulation.assert.deferred_once

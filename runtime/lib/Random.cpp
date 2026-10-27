@@ -9,15 +9,15 @@
 
 namespace {
 
-constexpr uint64_t kMultiplier = OBELISK_RT_RANDOM_MULTIPLIER;
+constexpr uint64_t kMultiplier = TALOS_RT_RANDOM_MULTIPLIER;
 // The prior context-global generator used this odd increment directly.
-constexpr uint64_t kDefaultIncrement = OBELISK_RT_RANDOM_DEFAULT_INCREMENT;
+constexpr uint64_t kDefaultIncrement = TALOS_RT_RANDOM_DEFAULT_INCREMENT;
 constexpr uint64_t kDefaultSequence = kDefaultIncrement >> 1;
 
-uint64_t next64(obelisk_rt_random_state_v1 &state) {
-  return (static_cast<uint64_t>(obelisk_rt_v1_random_state_next32(&state))
+uint64_t next64(talos_rt_random_state_v1 &state) {
+  return (static_cast<uint64_t>(talos_rt_v1_random_state_next32(&state))
           << 32) |
-         obelisk_rt_v1_random_state_next32(&state);
+         talos_rt_v1_random_state_next32(&state);
 }
 
 uint64_t lowMask(unsigned width) {
@@ -53,19 +53,19 @@ uint64_t randcPermute(uint64_t key, uint64_t position, unsigned width) {
 } // namespace
 
 extern "C" void
-obelisk_rt_v1_random_state_seed(obelisk_rt_random_state_v1 *state,
+talos_rt_v1_random_state_seed(talos_rt_random_state_v1 *state,
                                 uint64_t seed, uint64_t sequence) {
   if (!state)
     return;
   state->state = 0;
   state->increment = (sequence << 1) | 1;
-  (void)obelisk_rt_v1_random_state_next32(state);
+  (void)talos_rt_v1_random_state_next32(state);
   state->state += seed;
-  (void)obelisk_rt_v1_random_state_next32(state);
+  (void)talos_rt_v1_random_state_next32(state);
 }
 
 extern "C" uint32_t
-obelisk_rt_v1_random_state_next32(obelisk_rt_random_state_v1 *state) {
+talos_rt_v1_random_state_next32(talos_rt_random_state_v1 *state) {
   if (!state)
     return 0;
   uint64_t old = state->state;
@@ -76,45 +76,45 @@ obelisk_rt_v1_random_state_next32(obelisk_rt_random_state_v1 *state) {
 }
 
 extern "C" uint64_t
-obelisk_rt_v1_random_state_next64(obelisk_rt_random_state_v1 *state) {
+talos_rt_v1_random_state_next64(talos_rt_random_state_v1 *state) {
   return state ? next64(*state) : 0;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_random_cycle_next(uint64_t key, uint64_t position, uint32_t width,
+extern "C" talos_rt_status
+talos_rt_v1_random_cycle_next(uint64_t key, uint64_t position, uint32_t width,
                                 uint64_t *outNextPosition, uint64_t *outValue) {
   if (!outNextPosition || !outValue || width == 0 || width > 32 ||
       (position & ~lowMask(width)) != 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint64_t mask = lowMask(width);
   *outValue = randcPermute(key, position, width);
   *outNextPosition = (position + 1) & mask;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_random_state_bounded(obelisk_rt_random_state_v1 *state,
+extern "C" talos_rt_status
+talos_rt_v1_random_state_bounded(talos_rt_random_state_v1 *state,
                                    uint64_t bound, uint64_t *outValue) {
   if (!state || !outValue || bound == 0 || (state->increment & 1) == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint64_t threshold = (uint64_t{0} - bound) % bound;
   uint64_t value;
   do {
     value = next64(*state);
   } while (value < threshold);
   *outValue = value % bound;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_random_state_v1 *
-obelisk_rt_random_active_state_unlocked(obelisk_rt_context *context) {
+talos_rt_random_state_v1 *
+talos_rt_random_active_state_unlocked(talos_rt_context *context) {
   if (context && context->activeRandom)
     return context->activeRandom;
   if (!context || context->activeLogicalProcessToken == 0)
     return context ? &context->random : nullptr;
   uint64_t token = context->activeLogicalProcessToken;
-  if ((token & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
-    token &= ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+  if ((token & TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
+    token &= ~TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG;
     for (ScheduledProcess &process : context->scheduledProcesses)
       if (process.token == token)
         return &process.random;
@@ -126,16 +126,16 @@ obelisk_rt_random_active_state_unlocked(obelisk_rt_context *context) {
   return &context->random;
 }
 
-static obelisk_rt_random_state_v1 *
-processRandomStateUnlocked(obelisk_rt_context *context,
+static talos_rt_random_state_v1 *
+processRandomStateUnlocked(talos_rt_context *context,
                            uint64_t logicalProcess) {
   if (!context || logicalProcess == 0)
     return nullptr;
   if (context->activeLogicalProcessToken == logicalProcess &&
       context->activeRandom)
     return context->activeRandom;
-  if ((logicalProcess & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
-    uint64_t token = logicalProcess & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+  if ((logicalProcess & TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
+    uint64_t token = logicalProcess & ~TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG;
     for (ScheduledProcess &process : context->scheduledProcesses)
       if (process.token == token && process.instance)
         return &process.random;
@@ -147,50 +147,50 @@ processRandomStateUnlocked(obelisk_rt_context *context,
   return context->terminatedDesignTasks.randomState(logicalProcess);
 }
 
-void obelisk_rt_random_split_unlocked(obelisk_rt_context *context,
-                                      obelisk_rt_random_state_v1 &child) {
-  obelisk_rt_random_state_v1 *parent =
-      obelisk_rt_random_active_state_unlocked(context);
+void talos_rt_random_split_unlocked(talos_rt_context *context,
+                                      talos_rt_random_state_v1 &child) {
+  talos_rt_random_state_v1 *parent =
+      talos_rt_random_active_state_unlocked(context);
   uint64_t seed = next64(*parent);
   uint64_t sequence = next64(*parent);
-  obelisk_rt_v1_random_state_seed(&child, seed, sequence);
+  talos_rt_v1_random_state_seed(&child, seed, sequence);
 }
 
 uint64_t
-obelisk_rt_random_initialization_scope_unlocked(obelisk_rt_context *context) {
+talos_rt_random_initialization_scope_unlocked(talos_rt_context *context) {
   return context->activeLogicalProcessToken == 0 &&
                  context->initializationRandomScopes
              ? context->initializationRandomScopes->activeScope
              : 0;
 }
 
-void obelisk_rt_random_split_initialization_unlocked(
-    obelisk_rt_context *context, uint64_t scope,
-    obelisk_rt_random_state_v1 &child) {
+void talos_rt_random_split_initialization_unlocked(
+    talos_rt_context *context, uint64_t scope,
+    talos_rt_random_state_v1 &child) {
   auto &parent = scope ? context->initializationRandomScopes->streams.at(scope)
                        : context->random;
   uint64_t seed = next64(parent);
   uint64_t sequence = next64(parent);
-  obelisk_rt_v1_random_state_seed(&child, seed, sequence);
+  talos_rt_v1_random_state_seed(&child, seed, sequence);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_random_initialization_enter(
-    obelisk_rt_context *context, uint64_t scope, uint64_t *outActivation) {
+extern "C" talos_rt_status talos_rt_v1_random_initialization_enter(
+    talos_rt_context *context, uint64_t scope, uint64_t *outActivation) {
   if (!context || scope == 0 || !outActivation)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (!context->initializationRandomScopes)
       context->initializationRandomScopes =
           std::make_unique<InitializationRandomScopes>();
     auto &scopes = *context->initializationRandomScopes;
     if (scopes.nextToken == 0)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     // Allocate before publishing any binding or consuming the stream.
     scopes.activations.reserve(scopes.activations.size() + 1);
     auto [stream, inserted] = scopes.streams.try_emplace(scope);
     if (inserted)
-      obelisk_rt_v1_random_state_seed(&stream->second, context->configuredSeed,
+      talos_rt_v1_random_state_seed(&stream->second, context->configuredSeed,
                                       kDefaultSequence);
     uint64_t token = scopes.nextToken++;
     scopes.activations.push_back(
@@ -201,81 +201,81 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_initialization_enter(
     context->activeLogicalProcessParent = 0;
     context->activeRandom = &stream->second;
     *outActivation = token;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_OUT_OF_MEMORY; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_random_initialization_leave(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_random_initialization_leave(talos_rt_context *context,
                                           uint64_t activation) {
   if (!context || activation == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (!context->initializationRandomScopes)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     auto &scopes = *context->initializationRandomScopes;
     if (scopes.activations.empty() ||
         scopes.activations.back().token != activation ||
         context->activeLogicalProcessToken != 0)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     auto previous = scopes.activations.back();
     context->activeRandom = previous.previousRandom;
     context->activeLogicalProcessToken = previous.previousProcess;
     context->activeLogicalProcessParent = previous.previousParent;
     scopes.activeScope = previous.previousScope;
     scopes.activations.pop_back();
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-void obelisk_rt_random_seed_context_unlocked(obelisk_rt_context *context,
+void talos_rt_random_seed_context_unlocked(talos_rt_context *context,
                                              uint64_t seed) {
-  obelisk_rt_v1_random_state_seed(&context->random, seed, kDefaultSequence);
+  talos_rt_v1_random_state_seed(&context->random, seed, kDefaultSequence);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_random_next(obelisk_rt_context *context, uint64_t *outValue) {
+extern "C" talos_rt_status
+talos_rt_v1_random_next(talos_rt_context *context, uint64_t *outValue) {
   if (!context || !outValue)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    *outValue = next64(*obelisk_rt_random_active_state_unlocked(context));
-    return OBELISK_RT_OK;
+    *outValue = next64(*talos_rt_random_active_state_unlocked(context));
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_random_seed(obelisk_rt_context *context, uint64_t seed) {
+extern "C" talos_rt_status
+talos_rt_v1_random_seed(talos_rt_context *context, uint64_t seed) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    obelisk_rt_random_state_v1 *state =
-        obelisk_rt_random_active_state_unlocked(context);
+    talos_rt_random_state_v1 *state =
+        talos_rt_random_active_state_unlocked(context);
     // IEEE 1800-2023 18.13.1 makes an explicit seed determine the complete
     // sequence, independent of this thread's inherited stream selector. Use
     // the same canonical mapping as object and process srandom().
-    obelisk_rt_v1_random_state_seed(state, seed, kDefaultSequence);
-    return OBELISK_RT_OK;
+    talos_rt_v1_random_state_seed(state, seed, kDefaultSequence);
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_random_bounded(obelisk_rt_context *context, uint64_t bound,
+extern "C" talos_rt_status
+talos_rt_v1_random_bounded(talos_rt_context *context, uint64_t bound,
                              uint64_t *outValue) {
   if (!context || !outValue || bound == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    return obelisk_rt_v1_random_state_bounded(
-        obelisk_rt_random_active_state_unlocked(context), bound, outValue);
+    return talos_rt_v1_random_state_bounded(
+        talos_rt_random_active_state_unlocked(context), bound, outValue);
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
 namespace {
@@ -394,122 +394,122 @@ int32_t annexDistUniform(int32_t &seed, int32_t start, int32_t end) {
 
 } // namespace
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_random_distribution(obelisk_rt_context *context,
-                                  obelisk_rt_distribution distribution,
+extern "C" talos_rt_status
+talos_rt_v1_random_distribution(talos_rt_context *context,
+                                  talos_rt_distribution distribution,
                                   int32_t seed, int32_t first, int32_t second,
                                   int32_t *outValue, int32_t *outNextSeed) {
   if (!context || !outValue || !outNextSeed)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     double value = 0.0;
     switch (distribution) {
-    case OBELISK_RT_DISTRIBUTION_UNIFORM:
+    case TALOS_RT_DISTRIBUTION_UNIFORM:
       *outValue = annexDistUniform(seed, first, second);
       *outNextSeed = seed;
-      return OBELISK_RT_OK;
-    case OBELISK_RT_DISTRIBUTION_NORMAL:
+      return TALOS_RT_OK;
+    case TALOS_RT_DISTRIBUTION_NORMAL:
       value = annexNormal(seed, first, second);
       break;
-    case OBELISK_RT_DISTRIBUTION_EXPONENTIAL:
+    case TALOS_RT_DISTRIBUTION_EXPONENTIAL:
       value = first > 0 ? annexExponential(seed, first) : 0.0;
       break;
-    case OBELISK_RT_DISTRIBUTION_POISSON:
+    case TALOS_RT_DISTRIBUTION_POISSON:
       *outValue = first > 0 ? annexPoisson(seed, first) : 0;
       *outNextSeed = seed;
-      return OBELISK_RT_OK;
-    case OBELISK_RT_DISTRIBUTION_CHI_SQUARE:
+      return TALOS_RT_OK;
+    case TALOS_RT_DISTRIBUTION_CHI_SQUARE:
       value = first > 0 ? annexChiSquare(seed, first) : 0.0;
       break;
-    case OBELISK_RT_DISTRIBUTION_T:
+    case TALOS_RT_DISTRIBUTION_T:
       value = first > 0 ? annexT(seed, first) : 0.0;
       break;
-    case OBELISK_RT_DISTRIBUTION_ERLANG:
+    case TALOS_RT_DISTRIBUTION_ERLANG:
       value = first > 0 ? annexErlang(seed, first, second) : 0.0;
       break;
     default:
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     }
     *outValue = annexRound(value);
     *outNextSeed = seed;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_random_legacy(obelisk_rt_context *context, int32_t *outValue) {
+extern "C" talos_rt_status
+talos_rt_v1_random_legacy(talos_rt_context *context, int32_t *outValue) {
   if (!context || !outValue)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     *outValue = annexDistUniform(context->legacyRandomSeed,
                                  std::numeric_limits<int32_t>::min(),
                                  std::numeric_limits<int32_t>::max());
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_random_get_state(obelisk_rt_context *context,
-                               obelisk_rt_random_state_v1 *outState) {
+extern "C" talos_rt_status
+talos_rt_v1_random_get_state(talos_rt_context *context,
+                               talos_rt_random_state_v1 *outState) {
   if (!context || !outState)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    *outState = *obelisk_rt_random_active_state_unlocked(context);
-    return OBELISK_RT_OK;
+    *outState = *talos_rt_random_active_state_unlocked(context);
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_random_set_state(obelisk_rt_context *context,
-                               const obelisk_rt_random_state_v1 *state) {
+extern "C" talos_rt_status
+talos_rt_v1_random_set_state(talos_rt_context *context,
+                               const talos_rt_random_state_v1 *state) {
   if (!context || !state || (state->increment & 1) == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    *obelisk_rt_random_active_state_unlocked(context) = *state;
-    return OBELISK_RT_OK;
+    *talos_rt_random_active_state_unlocked(context) = *state;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_process_random_get(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_process_random_get(talos_rt_context *context,
                                  uint64_t logicalProcess,
-                                 obelisk_rt_random_state_v1 *outState) {
+                                 talos_rt_random_state_v1 *outState) {
   if (!context || logicalProcess == 0 || !outState)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    obelisk_rt_random_state_v1 *state =
+    talos_rt_random_state_v1 *state =
         processRandomStateUnlocked(context, logicalProcess);
     if (!state)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     *outState = *state;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_process_random_set(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_process_random_set(talos_rt_context *context,
                                  uint64_t logicalProcess,
-                                 const obelisk_rt_random_state_v1 *state) {
+                                 const talos_rt_random_state_v1 *state) {
   if (!context || logicalProcess == 0 || !state || (state->increment & 1) == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    obelisk_rt_random_state_v1 *target =
+    talos_rt_random_state_v1 *target =
         processRandomStateUnlocked(context, logicalProcess);
     if (!target)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     *target = *state;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }

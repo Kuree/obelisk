@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=DISPLAY < %t.llvm.mlir
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=read},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=read},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.read.llvm.mlir
 
 // Read-only VPI with no readers must preserve the same native lowering and
@@ -12,20 +12,20 @@
 // iteration, and immediate displays must observe values before their own NBA.
 // Empty-barrier bypass must not suppress the second commit, and canonical
 // handover must clear B's initial X. No display may execute in a dry-run probe.
-// PLAN-DAG: llvm.call @obelisk_rt_v1_eval_display
+// PLAN-DAG: llvm.call @talos_rt_v1_eval_display
 // Displays execute only in the real eval bodies of writer and cascade (and
 // their two-state forms), never in a predicate or dry-run probe.
-// DISPLAY-LABEL: llvm.func @writer.__obelisk_eval_body_0(
-// DISPLAY: llvm.call @obelisk_rt_v1_eval_display(
-// DISPLAY-LABEL: llvm.func @cascade.__obelisk_eval_body_0(
-// DISPLAY: llvm.call @obelisk_rt_v1_eval_display(
-// DISPLAY-LABEL: llvm.func @writer.__obelisk_eval_body_0.__obelisk_two_state_0(
-// DISPLAY: llvm.call @obelisk_rt_v1_eval_display(
-// DISPLAY-LABEL: llvm.func @cascade.__obelisk_eval_body_0.__obelisk_two_state_0(
-// DISPLAY: llvm.call @obelisk_rt_v1_eval_display(
-// DISPLAY-NOT: llvm.call @obelisk_rt_v1_eval_display(
-// PLAN-DAG: llvm.func @__obelisk_eval_dispatch_v1
-// PLAN-DAG: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// DISPLAY-LABEL: llvm.func @writer.__talos_eval_body_0(
+// DISPLAY: llvm.call @talos_rt_v1_eval_display(
+// DISPLAY-LABEL: llvm.func @cascade.__talos_eval_body_0(
+// DISPLAY: llvm.call @talos_rt_v1_eval_display(
+// DISPLAY-LABEL: llvm.func @writer.__talos_eval_body_0.__talos_two_state_0(
+// DISPLAY: llvm.call @talos_rt_v1_eval_display(
+// DISPLAY-LABEL: llvm.func @cascade.__talos_eval_body_0.__talos_two_state_0(
+// DISPLAY: llvm.call @talos_rt_v1_eval_display(
+// DISPLAY-NOT: llvm.call @talos_rt_v1_eval_display(
+// PLAN-DAG: llvm.func @__talos_eval_dispatch_v1
+// PLAN-DAG: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

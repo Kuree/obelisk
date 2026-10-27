@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=reaching-values=true inputs=true' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s '--test-talos-activation-regions=reaching-values=true inputs=true' -o /dev/null 2>&1 | FileCheck %s
 // Every logical lane of a padded type is a separate relation at each node that
 // touches it. Up to 1024 lanes the padding bits stay out of the dependencies;
 // a larger type keeps every provenance lane, as an unrepresentable mask does.

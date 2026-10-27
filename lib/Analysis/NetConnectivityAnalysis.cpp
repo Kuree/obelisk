@@ -1,9 +1,9 @@
 //===- NetConnectivityAnalysis.cpp - Static net topology facts ----------===//
 
-#include "obelisk/Analysis/NetConnectivityAnalysis.h"
+#include "talos/Analysis/NetConnectivityAnalysis.h"
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "llvm/ADT/DenseSet.h"
 
@@ -13,7 +13,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 
 namespace {
 /// Content digest of the declarations the topology depends on. Attribute
@@ -495,4 +495,4 @@ NetConnectivityAnalysis::getNetWidth(uint64_t net) const {
   return found->second;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

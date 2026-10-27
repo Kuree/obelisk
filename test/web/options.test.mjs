@@ -47,12 +47,12 @@ assert.deepEqual(buildArgs({
   ...DEFAULTS, stage: 'sim', tier: 'bytecode', scheduler: 'aot',
 }), ['-emit-sim', '--std=1800-2023', '-O3']);
 assert.equal(formatCommand({ ...DEFAULTS, stage: 'run', extra: '"a b"' }),
-  `obelisk --std=1800-2023 -O3 'a b' ${INPUT_FILE}`);
+  `talos --std=1800-2023 -O3 'a b' ${INPUT_FILE}`);
 
 assert.equal(DEFAULT_STAGE, 'run');
 assert.equal(findStage('missing').id, DEFAULT_STAGE);
 assert.deepEqual(STAGES.map((stage) => stage.id), [
-  'preprocess', 'slang', 'obelisk', 'sim', 'schedule', 'llvm', 'run', 'waveform',
+  'preprocess', 'slang', 'talos', 'sim', 'schedule', 'llvm', 'run', 'waveform',
   'coverage',
 ]);
 assert.equal(findStage('schedule').language, 'mlir');
@@ -95,7 +95,7 @@ for (const example of EXAMPLES) {
   assert.ok(example.name);
   assert.match(example.source, /\bmodule\b/);
   assert.match(example.source, /\bendmodule\b/);
-  assert.doesNotMatch(example.source, /Obelisk compiles|ahead of time to WebAssembly/i);
+  assert.doesNotMatch(example.source, /Talos compiles|ahead of time to WebAssembly/i);
 }
 const rv32im = EXAMPLES.find((example) => example.name === 'RV32IM core');
 assert.ok(rv32im);

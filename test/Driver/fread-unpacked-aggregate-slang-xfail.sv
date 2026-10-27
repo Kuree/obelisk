@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk -emit-slang %s -o /dev/null
+// RUN: %talos -emit-slang %s -o /dev/null
 
 // IEEE 1800-2023 21.3.4.4: $fread reads an unpacked struct member by member
 // in declaration order, and an unpacked union through its first member.

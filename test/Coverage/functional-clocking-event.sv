@@ -1,11 +1,11 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -emit-sim %s \
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -emit-sim %s \
 // RUN:   | FileCheck %s --check-prefix=IR
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -emit-sim %s \
-// RUN:   | obelisk-opt --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -emit-sim %s \
+// RUN:   | talos-opt --test-talos-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s --check-prefix=QUERY
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 
 module top;
   bit clock;

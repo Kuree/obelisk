@@ -1,4 +1,4 @@
-// RUN: env OBELISK_TEST_INPUT=%s %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.FrameReferenceAliases
+// RUN: env TALOS_TEST_INPUT=%s %obj_root/test/talos-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.FrameReferenceAliases
 #word = #simulation.vpi_type<kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>
 #flags = #simulation.vpi_type<kind = logic, isSigned = false, isFourState = true, range = [8, 0], children = [], childNames = []>
 #nibble = #simulation.vpi_type<kind = bit, isSigned = false, isFourState = false,

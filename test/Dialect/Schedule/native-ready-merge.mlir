@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --convert-native-schedule-actions-to-llvm -o %t
+// RUN: talos-opt %s --convert-native-schedule-actions-to-llvm -o %t
 // RUN: FileCheck %s < %t
-// RUN: obelisk-opt %s --mlir-disable-threading --convert-native-schedule-actions-to-llvm | diff %t -
-// RUN: obelisk-opt %t --convert-native-schedule-actions-to-llvm | diff %t -
-// RUN: obelisk-opt %s --schedule-coalesce-native-ready --convert-native-schedule-actions-to-llvm | FileCheck %s --check-prefix=OBS
+// RUN: talos-opt %s --mlir-disable-threading --convert-native-schedule-actions-to-llvm | diff %t -
+// RUN: talos-opt %t --convert-native-schedule-actions-to-llvm | diff %t -
+// RUN: talos-opt %s --schedule-coalesce-native-ready --convert-native-schedule-actions-to-llvm | FileCheck %s --check-prefix=OBS
 
 // Bulk publication has a bounded CFG, no callback/runtime helper, and no
 // per-leaf SSA expansion. The runtime companion compares ascending merges

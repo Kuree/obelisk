@@ -7,9 +7,9 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -20,7 +20,7 @@
 #include <vector>
 
 namespace {
-using namespace obelisk::reflection;
+using namespace talos::reflection;
 
 uint64_t imageChecksum(const std::vector<uint8_t> &bytes) {
   uint64_t hash = UINT64_C(14695981039346656037);
@@ -32,24 +32,24 @@ uint64_t imageChecksum(const std::vector<uint8_t> &bytes) {
 }
 
 TEST(GeneratedDesignDatabase, SourceValueDefaults) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -66,13 +66,13 @@ TEST(GeneratedDesignDatabase, SourceValueDefaults) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
   std::vector<vpiHandle> handles;
   auto keep = [&](vpiHandle handle) {
     EXPECT_NE(handle, nullptr);
@@ -261,25 +261,25 @@ TEST(GeneratedDesignDatabase, SourceValueDefaults) {
   }
 
   auto cursor = [&](const char *name) {
-    obelisk_rt_design_cursor_v1 result{};
-    EXPECT_EQ(obelisk_rt_cached_design_lookup(
+    talos_rt_design_cursor_v1 result{};
+    EXPECT_EQ(talos_rt_cached_design_lookup(
                   runtime, reinterpret_cast<const uint8_t *>(name),
                   std::strlen(name), &result),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     return result;
   };
-  auto expression = [&](obelisk_rt_design_cursor_v1 parameter) {
+  auto expression = [&](talos_rt_design_cursor_v1 parameter) {
     VPIRelationRange range{};
-    obelisk_rt_design_cursor_v1 result{};
+    talos_rt_design_cursor_v1 result{};
     uint32_t type = 0;
     bool statement = false;
-    EXPECT_EQ(obelisk_rt_cached_vpi_relation_range(runtime, parameter, vpiExpr,
+    EXPECT_EQ(talos_rt_cached_vpi_relation_range(runtime, parameter, vpiExpr,
                                                    false, &range),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(range.count, 1u);
-    EXPECT_EQ(obelisk_rt_cached_vpi_relation_target(runtime, range.first,
+    EXPECT_EQ(talos_rt_cached_vpi_relation_target(runtime, range.first,
                                                     &result, &type, &statement),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     return result;
   };
   const auto n = cursor("G::N");
@@ -287,17 +287,17 @@ TEST(GeneratedDesignDatabase, SourceValueDefaults) {
   const auto g = cursor("G");
   const auto literal = expression(n);
   const auto add = expression(m);
-  obelisk_rt_design_cursor_v1 semantic{};
-  ASSERT_EQ(obelisk_rt_cached_design_semantic_root(runtime, literal, &semantic),
-            OBELISK_RT_OK);
+  talos_rt_design_cursor_v1 semantic{};
+  ASSERT_EQ(talos_rt_cached_design_semantic_root(runtime, literal, &semantic),
+            TALOS_RT_OK);
   for (auto handle : handles)
     EXPECT_EQ(vpi_release_handle(handle), 1);
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 
   const auto &image = encoded->designDatabase;
   HeaderView header(image.data());
   SemanticDirectoryView directory(image.data() + header.getReserved());
-  auto packed = [&](obelisk_rt_design_cursor_v1 object) {
+  auto packed = [&](talos_rt_design_cursor_v1 object) {
     uint32_t result = UINT32_MAX;
     if (object.offset >= header.getObjectOffset() &&
         object.offset < header.getObjectOffset() +
@@ -322,7 +322,7 @@ TEST(GeneratedDesignDatabase, SourceValueDefaults) {
   const uint32_t nPacked = packed(n), addPacked = packed(add),
                  literalPacked = packed(literal);
   auto setFlags = [&](std::vector<uint8_t> &bytes,
-                      obelisk_rt_design_cursor_v1 object, uint32_t flags) {
+                      talos_rt_design_cursor_v1 object, uint32_t flags) {
     if (unpackTableIndexKind(packed(object)) == TableKind::Object)
       ObjectWriter(bytes.data() + object.offset).setCaps(flags);
     else
@@ -335,17 +335,17 @@ TEST(GeneratedDesignDatabase, SourceValueDefaults) {
     auto invalid = execution;
     invalid.design_database = bytes.data();
     invalid.design_database_size = bytes.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&invalid),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&invalid),
+              TALOS_RT_INVALID_DESIGN);
   };
   rejects([&](auto &bytes) { setFlags(bytes, n, 0); });
   rejects([&](auto &bytes) {
-    setFlags(bytes, g, OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER);
+    setFlags(bytes, g, TALOS_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER);
   });
   rejects([&](auto &bytes) {
     setFlags(bytes, n,
-             OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER |
-                 OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT);
+             TALOS_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER |
+                 TALOS_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT);
   });
   auto operandRow = [&] {
     for (uint64_t index = 0; index != header.getRelationCount(); ++index) {
@@ -431,9 +431,9 @@ TEST(GeneratedDesignDatabase, SourceValueDefaults) {
                 count * SemanticTypeLayout.size);
     auto type = SemanticTypeWriter(bytes.data() + newOffset +
                                    count * SemanticTypeLayout.size);
-    type.setKindAndFlags(OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL |
+    type.setKindAndFlags(TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL |
                          (uint32_t{vpiShortRealTypespec}
-                          << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+                          << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
     type.setAliasObjectIndexAndTable(UINT32_MAX);
     type.setIdentityTargetIndexAndTable(UINT32_MAX);
     auto updated = SemanticDirectoryWriter(bytes.data() + header.getReserved());

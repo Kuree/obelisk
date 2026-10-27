@@ -7,7 +7,7 @@ from pathlib import Path
 BENCHMARK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_DIR))
 
-from obelisk_bench import classify  # noqa: E402
+from talos_bench import classify  # noqa: E402
 
 
 class ClassifyLineTest(unittest.TestCase):
@@ -17,31 +17,31 @@ class ClassifyLineTest(unittest.TestCase):
 
     def test_virtual_interface_type_is_its_own_feature(self):
         line = ("error: unsupported semantic type in the first simulation "
-                "slice: '!obelisk.virtual_interface<@s3.$root::@s4.env::@s5.if, \"\">'")
+                "slice: '!talos.virtual_interface<@s3.$root::@s4.env::@s5.if, \"\">'")
         self.assertEqual(self.classify(line), "Virtual interfaces")
 
     def test_plain_interface_stays_separate_from_virtual_interface(self):
-        line = "error: unsupported semantic node: obelisk.sv.symbol.modport"
+        line = "error: unsupported semantic node: talos.sv.symbol.modport"
         self.assertEqual(self.classify(line), "Interfaces and modports")
 
     def test_builtin_class_is_recognized_from_its_mangled_symbol(self):
         line = ('error: \'simulation.storage.decl\' op cannot resolve "type" '
-                "@__obelisk_class_s6_mailbox")
+                "@__talos_class_s6_mailbox")
         self.assertEqual(self.classify(line), "std::mailbox")
 
     def test_system_task_template_names_the_task(self):
         line = ("error: unsupported semantic node in the first simulation slice: "
-                "obelisk.sv.expression.call (unsupported system call $dumpports)")
+                "talos.sv.expression.call (unsupported system call $dumpports)")
         self.assertEqual(self.classify(line), "system task $dumpports")
 
     def test_unknown_construct_falls_back_to_its_mnemonic(self):
         line = ("error: unsupported semantic node in the first simulation slice: "
-                "obelisk.sv.statement.wibble")
+                "talos.sv.statement.wibble")
         self.assertEqual(self.classify(line), "unnamed construct wibble")
 
     def test_unknown_type_falls_back_to_its_mnemonic(self):
         line = ("error: unsupported semantic type in the first simulation "
-                "slice: '!obelisk.frobnicator<@x>'")
+                "slice: '!talos.frobnicator<@x>'")
         self.assertEqual(self.classify(line), "unnamed type frobnicator")
 
     def test_semantic_only_guards_keep_distinct_lrm_areas(self):
@@ -53,7 +53,7 @@ class ClassifyLineTest(unittest.TestCase):
             ("error: IEEE 1800-2017 Clause 31 system timing checks are retained "
              "in semantic IR but are not executable yet"): "System timing checks",
             ("error: unsupported semantic construct in the first simulation "
-             "slice: obelisk.sv.statement.procedural_checker"): "Executable checkers",
+             "slice: talos.sv.statement.procedural_checker"): "Executable checkers",
         }
         for line, expected in diagnostics.items():
             with self.subTest(line=line):
@@ -61,7 +61,7 @@ class ClassifyLineTest(unittest.TestCase):
 
     def test_udp_and_legacy_timing_diagnostics_use_exact_lrm_chapters(self):
         cases = {
-            "error: unsupported obelisk.sv.symbol.udp": "IEEE 1800 Ch. 29",
+            "error: unsupported talos.sv.symbol.udp": "IEEE 1800 Ch. 29",
             "error: unsupported parallel path connection": "IEEE 1800 Ch. 30",
             "error: unsupported timing check condition": "IEEE 1800 Ch. 31",
         }
@@ -88,7 +88,7 @@ class ClassifyLineTest(unittest.TestCase):
 
     def test_missing_override_lowering_remains_a_feature_gap(self):
         line = ("error: unsupported semantic construct in the first simulation "
-                "slice: obelisk.sv.statement.procedural_assign")
+                "slice: talos.sv.statement.procedural_assign")
         self.assertEqual(self.classify(line),
                          "procedural assign / force / release")
 
@@ -108,14 +108,14 @@ class AreaTest(unittest.TestCase):
 
 class FeaturesInLogTest(unittest.TestCase):
     def test_crash_outranks_everything_else(self):
-        log = "error: unsupported semantic node: obelisk.sv.statement.rand_case\nStack dump\n"
+        log = "error: unsupported semantic node: talos.sv.statement.rand_case\nStack dump\n"
         self.assertEqual(classify.features_in_log(log)[0], classify.CRASH_FEATURE)
 
-    def test_slang_stack_is_distinct_from_an_obelisk_crash(self):
+    def test_slang_stack_is_distinct_from_an_talos_crash(self):
         log = ("terminate called after throwing std::out_of_range\n"
                "Stack dump:\n"
                "#0 slang::ConstantValue::at(unsigned long)\n"
-               "#1 obelisk::frontend::importSystemVerilog()\n")
+               "#1 talos::frontend::importSystemVerilog()\n")
         self.assertEqual(classify.features_in_log(log),
                          [classify.SLANG_BUG_FEATURE])
 
@@ -136,9 +136,9 @@ class FeaturesInLogTest(unittest.TestCase):
                          ["Compile timeout"])
 
     def test_features_are_ordered_and_deduplicated(self):
-        log = ("error: unsupported semantic node: obelisk.sv.statement.rand_case\n"
-               "error: unsupported semantic type: '!obelisk.chandle'\n"
-               "error: unsupported semantic node: obelisk.sv.statement.rand_case\n")
+        log = ("error: unsupported semantic node: talos.sv.statement.rand_case\n"
+               "error: unsupported semantic type: '!talos.chandle'\n"
+               "error: unsupported semantic node: talos.sv.statement.rand_case\n")
         self.assertEqual(classify.features_in_log(log), ["randcase", "chandle"])
 
 

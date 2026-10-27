@@ -1,16 +1,16 @@
-#include "obelisk/Runtime/PromotionRangeIndex.h"
+#include "talos/Runtime/PromotionRangeIndex.h"
 #include "gtest/gtest.h"
 
 #include <random>
 #include <set>
 
-using obelisk::runtime::buildPromotionRangeIndex;
-using obelisk::runtime::visitPromotionRangeDependencies;
+using talos::runtime::buildPromotionRangeIndex;
+using talos::runtime::visitPromotionRangeDependencies;
 
 namespace {
 
 TEST(PromotionRangeIndex, MergesOnlyTheSameProofAndRejectsInvalidRanges) {
-  std::vector<obelisk_rt_native_promotion_dependency> entries{{9, 20, 0, 0},
+  std::vector<talos_rt_native_promotion_dependency> entries{{9, 20, 0, 0},
                                                               {1, 10, 0, 0},
                                                               {20, 25, 0, 0},
                                                               {2, 12, 0, 1},
@@ -23,9 +23,9 @@ TEST(PromotionRangeIndex, MergesOnlyTheSameProofAndRejectsInvalidRanges) {
   EXPECT_EQ(entries[0].subtree_end, 25u);
   EXPECT_EQ(entries[1].subtree_end, 31u);
   EXPECT_EQ(entries[2].subtree_end, 31u);
-  for (auto invalid : std::vector<obelisk_rt_native_promotion_dependency>{
+  for (auto invalid : std::vector<talos_rt_native_promotion_dependency>{
            {1, 1, 0, 0}, {2, 1, 0, 0}, {0, 33, 0, 0}, {0, 1, 0, 2}}) {
-    std::vector<obelisk_rt_native_promotion_dependency> bad{invalid};
+    std::vector<talos_rt_native_promotion_dependency> bad{invalid};
     EXPECT_FALSE(buildPromotionRangeIndex(bad, 32, 2));
   }
 }
@@ -35,7 +35,7 @@ TEST(PromotionRangeIndex, RandomQueriesMatchIndependentScalarOverlap) {
   for (unsigned trial = 0; trial != 24; ++trial) {
     // Include queries and intervals near the limit without wrapping endpoints.
     uint64_t base = trial % 2 ? UINT64_MAX - 4096 : 0;
-    std::vector<obelisk_rt_native_promotion_dependency> original;
+    std::vector<talos_rt_native_promotion_dependency> original;
     for (unsigned index = 0; index != 400; ++index) {
       uint64_t begin = base + random() % 2048;
       original.push_back(
@@ -69,16 +69,16 @@ TEST(PromotionRangeIndex, RuntimeUpdatesOnlyDependentProofState) {
   uint8_t first = 1, second = 1;
   uint64_t pending = 0;
   auto route = promotedRoute;
-  obelisk_rt_native_promotion_certificate certificates[] = {
+  talos_rt_native_promotion_certificate certificates[] = {
       {&first, &pending, 1, nullptr, nullptr},
       {&second, &pending, uint64_t{1} << 63, nullptr, nullptr},
       {nullptr, nullptr, 0, &route, fourStateRoute}};
-  std::vector<obelisk_rt_native_promotion_dependency> entries{
+  std::vector<talos_rt_native_promotion_dependency> entries{
       {0, 4, 0, 0}, {8, 12, 0, 1}, {8, 10, 0, 2}, {16, 20, 0, 2}};
   ASSERT_TRUE(buildPromotionRangeIndex(entries, 32, 3));
   aggregateInvalidations = 0;
   auto invalidate = [&](uint64_t offset, uint64_t width) {
-    obelisk_rt_v1_native_promotion_invalidate_ranges(
+    talos_rt_v1_native_promotion_invalidate_ranges(
         entries.data(), entries.size(), certificates, invalidateAggregate,
         offset, width);
   };
@@ -106,19 +106,19 @@ TEST(PromotionRangeIndex, NBACertificatesAndRecoveryAreIndependent) {
   uint64_t pending = 0, routePending = 0;
   uint64_t knownRoots[] = {6, uint64_t{1} << 63};
   auto route = promotedRoute;
-  obelisk_rt_native_promotion_certificate certificates[] = {
+  talos_rt_native_promotion_certificate certificates[] = {
       {&failedKernel, &pending, 1, nullptr, nullptr},
       {&validKernel, &pending, 2, nullptr, nullptr},
       {nullptr, &routePending, 4, &route, fourStateRoute},
       {nullptr, &knownRoots[0], 2, nullptr, nullptr},
       {nullptr, &knownRoots[1], uint64_t{1} << 63, nullptr, nullptr}};
-  std::vector<obelisk_rt_native_promotion_dependency> entries{
+  std::vector<talos_rt_native_promotion_dependency> entries{
       {0, 4, 0, 0}, {4, 8, 0, 1}, {4, 8, 0, 2}, {0, 4, 0, 3}, {128, 132, 0, 4}};
   ASSERT_TRUE(buildPromotionRangeIndex(entries, 160, 5));
   aggregateInvalidations = 0;
   // The kernel was already unpromoted, but this NBA root was independently
   // known. It must lose its certificate before a value-only commit is used.
-  obelisk_rt_v1_native_promotion_invalidate_ranges(
+  talos_rt_v1_native_promotion_invalidate_ranges(
       entries.data(), entries.size(), certificates, invalidateAggregate, 1, 1);
   EXPECT_EQ(failedKernel, 0);
   EXPECT_EQ(validKernel, 1);
@@ -130,7 +130,7 @@ TEST(PromotionRangeIndex, NBACertificatesAndRecoveryAreIndependent) {
 
   // A gain requests rechecking; it cannot prove an entire root known, nor
   // invalidate an already valid route/kernel/root touched by a wider range.
-  obelisk_rt_v1_native_promotion_recheck_ranges(
+  talos_rt_v1_native_promotion_recheck_ranges(
       entries.data(), entries.size(), certificates, invalidateAggregate, 0, 8);
   EXPECT_EQ(failedKernel, 0);
   EXPECT_EQ(validKernel, 1);
@@ -138,36 +138,36 @@ TEST(PromotionRangeIndex, NBACertificatesAndRecoveryAreIndependent) {
   EXPECT_EQ(knownRoots[0], 4u);
   EXPECT_EQ(route, promotedRoute);
   EXPECT_EQ(aggregateInvalidations, 2u);
-  obelisk_rt_v1_native_promotion_recheck_ranges(entries.data(), entries.size(),
+  talos_rt_v1_native_promotion_recheck_ranges(entries.data(), entries.size(),
                                                 certificates,
                                                 invalidateAggregate, 8, 120);
   EXPECT_EQ(aggregateInvalidations, 2u);
-  obelisk_rt_v1_native_promotion_invalidate_ranges(entries.data(),
+  talos_rt_v1_native_promotion_invalidate_ranges(entries.data(),
                                                    entries.size(), certificates,
                                                    invalidateAggregate, 129, 1);
   EXPECT_EQ(knownRoots[0], 4u);
   EXPECT_EQ(knownRoots[1], 0u);
   EXPECT_EQ(routePending, 0u);
-  obelisk_rt_v1_native_promotion_invalidate_ranges(
+  talos_rt_v1_native_promotion_invalidate_ranges(
       entries.data(), entries.size(), certificates, invalidateAggregate, 5, 1);
   EXPECT_EQ(route, fourStateRoute);
   EXPECT_EQ(routePending, 4u);
   routePending = 0; // A failed scan consumes its pending bit.
-  obelisk_rt_v1_native_promotion_recheck_ranges(
+  talos_rt_v1_native_promotion_recheck_ranges(
       entries.data(), entries.size(), certificates, invalidateAggregate, 5, 1);
   EXPECT_EQ(routePending, 4u);
   route = promotedRoute;
   routePending = 0;
-  obelisk_rt_v1_native_promotion_recheck_ranges(
+  talos_rt_v1_native_promotion_recheck_ranges(
       entries.data(), entries.size(), certificates, invalidateAggregate, 5, 1);
   EXPECT_EQ(routePending, 0u);
 }
 
 TEST(PromotionBucketIndex, BudgetAndEncodingRejectUnboundedExpansion) {
-  obelisk::runtime::PromotionBucketIndex buckets;
-  auto build = [&](std::vector<obelisk_rt_native_promotion_dependency> entries,
+  talos::runtime::PromotionBucketIndex buckets;
+  auto build = [&](std::vector<talos_rt_native_promotion_dependency> entries,
                    uint64_t budget) {
-    return obelisk::runtime::buildPromotionBucketIndex(entries, budget,
+    return talos::runtime::buildPromotionBucketIndex(entries, budget,
                                                        buckets);
   };
   EXPECT_FALSE(build({}, 1024));
@@ -190,7 +190,7 @@ TEST(PromotionBucketIndex, BudgetAndEncodingRejectUnboundedExpansion) {
 TEST(PromotionBucketIndex, RandomQueriesMatchIndependentScalarOverlap) {
   std::mt19937_64 random(0xbac4e7);
   for (unsigned trial = 0; trial != 24; ++trial) {
-    std::vector<obelisk_rt_native_promotion_dependency> original;
+    std::vector<talos_rt_native_promotion_dependency> original;
     for (unsigned index = 0; index != 400; ++index) {
       uint64_t begin = random() % 8192;
       original.push_back(
@@ -198,9 +198,9 @@ TEST(PromotionBucketIndex, RandomQueriesMatchIndependentScalarOverlap) {
     }
     auto entries = original;
     ASSERT_TRUE(buildPromotionRangeIndex(entries, 9000, 129));
-    obelisk::runtime::PromotionBucketIndex buckets;
+    talos::runtime::PromotionBucketIndex buckets;
     ASSERT_TRUE(
-        obelisk::runtime::buildPromotionBucketIndex(entries, 65536, buckets));
+        talos::runtime::buildPromotionBucketIndex(entries, 65536, buckets));
     for (unsigned query = 0; query != 256; ++query) {
       uint64_t begin = random() % 16384;
       uint64_t width = query % 31 ? random() % 600 : UINT64_MAX;
@@ -210,7 +210,7 @@ TEST(PromotionBucketIndex, RandomQueriesMatchIndependentScalarOverlap) {
         for (auto entry : original)
           if (entry.begin < end && begin < entry.end)
             expected.insert(entry.certificate);
-      obelisk::runtime::visitPromotionBucketDependencies(
+      talos::runtime::visitPromotionBucketDependencies(
           buckets.starts.data(), buckets.records.data(),
           buckets.starts.size() - 1, begin, width,
           [&](uint64_t id) { actual.insert(id); });
@@ -222,15 +222,15 @@ TEST(PromotionBucketIndex, RandomQueriesMatchIndependentScalarOverlap) {
 TEST(PromotionBucketIndex, RuntimeActionsMatchIntervalIndex) {
   // Include duplicate certificate visits across buckets, holes, the high word
   // bit, a failed and a valid latch, an NBA bit, and a function-pointer route.
-  std::vector<obelisk_rt_native_promotion_dependency> entries{{0, 130, 0, 0},
+  std::vector<talos_rt_native_promotion_dependency> entries{{0, 130, 0, 0},
                                                               {63, 68, 0, 1},
                                                               {60, 66, 0, 2},
                                                               {192, 193, 0, 0},
                                                               {257, 300, 0, 3}};
   ASSERT_TRUE(buildPromotionRangeIndex(entries, 320, 4));
-  obelisk::runtime::PromotionBucketIndex buckets;
+  talos::runtime::PromotionBucketIndex buckets;
   ASSERT_TRUE(
-      obelisk::runtime::buildPromotionBucketIndex(entries, 1024, buckets));
+      talos::runtime::buildPromotionBucketIndex(entries, 1024, buckets));
   for (uint64_t offset :
        {0u, 60u, 63u, 64u, 65u, 129u, 130u, 192u, 257u, 319u, 320u})
     for (uint64_t width : {0u, 1u, 4u, 64u, 65u, 256u})
@@ -238,11 +238,11 @@ TEST(PromotionBucketIndex, RuntimeActionsMatchIntervalIndex) {
         uint8_t latch[2][2] = {{0, 1}, {0, 1}};
         uint64_t words[2][2] = {{0, UINT64_MAX}, {0, UINT64_MAX}};
         auto firstRoute = recover ? fourStateRoute : promotedRoute;
-        obelisk_rt_native_promotion_invalidate routes[] = {firstRoute,
+        talos_rt_native_promotion_invalidate routes[] = {firstRoute,
                                                            firstRoute};
         unsigned aggregate[2];
         for (unsigned variant = 0; variant != 2; ++variant) {
-          obelisk_rt_native_promotion_certificate certificates[] = {
+          talos_rt_native_promotion_certificate certificates[] = {
               {&latch[variant][0], &words[variant][0], 1, nullptr, nullptr},
               {&latch[variant][1], &words[variant][0], uint64_t{1} << 63,
                nullptr, nullptr},
@@ -252,15 +252,15 @@ TEST(PromotionBucketIndex, RuntimeActionsMatchIntervalIndex) {
           aggregateInvalidations = 0;
           if (variant) {
             auto action =
-                recover ? obelisk_rt_v1_native_promotion_recheck_buckets
-                        : obelisk_rt_v1_native_promotion_invalidate_buckets;
+                recover ? talos_rt_v1_native_promotion_recheck_buckets
+                        : talos_rt_v1_native_promotion_invalidate_buckets;
             action(buckets.starts.data(), buckets.records.data(),
                    buckets.starts.size() - 1, certificates, invalidateAggregate,
                    offset, width);
           } else {
             auto action =
-                recover ? obelisk_rt_v1_native_promotion_recheck_ranges
-                        : obelisk_rt_v1_native_promotion_invalidate_ranges;
+                recover ? talos_rt_v1_native_promotion_recheck_ranges
+                        : talos_rt_v1_native_promotion_invalidate_ranges;
             action(entries.data(), entries.size(), certificates,
                    invalidateAggregate, offset, width);
           }

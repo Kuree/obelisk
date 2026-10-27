@@ -1,0 +1,679 @@
+//===- SlangToTalos.cpp - Exhaustive semantic conversion --------------===//
+
+#include "talos/Conversion/SlangToTalos.h"
+
+#include "talos/Dialect/Talos/TalosOps.h"
+#include "talos/Dialect/Slang/SlangOps.h"
+
+#include "mlir/IR/AttrTypeSubElements.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/DialectConversion.h"
+
+#include <type_traits>
+
+using namespace mlir;
+
+namespace talos {
+
+#define GEN_PASS_DEF_CONVERTSLANGTOTALOSPASS
+#include "talos/Conversion/Passes.h.inc"
+
+namespace {
+
+template <typename Source, typename Target>
+constexpr bool haveSameEncoding(Source source, Target target) {
+  return static_cast<std::underlying_type_t<Source>>(source) ==
+         static_cast<std::underlying_type_t<Target>>(target);
+}
+
+// Enum attributes use builtin IntegerAttr storage. Keep the source and target
+// encodings locked together so generic attribute conversion cannot reinterpret
+// a value if either dialect is edited independently.
+static_assert(haveSameEncoding(slangir::AssignmentKind::Blocking,
+                               ir::SVAssignmentKind::Blocking) &&
+              haveSameEncoding(slangir::AssignmentKind::Nonblocking,
+                               ir::SVAssignmentKind::Nonblocking));
+static_assert(haveSameEncoding(slangir::RangeSelectionKind::Simple,
+                               ir::SVRangeSelectionKind::Simple) &&
+              haveSameEncoding(slangir::RangeSelectionKind::IndexedUp,
+                               ir::SVRangeSelectionKind::IndexedUp) &&
+              haveSameEncoding(slangir::RangeSelectionKind::IndexedDown,
+                               ir::SVRangeSelectionKind::IndexedDown));
+static_assert(haveSameEncoding(slangir::ArgumentDirection::In,
+                               ir::SVArgumentDirection::In) &&
+              haveSameEncoding(slangir::ArgumentDirection::Out,
+                               ir::SVArgumentDirection::Out) &&
+              haveSameEncoding(slangir::ArgumentDirection::InOut,
+                               ir::SVArgumentDirection::InOut) &&
+              haveSameEncoding(slangir::ArgumentDirection::Ref,
+                               ir::SVArgumentDirection::Ref));
+static_assert(haveSameEncoding(slangir::DriveStrength::Supply,
+                               ir::SVDriveStrength::Supply) &&
+              haveSameEncoding(slangir::DriveStrength::Strong,
+                               ir::SVDriveStrength::Strong) &&
+              haveSameEncoding(slangir::DriveStrength::Pull,
+                               ir::SVDriveStrength::Pull) &&
+              haveSameEncoding(slangir::DriveStrength::Weak,
+                               ir::SVDriveStrength::Weak) &&
+              haveSameEncoding(slangir::DriveStrength::HighZ,
+                               ir::SVDriveStrength::HighZ));
+static_assert(haveSameEncoding(slangir::ChargeStrength::Small,
+                               ir::SVChargeStrength::Small) &&
+              haveSameEncoding(slangir::ChargeStrength::Medium,
+                               ir::SVChargeStrength::Medium) &&
+              haveSameEncoding(slangir::ChargeStrength::Large,
+                               ir::SVChargeStrength::Large));
+static_assert(haveSameEncoding(slangir::DefinitionKind::Module,
+                               ir::SVDefinitionKind::Module) &&
+              haveSameEncoding(slangir::DefinitionKind::Interface,
+                               ir::SVDefinitionKind::Interface) &&
+              haveSameEncoding(slangir::DefinitionKind::Program,
+                               ir::SVDefinitionKind::Program));
+static_assert(haveSameEncoding(slangir::ProceduralBlockKind::Initial,
+                               ir::SVProceduralBlockKind::Initial) &&
+              haveSameEncoding(slangir::ProceduralBlockKind::Final,
+                               ir::SVProceduralBlockKind::Final) &&
+              haveSameEncoding(slangir::ProceduralBlockKind::Always,
+                               ir::SVProceduralBlockKind::Always) &&
+              haveSameEncoding(slangir::ProceduralBlockKind::AlwaysComb,
+                               ir::SVProceduralBlockKind::AlwaysComb) &&
+              haveSameEncoding(slangir::ProceduralBlockKind::AlwaysLatch,
+                               ir::SVProceduralBlockKind::AlwaysLatch) &&
+              haveSameEncoding(slangir::ProceduralBlockKind::AlwaysFF,
+                               ir::SVProceduralBlockKind::AlwaysFF));
+static_assert(haveSameEncoding(slangir::StatementBlockKind::Sequential,
+                               ir::SVStatementBlockKind::Sequential) &&
+              haveSameEncoding(slangir::StatementBlockKind::JoinAll,
+                               ir::SVStatementBlockKind::JoinAll) &&
+              haveSameEncoding(slangir::StatementBlockKind::JoinAny,
+                               ir::SVStatementBlockKind::JoinAny) &&
+              haveSameEncoding(slangir::StatementBlockKind::JoinNone,
+                               ir::SVStatementBlockKind::JoinNone));
+static_assert(haveSameEncoding(slangir::SubroutineKind::Function,
+                               ir::SVSubroutineKind::Function) &&
+              haveSameEncoding(slangir::SubroutineKind::Task,
+                               ir::SVSubroutineKind::Task));
+static_assert(haveSameEncoding(slangir::DynamicCastKind::AlwaysSuccess,
+                               ir::SVDynamicCastKind::AlwaysSuccess) &&
+              haveSameEncoding(slangir::DynamicCastKind::AlwaysFail,
+                               ir::SVDynamicCastKind::AlwaysFail) &&
+              haveSameEncoding(slangir::DynamicCastKind::EnumMembership,
+                               ir::SVDynamicCastKind::EnumMembership) &&
+              haveSameEncoding(slangir::DynamicCastKind::ClassRuntime,
+                               ir::SVDynamicCastKind::ClassRuntime));
+static_assert(haveSameEncoding(slangir::UnaryOperator::Plus,
+                               ir::SVUnaryOperator::Plus) &&
+              haveSameEncoding(slangir::UnaryOperator::Postdecrement,
+                               ir::SVUnaryOperator::Postdecrement));
+static_assert(haveSameEncoding(slangir::BinaryOperator::Add,
+                               ir::SVBinaryOperator::Add) &&
+              haveSameEncoding(slangir::BinaryOperator::Power,
+                               ir::SVBinaryOperator::Power));
+static_assert(haveSameEncoding(slangir::UniquePriorityCheck::None,
+                               ir::SVUniquePriorityCheck::None) &&
+              haveSameEncoding(slangir::UniquePriorityCheck::Priority,
+                               ir::SVUniquePriorityCheck::Priority));
+static_assert(haveSameEncoding(slangir::CaseCondition::Normal,
+                               ir::SVCaseCondition::Normal) &&
+              haveSameEncoding(slangir::CaseCondition::Inside,
+                               ir::SVCaseCondition::Inside));
+static_assert(haveSameEncoding(slangir::AssertionKind::Assert,
+                               ir::SVAssertionKind::Assert) &&
+              haveSameEncoding(slangir::AssertionKind::Expect,
+                               ir::SVAssertionKind::Expect));
+static_assert(haveSameEncoding(slangir::CoverageBinKind::Bins,
+                               ir::SVCoverageBinKind::Bins) &&
+              haveSameEncoding(slangir::CoverageBinKind::IgnoreBins,
+                               ir::SVCoverageBinKind::IgnoreBins));
+static_assert(
+    haveSameEncoding(slangir::CoverageEventKind::None,
+                     ir::SVCoverageEventKind::None) &&
+    haveSameEncoding(slangir::CoverageEventKind::Clocking,
+                     ir::SVCoverageEventKind::Clocking) &&
+    haveSameEncoding(slangir::CoverageEventKind::CustomSample,
+                     ir::SVCoverageEventKind::CustomSample) &&
+    haveSameEncoding(slangir::CoverageEventKind::Block,
+                     ir::SVCoverageEventKind::Block) &&
+    haveSameEncoding(slangir::CoverageEventKind::Inherited,
+                     ir::SVCoverageEventKind::Inherited));
+static_assert(
+    haveSameEncoding(slangir::CoverageOptionOwnerKind::Covergroup,
+                     ir::SVCoverageOptionOwnerKind::Covergroup) &&
+    haveSameEncoding(slangir::CoverageOptionOwnerKind::Coverpoint,
+                     ir::SVCoverageOptionOwnerKind::Coverpoint) &&
+    haveSameEncoding(slangir::CoverageOptionOwnerKind::Cross,
+                     ir::SVCoverageOptionOwnerKind::Cross));
+static_assert(
+    haveSameEncoding(slangir::CoverageOptionScopeKind::Instance,
+                     ir::SVCoverageOptionScopeKind::Instance) &&
+    haveSameEncoding(slangir::CoverageOptionScopeKind::Type,
+                     ir::SVCoverageOptionScopeKind::Type));
+static_assert(
+    haveSameEncoding(slangir::CoverageOptionKind::Name,
+                     ir::SVCoverageOptionKind::Name) &&
+    haveSameEncoding(slangir::CoverageOptionKind::Weight,
+                     ir::SVCoverageOptionKind::Weight) &&
+    haveSameEncoding(slangir::CoverageOptionKind::Goal,
+                     ir::SVCoverageOptionKind::Goal) &&
+    haveSameEncoding(slangir::CoverageOptionKind::Comment,
+                     ir::SVCoverageOptionKind::Comment) &&
+    haveSameEncoding(slangir::CoverageOptionKind::AtLeast,
+                     ir::SVCoverageOptionKind::AtLeast) &&
+    haveSameEncoding(slangir::CoverageOptionKind::AutoBinMax,
+                     ir::SVCoverageOptionKind::AutoBinMax) &&
+    haveSameEncoding(slangir::CoverageOptionKind::CrossNumPrintMissing,
+                     ir::SVCoverageOptionKind::CrossNumPrintMissing) &&
+    haveSameEncoding(slangir::CoverageOptionKind::CrossRetainAutoBins,
+                     ir::SVCoverageOptionKind::CrossRetainAutoBins) &&
+    haveSameEncoding(slangir::CoverageOptionKind::DetectOverlap,
+                     ir::SVCoverageOptionKind::DetectOverlap) &&
+    haveSameEncoding(slangir::CoverageOptionKind::PerInstance,
+                     ir::SVCoverageOptionKind::PerInstance) &&
+    haveSameEncoding(slangir::CoverageOptionKind::GetInstCoverage,
+                     ir::SVCoverageOptionKind::GetInstCoverage) &&
+    haveSameEncoding(slangir::CoverageOptionKind::Strobe,
+                     ir::SVCoverageOptionKind::Strobe) &&
+    haveSameEncoding(slangir::CoverageOptionKind::MergeInstances,
+                     ir::SVCoverageOptionKind::MergeInstances) &&
+    haveSameEncoding(slangir::CoverageOptionKind::DistributeFirst,
+                     ir::SVCoverageOptionKind::DistributeFirst) &&
+    haveSameEncoding(slangir::CoverageOptionKind::RealInterval,
+                     ir::SVCoverageOptionKind::RealInterval));
+static_assert(
+    haveSameEncoding(slangir::CoverageSelectUnaryOperator::Negation,
+                     ir::SVCoverageSelectUnaryOperator::Negation));
+static_assert(
+    haveSameEncoding(slangir::CoverageExpressionRole::Sample,
+                     ir::SVCoverageExpressionRole::Sample) &&
+    haveSameEncoding(slangir::CoverageExpressionRole::Iff,
+                     ir::SVCoverageExpressionRole::Iff));
+static_assert(
+    haveSameEncoding(slangir::CoverageBlockEventKind::Begin,
+                     ir::SVCoverageBlockEventKind::Begin) &&
+    haveSameEncoding(slangir::CoverageBlockEventKind::End,
+                     ir::SVCoverageBlockEventKind::End));
+static_assert(
+    haveSameEncoding(slangir::CoverageSelectBinaryOperator::And,
+                     ir::SVCoverageSelectBinaryOperator::And) &&
+    haveSameEncoding(slangir::CoverageSelectBinaryOperator::Or,
+                     ir::SVCoverageSelectBinaryOperator::Or));
+static_assert(
+    haveSameEncoding(slangir::CoverageBinChildRole::Iff,
+                     ir::SVCoverageBinChildRole::Iff) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::NumberOfBins,
+                     ir::SVCoverageBinChildRole::NumberOfBins) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::SetCoverage,
+                     ir::SVCoverageBinChildRole::SetCoverage) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::With,
+                     ir::SVCoverageBinChildRole::With) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::CrossSelect,
+                     ir::SVCoverageBinChildRole::CrossSelect) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::Value,
+                     ir::SVCoverageBinChildRole::Value) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::TransitionItem,
+                     ir::SVCoverageBinChildRole::TransitionItem) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::TransitionRepeatFrom,
+                     ir::SVCoverageBinChildRole::TransitionRepeatFrom) &&
+    haveSameEncoding(slangir::CoverageBinChildRole::TransitionRepeatTo,
+                     ir::SVCoverageBinChildRole::TransitionRepeatTo));
+static_assert(
+    haveSameEncoding(slangir::CoverageTransitionRepeatKind::None,
+                     ir::SVCoverageTransitionRepeatKind::None) &&
+    haveSameEncoding(slangir::CoverageTransitionRepeatKind::Consecutive,
+                     ir::SVCoverageTransitionRepeatKind::Consecutive) &&
+    haveSameEncoding(slangir::CoverageTransitionRepeatKind::Nonconsecutive,
+                     ir::SVCoverageTransitionRepeatKind::Nonconsecutive) &&
+    haveSameEncoding(slangir::CoverageTransitionRepeatKind::GoTo,
+                     ir::SVCoverageTransitionRepeatKind::GoTo));
+static_assert(
+    haveSameEncoding(slangir::EdgeKind::None, ir::EdgeKind::Change) &&
+    haveSameEncoding(slangir::EdgeKind::PosEdge, ir::EdgeKind::Posedge) &&
+    haveSameEncoding(slangir::EdgeKind::NegEdge, ir::EdgeKind::Negedge) &&
+    haveSameEncoding(slangir::EdgeKind::BothEdges, ir::EdgeKind::Both));
+static_assert(haveSameEncoding(slangir::VariableLifetime::Automatic,
+                               ir::SVVariableLifetime::Automatic) &&
+              haveSameEncoding(slangir::VariableLifetime::Static,
+                               ir::SVVariableLifetime::Static));
+static_assert(haveSameEncoding(slangir::Visibility::Public,
+                               ir::SVVisibility::Public) &&
+              haveSameEncoding(slangir::Visibility::Local,
+                               ir::SVVisibility::Local));
+static_assert(haveSameEncoding(slangir::RandMode::None, ir::SVRandMode::None) &&
+              haveSameEncoding(slangir::RandMode::RandC,
+                               ir::SVRandMode::RandC));
+static_assert(haveSameEncoding(slangir::IntegralFlavor::Generic,
+                               ir::SVIntegralFlavor::Generic) &&
+              haveSameEncoding(slangir::IntegralFlavor::Integer,
+                               ir::SVIntegralFlavor::Integer) &&
+              haveSameEncoding(slangir::IntegralFlavor::Time,
+                               ir::SVIntegralFlavor::Time));
+static_assert(haveSameEncoding(slangir::NetKind::Unknown,
+                               ir::SVNetKind::Unknown) &&
+              haveSameEncoding(slangir::NetKind::UserDefined,
+                               ir::SVNetKind::UserDefined));
+static_assert(haveSameEncoding(slangir::NetExpansionHint::None,
+                               ir::SVNetExpansionHint::None) &&
+              haveSameEncoding(slangir::NetExpansionHint::Vectored,
+                               ir::SVNetExpansionHint::Vectored) &&
+              haveSameEncoding(slangir::NetExpansionHint::Scalared,
+                               ir::SVNetExpansionHint::Scalared));
+static_assert(haveSameEncoding(slangir::PortConnectionKind::Ordered,
+                               ir::SVPortConnectionKind::Ordered) &&
+              haveSameEncoding(slangir::PortConnectionKind::Default,
+                               ir::SVPortConnectionKind::Default));
+static_assert(haveSameEncoding(slangir::AssertionUnaryOperator::Not,
+                               ir::SVAssertionUnaryOperator::Not) &&
+              haveSameEncoding(slangir::AssertionUnaryOperator::SEventually,
+                               ir::SVAssertionUnaryOperator::SEventually));
+static_assert(
+    haveSameEncoding(slangir::AssertionBinaryOperator::And,
+                     ir::SVAssertionBinaryOperator::And) &&
+    haveSameEncoding(slangir::AssertionBinaryOperator::NonOverlappedFollowedBy,
+                     ir::SVAssertionBinaryOperator::NonOverlappedFollowedBy));
+static_assert(haveSameEncoding(slangir::SequenceRepetitionKind::Consecutive,
+                               ir::SVSequenceRepetitionKind::Consecutive) &&
+              haveSameEncoding(slangir::SequenceRepetitionKind::GoTo,
+                               ir::SVSequenceRepetitionKind::GoTo));
+static_assert(haveSameEncoding(slangir::AssertionStrength::Strong,
+                               ir::SVAssertionStrength::Strong) &&
+              haveSameEncoding(slangir::AssertionStrength::Weak,
+                               ir::SVAssertionStrength::Weak));
+static_assert(haveSameEncoding(slangir::AssertionAbortAction::Accept,
+                               ir::SVAssertionAbortAction::Accept) &&
+              haveSameEncoding(slangir::AssertionAbortAction::Reject,
+                               ir::SVAssertionAbortAction::Reject));
+
+class SlangTypeConverter : public TypeConverter {
+public:
+  SlangTypeConverter() {
+    addConversion([this](Type type) -> std::optional<Type> {
+      Type converted = convertRecursively(type);
+      if (!converted)
+        return std::nullopt;
+      return converted;
+    });
+  }
+
+  Type convertRecursively(Type type) const {
+    bool failedConversion = false;
+    AttrTypeReplacer replacer;
+    replacer.addReplacement([&](Type nested) -> std::optional<Type> {
+      if (nested.getDialect().getNamespace() !=
+          slangir::SlangDialect::getDialectNamespace())
+        return std::nullopt;
+      Type converted = convertSlangType(nested);
+      if (!converted)
+        failedConversion = true;
+      return converted;
+    });
+
+    Type converted = replacer.replace(type);
+    if (failedConversion || !converted)
+      return {};
+    bool containsSlang = false;
+    converted.walk([&](Type nested) {
+      if (nested.getDialect().getNamespace() ==
+          slangir::SlangDialect::getDialectNamespace())
+        containsSlang = true;
+    });
+    return containsSlang ? Type{} : converted;
+  }
+
+  Type convertSlangType(Type type) const {
+    MLIRContext *context = type.getContext();
+    if (auto value = dyn_cast<slangir::IntegralType>(type))
+      return ir::IntegralType::get(
+          context, value.getWidth(), value.getIsSigned(),
+          value.getIsFourState(), value.getLeft(), value.getRight(),
+          static_cast<ir::SVIntegralFlavor>(value.getFlavor()));
+    if (isa<slangir::StringType>(type))
+      return ir::StringType::get(context);
+    if (isa<slangir::RealType>(type))
+      return ir::RealType::get(context);
+    if (isa<slangir::RealtimeType>(type))
+      return ir::RealtimeType::get(context);
+    if (isa<slangir::ShortRealType>(type))
+      return ir::ShortRealType::get(context);
+    if (isa<slangir::VoidType>(type))
+      return ir::VoidType::get(context);
+    if (isa<slangir::TimeType>(type))
+      return ir::TimeType::get(context);
+    if (isa<slangir::NullType>(type))
+      return ir::NullType::get(context);
+    if (isa<slangir::ChandleType>(type))
+      return ir::ChandleType::get(context);
+    if (isa<slangir::EventType>(type))
+      return ir::EventType::get(context);
+    if (isa<slangir::UnboundedType>(type))
+      return ir::UnboundedType::get(context);
+    if (isa<slangir::UntypedType>(type))
+      return ir::UntypedType::get(context);
+    if (isa<slangir::TypeReferenceType>(type))
+      return ir::TypeReferenceType::get(context);
+    if (isa<slangir::SequenceType>(type))
+      return ir::SequenceType::get(context);
+    if (isa<slangir::PropertyType>(type))
+      return ir::PropertyType::get(context);
+    if (isa<slangir::ErrorType>(type))
+      return {};
+    if (auto value = dyn_cast<slangir::EnumType>(type)) {
+      if (Type baseType = convertType(value.getBaseType()))
+        return ir::EnumType::get(context, value.getName(), baseType);
+      return {};
+    }
+    if (auto value = dyn_cast<slangir::PackedArrayType>(type)) {
+      if (Type elementType = convertType(value.getElementType()))
+        return ir::RangedPackedArrayType::get(
+            context, elementType, value.getLeft(), value.getRight());
+      return {};
+    }
+    if (auto value = dyn_cast<slangir::UnpackedArrayType>(type)) {
+      if (Type elementType = convertType(value.getElementType()))
+        return ir::RangedUnpackedArrayType::get(
+            context, elementType, value.getLeft(), value.getRight());
+      return {};
+    }
+    if (auto value = dyn_cast<slangir::DynamicArrayType>(type)) {
+      if (Type elementType = convertType(value.getElementType()))
+        return ir::DynArrayType::get(context, elementType);
+      return {};
+    }
+    if (auto value = dyn_cast<slangir::OpenArrayType>(type)) {
+      if (Type elementType = convertType(value.getElementType()))
+        return ir::OpenArrayType::get(context, elementType,
+                                      value.getIsPacked());
+      return {};
+    }
+    if (auto value = dyn_cast<slangir::AssociativeArrayType>(type)) {
+      Type indexType = convertType(value.getIndexType());
+      Type elementType = convertType(value.getElementType());
+      if (indexType && elementType)
+        return ir::AssocArrayType::get(context, indexType, elementType,
+                                       value.getWildcardIndex());
+      return {};
+    }
+    if (auto value = dyn_cast<slangir::QueueType>(type)) {
+      if (Type elementType = convertType(value.getElementType()))
+        return ir::QueueType::get(context, elementType, value.getBound());
+      return {};
+    }
+    if (auto value = dyn_cast<slangir::AggregateType>(type))
+      return ir::SourceAggregateType::get(
+          context, value.getName(), value.getIsPacked(), value.getIsUnion(),
+          value.getIsTagged(), value.getIsSigned(), value.getIsFourState(),
+          value.getIsSoft(), value.getBitWidth(), value.getSelectableWidth(),
+          value.getBitstreamWidth(), value.getTagBits(), value.getFields());
+    if (auto value = dyn_cast<slangir::ClassHandleType>(type))
+      return ir::ClassHandleType::get(context, value.getClassName());
+    if (auto value = dyn_cast<slangir::CovergroupHandleType>(type))
+      return ir::CovergroupHandleType::get(context, value.getCovergroupName());
+    if (auto value = dyn_cast<slangir::VirtualInterfaceType>(type))
+      return ir::VirtualInterfaceType::get(context, value.getInterfaceName(),
+                                           value.getModport());
+    if (auto value = dyn_cast<slangir::SubroutineType>(type)) {
+      if (Type signature = convertType(value.getSignature()))
+        return ir::SubroutineType::get(context, signature, value.getIsTask());
+      return {};
+    }
+    if (auto value = dyn_cast<slangir::SourceRangeType>(type))
+      return ir::SourceRangeType::get(
+          context, value.getStartFile(), value.getStartLine(),
+          value.getStartColumn(), value.getEndFile(), value.getEndLine(),
+          value.getEndColumn(), value.getMacroName());
+    return {};
+  }
+
+  FailureOr<Attribute> convertAttribute(Attribute attr) const {
+    Attribute converted =
+        attr.replace([this](Type type) { return convertType(type); });
+    if (!converted)
+      return failure();
+    return converted;
+  }
+
+  /// Dialect conversion checks value types, but semantic types also occur in
+  /// TypeAttrs nested in dictionaries and arrays. Keep an operation legal only
+  /// when both locations are free of source-dialect types.
+  bool isRecursivelyLegal(Operation *op) const {
+    if (!isLegal(op))
+      return false;
+    for (Region &region : op->getRegions()) {
+      if (!isLegal(&region))
+        return false;
+    }
+    for (NamedAttribute named : op->getAttrs()) {
+      bool legal = true;
+      named.getValue().walk([&](Type type) {
+        if (!isLegal(type))
+          legal = false;
+      });
+      if (!legal)
+        return false;
+    }
+    return true;
+  }
+};
+
+template <typename Op>
+inline constexpr bool isInvalidSemanticOp =
+    std::is_same_v<Op, slangir::InvalidTimingControlOp> ||
+    std::is_same_v<Op, slangir::InvalidConstraintOp> ||
+    std::is_same_v<Op, slangir::InvalidAssertionExprOp> ||
+    std::is_same_v<Op, slangir::InvalidBinsSelectExprOp> ||
+    std::is_same_v<Op, slangir::InvalidPatternOp> ||
+    std::is_same_v<Op, slangir::ErrorTypeOp>;
+
+template <typename SourceOp, typename TargetOp>
+class ConcreteASTNodeConversion : public OpConversionPattern<SourceOp> {
+public:
+  using OpConversionPattern<SourceOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(SourceOp op, typename SourceOp::Adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if constexpr (isInvalidSemanticOp<SourceOp>)
+      return rewriter.notifyMatchFailure(
+          op, "invalid semantic sentinels have no Talos representation");
+
+    if constexpr (std::is_same_v<SourceOp, slangir::GenerateBlockSymbolOp> ||
+                  std::is_same_v<SourceOp, slangir::InstanceSymbolOp>) {
+      if (auto inactive =
+              op->template getAttrOfType<BoolAttr>("is_uninstantiated");
+          inactive && inactive.getValue()) {
+        // Slang retains inactive generate arms and invalid instances for
+        // semantic checking. Neither is part of the elaborated design. In
+        // particular, IEEE 1800-2017 6.20 forbids implicitly instantiating a
+        // design element whose parameter has no default, so its synthetic
+        // instance can contain intentionally unset values and error types.
+        rewriter.eraseOp(op);
+        return success();
+      }
+    }
+
+    const auto &converter =
+        *static_cast<const SlangTypeConverter *>(this->getTypeConverter());
+    NamedAttrList attrs;
+    for (NamedAttribute attr : op->getAttrs()) {
+      if constexpr (std::is_same_v<SourceOp, slangir::GenerateBlockSymbolOp>)
+        if (attr.getName() == "is_uninstantiated")
+          continue;
+      if constexpr (std::is_same_v<SourceOp, slangir::InstanceSymbolOp> ||
+                    std::is_same_v<SourceOp,
+                                   slangir::CheckerInstanceSymbolOp>) {
+        // Binding provenance is an opt-in frontend report surface. The
+        // selected hierarchy itself is already frozen in the semantic tree;
+        // dropping its explanation here keeps executable Talos and
+        // simulation IR identical to the pre-reporting pipeline.
+        StringRef name = attr.getName().getValue();
+        if (name == "is_from_bind" || name == "is_below_bind" ||
+            name == "is_bind_target" || name == "selected_cell" ||
+            name == "configuration" || name == "configuration_root" ||
+            name == "configuration_liblist" ||
+            name == "configuration_rule_kind" ||
+            name == "configuration_rule_source_range")
+          continue;
+      }
+      FailureOr<Attribute> converted =
+          converter.convertAttribute(attr.getValue());
+      if (failed(converted))
+        return rewriter.notifyMatchFailure(op,
+                                           "attribute type conversion failed");
+      attrs.set(attr.getName(), *converted);
+    }
+
+    SmallVector<NamedAttribute> discardableAttrs;
+    for (NamedAttribute attr : op->getDiscardableAttrs()) {
+      FailureOr<Attribute> converted =
+          converter.convertAttribute(attr.getValue());
+      if (failed(converted))
+        return rewriter.notifyMatchFailure(
+            op, "discardable attribute type conversion failed");
+      discardableAttrs.emplace_back(attr.getName(), *converted);
+    }
+
+    TargetOp target = TargetOp::create(rewriter, op.getLoc(), TypeRange{},
+                                       ValueRange{}, attrs.getAttrs());
+    for (NamedAttribute attr : discardableAttrs)
+      target->setDiscardableAttr(attr.getName(), attr.getValue());
+    rewriter.inlineRegionBefore(op.getBody(), target.getBody(),
+                                target.getBody().end());
+    rewriter.replaceOp(op, target->getResults());
+    return success();
+  }
+};
+
+class PortConnectionConversion
+    : public OpConversionPattern<slangir::PortConnectionOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(slangir::PortConnectionOp op, OpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    const auto &converter =
+        *static_cast<const SlangTypeConverter *>(getTypeConverter());
+    NamedAttrList attrs;
+    for (NamedAttribute attr : op->getAttrs()) {
+      FailureOr<Attribute> converted =
+          converter.convertAttribute(attr.getValue());
+      if (failed(converted))
+        return rewriter.notifyMatchFailure(op,
+                                           "attribute type conversion failed");
+      attrs.set(attr.getName(), *converted);
+    }
+
+    auto target = ir::SVPortConnectionOp::create(
+        rewriter, op.getLoc(), TypeRange{}, ValueRange{}, attrs.getAttrs());
+    if (!op.getInternal().empty())
+      rewriter.inlineRegionBefore(op.getInternal(), target.getInternal(),
+                                  target.getInternal().end());
+    if (!op.getActual().empty())
+      rewriter.inlineRegionBefore(op.getActual(), target.getActual(),
+                                  target.getActual().end());
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+class ConvertSlangToTalosPass
+    : public impl::ConvertSlangToTalosPassBase<ConvertSlangToTalosPass> {
+public:
+  void runOnOperation() override {
+    MLIRContext &context = getContext();
+    SlangTypeConverter converter;
+    // Module metadata can contain semantic types, including the frozen enum
+    // domains needed after the Slang AST has been released.
+    for (NamedAttribute attribute : getOperation()->getAttrs()) {
+      FailureOr<Attribute> converted =
+          converter.convertAttribute(attribute.getValue());
+      if (failed(converted)) {
+        getOperation().emitError("module attribute type conversion failed");
+        signalPassFailure();
+        return;
+      }
+      getOperation()->setAttr(attribute.getName(), *converted);
+    }
+    ConversionTarget target(context);
+    target.addIllegalDialect<slangir::SlangDialect>();
+    target.addDynamicallyLegalDialect<ir::TalosDialect>(
+        [&](Operation *op) { return converter.isRecursivelyLegal(op); });
+    target.addDynamicallyLegalOp<ModuleOp>(
+        [&](Operation *op) { return converter.isRecursivelyLegal(op); });
+    target.markUnknownOpDynamicallyLegal(
+        [&](Operation *op) { return converter.isRecursivelyLegal(op); });
+
+    RewritePatternSet patterns(&context);
+    patterns.add<PortConnectionConversion>(converter, &context);
+    patterns.add<ConcreteASTNodeConversion<slangir::CoverageOptionOp,
+                                           ir::SVCoverageOptionOp>>(converter,
+                                                                    &context);
+    patterns
+        .add<ConcreteASTNodeConversion<slangir::SourceClassDefinitionSymbolOp,
+                                       ir::SVSourceClassDefinitionSymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassPropertySymbolOp,
+                                       ir::SVSourceClassPropertySymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassTypeAliasSymbolOp,
+                                       ir::SVSourceClassTypeAliasSymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceDeclaredTypeOp,
+                                       ir::SVSourceDeclaredTypeOp>,
+             ConcreteASTNodeConversion<slangir::SourceDeclaredTypeReferenceOp,
+                                       ir::SVSourceDeclaredTypeReferenceOp>,
+             ConcreteASTNodeConversion<slangir::SourceUnavailableTypeOp,
+                                       ir::SVSourceUnavailableTypeOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassExtendsOp,
+                                       ir::SVSourceClassExtendsOp>,
+             ConcreteASTNodeConversion<slangir::SourceParameterActualOp,
+                                       ir::SVSourceParameterActualOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassParameterActualOp,
+                                       ir::SVSourceClassParameterActualOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassConstraintSymbolOp,
+                                       ir::SVSourceClassConstraintSymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassMethodSymbolOp,
+                                       ir::SVSourceClassMethodSymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceValueParameterSymbolOp,
+                                       ir::SVSourceValueParameterSymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceValueDefaultOp,
+                                       ir::SVSourceValueDefaultOp>,
+             ConcreteASTNodeConversion<slangir::SourceParameterReferenceOp,
+                                       ir::SVSourceParameterReferenceOp>,
+             ConcreteASTNodeConversion<slangir::SourceUnaryExpressionOp,
+                                       ir::SVSourceUnaryExpressionOp>,
+             ConcreteASTNodeConversion<slangir::SourceBinaryExpressionOp,
+                                       ir::SVSourceBinaryExpressionOp>,
+             ConcreteASTNodeConversion<slangir::SourceConditionalExpressionOp,
+                                       ir::SVSourceConditionalExpressionOp>,
+             ConcreteASTNodeConversion<slangir::SourceTypeParameterSymbolOp,
+                                       ir::SVSourceTypeParameterSymbolOp>>(
+            converter, &context);
+    patterns.add<ConcreteASTNodeConversion<slangir::SourceTypeDefaultOp,
+                                           ir::SVSourceTypeDefaultOp>>(
+        converter, &context);
+    patterns
+        .add<ConcreteASTNodeConversion<slangir::SourceTypeReferenceDefaultOp,
+                                       ir::SVSourceTypeReferenceDefaultOp>>(
+            converter, &context);
+    patterns.add<ConcreteASTNodeConversion<slangir::SourceUnsupportedDefaultOp,
+                                           ir::SVSourceUnsupportedDefaultOp>>(
+        converter, &context);
+#define SLANG_AST_NODE(Category, Kind, CppType)                                \
+  patterns.add<                                                                \
+      ConcreteASTNodeConversion<slangir::CppType##Op, ir::SV##CppType##Op>>(   \
+      converter, &context);
+#include "talos/Dialect/Slang/SlangASTNodes.def"
+#undef SLANG_AST_NODE
+
+    // Patterns fail only before mutating IR, so rollback is never needed.
+    // Disabling it drops the driver's undo bookkeeping.
+    ConversionConfig config;
+    config.allowPatternRollback = false;
+    if (failed(applyFullConversion(getOperation(), target, std::move(patterns),
+                                   config)))
+      signalPassFailure();
+  }
+};
+
+} // namespace
+} // namespace talos

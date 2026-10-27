@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-activation-memory -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-activation-memory -o /dev/null 2>&1 | FileCheck %s
 
 module {
   simulation.design @coverage {

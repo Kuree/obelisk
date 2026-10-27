@@ -2,13 +2,13 @@
 
 #include "../../../Conversion/SimulationToLLVMCoroutine/SimulationAOTPlanning.h"
 #include "../../../Conversion/SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/SimulationScheduleAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -21,7 +21,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 LogicalResult
 specializeNativeAOTCaptures(ModuleOp module,
@@ -68,7 +68,7 @@ specializeNativeAOTCaptures(ModuleOp module,
 
     sim::SimFuncOp evalBody;
     if (auto evalBodyRef =
-            ::obelisk::schedule::get<::obelisk::schedule::Field::EvalBody>(
+            ::talos::schedule::get<::talos::schedule::Field::EvalBody>(
                 target)) {
       evalBody = symbols.lookupSymbolIn<sim::SimFuncOp>(design, evalBodyRef);
       if (!evalBody || evalBody.getBody().front().getNumArguments() !=
@@ -223,4 +223,4 @@ specializeNativeAOTCaptures(ModuleOp module,
   }
   return success();
 }
-} // namespace obelisk::detail
+} // namespace talos::detail

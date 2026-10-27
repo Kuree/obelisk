@@ -5,9 +5,9 @@
 #include "RandSolveOrder.h"
 #include "RandSolveWeighted.h"
 #include "RuntimeInternal.h"
-#include "obelisk/Runtime/RandomDomain.h"
-#include "obelisk/Runtime/RandomSamplerPlan.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/RandomDomain.h"
+#include "talos/Runtime/RandomSamplerPlan.h"
+#include "talos/Runtime/Runtime.h"
 
 #include <algorithm>
 #include <array>
@@ -46,7 +46,7 @@ struct SolveBeforeEdge {
 };
 
 struct DomainPattern {
-  obelisk::random::DomainRecord bits;
+  talos::random::DomainRecord bits;
   uint64_t freeMask = 0;
   uint64_t cardinality = 0;
 };
@@ -207,13 +207,13 @@ WideValue bitwise(const WideValue &lhs, const WideValue &rhs, uint32_t width,
   WideValue result(width);
   for (size_t index = 0; index != result.words.size(); ++index) {
     switch (opcode) {
-    case OBELISK_RT_RANDOM_BIT_AND_V1:
+    case TALOS_RT_RANDOM_BIT_AND_V1:
       result.words[index] = lhs.words[index] & rhs.words[index];
       break;
-    case OBELISK_RT_RANDOM_BIT_OR_V1:
+    case TALOS_RT_RANDOM_BIT_OR_V1:
       result.words[index] = lhs.words[index] | rhs.words[index];
       break;
-    case OBELISK_RT_RANDOM_BIT_XOR_V1:
+    case TALOS_RT_RANDOM_BIT_XOR_V1:
       result.words[index] = lhs.words[index] ^ rhs.words[index];
       break;
     default:
@@ -349,18 +349,18 @@ WideValue power(WideValue base, const WideValue &exponent, uint32_t width) {
 }
 
 bool isUnary(uint8_t opcode) {
-  return (opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
-          opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
-         opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
-         opcode == OBELISK_RT_RANDOM_CLOG2_V1 ||
-         obelisk::random::isRealInstruction(opcode);
+  return (opcode >= TALOS_RT_RANDOM_CAST_V1 &&
+          opcode <= TALOS_RT_RANDOM_LOGICAL_NOT_V1) ||
+         opcode == TALOS_RT_RANDOM_COUNT_ONES_V1 ||
+         opcode == TALOS_RT_RANDOM_CLOG2_V1 ||
+         talos::random::isRealInstruction(opcode);
 }
 
 bool isBinary(uint8_t opcode) {
-  return (opcode >= OBELISK_RT_RANDOM_ADD_V1 &&
-          opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1) ||
-         (opcode >= OBELISK_RT_RANDOM_DIV_V1 &&
-          opcode <= OBELISK_RT_RANDOM_POWER_V1);
+  return (opcode >= TALOS_RT_RANDOM_ADD_V1 &&
+          opcode <= TALOS_RT_RANDOM_LOGICAL_EQUIV_V1) ||
+         (opcode >= TALOS_RT_RANDOM_DIV_V1 &&
+          opcode <= TALOS_RT_RANDOM_POWER_V1);
 }
 
 bool intersects(const WideValue &left, const WideValue &right) {
@@ -370,9 +370,9 @@ bool intersects(const WideValue &left, const WideValue &right) {
   return false;
 }
 
-std::vector<obelisk::runtime::SolveOrderEdge>
+std::vector<talos::runtime::SolveOrderEdge>
 toSolveOrderEdges(const std::vector<SolveBeforeEdge> &edges) {
-  std::vector<obelisk::runtime::SolveOrderEdge> orderEdges;
+  std::vector<talos::runtime::SolveOrderEdge> orderEdges;
   for (const SolveBeforeEdge &edge : edges)
     orderEdges.push_back({edge.beforeMask.words, edge.afterMask.words,
                           edge.constraintBlock, edge.functionPriority});
@@ -383,8 +383,8 @@ bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
                             const WideValue &mutableMask,
                             uint64_t constraintMask,
                             std::vector<WideValue> &layers) {
-  std::vector<obelisk::runtime::OrderMask> masks;
-  if (!obelisk::runtime::buildSolveOrderLayers(toSolveOrderEdges(edges),
+  std::vector<talos::runtime::OrderMask> masks;
+  if (!talos::runtime::buildSolveOrderLayers(toSolveOrderEdges(edges),
                                                mutableMask.words,
                                                constraintMask, false, masks))
     return false;
@@ -400,10 +400,10 @@ bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
 bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
                       const uint32_t *captureWidths, uint64_t captureCount,
                       uint64_t captureWordCount) {
-  if (size < OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 ||
-      read32(bytes) != OBELISK_RT_RANDOM_PROGRAM_MAGIC ||
-      read16(bytes + 4) != OBELISK_RT_RANDOM_PROGRAM_VERSION_V2 ||
-      read16(bytes + 6) != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2)
+  if (size < TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 ||
+      read32(bytes) != TALOS_RT_RANDOM_PROGRAM_MAGIC ||
+      read16(bytes + 4) != TALOS_RT_RANDOM_PROGRAM_VERSION_V2 ||
+      read16(bytes + 6) != TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2)
     return false;
   result.aggregateWidth = read32(bytes + 8);
   uint32_t instructionCount = read32(bytes + 12);
@@ -413,53 +413,53 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   // Establish that the caller supplied that inventory before inspecting it.
   if (encodedCaptureCount != captureCount)
     return false;
-  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) {
-    obelisk::random::SamplerPlanView plan;
-    if (!obelisk::random::readSamplerPlan(bytes, size, captureWidths, plan))
+  if (flags & TALOS_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) {
+    talos::random::SamplerPlanView plan;
+    if (!talos::random::readSamplerPlan(bytes, size, captureWidths, plan))
       return false;
     size = plan.coreSize;
   }
   uint32_t literalWordCount = read32(bytes + 24);
-  bool encodedDomains = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0;
-  bool encodedOrder = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
+  bool encodedDomains = (flags & TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0;
+  bool encodedOrder = (flags & TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
   bool encodedPriority =
-      (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
+      (flags & TALOS_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
   std::vector<uint32_t> maskCaptures;
-  bool weighted = (flags & OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) != 0;
-  bool encodedDist = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
+  bool weighted = (flags & TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) != 0;
+  bool encodedDist = (flags & TALOS_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
   if (result.aggregateWidth == 0 || encodedCaptureCount != captureCount ||
       read32(bytes + 28) != 0 ||
-      (flags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
-                 OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
-                 OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
-                 OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                 OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-                 OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED |
-                 OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS |
-                 OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN |
-                 OBELISK_RT_RANDOM_PROGRAM_HAS_REAL |
-                 OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)) != 0)
+      (flags & ~(TALOS_RT_RANDOM_PROGRAM_HAS_SOFT |
+                 TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS |
+                 TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
+                 TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                 TALOS_RT_RANDOM_PROGRAM_HAS_DIST |
+                 TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED |
+                 TALOS_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS |
+                 TALOS_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN |
+                 TALOS_RT_RANDOM_PROGRAM_HAS_REAL |
+                 TALOS_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)) != 0)
     return false;
-  bool real = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL) != 0;
-  if (real && (!(flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
-                !(flags & OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM)))
+  bool real = (flags & TALOS_RT_RANDOM_PROGRAM_HAS_REAL) != 0;
+  if (real && (!(flags & TALOS_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
+                !(flags & TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM)))
     return false;
   if ((encodedDist != weighted) || (weighted && encodedPriority))
     return false;
   bool dynamicMasks =
-      (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS) != 0;
+      (flags & TALOS_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS) != 0;
   if (dynamicMasks && !encodedPriority)
     return false;
-  if (encodedOrder && !(flags & (OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                                 OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)))
+  if (encodedOrder && !(flags & (TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                                 TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)))
     return false;
   if (encodedPriority && !encodedOrder)
     return false;
-  result.hasSoft = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
+  result.hasSoft = (flags & TALOS_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
   uint64_t instructionBytes = static_cast<uint64_t>(instructionCount) *
-                              OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+                              TALOS_RT_RANDOM_INSTRUCTION_SIZE_V2;
   uint64_t literalBytes = static_cast<uint64_t>(literalWordCount) * 8;
-  uint64_t expectedSize = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2;
+  uint64_t expectedSize = TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2;
   if (instructionBytes > UINT64_MAX - expectedSize)
     return false;
   expectedSize += instructionBytes;
@@ -471,13 +471,13 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   uint32_t solveEdgeCount = 0;
   if (encodedOrder) {
     if (expectedSize > size ||
-        size - expectedSize < OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE)
+        size - expectedSize < TALOS_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE)
       return false;
     solveEdgeCount = read32(bytes + expectedSize);
     solveRecordsOffset =
-        expectedSize + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
+        expectedSize + TALOS_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
     solveRecordSize = ((uint64_t(result.aggregateWidth) + 63) / 64) * 16 +
-                      OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
+                      TALOS_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
     if ((!encodedPriority && solveEdgeCount == 0) ||
         solveEdgeCount > (size - solveRecordsOffset) / solveRecordSize)
       return false;
@@ -488,9 +488,9 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     if (expectedSize > size)
       return false;
     size_t offset = expectedSize;
-    obelisk::runtime::PriorityInputs inputs;
-    if (!obelisk::runtime::readPriorityInputs(
-            bytes, size, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2,
+    talos::runtime::PriorityInputs inputs;
+    if (!talos::runtime::readPriorityInputs(
+            bytes, size, TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2,
             instructionCount, result.aggregateWidth, offset, inputs,
             captureCount, dynamicMasks))
       return false;
@@ -505,18 +505,18 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
         maskCaptures.push_back(input.second.maskCapture);
       }
   }
-  std::vector<obelisk::runtime::WeightedGroup> weightedGroups;
+  std::vector<talos::runtime::WeightedGroup> weightedGroups;
   if (weighted) {
     if (expectedSize > size ||
-        size - expectedSize < OBELISK_RT_RANDOM_DIST_HEADER_SIZE)
+        size - expectedSize < TALOS_RT_RANDOM_DIST_HEADER_SIZE)
       return false;
     size_t records = read32(bytes + expectedSize + 4);
-    if (records > (size - expectedSize - OBELISK_RT_RANDOM_DIST_HEADER_SIZE) /
-                      OBELISK_RT_RANDOM_DIST_RECORD_SIZE)
+    if (records > (size - expectedSize - TALOS_RT_RANDOM_DIST_HEADER_SIZE) /
+                      TALOS_RT_RANDOM_DIST_RECORD_SIZE)
       return false;
-    size_t footerSize = OBELISK_RT_RANDOM_DIST_HEADER_SIZE +
-                        records * OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
-    if (!obelisk::runtime::parseWeightedGroups(
+    size_t footerSize = TALOS_RT_RANDOM_DIST_HEADER_SIZE +
+                        records * TALOS_RT_RANDOM_DIST_RECORD_SIZE;
+    if (!talos::runtime::parseWeightedGroups(
             bytes + expectedSize, footerSize, result.aggregateWidth,
             encodedCaptureCount, weightedGroups))
       return false;
@@ -526,18 +526,18 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   uint32_t domainRecordCount = 0;
   uint64_t domainRecordsOffset = 0;
   if (encodedDomains) {
-    if (expectedSize > UINT64_MAX - OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE ||
-        size < expectedSize + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE)
+    if (expectedSize > UINT64_MAX - TALOS_RT_RANDOM_DOMAIN_HEADER_SIZE ||
+        size < expectedSize + TALOS_RT_RANDOM_DOMAIN_HEADER_SIZE)
       return false;
     domainGroupCount = read32(bytes + expectedSize);
     domainRecordCount = read32(bytes + expectedSize + 4);
-    domainRecordsOffset = expectedSize + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE;
+    domainRecordsOffset = expectedSize + TALOS_RT_RANDOM_DOMAIN_HEADER_SIZE;
     if (domainRecordCount > (UINT64_MAX - domainRecordsOffset) /
-                                OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE)
+                                TALOS_RT_RANDOM_DOMAIN_RECORD_SIZE)
       return false;
     expectedSize =
         domainRecordsOffset + static_cast<uint64_t>(domainRecordCount) *
-                                  OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
+                                  TALOS_RT_RANDOM_DOMAIN_RECORD_SIZE;
   }
   if (expectedSize != size)
     return false;
@@ -560,15 +560,15 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   std::vector<uint32_t> stackWidths, temporaryWidths;
   bool sawHard = false;
   bool sawSoft = false;
-  obelisk::random::SoftPrioritySet softPriorities;
+  talos::random::SoftPrioritySet softPriorities;
   std::vector<bool> guardSeen(weightedGroups.size(), false);
-  obelisk::random::DistBitSequence distBits(
+  talos::random::DistBitSequence distBits(
       encodedCaptureCount, static_cast<uint32_t>(weightedGroups.size()),
       weighted);
   for (uint32_t index = 0; index != instructionCount; ++index) {
     const uint8_t *cursor =
-        bytes + OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
-        static_cast<uint64_t>(index) * OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+        bytes + TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
+        static_cast<uint64_t>(index) * TALOS_RT_RANDOM_INSTRUCTION_SIZE_V2;
     WideInstruction instruction;
     instruction.opcode = cursor[0];
     instruction.flags = cursor[1];
@@ -579,24 +579,24 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
                         instruction.flags, instruction.operand,
                         instruction.auxiliary))
       return false;
-    if (obelisk::random::isRealInstruction(instruction.opcode) &&
+    if (talos::random::isRealInstruction(instruction.opcode) &&
         (!real || stackWidths.empty() ||
-         !obelisk::random::validRealInstruction(
+         !talos::random::validRealInstruction(
              instruction.opcode, instruction.width, instruction.flags,
              instruction.operand, instruction.auxiliary, stackWidths.back())))
       return false;
     if (read16(cursor + 2) != 0 || instruction.width == 0 ||
-        (instruction.flags & ~OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
+        (instruction.flags & ~TALOS_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
       return false;
     switch (instruction.opcode) {
-    case OBELISK_RT_RANDOM_PUSH_VARIABLE_V1:
+    case TALOS_RT_RANDOM_PUSH_VARIABLE_V1:
       if (instruction.operand >= result.aggregateWidth ||
           instruction.width > result.aggregateWidth - instruction.operand ||
           instruction.auxiliary != 0)
         return false;
       ++depth;
       break;
-    case OBELISK_RT_RANDOM_PUSH_CAPTURE_V1:
+    case TALOS_RT_RANDOM_PUSH_CAPTURE_V1:
       if (instruction.operand >= encodedCaptureCount ||
           instruction.auxiliary != 0)
         return false;
@@ -604,27 +604,27 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
           result.captureWidths[instruction.operand], instruction.width);
       ++depth;
       break;
-    case OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1:
+    case TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1:
       if (instruction.width != 1 || instruction.flags != 0 ||
           instruction.operand >= 64 || instruction.auxiliary != 0)
         return false;
       ++depth;
       break;
-    case OBELISK_RT_RANDOM_STORE_VALUE_V1:
+    case TALOS_RT_RANDOM_STORE_VALUE_V1:
       if (depth == 0 || instruction.flags != 0 || instruction.auxiliary != 0 ||
           instruction.operand != temporaryWidths.size() ||
           instruction.width != stackWidths.back())
         return false;
       temporaryWidths.push_back(instruction.width);
       break;
-    case OBELISK_RT_RANDOM_LOAD_VALUE_V1:
+    case TALOS_RT_RANDOM_LOAD_VALUE_V1:
       if (instruction.flags != 0 || instruction.auxiliary != 0 ||
           instruction.operand >= temporaryWidths.size() ||
           instruction.width != temporaryWidths[instruction.operand])
         return false;
       ++depth;
       break;
-    case OBELISK_RT_RANDOM_PUSH_LITERAL_V1: {
+    case TALOS_RT_RANDOM_PUSH_LITERAL_V1: {
       uint64_t wordCount = (static_cast<uint64_t>(instruction.width) + 63) / 64;
       if (instruction.auxiliary > literalWordCount ||
           wordCount > literalWordCount - instruction.auxiliary)
@@ -645,13 +645,13 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       ++depth;
       break;
     }
-    case OBELISK_RT_RANDOM_END_HARD_V1:
-    case OBELISK_RT_RANDOM_END_SOFT_V1:
+    case TALOS_RT_RANDOM_END_HARD_V1:
+    case TALOS_RT_RANDOM_END_SOFT_V1:
       if (instruction.width != 1 || depth != 1 ||
-          (instruction.operand != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+          (instruction.operand != TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
            instruction.operand >= 64))
         return false;
-      if (instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1) {
+      if (instruction.opcode == TALOS_RT_RANDOM_END_HARD_V1) {
         if (instruction.auxiliary != 0)
           return false;
         sawHard = true;
@@ -662,7 +662,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       }
       depth = 0;
       break;
-    case OBELISK_RT_RANDOM_END_DIST_GUARD_V1:
+    case TALOS_RT_RANDOM_END_DIST_GUARD_V1:
       if (!weighted || instruction.width != 1 || instruction.flags != 0 ||
           depth != 1 || instruction.auxiliary != 0 ||
           instruction.operand >= guardSeen.size() ||
@@ -671,7 +671,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       guardSeen[instruction.operand] = true;
       depth = 0;
       break;
-    case OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1:
+    case TALOS_RT_RANDOM_END_DIST_WEIGHT_BIT_V1:
       if (!weighted || instruction.flags || depth != 1 ||
           stackWidths.back() != instruction.width ||
           instruction.operand >= encodedCaptureCount ||
@@ -681,7 +681,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       if (instruction.auxiliary + 1 == instruction.width)
         depth = 0;
       break;
-    case OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1:
+    case TALOS_RT_RANDOM_END_DIST_TARGET_BIT_V1:
       if (!weighted || instruction.flags || depth != 1 ||
           stackWidths.back() != instruction.width ||
           instruction.operand >= guardSeen.size() ||
@@ -690,7 +690,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       if (instruction.auxiliary + 1 == instruction.width)
         depth = 0;
       break;
-    case OBELISK_RT_RANDOM_SELECT_V1:
+    case TALOS_RT_RANDOM_SELECT_V1:
       if (instruction.auxiliary != 0 || depth < 3)
         return false;
       depth -= 2;
@@ -742,18 +742,18 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       edge.constraintBlock = read32(cursor);
       uint32_t reserved = read32(cursor + 4);
       edge.functionPriority =
-          (reserved & OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY) != 0;
+          (reserved & TALOS_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY) != 0;
       sawFunctionEdge |= edge.functionPriority;
-      cursor += OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
+      cursor += TALOS_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
       uint64_t upperMask = highMask(result.aggregateWidth);
       if (!truth(edge.beforeMask) || !truth(edge.afterMask) ||
           (edge.beforeMask.words.back() & ~upperMask) != 0 ||
           (edge.afterMask.words.back() & ~upperMask) != 0 ||
           intersects(edge.beforeMask, edge.afterMask) ||
           (reserved &
-           ~(encodedPriority ? OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY
+           ~(encodedPriority ? TALOS_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY
                              : 0u)) != 0 ||
-          (edge.constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+          (edge.constraintBlock != TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
            edge.constraintBlock >= 64))
         return false;
       result.solveEdges.push_back(std::move(edge));
@@ -762,7 +762,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     std::fill(all.words.begin(), all.words.end(), UINT64_MAX);
     normalize(all);
     if ((encodedPriority && !sawFunctionEdge && !sourceFunctionArguments) ||
-        !obelisk::runtime::validateSolveOrderDeclarations(
+        !talos::runtime::validateSolveOrderDeclarations(
             toSolveOrderEdges(result.solveEdges), all.words))
       return false;
   }
@@ -776,22 +776,22 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     WideValue encodedMask(result.aggregateWidth);
     const uint8_t *cursor = bytes + domainRecordsOffset;
     for (uint32_t index = 0; index != domainRecordCount; ++index) {
-      obelisk::random::DomainRecord decoded;
-      if (!obelisk::random::readDomainRecord(
+      talos::random::DomainRecord decoded;
+      if (!talos::random::readDomainRecord(
               cursor, result.aggregateWidth, true, bytes + literalOffset,
               literalWordCount, literalUse.data(), decoded) ||
           decoded.group >= domainGroupCount)
         return false;
-      cursor += OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
+      cursor += TALOS_RT_RANDOM_DOMAIN_RECORD_SIZE;
       uint32_t groupIndex = decoded.group;
       uint32_t targetOffset = decoded.targetOffset;
       uint32_t width = decoded.width;
       // Wide semantic domains are sampled by the compiled exact plan. The
       // legacy bounded radix traversal only stores narrow domain indices.
       if (width > 64 &&
-          (!(flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
-           !(flags & (OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                      OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED))))
+          (!(flags & TALOS_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
+           !(flags & (TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                      TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED))))
         return false;
       DomainGroup &group = result.domainGroups[groupIndex];
       if (seen[groupIndex] &&
@@ -808,7 +808,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
         }
       }
       for (const DomainPattern &other : group.patterns)
-        if (obelisk::random::domainPatternsOverlap(decoded, other.bits))
+        if (talos::random::domainPatternsOverlap(decoded, other.bits))
           return false;
       uint64_t freeMask = 0, cardinality = 0;
       if (width <= 64) {
@@ -861,15 +861,15 @@ bool compare(const WideValue &lhs, const WideValue &rhs, bool isSigned,
   else
     relation = compareUnsigned(left, right);
   switch (opcode) {
-  case OBELISK_RT_RANDOM_EQ_V1:
+  case TALOS_RT_RANDOM_EQ_V1:
     return relation == 0;
-  case OBELISK_RT_RANDOM_NE_V1:
+  case TALOS_RT_RANDOM_NE_V1:
     return relation != 0;
-  case OBELISK_RT_RANDOM_GE_V1:
+  case TALOS_RT_RANDOM_GE_V1:
     return relation >= 0;
-  case OBELISK_RT_RANDOM_GT_V1:
+  case TALOS_RT_RANDOM_GT_V1:
     return relation > 0;
-  case OBELISK_RT_RANDOM_LE_V1:
+  case TALOS_RT_RANDOM_LE_V1:
     return relation <= 0;
   default:
     return relation < 0;
@@ -887,62 +887,62 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
   soft.assign(program.softCount, 1);
   for (const WideInstruction &instruction : program.instructions) {
     bool signedOperation =
-        (instruction.flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
-    if (instruction.opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1) {
+        (instruction.flags & TALOS_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
+    if (instruction.opcode == TALOS_RT_RANDOM_PUSH_VARIABLE_V1) {
       stack.push_back(extract(assignment.words.data(), assignment.words.size(),
                               instruction.operand, instruction.width));
       continue;
     }
-    if (instruction.opcode == OBELISK_RT_RANDOM_PUSH_CAPTURE_V1) {
+    if (instruction.opcode == TALOS_RT_RANDOM_PUSH_CAPTURE_V1) {
       stack.push_back(
           extract(captureWords + program.captureOffsets[instruction.operand],
                   (static_cast<uint64_t>(instruction.width) + 63) / 64, 0,
                   instruction.width));
       continue;
     }
-    if (instruction.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
+    if (instruction.opcode == TALOS_RT_RANDOM_PUSH_LITERAL_V1) {
       stack.push_back(instruction.literal);
       continue;
     }
-    if (instruction.opcode == OBELISK_RT_RANDOM_STORE_VALUE_V1) {
+    if (instruction.opcode == TALOS_RT_RANDOM_STORE_VALUE_V1) {
       temporaries.push_back(stack.back());
       continue;
     }
-    if (instruction.opcode == OBELISK_RT_RANDOM_LOAD_VALUE_V1) {
+    if (instruction.opcode == TALOS_RT_RANDOM_LOAD_VALUE_V1) {
       stack.push_back(temporaries[instruction.operand]);
       continue;
     }
-    if (instruction.opcode == OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
+    if (instruction.opcode == TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
       WideValue enabled(1);
       enabled.words[0] = ((constraintMask >> instruction.operand) & 1) == 0;
       stack.push_back(std::move(enabled));
       continue;
     }
-    if (instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||
-        instruction.opcode == OBELISK_RT_RANDOM_END_SOFT_V1) {
+    if (instruction.opcode == TALOS_RT_RANDOM_END_HARD_V1 ||
+        instruction.opcode == TALOS_RT_RANDOM_END_SOFT_V1) {
       bool satisfied = truth(stack.back());
       stack.pop_back();
       bool enabled =
-          instruction.operand == OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 ||
+          instruction.operand == TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1 ||
           ((constraintMask >> instruction.operand) & 1) == 0;
       satisfied |= !enabled;
-      if (instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1)
+      if (instruction.opcode == TALOS_RT_RANDOM_END_HARD_V1)
         hard &= satisfied;
       else
         soft[instruction.auxiliary] &= satisfied;
       continue;
     }
-    if (instruction.opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
+    if (instruction.opcode == TALOS_RT_RANDOM_END_DIST_GUARD_V1) {
       stack.pop_back();
       continue;
     }
-    if (instruction.opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 ||
-        instruction.opcode == OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1) {
+    if (instruction.opcode == TALOS_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 ||
+        instruction.opcode == TALOS_RT_RANDOM_END_DIST_TARGET_BIT_V1) {
       if (instruction.auxiliary + 1 == instruction.width)
         stack.pop_back();
       continue;
     }
-    if (instruction.opcode == OBELISK_RT_RANDOM_SELECT_V1) {
+    if (instruction.opcode == TALOS_RT_RANDOM_SELECT_V1) {
       WideValue falseValue = std::move(stack.back());
       stack.pop_back();
       WideValue trueValue = std::move(stack.back());
@@ -958,47 +958,47 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
       stack.pop_back();
       WideValue result;
       switch (instruction.opcode) {
-      case OBELISK_RT_RANDOM_CAST_V1:
-      case OBELISK_RT_RANDOM_POS_V1:
+      case TALOS_RT_RANDOM_CAST_V1:
+      case TALOS_RT_RANDOM_POS_V1:
         result = resize(input, instruction.width, signedOperation);
         break;
-      case OBELISK_RT_RANDOM_NEG_V1:
+      case TALOS_RT_RANDOM_NEG_V1:
         result = negate(resize(input, instruction.width, signedOperation));
         break;
-      case OBELISK_RT_RANDOM_BIT_NOT_V1:
+      case TALOS_RT_RANDOM_BIT_NOT_V1:
         result = resize(input, instruction.width, signedOperation);
         for (uint64_t &word : result.words)
           word = ~word;
         normalize(result);
         break;
-      case OBELISK_RT_RANDOM_REDUCE_AND_V1: {
+      case TALOS_RT_RANDOM_REDUCE_AND_V1: {
         bool all = input.words.back() == highMask(input.width);
         for (size_t index = 0; all && index + 1 < input.words.size(); ++index)
           all = input.words[index] == UINT64_MAX;
         result = booleanValue(all, instruction.width);
         break;
       }
-      case OBELISK_RT_RANDOM_REDUCE_OR_V1:
+      case TALOS_RT_RANDOM_REDUCE_OR_V1:
         result = booleanValue(truth(input), instruction.width);
         break;
-      case OBELISK_RT_RANDOM_REDUCE_XOR_V1:
-      case OBELISK_RT_RANDOM_REDUCE_XNOR_V1: {
+      case TALOS_RT_RANDOM_REDUCE_XOR_V1:
+      case TALOS_RT_RANDOM_REDUCE_XNOR_V1: {
         unsigned parity = 0;
         for (uint64_t word : input.words)
           parity ^= static_cast<unsigned>(__builtin_parityll(word));
-        if (instruction.opcode == OBELISK_RT_RANDOM_REDUCE_XNOR_V1)
+        if (instruction.opcode == TALOS_RT_RANDOM_REDUCE_XNOR_V1)
           parity ^= 1;
         result = booleanValue(parity != 0, instruction.width);
         break;
       }
-      case OBELISK_RT_RANDOM_REDUCE_NAND_V1: {
+      case TALOS_RT_RANDOM_REDUCE_NAND_V1: {
         bool all = input.words.back() == highMask(input.width);
         for (size_t index = 0; all && index + 1 < input.words.size(); ++index)
           all = input.words[index] == UINT64_MAX;
         result = booleanValue(!all, instruction.width);
         break;
       }
-      case OBELISK_RT_RANDOM_COUNT_ONES_V1: {
+      case TALOS_RT_RANDOM_COUNT_ONES_V1: {
         uint64_t count = 0;
         for (uint64_t word : input.words)
           count += static_cast<uint64_t>(__builtin_popcountll(word));
@@ -1007,7 +1007,7 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
         normalize(result);
         break;
       }
-      case OBELISK_RT_RANDOM_CLOG2_V1: {
+      case TALOS_RT_RANDOM_CLOG2_V1: {
         uint64_t highest = 0;
         uint64_t count = 0;
         for (size_t index = 0; index != input.words.size(); ++index) {
@@ -1034,22 +1034,22 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
     WideValue lhs = std::move(stack.back());
     stack.pop_back();
     WideValue result;
-    if (instruction.opcode >= OBELISK_RT_RANDOM_EQ_V1 &&
-        instruction.opcode <= OBELISK_RT_RANDOM_LT_V1) {
+    if (instruction.opcode >= TALOS_RT_RANDOM_EQ_V1 &&
+        instruction.opcode <= TALOS_RT_RANDOM_LT_V1) {
       result =
           booleanValue(compare(lhs, rhs, signedOperation, instruction.opcode),
                        instruction.width);
-    } else if (instruction.opcode >= OBELISK_RT_RANDOM_LOGICAL_AND_V1 &&
-               instruction.opcode <= OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1) {
+    } else if (instruction.opcode >= TALOS_RT_RANDOM_LOGICAL_AND_V1 &&
+               instruction.opcode <= TALOS_RT_RANDOM_LOGICAL_EQUIV_V1) {
       bool left = truth(lhs), right = truth(rhs), value = false;
       switch (instruction.opcode) {
-      case OBELISK_RT_RANDOM_LOGICAL_AND_V1:
+      case TALOS_RT_RANDOM_LOGICAL_AND_V1:
         value = left && right;
         break;
-      case OBELISK_RT_RANDOM_LOGICAL_OR_V1:
+      case TALOS_RT_RANDOM_LOGICAL_OR_V1:
         value = left || right;
         break;
-      case OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1:
+      case TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1:
         value = !left || right;
         break;
       default:
@@ -1061,23 +1061,23 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
       WideValue left = resize(lhs, instruction.width, signedOperation);
       WideValue right = resize(rhs, instruction.width, signedOperation);
       switch (instruction.opcode) {
-      case OBELISK_RT_RANDOM_ADD_V1:
+      case TALOS_RT_RANDOM_ADD_V1:
         result = add(left, right, instruction.width);
         break;
-      case OBELISK_RT_RANDOM_SUB_V1:
+      case TALOS_RT_RANDOM_SUB_V1:
         result = subtract(left, right, instruction.width);
         break;
-      case OBELISK_RT_RANDOM_MUL_V1:
+      case TALOS_RT_RANDOM_MUL_V1:
         result = multiply(left, right, instruction.width);
         break;
-      case OBELISK_RT_RANDOM_BIT_AND_V1:
-      case OBELISK_RT_RANDOM_BIT_OR_V1:
-      case OBELISK_RT_RANDOM_BIT_XOR_V1:
-      case OBELISK_RT_RANDOM_BIT_XNOR_V1:
+      case TALOS_RT_RANDOM_BIT_AND_V1:
+      case TALOS_RT_RANDOM_BIT_OR_V1:
+      case TALOS_RT_RANDOM_BIT_XOR_V1:
+      case TALOS_RT_RANDOM_BIT_XNOR_V1:
         result = bitwise(left, right, instruction.width, instruction.opcode);
         break;
-      case OBELISK_RT_RANDOM_DIV_V1:
-      case OBELISK_RT_RANDOM_MOD_V1: {
+      case TALOS_RT_RANDOM_DIV_V1:
+      case TALOS_RT_RANDOM_MOD_V1: {
         if (!truth(right))
           return false;
         bool leftNegative = signedOperation && bit(left, left.width - 1);
@@ -1086,36 +1086,36 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
         WideValue rightMagnitude = rightNegative ? negate(right) : right;
         WideValue quotient, remainder;
         unsignedDivMod(leftMagnitude, rightMagnitude, quotient, remainder);
-        if (instruction.opcode == OBELISK_RT_RANDOM_DIV_V1) {
+        if (instruction.opcode == TALOS_RT_RANDOM_DIV_V1) {
           result = leftNegative != rightNegative ? negate(quotient) : quotient;
         } else {
           result = leftNegative ? negate(remainder) : remainder;
         }
         break;
       }
-      case OBELISK_RT_RANDOM_SHIFT_LEFT_V1:
-      case OBELISK_RT_RANDOM_SHIFT_RIGHT_V1:
-      case OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1: {
+      case TALOS_RT_RANDOM_SHIFT_LEFT_V1:
+      case TALOS_RT_RANDOM_SHIFT_RIGHT_V1:
+      case TALOS_RT_RANDOM_SHIFT_RIGHT_ARITH_V1: {
         uint32_t amount = 0;
         if (!shiftAmount(rhs, instruction.width, amount)) {
           bool fill =
-              instruction.opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1 &&
+              instruction.opcode == TALOS_RT_RANDOM_SHIFT_RIGHT_ARITH_V1 &&
               bit(left, instruction.width - 1);
           result = WideValue(instruction.width);
           if (fill) {
             std::fill(result.words.begin(), result.words.end(), UINT64_MAX);
             normalize(result);
           }
-        } else if (instruction.opcode == OBELISK_RT_RANDOM_SHIFT_LEFT_V1) {
+        } else if (instruction.opcode == TALOS_RT_RANDOM_SHIFT_LEFT_V1) {
           result = shiftLeft(left, instruction.width, amount);
         } else {
           result = shiftRight(left, instruction.width, amount,
                               instruction.opcode ==
-                                  OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1);
+                                  TALOS_RT_RANDOM_SHIFT_RIGHT_ARITH_V1);
         }
         break;
       }
-      case OBELISK_RT_RANDOM_POWER_V1:
+      case TALOS_RT_RANDOM_POWER_V1:
         result = power(left, rhs, instruction.width);
         break;
       default:
@@ -1156,17 +1156,17 @@ bool advanceMutable(WideValue &candidate, const WideValue &mutableMask) {
 
 } // namespace
 
-extern "C" obelisk_rt_status obelisk_rt_v1_random_cycle_sample(
-    obelisk_rt_context *context, const uint8_t *programBytes,
+extern "C" talos_rt_status talos_rt_v1_random_cycle_sample(
+    talos_rt_context *context, const uint8_t *programBytes,
     uint64_t programSize, const uint64_t *startWords,
     const uint64_t *mutableMaskWords, uint64_t assignmentWordCount,
     uint64_t constraintMask, uint64_t rngState, uint64_t rngIncrement,
-    uint64_t key, uint64_t position, obelisk_rt_string_v1 domain,
+    uint64_t key, uint64_t position, talos_rt_string_v1 domain,
     uint32_t fieldOffset, uint32_t fieldWidth, const uint64_t *captureWords,
     uint64_t captureWordCount, const uint32_t *captureWidths,
     uint64_t captureCount, uint64_t *outAssignmentWords, uint32_t *outSuccess,
     uint64_t *outRngState, uint64_t *outKey, uint64_t *outPosition,
-    obelisk_rt_string_v1 *outDomain) {
+    talos_rt_string_v1 *outDomain) {
   constexpr uint64_t maxWords =
       std::numeric_limits<size_t>::max() / sizeof(uint64_t);
   if (!context || !programBytes || !startWords || !mutableMaskWords ||
@@ -1176,30 +1176,30 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_cycle_sample(
       assignmentWordCount > maxWords || captureWordCount > maxWords ||
       captureCount > UINT32_MAX || !(rngIncrement & 1) || fieldWidth == 0 ||
       fieldWidth > 32)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outSuccess = 0;
   *outRngState = rngState;
   *outKey = key;
   *outPosition = position;
   *outDomain = domain;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     WideProgram program;
     if (!parseWideProgram(programBytes, programSize, program, captureWidths,
                           captureCount, captureWordCount) ||
         assignmentWordCount != (uint64_t(program.aggregateWidth) + 63) / 64 ||
         fieldOffset > program.aggregateWidth ||
         fieldWidth > program.aggregateWidth - fieldOffset)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     uint64_t padding = ~highMask(program.aggregateWidth);
     if ((startWords[assignmentWordCount - 1] & padding) ||
         (mutableMaskWords[assignmentWordCount - 1] & padding))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     for (size_t index = 0; index != program.captureWidths.size(); ++index) {
       uint32_t width = program.captureWidths[index];
       size_t last =
           program.captureOffsets[index] + (uint64_t(width) + 63) / 64 - 1;
       if (captureWords[last] & ~highMask(width))
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
     }
     for (const DomainGroup &group : program.domainGroups) {
       WideValue overlap = extract(mutableMaskWords, assignmentWordCount,
@@ -1209,22 +1209,22 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_cycle_sample(
           if (overlap.words[word] != (word + 1 == overlap.words.size()
                                           ? highMask(group.width)
                                           : UINT64_MAX))
-            return OBELISK_RT_INVALID_ARGUMENT;
+            return TALOS_RT_INVALID_ARGUMENT;
     }
     std::copy_n(startWords, assignmentWordCount, outAssignmentWords);
     ManagedExecutionScope execution(context);
-    if (execution.getStatus() != OBELISK_RT_OK)
+    if (execution.getStatus() != TALOS_RT_OK)
       return execution.getStatus();
-    obelisk_rt_status status = obelisk_rt_validate_string(context, domain);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = talos_rt_validate_string(context, domain);
+    if (status != TALOS_RT_OK)
       return status;
     char scratch[8];
     const char *oldBytes = nullptr;
     uint64_t oldSize = 0;
-    status = obelisk_rt_v1_string_view(domain, scratch, &oldBytes, &oldSize);
-    if (status != OBELISK_RT_OK)
+    status = talos_rt_v1_string_view(domain, scratch, &oldBytes, &oldSize);
+    if (status != TALOS_RT_OK)
       return status;
-    obelisk::runtime::CyclicSampleRequest request{
+    talos::runtime::CyclicSampleRequest request{
         fieldOffset,
         fieldWidth,
         key,
@@ -1232,29 +1232,29 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_cycle_sample(
         reinterpret_cast<const uint8_t *>(oldBytes),
         static_cast<size_t>(oldSize),
         {}};
-    obelisk_rt_random_state_v1 state{rngState, rngIncrement};
+    talos_rt_random_state_v1 state{rngState, rngIncrement};
     std::vector<uint64_t> assignment(assignmentWordCount);
-    auto result = obelisk::runtime::sampleRandomPlan(
+    auto result = talos::runtime::sampleRandomPlan(
         programBytes, programSize, startWords, mutableMaskWords,
         assignmentWordCount, constraintMask, captureWords, captureWidths,
         captureCount, assignment.data(), &state, nullptr, 0, &request);
-    if (result == obelisk::runtime::SamplerResult::Unsatisfiable)
-      return OBELISK_RT_OK;
-    if (result == obelisk::runtime::SamplerResult::Exhausted)
-      return OBELISK_RT_OUT_OF_RESOURCES;
-    if (result != obelisk::runtime::SamplerResult::Satisfiable)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_string_v1 nextDomain = domain;
+    if (result == talos::runtime::SamplerResult::Unsatisfiable)
+      return TALOS_RT_OK;
+    if (result == talos::runtime::SamplerResult::Exhausted)
+      return TALOS_RT_OUT_OF_RESOURCES;
+    if (result != talos::runtime::SamplerResult::Satisfiable)
+      return TALOS_RT_INVALID_ARGUMENT;
+    talos_rt_string_v1 nextDomain = domain;
     if (oldSize != request.domain.size() ||
         !std::equal(request.domain.begin(), request.domain.end(),
                     reinterpret_cast<const uint8_t *>(oldBytes))) {
       // Comparison is complete before the allocating safepoint. No borrowed
       // view of the previous managed string survives that allocation.
-      status = obelisk_rt_v1_string_create(
+      status = talos_rt_v1_string_create(
           execution.getLane(),
           reinterpret_cast<const char *>(request.domain.data()),
           request.domain.size(), &nextDomain);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
     }
     std::copy(assignment.begin(), assignment.end(), outAssignmentWords);
@@ -1263,17 +1263,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_cycle_sample(
     *outKey = request.key;
     *outPosition = request.position;
     *outDomain = nextDomain;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH(const std::length_error &) {
-    return OBELISK_RT_OUT_OF_RESOURCES;
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::length_error &) {
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
-    obelisk_rt_context *context, const uint8_t *programBytes,
+extern "C" talos_rt_status talos_rt_v1_random_solve_wide_modes_state(
+    talos_rt_context *context, const uint8_t *programBytes,
     uint64_t programSize, const uint64_t *startWords,
     const uint64_t *mutableMaskWords, uint64_t assignmentWordCount,
     uint64_t constraintMask, uint64_t maxAttempts, uint64_t rngState,
@@ -1290,27 +1290,27 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
       programSize > std::numeric_limits<size_t>::max() ||
       assignmentWordCount > maxAddressableWords ||
       captureWordCount > maxAddressableWords || (rngIncrement & 1) == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outSuccess = 0;
   *outRngState = rngState;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     WideProgram program;
     if (!parseWideProgram(programBytes, static_cast<size_t>(programSize),
                           program, captureWidths, captureCount,
                           captureWordCount) ||
         assignmentWordCount !=
             (static_cast<uint64_t>(program.aggregateWidth) + 63) / 64)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     uint64_t aggregateHighMask = highMask(program.aggregateWidth);
     if ((startWords[assignmentWordCount - 1] & ~aggregateHighMask) != 0 ||
         (mutableMaskWords[assignmentWordCount - 1] & ~aggregateHighMask) != 0)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     for (size_t index = 0; index != program.captureWidths.size(); ++index) {
       uint32_t width = program.captureWidths[index];
       uint64_t words = (static_cast<uint64_t>(width) + 63) / 64;
       if ((captureWords[program.captureOffsets[index] + words - 1] &
            ~highMask(width)) != 0)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
     }
     std::fill_n(outAssignmentWords, static_cast<size_t>(assignmentWordCount),
                 0);
@@ -1322,9 +1322,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     normalize(start);
     normalize(mutableMask);
 
-    obelisk_rt_random_state_v1 randomState{rngState, rngIncrement};
-    if (read32(programBytes + 20) & (OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
-                                     OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)) {
+    talos_rt_random_state_v1 randomState{rngState, rngIncrement};
+    if (read32(programBytes + 20) & (TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                                     TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)) {
       for (const DomainGroup &group : program.domainGroups) {
         WideValue overlap =
             extract(mutableMask.words.data(), mutableMask.words.size(),
@@ -1334,34 +1334,34 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
             if (overlap.words[word] != (word + 1 == overlap.words.size()
                                             ? highMask(group.width)
                                             : UINT64_MAX))
-              return OBELISK_RT_INVALID_ARGUMENT;
+              return TALOS_RT_INVALID_ARGUMENT;
       }
       if (maxAttempts == 0)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       std::vector<WideValue> solveLayers;
       if (!buildSolveBeforeLayers(program.solveEdges, mutableMask,
                                   constraintMask, solveLayers)) {
-        obelisk::runtime::reportActiveSolveOrderCycle(context);
-        return OBELISK_RT_OK;
+        talos::runtime::reportActiveSolveOrderCycle(context);
+        return TALOS_RT_OK;
       }
       std::vector<uint64_t> orderedMasks;
       for (const WideValue &layer : solveLayers)
         orderedMasks.insert(orderedMasks.end(), layer.words.begin(),
                             layer.words.end());
-      auto result = obelisk::runtime::sampleRandomPlan(
+      auto result = talos::runtime::sampleRandomPlan(
           programBytes, static_cast<size_t>(programSize), startWords,
           mutableMaskWords, assignmentWordCount, constraintMask, captureWords,
           captureWidths, captureCount, outAssignmentWords, &randomState,
           orderedMasks.data(), solveLayers.size());
-      if (result == obelisk::runtime::SamplerResult::Exhausted)
-        return OBELISK_RT_OUT_OF_RESOURCES;
-      if (result == obelisk::runtime::SamplerResult::Satisfiable)
+      if (result == talos::runtime::SamplerResult::Exhausted)
+        return TALOS_RT_OUT_OF_RESOURCES;
+      if (result == talos::runtime::SamplerResult::Satisfiable)
         *outSuccess = 1;
       else
         std::fill_n(outAssignmentWords,
                     static_cast<size_t>(assignmentWordCount), 0);
       *outRngState = randomState.state;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     WideValue ordinaryMutableMask = mutableMask;
     std::vector<uint64_t> domainIndices(program.domainGroups.size(), 0);
@@ -1395,7 +1395,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
       uint64_t overlap = mutableField.words.front();
       uint64_t fieldMask = widthMask(group.width);
       if (overlap != 0 && overlap != fieldMask)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       uint64_t field = extract(start.words.data(), start.words.size(),
                                group.targetOffset, group.width)
                            .words.front();
@@ -1406,10 +1406,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
       insert(ordinaryMutableMask, group.targetOffset, group.width, 0);
       if (!legal) {
         if (group.fullCardinality)
-          return OBELISK_RT_INVALID_ARGUMENT;
-        obelisk_rt_status status = obelisk_rt_v1_random_state_bounded(
+          return TALOS_RT_INVALID_ARGUMENT;
+        talos_rt_status status = talos_rt_v1_random_state_bounded(
             &randomState, group.cardinality, &groupIndex);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       }
       domainIndices[index] = groupIndex;
@@ -1454,13 +1454,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
       bool hard = false;
       if (!evaluate(program, candidate, captureWords, constraintMask, stack,
                     temporaries, hard, soft))
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       if (hard && (!program.hasSoft || allSoft(soft))) {
         std::copy(candidate.words.begin(), candidate.words.end(),
                   outAssignmentWords);
         *outSuccess = 1;
         *outRngState = randomState.state;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       if (hard && program.hasSoft &&
           (!hasBest || compareSoft(soft, bestSoft) > 0)) {
@@ -1492,8 +1492,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
       *outSuccess = 1;
     }
     *outRngState = randomState.state;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }

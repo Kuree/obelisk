@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
+// RUN: talos -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O3 --native-scheduler=auto %s -o %t.auto
+// RUN: talos -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.auto > %t.auto.out
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.auto.out
@@ -43,6 +43,6 @@ module native_nba_ordered_generated_cross_root;
   end
 endmodule
 
-// LLVM: @__obelisk_eval_ordered_nba_queue_v1 = internal global
-// LLVM: define i32 @__obelisk_eval_dispatch_v1
+// LLVM: @__talos_eval_ordered_nba_queue_v1 = internal global
+// LLVM: define i32 @__talos_eval_dispatch_v1
 // OUTPUT: a=4 b=4 ae=4 be=4

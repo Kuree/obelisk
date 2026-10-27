@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O0 --native-scheduler=eval %s -o %t.o0
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: talos -O0 --native-scheduler=eval %s -o %t.o0
+// RUN: talos -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.eval | FileCheck %s
 // RUN: %t.o0 | FileCheck %s
 // RUN: %t.generic | FileCheck %s

@@ -1,18 +1,18 @@
-add_mlir_library(ObeliskRuntimeIR
+add_mlir_library(TalosRuntimeIR
   RuntimeDialect.cpp
 
   DEPENDS
-  ObeliskRuntimeAttrsIncGen
-  ObeliskRuntimeDialectIncGen
-  ObeliskRuntimeEnumsIncGen
-  ObeliskRuntimeOpsIncGen
-  ObeliskRuntimeTypesIncGen
+  TalosRuntimeAttrsIncGen
+  TalosRuntimeDialectIncGen
+  TalosRuntimeEnumsIncGen
+  TalosRuntimeOpsIncGen
+  TalosRuntimeTypesIncGen
 
   LINK_LIBS PUBLIC
   MLIRIR
   MLIRSideEffectInterfaces
 )
 
-target_include_directories(ObeliskRuntimeIR PRIVATE
+target_include_directories(TalosRuntimeIR PRIVATE
   ${PROJECT_SOURCE_DIR}/runtime/include
 )

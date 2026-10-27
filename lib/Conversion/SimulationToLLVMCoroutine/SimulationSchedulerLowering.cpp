@@ -1,16 +1,16 @@
 //===- SimulationSchedulerLowering.cpp - Native scheduler support -------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 class SpawnTypeConversion final : public OpConversionPattern<sim::SimSpawnOp> {
@@ -49,7 +49,7 @@ void materializeNativeSchedulerGlobals(ModuleOp module) {
 
   Type pointer = LLVM::LLVMPointerType::get(module.getContext());
   constexpr llvm::StringLiteral currentContextName =
-      "__obelisk_current_context";
+      "__talos_current_context";
   if (!module.lookupSymbol(currentContextName)) {
     auto global = LLVM::GlobalOp::create(
         builder, location, pointer, false, LLVM::Linkage::Internal,
@@ -63,8 +63,8 @@ void materializeNativeSchedulerGlobals(ModuleOp module) {
   }
 
   for (StringRef specializationFastName :
-       {"__obelisk_static_specialization_fast_v1",
-        "__obelisk_state_specialization_fast_v1"}) {
+       {"__talos_static_specialization_fast_v1",
+        "__talos_state_specialization_fast_v1"}) {
     if (module.lookupSymbol(specializationFastName))
       continue;
     builder.setInsertionPointToStart(module.getBody());
@@ -80,4 +80,4 @@ void materializeNativeSchedulerGlobals(ModuleOp module) {
   }
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

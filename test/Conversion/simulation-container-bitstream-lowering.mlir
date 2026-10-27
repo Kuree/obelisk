@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=FEATURE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=FEATURE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --test-talos-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
@@ -35,7 +35,7 @@ module attributes {
   }
 }
 
-// NATIVE-COUNT-4: llvm.call @obelisk_rt_v1_container_export_bitstream
+// NATIVE-COUNT-4: llvm.call @talos_rt_v1_container_export_bitstream
 // FEATURE: runtime.features = #runtime.features<container_bitstream>
 // BYTECODE: intrinsic {{.*}}id=0x00010464 inputs=8 outputs=1 flags=0
 // BYTECODE-COUNT-4: site {{.*}}id=0x00010464 inputs=

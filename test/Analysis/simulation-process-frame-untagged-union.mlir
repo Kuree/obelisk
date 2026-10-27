@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(test-obelisk-simulation-process-frame-analysis)' \
+// RUN: talos-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(test-talos-simulation-process-frame-analysis)' \
 // RUN:   2>&1 | FileCheck %s
 
 !untagged = !simulation.unpacked_union<fields = [

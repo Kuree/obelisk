@@ -1,4 +1,4 @@
-add_mlir_library(ObeliskAnalysisTestPasses
+add_mlir_library(TalosAnalysisTestPasses
   AccessFootprintAnalysisTestPass.cpp
   ActivationMemoryAnalysisTestPass.cpp
   ActivationPhaseAnalysisTestPass.cpp
@@ -30,13 +30,13 @@ add_mlir_library(ObeliskAnalysisTestPasses
   DISABLE_INSTALL
 
   DEPENDS
-  ObeliskSimulationOpsIncGen
+  TalosSimulationOpsIncGen
 
   LINK_LIBS PUBLIC
-  ObeliskCoverage
-  ObeliskSimulationAnalysis
-  ObeliskScheduleTransforms
-  ObeliskSimulationIR
+  TalosCoverage
+  TalosSimulationAnalysis
+  TalosScheduleTransforms
+  TalosSimulationIR
   MLIRArithDialect
   MLIRAsmParser
   MLIRIR
@@ -48,11 +48,11 @@ add_mlir_library(ObeliskAnalysisTestPasses
   LLVMCore
 )
 
-target_include_directories(ObeliskAnalysisTestPasses PRIVATE
+target_include_directories(TalosAnalysisTestPasses PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )
 
-include(${PROJECT_SOURCE_DIR}/cmake/ObeliskPrecompiledHeaders.cmake)
-obelisk_precompile_headers(ObeliskAnalysisTestPasses
-  "${PROJECT_SOURCE_DIR}/include/obelisk/Dialect/Simulation/SimulationOps.h"
+include(${PROJECT_SOURCE_DIR}/cmake/TalosPrecompiledHeaders.cmake)
+talos_precompile_headers(TalosAnalysisTestPasses
+  "${PROJECT_SOURCE_DIR}/include/talos/Dialect/Simulation/SimulationOps.h"
   <mlir/Pass/Pass.h>)

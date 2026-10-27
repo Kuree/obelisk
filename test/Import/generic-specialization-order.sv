@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s -o %t.first.mlir
-// RUN: obelisk -emit-slang %s -o %t.second.mlir
+// RUN: talos -emit-slang %s -o %t.first.mlir
+// RUN: talos -emit-slang %s -o %t.second.mlir
 // RUN: diff %t.first.mlir %t.second.mlir
 // RUN: FileCheck %s < %t.first.mlir
 

@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s -o %t.slang.mlir
+// RUN: talos -emit-slang %s -o %t.slang.mlir
 // RUN: FileCheck %s --check-prefix=SLANG < %t.slang.mlir
 
 `timescale 1ns / 1ns

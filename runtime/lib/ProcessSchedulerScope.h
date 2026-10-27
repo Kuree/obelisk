@@ -1,7 +1,7 @@
 //===- ProcessSchedulerScope.h - Scoped executor selection ------*- C++ -*-===//
 
-#ifndef OBELISK_RUNTIME_LIB_PROCESSSCHEDULERSCOPE_H
-#define OBELISK_RUNTIME_LIB_PROCESSSCHEDULERSCOPE_H
+#ifndef TALOS_RUNTIME_LIB_PROCESSSCHEDULERSCOPE_H
+#define TALOS_RUNTIME_LIB_PROCESSSCHEDULERSCOPE_H
 
 #include "ProcessContext.h"
 #include "RuntimeInternal.h"
@@ -12,7 +12,7 @@
 // advance time after the callback returns (IEEE 1800-2023 4.5, 4.10).
 class NativeScheduleStepScope {
 public:
-  NativeScheduleStepScope(obelisk_rt_context *context, uint32_t actorSlot,
+  NativeScheduleStepScope(talos_rt_context *context, uint32_t actorSlot,
                           bool controlOnly, bool processFilterActive = false,
                           uint64_t processToken = 0)
       : context(context) {
@@ -58,7 +58,7 @@ private:
     bool processFilterActive;
     uint64_t processToken;
   } previous;
-  obelisk_rt_context *context;
+  talos_rt_context *context;
 };
 
-#endif // OBELISK_RUNTIME_LIB_PROCESSSCHEDULERSCOPE_H
+#endif // TALOS_RUNTIME_LIB_PROCESSSCHEDULERSCOPE_H

@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s -o %t.original
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.func(obelisk-sim-unroll-bounded-loops))' -o %t.after && diff -u %t.original %t.after
+// RUN: talos-opt %s -o %t.original
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.func(talos-sim-unroll-bounded-loops))' -o %t.after && diff -u %t.original %t.after
 
 // Every rejected candidate must preserve the exact original CFG, including
 // initializer edges. No speculative preheader may remain after a failed

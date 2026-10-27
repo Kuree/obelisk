@@ -7,9 +7,9 @@
 #include <cstdint>
 #include <vector>
 
-struct obelisk_rt_random_state_v1;
+struct talos_rt_random_state_v1;
 
-namespace obelisk::runtime {
+namespace talos::runtime {
 /// Exhausted: an exact sample needs more work than the runtime's budget.
 enum class SamplerResult {
   Unavailable,
@@ -39,7 +39,7 @@ SamplerResult sampleRandomPlan(
     const uint64_t *mutableMask, size_t assignmentWords,
     uint64_t constraintMask, const uint64_t *captures,
     const uint32_t *captureWidths, size_t captureCount, uint64_t *assignment,
-    obelisk_rt_random_state_v1 *randomState = nullptr,
+    talos_rt_random_state_v1 *randomState = nullptr,
     const uint64_t *orderedMasks = nullptr, size_t orderedLayerCount = 0,
     CyclicSampleRequest *cyclic = nullptr);
-} // namespace obelisk::runtime
+} // namespace talos::runtime

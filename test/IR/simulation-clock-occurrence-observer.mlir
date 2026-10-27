@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s | FileCheck %s
+// RUN: talos-opt %s | FileCheck %s
 
 module {
   simulation.design @clock_condition_observer {

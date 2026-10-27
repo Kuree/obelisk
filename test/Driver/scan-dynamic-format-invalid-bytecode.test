@@ -1,6 +1,6 @@
 // The bytecode tier reports the same dynamic-format scan errors as native code
 // for scan-dynamic-format-invalid.sv.
-// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %S/scan-dynamic-format-invalid.sv -o %t.bytecode
+// RUN: talos -O0 --vpi=off --execution-tier=bytecode %S/scan-dynamic-format-invalid.sv -o %t.bytecode
 // RUN: not %t.bytecode +CASE=malformed 2>&1 | FileCheck %S/scan-dynamic-format-invalid.sv --check-prefix=MALFORMED
 // RUN: not %t.bytecode +CASE=mismatch_count 2>&1 | FileCheck %S/scan-dynamic-format-invalid.sv --check-prefix=COUNT
 // RUN: not %t.bytecode +CASE=mismatch_type 2>&1 | FileCheck %S/scan-dynamic-format-invalid.sv --check-prefix=TYPE

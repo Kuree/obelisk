@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics --pass-pipeline='builtin.module(simulation.design(obelisk-sim-verify-compute-graph))'
+// RUN: talos-opt %s --split-input-file --verify-diagnostics --pass-pipeline='builtin.module(simulation.design(talos-sim-verify-compute-graph))'
 
 // The verifier re-derives the whole schedule from the executable CFG and
 // compares. Every rejection therefore names what disagreed; none of them may

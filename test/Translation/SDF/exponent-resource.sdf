@@ -1,11 +1,11 @@
-// RUN: obelisk-translate --import-sdf %S/../../Inputs/sdf/exponent-resource.sdf | FileCheck %s
+// RUN: talos-translate --import-sdf %S/../../Inputs/sdf/exponent-resource.sdf | FileCheck %s
 
 // IEEE 1800-2017 32.4/.5 permits exponent spellings. Import must classify
 // their tokens linearly and must not allocate exponent-sized APInt or power
 // temporaries merely to build transient IR.
-// CHECK: obelisk_sdf.delay_file
+// CHECK: talos_sdf.delay_file
 // CHECK: typ = <"1e999999
-// CHECK-NEXT: obelisk_sdf.path_delay {{.*}}typ = <"1e-999999
-// CHECK-COUNT-2: obelisk_sdf.path_delay
+// CHECK-NEXT: talos_sdf.path_delay {{.*}}typ = <"1e-999999
+// CHECK-COUNT-2: talos_sdf.path_delay
 // CHECK-NOT: simulation
 // CHECK-NOT: runtime

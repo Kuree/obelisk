@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-clocked-kernels))' | FileCheck %s
 
 // A true dual-port RAM: each port is its own always_ff, so in the kernel the
 // second port reads `array` after the first port's NBA site. That read must
@@ -74,7 +74,7 @@ module attributes {
       cf.br ^low
     }
     // CHECK-LABEL: simulation.design @ram
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK-SAME: %[[ARRAY:arg2]]: !simulation.ref<!simulation.unpacked_array<0 : 63 x !simulation.logic<32>>>
     // CHECK: simulation.suspend.edge posedge %{{.*}} to ^[[START:bb[0-9]+]]
     // CHECK: ^[[START]]:

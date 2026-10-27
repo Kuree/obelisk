@@ -1,26 +1,26 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=OUTLINE < %t.mlir
-// RUN: obelisk-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S | FileCheck %s --check-prefix=LLVM
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.disable_two_state_specialization}"' | obelisk-opt --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=FOUR --implicit-check-not='__obelisk_two_state' --implicit-check-not='__obelisk_path_known' --implicit-check-not='__obelisk_eval_path_dispatch_v1_' --implicit-check-not='schedule.eval.local_promotion_ranges'
+// RUN: talos-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S | FileCheck %s --check-prefix=LLVM
+// RUN: talos-opt %s '--test-talos-set-module-attributes=attrs="{native.disable_two_state_specialization}"' | talos-opt --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=FOUR --implicit-check-not='__talos_two_state' --implicit-check-not='__talos_path_known' --implicit-check-not='__talos_eval_path_dispatch_v1_' --implicit-check-not='schedule.eval.local_promotion_ranges'
 
 // A checkpoint-capable owner stays in the generated Tier-1/Tier-2 closure on
 // its known path.  The unsupported display leaf is fractured into a cold
 // Tier-3 callback and queued only after the generated coordinator returns.
 // Without state specialization, the complete canonical activation executes at
 // a checkpoint instead. Its preceding NBA staging must remain before display.
-// FOUR-LABEL: llvm.func @guarded.__obelisk_table_body(
-// FOUR: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
-// FOUR: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
-// FOUR: llvm.call @obelisk_rt_v1_display
-// FOUR-LABEL: llvm.func @__obelisk_direct_fragment_{{.*}}.__obelisk_execute.checkpoint(
-// FOUR: llvm.call @obelisk_rt_v1_scheduler_execute_aot_actor
+// FOUR-LABEL: llvm.func @guarded.__talos_table_body(
+// FOUR: llvm.mlir.addressof @__talos_aot_nba_accumulator_0
+// FOUR: llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
+// FOUR: llvm.call @talos_rt_v1_display
+// FOUR-LABEL: llvm.func @__talos_direct_fragment_{{.*}}.__talos_execute.checkpoint(
+// FOUR: llvm.call @talos_rt_v1_scheduler_execute_aot_actor
 // FOUR: llvm.return
-// FOUR-LABEL: llvm.func @__obelisk_direct_fragment_{{.*}}.__obelisk_execute(
+// FOUR-LABEL: llvm.func @__talos_direct_fragment_{{.*}}.__talos_execute(
 // FOUR-NOT: llvm.call
-// FOUR: llvm.mlir.addressof @__obelisk_eval_checkpoint_callback_v1
+// FOUR: llvm.mlir.addressof @__talos_eval_checkpoint_callback_v1
 // FOUR: llvm.return
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -134,60 +134,60 @@ module attributes {
 
 // The whole-closure certificate scans the exact canonical unknown-plane
 // range before clearing this owner's pending bit.
-// CHECK-LABEL: llvm.func @__obelisk_eval_kernel_promotion_scan_v1(
+// CHECK-LABEL: llvm.func @__talos_eval_kernel_promotion_scan_v1(
 // CHECK-SAME: passthrough = ["noinline", "cold"]
-// CHECK: llvm.mlir.addressof @__obelisk_eval_kernel_promotion_owners_v1
-// CHECK: llvm.mlir.addressof @__obelisk_eval_kernel_promotion_ranges_v1
-// CHECK: llvm.mlir.addressof @__obelisk_state_unknown
-// CHECK: llvm.mlir.addressof @__obelisk_eval_kernel_promotion_hints_v1
+// CHECK: llvm.mlir.addressof @__talos_eval_kernel_promotion_owners_v1
+// CHECK: llvm.mlir.addressof @__talos_eval_kernel_promotion_ranges_v1
+// CHECK: llvm.mlir.addressof @__talos_state_unknown
+// CHECK: llvm.mlir.addressof @__talos_eval_kernel_promotion_hints_v1
 // CHECK: llvm.load {{.*}} : !llvm.ptr -> i64
 // CHECK: llvm.and {{.*}} : i64
-// CHECK: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
-// CHECK-LABEL: llvm.func @__obelisk_eval_kernel_promotion_ready_v1(
+// CHECK: llvm.mlir.addressof @__talos_eval_promotion_pending_mask_v1
+// CHECK-LABEL: llvm.func @__talos_eval_kernel_promotion_ready_v1(
 // CHECK-SAME: passthrough = ["alwaysinline"]
-// CHECK: llvm.mlir.addressof @__obelisk_eval_kernel_promotion_latched_v1
-// CHECK: llvm.call @__obelisk_eval_kernel_promotion_scan_v1
+// CHECK: llvm.mlir.addressof @__talos_eval_kernel_promotion_latched_v1
+// CHECK: llvm.call @__talos_eval_kernel_promotion_scan_v1
 
 // Path probes and checkpoint continuation remain local to their executor.
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
-// CHECK: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
-// CHECK: llvm.call @__obelisk_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__obelisk_execute
-// CHECK-LABEL: llvm.func @__obelisk_eval_checkpoint_body_v1_0(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_time
-// CHECK: llvm.call @obelisk_rt_v1_display
-// CHECK-LABEL: llvm.func @__obelisk_eval_four_state_fallback_v1_0(
-// CHECK-DAG: %[[FALLBACK:.*]] = llvm.mlir.addressof @__obelisk_eval_step_four_state_fallback_v1
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1
+// CHECK: llvm.mlir.addressof @__talos_eval_promotion_pending_mask_v1
+// CHECK: llvm.call @__talos_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__talos_execute
+// CHECK-LABEL: llvm.func @__talos_eval_checkpoint_body_v1_0(
+// CHECK: llvm.call @talos_rt_v1_scheduler_time
+// CHECK: llvm.call @talos_rt_v1_display
+// CHECK-LABEL: llvm.func @__talos_eval_four_state_fallback_v1_0(
+// CHECK-DAG: %[[FALLBACK:.*]] = llvm.mlir.addressof @__talos_eval_step_four_state_fallback_v1
 // CHECK-DAG: %[[ONE:.*]] = llvm.mlir.constant(1 : i8)
 // CHECK: llvm.store %[[ONE]], %[[FALLBACK]]
-// CHECK-DAG: %[[ROOTS:.*]] = llvm.mlir.addressof @__obelisk_eval_fast_nba_roots_v1
+// CHECK-DAG: %[[ROOTS:.*]] = llvm.mlir.addressof @__talos_eval_fast_nba_roots_v1
 // CHECK-DAG: %[[ROOT_ZERO:.*]] = llvm.mlir.zero : !llvm.array<1 x i64>
 // CHECK: llvm.store %[[ROOT_ZERO]], %[[ROOTS]]
-// CHECK: llvm.call @__obelisk_eval_checkpoint_body_v1_0
+// CHECK: llvm.call @__talos_eval_checkpoint_body_v1_0
 // CHECK-SAME: no_inline
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_queue_aot_checkpoint
-// CHECK-LABEL: llvm.func @__obelisk_eval_path_dispatch_v1_0(
+// CHECK: llvm.call @talos_rt_v1_scheduler_queue_aot_checkpoint
+// CHECK-LABEL: llvm.func @__talos_eval_path_dispatch_v1_0(
 // CHECK: llvm.cond_br {{.*}}, ^[[PROMOTED:bb[0-9]+]], ^[[TRANSIENT:bb[0-9]+]]
 // CHECK: ^[[TRANSIENT]]:
-// CHECK: llvm.call @guarded.__obelisk_eval_body_0.__obelisk_path_known_0
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_time
+// CHECK: llvm.call @guarded.__talos_eval_body_0.__talos_path_known_0
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_time
 // CHECK: ^[[PROMOTED]]:
-// CHECK: llvm.call @guarded.__obelisk_eval_body_0.__obelisk_checkpoint_path_0
-// CHECK-DAG: llvm.mlir.addressof @__obelisk_eval_checkpoint_callback_v1
-// CHECK-DAG: llvm.mlir.addressof @__obelisk_eval_four_state_fallback_v1_0
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK: llvm.call @guarded.__talos_eval_body_0.__talos_checkpoint_path_0
+// CHECK-DAG: llvm.mlir.addressof @__talos_eval_checkpoint_callback_v1
+// CHECK-DAG: llvm.mlir.addressof @__talos_eval_four_state_fallback_v1_0
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
 
 // The local unknown branch shares its original four-state body; the selected
 // two-state branch keeps its normal inlining policy.
-// OUTLINE-LABEL: llvm.func @__obelisk_eval_path_dispatch_v1_0(
-// OUTLINE: llvm.call @guarded.__obelisk_eval_body_0.__obelisk_two_state_0(
+// OUTLINE-LABEL: llvm.func @__talos_eval_path_dispatch_v1_0(
+// OUTLINE: llvm.call @guarded.__talos_eval_body_0.__talos_two_state_0(
 // OUTLINE-NOT: no_inline
 // OUTLINE: llvm.return
-// OUTLINE: llvm.call @guarded.__obelisk_eval_body_0(
+// OUTLINE: llvm.call @guarded.__talos_eval_body_0(
 // OUTLINE-SAME: no_inline
 
-// LLVM-LABEL: define {{.*}}@__obelisk_eval_four_state_fallback_v1_0(
-// LLVM: call i32 @__obelisk_eval_checkpoint_body_v1_0({{.*}}) #[[NOINLINE:[0-9]+]]
-// LLVM-LABEL: define {{.*}}@__obelisk_eval_path_dispatch_v1_0(
-// LLVM: call i32 @guarded.__obelisk_eval_body_0({{.*}}) #[[NOINLINE]]
+// LLVM-LABEL: define {{.*}}@__talos_eval_four_state_fallback_v1_0(
+// LLVM: call i32 @__talos_eval_checkpoint_body_v1_0({{.*}}) #[[NOINLINE:[0-9]+]]
+// LLVM-LABEL: define {{.*}}@__talos_eval_path_dispatch_v1_0(
+// LLVM: call i32 @guarded.__talos_eval_body_0({{.*}}) #[[NOINLINE]]
 // LLVM: attributes #[[NOINLINE]] = { {{.*}}noinline{{.*}} }

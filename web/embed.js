@@ -8,13 +8,13 @@
 // Other sites load whatever is deployed, so the message protocol is a public
 // interface: extend it compatibly and bump PROTOCOL only for a breaking change.
 //
-//   parent -> service  { obelisk, type: 'run', id, source, args, timeoutMs }
-//                      { obelisk, type: 'stop', id }
-//   service -> parent  { obelisk, type: 'ready' }
-//                      { obelisk, type: 'status', id, phase }   loading | compiling | running
-//                      { obelisk, type: 'log', id, stream, text }      compiler diagnostics
-//                      { obelisk, type: 'output', id, stream, text }   simulation output
-//                      { obelisk, type: 'done', id, result, ... }
+//   parent -> service  { talos, type: 'run', id, source, args, timeoutMs }
+//                      { talos, type: 'stop', id }
+//   service -> parent  { talos, type: 'ready' }
+//                      { talos, type: 'status', id, phase }   loading | compiling | running
+//                      { talos, type: 'log', id, stream, text }      compiler diagnostics
+//                      { talos, type: 'output', id, stream, text }   simulation output
+//                      { talos, type: 'done', id, result, ... }
 //
 // `result` is one of: exited (with code), aborted (the simulation trapped,
 // with error), compile-error (with status), failed (with message), stopped,
@@ -35,7 +35,7 @@ export function createEmbedService({
   let active = null;
   let compilerReady = false;
 
-  const send = (message) => post({ obelisk: PROTOCOL, ...message });
+  const send = (message) => post({ talos: PROTOCOL, ...message });
 
   function finish(request, result) {
     request.finished = true;
@@ -119,7 +119,7 @@ export function createEmbedService({
   }
 
   function receive(message) {
-    if (message?.obelisk !== PROTOCOL) return;
+    if (message?.talos !== PROTOCOL) return;
     if (message.type === 'run') {
       if (typeof message.source !== 'string') return;
       queue.push({

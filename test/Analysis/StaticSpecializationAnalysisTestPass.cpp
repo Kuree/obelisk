@@ -1,10 +1,10 @@
 //===- StaticSpecializationAnalysisTestPass.cpp - Print plan facts -------===//
 
 #include "AnalysisTestPasses.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
 
-#include "obelisk/Analysis/StaticSpecializationAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/StaticSpecializationAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -24,23 +24,23 @@ public:
       StaticSpecializationAnalysisTestPass)
 
   StringRef getArgument() const final {
-    return "test-obelisk-static-specialization-analysis";
+    return "test-talos-static-specialization-analysis";
   }
   StringRef getDescription() const final {
     return "print validated static-specialization plan facts";
   }
 
   void runOnOperation() final {
-    obelisk::sim::SimDesignOp design;
+    talos::sim::SimDesignOp design;
     getOperation().walk(
-        [&](obelisk::sim::SimDesignOp candidate) { design = candidate; });
+        [&](talos::sim::SimDesignOp candidate) { design = candidate; });
     if (!design) {
       getOperation().emitError("has no simulation design");
       signalPassFailure();
       return;
     }
-    FailureOr<obelisk::analysis::StaticSpecializationAnalysis> analysis =
-        obelisk::analysis::StaticSpecializationAnalysis::compute(design);
+    FailureOr<talos::analysis::StaticSpecializationAnalysis> analysis =
+        talos::analysis::StaticSpecializationAnalysis::compute(design);
     if (failed(analysis)) {
       signalPassFailure();
       return;
@@ -58,7 +58,7 @@ public:
       roots.push_back(descriptor);
     llvm::sort(roots);
     for (uint64_t descriptor : roots) {
-      obelisk::schedule::StaticStateRootAttr policy =
+      talos::schedule::StaticStateRootAttr policy =
           analysis->getRoots().lookup(descriptor);
       llvm::errs() << "  root " << descriptor << " width=" << policy.getWidth()
                    << " direct=" << (policy.getDirect() ? "true" : "false")
@@ -72,7 +72,7 @@ public:
     llvm::sort(sites);
     for (uint64_t site : sites)
       llvm::errs() << "  nba-site " << site << "\n";
-    for (obelisk::schedule::ComputeNBACommitAttr commit :
+    for (talos::schedule::ComputeNBACommitAttr commit :
          analysis->getOrderedNBACommits())
       llvm::errs() << "  nba-commit " << commit.getId()
                    << " descriptor=" << commit.getEffect().getDescriptor()
@@ -83,10 +83,10 @@ public:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 
 void registerStaticSpecializationAnalysisTestPass() {
   PassRegistration<StaticSpecializationAnalysisTestPass>();
 }
 
-} // namespace obelisk
+} // namespace talos

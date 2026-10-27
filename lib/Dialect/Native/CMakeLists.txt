@@ -1,9 +1,9 @@
-add_mlir_library(ObeliskNativeIR
+add_mlir_library(TalosNativeIR
   NativeDialect.cpp
 
   DEPENDS
-  ObeliskNativeAttrsIncGen
-  ObeliskNativeDialectIncGen
+  TalosNativeAttrsIncGen
+  TalosNativeDialectIncGen
 
   LINK_LIBS PUBLIC
   MLIRIR

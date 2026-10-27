@@ -4,15 +4,15 @@
 #include "SimulationAOTPlanning.h"
 #include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Conversion/SimulationToLLVMCoroutine.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/Analysis/CallGraph.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -43,7 +43,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 /// Promotes generated scalar slots to SSA. mlir::tryToPromoteMemorySlots
@@ -331,8 +331,8 @@ buildNativeStateFootprints(ModuleOp module,
             return;
           }
           StringRef global = address.getGlobalName();
-          if (global != "__obelisk_state_value" &&
-              global != "__obelisk_state_unknown")
+          if (global != "__talos_state_value" &&
+              global != "__talos_state_unknown")
             return;
           if (!bytes) {
             result.exact = false;
@@ -349,7 +349,7 @@ buildNativeStateFootprints(ModuleOp module,
             uint64_t end =
                 std::min(uint64_t(interval[1]), array.getNumElements());
             if (begin < end) {
-              (global == "__obelisk_state_value" ? result.value
+              (global == "__talos_state_value" ? result.value
                                                  : result.unknown)
                   .emplace_back(begin, end);
               return;
@@ -361,7 +361,7 @@ buildNativeStateFootprints(ModuleOp module,
             return;
           }
           if (*bytes)
-            (global == "__obelisk_state_value" ? result.value : result.unknown)
+            (global == "__talos_state_value" ? result.value : result.unknown)
                 .emplace_back(*offset, *offset + *bytes);
         };
         function.walk([&](Operation *operation) {
@@ -452,7 +452,7 @@ LogicalResult promoteGroupReadyWords(LLVM::LLVMFuncOp function,
                                      const llvm::StringMap<Type> &globalTypes,
                                      uint64_t &budget) {
   auto reference =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupIngress>(
+      ::talos::schedule::get<::talos::schedule::Field::EvalGroupIngress>(
           function);
   auto array = reference ? dyn_cast_or_null<LLVM::LLVMArrayType>(
                                globalTypes.lookup(reference.getValue()))
@@ -571,7 +571,7 @@ LogicalResult promoteGroupReadyWords(LLVM::LLVMFuncOp function,
   if (failed(promoteScalarSlots(allocations, builder,
                                 DataLayout::closest(function), dominance)))
     return function.emitError("could not materialize group ready words in SSA");
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSsaReadyWords>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalSsaReadyWords>(
       function, builder.getI64IntegerAttr(words.size()));
   return success();
 }
@@ -639,7 +639,7 @@ promoteGroupState(LLVM::LLVMFuncOp function,
       if (call.getCallee())
         if (auto found = callFootprints.find(*call.getCallee());
             found != callFootprints.end() && found->second.exact) {
-          auto &footprint = name == "__obelisk_state_value"
+          auto &footprint = name == "__talos_state_value"
                                 ? found->second.value
                                 : found->second.unknown;
           if (!footprint.empty()) {
@@ -714,7 +714,7 @@ promoteGroupState(LLVM::LLVMFuncOp function,
     if (address.getGlobalName() != name)
       return;
     auto owner =
-        ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupOwner>(
+        ::talos::schedule::get<::talos::schedule::Field::EvalGroupOwner>(
             operation);
     auto type = dyn_cast<IntegerType>(load ? load.getType()
                                            : store.getValue().getType());
@@ -1014,9 +1014,9 @@ promoteGroupState(LLVM::LLVMFuncOp function,
   if (failed(promoteScalarSlots(allocations, builder,
                                 DataLayout::closest(function), dominance)))
     return function.emitError("could not materialize group state in SSA");
-  auto attribute = name == "__obelisk_state_value"
-                       ? ::obelisk::schedule::Field::EvalSsaValueRanges
-                       : ::obelisk::schedule::Field::EvalSsaUnknownRanges;
+  auto attribute = name == "__talos_state_value"
+                       ? ::talos::schedule::Field::EvalSsaValueRanges
+                       : ::talos::schedule::Field::EvalSsaUnknownRanges;
   schedule::set(function, attribute, builder.getI64IntegerAttr(slots.size()));
   return success();
 }
@@ -1078,7 +1078,7 @@ materializeNativeEvalValueInterface(LLVM::LLVMFuncOp function,
     arguments.push_back(type);
     if (lane.written)
       results.push_back(type);
-    description.append({int64_t(lane.plane == "__obelisk_state_unknown"),
+    description.append({int64_t(lane.plane == "__talos_state_unknown"),
                         int64_t(lane.begin), int64_t(lane.end - lane.begin),
                         int64_t(lane.written)});
   }
@@ -1088,7 +1088,7 @@ materializeNativeEvalValueInterface(LLVM::LLVMFuncOp function,
                           function.getContext(), results));
   builder.setInsertionPoint(function);
   auto body = LLVM::LLVMFuncOp::create(
-      builder, location, function.getSymName().str() + ".__obelisk_eval_values",
+      builder, location, function.getSymName().str() + ".__talos_eval_values",
       LLVM::LLVMFunctionType::get(result, arguments, false),
       LLVM::Linkage::Internal);
   symbols.insert(body);
@@ -1269,9 +1269,9 @@ LogicalResult materializeNativeEvalValueCalls(
                                              : store.getValue().getType());
       auto offset = staticByteOffset(pointer);
       if (address && type && offset && type.getWidth() % 8 == 0 &&
-          (address.getGlobalName() == "__obelisk_state_value" ||
-           address.getGlobalName() == "__obelisk_state_unknown"))
-        (address.getGlobalName() == "__obelisk_state_value"
+          (address.getGlobalName() == "__talos_state_value" ||
+           address.getGlobalName() == "__talos_state_unknown"))
+        (address.getGlobalName() == "__talos_state_value"
              ? callerAccesses.value
              : callerAccesses.unknown)
             .emplace_back(*offset, *offset + type.getWidth() / 8);
@@ -1313,15 +1313,15 @@ LogicalResult materializeNativeEvalValueCalls(
         SmallVector<NativeEvalValueLane> ranges;
         NativeStateFootprint cuts{true, {}, {}};
         auto cutPlane = [&](StringRef plane) -> NativeByteFootprint & {
-          return plane == "__obelisk_state_value" ? cuts.value : cuts.unknown;
+          return plane == "__talos_state_value" ? cuts.value : cuts.unknown;
         };
         auto cutPointer = [&](Value pointer) {
           while (auto gep = pointer.getDefiningOp<LLVM::GEPOp>())
             pointer = gep.getBase();
           auto address = pointer.getDefiningOp<LLVM::AddressOfOp>();
           if (!address ||
-              (address.getGlobalName() != "__obelisk_state_value" &&
-               address.getGlobalName() != "__obelisk_state_unknown"))
+              (address.getGlobalName() != "__talos_state_value" &&
+               address.getGlobalName() != "__talos_state_unknown"))
             return;
           auto array = cast<LLVM::LLVMArrayType>(
               globalTypes.lookup(address.getGlobalName()));
@@ -1360,8 +1360,8 @@ LogicalResult materializeNativeEvalValueCalls(
             root = gep.getBase();
           auto address = root.getDefiningOp<LLVM::AddressOfOp>();
           if (!address ||
-              (address.getGlobalName() != "__obelisk_state_value" &&
-               address.getGlobalName() != "__obelisk_state_unknown"))
+              (address.getGlobalName() != "__talos_state_value" &&
+               address.getGlobalName() != "__talos_state_unknown"))
             return;
           auto offset = staticByteOffset(pointer);
           auto type = dyn_cast<IntegerType>(load ? load.getType()
@@ -1415,7 +1415,7 @@ LogicalResult materializeNativeEvalValueCalls(
         }
         auto overlaps = [](const NativeEvalValueLane &lane,
                            const NativeStateFootprint &footprint) {
-          const auto &ranges = lane.plane == "__obelisk_state_value"
+          const auto &ranges = lane.plane == "__talos_state_value"
                                    ? footprint.value
                                    : footprint.unknown;
           auto first = llvm::lower_bound(
@@ -1531,7 +1531,7 @@ LogicalResult materializeNativeEvalValueCalls(
     }
   }
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk eval value interfaces: cores=" << interfaces.size()
+    llvm::errs() << "talos eval value interfaces: cores=" << interfaces.size()
                  << " calls=" << valueCalls << '\n';
   return success();
 }
@@ -1582,10 +1582,10 @@ public:
     if (failed(
             promoteGroupReadyWords(function, inputs.globalTypes, remaining)) ||
         failed(promoteGroupState(function, inputs.globalTypes,
-                                 "__obelisk_state_value", remaining,
+                                 "__talos_state_value", remaining,
                                  inputs.metadataOnly, inputs.callFootprints)) ||
         failed(promoteGroupState(function, inputs.globalTypes,
-                                 "__obelisk_state_unknown", remaining,
+                                 "__talos_state_unknown", remaining,
                                  inputs.metadataOnly, inputs.callFootprints)))
       return signalPassFailure();
     if (remaining == budget) {
@@ -1599,7 +1599,7 @@ public:
       auto value = schedule::get<IntegerAttr>(function, name);
       return value ? value.getUInt() : 0;
     };
-    diagnostic << "obelisk native group: " << function.getSymName()
+    diagnostic << "talos native group: " << function.getSymName()
                << " expanded_calls="
                << count(schedule::Field::EvalMaterializedGroupCalls)
                << " ready_words=" << count(schedule::Field::EvalSsaReadyWords)
@@ -1623,7 +1623,7 @@ inlineGroupBody(LLVM::LLVMFuncOp function, const SymbolTable &symbols,
   InlinerInterface interface(function.getContext());
   SmallVector<LLVM::CallOp> pending;
   function.walk([&](LLVM::CallOp call) {
-    if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalGroupMember>(
+    if (::talos::schedule::has<::talos::schedule::Field::EvalGroupMember>(
             call))
       pending.push_back(call);
   });
@@ -1641,14 +1641,14 @@ inlineGroupBody(LLVM::LLVMFuncOp function, const SymbolTable &symbols,
     auto callee = symbols.lookup<LLVM::LLVMFuncOp>(*call.getCallee());
     if (!callee || callee == function || callee.isExternal() ||
         expanded.contains(callee) ||
-        !(::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalGroupDomainSelected>(call) ||
-          ::obelisk::schedule::has<schedule::metadata::evalInfallible>(
+        !(::talos::schedule::has<
+              ::talos::schedule::Field::EvalGroupDomainSelected>(call) ||
+          ::talos::schedule::has<schedule::metadata::evalInfallible>(
               callee) ||
-          ::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalFourStateSource>(callee) ||
-          ::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalConditionallyTwoState>(callee)))
+          ::talos::schedule::has<
+              ::talos::schedule::Field::EvalFourStateSource>(callee) ||
+          ::talos::schedule::has<
+              ::talos::schedule::Field::EvalConditionallyTwoState>(callee)))
       continue;
     uint64_t cost;
     if (auto frozen = stableCosts.find(callee); frozen != stableCosts.end()) {
@@ -1666,7 +1666,7 @@ inlineGroupBody(LLVM::LLVMFuncOp function, const SymbolTable &symbols,
       continue;
     SmallVector<LLVM::CallOp> nested;
     auto owner =
-        ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupMember>(
+        ::talos::schedule::get<::talos::schedule::Field::EvalGroupMember>(
             call);
     auto clone = [&](OpBuilder &, Region *source, Block *inlineBlock,
                      Block *postInsertBlock, IRMapping &mapping,
@@ -1680,8 +1680,8 @@ inlineGroupBody(LLVM::LLVMFuncOp function, const SymbolTable &symbols,
             schedule::set<schedule::Field::EvalGroupOwner>(&operation, owner);
           if (auto child = dyn_cast<LLVM::CallOp>(operation)) {
             if (owner)
-              ::obelisk::schedule::set<
-                  ::obelisk::schedule::Field::EvalGroupMember>(child, owner);
+              ::talos::schedule::set<
+                  ::talos::schedule::Field::EvalGroupMember>(child, owner);
             nested.push_back(child);
           }
         }
@@ -1701,8 +1701,8 @@ inlineGroupBody(LLVM::LLVMFuncOp function, const SymbolTable &symbols,
     llvm::append_range(pending, nested);
   }
   if (materialized)
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::EvalMaterializedGroupCalls>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::EvalMaterializedGroupCalls>(
         function, IntegerAttr::get(IntegerType::get(function.getContext(), 64),
                                    materialized));
   return {remaining, materialized};
@@ -1754,7 +1754,7 @@ emitGroupDomainGuard(OpBuilder &builder, Location loc,
   Value zero = llvmConstant(builder, loc, i64, 0);
   Value proof = LLVM::AddressOfOp::create(
       builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
-      "__obelisk_eval_promotion_pending_mask_v1");
+      "__talos_eval_promotion_pending_mask_v1");
   Value needed = zero;
   SmallVector<std::pair<unsigned, Value>> words;
   for (auto [word, mask] : masks) {
@@ -1837,7 +1837,7 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   auto report = std::make_shared<NativeGroupPromotionReport>();
   SmallVector<LLVM::LLVMFuncOp> groups;
   for (auto function : module.getOps<LLVM::LLVMFuncOp>())
-    if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRankedMembers>(
+    if (::talos::schedule::has<::talos::schedule::Field::EvalRankedMembers>(
             function))
       groups.push_back(function);
   auto &inputs = manager.getAnalysis<NativeGroupPromotionInputs>();
@@ -1854,8 +1854,8 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   // their callable interface. Inventory uses once, not once per group.
   DenseSet<Operation *> externallyUsedCandidates;
   if (llvm::any_of(groups, [](auto function) {
-        return ::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalDataflowCandidate>(function);
+        return ::talos::schedule::has<
+            ::talos::schedule::Field::EvalDataflowCandidate>(function);
       })) {
     SmallVector<Region *> scopes;
     for (Operation *operation : analysis::collectInWalkOrder<Operation *>(
@@ -1868,8 +1868,8 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
     if (!uses) {
       // An unknown symbol scope cannot prove a transient candidate unused.
       for (auto function : groups)
-        if (::obelisk::schedule::has<
-                ::obelisk::schedule::Field::EvalDataflowCandidate>(function))
+        if (::talos::schedule::has<
+                ::talos::schedule::Field::EvalDataflowCandidate>(function))
           externallyUsedCandidates.insert(function);
     } else {
       SymbolTableCollection tables;
@@ -1879,14 +1879,14 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
         if (auto function = tables.lookupNearestSymbolFrom<LLVM::LLVMFuncOp>(
                 use.getUser()->getParentOp(), use.getSymbolRef());
             function &&
-            ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::EvalDataflowCandidate>(function))
+            ::talos::schedule::has<
+                ::talos::schedule::Field::EvalDataflowCandidate>(function))
           externallyUsedCandidates.insert(function);
     }
   }
 
   auto limit =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::MaxInlineOps>(
+      ::talos::schedule::get<::talos::schedule::Field::MaxInlineOps>(
           module);
   uint64_t operationLimit = limit ? limit.getValue().getZExtValue() : 5000;
   if (!operationLimit)
@@ -2003,8 +2003,8 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
     groupOrder.try_emplace(function, i);
   DenseSet<Operation *> earlyRefinementTargets;
   for (auto [i, function] : llvm::enumerate(groups))
-    if (auto candidate = ::obelisk::schedule::get<
-            ::obelisk::schedule::Field::EvalDataflowCandidate>(function)) {
+    if (auto candidate = ::talos::schedule::get<
+            ::talos::schedule::Field::EvalDataflowCandidate>(function)) {
       auto original = symbols.lookup<LLVM::LLVMFuncOp>(candidate.getValue());
       auto position = groupOrder.find(original);
       if (position != groupOrder.end() && position->second > i)
@@ -2032,7 +2032,7 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   for (auto [i, function] : llvm::enumerate(independent))
     preInlined.try_emplace(function, inlinedBodies[i]);
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk native group inlining: independent="
+    llvm::errs() << "talos native group inlining: independent="
                  << independent.size()
                  << " ordered=" << groups.size() - independent.size() << '\n';
 
@@ -2042,8 +2042,8 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   for (size_t index = 0; index < groups.size(); ++index) {
     auto function = groups[index];
     if (externallyUsedCandidates.contains(function)) {
-      ::obelisk::schedule::remove<
-          ::obelisk::schedule::Field::EvalDataflowCandidate>(function);
+      ::talos::schedule::remove<
+          ::talos::schedule::Field::EvalDataflowCandidate>(function);
       continue;
     }
     auto inlined = preInlined.find(function);
@@ -2067,11 +2067,11 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
     if (failed(lowerNativeScheduleActionsToLLVM(function, &symbolTables)))
       return failure();
     uint64_t remaining = body.remaining;
-    if (auto candidate = ::obelisk::schedule::get<
-            ::obelisk::schedule::Field::EvalDataflowCandidate>(function)) {
+    if (auto candidate = ::talos::schedule::get<
+            ::talos::schedule::Field::EvalDataflowCandidate>(function)) {
       auto original = symbols.lookup<LLVM::LLVMFuncOp>(candidate.getValue());
-      auto members = ::obelisk::schedule::get<
-          ::obelisk::schedule::Field::EvalRankedMembers>(function);
+      auto members = ::talos::schedule::get<
+          ::talos::schedule::Field::EvalRankedMembers>(function);
       if (original &&
           schedule::get<schedule::Field::EvalGroupProofDomain>(original) !=
               schedule::get<schedule::Field::EvalGroupProofDomain>(function))
@@ -2079,29 +2079,29 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
                    "candidate and original group proof domains differ"),
                failure();
       auto pendingGlobal = symbols.lookup<LLVM::GlobalOp>(
-          "__obelisk_eval_promotion_pending_mask_v1");
+          "__talos_eval_promotion_pending_mask_v1");
       auto pendingType =
           pendingGlobal
               ? dyn_cast<LLVM::LLVMArrayType>(pendingGlobal.getGlobalType())
               : LLVM::LLVMArrayType{};
       bool identitiesValid =
           original && original != function && !original.empty() &&
-          !::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalDataflowCandidate>(original) &&
-          !::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalDataflowExecutor>(original) &&
+          !::talos::schedule::has<
+              ::talos::schedule::Field::EvalDataflowCandidate>(original) &&
+          !::talos::schedule::has<
+              ::talos::schedule::Field::EvalDataflowExecutor>(original) &&
           members &&
-          !::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalDataflowFallback>(original) &&
+          !::talos::schedule::has<
+              ::talos::schedule::Field::EvalDataflowFallback>(original) &&
           !members.empty() &&
           original.getFunctionType() == function.getFunctionType() &&
-          ::obelisk::schedule::get<
-              ::obelisk::schedule::Field::EvalRankedMembers>(original) ==
+          ::talos::schedule::get<
+              ::talos::schedule::Field::EvalRankedMembers>(original) ==
               members &&
-          ::obelisk::schedule::get<
-              ::obelisk::schedule::Field::EvalGroupIngress>(original) ==
-              ::obelisk::schedule::get<
-                  ::obelisk::schedule::Field::EvalGroupIngress>(function) &&
+          ::talos::schedule::get<
+              ::talos::schedule::Field::EvalGroupIngress>(original) ==
+              ::talos::schedule::get<
+                  ::talos::schedule::Field::EvalGroupIngress>(function) &&
           pendingType && pendingType.getElementType().isInteger(64);
       llvm::SmallDenseSet<uint32_t> identities;
       if (identitiesValid)
@@ -2113,7 +2113,7 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       bool accepted = identitiesValid && materializeNativeGroupDataflow(
                                              function, symbols, operationLimit);
       if (native::has<native::DebugTiming>(module))
-        llvm::errs() << "obelisk group dataflow: " << function.getSymName()
+        llvm::errs() << "talos group dataflow: " << function.getSymName()
                      << " accepted=" << accepted << '\n';
       if (!accepted) {
         if (identitiesValid) {
@@ -2151,11 +2151,11 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
         if (failed(promoteGroupReadyWords(original, inputs.globalTypes,
                                           remaining->second)) ||
             failed(promoteGroupState(original, inputs.globalTypes,
-                                     "__obelisk_state_value", remaining->second,
+                                     "__talos_state_value", remaining->second,
                                      inputs.metadataOnly,
                                      inputs.callFootprints)) ||
             failed(promoteGroupState(
-                original, inputs.globalTypes, "__obelisk_state_unknown",
+                original, inputs.globalTypes, "__talos_state_unknown",
                 remaining->second, inputs.metadataOnly, inputs.callFootprints)))
           return failure();
         finalized.insert(original);
@@ -2167,11 +2167,11 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
         // The parent owns this child's selection point. Keeping another
         // guarded wrapper on the fast path would add a call boundary which
         // physical native partitioning cannot reliably inline away.
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalDataflowExecutor>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::EvalDataflowExecutor>(
             original, FlatSymbolRefAttr::get(function));
-        ::obelisk::schedule::remove<
-            ::obelisk::schedule::Field::EvalDataflowCandidate>(function);
+        ::talos::schedule::remove<
+            ::talos::schedule::Field::EvalDataflowCandidate>(function);
         continue;
       }
       // Make computation the actual group entry before physical partitioning.
@@ -2183,16 +2183,16 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       fallbackBody.takeBody(original.getBody());
       original.getBody().takeBody(function.getBody());
       function.getBody().takeBody(fallbackBody);
-      for (auto name : {::obelisk::schedule::Field::EvalMaterializedGroupCalls,
-                        ::obelisk::schedule::Field::EvalSsaReadyWords,
-                        ::obelisk::schedule::Field::EvalSsaValueRanges,
-                        ::obelisk::schedule::Field::EvalSsaUnknownRanges,
-                        ::obelisk::schedule::Field::EvalPredicatedDataflow,
-                        ::obelisk::schedule::Field::EvalControlFlowDataflow,
-                        ::obelisk::schedule::Field::EvalDataflowSlots,
-                        ::obelisk::schedule::Field::EvalCoalescedSlots,
-                        ::obelisk::schedule::Field::EvalCacheHintWords,
-                        ::obelisk::schedule::Field::EvalUnconditionalMembers}) {
+      for (auto name : {::talos::schedule::Field::EvalMaterializedGroupCalls,
+                        ::talos::schedule::Field::EvalSsaReadyWords,
+                        ::talos::schedule::Field::EvalSsaValueRanges,
+                        ::talos::schedule::Field::EvalSsaUnknownRanges,
+                        ::talos::schedule::Field::EvalPredicatedDataflow,
+                        ::talos::schedule::Field::EvalControlFlowDataflow,
+                        ::talos::schedule::Field::EvalDataflowSlots,
+                        ::talos::schedule::Field::EvalCoalescedSlots,
+                        ::talos::schedule::Field::EvalCacheHintWords,
+                        ::talos::schedule::Field::EvalUnconditionalMembers}) {
         Attribute slow = schedule::get<Attribute>(original, name),
                   fast = schedule::get<Attribute>(function, name);
         schedule::remove(original, name);
@@ -2205,8 +2205,8 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       symbols.remove(function);
       function.setSymName(original.getSymName().str() + ".fallback");
       symbols.insert(function);
-      ::obelisk::schedule::remove<
-          ::obelisk::schedule::Field::EvalDataflowCandidate>(function);
+      ::talos::schedule::remove<
+          ::talos::schedule::Field::EvalDataflowCandidate>(function);
       OpBuilder builder(module.getContext());
       Location loc = function.getLoc();
       Block *oldEntry = &original.getBody().front();
@@ -2238,8 +2238,8 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       LLVM::CallOp::create(builder, loc, TypeRange{}, function.getSymName(),
                            guard->getArguments());
       LLVM::ReturnOp::create(builder, loc, ValueRange{});
-      ::obelisk::schedule::set<
-          ::obelisk::schedule::Field::EvalDataflowFallback>(
+      ::talos::schedule::set<
+          ::talos::schedule::Field::EvalDataflowFallback>(
           original, FlatSymbolRefAttr::get(function));
       continue;
     }
@@ -2252,10 +2252,10 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   }
   for (auto &refinement : llvm::reverse(refinements)) {
     bool useful = llvm::any_of(refinement.children, [](auto child) {
-      return ::obelisk::schedule::has<
-                 ::obelisk::schedule::Field::EvalDataflowExecutor>(child) ||
-             ::obelisk::schedule::has<
-                 ::obelisk::schedule::Field::EvalGroupChildren>(child);
+      return ::talos::schedule::has<
+                 ::talos::schedule::Field::EvalDataflowExecutor>(child) ||
+             ::talos::schedule::has<
+                 ::talos::schedule::Field::EvalGroupChildren>(child);
     });
     if (!useful) {
       for (auto child : refinement.children) {
@@ -2274,7 +2274,7 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
     Block *entry = parent.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);
     auto ingress =
-        ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupIngress>(
+        ::talos::schedule::get<::talos::schedule::Field::EvalGroupIngress>(
             parent);
     Value ready = LLVM::AddressOfOp::create(
         builder, parent.getLoc(),
@@ -2287,8 +2287,8 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       // Reacquire after each child: an earlier child can publish a later one.
       std::map<unsigned, uint64_t> masks;
       for (int32_t owner :
-           ::obelisk::schedule::get<
-               ::obelisk::schedule::Field::EvalRankedMembers>(child)
+           ::talos::schedule::get<
+               ::talos::schedule::Field::EvalRankedMembers>(child)
                .asArrayRef())
         masks[unsigned(owner) / 64] |= uint64_t{1} << (unsigned(owner) % 64);
       Value pending =
@@ -2309,8 +2309,8 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       LLVM::CondBrOp::create(builder, parent.getLoc(), active, execute,
                              ValueRange{}, next, ValueRange{});
       builder.setInsertionPointToStart(execute);
-      if (auto fast = ::obelisk::schedule::get<
-              ::obelisk::schedule::Field::EvalDataflowExecutor>(child)) {
+      if (auto fast = ::talos::schedule::get<
+              ::talos::schedule::Field::EvalDataflowExecutor>(child)) {
         auto *collapsed = new Block, *fallback = new Block;
         parent.getBody().push_back(collapsed);
         parent.getBody().push_back(fallback);
@@ -2334,10 +2334,10 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
       builder.setInsertionPointToStart(next);
     }
     LLVM::ReturnOp::create(builder, parent.getLoc(), ValueRange{});
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupChildren>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalGroupChildren>(
         parent, builder.getArrayAttr(references));
     if (native::has<native::DebugTiming>(module))
-      llvm::errs() << "obelisk group hierarchy: " << parent.getSymName()
+      llvm::errs() << "talos group hierarchy: " << parent.getSymName()
                    << " children=" << refinement.children.size() << '\n';
   }
   // Group refinement and symbol creation are complete. Residual promotion
@@ -2345,8 +2345,8 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   llvm::erase_if(residuals, [&](const auto &residual) {
     auto function = residual.first;
     return discarded.contains(function) || finalized.contains(function) ||
-           ::obelisk::schedule::has<
-               ::obelisk::schedule::Field::EvalGroupChildren>(function);
+           ::talos::schedule::has<
+               ::talos::schedule::Field::EvalGroupChildren>(function);
   });
   // A canonical output need not be globally private to keep its intermediate
   // contents in SSA during a native activation. Transition/knownness actions
@@ -2380,7 +2380,7 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
     inputs.residuals.try_emplace(residual.first,
                                  std::make_pair(residual.second, index));
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk unconditional member publications elided: "
+    llvm::errs() << "talos unconditional member publications elided: "
                  << report->elidedUnconditionalPublications << '\n';
   return report;
 }
@@ -2389,18 +2389,18 @@ std::unique_ptr<Pass> createPromoteNativeGroupFunctionPass() {
   return std::make_unique<PromoteNativeGroupFunctionPass>();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-namespace obelisk {
-#define GEN_PASS_DEF_MATERIALIZEOBELISKNATIVEEVALGROUPSPASS
-#include "obelisk/Conversion/Passes.h.inc"
+namespace talos {
+#define GEN_PASS_DEF_MATERIALIZETALOSNATIVEEVALGROUPSPASS
+#include "talos/Conversion/Passes.h.inc"
 
 namespace {
-struct MaterializeObeliskNativeEvalGroupsPass
-    : impl::MaterializeObeliskNativeEvalGroupsPassBase<
-          MaterializeObeliskNativeEvalGroupsPass> {
-  using MaterializeObeliskNativeEvalGroupsPassBase::
-      MaterializeObeliskNativeEvalGroupsPassBase;
+struct MaterializeTalosNativeEvalGroupsPass
+    : impl::MaterializeTalosNativeEvalGroupsPassBase<
+          MaterializeTalosNativeEvalGroupsPass> {
+  using MaterializeTalosNativeEvalGroupsPassBase::
+      MaterializeTalosNativeEvalGroupsPassBase;
 
   void runOnOperation() override {
     auto report = detail::materializeNativeEvalGroupBodies(
@@ -2419,4 +2419,4 @@ struct MaterializeObeliskNativeEvalGroupsPass
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

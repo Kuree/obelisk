@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --schedule-optimize-native-words | FileCheck %s
-// RUN: obelisk-opt %s --schedule-optimize-native-words='predication-operation-budget=0' | FileCheck %s
+// RUN: talos-opt %s --schedule-optimize-native-words | FileCheck %s
+// RUN: talos-opt %s --schedule-optimize-native-words='predication-operation-budget=0' | FileCheck %s
 // A fused function can mix invocation-local loops with canonical storage loops.
 // Refusing the former must leave their effects intact and still widen the latter.
 // CHECK-LABEL: simulation.func @local_then_canonical

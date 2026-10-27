@@ -1,4 +1,4 @@
-// RUN: not obelisk --std=1800-2023 -emit-obelisk %s -o /dev/null 2>&1 | FileCheck %s --implicit-check-not=error:
+// RUN: not talos --std=1800-2023 -emit-talos %s -o /dev/null 2>&1 | FileCheck %s --implicit-check-not=error:
 
 // IEEE 19.7 and 19.7.1 limit these options to coverage definitions. Unary
 // and compound updates use the same checks as simple assignment.

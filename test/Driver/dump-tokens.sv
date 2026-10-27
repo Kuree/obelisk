@@ -7,13 +7,13 @@ endmodule
 // The source above must stay the first bytes of this file: the listing gives
 // byte offsets, and the comment's "é" is two bytes.
 
-// RUN: obelisk -dump-tokens %s | FileCheck %s
-// RUN: obelisk -dump-tokens --std=1800-2017 %s -o %t.tokens
+// RUN: talos -dump-tokens %s | FileCheck %s
+// RUN: talos -dump-tokens --std=1800-2017 %s -o %t.tokens
 // RUN: FileCheck %s --input-file=%t.tokens
 
-// Tools such as obelisk-cov lex through the ObeliskSourceTokens library
+// Tools such as talos-cov lex through the TalosSourceTokens library
 // directly; it must list exactly what the driver prints.
-// RUN: obelisk -dump-tokens --std=1800-2023 %s -o %t.driver.tokens
+// RUN: talos -dump-tokens --std=1800-2023 %s -o %t.driver.tokens
 // RUN: %source-tokens-test --std=1800-2023 %s | diff %t.driver.tokens -
 // RUN: %source-tokens-test --std=1800-2017 %s | diff %t.tokens -
 
@@ -53,7 +53,7 @@ endmodule
 // CHECK-NOT:  EndOfFile
 
 // Several inputs are listed in order, each under its path.
-// RUN: obelisk -dump-tokens %s %S/Inputs/dump-tokens.second.sv | FileCheck %s --check-prefix=MULTI
+// RUN: talos -dump-tokens %s %S/Inputs/dump-tokens.second.sv | FileCheck %s --check-prefix=MULTI
 // MULTI:      file {{.*}}dump-tokens.sv
 // MULTI-NEXT: 0 7 Directive
 // MULTI:      file {{.*}}.second.sv

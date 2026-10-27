@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-native-state-layout-analysis 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-native-state-layout-analysis 2>&1 | FileCheck %s
 
 // Native containers own their padding; stable handle bounds remain logical.
 // Neither adjacent roots nor the end of a plane may occupy a container tail.

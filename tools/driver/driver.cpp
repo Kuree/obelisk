@@ -1,4 +1,4 @@
-//===- driver.cpp - Obelisk compiler driver -------------------------------===//
+//===- driver.cpp - Talos compiler driver -------------------------------===//
 //
 // This executable owns compilation policy: source files, command files,
 // include paths, macros, libraries, language revision, and the selected output
@@ -7,11 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "NativeInputs.h"
-#include "obelisk/Conversion/SimulationToSchedule.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#if OBELISK_HAS_HOST_C_RUNTIME
+#include "talos/Conversion/SimulationToSchedule.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#if TALOS_HAS_HOST_C_RUNTIME
 #include "HostCRuntime.h"
 #endif
 #include "DriverMain.h"
@@ -19,22 +19,22 @@
 #include "PassIRDump.h"
 #include "TargetBackend.h"
 
-#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
-#include "obelisk/Conversion/ObeliskToSimulation.h"
-#include "obelisk/Conversion/SlangToObelisk.h"
-#include "obelisk/Dialect/Coverage/CoverageDialect.h"
-#include "obelisk/Dialect/DPI/DPIDialect.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
-#include "obelisk/Dialect/Obelisk/ObeliskOps.h"
-#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
-#include "obelisk/Dialect/Schedule/Export.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Slang/SlangDialect.h"
-#include "obelisk/Dialect/Slang/SlangOps.h"
-#include "obelisk/Frontend/Frontend.h"
+#include "talos/Analysis/SimulationScheduleAnalysis.h"
+#include "talos/Conversion/TalosToSimulation.h"
+#include "talos/Conversion/SlangToTalos.h"
+#include "talos/Dialect/Coverage/CoverageDialect.h"
+#include "talos/Dialect/DPI/DPIDialect.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Talos/TalosDialect.h"
+#include "talos/Dialect/Talos/TalosOps.h"
+#include "talos/Dialect/Runtime/RuntimeDialect.h"
+#include "talos/Dialect/Schedule/Export.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Simulation/SimulationDialect.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Slang/SlangDialect.h"
+#include "talos/Dialect/Slang/SlangOps.h"
+#include "talos/Frontend/Frontend.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/AsmState.h"
@@ -78,14 +78,14 @@
 using namespace llvm;
 using namespace llvm::opt;
 using namespace mlir;
-using namespace obelisk::driver::options;
+using namespace talos::driver::options;
 
 namespace {
 
 static std::string driverExecutablePath;
 
 static void emitDriverError(const Twine &message) {
-  WithColor::error(errs(), "obelisk") << message << '\n';
+  WithColor::error(errs(), "talos") << message << '\n';
 }
 
 static bool validateCoverageConfiguration(StringRef path,
@@ -195,7 +195,7 @@ static std::string resolveSVLibraryPath(StringRef root, StringRef path,
   if (appendExtension) {
     // Annex J names libraries without a suffix; the registered native target
     // supplies its shared-library extension.
-    Triple target(OBELISK_NATIVE_TARGET_TRIPLE);
+    Triple target(TALOS_NATIVE_TARGET_TRIPLE);
     resolved += target.isOSWindows() ? ".dll"
                 : target.isOSDarwin() ? ".dylib"
                                       : ".so";
@@ -269,7 +269,7 @@ static bool collectSVLibraryInputs(const InputArgList &args,
 // Command files are the delivery format for real testbenches, and every other
 // tool treats them as "my whole command line, in a file" rather than a
 // frontend-only filelist. Expanding them into the driver's own argv before
-// option parsing is what makes that true here: a `.f` may carry any obelisk
+// option parsing is what makes that true here: a `.f` may carry any talos
 // option, not just the ones slang happens to understand. The frontend still
 // receives everything, because buildSlangArguments() reconstructs slang's
 // command line from the parsed options rather than forwarding the file.
@@ -453,13 +453,13 @@ static bool expandCommandFiles(SmallVectorImpl<const char *> &argv,
 // the diagnostic instead of adding it to the versioned runtime graph schema.
 static FileLineColLoc
 scheduleSourceLocation(SymbolTable &symbols,
-                       obelisk::schedule::ComputeFragmentAttr fragment) {
-  auto function = symbols.lookup<obelisk::sim::SimFuncOp>(
+                       talos::schedule::ComputeFragmentAttr fragment) {
+  auto function = symbols.lookup<talos::sim::SimFuncOp>(
       fragment.getFunction().getValue());
   if (!function)
     return {};
   Block *block =
-      obelisk::analysis::lookupComputeGraphBlock(function, fragment.getBlock());
+      talos::analysis::lookupComputeGraphBlock(function, fragment.getBlock());
   Location source =
       block ? block->getTerminator()->getLoc() : function.getLoc();
   auto location = source->findInstanceOf<FileLineColLoc>();
@@ -471,14 +471,14 @@ scheduleSourceLocation(SymbolTable &symbols,
 }
 
 static void
-printScheduleSourceLocations(obelisk::sim::SimDesignOp design,
-                             obelisk::schedule::ComputeGraphAttr graph,
+printScheduleSourceLocations(talos::sim::SimDesignOp design,
+                             talos::schedule::ComputeGraphAttr graph,
                              raw_ostream &output) {
   SymbolTable symbols(design);
   bool first = true;
   output << " source_locations = [";
   for (Attribute node : graph.getNodes()) {
-    auto fragment = dyn_cast<obelisk::schedule::ComputeFragmentAttr>(node);
+    auto fragment = dyn_cast<talos::schedule::ComputeFragmentAttr>(node);
     if (!fragment)
       continue;
     auto location = scheduleSourceLocation(symbols, fragment);
@@ -525,21 +525,21 @@ public:
   }
 
   FailureOr<DPIHeaderType> get(mlir::Type type, Location location) {
-    FailureOr<obelisk::DPIABIType> abi =
-        obelisk::classifyDPIABIType(type, location);
+    FailureOr<talos::DPIABIType> abi =
+        talos::classifyDPIABIType(type, location);
     if (failed(abi))
       return failure();
-    if (abi->kind != obelisk::DPIABIKind::UnpackedAggregate) {
+    if (abi->kind != talos::DPIABIKind::UnpackedAggregate) {
       std::string suffix;
       if (abi->isVector())
         suffix = ("[" + Twine((uint64_t{abi->width} + 31) / 32) + "]").str();
-      return DPIHeaderType{obelisk::getDPICTypeSpelling(*abi).str(), suffix,
+      return DPIHeaderType{talos::getDPICTypeSpelling(*abi).str(), suffix,
                            abi->isVector(),
-                           abi->kind == obelisk::DPIABIKind::OpenArray, false};
+                           abi->kind == talos::DPIABIKind::OpenArray, false};
     }
     SmallVector<uint64_t> dimensions;
     while (true) {
-      if (auto array = dyn_cast<obelisk::ir::RangedUnpackedArrayType>(type)) {
+      if (auto array = dyn_cast<talos::ir::RangedUnpackedArrayType>(type)) {
         uint64_t left = static_cast<uint64_t>(array.getLeft());
         uint64_t right = static_cast<uint64_t>(array.getRight());
         uint64_t distance =
@@ -552,7 +552,7 @@ public:
         type = array.getElementType();
         continue;
       }
-      if (auto array = dyn_cast<obelisk::ir::UnpackedArrayType>(type)) {
+      if (auto array = dyn_cast<talos::ir::UnpackedArrayType>(type)) {
         dimensions.push_back(array.getSize());
         type = array.getElementType();
         continue;
@@ -570,7 +570,7 @@ public:
       return DPIHeaderType{element->spelling, suffix, false, false, true};
     }
 
-    auto aggregate = dyn_cast<obelisk::ir::SourceAggregateType>(type);
+    auto aggregate = dyn_cast<talos::ir::SourceAggregateType>(type);
     if (!aggregate || aggregate.getIsPacked() || aggregate.getIsUnion()) {
       emitError(location)
           << "DPI header generation requires a named unpacked struct";
@@ -581,7 +581,7 @@ public:
       return DPIHeaderType{found->second, {}, false, false, true};
     std::string name = sanitize(aggregate.getName().getValue());
     if (name.empty())
-      name = ("obelisk_dpi_struct_" + Twine(names.size())).str();
+      name = ("talos_dpi_struct_" + Twine(names.size())).str();
     std::string baseName = name;
     for (uint64_t suffix = 1;; ++suffix) {
       auto collision = namedTypes.find(name);
@@ -610,7 +610,7 @@ public:
       }
       std::string cName = sanitize(fieldName.getValue());
       if (cName.empty())
-        cName = ("obelisk_field_" + Twine(fieldIndex)).str();
+        cName = ("talos_field_" + Twine(fieldIndex)).str();
       std::string base = cName;
       for (uint64_t suffix = 1; !fieldNames.insert(cName).second; ++suffix)
         cName = (base + "_" + Twine(suffix)).str();
@@ -752,7 +752,7 @@ private:
                                                  "_Static_assert",
                                                  "_Thread_local"};
     if (llvm::is_contained(keywords, result))
-      result.insert(0, "obelisk_");
+      result.insert(0, "talos_");
     return result;
   }
 
@@ -765,14 +765,14 @@ private:
 static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
   llvm::StringMap<std::string> prototypes;
   DPIHeaderTypes headerTypes;
-  module.walk([&](obelisk::ir::SVSubroutineSymbolOp op) {
+  module.walk([&](talos::ir::SVSubroutineSymbolOp op) {
     bool imported = op.getIsDpiImport().value_or(false);
     StringAttr identifier = imported ? op.getDpiCIdentifierAttr()
                                      : op.getDpiExportCIdentifierAttr();
     if (identifier)
       headerTypes.reserveIdentifier(identifier.getValue());
   });
-  WalkResult walked = module.walk([&](obelisk::ir::SVSubroutineSymbolOp op) {
+  WalkResult walked = module.walk([&](talos::ir::SVSubroutineSymbolOp op) {
     bool imported = op.getIsDpiImport().value_or(false);
     StringAttr exported = op.getDpiExportCIdentifierAttr();
     if (!imported && !exported)
@@ -785,7 +785,7 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
     SmallVector<std::string> arguments;
     unsigned argumentIndex = 0;
     for (Operation &child : op.getRegion().front()) {
-      auto formal = dyn_cast<obelisk::ir::SVFormalArgumentSymbolOp>(child);
+      auto formal = dyn_cast<talos::ir::SVFormalArgumentSymbolOp>(child);
       if (!formal)
         continue;
       std::optional<mlir::Type> semanticType = formal.getSemanticType();
@@ -798,7 +798,7 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
       if (failed(type))
         return WalkResult::interrupt();
       auto direction = formal.getDirection();
-      bool input = direction == obelisk::ir::SVArgumentDirection::In;
+      bool input = direction == talos::ir::SVArgumentDirection::In;
       bool pointer =
           !type->openArray && !type->aggregate && (!input || type->vector);
       std::string declaration;
@@ -815,14 +815,14 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
       arguments.push_back(std::move(declaration));
     }
 
-    bool task = op.getSubroutineKind() == obelisk::ir::SVSubroutineKind::Task;
+    bool task = op.getSubroutineKind() == talos::ir::SVSubroutineKind::Task;
     std::string returnType = task ? "int" : "";
     if (!task) {
       auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
       auto subroutine =
           semanticType
-              ? dyn_cast<obelisk::ir::SubroutineType>(semanticType.getValue())
-              : obelisk::ir::SubroutineType{};
+              ? dyn_cast<talos::ir::SubroutineType>(semanticType.getValue())
+              : talos::ir::SubroutineType{};
       auto signature = subroutine
                            ? dyn_cast<FunctionType>(subroutine.getSignature())
                            : FunctionType{};
@@ -830,7 +830,7 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
         op.emitError("DPI function has no resolved result signature");
         return WalkResult::interrupt();
       }
-      if (isa<obelisk::ir::VoidType>(signature.getResult(0))) {
+      if (isa<talos::ir::VoidType>(signature.getResult(0))) {
         returnType = "void";
       } else {
         FailureOr<DPIHeaderType> result =
@@ -867,8 +867,8 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
   });
   if (walked.wasInterrupted())
     return failure();
-  output << "#ifndef OBELISK_GENERATED_DPI_H\n"
-            "#define OBELISK_GENERATED_DPI_H\n\n"
+  output << "#ifndef TALOS_GENERATED_DPI_H\n"
+            "#define TALOS_GENERATED_DPI_H\n\n"
             "#include <stdint.h>\n"
             "#include <svdpi.h>\n\n";
   for (const std::string &definition : headerTypes.getDefinitions())
@@ -893,8 +893,8 @@ static LogicalResult writeDPIHeader(ModuleOp module, raw_ostream &output) {
 static void writeBindingReport(ModuleOp module, raw_ostream &output) {
   SmallVector<Operation *> instances;
   module.walk([&](Operation *instance) {
-    if (!isa<obelisk::slangir::InstanceSymbolOp,
-             obelisk::slangir::CheckerInstanceSymbolOp>(instance))
+    if (!isa<talos::slangir::InstanceSymbolOp,
+             talos::slangir::CheckerInstanceSymbolOp>(instance))
       return;
     if (instance->hasAttr("configuration") ||
         instance->hasAttr("is_from_bind") ||
@@ -935,7 +935,7 @@ static void writeBindingReport(ModuleOp module, raw_ostream &output) {
     if (StringAttr kind =
             instance->getAttrOfType<StringAttr>("configuration_rule_kind")) {
       output << " rule=" << kind.getValue();
-      auto range = cast<obelisk::slangir::SourceRangeType>(
+      auto range = cast<talos::slangir::SourceRangeType>(
           instance->getAttrOfType<TypeAttr>("configuration_rule_source_range")
               .getValue());
       output << '@' << sys::path::filename(range.getStartFile()) << ':'
@@ -945,10 +945,10 @@ static void writeBindingReport(ModuleOp module, raw_ostream &output) {
   }
 }
 
-static obelisk::frontend::FrontendOptions buildFrontendOptions(
+static talos::frontend::FrontendOptions buildFrontendOptions(
     const InputArgList &args, bool &valid,
-    const obelisk::driver::DriverConfiguration &config) {
-  obelisk::frontend::FrontendOptions options;
+    const talos::driver::DriverConfiguration &config) {
+  talos::frontend::FrontendOptions options;
   // Split only the conventional '+' aliases. A canonical -I or -D value may
   // itself contain '+' (a directory name or an arithmetic macro expression).
   auto appendPreprocessorValues = [&](unsigned option, StringRef plusSpelling,
@@ -1014,8 +1014,8 @@ static obelisk::frontend::FrontendOptions buildFrontendOptions(
     arg->claim();
     options.libraryInputs.push_back(
         {arg->getOption().matches(OPT_v)
-             ? obelisk::frontend::LibraryInputKind::File
-             : obelisk::frontend::LibraryInputKind::Map,
+             ? talos::frontend::LibraryInputKind::File
+             : talos::frontend::LibraryInputKind::Map,
          arg->getValue()});
   }
   options.topModules = args.getAllArgValues(OPT_top_EQ);
@@ -1037,9 +1037,9 @@ static obelisk::frontend::FrontendOptions buildFrontendOptions(
                     "'; expected min, typ, or max");
     valid = false;
   }
-  options.minTypMax = timing == "min"   ? obelisk::frontend::MinTypMax::Min
-                      : timing == "max" ? obelisk::frontend::MinTypMax::Max
-                                        : obelisk::frontend::MinTypMax::Typ;
+  options.minTypMax = timing == "min"   ? talos::frontend::MinTypMax::Min
+                      : timing == "max" ? talos::frontend::MinTypMax::Max
+                                        : talos::frontend::MinTypMax::Typ;
 
   valid &= parseUnsignedOption(args, OPT_max_include_depth_EQ,
                                "--max-include-depth", options.maxIncludeDepth);
@@ -1054,8 +1054,8 @@ static obelisk::frontend::FrontendOptions buildFrontendOptions(
   }
   options.languageVersion =
       standard == "1800-2017"
-          ? obelisk::frontend::LanguageVersion::IEEE1800_2017
-          : obelisk::frontend::LanguageVersion::IEEE1800_2023;
+          ? talos::frontend::LanguageVersion::IEEE1800_2017
+          : talos::frontend::LanguageVersion::IEEE1800_2023;
   for (std::string argument : args.getAllArgValues(OPT_Xslang))
     options.slangArgs.push_back(std::move(argument));
   options.sdfLimits = config.sdfLimits;
@@ -1064,7 +1064,7 @@ static obelisk::frontend::FrontendOptions buildFrontendOptions(
 
 static int executeCompilation(
     const InputArgList &args,
-    const obelisk::driver::DriverConfiguration &config) {
+    const talos::driver::DriverConfiguration &config) {
   SmallVector<std::string> inputs;
   for (const Arg *arg : args.filtered(OPT_INPUT))
     inputs.emplace_back(arg->getValue());
@@ -1073,7 +1073,7 @@ static int executeCompilation(
       inputs.emplace_back(value);
 
   bool valid = true;
-  obelisk::frontend::FrontendOptions frontendOptions =
+  talos::frontend::FrontendOptions frontendOptions =
       buildFrontendOptions(args, valid, config);
   // Command files were already spliced into argv, so anything they contributed
   // is present here as an ordinary input.
@@ -1106,7 +1106,7 @@ static int executeCompilation(
     emitDriverError("--compile-threads must be greater than zero");
     valid = false;
   }
-  obelisk::driver::PassIRDumpOptions irDump;
+  talos::driver::PassIRDumpOptions irDump;
   irDump.before = args.getLastArgValue(OPT_dump_ir_before_EQ).str();
   irDump.after = args.getLastArgValue(OPT_dump_ir_after_EQ).str();
   irDump.path = args.getLastArgValue(OPT_dump_ir_path_EQ).str();
@@ -1141,7 +1141,7 @@ static int executeCompilation(
   // The default is whichever target this build can produce; a wasm build of
   // the compiler has no native ELF backend linked in.
   StringRef targetName =
-      args.getLastArgValue(OPT_target_EQ, OBELISK_DEFAULT_TARGET);
+      args.getLastArgValue(OPT_target_EQ, TALOS_DEFAULT_TARGET);
   if (targetName != "native" && targetName != "wasm32") {
     emitDriverError(Twine("unsupported target '") + targetName +
                     "'; expected native or wasm32");
@@ -1167,7 +1167,7 @@ static int executeCompilation(
   }
   StringRef nativeScheduler =
       args.getLastArgValue(OPT_native_scheduler_EQ, "auto");
-  if (!obelisk::schedule::symbolizeNativeSchedulerMode(nativeScheduler)) {
+  if (!talos::schedule::symbolizeNativeSchedulerMode(nativeScheduler)) {
     emitDriverError(Twine("unsupported native scheduler '") + nativeScheduler +
                     "'; expected auto, generic, aot, or eval");
     valid = false;
@@ -1262,7 +1262,7 @@ static int executeCompilation(
 
   const Arg *action =
       args.getLastArg(OPT_E, OPT_dump_tokens, OPT_emit_slang, OPT_emit_bindings,
-                      OPT_emit_obelisk, OPT_emit_sim, OPT_emit_schedule, OPT_c,
+                      OPT_emit_talos, OPT_emit_sim, OPT_emit_schedule, OPT_c,
                       OPT_emit_llvm, OPT_emit_dpi_header);
   bool preprocess = action && action->getOption().matches(OPT_E);
   bool dumpTokens = action && action->getOption().matches(OPT_dump_tokens);
@@ -1303,8 +1303,8 @@ static int executeCompilation(
     return 1;
   inputs.append(svLibraries);
 
-  obelisk::driver::ClassifiedInputs classifiedInputs;
-  if (failed(obelisk::driver::classifyDirectInputs(
+  talos::driver::ClassifiedInputs classifiedInputs;
+  if (failed(talos::driver::classifyDirectInputs(
           inputs, action == nullptr && targetName == "native", vpiMode,
           classifiedInputs)))
     return 1;
@@ -1318,9 +1318,9 @@ static int executeCompilation(
 
   if (preprocess || dumpTokens) {
     FailureOr<std::string> text =
-        preprocess ? obelisk::frontend::preprocessSystemVerilog(inputs,
+        preprocess ? talos::frontend::preprocessSystemVerilog(inputs,
                                                                 frontendOptions)
-                   : obelisk::frontend::listSystemVerilogTokens(
+                   : talos::frontend::listSystemVerilogTokens(
                          inputs, frontendOptions);
     if (failed(text))
       return 1;
@@ -1339,10 +1339,10 @@ static int executeCompilation(
 
   DialectRegistry registry;
   registry.insert<
-      obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
-      obelisk::cov::CoverageDialect, obelisk::dpi::DPIDialect,
-      obelisk::native::NativeDialect, obelisk::runtime::ObeliskRuntimeDialect,
-      obelisk::sim::ObeliskSimulationDialect, mlir::LLVM::LLVMDialect>();
+      talos::slangir::SlangDialect, talos::ir::TalosDialect,
+      talos::cov::CoverageDialect, talos::dpi::DPIDialect,
+      talos::native::NativeDialect, talos::runtime::TalosRuntimeDialect,
+      talos::sim::TalosSimulationDialect, mlir::LLVM::LLVMDialect>();
   // One explicitly sized pool is shared by all MLIR parallel pass adaptors.
   // Its lifetime encloses the context as required by MLIRContext.
   std::unique_ptr<llvm::DefaultThreadPool> compilerPool;
@@ -1393,29 +1393,29 @@ static int executeCompilation(
   });
 
   auto importedModule =
-      obelisk::frontend::importSystemVerilog(inputs, context, frontendOptions);
+      talos::frontend::importSystemVerilog(inputs, context, frontendOptions);
   if (failed(importedModule))
     return 1;
   OwningOpRef<ModuleOp> module = std::move(*importedModule);
   if (frontendOptions.twoState)
-    obelisk::native::mark<obelisk::native::TwoState>(*module);
+    talos::native::mark<talos::native::TwoState>(*module);
   if (args.hasArg(OPT_no_two_state_specialization))
-    obelisk::native::mark<obelisk::native::DisableTwoStateSpecialization>(
+    talos::native::mark<talos::native::DisableTwoStateSpecialization>(
         *module);
 
   if (pulseRejectPercent || pulseErrorPercent) {
-    obelisk::sim::set<obelisk::sim::metadata::PulseRejectPercent>(
+    talos::sim::set<talos::sim::metadata::PulseRejectPercent>(
         (*module),
         IntegerAttr::get(IntegerType::get(&context, 32), effectivePulseReject));
-    obelisk::sim::set<obelisk::sim::metadata::PulseErrorPercent>(
+    talos::sim::set<talos::sim::metadata::PulseErrorPercent>(
         (*module),
         IntegerAttr::get(IntegerType::get(&context, 32), effectivePulseError));
   }
   if (!globalPulseStyle.empty())
-    obelisk::sim::set<obelisk::sim::metadata::PulseOnDetect>(
+    talos::sim::set<talos::sim::metadata::PulseOnDetect>(
         (*module), BoolAttr::get(&context, globalPulseStyle == "ondetect"));
   if (!globalCancelledPulses.empty())
-    obelisk::sim::set<obelisk::sim::metadata::PulseShowCancelled>(
+    talos::sim::set<talos::sim::metadata::PulseShowCancelled>(
         (*module), BoolAttr::get(&context, globalCancelledPulses == "show"));
   if (const Arg *coverage = args.getLastArg(OPT_coverage, OPT_coverage_EQ)) {
     SmallVector<Attribute> metrics;
@@ -1429,38 +1429,38 @@ static int executeCompilation(
       for (StringRef metric : selected)
         metrics.push_back(StringAttr::get(&context, metric));
     }
-    obelisk::cov::set<obelisk::cov::Metrics>((*module),
+    talos::cov::set<talos::cov::Metrics>((*module),
                                              ArrayAttr::get(&context, metrics));
   }
   if (!coverageConfigContents.empty())
-    obelisk::cov::set<obelisk::cov::Config>(
+    talos::cov::set<talos::cov::Config>(
         (*module), StringAttr::get(&context, coverageConfigContents));
   SmallVector<Attribute> prefixMaps;
   for (StringRef mapping : args.getAllArgValues(OPT_coverage_prefix_map_EQ))
     prefixMaps.push_back(StringAttr::get(&context, mapping));
   if (!prefixMaps.empty())
-    obelisk::cov::set<obelisk::cov::PrefixMaps>(
+    talos::cov::set<talos::cov::PrefixMaps>(
         (*module), ArrayAttr::get(&context, prefixMaps));
 
   if (native) {
-    if (failed(obelisk::driver::configureTargetLayout(
+    if (failed(talos::driver::configureTargetLayout(
             *module, targetName == "wasm32"
-                         ? obelisk::driver::TargetKind::Wasm
-                         : obelisk::driver::TargetKind::Native)))
+                         ? talos::driver::TargetKind::Wasm
+                         : talos::driver::TargetKind::Native)))
       return 1;
-    obelisk::schedule::NativeSchedulerMode pipelineScheduler =
-        *obelisk::schedule::symbolizeNativeSchedulerMode(nativeScheduler);
-    if (pipelineScheduler == obelisk::schedule::NativeSchedulerMode::Auto) {
+    talos::schedule::NativeSchedulerMode pipelineScheduler =
+        *talos::schedule::symbolizeNativeSchedulerMode(nativeScheduler);
+    if (pipelineScheduler == talos::schedule::NativeSchedulerMode::Auto) {
       if (!args.hasArg(OPT_execution_tier_EQ))
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::NativeSchedulerAutoRequested>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::NativeSchedulerAutoRequested>(
             (*module), UnitAttr::get(&context));
       pipelineScheduler = executionTier == "bytecode"
-                              ? obelisk::schedule::NativeSchedulerMode::Generic
-                              : obelisk::schedule::NativeSchedulerMode::Eval;
+                              ? talos::schedule::NativeSchedulerMode::Generic
+                              : talos::schedule::NativeSchedulerMode::Eval;
     }
-    ::obelisk::schedule::set<::obelisk::schedule::Field::NativeScheduler>(
-        (*module), obelisk::schedule::NativeSchedulerModeAttr::get(
+    ::talos::schedule::set<::talos::schedule::Field::NativeScheduler>(
+        (*module), talos::schedule::NativeSchedulerModeAttr::get(
                        &context, pipelineScheduler));
   }
 
@@ -1468,7 +1468,7 @@ static int executeCompilation(
     PassManager passManager(&context);
     // The driver validates pipeline boundaries. Rechecking the complete IR
     // after every internal pass repeatedly walks large elaborated designs;
-    // obelisk-opt still verifies each pass when testing the transformations.
+    // talos-opt still verifies each pass when testing the transformations.
     passManager.enableVerifier(args.hasArg(OPT_mlir_verify_each));
     if (args.hasArg(OPT_mlir_timing)) {
       passManager.enableTiming();
@@ -1476,12 +1476,12 @@ static int executeCompilation(
       // marker. Body fusion is the one Tier-1 path that does not depend on
       // whole-design admission, so its planning decisions must be reportable
       // under the existing diagnostic flag rather than only its pass timing.
-      obelisk::native::mark<obelisk::native::DebugTiming>(*module);
+      talos::native::mark<talos::native::DebugTiming>(*module);
     }
-    obelisk::driver::addPassIRDump(passManager, irDump);
-    passManager.addPass(obelisk::createConvertSlangToObeliskPass());
+    talos::driver::addPassIRDump(passManager, irDump);
+    passManager.addPass(talos::createConvertSlangToTalosPass());
     if (emitSim || emitSchedule || native)
-      obelisk::buildObeliskToSimulationPipeline(
+      talos::buildTalosToSimulationPipeline(
           passManager, requestedWorkers.value_or(1), vpiMode, optLevel,
           // Exact eval selection needs the verified static-state/NBA and
           // superstep plans even at O0. Auto otherwise follows optimization
@@ -1496,9 +1496,9 @@ static int executeCompilation(
   }
 
   bool hasDPI = false;
-  (*module)->walk([&](obelisk::sim::SimCodeUnitDeclOp declaration) {
-    hasDPI |= obelisk::dpi::has<obelisk::dpi::Import>(declaration) ||
-              obelisk::dpi::has<obelisk::dpi::Export>(declaration);
+  (*module)->walk([&](talos::sim::SimCodeUnitDeclOp declaration) {
+    hasDPI |= talos::dpi::has<talos::dpi::Import>(declaration) ||
+              talos::dpi::has<talos::dpi::Export>(declaration);
   });
   if (native && targetName == "wasm32") {
     if (hasDPI) {
@@ -1509,11 +1509,11 @@ static int executeCompilation(
   }
 
   if (native) {
-    obelisk::driver::NativeOutputOptions nativeOptions;
-    nativeOptions.kind = emitObject ? obelisk::driver::NativeOutputKind::Object
+    talos::driver::NativeOutputOptions nativeOptions;
+    nativeOptions.kind = emitObject ? talos::driver::NativeOutputKind::Object
                          : emitLLVM
-                             ? obelisk::driver::NativeOutputKind::LLVMIR
-                             : obelisk::driver::NativeOutputKind::Executable;
+                             ? talos::driver::NativeOutputKind::LLVMIR
+                             : talos::driver::NativeOutputKind::Executable;
     nativeOptions.outputPath = args.getLastArgValue(OPT_o, emitObject ? "a.o"
                                                            : emitLLVM ? "-"
                                                                       : "a.out")
@@ -1540,9 +1540,9 @@ static int executeCompilation(
     nativeOptions.irDump = irDump;
     nativeOptions.compileThreads = resolvedCompilerThreads;
     nativeOptions.target = targetName == "wasm32"
-                               ? obelisk::driver::TargetKind::Wasm
-                               : obelisk::driver::TargetKind::Native;
-    return succeeded(obelisk::driver::emitTargetOutput(*module, nativeOptions))
+                               ? talos::driver::TargetKind::Wasm
+                               : talos::driver::TargetKind::Native;
+    return succeeded(talos::driver::emitTargetOutput(*module, nativeOptions))
                ? 0
                : 1;
   }
@@ -1568,8 +1568,8 @@ static int executeCompilation(
       return 1;
     }
     llvm::json::Array graphs;
-    for (obelisk::sim::SimDesignOp design :
-         module->getBody()->getOps<obelisk::sim::SimDesignOp>()) {
+    for (talos::sim::SimDesignOp design :
+         module->getBody()->getOps<talos::sim::SimDesignOp>()) {
       auto graph = design.getComputeGraphAttr();
       if (!graph) {
         emitDriverError("simulation lowering produced no compute graph");
@@ -1577,7 +1577,7 @@ static int executeCompilation(
       }
       if (format == "json") {
         SymbolTable symbols(design);
-        graphs.push_back(obelisk::schedule::exportGraph(
+        graphs.push_back(talos::schedule::exportGraph(
             graph, design.getSymName(), [&](auto fragment) {
               return scheduleSourceLocation(symbols, fragment);
             }));
@@ -1615,12 +1615,12 @@ static int executeCompilation(
 
 } // namespace
 
-int obelisk::driver::runObeliskDriver(
+int talos::driver::runTalosDriver(
     int argc, char **argv,
     const DriverConfiguration &config) {
   driverExecutablePath = sys::fs::getMainExecutable(
-      argv[0], reinterpret_cast<void *>(&runObeliskDriver));
-  const OptTable &optionTable = obelisk::driver::getDriverOptTable();
+      argv[0], reinterpret_cast<void *>(&runTalosDriver));
+  const OptTable &optionTable = talos::driver::getDriverOptTable();
 
   BumpPtrAllocator allocator;
   StringSaver saver(allocator);
@@ -1642,24 +1642,24 @@ int obelisk::driver::runObeliskDriver(
     return 1;
 
   if (args.hasArg(OPT_help) || args.hasArg(OPT_help_hidden)) {
-    optionTable.printHelp(outs(), "obelisk [options] <input files>",
-                          "Obelisk ahead-of-time SystemVerilog compiler",
+    optionTable.printHelp(outs(), "talos [options] <input files>",
+                          "Talos ahead-of-time SystemVerilog compiler",
                           args.hasArg(OPT_help_hidden));
     return 0;
   }
   if (args.hasArg(OPT_version)) {
-    outs() << "obelisk version " << OBELISK_VERSION_STRING << '\n'
-           << obelisk::frontend::getSlangVersion() << '\n';
+    outs() << "talos version " << TALOS_VERSION_STRING << '\n'
+           << talos::frontend::getSlangVersion() << '\n';
     return 0;
   }
   if (args.hasArg(OPT_print_resource_dir)) {
-    outs() << OBELISK_RESOURCE_DIR << '\n';
+    outs() << TALOS_RESOURCE_DIR << '\n';
     return 0;
   }
   if (args.hasArg(OPT_print_host_c_runtime)) {
-#if OBELISK_HAS_HOST_C_RUNTIME
-    FailureOr<obelisk::driver::HostCRuntimeInputs> inputs =
-        obelisk::driver::discoverHostCRuntime(OBELISK_NATIVE_TARGET_TRIPLE,
+#if TALOS_HAS_HOST_C_RUNTIME
+    FailureOr<talos::driver::HostCRuntimeInputs> inputs =
+        talos::driver::discoverHostCRuntime(TALOS_NATIVE_TARGET_TRIPLE,
                                               driverExecutablePath);
     if (failed(inputs))
       return 1;

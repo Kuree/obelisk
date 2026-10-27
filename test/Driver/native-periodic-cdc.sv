@@ -1,9 +1,9 @@
-// RUN: obelisk -O2 --native-scheduler=auto %s -o %t.auto
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.auto.diag
+// RUN: talos -O2 --native-scheduler=auto %s -o %t.auto
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.auto.diag
 // RUN: FileCheck %s < %t.auto.out
 // RUN: FileCheck %s --check-prefix=DIAG < %t.auto.diag
-// RUN: obelisk -O0 --native-scheduler=eval %s -o %t.o0
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.o0 2> %t.o0.diag | diff -u %t.auto.out -
+// RUN: talos -O0 --native-scheduler=eval %s -o %t.o0
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.o0 2> %t.o0.diag | diff -u %t.auto.out -
 // RUN: FileCheck %s --check-prefix=DIAG < %t.o0.diag
 
 module cdc_sink(input bit fast, slow, sparse, input logic [7:0] data);
@@ -78,7 +78,7 @@ endmodule
 // CHECK: recovered data=a5/a5 sparse=xx
 // CHECK: counts=53/35/6 either=53
 // CHECK: cdc=53/52/50 ack=49/49/47 levels=49249249 history=a3d6a427 data=a5/a5/a5
-// DIAG: obelisk-signal-diagnostics
+// DIAG: talos-signal-diagnostics
 // DIAG-SAME: aot_fallbacks=0
 // DIAG-SAME: periodic_preparations={{[1-9][0-9]*}}
 // DIAG-SAME: periodic_clocks_high_water=3

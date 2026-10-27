@@ -1,14 +1,14 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-disable-threading > %t.serial
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines > %t.threaded
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines --mlir-disable-threading > %t.serial
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines > %t.threaded
 // RUN: diff -u %t.serial %t.threaded
 // RUN: FileCheck %s --check-prefix=ABSENT < %t.serial
-// ABSENT-NOT: llvm.func @input_copy.__obelisk_group_body
-// ABSENT-NOT: llvm.func @output_copy.__obelisk_group_body
-// ABSENT-NOT: llvm.func @continuous_copy.__obelisk_group_body
-// ABSENT-NOT: llvm.func @input_copy.__obelisk_table_body
-// ABSENT-NOT: llvm.func @output_copy.__obelisk_table_body
-// ABSENT-NOT: llvm.func @continuous_copy.__obelisk_table_body
+// ABSENT-NOT: llvm.func @input_copy.__talos_group_body
+// ABSENT-NOT: llvm.func @output_copy.__talos_group_body
+// ABSENT-NOT: llvm.func @continuous_copy.__talos_group_body
+// ABSENT-NOT: llvm.func @input_copy.__talos_table_body
+// ABSENT-NOT: llvm.func @output_copy.__talos_table_body
+// ABSENT-NOT: llvm.func @continuous_copy.__talos_table_body
 
 // Admission retains the exact source store and wait. Actor and continuation
 // descriptors survive. Schedule-selected transfer implementations share a kernel. Distinct
@@ -125,24 +125,24 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.mlir.global internal constant @output_copy.__obelisk_table.plan
-// CHECK: llvm.mlir.addressof @__obelisk_transfer_kernel_0.impl.__obelisk_table_body
-// CHECK-LABEL: llvm.mlir.global internal constant @output_copy.__obelisk_table.waits
+// CHECK-LABEL: llvm.mlir.global internal constant @output_copy.__talos_table.plan
+// CHECK: llvm.mlir.addressof @__talos_transfer_kernel_0.impl.__talos_table_body
+// CHECK-LABEL: llvm.mlir.global internal constant @output_copy.__talos_table.waits
 // CHECK: llvm.mlir.constant(7 : i32)
-// CHECK-LABEL: llvm.mlir.global internal constant @input_copy.__obelisk_table.plan
-// CHECK: llvm.mlir.addressof @__obelisk_transfer_kernel_0.impl.__obelisk_table_body
-// CHECK-LABEL: llvm.mlir.global internal constant @continuous_copy.__obelisk_table.plan
-// CHECK: llvm.mlir.addressof @__obelisk_transfer_kernel_0.impl.__obelisk_table_body
-// CHECK-LABEL: llvm.func @wrong_watch.__obelisk_table_body
+// CHECK-LABEL: llvm.mlir.global internal constant @input_copy.__talos_table.plan
+// CHECK: llvm.mlir.addressof @__talos_transfer_kernel_0.impl.__talos_table_body
+// CHECK-LABEL: llvm.mlir.global internal constant @continuous_copy.__talos_table.plan
+// CHECK: llvm.mlir.addressof @__talos_transfer_kernel_0.impl.__talos_table_body
+// CHECK-LABEL: llvm.func @wrong_watch.__talos_table_body
 // CHECK-NOT: llvm.intr.coro
-// CHECK-LABEL: llvm.func @side_effect.__obelisk_table_body
+// CHECK-LABEL: llvm.func @side_effect.__talos_table_body
 // CHECK-NOT: llvm.intr.coro
-// CHECK-LABEL: llvm.func @conversion.__obelisk_table_body
+// CHECK-LABEL: llvm.func @conversion.__talos_table_body
 // CHECK-NOT: llvm.intr.coro
-// CHECK-LABEL: llvm.func @initial_copy.__obelisk_table_body
+// CHECK-LABEL: llvm.func @initial_copy.__talos_table_body
 // CHECK-NOT: llvm.intr.coro
-// CHECK-LABEL: llvm.func @carried.__obelisk_coro_ramp
+// CHECK-LABEL: llvm.func @carried.__talos_coro_ramp
 // CHECK: llvm.intr.coro.begin
-// CHECK-LABEL: llvm.func @__obelisk_transfer_kernel_0.impl.__obelisk_table_body
+// CHECK-LABEL: llvm.func @__talos_transfer_kernel_0.impl.__talos_table_body
 // CHECK-SAME: passthrough = ["noinline"]
 // CHECK-NOT: llvm.intr.coro

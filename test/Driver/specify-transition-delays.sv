@@ -1,8 +1,8 @@
-// RUN: obelisk -O3 %s -o %t.o3.native
+// RUN: talos -O3 %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode | FileCheck %s
-// RUN: obelisk -emit-slang %s -o - | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-slang %s -o - | FileCheck %s --check-prefix=SLANG
 
 `timescale 1ns / 1ns
 
@@ -141,4 +141,4 @@ endmodule
 // CHECK: PASSED
 // SLANG-DAG: timing_delay_count = 12 : i64
 // SLANG-DAG: timing_delay_fs = array<i64: 1000000, 2000000, 3000000, 4000000, 5000000, 6000000, 7000000, 8000000, 9000000, 10000000, 11000000, 12000000>
-// SLANG-DAG: obelisk.simple_timing_path
+// SLANG-DAG: talos.simple_timing_path

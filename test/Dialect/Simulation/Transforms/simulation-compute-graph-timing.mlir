@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
 
 // CHECK-DAG: simulation.suspend.delay {{.*}}timing = #schedule.timing_site<id = 0, kind = deadline_slot>
 // CHECK-DAG: simulation.suspend.delay {{.*}}timing = #schedule.timing_site<id = 1, kind = calendar>

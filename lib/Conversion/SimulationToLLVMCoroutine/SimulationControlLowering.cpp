@@ -2,8 +2,8 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include <type_traits>
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -12,14 +12,14 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 Value loadCurrentRuntimeContext(ConversionPatternRewriter &rewriter,
                                 Location location) {
   Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
   Value address = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                            "__obelisk_current_context");
+                                            "__talos_current_context");
   return LLVM::LoadOp::create(rewriter, location, pointer, address, 8);
 }
 
@@ -28,7 +28,7 @@ void reportRuntimeControlStatus(ConversionPatternRewriter &rewriter,
                                 Value status) {
   LLVM::CallOp::create(
       rewriter, location, TypeRange{},
-      SymbolRefAttr::get(rewriter.getContext(), "obelisk_rt_v1_scheduler_fail"),
+      SymbolRefAttr::get(rewriter.getContext(), "talos_rt_v1_scheduler_fail"),
       ValueRange{context, status});
 }
 
@@ -160,7 +160,7 @@ public:
     auto call = LLVM::CallOp::create(
         rewriter, operation.getLoc(), TypeRange{rewriter.getI64Type()},
         SymbolRefAttr::get(rewriter.getContext(),
-                           "obelisk_rt_v1_process_current"),
+                           "talos_rt_v1_process_current"),
         ValueRange{context});
     rewriter.replaceOp(operation, call.getResults());
     return success();
@@ -205,7 +205,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_process_status"),
+                               "talos_rt_v1_process_status"),
             ValueRange{context, adaptor.getProcess().front(), outState})
             .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
@@ -237,7 +237,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_process_random_get"),
+                               "talos_rt_v1_process_random_get"),
             ValueRange{context, adaptor.getProcess().front(), outState})
             .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
@@ -273,7 +273,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, location, TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_process_random_set"),
+                                          "talos_rt_v1_process_random_set"),
                        ValueRange{context, adaptor.getProcess().front(), state})
                        .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
@@ -296,7 +296,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_scheduler_disable_children"),
+                               "talos_rt_v1_scheduler_disable_children"),
             ValueRange{context})
             .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
@@ -341,38 +341,38 @@ public:
       if (!id)
         return rewriter.notifyMatchFailure(operation,
                                            "missing verified VPI call ID");
-      function = "obelisk_rt_v1_vpi_call_prepare";
+      function = "talos_rt_v1_vpi_call_prepare";
       arguments.push_back(integer(id.getInt()));
     } else if constexpr (std::is_same_v<Op, sim::SimVPIFrameEnterForeignOp>) {
-      function = "obelisk_rt_v1_vpi_frame_enter_prepared";
+      function = "talos_rt_v1_vpi_frame_enter_prepared";
       arguments.push_back(integer(operation.getCodeUnitId()));
       arguments.push_back(integer(0, true));
     } else if constexpr (std::is_same_v<Op, sim::SimVPIResolutionPrepareOp>) {
-      function = "obelisk_rt_v1_vpi_resolution_prepare";
+      function = "talos_rt_v1_vpi_resolution_prepare";
       arguments.push_back(integer(operation.getNetId()));
     } else if constexpr (std::is_same_v<Op, sim::SimVPIFrameEnterPreparedOp>) {
-      function = "obelisk_rt_v1_vpi_frame_enter_prepared";
+      function = "talos_rt_v1_vpi_frame_enter_prepared";
       arguments.push_back(integer(operation.getCodeUnitId()));
       arguments.push_back(integer(operation.getIsTask(), true));
     } else if constexpr (std::is_same_v<Op, sim::SimVPIFrameEnterOp>) {
-      function = "obelisk_rt_v1_vpi_frame_enter";
+      function = "talos_rt_v1_vpi_frame_enter";
       arguments.push_back(integer(operation.getCodeUnitId()));
       arguments.push_back(integer(operation.getStatementId() ? 2 : 0, true));
       arguments.push_back(integer(
           operation.getStatementId().value_or(operation.getCodeUnitId())));
     } else if constexpr (std::is_same_v<Op, sim::SimVPIFrameCheckpointOp>) {
-      function = "obelisk_rt_v1_vpi_frame_checkpoint";
+      function = "talos_rt_v1_vpi_frame_checkpoint";
       arguments.push_back(integer(operation.getStatementId()));
     } else if constexpr (std::is_same_v<Op, sim::SimVPIFrameLeaveOp>) {
       if (adaptor.getActivation().size() != 1)
         return failure();
-      function = "obelisk_rt_v1_vpi_frame_leave";
+      function = "talos_rt_v1_vpi_frame_leave";
       arguments.push_back(adaptor.getActivation().front());
       // Ownership planning has already consumed the observation endpoints.
     } else if constexpr (std::is_same_v<Op, sim::SimVPICallFinishOp>) {
       if (adaptor.getTicket().size() != 1)
         return failure();
-      function = "obelisk_rt_v1_vpi_call_finish";
+      function = "talos_rt_v1_vpi_call_finish";
       arguments.push_back(adaptor.getTicket().front());
     }
     Value output;
@@ -413,7 +413,7 @@ public:
     Value status =
         LLVM::CallOp::create(rewriter, location, TypeRange{i32},
                              SymbolRefAttr::get(rewriter.getContext(),
-                                                "obelisk_rt_v1_control_enter"),
+                                                "talos_rt_v1_control_enter"),
                              ValueRange{context,
                                         llvmConstant(rewriter, location, i64,
                                                      operation.getTargetId()),
@@ -441,7 +441,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, location, TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_control_leave"),
+                                          "talos_rt_v1_control_leave"),
                        ValueRange{context, adaptor.getControl().front()})
                        .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
@@ -468,7 +468,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_control_disable"),
+                               "talos_rt_v1_control_disable"),
             ValueRange{context,
                        llvmConstant(rewriter, location, rewriter.getI64Type(),
                                     operation.getTargetId()),
@@ -503,7 +503,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_control_disable_selected"),
+                               "talos_rt_v1_control_disable_selected"),
             ValueRange{
                 context,
                 llvmConstant(rewriter, location, i64, operation.getTargetId()),
@@ -546,7 +546,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_control_escape_pending"),
+                               "talos_rt_v1_control_escape_pending"),
             ValueRange{context})
             .getResult();
     rewriter.replaceOpWithNewOp<arith::TruncIOp>(operation,
@@ -599,10 +599,10 @@ public:
     SmallVector<Value> arguments{context, llvmConstant(rewriter, location,
                                                        rewriter.getI64Type(),
                                                        operation.getId())};
-    StringRef runtimeFunction = "obelisk_rt_v1_deferred_enqueue";
+    StringRef runtimeFunction = "talos_rt_v1_deferred_enqueue";
     if (auto assertionID =
             sim::get<sim::metadata::AssertionControlTargetId>(operation)) {
-      runtimeFunction = "obelisk_rt_v1_deferred_enqueue_for_assertion";
+      runtimeFunction = "talos_rt_v1_deferred_enqueue_for_assertion";
       arguments.push_back(llvmConstant(rewriter, location,
                                        rewriter.getI64Type(),
                                        assertionID.getValue().getZExtValue()));
@@ -627,7 +627,7 @@ public:
     Value current = LLVM::CallOp::create(
                         rewriter, location, TypeRange{rewriter.getI32Type()},
                         SymbolRefAttr::get(rewriter.getContext(),
-                                           "obelisk_rt_v1_deferred_mature"),
+                                           "talos_rt_v1_deferred_mature"),
                         ValueRange{context, operation.getTicket()})
                         .getResult();
     rewriter.replaceOpWithNewOp<arith::TruncIOp>(operation,
@@ -650,7 +650,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_assertion_control"),
+                               "talos_rt_v1_assertion_control"),
             ValueRange{
                 context,
                 llvmConstant(rewriter, location, rewriter.getI32Type(),
@@ -678,7 +678,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_assertion_control"),
+                               "talos_rt_v1_assertion_control"),
             ValueRange{context, operation.getAction(),
                        llvmConstant(rewriter, location, rewriter.getI64Type(),
                                     operation.getAssertionId())})
@@ -703,7 +703,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_assertion_enabled"),
+                               "talos_rt_v1_assertion_enabled"),
             ValueRange{context,
                        llvmConstant(rewriter, location, rewriter.getI64Type(),
                                     operation.getAssertionId())})
@@ -728,7 +728,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_assertion_action_state"),
+                               "talos_rt_v1_assertion_action_state"),
             ValueRange{context,
                        llvmConstant(rewriter, location, rewriter.getI64Type(),
                                     operation.getAssertionId())})
@@ -752,7 +752,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI64Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_assertion_kill_epoch"),
+                               "talos_rt_v1_assertion_kill_epoch"),
             ValueRange{context,
                        llvmConstant(rewriter, location, rewriter.getI64Type(),
                                     operation.getAssertionId())})
@@ -778,7 +778,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_monitor_register_logical"),
+                               "talos_rt_v1_monitor_register_logical"),
             ValueRange{context, adaptor.getProcess().front()})
             .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
@@ -801,7 +801,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_monitor_control"),
+                               "talos_rt_v1_monitor_control"),
             ValueRange{context,
                        llvmConstant(rewriter, location, rewriter.getI32Type(),
                                     operation.getEnabled() ? 1 : 0)})
@@ -825,7 +825,7 @@ public:
     Value current = LLVM::CallOp::create(
                         rewriter, location, TypeRange{rewriter.getI32Type()},
                         SymbolRefAttr::get(rewriter.getContext(),
-                                           "obelisk_rt_v1_monitor_current"),
+                                           "talos_rt_v1_monitor_current"),
                         ValueRange{context})
                         .getResult();
     rewriter.replaceOpWithNewOp<arith::TruncIOp>(operation,
@@ -860,13 +860,13 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
       ProcessSetRandomStateConversion, MonitorRegisterConversion,
       MonitorControlConversion, MonitorCurrentConversion>(converter, context);
   patterns.add<OnceConversion<sim::SimStaticOnceOp>>(
-      converter, context, "obelisk_rt_v1_static_once");
+      converter, context, "talos_rt_v1_static_once");
   patterns.add<OnceConversion<sim::SimDeferredOnceOp>>(
-      converter, context, "obelisk_rt_v1_deferred_once");
+      converter, context, "talos_rt_v1_deferred_once");
   patterns.add<DeferredEnqueueConversion, DeferredMatureConversion,
                AssertionControlConversion, AssertionControlDynamicConversion,
                AssertionEnabledConversion, AssertionActionStateConversion,
                AssertionKillEpochConversion>(converter, context);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

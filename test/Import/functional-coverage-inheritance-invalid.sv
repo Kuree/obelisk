@@ -1,4 +1,4 @@
-// RUN: not %obelisk --std=1800-2023 -emit-obelisk %s 2>&1 \
+// RUN: not %talos --std=1800-2023 -emit-talos %s 2>&1 \
 // RUN:   | FileCheck %s
 
 class duplicate_cross_owner;

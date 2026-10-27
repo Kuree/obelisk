@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
-!logic4 = !obelisk.integral<4, false, true, 3 : 0, logic>
+!logic4 = !talos.integral<4, false, true, 3 : 0, logic>
 
 module {
   simulation.design @partial_specify_lowering {
@@ -58,13 +58,13 @@ module {
                       #simulation.argument_binding<path = "top.source", argument = 2, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.snapshot", argument = 3, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.condition", argument = 4, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {
+      talos.sv.expression.assignment attributes {
           assignment_kind = 0 : i32, node_id = 1 : i64,
           semantic_type = !logic4} {
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 2 : i64, referenced_path = "top.out",
             referenced_symbol = @out, semantic_type = !logic4} {}
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 3 : i64, referenced_path = "top.source",
             referenced_symbol = @source, semantic_type = !logic4} {}
       }

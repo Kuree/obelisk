@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines 2>&1 | FileCheck %s
+// RUN: not talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines 2>&1 | FileCheck %s
 // A mixed-owner PHI must keep its existing ownership diagnostic; choosing a
 // single allocation's stack address would read the wrong object.
 // CHECK: automatic reference block argument merges distinct ownership origins

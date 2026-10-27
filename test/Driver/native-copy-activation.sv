@@ -1,9 +1,9 @@
-// RUN: obelisk -O0 --native-scheduler=generic --mlir-timing %s -o %t.generic 2> %t.plan
+// RUN: talos -O0 --native-scheduler=generic --mlir-timing %s -o %t.generic 2> %t.plan
 // RUN: FileCheck %s --check-prefix=PLAN < %t.plan
 // RUN: %t.generic | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
+// RUN: talos -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: %t.auto | FileCheck %s
-// RUN: obelisk --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 
 module copy_child(input var logic [64:0] source,
@@ -61,4 +61,4 @@ module top;
 endmodule
 
 // CHECK: copy activation passed
-// PLAN: obelisk scheduled transfer kernels: {{[1-9][0-9]*}} for {{[1-9][0-9]*}} activations
+// PLAN: talos scheduled transfer kernels: {{[1-9][0-9]*}} for {{[1-9][0-9]*}} activations

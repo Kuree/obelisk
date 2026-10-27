@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
-// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
+// PLAN-LABEL: llvm.func @__talos_eval_dispatch_v1(
 // Even a one-operation inlining budget retains the certified shared sweep.
-// PLAN: llvm.call @__obelisk_eval_ranked_group_
+// PLAN: llvm.call @__talos_eval_ranked_group_
 // PLAN-NOT: schedule.eval.materialized_group_calls
 // PLAN-NOT: schedule.eval.ssa_ready_words
 

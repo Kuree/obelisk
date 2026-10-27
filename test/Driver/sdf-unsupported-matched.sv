@@ -1,4 +1,4 @@
-// RUN: cd %S && obelisk -emit-slang %s -o %t.mlir 2>&1 | FileCheck %s
+// RUN: cd %S && talos -emit-slang %s -o %t.mlir 2>&1 | FileCheck %s
 
 module sdf_unsupported_cell(input wire source, input wire destination);
 endmodule

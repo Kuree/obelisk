@@ -1,9 +1,9 @@
-// RUN: obelisk -O3 %s -o %t.native
+// RUN: talos -O3 %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
-// RUN: not obelisk -DAUTOMATIC %s -o %t.automatic 2>&1 | FileCheck %s --check-prefix=AUTOMATIC
+// RUN: not talos -DAUTOMATIC %s -o %t.automatic 2>&1 | FileCheck %s --check-prefix=AUTOMATIC
 
 module force_alias_leaf(inout wire p);
 endmodule

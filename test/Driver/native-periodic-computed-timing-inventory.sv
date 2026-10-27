@@ -1,11 +1,11 @@
-// RUN: obelisk -O2 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O2 --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O2 --native-scheduler=eval %s -o %t.eval
+// RUN: talos -O2 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.eval > %t.eval.out
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.eval.out
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > /dev/null 2> %t.diag
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > /dev/null 2> %t.diag
 // RUN: FileCheck %s --check-prefix=DIAG \
-// RUN:   --implicit-check-not=obelisk-periodic-reject < %t.diag
+// RUN:   --implicit-check-not=talos-periodic-reject < %t.diag
 
 module native_periodic_computed_timing_inventory;
   bit clock = 0;
@@ -32,6 +32,6 @@ module native_periodic_computed_timing_inventory;
   end
 endmodule
 
-// DIAG: obelisk-signal-diagnostics
+// DIAG: talos-signal-diagnostics
 // DIAG-SAME: aot_node_executions={{[1-9][0-9]*}}
 // DIAG-SAME: aot_fallbacks=0

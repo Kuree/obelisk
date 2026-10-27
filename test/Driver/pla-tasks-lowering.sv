@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-sim -O0 --vpi=off %s | FileCheck %s
+// RUN: talos -emit-sim -O0 --vpi=off %s | FileCheck %s
 
 // Keep the implementation proportional to PLA outputs, not input bits. A
 // 512-input product row remains one vector operation and one reduction.

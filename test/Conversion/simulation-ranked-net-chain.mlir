@@ -1,41 +1,41 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir 2> %t.trace
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 // RUN: FileCheck %s --check-prefix=GROUP < %t.mlir
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.driver clone set={id = 2 : i64}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.net set={propagation_delays = array<i64: 1, 1, 1>}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' 2> %t.vpi.trace | FileCheck %s --check-prefix=VPI --implicit-check-not=__obelisk_eval_ranked_group_
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.driver set={strength0 = 3 : i32, strength1 = 3 : i32}},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' 2> %t.read.trace | FileCheck %s --check-prefix=GROUP
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-edit-attributes{has=test.driver clone set={id = 2 : i64}},simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-edit-attributes{has=test.net set={propagation_delays = array<i64: 1, 1, 1>}},simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=full},convert-talos-sim-processes-to-llvm-coroutines)' 2> %t.vpi.trace | FileCheck %s --check-prefix=VPI --implicit-check-not=__talos_eval_ranked_group_
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-edit-attributes{has=test.driver set={strength0 = 3 : i32, strength1 = 3 : i32}},simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BOUNDARY
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph{vpi=read},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=read},convert-talos-sim-processes-to-llvm-coroutines)' 2> %t.read.trace | FileCheck %s --check-prefix=GROUP
 
 // IEEE 1800-2023 4.5-4.7, 4.9.1, 6.6.1: a chain of isolated wires with
 // single, strong, full-width, undelayed drivers can share an Active sweep.
 // Each source keeps its sensitivity and exact publication; X and Z remain
 // distinct (6.3.1). The paired runtime test checks both O0 and O3.
-// TRACE: obelisk ranked groups: candidates=3 groups=1 segments=0 members=3
-// GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
+// TRACE: talos ranked groups: candidates=3 groups=1 segments=0 members=3
+// GROUP-LABEL: llvm.func @__talos_eval_ranked_group_0(
 // GROUP-SAME: schedule.eval.predicated_dataflow
 // GROUP-SAME: schedule.eval.ranked_members = array<i32: 0, 1, 2>
 // One input-group certificate gate; the known body has no per-drive probe,
 // branch, or unknown-plane publication helper. Driver contributions remain
 // canonical for force/release (10.6.2); the certificate covers the net planes.
-// GROUP: llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
+// GROUP: llvm.mlir.addressof @__talos_eval_promotion_pending_mask_v1
 // GROUP: llvm.cond_br
 // GROUP-NOT: llvm.call
 // GROUP-NOT: llvm.cond_br
 // GROUP-NOT: llvm.br
 // GROUP-NOT: llvm.switch
-// GROUP-NOT: @__obelisk_state_unknown
+// GROUP-NOT: @__talos_state_unknown
 // GROUP: llvm.return
-// GROUP: llvm.call @__obelisk_eval_ranked_group_0.fallback
-// GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
+// GROUP: llvm.call @__talos_eval_ranked_group_0.fallback
+// GROUP-LABEL: llvm.func @__talos_eval_ranked_group_0.fallback(
 // GROUP: llvm.return
 // Multiple drivers require resolution; net delays schedule later publication
 // (IEEE 1800-2023 6.6.1, 10.3.3, 28.16). Neither is a plain Active wire copy.
 // Weak drivers retain the strength-aware boundary (6.3.2, 28.11).
-// BOUNDARY: obelisk eval boundary: owner={{[0-9]+}} island={{[0-9]+}} body=source.__obelisk_eval_body_0
-// BOUNDARY: obelisk eval boundary: owner={{[0-9]+}} island={{[0-9]+}} body=copy.__obelisk_eval_body_0
+// BOUNDARY: talos eval boundary: owner={{[0-9]+}} island={{[0-9]+}} body=source.__talos_eval_body_0
+// BOUNDARY: talos eval boundary: owner={{[0-9]+}} island={{[0-9]+}} body=copy.__talos_eval_body_0
 // Writable VPI retains individual override-aware entries (10.6.2, 38.34).
-// VPI: llvm.func @__obelisk_eval_dispatch_v1(
+// VPI: llvm.func @__talos_eval_dispatch_v1(
 
 !byte = !simulation.logic<8>
 !ref = !simulation.ref<!byte>

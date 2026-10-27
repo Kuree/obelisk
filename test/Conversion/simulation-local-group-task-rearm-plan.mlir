@@ -1,13 +1,13 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // A candidate plan supplied directly (the wait fragments are 1 and 4) must
 // still pass materialization's independent rearm proof. The two clocked
 // actors of simulation-local-group-task-runtime.mlir accept it.
 // CHECK-LABEL: simulation.design @accepted
-// CHECK: simulation.spawn @__obelisk_fused_
+// CHECK: simulation.spawn @__talos_fused_
 // CHECK-NOT: simulation.func private @a(
 // CHECK-NOT: simulation.func private @b(
-// CHECK: simulation.func private @__obelisk_fused_
+// CHECK: simulation.func private @__talos_fused_
 // CHECK-SAME: schedule.native.region_body
 
 !ref = !simulation.ref<i32>
@@ -60,12 +60,12 @@ module attributes {schedule.native_scheduler = 1 : i32} {
 
 // Actors that write their own clock keep their original form.
 // CHECK-LABEL: simulation.design @clock_write
-// CHECK-NOT: __obelisk_fused_
+// CHECK-NOT: __talos_fused_
 // CHECK: simulation.func private @a(
 // CHECK: arith.addi
 // CHECK: simulation.func private @b(
 // CHECK: arith.addi
-// CHECK-NOT: __obelisk_fused_
+// CHECK-NOT: __talos_fused_
 
 !ref = !simulation.ref<i32>
 !clockref = !simulation.ref<i1>

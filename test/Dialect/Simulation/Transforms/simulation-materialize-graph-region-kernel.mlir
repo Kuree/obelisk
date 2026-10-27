@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion),encode-obelisk-sim-to-bytecode{vpi=off},test-obelisk-print-bytecode)' \
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion),encode-talos-sim-to-bytecode{vpi=off},test-talos-print-bytecode)' \
 // RUN:   -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
@@ -81,8 +81,8 @@ module attributes {
   }
 }
 
-// CHECK: simulation.spawn @__obelisk_region_kernel_
-// CHECK: simulation.func private @__obelisk_region_kernel_
+// CHECK: simulation.spawn @__talos_region_kernel_
+// CHECK: simulation.func private @__talos_region_kernel_
 // CHECK-SAME: entry_kind = 7 : i32
 // CHECK: ^bb{{[0-9]+}}(%[[INITIAL:.*]]: i1, %[[PREV0:.*]]: !simulation.logic<1>, %[[PREV1:.*]]: !simulation.logic<1>):
 // CHECK: simulation.logic.compare case_eq

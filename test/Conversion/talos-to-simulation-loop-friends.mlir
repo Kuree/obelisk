@@ -1,0 +1,107 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+
+module {
+  talos.sv.symbol.definition @s0.simulation_loop_friends attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_loop_friends", name = "simulation_loop_friends", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.simulation_loop_friends attributes {hierarchical_name = "simulation_loop_friends", is_uninstantiated = false, name = "simulation_loop_friends", node_id = 3 : i64, referenced_path = "simulation_loop_friends", referenced_symbol = @s0.simulation_loop_friends} {
+      talos.sv.symbol.instance_body @s4.simulation_loop_friends attributes {hierarchical_name = "simulation_loop_friends", name = "simulation_loop_friends", node_id = 4 : i64} {
+        talos.sv.symbol.variable @s5.indices_only attributes {hierarchical_name = "simulation_loop_friends.indices_only", lifetime = 1 : i32, name = "indices_only", node_id = 5 : i64, semantic_type = !talos.ranged_packed_array<2 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+        }
+        talos.sv.symbol.variable @s6.once attributes {hierarchical_name = "simulation_loop_friends.once", lifetime = 1 : i32, name = "once", node_id = 6 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+        }
+        talos.sv.symbol.variable @s7.count attributes {hierarchical_name = "simulation_loop_friends.count", lifetime = 1 : i32, name = "count", node_id = 7 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+        }
+        talos.sv.symbol.statement_block @s8 attributes {block_kind = 0 : i32, hierarchical_name = "simulation_loop_friends", node_id = 8 : i64} {
+          talos.sv.symbol.iterator @s9.index attributes {array_type = !talos.ranged_packed_array<2 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>, hierarchical_name = "simulation_loop_friends.index", index_method_name = "", is_const, name = "index", node_id = 9 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+          }
+        }
+        talos.sv.symbol.procedural_block @s10 attributes {hierarchical_name = "simulation_loop_friends", node_id = 10 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.block attributes {node_id = 11 : i64} {
+            talos.sv.statement.list attributes {node_id = 12 : i64} {
+              talos.sv.statement.expression_statement attributes {node_id = 13 : i64} {
+                talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 14 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                  talos.sv.expression.named_value attributes {node_id = 15 : i64, referenced_path = "simulation_loop_friends.once", referenced_symbol = @s1.$root::@s3.simulation_loop_friends::@s4.simulation_loop_friends::@s6.once, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                  }
+                  talos.sv.expression.conversion attributes {node_id = 16 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                    talos.sv.expression.integer_literal attributes {constant_value = "0", node_id = 17 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                }
+              }
+              talos.sv.statement.do_while_loop attributes {node_id = 18 : i64} {
+                talos.sv.expression.integer_literal attributes {constant_value = "0", node_id = 19 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                }
+                talos.sv.statement.expression_statement attributes {node_id = 20 : i64} {
+                  talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 21 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                    talos.sv.expression.named_value attributes {node_id = 22 : i64, referenced_path = "simulation_loop_friends.once", referenced_symbol = @s1.$root::@s3.simulation_loop_friends::@s4.simulation_loop_friends::@s6.once, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                    }
+                    talos.sv.expression.binary_op attributes {node_id = 23 : i64, operator_kind = 0 : i32, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                      talos.sv.expression.named_value attributes {node_id = 24 : i64, referenced_path = "simulation_loop_friends.once", referenced_symbol = @s1.$root::@s3.simulation_loop_friends::@s4.simulation_loop_friends::@s6.once, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                      }
+                      talos.sv.expression.conversion attributes {node_id = 25 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                        talos.sv.expression.integer_literal attributes {constant_value = "1", node_id = 26 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              talos.sv.statement.forever_loop attributes {node_id = 27 : i64} {
+                talos.sv.statement.block attributes {node_id = 28 : i64} {
+                  talos.sv.statement.list attributes {node_id = 29 : i64} {
+                    talos.sv.statement.expression_statement attributes {node_id = 30 : i64} {
+                      talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 31 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                        talos.sv.expression.named_value attributes {node_id = 32 : i64, referenced_path = "simulation_loop_friends.count", referenced_symbol = @s1.$root::@s3.simulation_loop_friends::@s4.simulation_loop_friends::@s7.count, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                        }
+                        talos.sv.expression.binary_op attributes {node_id = 33 : i64, operator_kind = 0 : i32, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                          talos.sv.expression.named_value attributes {node_id = 34 : i64, referenced_path = "simulation_loop_friends.count", referenced_symbol = @s1.$root::@s3.simulation_loop_friends::@s4.simulation_loop_friends::@s7.count, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                          }
+                          talos.sv.expression.conversion attributes {node_id = 35 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                            talos.sv.expression.integer_literal attributes {constant_value = "1", node_id = 36 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                            }
+                          }
+                        }
+                      }
+                    }
+                    talos.sv.statement.break attributes {node_id = 37 : i64} {
+                    }
+                  }
+                }
+              }
+              talos.sv.statement.block attributes {node_id = 38 : i64} {
+                talos.sv.statement.foreach_loop attributes {loop_dimensions = [{has_iterator = true, has_static_range = true, iterator_path = "simulation_loop_friends.index", iterator_symbol = @s1.$root::@s4.simulation_loop_friends::@s8::@s9.index, iterator_type = !talos.integral<32, true, false, 31 : 0, int>, left = 2 : i64, right = 0 : i64}], node_id = 39 : i64} {
+                  talos.sv.expression.named_value attributes {node_id = 40 : i64, referenced_path = "simulation_loop_friends.indices_only", referenced_symbol = @s1.$root::@s3.simulation_loop_friends::@s4.simulation_loop_friends::@s5.indices_only, semantic_type = !talos.ranged_packed_array<2 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                  }
+                  talos.sv.statement.expression_statement attributes {node_id = 41 : i64} {
+                    talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 42 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                      talos.sv.expression.named_value attributes {node_id = 43 : i64, referenced_path = "simulation_loop_friends.count", referenced_symbol = @s1.$root::@s3.simulation_loop_friends::@s4.simulation_loop_friends::@s7.count, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                      }
+                      talos.sv.expression.binary_op attributes {node_id = 44 : i64, operator_kind = 0 : i32, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                        talos.sv.expression.named_value attributes {node_id = 45 : i64, referenced_path = "simulation_loop_friends.count", referenced_symbol = @s1.$root::@s3.simulation_loop_friends::@s4.simulation_loop_friends::@s7.count, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                        }
+                        talos.sv.expression.conversion attributes {node_id = 46 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                          talos.sv.expression.named_value attributes {node_id = 47 : i64, referenced_path = "simulation_loop_friends.index", referenced_symbol = @s1.$root::@s3.simulation_loop_friends::@s4.simulation_loop_friends::@s8::@s9.index, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The fixed foreach collection is not a process capture or aggregate read.
+// CHECK-LABEL: simulation.func{{.*}}@unit_0(
+// CHECK-NOT: !simulation.ref<!simulation.packed_array
+// CHECK: arith.cmpi ult
+// CHECK: arith.remui
+// CHECK-NOT: talos.sv.

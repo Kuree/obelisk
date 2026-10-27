@@ -1,0 +1,89 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | \
+// RUN:   FileCheck %s --implicit-check-not=simulation.time.from_real
+
+module {
+  talos.sv.symbol.definition @s0.simulation_real_delay attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_real_delay", name = "simulation_real_delay", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.simulation_real_delay attributes {hierarchical_name = "simulation_real_delay", is_uninstantiated = false, name = "simulation_real_delay", node_id = 3 : i64, referenced_path = "simulation_real_delay", referenced_symbol = @s0.simulation_real_delay} {
+      talos.sv.symbol.instance_body @s4.simulation_real_delay attributes {hierarchical_name = "simulation_real_delay", name = "simulation_real_delay", node_id = 4 : i64} {
+        talos.sv.symbol.parameter @s25.D attributes {
+          constant_value = "1.55", hierarchical_name = "simulation_real_delay.D",
+          name = "D", node_id = 25 : i64, semantic_type = !talos.real
+        } {
+          talos.sv.expression.real_literal attributes {
+            constant_value = "1.55", node_id = 26 : i64,
+            semantic_type = !talos.real
+          } {}
+        }
+        talos.sv.symbol.procedural_block @s5 attributes {hierarchical_name = "simulation_real_delay", node_id = 5 : i64, procedure_kind = 0 : i32, time_precision_fs = 100000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.block attributes {node_id = 6 : i64} {
+            talos.sv.statement.list attributes {node_id = 7 : i64} {
+              talos.sv.statement.timed attributes {node_id = 8 : i64} {
+                talos.sv.timing.delay attributes {node_id = 9 : i64} {
+                  talos.sv.expression.real_literal attributes {constant_value = "0.14000000000000001", node_id = 10 : i64, semantic_type = !talos.real} {
+                  }
+                }
+                talos.sv.statement.empty attributes {node_id = 11 : i64} {
+                }
+              }
+              talos.sv.statement.timed attributes {node_id = 12 : i64} {
+                talos.sv.timing.delay attributes {node_id = 13 : i64} {
+                  talos.sv.expression.real_literal attributes {constant_value = "0.14999999999999999", node_id = 14 : i64, semantic_type = !talos.real} {
+                  }
+                }
+                talos.sv.statement.empty attributes {node_id = 15 : i64} {
+                }
+              }
+              talos.sv.statement.timed attributes {node_id = 16 : i64} {
+                talos.sv.timing.delay attributes {node_id = 17 : i64} {
+                  talos.sv.expression.time_literal attributes {constant_value = "1", node_id = 18 : i64, semantic_type = !talos.realtime, time_scale = "1ns / 100ps"} {
+                  }
+                }
+                talos.sv.statement.empty attributes {node_id = 19 : i64} {
+                }
+              }
+              talos.sv.statement.timed attributes {node_id = 20 : i64} {
+                talos.sv.timing.delay attributes {node_id = 21 : i64} {
+                  talos.sv.expression.unary_op attributes {node_id = 22 : i64, operator_kind = 1 : i32, semantic_type = !talos.real} {
+                    talos.sv.expression.real_literal attributes {constant_value = "0.20000000000000001", node_id = 23 : i64, semantic_type = !talos.real} {
+                    }
+                  }
+                }
+                talos.sv.statement.empty attributes {node_id = 24 : i64} {
+                }
+              }
+              talos.sv.statement.timed attributes {node_id = 27 : i64} {
+                talos.sv.timing.delay attributes {node_id = 28 : i64} {
+                  talos.sv.expression.named_value attributes {
+                    node_id = 29 : i64,
+                    referenced_path = "simulation_real_delay.D",
+                    referenced_symbol = @s1.$root::@s3.simulation_real_delay::@s4.simulation_real_delay::@s25.D,
+                    semantic_type = !talos.real
+                  } {}
+                }
+                talos.sv.statement.empty attributes {node_id = 30 : i64} {}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Real delays are rounded to the lexical 100 ps precision before they become
+// design ticks: 0.14 ns -> 1 tick, 0.15 ns -> 2 ticks, 1 ns -> 10 ticks,
+// a negative delay -> the saturated time that never matures (IEEE 1800-2023
+// 9.4.1), and a typed real parameter of 1.55 ns -> 16 ticks. Constant
+// parameters stay on the same compile-time path as literals.
+// CHECK: simulation.design @design attributes {{.*}}time_precision_fs = 100000
+// CHECK-DAG: simulation.time.constant 1{{$}}
+// CHECK-DAG: simulation.time.constant 2{{$}}
+// CHECK-DAG: simulation.time.constant 10{{$}}
+// CHECK-DAG: simulation.time.constant 9223372036854775807{{$}}
+// CHECK-DAG: simulation.time.constant 16{{$}}
+// CHECK-COUNT-5: simulation.suspend.delay
+// CHECK-NOT: talos.sv.

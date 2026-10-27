@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-obelisk %s 2>&1 | FileCheck %s
+// RUN: not talos -emit-talos %s 2>&1 | FileCheck %s
 
 module dpi_integer_time_result_unsupported;
   // IEEE 1800-2017 35.5.5 permits integer and time as formal argument types,

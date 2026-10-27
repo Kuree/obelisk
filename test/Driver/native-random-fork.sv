@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --std=1800-2023 %s -o %t.native
+// RUN: talos -O3 --std=1800-2023 %s -o %t.native
 // RUN: %t.native --seed=71 > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode --std=1800-2023 %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode --std=1800-2023 %s -o %t.bytecode
 // RUN: %t.bytecode --seed=71 | diff -u %t.native.out -
 
 module native_random_fork;

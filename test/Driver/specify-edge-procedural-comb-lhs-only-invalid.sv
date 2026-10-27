@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not talos -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
 module comb_lhs_only(input wire source, data, output logic q);
   always_comb begin
     force source = data;

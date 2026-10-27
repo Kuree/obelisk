@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion,schedule-localize-private-eval-storage,schedule-promote-eval-storage))' | FileCheck %s --check-prefix=SSA
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s --check-prefix=READ
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-materialize-compute-fusion,schedule-localize-private-eval-storage,schedule-promote-eval-storage))' | FileCheck %s --check-prefix=SSA
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=read},talos-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s --check-prefix=READ
 // READ-NOT: simulation.ref.alloc
 // LRM 4.6/10.4.1: local reads observe preceding blocking assignments.
 // LRM 4.7 permits this synchronous activation; it does not mandate atomicity.
@@ -34,7 +34,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK: %[[CANON:.*]] = simulation.context.storage %{{.*}}[1]
 // CHECK-NOT: simulation.ref.load %[[CANON]]
 // CHECK: %[[LOCAL:.*]] = simulation.ref.alloc
@@ -43,7 +43,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
 // CHECK: %[[FINAL:.*]] = simulation.ref.load %[[LOCAL]]
 // CHECK-NEXT: simulation.ref.store %[[FINAL]] to %[[CANON]]
 // CHECK-NEXT: simulation.return
-// SSA-LABEL: simulation.func private @process.__obelisk_eval_body_
+// SSA-LABEL: simulation.func private @process.__talos_eval_body_
 // SSA-NOT: simulation.ref.alloc
 // SSA: simulation.ref.store
 // SSA-NOT: simulation.ref.store
@@ -73,7 +73,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK: %[[CANON:.*]] = simulation.context.storage %{{.*}}[1]
 // CHECK: %[[IN:.*]] = simulation.ref.load %[[CANON]]
 // CHECK-NEXT: %[[LOCAL:.*]] = simulation.ref.alloc %[[IN]]
@@ -107,7 +107,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK: %[[CANON:.*]] = simulation.context.storage %{{.*}}[1]
 // CHECK: %[[IN:.*]] = simulation.ref.load %[[CANON]]
 // CHECK: %[[LOCAL:.*]] = simulation.ref.alloc %[[IN]]
@@ -142,7 +142,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: %[[FIRST:.*]] = simulation.ref.subelement
 // CHECK: simulation.ref.store %[[VALUE:.*]] to %[[FIRST]]
@@ -181,7 +181,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK: %[[CANON:.*]] = simulation.context.storage %{{.*}}[1]
 // CHECK-NOT: simulation.ref.load %[[CANON]]
 // CHECK: %[[ZERO:.*]] = simulation.aggregate.splat
@@ -221,7 +221,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
       simulation.suspend.change %ref to ^wait : !simulation.ref<i8>
     }
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.return
   simulation.design @watched_edge {
@@ -256,7 +256,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
       simulation.suspend.edge posedge %ref to ^wait : !simulation.ref<i8>
     }
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.return
   simulation.design @callee_reads {
@@ -290,7 +290,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
       simulation.return %v : i8
     }
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.return
   simulation.design @transitive_callee_reads {
@@ -329,7 +329,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
       simulation.return %v : i8
     }
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.return
   simulation.design @reference_escape {
@@ -362,7 +362,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
       simulation.return %v : i8
     }
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.return
   simulation.design @toggle_observed {
@@ -391,7 +391,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.return
   simulation.design @conditional_write {
@@ -426,7 +426,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK: %[[CANON:.*]] = simulation.context.storage %{{.*}}[1]
 // CHECK: %[[IN:.*]] = simulation.ref.load %[[CANON]]
 // CHECK-NEXT: %[[LOCAL:.*]] = simulation.ref.alloc %[[IN]]
@@ -458,7 +458,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK: %[[CANON:.*]] = simulation.context.storage %{{.*}}[1]
 // CHECK: %[[LOCAL:.*]] = simulation.ref.alloc
 // CHECK: simulation.ref.store %{{.*}} to %[[LOCAL]]
@@ -466,7 +466,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
 // CHECK: simulation.ref.store %{{.*}} to %[[CANON]]
 // CHECK-NEXT: simulation.return
 // SSA-LABEL: simulation.design @four_state
-// SSA: simulation.func private @process.__obelisk_eval_body_
+// SSA: simulation.func private @process.__talos_eval_body_
 // SSA: %[[Z:.*]] = simulation.logic.constant -1 : i8, -1 : i8
 // SSA-NOT: simulation.ref.alloc
 // SSA: simulation.ref.store %[[Z]]
@@ -529,7 +529,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
   }
-// CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @process.__talos_eval_body_
 // CHECK: %[[LOCAL:.*]] = simulation.ref.alloc
 // CHECK: simulation.ref.store %{{.*}} to %[[LOCAL]]
 // CHECK: simulation.ref.load %[[LOCAL]]

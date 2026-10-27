@@ -1,6 +1,6 @@
 //===- CoverageDatabase.cpp - portable .obcov codec ---------------------===//
 
-#include "obelisk/Coverage/CoverageDatabase.h"
+#include "talos/Coverage/CoverageDatabase.h"
 
 #include "CoverageFileSupport.h"
 #include "CoverageIndex.h"
@@ -23,12 +23,12 @@
 #include <type_traits>
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
-#define OBELISK_COVERAGE_HAS_EXCEPTIONS 1
+#define TALOS_COVERAGE_HAS_EXCEPTIONS 1
 #else
-#define OBELISK_COVERAGE_HAS_EXCEPTIONS 0
+#define TALOS_COVERAGE_HAS_EXCEPTIONS 0
 #endif
 
-namespace obelisk::coverage {
+namespace talos::coverage {
 namespace {
 
 using detail::groupRecords;
@@ -69,8 +69,8 @@ struct RecordDescriptor {
   const FieldDescriptor *fields;
   uint32_t fieldCount;
 };
-#include "obelisk/Coverage/CoverageFormatParser.h.inc"
-#include "obelisk/Coverage/CoverageFormatSerializer.h.inc"
+#include "talos/Coverage/CoverageFormatParser.h.inc"
+#include "talos/Coverage/CoverageFormatSerializer.h.inc"
 
 constexpr uint32_t RequiredSection = 1;
 constexpr uint32_t KnownHeaderFlags = 0;
@@ -525,108 +525,108 @@ Status planSections(const Database &db, const StringTable &strings,
     sections.push_back({kind, required ? RequiredSection : 0, count, bytes});
     return true;
   };
-#define OBELISK_COVERAGE_PLAN(KIND, COUNT)                                     \
+#define TALOS_COVERAGE_PLAN(KIND, COUNT)                                     \
   if (!add(SectionKind::KIND, (COUNT)))                                        \
   return Status::IntegerOverflow
   if (!add(SectionKind::Strings, strings.strings.size(), true))
     return Status::IntegerOverflow;
-  OBELISK_COVERAGE_PLAN(SourceFiles, db.sourceFiles.size());
-  OBELISK_COVERAGE_PLAN(Scopes, db.scopes.size());
-  OBELISK_COVERAGE_PLAN(LinePoints, db.linePoints.size());
-  OBELISK_COVERAGE_PLAN(ToggleObjects, db.toggleObjects.size());
-  OBELISK_COVERAGE_PLAN(ToggleTypeDimensions, db.toggleDimensions.size());
-  OBELISK_COVERAGE_PLAN(FunctionalTypes, db.functionalTypes.size());
-  OBELISK_COVERAGE_PLAN(FunctionalItems, db.functionalItems.size());
-  OBELISK_COVERAGE_PLAN(FunctionalBins, db.functionalBins.size());
-  OBELISK_COVERAGE_PLAN(TransitionPrograms, db.transitionPrograms.size());
-  OBELISK_COVERAGE_PLAN(CrossPlans, db.crossPlans.size());
-  OBELISK_COVERAGE_PLAN(Exclusions, db.exclusions.size());
-  OBELISK_COVERAGE_PLAN(Runs, db.runs.size());
-  OBELISK_COVERAGE_PLAN(ResolvedCovergroupInstances,
+  TALOS_COVERAGE_PLAN(SourceFiles, db.sourceFiles.size());
+  TALOS_COVERAGE_PLAN(Scopes, db.scopes.size());
+  TALOS_COVERAGE_PLAN(LinePoints, db.linePoints.size());
+  TALOS_COVERAGE_PLAN(ToggleObjects, db.toggleObjects.size());
+  TALOS_COVERAGE_PLAN(ToggleTypeDimensions, db.toggleDimensions.size());
+  TALOS_COVERAGE_PLAN(FunctionalTypes, db.functionalTypes.size());
+  TALOS_COVERAGE_PLAN(FunctionalItems, db.functionalItems.size());
+  TALOS_COVERAGE_PLAN(FunctionalBins, db.functionalBins.size());
+  TALOS_COVERAGE_PLAN(TransitionPrograms, db.transitionPrograms.size());
+  TALOS_COVERAGE_PLAN(CrossPlans, db.crossPlans.size());
+  TALOS_COVERAGE_PLAN(Exclusions, db.exclusions.size());
+  TALOS_COVERAGE_PLAN(Runs, db.runs.size());
+  TALOS_COVERAGE_PLAN(ResolvedCovergroupInstances,
                         db.resolvedInstances.size());
-  OBELISK_COVERAGE_PLAN(Counters, db.counters.size());
-  OBELISK_COVERAGE_PLAN(SparseCrossTuples, db.sparseCrossTuples.size());
-  OBELISK_COVERAGE_PLAN(IllegalBinDiagnostics, db.illegalBinDiagnostics.size());
-  OBELISK_COVERAGE_PLAN(UserMetadata, tagCount + 1);
-  OBELISK_COVERAGE_PLAN(FunctionalSourceRanges,
+  TALOS_COVERAGE_PLAN(Counters, db.counters.size());
+  TALOS_COVERAGE_PLAN(SparseCrossTuples, db.sparseCrossTuples.size());
+  TALOS_COVERAGE_PLAN(IllegalBinDiagnostics, db.illegalBinDiagnostics.size());
+  TALOS_COVERAGE_PLAN(UserMetadata, tagCount + 1);
+  TALOS_COVERAGE_PLAN(FunctionalSourceRanges,
                         db.functionalSourceRanges.size());
-  OBELISK_COVERAGE_PLAN(TransitionAlternatives,
+  TALOS_COVERAGE_PLAN(TransitionAlternatives,
                         db.transitionAlternatives.size());
-  OBELISK_COVERAGE_PLAN(TransitionSteps, db.transitionSteps.size());
-  OBELISK_COVERAGE_PLAN(CrossTargets, db.crossTargets.size());
-  OBELISK_COVERAGE_PLAN(CrossBins, db.crossBins.size());
-  OBELISK_COVERAGE_PLAN(CrossSelectorNodes, db.crossSelectorNodes.size());
-  OBELISK_COVERAGE_PLAN(CrossSelectorOperands, db.crossSelectorOperands.size());
-  OBELISK_COVERAGE_PLAN(SparseCrossTupleComponents,
+  TALOS_COVERAGE_PLAN(TransitionSteps, db.transitionSteps.size());
+  TALOS_COVERAGE_PLAN(CrossTargets, db.crossTargets.size());
+  TALOS_COVERAGE_PLAN(CrossBins, db.crossBins.size());
+  TALOS_COVERAGE_PLAN(CrossSelectorNodes, db.crossSelectorNodes.size());
+  TALOS_COVERAGE_PLAN(CrossSelectorOperands, db.crossSelectorOperands.size());
+  TALOS_COVERAGE_PLAN(SparseCrossTupleComponents,
                         db.sparseCrossTupleComponents.size());
-  OBELISK_COVERAGE_PLAN(FunctionalValueSets, db.functionalValueSets.size());
-  OBELISK_COVERAGE_PLAN(FunctionalValueAtoms, db.functionalValueAtoms.size());
-  OBELISK_COVERAGE_PLAN(FunctionalValueLimbs, db.functionalValueLimbs.size());
-  OBELISK_COVERAGE_PLAN(FunctionalExpressions, db.functionalExpressions.size());
-  OBELISK_COVERAGE_PLAN(FunctionalConfigurations,
+  TALOS_COVERAGE_PLAN(FunctionalValueSets, db.functionalValueSets.size());
+  TALOS_COVERAGE_PLAN(FunctionalValueAtoms, db.functionalValueAtoms.size());
+  TALOS_COVERAGE_PLAN(FunctionalValueLimbs, db.functionalValueLimbs.size());
+  TALOS_COVERAGE_PLAN(FunctionalExpressions, db.functionalExpressions.size());
+  TALOS_COVERAGE_PLAN(FunctionalConfigurations,
                         db.functionalConfigurations.size());
-  OBELISK_COVERAGE_PLAN(ResolvedFunctionalItems,
+  TALOS_COVERAGE_PLAN(ResolvedFunctionalItems,
                         db.resolvedFunctionalItems.size());
-  OBELISK_COVERAGE_PLAN(ResolvedFunctionalBins,
+  TALOS_COVERAGE_PLAN(ResolvedFunctionalBins,
                         db.resolvedFunctionalBins.size());
-  OBELISK_COVERAGE_PLAN(ResolvedTransitionSteps,
+  TALOS_COVERAGE_PLAN(ResolvedTransitionSteps,
                         db.resolvedTransitionSteps.size());
-  OBELISK_COVERAGE_PLAN(ResolvedCrossPlans, db.resolvedCrossPlans.size());
-  OBELISK_COVERAGE_PLAN(ResolvedCrossSelectorBindings,
+  TALOS_COVERAGE_PLAN(ResolvedCrossPlans, db.resolvedCrossPlans.size());
+  TALOS_COVERAGE_PLAN(ResolvedCrossSelectorBindings,
                         db.resolvedCrossSelectorBindings.size());
-  OBELISK_COVERAGE_PLAN(ResolvedFunctionalValueSets,
+  TALOS_COVERAGE_PLAN(ResolvedFunctionalValueSets,
                         db.resolvedFunctionalValueSets.size());
-  OBELISK_COVERAGE_PLAN(ResolvedFunctionalValueAtoms,
+  TALOS_COVERAGE_PLAN(ResolvedFunctionalValueAtoms,
                         db.resolvedFunctionalValueAtoms.size());
-  OBELISK_COVERAGE_PLAN(ResolvedFunctionalValueLimbs,
+  TALOS_COVERAGE_PLAN(ResolvedFunctionalValueLimbs,
                         db.resolvedFunctionalValueLimbs.size());
-  OBELISK_COVERAGE_PLAN(FunctionalBinPlans, db.functionalBinPlans.size());
-  OBELISK_COVERAGE_PLAN(FunctionalTupleSets, db.functionalTupleSets.size());
-  OBELISK_COVERAGE_PLAN(FunctionalTupleSetTuples,
+  TALOS_COVERAGE_PLAN(FunctionalBinPlans, db.functionalBinPlans.size());
+  TALOS_COVERAGE_PLAN(FunctionalTupleSets, db.functionalTupleSets.size());
+  TALOS_COVERAGE_PLAN(FunctionalTupleSetTuples,
                         db.functionalTupleSetTuples.size());
-  OBELISK_COVERAGE_PLAN(FunctionalTupleSetComponents,
+  TALOS_COVERAGE_PLAN(FunctionalTupleSetComponents,
                         db.functionalTupleSetComponents.size());
-  OBELISK_COVERAGE_PLAN(FunctionalOptionPlans, db.functionalOptionPlans.size());
-  OBELISK_COVERAGE_PLAN(FunctionalConfigurationOptions,
+  TALOS_COVERAGE_PLAN(FunctionalOptionPlans, db.functionalOptionPlans.size());
+  TALOS_COVERAGE_PLAN(FunctionalConfigurationOptions,
                         db.functionalConfigurationOptions.size());
-  OBELISK_COVERAGE_PLAN(ResolvedFunctionalBinPlans,
+  TALOS_COVERAGE_PLAN(ResolvedFunctionalBinPlans,
                         db.resolvedFunctionalBinPlans.size());
-  OBELISK_COVERAGE_PLAN(ResolvedFunctionalTupleSets,
+  TALOS_COVERAGE_PLAN(ResolvedFunctionalTupleSets,
                         db.resolvedFunctionalTupleSets.size());
-  OBELISK_COVERAGE_PLAN(ResolvedFunctionalTupleSetTuples,
+  TALOS_COVERAGE_PLAN(ResolvedFunctionalTupleSetTuples,
                         db.resolvedFunctionalTupleSetTuples.size());
-  OBELISK_COVERAGE_PLAN(ResolvedFunctionalTupleSetComponents,
+  TALOS_COVERAGE_PLAN(ResolvedFunctionalTupleSetComponents,
                         db.resolvedFunctionalTupleSetComponents.size());
-  OBELISK_COVERAGE_PLAN(ResolvedTransitionAlternatives,
+  TALOS_COVERAGE_PLAN(ResolvedTransitionAlternatives,
                         db.resolvedTransitionAlternatives.size());
-  OBELISK_COVERAGE_PLAN(ResolvedFunctionalBinGroups,
+  TALOS_COVERAGE_PLAN(ResolvedFunctionalBinGroups,
                         db.resolvedFunctionalBinGroups.size());
-  OBELISK_COVERAGE_PLAN(ResolvedTransitionExpansionGroups,
+  TALOS_COVERAGE_PLAN(ResolvedTransitionExpansionGroups,
                         db.resolvedTransitionExpansionGroups.size());
-  OBELISK_COVERAGE_PLAN(ResolvedCrossAutomaticBinCountLimbs,
+  TALOS_COVERAGE_PLAN(ResolvedCrossAutomaticBinCountLimbs,
                         db.resolvedCrossAutomaticBinCountLimbs.size());
-  OBELISK_COVERAGE_PLAN(ResolvedCrossAutomaticNodes,
+  TALOS_COVERAGE_PLAN(ResolvedCrossAutomaticNodes,
                         db.resolvedCrossAutomaticNodes.size());
-  OBELISK_COVERAGE_PLAN(ResolvedCrossAutomaticEdges,
+  TALOS_COVERAGE_PLAN(ResolvedCrossAutomaticEdges,
                         db.resolvedCrossAutomaticEdges.size());
-  OBELISK_COVERAGE_PLAN(FunctionalFormals, db.functionalFormals.size());
-  OBELISK_COVERAGE_PLAN(ResolvedInstanceOptions,
+  TALOS_COVERAGE_PLAN(FunctionalFormals, db.functionalFormals.size());
+  TALOS_COVERAGE_PLAN(ResolvedInstanceOptions,
                         db.resolvedInstanceOptions.size());
-  OBELISK_COVERAGE_PLAN(FunctionalContainerTypes,
+  TALOS_COVERAGE_PLAN(FunctionalContainerTypes,
                         db.functionalContainerTypes.size());
-  OBELISK_COVERAGE_PLAN(FunctionalAggregateTypes,
+  TALOS_COVERAGE_PLAN(FunctionalAggregateTypes,
                         db.functionalAggregateTypes.size());
-  OBELISK_COVERAGE_PLAN(FunctionalClassTypes, db.functionalClassTypes.size());
-  OBELISK_COVERAGE_PLAN(FunctionalVirtualInterfaceTypes,
+  TALOS_COVERAGE_PLAN(FunctionalClassTypes, db.functionalClassTypes.size());
+  TALOS_COVERAGE_PLAN(FunctionalVirtualInterfaceTypes,
                         db.functionalVirtualInterfaceTypes.size());
-  OBELISK_COVERAGE_PLAN(FunctionalVirtualInterfaceScopes,
+  TALOS_COVERAGE_PLAN(FunctionalVirtualInterfaceScopes,
                         db.functionalVirtualInterfaceScopes.size());
-  OBELISK_COVERAGE_PLAN(CrossPredicateNodes, db.crossPredicateNodes.size());
-  OBELISK_COVERAGE_PLAN(CrossPredicateOperands,
+  TALOS_COVERAGE_PLAN(CrossPredicateNodes, db.crossPredicateNodes.size());
+  TALOS_COVERAGE_PLAN(CrossPredicateOperands,
                         db.crossPredicateOperands.size());
-  OBELISK_COVERAGE_PLAN(AssertionPoints, db.assertionPoints.size());
-  OBELISK_COVERAGE_PLAN(FSMStates, db.fsmStates.size());
-#undef OBELISK_COVERAGE_PLAN
+  TALOS_COVERAGE_PLAN(AssertionPoints, db.assertionPoints.size());
+  TALOS_COVERAGE_PLAN(FSMStates, db.fsmStates.size());
+#undef TALOS_COVERAGE_PLAN
   return Status::Ok;
 }
 
@@ -2490,7 +2490,7 @@ static Digest computeConfigurationBundleDigest(const Database &db,
                                                bool includeResolvedIDs) {
   const auto &view = index.get(type, configuration);
   SHA256 h;
-  static constexpr char domain[] = "obelisk.coverage.v1.configuration";
+  static constexpr char domain[] = "talos.coverage.v1.configuration";
   h.update(reinterpret_cast<const uint8_t *>(domain), sizeof(domain) - 1);
   hashScalar(h, type);
   IndexMap<uint64_t, const ResolvedFunctionalItem *> items;
@@ -2800,7 +2800,7 @@ static Digest computeConfigurationBundleDigest(const Database &db,
     for (const auto *nodePointer : reverseNodes) {
       SHA256 nodeHash;
       static constexpr char nodeDomain[] =
-          "obelisk.coverage.v1.resolved-cross-automatic-node";
+          "talos.coverage.v1.resolved-cross-automatic-node";
       nodeHash.update(reinterpret_cast<const uint8_t *>(nodeDomain),
                       sizeof(nodeDomain) - 1);
       const auto &node = *nodePointer;
@@ -2946,7 +2946,7 @@ bool isSchemaOnly(const Database &db) {
 Status partitionFunctionalConfigurations(const Database &database,
                                          std::vector<Database> &result,
                                          Diagnostic *diagnostic) {
-#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+#if TALOS_COVERAGE_HAS_EXCEPTIONS
   try {
 #endif
     IndexSet<ConfigurationKey> seen;
@@ -2974,7 +2974,7 @@ Status partitionFunctionalConfigurations(const Database &database,
     }
     result.swap(prepared);
     return Status::Ok;
-#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+#if TALOS_COVERAGE_HAS_EXCEPTIONS
   } catch (const std::bad_alloc &) {
     return Status::OutOfMemory;
   } catch (const std::length_error &) {
@@ -2985,7 +2985,7 @@ Status partitionFunctionalConfigurations(const Database &database,
 
 Status canonicalizeFunctionalConfigurations(Database &database,
                                             Diagnostic *diagnostic) {
-#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+#if TALOS_COVERAGE_HAS_EXCEPTIONS
   try {
 #endif
     IndexSet<ConfigurationKey> seen;
@@ -3045,7 +3045,7 @@ Status canonicalizeFunctionalConfigurations(Database &database,
     database.resolvedFunctionalTupleSetComponents.swap(
         canonical.resolvedFunctionalTupleSetComponents);
     return Status::Ok;
-#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+#if TALOS_COVERAGE_HAS_EXCEPTIONS
   } catch (const std::bad_alloc &) {
     setDiagnostic(diagnostic, Status::OutOfMemory, 0, SectionKind::Strings,
                   NoRecord, "allocation");
@@ -7269,7 +7269,7 @@ Status serialize(const Database &database, WriteCallback callback, void *user,
                   NoRecord, "callback");
     return Status::InvalidArgument;
   }
-#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+#if TALOS_COVERAGE_HAS_EXCEPTIONS
   try {
 #endif
     Status checked = validate(database, diagnostic);
@@ -7381,7 +7381,7 @@ Status serialize(const Database &database, WriteCallback callback, void *user,
     if (diagnostic)
       *diagnostic = {};
     return Status::Ok;
-#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+#if TALOS_COVERAGE_HAS_EXCEPTIONS
   } catch (const std::bad_alloc &) {
     setDiagnostic(diagnostic, Status::OutOfMemory, 0, SectionKind::Strings,
                   NoRecord, "allocation");
@@ -7412,7 +7412,7 @@ Status parse(const uint8_t *data, size_t size, Database &output,
     setDiagnostic(diagnostic, s, off, sec, rec, field, std::move(detail));
     return s;
   };
-#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+#if TALOS_COVERAGE_HAS_EXCEPTIONS
   try {
 #endif
     if (!data && size)
@@ -8950,7 +8950,7 @@ Status parse(const uint8_t *data, size_t size, Database &output,
     if (diagnostic)
       *diagnostic = {};
     return Status::Ok;
-#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+#if TALOS_COVERAGE_HAS_EXCEPTIONS
   } catch (const std::bad_alloc &) {
     return fail(Status::OutOfMemory, 0, SectionKind::Strings, NoRecord,
                 "allocation");
@@ -9410,7 +9410,7 @@ static Status mergeInPlace(Database &destination, const Database &source,
 
 Status merge(Database &destination, const Database &source, bool discard,
              Diagnostic *diagnostic) {
-#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+#if TALOS_COVERAGE_HAS_EXCEPTIONS
   try {
 #endif
     Database result = destination;
@@ -9422,7 +9422,7 @@ Status merge(Database &destination, const Database &source, bool discard,
       return status;
     destination = std::move(result);
     return Status::Ok;
-#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+#if TALOS_COVERAGE_HAS_EXCEPTIONS
   } catch (const std::bad_alloc &) {
     setDiagnostic(diagnostic, Status::OutOfMemory, 0, SectionKind::Strings,
                   NoRecord, "allocation");
@@ -9432,7 +9432,7 @@ Status merge(Database &destination, const Database &source, bool discard,
 }
 
 Status discardTestDetail(Database &database, Diagnostic *diagnostic) {
-#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+#if TALOS_COVERAGE_HAS_EXCEPTIONS
   try {
 #endif
     Database result = database;
@@ -9446,7 +9446,7 @@ Status discardTestDetail(Database &database, Diagnostic *diagnostic) {
       return status;
     database = std::move(result);
     return Status::Ok;
-#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+#if TALOS_COVERAGE_HAS_EXCEPTIONS
   } catch (const std::bad_alloc &) {
     setDiagnostic(diagnostic, Status::OutOfMemory, 0, SectionKind::Strings,
                   NoRecord, "allocation");
@@ -9647,4 +9647,4 @@ bool parseUUID(const std::string &text, UUID &uuid) {
   return true;
 }
 
-} // namespace obelisk::coverage
+} // namespace talos::coverage

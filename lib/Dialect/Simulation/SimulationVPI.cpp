@@ -1,15 +1,15 @@
 //===- SimulationVPI.cpp - Simulation VPI classification ----------------===//
 
-#include "obelisk/Dialect/Simulation/SimulationVPI.h"
+#include "talos/Dialect/Simulation/SimulationVPI.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/VPIObjectModel.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
 
-namespace obelisk::sim {
+namespace talos::sim {
 namespace {
 
 VPITypeSemanticsAttr packedArrayElement(VPITypeSemanticsAttr type) {
@@ -432,4 +432,4 @@ std::optional<uint32_t> vpiKindForTypespec(VPITypeSemanticsAttr type) {
   llvm_unreachable("unhandled VPI semantic typespec kind");
 }
 
-} // namespace obelisk::sim
+} // namespace talos::sim

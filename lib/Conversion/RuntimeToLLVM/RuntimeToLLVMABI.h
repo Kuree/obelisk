@@ -1,7 +1,7 @@
 //===- RuntimeToLLVMABI.h - Runtime LLVM ABI model --------------*- C++ -*-===//
 
-#ifndef OBELISK_LIB_CONVERSION_RUNTIMETOLLVM_RUNTIMETOLLVMABI_H
-#define OBELISK_LIB_CONVERSION_RUNTIMETOLLVM_RUNTIMETOLLVMABI_H
+#ifndef TALOS_LIB_CONVERSION_RUNTIMETOLLVM_RUNTIMETOLLVMABI_H
+#define TALOS_LIB_CONVERSION_RUNTIMETOLLVM_RUNTIMETOLLVMABI_H
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
@@ -15,7 +15,7 @@ namespace llvm {
 class DataLayout;
 }
 
-namespace obelisk::runtimelowering {
+namespace talos::runtimelowering {
 
 struct ABIAlignments {
   unsigned pointer = 0;
@@ -75,6 +75,6 @@ bool containsRuntimeType(mlir::Type type);
 std::optional<mlir::Type> convertRuntimeType(mlir::Type type,
                                              const ABITypes &abi);
 
-} // namespace obelisk::runtimelowering
+} // namespace talos::runtimelowering
 
-#endif // OBELISK_LIB_CONVERSION_RUNTIMETOLLVM_RUNTIMETOLLVMABI_H
+#endif // TALOS_LIB_CONVERSION_RUNTIMETOLLVM_RUNTIMETOLLVMABI_H

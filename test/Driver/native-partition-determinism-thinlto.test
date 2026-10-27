@@ -3,12 +3,12 @@
 # both links compile every partition. Both links use one file name, which
 # Mach-O records in the image.
 # RUN: rm -rf %t.serial %t.parallel && mkdir %t.serial %t.parallel
-# RUN: obelisk -O1 -flto --vpi=off --compile-threads=1 %S/native-partition-determinism.sv -o %t.serial/sim
-# RUN: obelisk -O1 -flto --vpi=off --compile-threads=8 %S/native-partition-determinism.sv -o %t.parallel/sim
+# RUN: talos -O1 -flto --vpi=off --compile-threads=1 %S/native-partition-determinism.sv -o %t.serial/sim
+# RUN: talos -O1 -flto --vpi=off --compile-threads=8 %S/native-partition-determinism.sv -o %t.parallel/sim
 # RUN: cmp %t.serial/sim %t.parallel/sim
 # RUN: %t.parallel/sim | FileCheck %S/native-partition-determinism.sv
 
 # An unpartitioned design takes full LTO, whose single LTO partition does not
 # depend on the worker count. The generated module it links must not either.
-# RUN: obelisk -O3 -flto --vpi=off --compile-threads=1 %S/native.sv -emit-llvm -o %t.full.ll
-# RUN: obelisk -O3 -flto --vpi=off --compile-threads=8 %S/native.sv -emit-llvm -o - | diff %t.full.ll -
+# RUN: talos -O3 -flto --vpi=off --compile-threads=1 %S/native.sv -emit-llvm -o %t.full.ll
+# RUN: talos -O3 -flto --vpi=off --compile-threads=8 %S/native.sv -emit-llvm -o - | diff %t.full.ll -

@@ -1,4 +1,4 @@
-// RUN: env OBELISK_TEST_INPUT=%s %obj_root/test/obelisk-design-database-dump-test \
+// RUN: env TALOS_TEST_INPUT=%s %obj_root/test/talos-design-database-dump-test \
 // RUN:   --gtest_filter=GeneratedDesignDatabase.ExactVPIElementDescriptors
 #int = #simulation.vpi_type<kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>
 #logic = #simulation.vpi_type<kind = logic, isSigned = false, isFourState = true, range = [12, 0], children = [], childNames = []>

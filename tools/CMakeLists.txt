@@ -1,5 +1,5 @@
 add_subdirectory(driver)
 add_subdirectory(filecheck)
-add_subdirectory(obelisk-opt)
-add_subdirectory(obelisk-translate)
-add_subdirectory(obelisk-cov)
+add_subdirectory(talos-opt)
+add_subdirectory(talos-translate)
+add_subdirectory(talos-cov)

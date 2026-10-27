@@ -8,7 +8,7 @@ namespace {
 
 constexpr size_t maxCachedDynamicScanPlans = 8;
 
-OBELISK_RT_FEATURE_HELPER std::shared_ptr<const DynamicScanPlan>
+TALOS_RT_FEATURE_HELPER std::shared_ptr<const DynamicScanPlan>
 parsePlan(std::string format) {
   auto plan = std::make_shared<DynamicScanPlan>();
   plan->format = std::move(format);
@@ -70,21 +70,21 @@ parsePlan(std::string format) {
 
 } // namespace
 
-OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_dynamic_scan_plan(
-    obelisk_rt_context *context, obelisk_rt_string_v1 format,
+TALOS_RT_FEATURE_TEXT talos_rt_status talos_rt_dynamic_scan_plan(
+    talos_rt_context *context, talos_rt_string_v1 format,
     std::shared_ptr<const DynamicScanPlan> &plan) noexcept {
   plan.reset();
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_status ownership = obelisk_rt_validate_string(context, format);
-  if (ownership != OBELISK_RT_OK)
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_status ownership = talos_rt_validate_string(context, format);
+  if (ownership != TALOS_RT_OK)
     return ownership;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     uint64_t identity = 0;
-    obelisk_rt_string_v1 inlineValue = 0;
+    talos_rt_string_v1 inlineValue = 0;
     if ((format & UINT64_C(3)) == 0 && format != 0)
-      identity = obelisk_rt_v1_object_id(
-          reinterpret_cast<const obelisk_rt_object_v1 *>(
+      identity = talos_rt_v1_object_id(
+          reinterpret_cast<const talos_rt_object_v1 *>(
               static_cast<uintptr_t>(format)));
     else
       inlineValue = format;
@@ -95,7 +95,7 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_dynamic_scan_plan(
       if (!context->dynamicScanState) {
         context->dynamicScanState = new (std::nothrow) DynamicScanState();
         if (!context->dynamicScanState)
-          return OBELISK_RT_OUT_OF_MEMORY;
+          return TALOS_RT_OUT_OF_MEMORY;
         context->dynamicScanState->destroy =
             [](DynamicScanState *state)
                 { delete state; };
@@ -122,19 +122,19 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_dynamic_scan_plan(
       if (!sameIdentity && !sameInline)
         continue;
       use(index);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
 
     char scratch[8]{};
     const char *bytes = nullptr;
     uint64_t size = 0;
-    obelisk_rt_status status =
-        obelisk_rt_v1_string_view(format, scratch, &bytes, &size);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status =
+        talos_rt_v1_string_view(format, scratch, &bytes, &size);
+    if (status != TALOS_RT_OK)
       return status;
     if (size > std::string{}.max_size())
-      return OBELISK_RT_OUT_OF_MEMORY;
-    uint64_t hash = obelisk_rt_v1_string_hash(format);
+      return TALOS_RT_OUT_OF_MEMORY;
+    uint64_t hash = talos_rt_v1_string_hash(format);
     for (size_t index = 0; index != state->plans.size(); ++index) {
       DynamicScanCacheEntry &entry = state->plans[index];
       bool sameValue = entry.hash == hash && entry.size == size && entry.plan &&
@@ -146,7 +146,7 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_dynamic_scan_plan(
                       static_cast<size_t>(size)) != 0)
         continue;
       use(index);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
 
     plan = parsePlan(std::string(bytes, static_cast<size_t>(size)));
@@ -155,42 +155,42 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status obelisk_rt_dynamic_scan_plan(
                         {hash, size, identity, inlineValue, plan});
     if (state->plans.size() > maxCachedDynamicScanPlans)
       state->plans.pop_back();
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     plan.reset();
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     plan.reset();
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
-extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status
-obelisk_rt_v1_scan_dynamic_validate(obelisk_rt_context *context,
-                                    obelisk_rt_string_v1 format,
+extern "C" TALOS_RT_FEATURE_TEXT talos_rt_status
+talos_rt_v1_scan_dynamic_validate(talos_rt_context *context,
+                                    talos_rt_string_v1 format,
                                     uint32_t planCursor, uint32_t file,
                                     uint32_t finalize,
                                     uint64_t allowedSpecifiers,
                                     uint32_t *outPlanCursor) {
   if (!context || !outPlanCursor || file > 1 || finalize > 1)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outPlanCursor = planCursor;
   std::shared_ptr<const DynamicScanPlan> plan;
-  obelisk_rt_status status =
-      obelisk_rt_dynamic_scan_plan(context, format, plan);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_dynamic_scan_plan(context, format, plan);
+  if (status != TALOS_RT_OK)
     return status;
   const char *task = file ? "$fscanf" : "$sscanf";
   if (!plan->error.empty()) {
-    std::fprintf(stderr, "obelisk: malformed dynamic %s conversion '%s'\n",
+    std::fprintf(stderr, "talos: malformed dynamic %s conversion '%s'\n",
                  task, plan->error.c_str());
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   }
   if (planCursor > plan->conversions.size()) {
-    std::fprintf(stderr, "obelisk: invalid dynamic %s format cursor\n", task);
-    return OBELISK_RT_INVALID_ARGUMENT;
+    std::fprintf(stderr, "talos: invalid dynamic %s format cursor\n", task);
+    return TALOS_RT_INVALID_ARGUMENT;
   }
   auto letter = [](uint32_t specifier) {
     return static_cast<char>(
@@ -209,37 +209,37 @@ obelisk_rt_v1_scan_dynamic_validate(obelisk_rt_context *context,
     if (conversion.suppressed) {
       if ((normalized == 'u' || normalized == 'z') && conversion.width == 0) {
         std::fprintf(stderr,
-                     "obelisk: dynamic %s assignment suppression for raw "
+                     "talos: dynamic %s assignment suppression for raw "
                      "%%%c requires an explicit byte count\n",
                      task, static_cast<char>(conversion.specifier));
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       }
       continue;
     }
     if (finalize) {
       std::fprintf(stderr,
-                   "obelisk: dynamic %s format has more conversions than "
+                   "talos: dynamic %s format has more conversions than "
                    "destinations\n",
                    task);
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     }
     if (!allowed(conversion.specifier)) {
       std::fprintf(stderr,
-                   "obelisk: dynamic %s %%%c is incompatible with its "
+                   "talos: dynamic %s %%%c is incompatible with its "
                    "destination\n",
                    task, static_cast<char>(conversion.specifier));
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     }
     *outPlanCursor = static_cast<uint32_t>(ordinal + 1);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (!finalize) {
     std::fprintf(stderr,
-                 "obelisk: dynamic %s format has fewer conversions than "
+                 "talos: dynamic %s format has fewer conversions than "
                  "destinations\n",
                  task);
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   }
   *outPlanCursor = static_cast<uint32_t>(plan->conversions.size());
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }

@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -passes=verify -disable-output
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.closed_executable}"' > %t.closed.mlir
-// RUN: obelisk-opt %t.closed.mlir --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --talos-sim-plan-native-partitions --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | opt -passes=verify -disable-output
+// RUN: talos-opt %s '--test-talos-set-module-attributes=attrs="{native.closed_executable}"' > %t.closed.mlir
+// RUN: talos-opt %t.closed.mlir --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
@@ -41,27 +41,27 @@ module attributes {
 }
 
 // Rows {plan, capture byte offset, no initialization scope}.
-// CHECK: llvm.mlir.global internal constant @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0() {{.*}} : !llvm.array<2 x struct<(ptr, i64, i64)>>
-// CHECK: llvm.mlir.addressof @child.__obelisk_spawn_plan
+// CHECK: llvm.mlir.global internal constant @parent.__talos_coro_ramp.__talos_spawn_batch_0() {{.*}} : !llvm.array<2 x struct<(ptr, i64, i64)>>
+// CHECK: llvm.mlir.addressof @child.__talos_spawn_plan
 // CHECK: llvm.mlir.constant(0 : i64)
 // CHECK: llvm.mlir.constant(0 : i64)
-// CHECK: llvm.mlir.addressof @child.__obelisk_spawn_plan
+// CHECK: llvm.mlir.addressof @child.__talos_spawn_plan
 // CHECK: llvm.mlir.constant(8 : i64)
 // CHECK: llvm.mlir.constant(0 : i64)
-// CHECK: llvm.mlir.global internal constant @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0_captures(dense<[17, 29]> : tensor<2xi64>) {{.*}} : !llvm.array<2 x i64>
-// CHECK-LABEL: llvm.func @parent.__obelisk_coro_ramp
-// CHECK: %[[TABLE:.*]] = llvm.mlir.addressof @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0 :
-// CHECK: %[[CAPTURES:.*]] = llvm.mlir.addressof @parent.__obelisk_coro_ramp.__obelisk_spawn_batch_0_captures
-// CHECK: llvm.call @obelisk_rt_v1_process_spawn_batch(%{{.*}}, %[[TABLE]], %[[CAPTURES]], %{{.*}})
+// CHECK: llvm.mlir.global internal constant @parent.__talos_coro_ramp.__talos_spawn_batch_0_captures(dense<[17, 29]> : tensor<2xi64>) {{.*}} : !llvm.array<2 x i64>
+// CHECK-LABEL: llvm.func @parent.__talos_coro_ramp
+// CHECK: %[[TABLE:.*]] = llvm.mlir.addressof @parent.__talos_coro_ramp.__talos_spawn_batch_0 :
+// CHECK: %[[CAPTURES:.*]] = llvm.mlir.addressof @parent.__talos_coro_ramp.__talos_spawn_batch_0_captures
+// CHECK: llvm.call @talos_rt_v1_process_spawn_batch(%{{.*}}, %[[TABLE]], %[[CAPTURES]], %{{.*}})
 // CHECK-NOT: llvm.icmp
-// CHECK-NOT: llvm.call @child.__obelisk_spawn
-// CHECK: llvm.call @obelisk_rt_v1_dump_flush
-// CHECK-COUNT-4: llvm.call @child.__obelisk_spawn
-// CHECK-LABEL: llvm.func @child.__obelisk_spawn(
+// CHECK-NOT: llvm.call @child.__talos_spawn
+// CHECK: llvm.call @talos_rt_v1_dump_flush
+// CHECK-COUNT-4: llvm.call @child.__talos_spawn
+// CHECK-LABEL: llvm.func @child.__talos_spawn(
 // CHECK: llvm.alloca
 // CHECK: llvm.intr.memset
 // CHECK: llvm.store
-// CHECK: llvm.mlir.addressof @child.__obelisk_spawn_plan
-// CHECK: llvm.call @obelisk_rt_v1_process_spawn
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_add
+// CHECK: llvm.mlir.addressof @child.__talos_spawn_plan
+// CHECK: llvm.call @talos_rt_v1_process_spawn
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_add
 // CHECK: llvm.return

@@ -1,13 +1,13 @@
 //===- SimulationCopyProcessAnalysis.cpp - Copy admission ----------------===//
 
-#include "obelisk/Analysis/SimulationCopyProcessAnalysis.h"
+#include "talos/Analysis/SimulationCopyProcessAnalysis.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 
 std::optional<CaptureCopyProcess>
 getCaptureCopyProcess(sim::SimFuncOp function) {
@@ -77,4 +77,4 @@ bool isCaptureCopyProcess(sim::SimFuncOp function) {
   return getCaptureCopyProcess(function).has_value();
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

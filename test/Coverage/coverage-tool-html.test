@@ -1,10 +1,10 @@
 # RUN: %coverage-fixture %t.a.obcov 1 alpha 1
 # RUN: %coverage-fixture %t.b.obcov 2 beta 0
-# RUN: obelisk-cov merge -o %t.merged.obcov %t.a.obcov %t.b.obcov
-# RUN: obelisk-cov report --format=html --source-root=%S/Inputs --fail-under=line=90 -o %t.html %t.merged.obcov
+# RUN: talos-cov merge -o %t.merged.obcov %t.a.obcov %t.b.obcov
+# RUN: talos-cov report --format=html --source-root=%S/Inputs --fail-under=line=90 -o %t.html %t.merged.obcov
 # RUN: FileCheck %s --check-prefix=HTML < %t.html
-# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html --script %source_root/tools/obelisk-cov/CoverageReport.js --style %source_root/tools/obelisk-cov/CoverageReport.css 'PASS 90.00%' '4 unique' 'dut.sv' 'top.dut' 'row:1|alpha|1|2|1|4 unique' 'row:dut.sv:1:3|line|1|covered|alpha' 'row:dut.sv:1:9|line|0|excluded: generated|' 'row:dut.sv:2|excluded|0|excluded: entire generated line|' %}
-# RUN: not obelisk-cov report --format=json --test=beta --fail-under=line=1 %t.merged.obcov | FileCheck %s --check-prefix=THRESHOLD-FAIL
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html --script %source_root/tools/talos-cov/CoverageReport.js --style %source_root/tools/talos-cov/CoverageReport.css 'PASS 90.00%' '4 unique' 'dut.sv' 'top.dut' 'row:1|alpha|1|2|1|4 unique' 'row:dut.sv:1:3|line|1|covered|alpha' 'row:dut.sv:1:9|line|0|excluded: generated|' 'row:dut.sv:2|excluded|0|excluded: entire generated line|' %}
+# RUN: not talos-cov report --format=json --test=beta --fail-under=line=1 %t.merged.obcov | FileCheck %s --check-prefix=THRESHOLD-FAIL
 
 # The HTML report is one self-contained page: a content security policy that
 # allows nothing but the page's own style and two scripts by hash, the report
@@ -20,7 +20,7 @@
 # HTML-NEXT: content="default-src 'none'; base-uri 'none'; style-src 'sha256-{{[A-Za-z0-9+/]+=*}}'; script-src 'sha256-{{[A-Za-z0-9+/]+=*}}' 'sha256-{{[A-Za-z0-9+/]+=*}}'">
 # HTML-NOT: unsafe-inline
 # HTML-NOT: nonce=
-# HTML: <title>Obelisk coverage</title>
+# HTML: <title>Talos coverage</title>
 # HTML: <style>
 # HTML: </style>
 # HTML: <select id="test">

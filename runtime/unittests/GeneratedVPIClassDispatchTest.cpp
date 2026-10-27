@@ -6,15 +6,15 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
 #include "gtest/gtest.h"
 #include <cstdlib>
 #include <set>
 
 namespace {
-using namespace obelisk::reflection;
+using namespace talos::reflection;
 
 template <typename Bytes> uint64_t imageChecksum(const Bytes &bytes) {
   uint64_t hash = UINT64_C(14695981039346656037);
@@ -26,23 +26,23 @@ template <typename Bytes> uint64_t imageChecksum(const Bytes &bytes) {
 }
 
 TEST(GeneratedDesignDatabase, ClassCallDispatch) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -59,21 +59,21 @@ TEST(GeneratedDesignDatabase, ClassCallDispatch) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
   const std::set<uint64_t> expected[] = {
       {101, 103, 104}, {101, 103, 104}, {102}, {104}, {}, {105, 106}};
   for (unsigned call = 0; call != std::size(expected); ++call) {
     SCOPED_TRACE(call);
     for (uint64_t callee : {0, 44, 101, 102, 103, 104, 105, 106, 107, 999})
-      EXPECT_EQ(obelisk_rt_cached_vpi_call_target(runtime, 20 + call, callee),
-                expected[call].count(callee) ? OBELISK_RT_OK : OBELISK_RT_EOF);
+      EXPECT_EQ(talos_rt_cached_vpi_call_target(runtime, 20 + call, callee),
+                expected[call].count(callee) ? TALOS_RT_OK : TALOS_RT_EOF);
   }
-  EXPECT_EQ(obelisk_rt_cached_vpi_call_target(runtime, 999, 101),
-            OBELISK_RT_EOF);
-  obelisk_rt_v1_context_destroy(runtime);
+  EXPECT_EQ(talos_rt_cached_vpi_call_target(runtime, 999, 101),
+            TALOS_RT_EOF);
+  talos_rt_v1_context_destroy(runtime);
 
   HeaderView header(encoded->designDatabase.data());
   SemanticDirectoryView directory(encoded->designDatabase.data() +
@@ -88,8 +88,8 @@ TEST(GeneratedDesignDatabase, ClassCallDispatch) {
     HeaderWriter(bytes.data()).setChecksum(imageChecksum(bytes));
     auto corrupt = execution;
     corrupt.design_database = bytes.data();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&corrupt),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&corrupt),
+              TALOS_RT_INVALID_DESIGN);
   };
   invalid([&](auto &bytes) {
     CallDispatchBindingWriter(bytes.data() + calls +
@@ -156,23 +156,23 @@ TEST(GeneratedDesignDatabase, ClassCallDispatch) {
   });
 }
 TEST(GeneratedDesignDatabase, ClassCallDispatchProducer) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -189,31 +189,31 @@ TEST(GeneratedDesignDatabase, ClassCallDispatchProducer) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  auto calls = design.getOps<obelisk::sim::SimVPICallDeclOp>();
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  auto calls = design.getOps<talos::sim::SimVPICallDeclOp>();
   ASSERT_EQ(std::distance(calls.begin(), calls.end()), 1);
   auto call = *calls.begin();
-  auto dispatches = design.getOps<obelisk::sim::SimVPIClassCallDispatchOp>();
+  auto dispatches = design.getOps<talos::sim::SimVPIClassCallDispatchOp>();
   ASSERT_EQ(std::distance(dispatches.begin(), dispatches.end()), 1);
   auto dispatch = *dispatches.begin();
   mlir::SymbolTableCollection symbols;
   auto method =
-      symbols.lookupNearestSymbolFrom<obelisk::sim::SimClassMethodDeclOp>(
+      symbols.lookupNearestSymbolFrom<talos::sim::SimClassMethodDeclOp>(
           dispatch, dispatch.getMethodAttr());
   ASSERT_TRUE(method);
-  auto function = symbols.lookupNearestSymbolFrom<obelisk::sim::SimFuncOp>(
+  auto function = symbols.lookupNearestSymbolFrom<talos::sim::SimFuncOp>(
       method, method.getImplementationAttr());
   ASSERT_TRUE(function);
   ASSERT_TRUE(function.getCodeUnitId());
-  EXPECT_EQ(obelisk_rt_cached_vpi_call_target(runtime, call.getId(),
+  EXPECT_EQ(talos_rt_cached_vpi_call_target(runtime, call.getId(),
                                               *function.getCodeUnitId()),
-            OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_cached_vpi_call_target(runtime, call.getId(),
+            TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_cached_vpi_call_target(runtime, call.getId(),
                                               call.getCodeUnitId()),
-            OBELISK_RT_EOF);
-  obelisk_rt_v1_context_destroy(runtime);
+            TALOS_RT_EOF);
+  talos_rt_v1_context_destroy(runtime);
 }
 } // namespace

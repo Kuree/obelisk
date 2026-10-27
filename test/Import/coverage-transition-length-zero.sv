@@ -1,4 +1,4 @@
-// RUN: not %obelisk -emit-slang %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not %talos -emit-slang %s -o /dev/null 2>&1 | FileCheck %s
 
 // IEEE 1800-2023 19.5.2: a transition bin of length 0, a single value range
 // that is not repeated or can be repeated exactly once, is illegal. Bins

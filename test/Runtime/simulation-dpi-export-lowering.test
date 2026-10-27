@@ -1,5 +1,5 @@
 // RUN: %llvm_dist/bin/clang -std=c11 -c %S/Inputs/dpi-export-runtime.c -o %t.c.o
-// RUN: obelisk-opt %S/../Conversion/simulation-dpi-export-lowering.mlir --pass-pipeline='builtin.module(obelisk-sim-materialize-dpi-exports,simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' | obelisk-translate --allow-unregistered-dialect --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.native.o
+// RUN: talos-opt %S/../Conversion/simulation-dpi-export-lowering.mlir --pass-pipeline='builtin.module(talos-sim-materialize-dpi-exports,simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),convert-talos-sim-processes-to-llvm-coroutines)' | talos-translate --allow-unregistered-dialect --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.native.o
 // RUN: %target_cxx %t.native.o %t.c.o %runtime_link_flags -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=RUNTIME
 

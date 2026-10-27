@@ -1,8 +1,8 @@
 // REQUIRES: native-macho
 // RUN: mkdir -p %t.dir
 // RUN: %target_clang -dynamiclib -Wl,-undefined,dynamic_lookup -Wl,-install_name,@rpath/libtasks.dylib %S/Inputs/dpi_export_task_impl.c -I%resource_dir/include -o %t.dir/libtasks.dylib
-// RUN: %obelisk %S/dpi-export-task.sv %t.dir/libtasks.dylib -o %t.dir/simulator && %t.dir/simulator | FileCheck %S/dpi-export-task.sv --check-prefix=OUTPUT
-// RUN: %obelisk -flto %S/dpi-export-task.sv %t.dir/libtasks.dylib -o %t.dir/lto && %t.dir/lto | FileCheck %S/dpi-export-task.sv --check-prefix=OUTPUT
-// RUN: %obelisk --execution-tier=bytecode %S/dpi-export-task.sv %t.dir/libtasks.dylib -o %t.dir/bytecode && %t.dir/bytecode | FileCheck %S/dpi-export-task.sv --check-prefix=OUTPUT
+// RUN: %talos %S/dpi-export-task.sv %t.dir/libtasks.dylib -o %t.dir/simulator && %t.dir/simulator | FileCheck %S/dpi-export-task.sv --check-prefix=OUTPUT
+// RUN: %talos -flto %S/dpi-export-task.sv %t.dir/libtasks.dylib -o %t.dir/lto && %t.dir/lto | FileCheck %S/dpi-export-task.sv --check-prefix=OUTPUT
+// RUN: %talos --execution-tier=bytecode %S/dpi-export-task.sv %t.dir/libtasks.dylib -o %t.dir/bytecode && %t.dir/bytecode | FileCheck %S/dpi-export-task.sv --check-prefix=OUTPUT
 // RUN: %target_clang -dynamiclib -Wl,-undefined,dynamic_lookup -Wl,-install_name,@rpath/libarray.dylib %S/Inputs/dpi_open_array_impl.c -I%resource_dir/include -o %t.dir/libarray.dylib
-// RUN: %obelisk %S/dpi-open-array.sv %t.dir/libarray.dylib -o %t.dir/array && %t.dir/array | FileCheck %S/dpi-open-array.sv
+// RUN: %talos %S/dpi-open-array.sv %t.dir/libarray.dylib -o %t.dir/array && %t.dir/array | FileCheck %S/dpi-open-array.sv

@@ -1,4 +1,4 @@
-//===- PassPlugin.cpp - opt plugin entry for the Obelisk LLVM passes -------===//
+//===- PassPlugin.cpp - opt plugin entry for the Talos LLVM passes -------===//
 //
 // The distribution ships no llvm/Passes/PassPlugin.h, so the plugin ABI record
 // is spelled out here: it is the stable `PassPluginLibraryInfo` of LLVM's pass
@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/LLVM/ClockedGuardLayout.h"
+#include "talos/LLVM/ClockedGuardLayout.h"
 
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Compiler.h"
@@ -23,6 +23,6 @@ struct PassPluginLibraryInfo {
 } // namespace
 
 extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
-  return {2, "ObeliskLLVMPasses", LLVM_VERSION_STRING,
-          obelisk::registerObeliskLLVMPasses};
+  return {2, "TalosLLVMPasses", LLVM_VERSION_STRING,
+          talos::registerTalosLLVMPasses};
 }

@@ -1,5 +1,5 @@
 // An unsupported protected envelope does not overwrite an existing output.
 // RUN: cp %S/Inputs/preexisting-output.mlir %t.existing.mlir
-// RUN: not obelisk -emit-obelisk %S/protected-envelope-unsupported.sv -o %t.existing.mlir 2> %t.existing.stderr
+// RUN: not talos -emit-talos %S/protected-envelope-unsupported.sv -o %t.existing.mlir 2> %t.existing.stderr
 // RUN: FileCheck %S/protected-envelope-unsupported.sv --input-file=%t.existing.stderr
 // RUN: cmp %S/Inputs/preexisting-output.mlir %t.existing.mlir

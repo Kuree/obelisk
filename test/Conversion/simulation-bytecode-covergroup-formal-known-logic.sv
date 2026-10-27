@@ -1,5 +1,5 @@
-// RUN: obelisk --coverage=functional -emit-sim %s -o %t.mlir
-// RUN: obelisk-opt %t.mlir '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\", llvm.target_triple = \"x86_64-unknown-linux-gnu\"}"' '--encode-obelisk-sim-to-bytecode=vpi=off' '--test-obelisk-print-bytecode=metadata=true' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos --coverage=functional -emit-sim %s -o %t.mlir
+// RUN: talos-opt %t.mlir '--test-talos-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\", llvm.target_triple = \"x86_64-unknown-linux-gnu\"}"' '--encode-talos-sim-to-bytecode=vpi=off' '--test-talos-print-bytecode=metadata=true' -o /dev/null 2>&1 | FileCheck %s
 
 // IEEE 1800-2023 19.3 and 13.5.1 require an input constructor formal to
 // preserve its assigned typed value. A later formal read uses that declared

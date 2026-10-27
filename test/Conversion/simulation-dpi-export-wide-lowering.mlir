@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --talos-sim-materialize-dpi-exports \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --implicit-check-not=i1048576 \
 // RUN:       --implicit-check-not=i65536 \
 // RUN:       --implicit-check-not='llvm.func @wide_export('
@@ -88,5 +88,5 @@ module attributes {
 // CHECK: llvm.intr.memset
 // CHECK-LABEL: llvm.func @wide_aggregate_export_c
 // CHECK-COUNT-4: llvm.intr.memset
-// CHECK-LABEL: llvm.func @wide_export.__obelisk_dpi_export_bridge.__obelisk_dpi_export
+// CHECK-LABEL: llvm.func @wide_export.__talos_dpi_export_bridge.__talos_dpi_export
 // CHECK-COUNT-2: llvm.intr.memcpy

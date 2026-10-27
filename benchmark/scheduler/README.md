@@ -21,7 +21,7 @@ Pass `--verilator /path/to/verilator` to compile the same source with Verilator
 and require identical lane output. Override `--waiters` to measure other
 dormant-fanout populations. Use the generated executables with
 Callgrind when instruction-level profiles are needed; `--tier native` and
-`--tier bytecode` isolate the two Obelisk configurations, while
+`--tier bytecode` isolate the two Talos configurations, while
 `--native-scheduler=generic` selects the semantic oracle. Design-wide
 bytecode operations are included wherever the workload lowers to them; the
 driver does not expose a third, independent design-task-only tier switch.
@@ -44,9 +44,9 @@ This benchmark intentionally has no Verilator step.
 For a quick local comparison:
 
 ```sh
-build/tools/driver/obelisk -O3 --native-scheduler=generic \
+build/tools/driver/talos -O3 --native-scheduler=generic \
   benchmark/scheduler/gated_scc.sv -o tmp/gated-scc-generic
-build/tools/driver/obelisk -O3 --native-scheduler=auto \
+build/tools/driver/talos -O3 --native-scheduler=auto \
   benchmark/scheduler/gated_scc.sv -o tmp/gated-scc-auto
 diff <(tmp/gated-scc-generic) <(tmp/gated-scc-auto)
 ```

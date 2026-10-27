@@ -1,8 +1,8 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=LAYOUT
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=COUNT
-// RUN: obelisk-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=LAYOUT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=COUNT
+// RUN: talos-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
 
 // IEEE 13.5, 19.3 and 19.8.1: fixed aggregate inputs copy values, including
 // nested arrays. Constructor refs are live const aliases, while sample inputs

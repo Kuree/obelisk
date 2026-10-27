@@ -1,15 +1,15 @@
-// RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups | FileCheck %s
+// RUN: talos-opt %s --talos-materialize-native-eval-groups | FileCheck %s
 
 // The bounded dynamic value-plane store intersects the fixed lane, so the
 // writer's value plane stays canonical; its independent X/Z lane can travel.
-// CHECK-LABEL: llvm.func internal @lane_write.__obelisk_eval_values(
+// CHECK-LABEL: llvm.func internal @lane_write.__talos_eval_values(
 // CHECK-SAME: schedule.eval.value_lanes = array<i64: 1, 0, 2, 1>
 // CHECK: llvm.load {{.*}} -> i16
 // CHECK: llvm.store {{.*}}schedule.eval.state_access_bytes
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", schedule.native.max_inline_ops = 64 : i64} {
-  llvm.mlir.global @__obelisk_state_value(dense<[52, 18, 77]> : tensor<3xi8>) : !llvm.array<3 x i8>
-  llvm.mlir.global @__obelisk_state_unknown(dense<0> : tensor<3xi8>) : !llvm.array<3 x i8>
+  llvm.mlir.global @__talos_state_value(dense<[52, 18, 77]> : tensor<3xi8>) : !llvm.array<3 x i8>
+  llvm.mlir.global @__talos_state_unknown(dense<0> : tensor<3xi8>) : !llvm.array<3 x i8>
   llvm.mlir.global internal @checksum(0 : i16) : i16
   llvm.mlir.global internal @context() : !llvm.ptr {
     %null = llvm.mlir.zero : !llvm.ptr
@@ -21,8 +21,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
   }
   llvm.func @observer(i16, i16) -> i1
   llvm.func @lane_write(%take: i1 {simulation.capture_kind = 1 : i32}) attributes {schedule.eval.raw_captures, passthrough = ["noinline"]} {
-    %v = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %x = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %v = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %x = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     %old = llvm.load %v {alignment = 1 : i64} : !llvm.ptr -> i16
     %oldx = llvm.load %x {alignment = 1 : i64} : !llvm.ptr -> i16
     %ctx = llvm.mlir.addressof @context : !llvm.ptr
@@ -124,8 +124,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", s
     llvm.return
   }
   llvm.func @lane_read(%expected: i16 {simulation.capture_kind = 1 : i32}, %expected_x: i16) -> i1 attributes {schedule.eval.infallible, passthrough = ["noinline"]} {
-    %v = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %x = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %v = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %x = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     %current = llvm.load %v {alignment = 1 : i64} : !llvm.ptr -> i16
     %current_x = llvm.load %x {alignment = 1 : i64} : !llvm.ptr -> i16
     %one = llvm.mlir.constant(1 : i16) : i16

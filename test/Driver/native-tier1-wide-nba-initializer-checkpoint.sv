@@ -1,7 +1,7 @@
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
+// RUN: talos --clocked-kernels=immediate -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: talos --clocked-kernels=immediate -O3 --native-scheduler=auto %s -o %t.auto
+// RUN: talos --clocked-kernels=immediate -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.auto > %t.auto.out
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.auto.out
@@ -32,7 +32,7 @@ module native_tier1_wide_nba_initializer_checkpoint;
   end
 endmodule
 
-// LLVM: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
-// LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
-// LLVM: call i32 @obelisk_rt_v1_native_state_bind_shared
+// LLVM: call i32 @talos_rt_v1_scheduler_execute_aot_actor
+// LLVM: define {{.*}}i32 @__talos_eval_dispatch_v1
+// LLVM: call i32 @talos_rt_v1_native_state_bind_shared
 // CHECK: pipeline 4 3 2

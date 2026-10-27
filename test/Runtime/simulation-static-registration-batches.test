@@ -1,11 +1,11 @@
 // Runtime semantics for ../Conversion/simulation-static-registration-batches.mlir.
 
-// RUN: obelisk-opt %S/../Conversion/simulation-static-registration-batches.mlir --encode-obelisk-sim-to-bytecode='vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.mlir
-// RUN: obelisk-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %S/../Conversion/simulation-static-registration-batches.mlir --encode-talos-sim-to-bytecode='vpi=off' --convert-talos-sim-processes-to-llvm-coroutines -o %t.mlir
+// RUN: talos-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %s
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s
-// RUN: obelisk-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o0.o
+// RUN: talos-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o0.o
 // RUN: %target_cxx %t.o0.o %runtime_link_flags -o %t.o0.exe
 // RUN: %t.o0.exe --execution-tier=native | FileCheck %s
 

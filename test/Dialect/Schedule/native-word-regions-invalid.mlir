@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics
+// RUN: talos-opt %s --split-input-file --verify-diagnostics
 module {
   func.func @bad() {
     // expected-error @+1 {{requires a lane count dividing the maximum word width}}

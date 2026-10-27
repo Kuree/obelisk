@@ -1,4 +1,4 @@
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 //===- SimulationProcessOps.cpp - Process, call, and reference op verifiers
 //===//
 //
@@ -9,13 +9,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "SimulationVerifiers.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/DPI/DPIDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationVPI.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/DPI/DPIDialect.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationVPI.h"
+#include "talos/Reflection/VPIObjectModel.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -44,10 +44,10 @@
 using namespace mlir;
 
 static std::optional<unsigned> getOverrideBitWidth(Type type) {
-  return obelisk::analysis::getSimulationStorageBitWidth(type);
+  return talos::analysis::getSimulationStorageBitWidth(type);
 }
 
-namespace obelisk::sim {
+namespace talos::sim {
 
 void SimFuncOp::build(OpBuilder &builder, OperationState &state, StringRef name,
                       FunctionType type, EntryKind entryKind,
@@ -406,7 +406,7 @@ LogicalResult SimFuncOp::verify() {
     if (type.getNumResults() != 1)
       return emitOpError("observer entry must return one scalar result");
     Type result = type.getResult(0);
-    if (::obelisk::schedule::has<::obelisk::schedule::Field::OverrideEvaluator>(
+    if (::talos::schedule::has<::talos::schedule::Field::OverrideEvaluator>(
             getOperation())) {
       if (!analysis::getSimulationStorageBitWidth(result))
         return emitOpError(
@@ -848,7 +848,7 @@ LogicalResult SimObserverBindOp::verify() {
       return emitOpError(
           "dependencies must be storage, argument-ref, net, named-event, or "
           "managed-watch handles");
-  if (::obelisk::schedule::has<::obelisk::schedule::Field::EventPrimary>(
+  if (::talos::schedule::has<::talos::schedule::Field::EventPrimary>(
           (*this))) {
     auto observer = cast<ObserverType>(getResult().getType());
     auto integer = dyn_cast<IntegerType>(observer.getResultType());
@@ -2420,4 +2420,4 @@ LogicalResult SimDriverDynExtractOp::verify() {
   return success();
 }
 
-} // namespace obelisk::sim
+} // namespace talos::sim

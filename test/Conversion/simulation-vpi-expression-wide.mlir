@@ -1,4 +1,4 @@
-// RUN: env OBELISK_TEST_INPUT=%s %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.WideExpressionTemplates
+// RUN: env TALOS_TEST_INPUT=%s %obj_root/test/talos-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.WideExpressionTemplates
 // Equal source templates in two distinct instances retain separate identities.
 #byte = #simulation.vpi_type<kind = logic, isSigned = false, isFourState = true, range = [64, 0], children = [], childNames = []>
 #half = #simulation.vpi_type<kind = logic, isSigned = false, isFourState = true, range = [129, 0], children = [], childNames = []>

@@ -1,4 +1,4 @@
-// RUN: env OBELISK_TEST_INPUT=%s %obj_root/test/obelisk-design-database-dump-test \
+// RUN: env TALOS_TEST_INPUT=%s %obj_root/test/talos-design-database-dump-test \
 // RUN:   --gtest_filter=GeneratedDesignDatabase.CompiledFrameLocalBinding
 #word = #simulation.vpi_type<kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>
 module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llvm.target_triple = "x86_64-unknown-linux-gnu"} {

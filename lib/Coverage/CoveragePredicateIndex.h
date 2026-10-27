@@ -1,11 +1,11 @@
 //===- CoveragePredicateIndex.h - symbolic integral cross predicates -----===//
-#ifndef OBELISK_LIB_COVERAGE_COVERAGEPREDICATEINDEX_H
-#define OBELISK_LIB_COVERAGE_COVERAGEPREDICATEINDEX_H
+#ifndef TALOS_LIB_COVERAGE_COVERAGEPREDICATEINDEX_H
+#define TALOS_LIB_COVERAGE_COVERAGEPREDICATEINDEX_H
 
 #include "CoverageDecisionIndex.h"
-#include "obelisk/Coverage/CoverageDatabase.h"
+#include "talos/Coverage/CoverageDatabase.h"
 
-namespace obelisk::coverage::detail {
+namespace talos::coverage::detail {
 
 // Four-state bit vectors use one Boolean graph for each A and B plane bit.
 // Every expression node is compiled once. Boolean graph operations retain
@@ -908,5 +908,5 @@ public:
   }
 };
 
-} // namespace obelisk::coverage::detail
+} // namespace talos::coverage::detail
 #endif

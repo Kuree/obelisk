@@ -2,26 +2,26 @@
 
 #include "EliminateDeadBoundaries.h"
 
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMELIMINATEDEADCAPTURESPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMELIMINATEDEADCAPTURESPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 
-class ObeliskSimEliminateDeadCapturesPass final
-    : public impl::ObeliskSimEliminateDeadCapturesPassBase<
-          ObeliskSimEliminateDeadCapturesPass> {
+class TalosSimEliminateDeadCapturesPass final
+    : public impl::TalosSimEliminateDeadCapturesPassBase<
+          TalosSimEliminateDeadCapturesPass> {
 public:
-  using Base = impl::ObeliskSimEliminateDeadCapturesPassBase<
-      ObeliskSimEliminateDeadCapturesPass>;
+  using Base = impl::TalosSimEliminateDeadCapturesPassBase<
+      TalosSimEliminateDeadCapturesPass>;
   using Base::Base;
-  ObeliskSimEliminateDeadCapturesPass(
-      const ObeliskSimEliminateDeadCapturesPass &other)
+  TalosSimEliminateDeadCapturesPass(
+      const TalosSimEliminateDeadCapturesPass &other)
       : Base(other) {}
 
   void runOnOperation() override {
@@ -57,4 +57,4 @@ private:
 };
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

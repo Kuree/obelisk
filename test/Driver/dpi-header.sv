@@ -1,4 +1,4 @@
-// RUN: obelisk --emit-dpi-header %s -o %t.h
+// RUN: talos --emit-dpi-header %s -o %t.h
 // RUN: FileCheck %s --check-prefix=HEADER < %t.h
 // RUN: %llvm_dist/bin/clang -x c -fsyntax-only -include %t.h \
 // RUN:   -I%resource_dir/include /dev/null
@@ -6,7 +6,7 @@
 // RUN:   -I%resource_dir/include /dev/null
 // RUN: test -f %resource_dir/include/svdpi.h
 // RUN: %llvm_dist/bin/clang -x c -c /dev/null -o %t.o
-// RUN: not obelisk --emit-dpi-header %t.o %s 2>&1 \
+// RUN: not talos --emit-dpi-header %t.o %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=LINK-ONLY
 
 module dpi_header;

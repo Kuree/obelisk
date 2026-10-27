@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir 2> %t.trace
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.serial 2> %t.serial.trace
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir 2> %t.trace
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' -o %t.serial 2> %t.serial.trace
 // RUN: diff %t.mlir %t.serial
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 // RUN: FileCheck %s --check-prefix=GROUP --implicit-check-not=schedule.eval.predicated_dataflow < %t.mlir
@@ -185,22 +185,22 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// TRACE: obelisk ranked groups: candidates=6 groups=3 segments=0 members=6 clocked_members=6
+// TRACE: talos ranked groups: candidates=6 groups=3 segments=0 members=6 clocked_members=6
 // Change-sensitive and multi-trigger bodies retain ordinary executors.
-// TRACE: obelisk eval owner: bit=0 {{.*}} group=- executor=
-// TRACE: obelisk eval owner: bit=1 {{.*}} group=- executor=
-// TRACE: obelisk eval dependency: owner=2 island=0 body=fall_a.__obelisk_eval_body_0
-// TRACE-NEXT: obelisk eval dependency: owner=3 island=0 body=fall_b.__obelisk_eval_body_0
-// TRACE-NEXT: obelisk eval dependency: owner=4 island=1 body=other_a.__obelisk_eval_body_0
-// TRACE-NEXT: obelisk eval dependency: owner=5 island=1 body=other_b.__obelisk_eval_body_0
-// TRACE-NEXT: obelisk eval dependency: owner=6 island=2 body=rise_a.__obelisk_eval_body_0
-// TRACE-NEXT: obelisk eval dependency: owner=7 island=2 body=rise_b.__obelisk_eval_body_0
+// TRACE: talos eval owner: bit=0 {{.*}} group=- executor=
+// TRACE: talos eval owner: bit=1 {{.*}} group=- executor=
+// TRACE: talos eval dependency: owner=2 island=0 body=fall_a.__talos_eval_body_0
+// TRACE-NEXT: talos eval dependency: owner=3 island=0 body=fall_b.__talos_eval_body_0
+// TRACE-NEXT: talos eval dependency: owner=4 island=1 body=other_a.__talos_eval_body_0
+// TRACE-NEXT: talos eval dependency: owner=5 island=1 body=other_b.__talos_eval_body_0
+// TRACE-NEXT: talos eval dependency: owner=6 island=2 body=rise_a.__talos_eval_body_0
+// TRACE-NEXT: talos eval dependency: owner=7 island=2 body=rise_b.__talos_eval_body_0
 
-// GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
+// GROUP-LABEL: llvm.func @__talos_eval_ranked_group_0(
 // GROUP-SAME: schedule.eval.ranked_members = array<i32: 2, 3>
-// GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_1(
+// GROUP-LABEL: llvm.func @__talos_eval_ranked_group_1(
 // GROUP-SAME: schedule.eval.ranked_members = array<i32: 4, 5>
-// GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_2(
+// GROUP-LABEL: llvm.func @__talos_eval_ranked_group_2(
 // GROUP-SAME: schedule.eval.ranked_members = array<i32: 6, 7>
 // Both ready predicates precede their corresponding inline bodies.
 // GROUP: llvm.mlir.constant(64 : i64)
@@ -211,6 +211,6 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // GROUP: llvm.and
 // GROUP: llvm.icmp "ne"
 // GROUP: llvm.cond_br
-// GROUP: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
+// GROUP: llvm.mlir.addressof @__talos_aot_nba_accumulator_
 // GROUP: llvm.store {{.*}}schedule.eval.group_owner = 6 : i32
 // GROUP: llvm.store {{.*}}schedule.eval.group_owner = 7 : i32

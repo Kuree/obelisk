@@ -10,7 +10,7 @@ import {
 } from '../../web/embed-snippet.js';
 import { PALETTES } from '../../web/sv-highlight.js';
 
-const runnerUrl = 'https://example.com/obelisk/runner.js';
+const runnerUrl = 'https://example.com/talos/runner.js';
 
 // The compile service already passes the defaults, whatever stage is open.
 assert.equal(embedArgs(DEFAULTS), '');
@@ -29,7 +29,7 @@ assert.deepEqual(splitFlags(embedArgs(custom)),
 const source = '\nmodule top;\n  initial if (1 < 2 && 3 > 2) $display("ok");\nendmodule\n\n';
 
 assert.equal(htmlSnippet({ source, options: DEFAULTS, runnerUrl }), [
-  '<script src="https://example.com/obelisk/runner.js" defer></script>',
+  '<script src="https://example.com/talos/runner.js" defer></script>',
   '',
   '<pre><code class="language-systemverilog">module top;',
   '  initial if (1 &lt; 2 &amp;&amp; 3 &gt; 2) $display("ok");',
@@ -37,14 +37,14 @@ assert.equal(htmlSnippet({ source, options: DEFAULTS, runnerUrl }), [
   '',
 ].join('\n'));
 assert.match(htmlSnippet({ source, options: custom, runnerUrl }),
-  /<pre><code class="language-systemverilog" data-obelisk-args="-O0 --execution-tier=bytecode --top=tb '-DNAME=a b'">/);
+  /<pre><code class="language-systemverilog" data-talos-args="-O0 --execution-tier=bytecode --top=tb '-DNAME=a b'">/);
 assert.match(htmlSnippet({ source, options: { ...DEFAULTS, defines: 'S="x"' }, runnerUrl }),
-  /data-obelisk-args="-DS=x"/);
+  /data-talos-args="-DS=x"/);
 assert.match(htmlSnippet({ source, options: { ...DEFAULTS, extra: `'--x=a "b"'` }, runnerUrl }),
-  /data-obelisk-args="'--x=a &quot;b&quot;'"/);
+  /data-talos-args="'--x=a &quot;b&quot;'"/);
 
 assert.equal(markdownSnippet({ source, options: DEFAULTS, runnerUrl }), [
-  '<script src="https://example.com/obelisk/runner.js" defer></script>',
+  '<script src="https://example.com/talos/runner.js" defer></script>',
   '',
   '```systemverilog',
   'module top;',
@@ -69,7 +69,7 @@ assert.match(baked, new RegExp(
   // The <code> repeats the ground so a site's own `code` styles cannot
   // override the colors it would inherit.
   `<code class="language-systemverilog" style="background:${PALETTES.dark.background};` +
-  `color:${PALETTES.dark.foreground}" data-obelisk-args="[^"]+">` +
+  `color:${PALETTES.dark.foreground}" data-talos-args="[^"]+">` +
   `<span style="color:${PALETTES.dark.keyword}">module</span> top;`));
 assert.match(baked, new RegExp(`<span style="color:${PALETTES.dark.system}">\\$display</span>`));
 assert.match(baked, new RegExp(`<span style="color:${PALETTES.dark.string}">&quot;ok&quot;</span>|<span style="color:${PALETTES.dark.string}">"ok"</span>`));
@@ -81,7 +81,7 @@ assert.match(htmlSnippet({ source, options: DEFAULTS, runnerUrl, colors: 'light'
 assert.equal(htmlSnippet({ source, options: DEFAULTS, runnerUrl, colors: 'plain' }),
   htmlSnippet({ source, options: DEFAULTS, runnerUrl }));
 
-// `obelisk -dump-tokens` listings: byte offsets, slang kind names, and no
+// `talos -dump-tokens` listings: byte offsets, slang kind names, and no
 // whitespace. This one is the driver's real output for `listed`; "é" is two
 // UTF-8 bytes, so later offsets run one ahead of the string indices.
 const listed = "// é\nlogic [7:0] v = 8'hA5; initial $display(\"x\", 4'b10?z, " +

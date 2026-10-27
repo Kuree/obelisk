@@ -1,10 +1,10 @@
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.native
+// RUN: talos --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.native
 // RUN: %t.native > %t.native.out 2>&1
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk --std=1800-2023 -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos --std=1800-2023 -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode 2>&1 | diff -u %t.native.out -
-// RUN: obelisk --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=SIM
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot -emit-llvm %s | FileCheck %s --check-prefix=AOT --implicit-check-not=obelisk_rt_v1_scheduler_run_aot_nodes
+// RUN: talos --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=SIM
+// RUN: talos --std=1800-2023 -O3 --native-scheduler=aot -emit-llvm %s | FileCheck %s --check-prefix=AOT --implicit-check-not=talos_rt_v1_scheduler_run_aot_nodes
 
 module native_concurrent_sva_disable_iff;
   logic clk = 0;
@@ -193,5 +193,5 @@ endmodule
 // SIM-DAG: schedule.concurrent_report
 // SIM-DAG: home_region = 8 : i32
 // SIM-DAG: home_region = 10 : i32
-// AOT: call i64 @obelisk_rt_v1_process_spawn
-// AOT: call i32 @obelisk_rt_v1_scheduler_run(
+// AOT: call i64 @talos_rt_v1_process_spawn
+// AOT: call i32 @talos_rt_v1_scheduler_run(

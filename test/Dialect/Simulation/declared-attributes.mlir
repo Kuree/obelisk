@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
+// RUN: talos-opt %s | talos-opt | FileCheck %s
 
 // CHECK: module attributes {simulation.gc_polled, simulation.pulse_on_detect = true, simulation.pulse_reject_percent = 80 : i32}
 module attributes {simulation.gc_polled, simulation.pulse_on_detect = true,

@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics \
-// RUN:   --test-obelisk-managed-class-layout-analysis
+// RUN: talos-opt %s --split-input-file --verify-diagnostics \
+// RUN:   --test-talos-managed-class-layout-analysis
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",

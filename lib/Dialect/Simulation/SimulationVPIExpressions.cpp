@@ -2,10 +2,10 @@
 //----===//
 
 #include "SimulationVerifiers.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationVPI.h"
-#include "obelisk/Dialect/Simulation/SimulationVPIConstantValues.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationVPI.h"
+#include "talos/Dialect/Simulation/SimulationVPIConstantValues.h"
+#include "talos/Reflection/VPIObjectModel.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -16,7 +16,7 @@
 
 using namespace mlir;
 
-namespace obelisk::sim {
+namespace talos::sim {
 namespace {
 using Kind = reflection::VPIObjectKind;
 using Relation = reflection::VPIRelationKind;
@@ -985,4 +985,4 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
   }
   return success();
 }
-} // namespace obelisk::sim
+} // namespace talos::sim

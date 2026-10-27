@@ -1,7 +1,7 @@
 //===- ClockedGuardLayout.cpp - Event-guard arms of clocked kernels --------===//
 
-#include "obelisk/LLVM/ClockedGuardLayout.h"
-#include "obelisk/LLVM/WideIntegerVectorization.h"
+#include "talos/LLVM/ClockedGuardLayout.h"
+#include "talos/LLVM/WideIntegerVectorization.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -14,7 +14,7 @@
 
 using namespace llvm;
 
-namespace obelisk {
+namespace talos {
 
 // `if (c) { arm }` with no else: the arm is every block reached from one
 // successor of the guard without passing the other successor (the join). It
@@ -43,7 +43,7 @@ static bool isGuardArm(BasicBlock &guard, BasicBlock *entry, BasicBlock *join) {
 }
 
 bool ClockedGuardLayoutPass::runOnFunction(Function &function) {
-  if (!function.getName().contains("__obelisk_clocked_"))
+  if (!function.getName().contains("__talos_clocked_"))
     return false;
   MDBuilder metadata(function.getContext());
   bool changed = false;
@@ -74,7 +74,7 @@ PreservedAnalyses ClockedGuardLayoutPass::run(Module &module,
   return PreservedAnalyses::all();
 }
 
-void registerObeliskLLVMPasses(PassBuilder &builder) {
+void registerTalosLLVMPasses(PassBuilder &builder) {
   builder.registerVectorizerStartEPCallback(
       [](FunctionPassManager &passes, OptimizationLevel) {
         passes.addPass(LimitWideIntegerVectorizationPass());
@@ -82,7 +82,7 @@ void registerObeliskLLVMPasses(PassBuilder &builder) {
   builder.registerPipelineParsingCallback(
       [](StringRef name, FunctionPassManager &passes,
          ArrayRef<PassBuilder::PipelineElement>) {
-        if (name != "obelisk-limit-wide-integer-vectorization")
+        if (name != "talos-limit-wide-integer-vectorization")
           return false;
         passes.addPass(LimitWideIntegerVectorizationPass());
         return true;
@@ -90,11 +90,11 @@ void registerObeliskLLVMPasses(PassBuilder &builder) {
   builder.registerPipelineParsingCallback(
       [](StringRef name, ModulePassManager &passes,
          ArrayRef<PassBuilder::PipelineElement>) {
-        if (name != "obelisk-clocked-guard-layout")
+        if (name != "talos-clocked-guard-layout")
           return false;
         passes.addPass(ClockedGuardLayoutPass());
         return true;
       });
 }
 
-} // namespace obelisk
+} // namespace talos

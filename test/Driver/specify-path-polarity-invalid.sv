@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-slang %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not talos -emit-slang %s -o /dev/null 2>&1 | FileCheck %s
 
 module invalid_parallel_polarity(
     input wire lhs, input wire rhs, output wire destination);

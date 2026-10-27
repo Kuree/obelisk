@@ -1,6 +1,6 @@
-// RUN: not obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' 2>&1 | FileCheck %s
+// RUN: not talos-opt %s --split-input-file --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' 2>&1 | FileCheck %s
 
-!logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
+!logic1 = !talos.integral<1, false, true, 0 : 0, logic>
 
 module {
   simulation.design @bad_udp_ports {
@@ -21,11 +21,11 @@ module {
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.in", argument = 2, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 1 : i64, semantic_type = !logic1} {
-        obelisk.sv.expression.named_value attributes {node_id = 2 : i64, referenced_path = "top.out", referenced_symbol = @out, semantic_type = !logic1} {}
-        obelisk.sv.expression.empty_argument attributes {node_id = 3 : i64, semantic_type = !logic1} {}
+      talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 1 : i64, semantic_type = !logic1} {
+        talos.sv.expression.named_value attributes {node_id = 2 : i64, referenced_path = "top.out", referenced_symbol = @out, semantic_type = !logic1} {}
+        talos.sv.expression.empty_argument attributes {node_id = 3 : i64, semantic_type = !logic1} {}
       }
-      obelisk.sv.expression.named_value attributes {node_id = 4 : i64, referenced_path = "top.in", referenced_symbol = @in, semantic_type = !logic1} {}
+      talos.sv.expression.named_value attributes {node_id = 4 : i64, referenced_path = "top.in", referenced_symbol = @in, semantic_type = !logic1} {}
       simulation.return
     }
   }
@@ -33,7 +33,7 @@ module {
 
 // -----
 
-!logic1_seq = !obelisk.integral<1, false, true, 0 : 0, logic>
+!logic1_seq = !talos.integral<1, false, true, 0 : 0, logic>
 
 module {
   simulation.design @sequential_udp {
@@ -54,11 +54,11 @@ module {
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.in", argument = 2, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 1 : i64, semantic_type = !logic1_seq} {
-        obelisk.sv.expression.named_value attributes {node_id = 2 : i64, referenced_path = "top.out", referenced_symbol = @out, semantic_type = !logic1_seq} {}
-        obelisk.sv.expression.empty_argument attributes {node_id = 3 : i64, semantic_type = !logic1_seq} {}
+      talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 1 : i64, semantic_type = !logic1_seq} {
+        talos.sv.expression.named_value attributes {node_id = 2 : i64, referenced_path = "top.out", referenced_symbol = @out, semantic_type = !logic1_seq} {}
+        talos.sv.expression.empty_argument attributes {node_id = 3 : i64, semantic_type = !logic1_seq} {}
       }
-      obelisk.sv.expression.named_value attributes {node_id = 4 : i64, referenced_path = "top.in", referenced_symbol = @in, semantic_type = !logic1_seq} {}
+      talos.sv.expression.named_value attributes {node_id = 4 : i64, referenced_path = "top.in", referenced_symbol = @in, semantic_type = !logic1_seq} {}
       simulation.return
     }
   }
@@ -66,7 +66,7 @@ module {
 
 // -----
 
-!logic1_row = !obelisk.integral<1, false, true, 0 : 0, logic>
+!logic1_row = !talos.integral<1, false, true, 0 : 0, logic>
 
 module {
   simulation.design @bad_udp_row {
@@ -87,11 +87,11 @@ module {
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.in", argument = 2, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 1 : i64, semantic_type = !logic1_row} {
-        obelisk.sv.expression.named_value attributes {node_id = 2 : i64, referenced_path = "top.out", referenced_symbol = @out, semantic_type = !logic1_row} {}
-        obelisk.sv.expression.empty_argument attributes {node_id = 3 : i64, semantic_type = !logic1_row} {}
+      talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 1 : i64, semantic_type = !logic1_row} {
+        talos.sv.expression.named_value attributes {node_id = 2 : i64, referenced_path = "top.out", referenced_symbol = @out, semantic_type = !logic1_row} {}
+        talos.sv.expression.empty_argument attributes {node_id = 3 : i64, semantic_type = !logic1_row} {}
       }
-      obelisk.sv.expression.named_value attributes {node_id = 4 : i64, referenced_path = "top.in", referenced_symbol = @in, semantic_type = !logic1_row} {}
+      talos.sv.expression.named_value attributes {node_id = 4 : i64, referenced_path = "top.in", referenced_symbol = @in, semantic_type = !logic1_row} {}
       simulation.return
     }
   }

@@ -1,16 +1,16 @@
 //===- SimulationAOTPlanning.h - Native AOT plan support -------*- C++ -*-===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_AOT_PLANNING_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_AOT_PLANNING_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_AOT_PLANNING_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_AOT_PLANNING_H
 
 #include "SimulationNBALowering.h"
-#include "obelisk/Analysis/ActivationMemoryAnalysis.h"
-#include "obelisk/Analysis/ClockInferenceAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Analysis/ActivationMemoryAnalysis.h"
+#include "talos/Analysis/ClockInferenceAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
 
-#include "obelisk/Analysis/NativeAOTAnalysis.h"
-#include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/NativeAOTAnalysis.h"
+#include "talos/Analysis/SimulationVPIAnalysis.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
 
@@ -35,12 +35,12 @@ namespace llvm {
 class DataLayout;
 }
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 struct NativeStateLayout;
 
 struct NativeStaticFanoutPlan {
-  llvm::SmallVector<obelisk_rt_static_fanout_entry> entries;
+  llvm::SmallVector<talos_rt_static_fanout_entry> entries;
   llvm::DenseMap<std::pair<uint32_t, uint32_t>, llvm::SmallVector<uint32_t>>
       fragments;
   llvm::DenseSet<uint32_t> runtimeTransitionStates;
@@ -66,23 +66,23 @@ mlir::LogicalResult materializeNativeRoutePromotionScan(
     llvm::StringRef dirtyName);
 
 inline constexpr llvm::StringLiteral kernelPromotionReadyName =
-    "__obelisk_eval_kernel_promotion_ready_v1";
+    "__talos_eval_kernel_promotion_ready_v1";
 inline constexpr llvm::StringLiteral groupPromotionReadyName =
-    "__obelisk_eval_group_promotion_ready_v1";
+    "__talos_eval_group_promotion_ready_v1";
 inline constexpr llvm::StringLiteral groupPromotionLatchName =
-    "__obelisk_eval_group_promotion_latched_v1";
+    "__talos_eval_group_promotion_latched_v1";
 
 /// The one model-wide eval ready set. Every clock kernel publishes its owners
 /// into this bitset, so a fragment reached through several kernels still
 /// occupies a single ready bit and executes once per step.
 inline constexpr llvm::StringLiteral evalModelIngressName =
-    "__obelisk_aot_model_ingress_v1";
+    "__talos_aot_model_ingress_v1";
 
 mlir::LogicalResult materializeNativeKernelPromotionReadiness(
     mlir::ModuleOp module, uint64_t stateBits,
     mlir::ArrayRef<llvm::SmallVector<NativePromotionRange>> ranges,
     mlir::ArrayRef<std::string> twoStateExecutors,
-    mlir::ArrayRef<obelisk_rt_native_merged_fragment> fragments);
+    mlir::ArrayRef<talos_rt_native_merged_fragment> fragments);
 
 /// Consume the typed group-domain inventory on its private latch array. The
 /// same materializer runs at the ranked-plan boundary and as a standalone
@@ -242,9 +242,9 @@ struct NativeEvalTransactionPlan {
 /// transformed symbols or recompute graph closure.
 struct ResolvedNativeEvalPlan {
   NativeEvalTransactionPlan transaction;
-  llvm::SmallVector<obelisk_rt_static_fanout_entry> fanoutEntries;
+  llvm::SmallVector<talos_rt_static_fanout_entry> fanoutEntries;
   llvm::SmallVector<NativeEvalClockKernel> clockKernels;
-  llvm::SmallVector<obelisk_rt_native_merged_fragment> mergedFragments;
+  llvm::SmallVector<talos_rt_native_merged_fragment> mergedFragments;
   llvm::SmallVector<std::string> mergedExecutors;
   llvm::SmallVector<std::string> mergedTwoStateExecutors;
   llvm::SmallVector<llvm::SmallVector<NativePromotionRange>>
@@ -271,7 +271,7 @@ struct ResolvedNativeEvalPlan {
 /// ownership, promotion, or NBA-taint facts from symbol names.
 struct NativeEvalCoordinatorPlan {
   mlir::ArrayRef<NativeEvalClockKernel> clockKernels;
-  mlir::ArrayRef<obelisk_rt_native_merged_fragment> fragments;
+  mlir::ArrayRef<talos_rt_native_merged_fragment> fragments;
   mlir::ArrayRef<std::string> fourStateExecutors;
   mlir::ArrayRef<std::string> twoStateExecutors;
   mlir::ArrayRef<llvm::APInt> ownerSubsumptionMasks;
@@ -342,7 +342,7 @@ buildNativeClockInferencePlan(
 mlir::LogicalResult
 specializeNativeAOTCaptures(mlir::ModuleOp module,
                             const analysis::NativeAOTAnalysis &eligibility);
-mlir::FailureOr<llvm::SmallVector<obelisk_rt_static_actor_root>>
+mlir::FailureOr<llvm::SmallVector<talos_rt_static_actor_root>>
 buildNativeStaticActorRootPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
     const llvm::DenseMap<mlir::Operation *, uint32_t> &actorSlots,
@@ -362,7 +362,7 @@ buildNativeThreeTierPlan(mlir::ModuleOp module,
 /// eval coordinator needs no executor for it.
 bool isNativePeriodicAliasEntry(
     mlir::ArrayRef<NativePeriodicAlias> periodicAliases,
-    const obelisk_rt_static_fanout_entry &entry);
+    const talos_rt_static_fanout_entry &entry);
 mlir::FailureOr<NativeEvalOwnershipPlan> buildNativeEvalOwnershipPlan(
     mlir::ModuleOp module, const NativeStateLayout &stateLayout,
     const NativeStaticFanoutPlan &fanoutPlan,
@@ -370,7 +370,7 @@ mlir::FailureOr<NativeEvalOwnershipPlan> buildNativeEvalOwnershipPlan(
     mlir::ArrayRef<NativePeriodicAlias> periodicAliases);
 mlir::FailureOr<ResolvedNativeEvalPlan> resolveNativeEvalPlan(
     mlir::ModuleOp module,
-    mlir::ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
+    mlir::ArrayRef<talos_rt_native_schedule_node> executableNodes,
     const NativeStateLayout &stateLayout,
     const NativeStaticNBAPlan &staticNBAPlan,
     const NativeStaticFanoutPlan &staticFanoutPlan,
@@ -424,30 +424,30 @@ void emitScalarNBACommitLoop(
     mlir::LLVM::LLVMFuncOp function, mlir::Block *exit, mlir::Value region,
     const NativeStaticNBAPlan &plan,
     mlir::ArrayRef<llvm::SmallVector<uint32_t>> rootsByWord,
-    mlir::ArrayRef<obelisk_rt_static_fanout_entry> fanout,
+    mlir::ArrayRef<talos_rt_static_fanout_entry> fanout,
     mlir::Value activatedNodes, mlir::Value activatedDirect,
     unsigned directWords);
 
 mlir::LogicalResult makeNativeAOTPlanLegacy(
     mlir::ModuleOp module, const llvm::DataLayout &dataLayout,
     uint32_t actorCount,
-    mlir::ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
+    mlir::ArrayRef<talos_rt_native_schedule_node> executableNodes,
     const NativeStateLayout &stateLayout,
     const NativeStaticNBAPlan &staticNBAPlan,
     const NativeStaticFanoutPlan &staticFanoutPlan,
-    mlir::ArrayRef<obelisk_rt_static_actor_root> actorRoots,
+    mlir::ArrayRef<talos_rt_static_actor_root> actorRoots,
     bool enableDirectState, bool enableStaticNBA, bool enableStaticControl,
     bool enableStaticFanout, bool enableCleanSuperstep, bool fullyStatic,
     bool rootSlotZero, const analysis::SimulationVPIAnalysis &vpi);
 mlir::FailureOr<bool> makeNativeEvalPlan(
     mlir::ModuleOp module, const llvm::DataLayout &dataLayout,
     uint32_t actorCount,
-    mlir::ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
+    mlir::ArrayRef<talos_rt_native_schedule_node> executableNodes,
     const ResolvedNativeEvalPlan &resolvedPlan,
     const NativeStateLayout &stateLayout,
     const NativeStaticNBAPlan &staticNBAPlan,
     const NativeStaticFanoutPlan &staticFanoutPlan,
-    mlir::ArrayRef<obelisk_rt_static_actor_root> actorRoots,
+    mlir::ArrayRef<talos_rt_static_actor_root> actorRoots,
     mlir::ArrayRef<uint32_t> writableVPIUnscopedActors,
     mlir::ArrayRef<NativeDirectFragment> directFragments,
     const NativeEvalOwnershipPlan &evalOwnership,
@@ -458,6 +458,6 @@ mlir::FailureOr<bool> makeNativeEvalPlan(
     bool enableCleanSuperstep, bool fullyStatic, bool staticEvalIsland,
     bool rootSlotZero, const analysis::SimulationVPIAnalysis &vpi);
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_AOT_PLANNING_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_AOT_PLANNING_H

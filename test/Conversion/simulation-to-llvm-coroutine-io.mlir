@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
@@ -71,36 +71,36 @@ module attributes {
 // CHECK-DAG: llvm.mlir.global internal constant @{{.*}}("work.plain")
 // CHECK-DAG: llvm.mlir.global internal constant @{{.*}}("/dev/stdout")
 // CHECK-DAG: llvm.mlir.global internal constant @{{.*}}("w")
-// CHECK-DAG: llvm.func @obelisk_rt_v1_display
-// CHECK-DAG: llvm.func @obelisk_rt_v1_file_open
-// CHECK-DAG: llvm.func @obelisk_rt_v1_file_close
-// CHECK-DAG: llvm.func @obelisk_rt_v1_file_getline
-// CHECK-DAG: llvm.func @obelisk_rt_v1_file_read
-// CHECK-DAG: llvm.func @obelisk_rt_v1_buffer_release
+// CHECK-DAG: llvm.func @talos_rt_v1_display
+// CHECK-DAG: llvm.func @talos_rt_v1_file_open
+// CHECK-DAG: llvm.func @talos_rt_v1_file_close
+// CHECK-DAG: llvm.func @talos_rt_v1_file_getline
+// CHECK-DAG: llvm.func @talos_rt_v1_file_read
+// CHECK-DAG: llvm.func @talos_rt_v1_buffer_release
 // CHECK-LABEL: llvm.func @plain_io(
-// CHECK: llvm.call @obelisk_rt_v1_file_open
-// CHECK: llvm.call @obelisk_rt_v1_display
+// CHECK: llvm.call @talos_rt_v1_file_open
+// CHECK: llvm.call @talos_rt_v1_display
 // CHECK: llvm.icmp "eq"
 // CHECK: llvm.cond_br
-// CHECK: llvm.call @obelisk_rt_v1_file_close
-// CHECK: llvm.call @obelisk_rt_v1_file_getline
+// CHECK: llvm.call @talos_rt_v1_file_close
+// CHECK: llvm.call @talos_rt_v1_file_getline
 // CHECK: "llvm.intr.memcpy"
-// CHECK: llvm.call @obelisk_rt_v1_buffer_release
-// CHECK: llvm.call @obelisk_rt_v1_file_read
+// CHECK: llvm.call @talos_rt_v1_buffer_release
+// CHECK: llvm.call @talos_rt_v1_file_read
 // CHECK: "llvm.intr.memcpy"
 // CHECK: llvm.return {{.*}} : i32
-// CHECK-LABEL: llvm.func @plain_io.__obelisk_native_execute
+// CHECK-LABEL: llvm.func @plain_io.__talos_native_execute
 // CHECK: llvm.call @plain_io
 // CHECK: llvm.return {{.*}} : i32
-// CHECK-LABEL: llvm.func @suspend_io.__obelisk_coro_ramp
-// CHECK: llvm.call @obelisk_rt_v1_display
+// CHECK-LABEL: llvm.func @suspend_io.__talos_coro_ramp
+// CHECK: llvm.call @talos_rt_v1_display
 // CHECK: llvm.icmp "eq"
 // CHECK: llvm.cond_br
 // CHECK: llvm.getelementptr {{.*}}[0, 10]
 // CHECK: llvm.store {{.*}} {alignment = 4 : i64} : i32, !llvm.ptr
 // CHECK-LABEL: llvm.func @aggregate_display(
 // CHECK-SAME: %{{.*}}: !llvm.ptr, %{{.*}}: i32, %{{.*}}: i80, %{{.*}}: i80) -> i32
-// CHECK: llvm.call @obelisk_rt_v1_display
+// CHECK: llvm.call @talos_rt_v1_display
 // CHECK: llvm.cond_br
 // CHECK-NOT: simulation.packed.
 // CHECK-NOT: simulation.

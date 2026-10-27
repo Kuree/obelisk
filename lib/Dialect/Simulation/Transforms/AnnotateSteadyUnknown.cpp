@@ -1,20 +1,20 @@
 //===- AnnotateSteadyUnknown.cpp - Record storage bits that stay X/Z -----===//
 
-#include "obelisk/Analysis/SteadyUnknownAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Analysis/SteadyUnknownAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/IR/BuiltinOps.h"
 
 using namespace mlir;
 
-namespace obelisk {
-#define GEN_PASS_DEF_OBELISKSIMANNOTATESTEADYUNKNOWNPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+namespace talos {
+#define GEN_PASS_DEF_TALOSSIMANNOTATESTEADYUNKNOWNPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 class AnnotateSteadyUnknownPass final
-    : public impl::ObeliskSimAnnotateSteadyUnknownPassBase<
+    : public impl::TalosSimAnnotateSteadyUnknownPassBase<
           AnnotateSteadyUnknownPass> {
 public:
   using Base::Base;
@@ -52,4 +52,4 @@ public:
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

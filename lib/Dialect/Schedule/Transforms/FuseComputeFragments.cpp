@@ -1,14 +1,14 @@
 //===- FuseComputeFragments.cpp - Plan static AOT execution batches ------===//
 
 #include "ComputeFusion.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
@@ -18,22 +18,22 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMFUSECOMPUTEFRAGMENTSPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMFUSECOMPUTEFRAGMENTSPASS
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 
-class ObeliskSimFuseComputeFragmentsPass final
-    : public impl::ObeliskSimFuseComputeFragmentsPassBase<
-          ObeliskSimFuseComputeFragmentsPass> {
+class TalosSimFuseComputeFragmentsPass final
+    : public impl::TalosSimFuseComputeFragmentsPassBase<
+          TalosSimFuseComputeFragmentsPass> {
 public:
-  using Base = impl::ObeliskSimFuseComputeFragmentsPassBase<
-      ObeliskSimFuseComputeFragmentsPass>;
+  using Base = impl::TalosSimFuseComputeFragmentsPassBase<
+      TalosSimFuseComputeFragmentsPass>;
   using Base::Base;
-  ObeliskSimFuseComputeFragmentsPass(
-      const ObeliskSimFuseComputeFragmentsPass &other)
+  TalosSimFuseComputeFragmentsPass(
+      const TalosSimFuseComputeFragmentsPass &other)
       : Base(other) {}
 
   void runOnOperation() override;
@@ -91,7 +91,7 @@ bool isStraightLineContinuous(sim::SimFuncOp function, bool eligible,
   return false;
 }
 
-void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
+void TalosSimFuseComputeFragmentsPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   if (bodyFusion &&
       (maxStraightLineMembers < 2 || maxStraightLineMembers > 64)) {
@@ -105,11 +105,11 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
   // the graph's final tier partition is selected. Explicit native execution
   // and scheduler requests do not carry this marker.
   if (primitiveOnly &&
-      ::obelisk::schedule::has<
-          ::obelisk::schedule::Field::NativeSchedulerAutoRequested>(module))
+      ::talos::schedule::has<
+          ::talos::schedule::Field::NativeSchedulerAutoRequested>(module))
     return;
   auto scheduler =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::NativeScheduler>(
+      ::talos::schedule::get<::talos::schedule::Field::NativeScheduler>(
           module);
   bool evalBodyFusion =
       bodyFusion && scheduler &&
@@ -261,7 +261,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
     sim::SimFuncOp function = lookupFunction(fragment.getFunction());
     if (primitiveOnly &&
         (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
-         !::obelisk::schedule::has<::obelisk::schedule::Field::PrimitiveName>(
+         !::talos::schedule::has<::talos::schedule::Field::PrimitiveName>(
              function) ||
          !entirelyNative.lookup(function.getOperation())))
       continue;
@@ -394,8 +394,8 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
                                      isBodyEligible(function, primitiveOnly),
                                      primitiveOnly)) ||
           (primitiveOnly &&
-           (!::obelisk::schedule::has<
-                ::obelisk::schedule::Field::PrimitiveName>(function) ||
+           (!::talos::schedule::has<
+                ::talos::schedule::Field::PrimitiveName>(function) ||
             !entirelyNative.lookup(function.getOperation()))))
         continue;
       seen.insert(function.getOperation());
@@ -419,8 +419,8 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
         continue;
       Attribute primitive =
           primitiveOnly
-              ? ::obelisk::schedule::get<
-                    ::obelisk::schedule::Field::PrimitiveName>(function)
+              ? ::talos::schedule::get<
+                    ::talos::schedule::Field::PrimitiveName>(function)
               : Attribute{};
       if (combinationalBody)
         primitive = function.getEntryKindAttr();
@@ -454,7 +454,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
                std::tie(scheduleOrder[resumeTargets.lookup(rhs)], rhs);
       });
       auto inlineLimit =
-          ::obelisk::schedule::get<::obelisk::schedule::Field::MaxInlineOps>(
+          ::talos::schedule::get<::talos::schedule::Field::MaxInlineOps>(
               module);
       uint64_t budget = inlineLimit ? inlineLimit.getUInt() : 5000;
       bool rankedCombinational =
@@ -522,7 +522,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
       members += size;
       largest = std::max(largest, size);
     }
-    llvm::errs() << "obelisk fusion planning:" << " body=" << bodyFusion
+    llvm::errs() << "talos fusion planning:" << " body=" << bodyFusion
                  << " primitive=" << primitiveOnly
                  << " eval_body=" << evalBodyFusion
                  << " groups=" << fusions.size() << " members=" << members
@@ -532,4 +532,4 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
 }
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

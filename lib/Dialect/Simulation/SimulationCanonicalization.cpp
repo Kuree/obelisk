@@ -6,9 +6,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "SimulationVerifiers.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -37,7 +37,7 @@
 
 using namespace mlir;
 
-namespace obelisk::sim {
+namespace talos::sim {
 
 namespace {
 
@@ -5116,9 +5116,9 @@ SimRandomInitializationLeaveOp::canonicalize(SimRandomInitializationLeaveOp op,
   return success();
 }
 
-void ObeliskSimulationDialect::getCanonicalizationPatterns(
+void TalosSimulationDialect::getCanonicalizationPatterns(
     RewritePatternSet &results) const {
   results.add<ExtractBitsInsertWithTruncation>(getContext());
 }
 
-} // namespace obelisk::sim
+} // namespace talos::sim

@@ -1,16 +1,16 @@
 //===- HandleDataflowAnalysis.cpp - SSA reference dataflow
 //------------------===//
-#include "obelisk/Analysis/HandleDataflowAnalysis.h"
+#include "talos/Analysis/HandleDataflowAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/IntegerRangeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
-#include "obelisk/Analysis/LogicBitAnalysis.h"
-#include "obelisk/Analysis/NetConnectivityAnalysis.h"
-#include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/LogicBitAnalysis.h"
+#include "talos/Analysis/NetConnectivityAnalysis.h"
+#include "talos/Analysis/ScopedIntegerRangeAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -19,7 +19,7 @@
 #include <mutex>
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 schedule::ComputeResourceKind resourceKind(Type type) {
   if (isa<sim::RefType>(type))
@@ -639,4 +639,4 @@ HandleFacts HandleDataflowAnalysis::derive(sim::SimFuncOp function) const {
 HandleFacts deriveHandleFacts(sim::SimFuncOp function) {
   return HandleDataflowAnalysis(function).derive(function);
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

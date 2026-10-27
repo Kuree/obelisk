@@ -1,11 +1,11 @@
-// RUN: obelisk -O3 %s -o %t.o3.native
+// RUN: talos -O3 %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode | FileCheck %s
-// RUN: obelisk -emit-slang %s -o - | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-slang %s -o - | FileCheck %s --check-prefix=SLANGMETA
-// RUN: obelisk -emit-obelisk %s -o - | FileCheck %s --check-prefix=OBELISK
-// RUN: obelisk -emit-obelisk %s -o - | FileCheck %s --check-prefix=OBELISKMETA
+// RUN: talos -emit-slang %s -o - | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-slang %s -o - | FileCheck %s --check-prefix=SLANGMETA
+// RUN: talos -emit-talos %s -o - | FileCheck %s --check-prefix=TALOS
+// RUN: talos -emit-talos %s -o - | FileCheck %s --check-prefix=TALOSMETA
 
 `timescale 1ns / 1ns
 
@@ -411,7 +411,7 @@ endmodule
 // SLANGMETA-DAG: timing_edge_identifier = 3 : i32
 // SLANGMETA-DAG: timing_edge_polarity = 1 : i32
 // SLANGMETA-DAG: timing_edge_polarity = 2 : i32
-// OBELISK-COUNT-11: obelisk.simple_timing_path
+// TALOS-COUNT-11: talos.simple_timing_path
 // The arbitrary data-source expression is preserved as analysis metadata.
-// OBELISKMETA: obelisk.sv.expression.binary
-// OBELISKMETA: obelisk.sv.expression.unary
+// TALOSMETA: talos.sv.expression.binary
+// TALOSMETA: talos.sv.expression.unary

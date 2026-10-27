@@ -10,8 +10,8 @@ import lit.formats
 # walks into this directory, finds the generated lit.site.cfg.py and picks the
 # suite up as a nested one, so a single lit process schedules the unit tests
 # and the ShTest regression tests in one worker pool.
-config.name = "OBELISK-UNIT"
+config.name = "TALOS-UNIT"
 config.suffixes = []
 config.test_format = lit.formats.GoogleTest(".", "Tests")
-config.test_exec_root = config.obelisk_runtime_unit_dir
+config.test_exec_root = config.talos_runtime_unit_dir
 config.test_source_root = config.test_exec_root

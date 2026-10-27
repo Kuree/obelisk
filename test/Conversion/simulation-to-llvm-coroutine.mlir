@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=ADJ
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -S -passes='verify,coro-early,coro-split<reuse-storage>,verify' | FileCheck %s --check-prefix=FRAME
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -S -passes='verify,coro-early,sroa,instcombine,simplifycfg,coro-split<reuse-storage>,coro-elide,coro-cleanup,sroa,instcombine,simplifycfg,dce,strip-dead-prototypes,verify' | FileCheck %s --check-prefix=SPLIT
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=ADJ
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | opt -S -passes='verify,coro-early,coro-split<reuse-storage>,verify' | FileCheck %s --check-prefix=FRAME
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | opt -S -passes='verify,coro-early,sroa,instcombine,simplifycfg,coro-split<reuse-storage>,coro-elide,coro-cleanup,sroa,instcombine,simplifycfg,dce,strip-dead-prototypes,verify' | FileCheck %s --check-prefix=SPLIT
 
 !choice = !simulation.unpacked_union<fields = [
   #simulation.field<name = "byte", type = i8, ordinal = 0, packedOffset = 0>,
@@ -293,12 +293,12 @@ module attributes {
   }
 }
 
-// CHECK-DAG: llvm.mlir.global external constant @delay_process.__obelisk_process_descriptor
-// CHECK-DAG: llvm.mlir.global internal constant @delay_process.__obelisk_frame_layout
-// CHECK-DAG: llvm.mlir.global internal constant @delay_process.__obelisk_continuations
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_frame_fields_{{[0-9a-f]+}}(
-// CHECK-DAG: llvm.mlir.global external constant @plain_process.__obelisk_process_descriptor
-// CHECK-LABEL: llvm.func @delay_process.__obelisk_coro_ramp
+// CHECK-DAG: llvm.mlir.global external constant @delay_process.__talos_process_descriptor
+// CHECK-DAG: llvm.mlir.global internal constant @delay_process.__talos_frame_layout
+// CHECK-DAG: llvm.mlir.global internal constant @delay_process.__talos_continuations
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_frame_fields_{{[0-9a-f]+}}(
+// CHECK-DAG: llvm.mlir.global external constant @plain_process.__talos_process_descriptor
+// CHECK-LABEL: llvm.func @delay_process.__talos_coro_ramp
 // CHECK-SAME: native.frame = #native.frame<size = {{[^,]+}}, alignment = 8, checksum = {{[^,]+}}, continuations = [0, 1, 2]
 // CHECK-SAME: passthrough = ["presplitcoroutine"]
 // CHECK-DAG: llvm.intr.coro.id
@@ -308,10 +308,10 @@ module attributes {
 // CHECK-DAG: llvm.intr.coro.save
 // CHECK-DAG: llvm.intr.coro.suspend
 // CHECK-DAG: llvm.intr.coro.end
-// CHECK-LABEL: llvm.func @delay_process.__obelisk_native_requirements
-// CHECK-LABEL: llvm.func @delay_process.__obelisk_native_execute
-// CHECK: llvm.call tail @__obelisk_native_coro_execute_v1
-// CHECK-LABEL: llvm.func @all_waits.__obelisk_coro_ramp
+// CHECK-LABEL: llvm.func @delay_process.__talos_native_requirements
+// CHECK-LABEL: llvm.func @delay_process.__talos_native_execute
+// CHECK: llvm.call tail @__talos_native_coro_execute_v1
+// CHECK-LABEL: llvm.func @all_waits.__talos_coro_ramp
 // CHECK-SAME: native.frame = #native.frame<size = 96, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1, 2, 3, 4, 5, 6]
 // CHECK-DAG: %[[ANY_WAIT:[0-9]+]] = llvm.getelementptr {{.*}}[32]
 // CHECK-DAG: %[[ANY_EDGE_CHANGE_ADDR:[0-9]+]] = llvm.getelementptr %[[ANY_WAIT]][40]
@@ -319,41 +319,41 @@ module attributes {
 // CHECK-DAG: %[[ANY_EDGE_POSEDGE_ADDR:[0-9]+]] = llvm.getelementptr {{.*}}[56]
 // CHECK-DAG: llvm.store %{{[0-9]+}}, %[[ANY_EDGE_POSEDGE_ADDR]]
 // CHECK-DAG: llvm.getelementptr {{.*}}[60]
-// CHECK-LABEL: llvm.func @loop_wait.__obelisk_coro_ramp
+// CHECK-LABEL: llvm.func @loop_wait.__talos_coro_ramp
 // CHECK-SAME: native.frame = #native.frame<size = {{[^,]+}}, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1]
-// CHECK-LABEL: llvm.func @shared_observer_binding.__obelisk_coro_ramp
+// CHECK-LABEL: llvm.func @shared_observer_binding.__talos_coro_ramp
 // CHECK-SAME: native.frame = #native.frame<size = {{[^,]+}}, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1]
-// CHECK-LABEL: llvm.func @reuse_continuation_slots.__obelisk_coro_ramp
+// CHECK-LABEL: llvm.func @reuse_continuation_slots.__talos_coro_ramp
 // CHECK-SAME: native.frame = #native.frame<size = 64, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1, 2]
-// CHECK-LABEL: llvm.func @maximum_continuation_id.__obelisk_coro_ramp
+// CHECK-LABEL: llvm.func @maximum_continuation_id.__talos_coro_ramp
 // CHECK-SAME: native.frame = #native.frame<size = {{[^,]+}}, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1, -1]
-// CHECK-LABEL: llvm.func @suspension_live_value.__obelisk_coro_ramp
+// CHECK-LABEL: llvm.func @suspension_live_value.__talos_coro_ramp
 // CHECK-SAME: native.frame = #native.frame<size = 40, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1]
 // CHECK-LABEL: llvm.func @plain_process
 // CHECK-SAME: native.scratch_size = 0 : i64
 // CHECK: llvm.alloca
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_alloc
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_alloc
 // CHECK-NOT: llvm.intr.coro.
-// CHECK-LABEL: llvm.func @plain_process.__obelisk_native_execute
+// CHECK-LABEL: llvm.func @plain_process.__talos_native_execute
 // CHECK-LABEL: llvm.func @consume_ref
-// CHECK: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK: llvm.call @talos_rt_v1_native_state_release
 // CHECK-LABEL: llvm.func @capture_ref(
-// CHECK: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK: llvm.call @talos_rt_v1_native_state_release
 // CHECK-LABEL: llvm.func @consume_ref_with_status(
-// CHECK: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK: llvm.call @talos_rt_v1_native_state_release
 // CHECK-LABEL: llvm.func @ref_lifetime
-// CHECK: llvm.call @obelisk_rt_v1_native_state_alloc
-// CHECK: llvm.call @obelisk_rt_v1_native_state_retain
+// CHECK: llvm.call @talos_rt_v1_native_state_alloc
+// CHECK: llvm.call @talos_rt_v1_native_state_retain
 // CHECK: llvm.call @consume_ref
-// CHECK: llvm.call @obelisk_rt_v1_native_state_retain
-// CHECK: llvm.call @obelisk_rt_v1_native_state_release
+// CHECK: llvm.call @talos_rt_v1_native_state_retain
+// CHECK: llvm.call @talos_rt_v1_native_state_release
 // CHECK-LABEL: llvm.func @cfg_ref_lifetime
 // CHECK: llvm.alloca
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_
 // CHECK: llvm.cond_br
 // CHECK-LABEL: llvm.func @branched_ref_lifetime
 // CHECK: llvm.alloca
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_
 // CHECK: llvm.return
 // CHECK-LABEL: llvm.func @wide_handle_indices
 // Every wide index needs a signed-i64 round-trip check. The four-state cases
@@ -373,24 +373,24 @@ module attributes {
 // ADJ: llvm.intr.coro.save
 // ADJ-NEXT: llvm.intr.coro.suspend
 
-// FRAME: %delay_process.__obelisk_coro_ramp.Frame = type { ptr, ptr, ptr, i2 }
+// FRAME: %delay_process.__talos_coro_ramp.Frame = type { ptr, ptr, ptr, i2 }
 
 // SPLIT-NOT: @llvm.coro.
-// SPLIT: @delay_process.__obelisk_coro_ramp.resumers = private constant
-// SPLIT-LABEL: define internal i32 @__obelisk_native_zero_requirements_v1
+// SPLIT: @delay_process.__talos_coro_ramp.resumers = private constant
+// SPLIT-LABEL: define internal i32 @__talos_native_zero_requirements_v1
 // SPLIT: store i64 0, ptr
 // SPLIT: store i64 1, ptr
-// SPLIT-LABEL: define void @delay_process.__obelisk_coro_ramp
+// SPLIT-LABEL: define void @delay_process.__talos_coro_ramp
 // SPLIT-NOT: call ptr @malloc
 // SPLIT-NOT: call void @free
 // SPLIT: store i64 32, ptr %2
 // SPLIT-NEXT: store i64 8, ptr %3
 // SPLIT-NOT: call ptr @malloc
 // SPLIT-NOT: call void @free
-// SPLIT-LABEL: define internal fastcc void @delay_process.__obelisk_coro_ramp.resume
+// SPLIT-LABEL: define internal fastcc void @delay_process.__talos_coro_ramp.resume
 // SPLIT: store i32 2, ptr
 // SPLIT: ret void
-// SPLIT-LABEL: define internal fastcc void @delay_process.__obelisk_coro_ramp.destroy
+// SPLIT-LABEL: define internal fastcc void @delay_process.__talos_coro_ramp.destroy
 // SPLIT-NOT: call ptr @malloc
 // SPLIT-NOT: call void @free
 // SPLIT-NOT: @llvm.coro.

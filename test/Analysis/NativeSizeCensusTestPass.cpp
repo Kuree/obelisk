@@ -3,8 +3,8 @@
 // Count the operations of a lowered native module by symbol family: function
 // bodies, and global initializers with the number of distinct contents. Names
 // are folded into families by replacing user-named dot segments with `*` and
-// numeric suffixes with `N`, so `top.u.proc_3.__obelisk_eval_body_7` and
-// `p.__obelisk_eval_body_2` are both `*.__obelisk_eval_body_N`.
+// numeric suffixes with `N`, so `top.u.proc_3.__talos_eval_body_7` and
+// `p.__talos_eval_body_2` are both `*.__talos_eval_body_N`.
 //
 //===----------------------------------------------------------------------===//
 
@@ -47,7 +47,7 @@ std::string foldSegment(StringRef segment) {
   return folded;
 }
 
-/// The family of a symbol name. Generated segments start with `__obelisk`;
+/// The family of a symbol name. Generated segments start with `__talos`;
 /// every run of other segments of a dotted name becomes one `*`.
 std::string familyOf(StringRef name) {
   SmallVector<StringRef> segments;
@@ -57,7 +57,7 @@ std::string familyOf(StringRef name) {
   std::string family;
   bool user = false;
   for (StringRef segment : segments) {
-    if (!segment.starts_with("__obelisk")) {
+    if (!segment.starts_with("__talos")) {
       if (!user)
         family += family.empty() ? "*" : ".*";
       user = true;
@@ -135,7 +135,7 @@ public:
       : PassWrapper(other) {}
 
   StringRef getArgument() const final {
-    return "test-obelisk-print-native-size";
+    return "test-talos-print-native-size";
   }
   StringRef getDescription() const final {
     return "print operation counts of a lowered native module by function "
@@ -233,8 +233,8 @@ public:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 void registerNativeSizeCensusTestPass() {
   PassRegistration<NativeSizeCensusTestPass>();
 }
-} // namespace obelisk
+} // namespace talos

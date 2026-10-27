@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-clocked-kernels))' | FileCheck %s
 
 // IEEE 1800-2023 4.5/4.7: `sampler` wakes on the same clock edge as the
 // kernel, in the same phase, and the scheduler may run it after the kernel.
@@ -53,7 +53,7 @@ module attributes {
       simulation.nba.enqueue %zero to %clk : (!bit, !ref) -> ()
       cf.br ^low
     }
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK: simulation.suspend.edge posedge
     // `follow` reads `q` before `toggle` would update it.
     // CHECK: simulation.ref.load

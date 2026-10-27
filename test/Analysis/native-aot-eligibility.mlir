@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
+// RUN: talos-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=ELIGIBLE
-// RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{workers=2},obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
+// RUN: talos-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{workers=2},talos-sim-verify-compute-graph),test-talos-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=MULTI-WORKER
 
 // ELIGIBLE: native-aot eligible=true fully=true

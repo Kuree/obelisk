@@ -1,10 +1,10 @@
-// RUN: obelisk -O0 %s -o %t.native
+// RUN: talos -O0 %s -o %t.native
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=aot %s -o %t.aot
+// RUN: talos -O3 --native-scheduler=aot %s -o %t.aot
 // RUN: %t.aot | FileCheck %s
-// RUN: obelisk -emit-sim -O0 %s -o - | FileCheck %s --check-prefix=SIM
+// RUN: talos -emit-sim -O0 %s -o - | FileCheck %s --check-prefix=SIM
 
 `timescale 1ns / 1ps
 

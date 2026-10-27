@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // IEEE 1800-2017 30.4.7 says path polarity does not modify functional data
 // propagation. It also does not exchange the path delay banks: delay
 // selection follows the destination transition. These hand-authored actors
 // model the legal positive `+=>` buffer and negative `-=>` inverter cases.
 
-!logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
+!logic1 = !talos.integral<1, false, true, 0 : 0, logic>
 
 module {
   simulation.design @specify_path_polarity_lowering {
@@ -35,16 +35,16 @@ module {
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.positive", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.source", argument = 2, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {
+      talos.sv.expression.assignment attributes {
           assignment_kind = 0 : i32, node_id = 1 : i64,
           semantic_type = !logic1} {
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 2 : i64, referenced_path = "top.positive",
             referenced_symbol = @positive_out, semantic_type = !logic1} {}
-        obelisk.sv.expression.empty_argument attributes {
+        talos.sv.expression.empty_argument attributes {
             node_id = 3 : i64, semantic_type = !logic1} {}
       }
-      obelisk.sv.expression.named_value attributes {
+      talos.sv.expression.named_value attributes {
           node_id = 4 : i64, referenced_path = "top.source",
           referenced_symbol = @source, semantic_type = !logic1} {}
       simulation.return
@@ -64,16 +64,16 @@ module {
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.negative", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.source", argument = 2, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {
+      talos.sv.expression.assignment attributes {
           assignment_kind = 0 : i32, node_id = 11 : i64,
           semantic_type = !logic1} {
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 12 : i64, referenced_path = "top.negative",
             referenced_symbol = @negative_out, semantic_type = !logic1} {}
-        obelisk.sv.expression.empty_argument attributes {
+        talos.sv.expression.empty_argument attributes {
             node_id = 13 : i64, semantic_type = !logic1} {}
       }
-      obelisk.sv.expression.named_value attributes {
+      talos.sv.expression.named_value attributes {
           node_id = 14 : i64, referenced_path = "top.source",
           referenced_symbol = @source, semantic_type = !logic1} {}
       simulation.return

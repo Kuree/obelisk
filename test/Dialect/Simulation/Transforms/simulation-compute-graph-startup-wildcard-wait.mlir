@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -20,7 +20,7 @@ module attributes {
   // CHECK-NOT: #schedule.edge<source = [[SELF]], target = [[WAIT]], kind = sensitivity
   // CHECK-SAME: regions =
   // The native wait template retains SUPPRESS_ACTIVE_SELF in the header flags.
-  // NATIVE-LABEL: llvm.mlir.global internal constant @wildcard.__obelisk_table.waits
+  // NATIVE-LABEL: llvm.mlir.global internal constant @wildcard.__talos_table.waits
   // NATIVE: %[[FLAGS:.*]] = llvm.mlir.constant(4 : i32) : i32
   // NATIVE-NEXT: llvm.insertvalue %[[FLAGS]], %{{.*}}[2]
   // The bytecode image preserves the same wait header: version, CHANGE kind,

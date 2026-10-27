@@ -1,10 +1,10 @@
-// RUN: obelisk -O0 %s -o %t.o0
+// RUN: talos -O0 %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 -fno-lto --compile-threads=8 %s -o %t.native
+// RUN: talos -O3 -fno-lto --compile-threads=8 %s -o %t.native
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.generic | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 // CHECK: state defaults passed
 

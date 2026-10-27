@@ -1,15 +1,15 @@
 //===- RuntimeToLLVM.cpp - Lower typed runtime operations to C ABI calls -===//
 
-#include "obelisk/Conversion/RuntimeToLLVM.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Conversion/RuntimeToLLVM.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
 #include "RuntimeToLLVMABI.h"
 #include "RuntimeToLLVMPatterns.h"
 
-#include "obelisk/Dialect/Runtime/RuntimeABI.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Runtime/RuntimeABI.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
 
 #include "mlir/Conversion/LLVMCommon/LoweringOptions.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
@@ -32,14 +32,14 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
 #define GEN_PASS_DEF_CONVERTRUNTIMETOLLVMPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "talos/Conversion/Passes.h.inc"
 
 namespace {
 
-using namespace obelisk::runtimelowering;
+using namespace talos::runtimelowering;
 class FuncValueTypeConversion : public ConversionPattern {
 public:
   FuncValueTypeConversion(const TypeConverter &converter, StringRef name,
@@ -264,7 +264,7 @@ public:
     populateBranchOpInterfaceTypeConversionPattern(patterns, converter);
 
     ConversionTarget target(getContext());
-    target.addIllegalDialect<runtime::ObeliskRuntimeDialect>();
+    target.addIllegalDialect<runtime::TalosRuntimeDialect>();
     target.addIllegalOp<schedule::NativeScratchOp>();
     target.addLegalDialect<LLVM::LLVMDialect>();
     target.addLegalOp<schedule::NativeByteAddressOp>();
@@ -321,7 +321,7 @@ void addRuntimeToLLVMTypeConversions(LLVMTypeConverter &converter) {
                getABIAlignments(converter.getDataLayout()),
                converter.getDataLayout());
   converter.addConversion([abi](Type type) -> std::optional<Type> {
-    if (!isa<runtime::ObeliskRuntimeDialect>(type.getDialect()))
+    if (!isa<runtime::TalosRuntimeDialect>(type.getDialect()))
       return std::nullopt;
     return convertRuntimeType(type, abi);
   });
@@ -367,4 +367,4 @@ void populateRuntimeToLLVMPatterns(const LLVMTypeConverter &converter,
   populateRuntimePatterns(converter, patterns, abi);
 }
 
-} // namespace obelisk
+} // namespace talos

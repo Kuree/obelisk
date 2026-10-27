@@ -1,7 +1,7 @@
 //===- SimulationProcessWrapperLowering.h - Native process wrappers ---===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSWRAPPERLOWERING_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSWRAPPERLOWERING_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSWRAPPERLOWERING_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSWRAPPERLOWERING_H
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
@@ -9,16 +9,16 @@
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 inline constexpr llvm::StringLiteral nativeCoroutineExecuteName =
-    "__obelisk_native_coro_execute_v1";
+    "__talos_native_coro_execute_v1";
 inline constexpr llvm::StringLiteral nativeCoroutineDestroyName =
-    "__obelisk_native_coro_destroy_v1";
+    "__talos_native_coro_destroy_v1";
 inline constexpr llvm::StringLiteral nativeNoopDestroyName =
-    "__obelisk_native_noop_destroy_v1";
+    "__talos_native_noop_destroy_v1";
 inline constexpr llvm::StringLiteral nativeZeroRequirementsName =
-    "__obelisk_native_zero_requirements_v1";
+    "__talos_native_zero_requirements_v1";
 
 mlir::LogicalResult materializeSharedNativeWrappers(mlir::ModuleOp module,
                                                     bool needsCoroutine);
@@ -77,6 +77,6 @@ mlir::LogicalResult makeRuntimeCheckpointWrapper(mlir::ModuleOp module,
                                                  uint32_t actorSlot,
                                                  uint32_t continuation);
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSWRAPPERLOWERING_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSWRAPPERLOWERING_H

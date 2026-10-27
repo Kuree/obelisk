@@ -1,4 +1,4 @@
-const DATABASE = 'obelisk-playground';
+const DATABASE = 'talos-playground';
 const STORE = 'waveforms';
 const LATEST = 'latest';
 

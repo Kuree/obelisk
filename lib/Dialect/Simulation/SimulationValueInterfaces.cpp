@@ -1,10 +1,10 @@
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include <cstdint>
 
 using namespace mlir;
 
-namespace obelisk::sim {
+namespace talos::sim {
 bool SimPackedFlattenOp::areCastCompatible(TypeRange inputs,
                                            TypeRange outputs) {
   return inputs.size() == 1 && outputs.size() == 1 &&
@@ -56,4 +56,4 @@ void SimLogicClog2Op::inferResultRangesFromOptional(
   setResultRange(getResult(), IntegerValueRange(ConstantIntRanges::fromUnsigned(
                                   APInt(32, 0), APInt(32, maximum))));
 }
-} // namespace obelisk::sim
+} // namespace talos::sim

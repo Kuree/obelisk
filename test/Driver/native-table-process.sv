@@ -1,10 +1,10 @@
-// RUN: obelisk -O3 %s -o %t.o3
+// RUN: talos -O3 %s -o %t.o3
 // RUN: %t.o3 | FileCheck %s
-// RUN: obelisk -O3 --bytecode-scope=all %s -o %t.all
+// RUN: talos -O3 --bytecode-scope=all %s -o %t.all
 // RUN: %t.all | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
-// RUN: obelisk -O0 %s -emit-llvm -o %t.ll
+// RUN: talos -O0 %s -emit-llvm -o %t.ll
 // RUN: FileCheck %s --check-prefix=IR < %t.ll
 
 // IEEE 1800-2023 9.4.2, 9.6.2: event widths, X edges and descendant disable.
@@ -55,5 +55,5 @@ module native_table_process;
 endmodule
 
 // CHECK: table events and disable passed
-// IR-DAG: define i32 @{{[^. ]+}}.__obelisk_table_body(
-// IR-DAG: define i32 @{{[^ ]+}}.fork.{{[^ ]+}}.__obelisk_table_body(
+// IR-DAG: define i32 @{{[^. ]+}}.__talos_table_body(
+// IR-DAG: define i32 @{{[^ ]+}}.fork.{{[^ ]+}}.__talos_table_body(

@@ -1,13 +1,13 @@
 //===- SpecializeStaticStateNBA.cpp - Plan static state/NBA specialization ===//
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/SimulationVPIAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -18,10 +18,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMSPECIALIZESTATICSTATENBAPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMSPECIALIZESTATICSTATENBAPASS
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 
@@ -30,15 +30,15 @@ struct Dependency {
   bool write = false;
 };
 
-class ObeliskSimSpecializeStaticStateNBAPass
-    : public impl::ObeliskSimSpecializeStaticStateNBAPassBase<
-          ObeliskSimSpecializeStaticStateNBAPass> {
+class TalosSimSpecializeStaticStateNBAPass
+    : public impl::TalosSimSpecializeStaticStateNBAPassBase<
+          TalosSimSpecializeStaticStateNBAPass> {
 public:
   using Base::Base;
   void runOnOperation() override;
 };
 
-void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
+void TalosSimSpecializeStaticStateNBAPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
   if (!graph) {
@@ -235,9 +235,9 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
       design.getContext(), schedule::metadata::schemaVersion, maxPackedWidth,
       graph, builder.getArrayAttr(roots), builder.getArrayAttr(actorRoots),
       builder.getDenseI64ArrayAttr(nbaRoots));
-  ::obelisk::schedule::set<schedule::metadata::staticSpecialization>(design,
+  ::talos::schedule::set<schedule::metadata::staticSpecialization>(design,
                                                                      plan);
 }
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

@@ -1,19 +1,19 @@
 //===- VPIObjectModelABI.cpp - generated VPI ABI checks ------------------===//
 
 #include "VPIInternal.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
+#include "talos/Reflection/VPIObjectModel.h"
 
-#define OBELISK_CHECK_VPI_VALUE(apiName, schemaValue)                          \
+#define TALOS_CHECK_VPI_VALUE(apiName, schemaValue)                          \
   static_assert(static_cast<uint32_t>(apiName) == uint32_t(schemaValue),       \
                 #apiName " differs from the generated VPI schema");
 
-OBELISK_FOR_EACH_VPI_OBJECT_KIND(OBELISK_CHECK_VPI_VALUE)
-OBELISK_FOR_EACH_VPI_RELATION(OBELISK_CHECK_VPI_VALUE)
-OBELISK_FOR_EACH_VPI_PROPERTY(OBELISK_CHECK_VPI_VALUE)
+TALOS_FOR_EACH_VPI_OBJECT_KIND(TALOS_CHECK_VPI_VALUE)
+TALOS_FOR_EACH_VPI_RELATION(TALOS_CHECK_VPI_VALUE)
+TALOS_FOR_EACH_VPI_PROPERTY(TALOS_CHECK_VPI_VALUE)
 
-#undef OBELISK_CHECK_VPI_VALUE
+#undef TALOS_CHECK_VPI_VALUE
 
-using namespace obelisk::reflection;
+using namespace talos::reflection;
 
 static_assert(vpiObjectModelImageHeaderSize == 120);
 static_assert(vpiObjectModelImageTraversalSize == 12);

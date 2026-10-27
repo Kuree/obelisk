@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep))' -o %t.planned.mlir
-// RUN: obelisk-opt %t.planned.mlir --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep))' -o %t.planned.mlir
+// RUN: talos-opt %t.planned.mlir --convert-talos-sim-processes-to-llvm-coroutines -o %t.llvm.mlir
 // RUN: FileCheck %s < %t.llvm.mlir
-// RUN: obelisk-opt %t.planned.mlir '--test-obelisk-set-module-attributes=attrs="{llvm.target_triple = \"wasm32-unknown-emscripten\", llvm.data_layout = \"e-m:e-p:32:32-i64:64-n32:64-S128\"}"' > %t.wasm.mlir
-// RUN: obelisk-opt %t.wasm.mlir --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=CHECK --check-prefix=WASM
+// RUN: talos-opt %t.planned.mlir '--test-talos-set-module-attributes=attrs="{llvm.target_triple = \"wasm32-unknown-emscripten\", llvm.data_layout = \"e-m:e-p:32:32-i64:64-n32:64-S128\"}"' > %t.wasm.mlir
+// RUN: talos-opt %t.wasm.mlir --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=CHECK --check-prefix=WASM
 
 // WASM: module attributes {{.*}}llvm.data_layout = "e-m:e-p:32:32-i64:64-n32:64-S128"
 // WASM-SAME: llvm.target_triple = "wasm32-unknown-emscripten"
@@ -132,9 +132,9 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
+// CHECK-LABEL: llvm.func @__talos_aot_schedule_run_v1(
 // CHECK: %[[CONTROL:.*]] = llvm.alloca {{.*}} x !llvm.struct<(ptr, ptr, i64)>
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot({{.*}}, %[[CONTROL]])
+// CHECK: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot({{.*}}, %[[CONTROL]])
 // Pointer-sized control fields must use typed struct indices, not the host's
 // byte offsets. The extra RUN exercises this exact path with wasm32 layout.
 // CHECK: %[[TERMINATION:.*]] = llvm.getelementptr %[[CONTROL]][0, 1] : (!llvm.ptr) -> !llvm.ptr, !llvm.struct<(ptr, ptr, i64)>
@@ -144,4 +144,4 @@ module attributes {
 // CHECK: %[[DEADLINE:.*]] = llvm.getelementptr %[[CONTROL]][0, 2] : (!llvm.ptr) -> !llvm.ptr, !llvm.struct<(ptr, ptr, i64)>
 // CHECK-NEXT: llvm.load %[[DEADLINE]] {{.*}} : !llvm.ptr -> i64
 // CHECK: llvm.load %[[TERMINATION_PTR]] {{.*}} : !llvm.ptr -> i32
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_handoff_periodic_aot
+// CHECK: llvm.call @talos_rt_v1_scheduler_handoff_periodic_aot

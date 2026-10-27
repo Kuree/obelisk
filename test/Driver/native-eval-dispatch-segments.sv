@@ -1,6 +1,6 @@
-// RUN: obelisk -O3 --vpi=off --mlir-timing %s -o %t.native 2> %t.timing
+// RUN: talos -O3 --vpi=off --mlir-timing %s -o %t.native 2> %t.timing
 // RUN: %llvm_dist/bin/llvm-nm %t.native | FileCheck %s --check-prefix=SEGMENTS
-// RUN: env OBELISK_RT_VERIFY_UNKNOWN_SUMMARY=1 %t.native > %t.native.out
+// RUN: env TALOS_RT_VERIFY_UNKNOWN_SUMMARY=1 %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
 // RUN: %t.native --execution-tier=bytecode | diff -u %t.native.out -
 
@@ -64,9 +64,9 @@ endmodule
 
 // Ranked groups may absorb a whole segment. Require two distinct surviving
 // dispatch segments without depending on the removed segment's number.
-// SEGMENTS-DAG: __obelisk_eval_dispatch_v1.segment_{{[0-9]+}}
-// SEGMENTS-DAG: __obelisk_eval_dispatch_v1.segment_{{[0-9]+}}
-// SEGMENTS-DAG: __obelisk_eval_ranked_group_
+// SEGMENTS-DAG: __talos_eval_dispatch_v1.segment_{{[0-9]+}}
+// SEGMENTS-DAG: __talos_eval_dispatch_v1.segment_{{[0-9]+}}
+// SEGMENTS-DAG: __talos_eval_ranked_group_
 // CHECK: round 0 count 1 chain 00
 // CHECK-NEXT: round 1 count 2 chain xx
 // CHECK-NEXT: round 2 count 3 chain 02

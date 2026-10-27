@@ -1,9 +1,9 @@
 //===- SimulationStorageAnalysis.cpp - Canonical storage facts ----------===//
 
-#include "obelisk/Analysis/SimulationStorageAnalysis.h"
+#include "talos/Analysis/SimulationStorageAnalysis.h"
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -11,7 +11,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 FailureOr<SimulationStorageProperties>
 getSimulationStorageProperties(Type type, const llvm::DataLayout &dataLayout,
                                llvm::LLVMContext &llvmContext) {
@@ -117,4 +117,4 @@ getSimulationPhysicalStorageCount(const SimulationStorageProperties &storage) {
   return storage.fourState || storage.managedReference ? 2 : 1;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

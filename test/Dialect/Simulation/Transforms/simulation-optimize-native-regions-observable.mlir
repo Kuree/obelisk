@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --obelisk-sim-optimize-native-regions | FileCheck %s
+// RUN: talos-opt %s --split-input-file --talos-sim-optimize-native-regions | FileCheck %s
 
 // Each NBA is its own update event (IEEE 1800-2017 4.6(b), 10.4.2). When an
 // event control can observe the root, the epilogue must not fold

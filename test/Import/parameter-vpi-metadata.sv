@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s 2>/dev/null | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-obelisk %s 2>/dev/null | FileCheck %s --check-prefix=OBELISK
+// RUN: talos -emit-slang %s 2>/dev/null | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-talos %s 2>/dev/null | FileCheck %s --check-prefix=TALOS
 
 parameter int CU_IMPLICIT = 1;
 
@@ -22,9 +22,9 @@ endpackage
 // SLANG-DAG: slang.symbol.parameter @{{[^ ]+}} attributes {constant_value = "6'b101010", has_explicit_range, hierarchical_name = "metadata_pkg::DIRECT_RANGE", is_local_param, name = "DIRECT_RANGE"
 // SLANG-DAG: slang.symbol.parameter @{{[^ ]+}} attributes {constant_value = "1'b1", has_explicit_range, hierarchical_name = "metadata_pkg::SINGLE_RANGE", is_local_param, name = "SINGLE_RANGE"
 // SLANG-DAG: slang.symbol.parameter @{{[^ ]+}} attributes {constant_value = "32'd305441741", has_explicit_range, hierarchical_name = "metadata_pkg::NAMED_DIRECT", is_local_param, name = "NAMED_DIRECT"
-// OBELISK-DAG: obelisk.sv.symbol.parameter @{{[^ ]+}} attributes {constant_value = "1", hierarchical_name = "CU_IMPLICIT", is_local_param, name = "CU_IMPLICIT"
-// OBELISK-DAG: obelisk.sv.symbol.parameter @{{[^ ]+}} attributes {constant_value = "2", hierarchical_name = "metadata_pkg::IMPLICIT", is_local_param, name = "IMPLICIT"
-// OBELISK-DAG: obelisk.sv.symbol.parameter @{{[^ ]+}} attributes {constant_value = "8'd60", hierarchical_name = "metadata_pkg::TYPEDEF_RANGE", is_local_param, name = "TYPEDEF_RANGE"
-// OBELISK-DAG: obelisk.sv.symbol.parameter @{{[^ ]+}} attributes {constant_value = "6'b101010", has_explicit_range, hierarchical_name = "metadata_pkg::DIRECT_RANGE", is_local_param, name = "DIRECT_RANGE"
-// OBELISK-DAG: obelisk.sv.symbol.parameter @{{[^ ]+}} attributes {constant_value = "1'b1", has_explicit_range, hierarchical_name = "metadata_pkg::SINGLE_RANGE", is_local_param, name = "SINGLE_RANGE"
-// OBELISK-DAG: obelisk.sv.symbol.parameter @{{[^ ]+}} attributes {constant_value = "32'd305441741", has_explicit_range, hierarchical_name = "metadata_pkg::NAMED_DIRECT", is_local_param, name = "NAMED_DIRECT"
+// TALOS-DAG: talos.sv.symbol.parameter @{{[^ ]+}} attributes {constant_value = "1", hierarchical_name = "CU_IMPLICIT", is_local_param, name = "CU_IMPLICIT"
+// TALOS-DAG: talos.sv.symbol.parameter @{{[^ ]+}} attributes {constant_value = "2", hierarchical_name = "metadata_pkg::IMPLICIT", is_local_param, name = "IMPLICIT"
+// TALOS-DAG: talos.sv.symbol.parameter @{{[^ ]+}} attributes {constant_value = "8'd60", hierarchical_name = "metadata_pkg::TYPEDEF_RANGE", is_local_param, name = "TYPEDEF_RANGE"
+// TALOS-DAG: talos.sv.symbol.parameter @{{[^ ]+}} attributes {constant_value = "6'b101010", has_explicit_range, hierarchical_name = "metadata_pkg::DIRECT_RANGE", is_local_param, name = "DIRECT_RANGE"
+// TALOS-DAG: talos.sv.symbol.parameter @{{[^ ]+}} attributes {constant_value = "1'b1", has_explicit_range, hierarchical_name = "metadata_pkg::SINGLE_RANGE", is_local_param, name = "SINGLE_RANGE"
+// TALOS-DAG: talos.sv.symbol.parameter @{{[^ ]+}} attributes {constant_value = "32'd305441741", has_explicit_range, hierarchical_name = "metadata_pkg::NAMED_DIRECT", is_local_param, name = "NAMED_DIRECT"

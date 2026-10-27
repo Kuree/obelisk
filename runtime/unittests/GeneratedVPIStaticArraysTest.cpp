@@ -1,7 +1,7 @@
 //===- GeneratedVPIStaticArraysTest.cpp - Static array VPI tests --------===//
 
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "GeneratedSymbol.h"
 #include "sv_vpi_user.h"
@@ -14,8 +14,8 @@
 #include <string>
 #include <vector>
 
-extern "C" const obelisk_rt_process_descriptor_v1 staticArraysDescriptor asm(
-    OBELISK_TEST_SYMBOL("static_arrays_process.__obelisk_process_descriptor"));
+extern "C" const talos_rt_process_descriptor_v1 staticArraysDescriptor asm(
+    TALOS_TEST_SYMBOL("static_arrays_process.__talos_process_descriptor"));
 
 namespace {
 
@@ -64,7 +64,7 @@ uint64_t imageChecksum(const std::vector<uint8_t> &bytes) {
 
 struct MutableStaticArraysImage {
   std::vector<uint8_t> bytes;
-  obelisk_rt_execution_descriptor_v1 execution;
+  talos_rt_execution_descriptor_v1 execution;
 
   MutableStaticArraysImage()
       : bytes(staticArraysDescriptor.execution->design_database,
@@ -78,27 +78,27 @@ struct MutableStaticArraysImage {
 };
 
 struct VPIContext {
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
 
   void start() {
     ASSERT_NE(staticArraysDescriptor.execution, nullptr);
     ASSERT_EQ(
         staticArraysDescriptor.execution->flags &
-            (OBELISK_RT_EXECUTION_VPI_READ | OBELISK_RT_EXECUTION_VPI_WRITE),
-        OBELISK_RT_EXECUTION_VPI_READ);
-    ASSERT_EQ(obelisk_rt_v1_design_validate(staticArraysDescriptor.execution),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_context_create_for_design(
+            (TALOS_RT_EXECUTION_VPI_READ | TALOS_RT_EXECUTION_VPI_WRITE),
+        TALOS_RT_EXECUTION_VPI_READ);
+    ASSERT_EQ(talos_rt_v1_design_validate(staticArraysDescriptor.execution),
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_context_create_for_design(
                   staticArraysDescriptor.execution, &context),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   }
 
   ~VPIContext() {
     if (context)
-      obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_context_destroy(context);
   }
 };
 
@@ -398,7 +398,7 @@ TEST(GeneratedVPIStaticArrays, ContextTeardownOwnsOutstandingQueryHandles) {
   ASSERT_NE(vpi_handle_by_index(array, 1), nullptr);
   ASSERT_NE(vpi_iterate(vpiInstance, array), nullptr);
   ASSERT_NE(vpi_iterate(vpiRange, array), nullptr);
-  obelisk_rt_v1_context_destroy(fixture.context);
+  talos_rt_v1_context_destroy(fixture.context);
   fixture.context = nullptr;
 }
 
@@ -635,9 +635,9 @@ TEST(GeneratedVPIStaticArrays, DirectIndexedNameInheritsProtectedArraySource) {
   put16(image.bytes, property + 6, 0);
   put64(image.bytes, property + 8, 1);
   image.seal();
-  obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
-      OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE | OBELISK_RT_EXECUTION_VPI_READ,
+  talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
+      TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE | TALOS_RT_EXECUTION_VPI_READ,
       0,
       nullptr,
       0,
@@ -653,14 +653,14 @@ TEST(GeneratedVPIStaticArrays, DirectIndexedNameInheritsProtectedArraySource) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char arrayName[] = "top.events";
   char partialName[] = "top.events[0]";
   vpiHandle array = vpi_handle_by_name(arrayName, nullptr);
@@ -675,7 +675,7 @@ TEST(GeneratedVPIStaticArrays, DirectIndexedNameInheritsProtectedArraySource) {
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_release_handle(partial), 1);
   EXPECT_EQ(vpi_release_handle(array), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(GeneratedVPIStaticArrays, TraversesSparseAndEmptyGenerateArrays) {
@@ -753,11 +753,11 @@ TEST(GeneratedVPIStaticArrays, TraversesInstancesInsideGenerateScopes) {
 }
 
 TEST(GeneratedVPIStaticArrays, RejectsGeneratedChildInAnotherEnclosingScope) {
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   for (TableKind sourceTable : {TableKind::Object, TableKind::StaticObject}) {
     SCOPED_TRACE(static_cast<unsigned>(sourceTable));
     MutableStaticArraysImage image;
-    ASSERT_EQ(obelisk_rt_v1_design_validate(&image.execution), OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_design_validate(&image.execution), TALOS_RT_OK);
     size_t relations = get64(image.bytes, 160);
     size_t count = get64(image.bytes, 168);
     bool corrupted = false;
@@ -778,20 +778,20 @@ TEST(GeneratedVPIStaticArrays, RejectsGeneratedChildInAnotherEnclosingScope) {
     }
     ASSERT_TRUE(corrupted);
     image.seal();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&image.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&image.execution),
+              TALOS_RT_INVALID_DESIGN);
   }
 }
 
 TEST(GeneratedVPIStaticArrays, RejectsCorruptRelationIndexImage) {
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   constexpr uint32_t objectTableTag = uint32_t{1} << 30;
 
   // Sparse generate lookup has separate source-ordinal and sorted-key slices.
   // Both are required to describe the same bijection.
   {
     MutableStaticArraysImage image;
-    ASSERT_EQ(obelisk_rt_v1_design_validate(&image.execution), OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_design_validate(&image.execution), TALOS_RT_OK);
     size_t directory = get32(image.bytes, 12);
     size_t indices = get64(image.bytes, directory + 48);
     size_t indexCount = get64(image.bytes, directory + 56);
@@ -810,8 +810,8 @@ TEST(GeneratedVPIStaticArrays, RejectsCorruptRelationIndexImage) {
     }
     ASSERT_TRUE(corrupted);
     image.seal();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&image.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&image.execution),
+              TALOS_RT_INVALID_DESIGN);
   }
 
   // A reverse vpiPrimitiveArray edge may target another legal primitive-array
@@ -872,8 +872,8 @@ TEST(GeneratedVPIStaticArrays, RejectsCorruptRelationIndexImage) {
     }
     ASSERT_TRUE(corrupted);
     image.seal();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&image.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&image.execution),
+              TALOS_RT_INVALID_DESIGN);
   }
 
   // Primitive input count and its derived scalar range are one checked unit.
@@ -893,8 +893,8 @@ TEST(GeneratedVPIStaticArrays, RejectsCorruptRelationIndexImage) {
     }
     ASSERT_TRUE(corrupted);
     image.seal();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&image.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&image.execution),
+              TALOS_RT_INVALID_DESIGN);
   }
 }
 

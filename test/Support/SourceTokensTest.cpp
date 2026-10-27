@@ -1,15 +1,15 @@
-// Lists a file's tokens through the ObeliskSourceTokens callback API. It is
+// Lists a file's tokens through the TalosSourceTokens callback API. It is
 // built as C++17 without the frontend, the way coverage tools consume the
-// library, and its output must match `obelisk -dump-tokens`.
+// library, and its output must match `talos -dump-tokens`.
 
-#include "obelisk/Frontend/SourceTokens.h"
+#include "talos/Frontend/SourceTokens.h"
 
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstring>
 
-using namespace obelisk::frontend;
+using namespace talos::frontend;
 
 int main(int argc, char **argv) {
   LanguageVersion version = LanguageVersion::IEEE1800_2023;

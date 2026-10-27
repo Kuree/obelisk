@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-dpi-effects)' -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph))' | FileCheck %s --check-prefix=RECORD
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-dpi-effects)' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph))' | FileCheck %s --check-prefix=RECORD
 
 // Export transparency is judged from compute-graph effect summaries, which
 // later rewrites may drop. Building the graph records the answer on the

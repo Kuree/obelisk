@@ -1,0 +1,51 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=3' '--encode-talos-sim-to-bytecode=vpi=off' -o /dev/null
+
+module attributes {
+  llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
+  talos.sv.symbol.definition @child attributes {definition_kind = 0 : i32, hierarchical_name = "child", name = "child", node_id = 0 : i64} {}
+  talos.sv.symbol.definition @top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 1 : i64} {}
+  talos.sv.symbol.root @root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 2 : i64} {
+    talos.sv.symbol.instance @top_i attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @top} {
+      talos.sv.symbol.instance_body @top_b attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        talos.sv.symbol.variable @select attributes {hierarchical_name = "top.select", lifetime = 1 : i32, name = "select", node_id = 5 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {}
+        talos.sv.symbol.variable @first attributes {hierarchical_name = "top.first", lifetime = 1 : i32, name = "first", node_id = 6 : i64, semantic_type = !talos.event} {}
+        talos.sv.symbol.variable @second attributes {hierarchical_name = "top.second", lifetime = 1 : i32, name = "second", node_id = 7 : i64, semantic_type = !talos.event} {}
+        talos.sv.symbol.instance @dut attributes {hierarchical_name = "top.dut", is_uninstantiated = false, name = "dut", node_id = 8 : i64, referenced_path = "child", referenced_symbol = @child} {
+          talos.sv.port.connection attributes {actual_is_constant = false, direction = 0 : i32, formal_name = "wake", formal_ordinal = 0 : i64, formal_path = "top.dut.wake", formal_symbol = @root::@top_i::@top_b::@dut::@child_b::@wake_p, formal_type = !talos.event, internal_path = "top.dut.wake", internal_symbol = @root::@top_i::@top_b::@dut::@child_b::@wake_v, is_ansi = true, is_net = false, node_id = 9 : i64, provenance = 0 : i32} {
+          } {
+            talos.sv.expression.conditional_op attributes {condition_count = 1 : i64, condition_pattern_flags = array<i64: 0>, node_id = 10 : i64, semantic_type = !talos.event} {
+              talos.sv.expression.named_value attributes {node_id = 11 : i64, referenced_path = "top.select", referenced_symbol = @root::@top_i::@top_b::@select, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {}
+              talos.sv.expression.named_value attributes {node_id = 12 : i64, referenced_path = "top.first", referenced_symbol = @root::@top_i::@top_b::@first, semantic_type = !talos.event} {}
+              talos.sv.expression.named_value attributes {node_id = 13 : i64, referenced_path = "top.second", referenced_symbol = @root::@top_i::@top_b::@second, semantic_type = !talos.event} {}
+            }
+          }
+          talos.sv.symbol.instance_body @child_b attributes {hierarchical_name = "top.dut", name = "child", node_id = 14 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+            talos.sv.symbol.port @wake_p attributes {direction = 0 : i32, hierarchical_name = "top.dut.wake", name = "wake", node_id = 15 : i64, semantic_type = !talos.event} {}
+            talos.sv.symbol.variable @wake_v attributes {hierarchical_name = "top.dut.wake", lifetime = 1 : i32, name = "wake", node_id = 16 : i64, semantic_type = !talos.event} {}
+          }
+        }
+      }
+    }
+  }
+}
+
+// CHECK: simulation.design @design attributes {{.*}}schedule.computed_event_startup
+// CHECK: simulation.storage.decl {{.*}} : !simulation.event {{.*}} hierarchy "top.dut.wake"
+// CHECK: simulation.func private @unit_0(
+// CHECK-SAME: %[[TRUE_ARG:[^:]+]]: !simulation.event
+// CHECK-SAME: %[[FALSE_ARG:[^:]+]]: !simulation.event
+// CHECK-SAME: entry_kind = 9 : i32
+// CHECK-SAME: schedule.computed_event_startup
+// The ABI evaluates and captures each arm once. IEEE 1800-2017 11.4.11 then
+// requires an unknown selector to publish the default null event even when
+// both captured values happen to name the same event object.
+// CHECK: cf.cond_br {{.*}}, ^{{bb[0-9]+}}(%[[TRUE_ARG]] : !simulation.event)
+// CHECK: %[[NULL:.*]] = simulation.event.null
+// CHECK: cf.cond_br {{.*}}, ^{{bb[0-9]+}}(%[[NULL]] : !simulation.event), ^{{bb[0-9]+}}(%[[FALSE_ARG]] : !simulation.event)
+// CHECK-NOT: simulation.event.equal
+// CHECK: simulation.ref.store
+// CHECK: simulation.suspend.change
+// CHECK-NOT: talos.sv.

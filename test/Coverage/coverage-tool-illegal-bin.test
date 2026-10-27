@@ -1,10 +1,10 @@
 # RUN: %coverage-fixture %t.illegal.obcov 27 illegal-report 1 illegal
-# RUN: obelisk-cov report --format=text %t.illegal.obcov | FileCheck %s --check-prefix=TEXT
-# RUN: obelisk-cov report --format=html -o %t.illegal.html %t.illegal.obcov
+# RUN: talos-cov report --format=text %t.illegal.obcov | FileCheck %s --check-prefix=TEXT
+# RUN: talos-cov report --format=html -o %t.illegal.html %t.illegal.obcov
 # RUN: FileCheck %s --check-prefix=HTML < %t.illegal.html
 # RUN: %coverage-fixture %t.same-a.obcov 40 same-illegal 1 illegal
 # RUN: %coverage-fixture %t.same-b.obcov 41 same-illegal 1 illegal
-# RUN: obelisk-cov report --format=html -o %t.same.html %t.same-a.obcov %t.same-b.obcov
+# RUN: talos-cov report --format=html -o %t.same.html %t.same-a.obcov %t.same-b.obcov
 # RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.same.html 'row:same-illegal (00000000-0000-0000-0000-000000000028)|top.dut.cg.cp.bad|1|42|1|illegal fixture bin' 'row:same-illegal (00000000-0000-0000-0000-000000000029)|top.dut.cg.cp.bad|1|42|1|illegal fixture bin' %}
 
 # An illegal bin (IEEE 1800-2023 19.5.6) is excluded from coverage and never

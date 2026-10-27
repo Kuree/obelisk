@@ -1,13 +1,13 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' -o /dev/null
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' -o /dev/null
 
 // IEEE 1800-2017 21.3.4.3 makes $fscanf consume from the descriptor's current
 // stream position. The enabled input prevents later conversions from reading
 // after an earlier mismatch, and EOF remains distinct from a match failure.
 
 // CHECK-LABEL: llvm.func @scan(
-// CHECK: llvm.call @obelisk_rt_v1_file_scan_field
+// CHECK: llvm.call @talos_rt_v1_file_scan_field
 // CHECK-SAME: %arg1, %arg2
 // CHECK: llvm.load
 // CHECK: llvm.load

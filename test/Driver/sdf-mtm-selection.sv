@@ -1,4 +1,4 @@
-// RUN: cd %S && obelisk -emit-slang %s -o %t.mlir
+// RUN: cd %S && talos -emit-slang %s -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 
 `timescale 1ns / 1ns
@@ -45,5 +45,5 @@ endmodule
 // CHECK-DAG: hierarchical_name = "sdf_mtm_selection.maximum.dut"{{.*}}timing_delay_count = 1 : i64, timing_delay_fs = array<i64: 3000000>
 // CHECK-DAG: hierarchical_name = "sdf_mtm_selection.tool.dut"{{.*}}timing_delay_count = 1 : i64, timing_delay_fs = array<i64: 2000000>
 // CHECK-DAG: hierarchical_name = "sdf_mtm_selection.default_selection.dut"{{.*}}timing_delay_count = 1 : i64, timing_delay_fs = array<i64: 2000000>
-// CHECK-NOT: obelisk_sdf.
-// CHECK-NOT: obelisk.sdf.table
+// CHECK-NOT: talos_sdf.
+// CHECK-NOT: talos.sdf.table

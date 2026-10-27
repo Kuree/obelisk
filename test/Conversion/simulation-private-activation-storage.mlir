@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s --check-prefix=READ
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=read},talos-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s --check-prefix=READ
 
 // Localize only the evaluator, preserving the canonical actor's ABI and static
 // lifetime. Partial initialization, another accessor, and read-only VPI each
@@ -194,33 +194,33 @@ module attributes {schedule.native_scheduler = 3 : i32} {
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.ref.store
 // CHECK: simulation.suspend.change
-// CHECK-LABEL: simulation.func private @complete.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @complete.__talos_eval_body_
 // CHECK: %[[LOCAL:.*]] = simulation.ref.alloc
 // CHECK: simulation.ref.subelement %[[LOCAL]]
 // CHECK: simulation.ref.store
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @partial.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @partial.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.ref.load
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @shared.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @shared.__talos_eval_body_
 // Unwatched shared storage retains its final canonical value for other actors.
 // CHECK: %[[CANON:.*]] = simulation.context.storage %{{.*}}[1]
 // CHECK: %[[SHARED:.*]] = simulation.ref.alloc
 // CHECK: %[[FINAL:.*]] = simulation.ref.load %[[SHARED]]
 // CHECK-NEXT: simulation.ref.store %[[FINAL]] to %[[CANON]]
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @disjoint_watch.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @disjoint_watch.__talos_eval_body_
 // CHECK: simulation.ref.alloc
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @overlap_watch.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @overlap_watch.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.ref.store
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @bootstrap_live_in.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @bootstrap_live_in.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.ref.store
 // CHECK: simulation.return
 // READ-NOT: simulation.ref.alloc
-// READ: simulation.func private @complete.__obelisk_eval_body_
+// READ: simulation.func private @complete.__talos_eval_body_
 // READ-NOT: simulation.ref.alloc

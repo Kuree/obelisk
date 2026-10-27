@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // IEEE 1800-2023 18.14.1 seeds a static process from "the next value from the
 // initialization RNG of the module instance ... containing the thread
@@ -46,29 +46,29 @@ module attributes {
 }
 
 // Rows {plan, capture byte offset, scope}; equal captures share a slice.
-// CHECK: llvm.mlir.global internal constant @parent.__obelisk_spawn_batch_0
-// CHECK: llvm.mlir.addressof @child.__obelisk_spawn_plan
+// CHECK: llvm.mlir.global internal constant @parent.__talos_spawn_batch_0
+// CHECK: llvm.mlir.addressof @child.__talos_spawn_plan
 // CHECK: llvm.mlir.constant(0 : i64)
 // CHECK: llvm.mlir.constant(7 : i64)
-// CHECK: llvm.mlir.addressof @child.__obelisk_spawn_plan
+// CHECK: llvm.mlir.addressof @child.__talos_spawn_plan
 // CHECK: llvm.mlir.constant(8 : i64)
 // CHECK: llvm.mlir.constant(0 : i64)
-// CHECK: llvm.mlir.addressof @child.__obelisk_spawn_plan
+// CHECK: llvm.mlir.addressof @child.__talos_spawn_plan
 // CHECK: llvm.mlir.constant(0 : i64)
 // CHECK: llvm.mlir.constant(9 : i64)
 // CHECK: llvm.return %{{.*}} : !llvm.array<3 x struct<(ptr, i64, i64)>>
-// CHECK: llvm.mlir.global internal constant @parent.__obelisk_spawn_batch_0_captures(dense<[17, 29]> : tensor<2xi64>) {{.*}} : !llvm.array<2 x i64>
+// CHECK: llvm.mlir.global internal constant @parent.__talos_spawn_batch_0_captures(dense<[17, 29]> : tensor<2xi64>) {{.*}} : !llvm.array<2 x i64>
 
 // CHECK-LABEL: llvm.func @parent(
-// CHECK-NOT: obelisk_rt_v1_random_initialization
-// CHECK: %[[TABLE:.*]] = llvm.mlir.addressof @parent.__obelisk_spawn_batch_0
-// CHECK: %[[CAPTURES:.*]] = llvm.mlir.addressof @parent.__obelisk_spawn_batch_0_captures
+// CHECK-NOT: talos_rt_v1_random_initialization
+// CHECK: %[[TABLE:.*]] = llvm.mlir.addressof @parent.__talos_spawn_batch_0
+// CHECK: %[[CAPTURES:.*]] = llvm.mlir.addressof @parent.__talos_spawn_batch_0_captures
 // CHECK: %[[COUNT:.*]] = llvm.mlir.constant(3 : i32)
-// CHECK: %[[STATUS:.*]] = llvm.call @obelisk_rt_v1_process_spawn_batch(%{{.*}}, %[[TABLE]], %[[CAPTURES]], %[[COUNT]])
+// CHECK: %[[STATUS:.*]] = llvm.call @talos_rt_v1_process_spawn_batch(%{{.*}}, %[[TABLE]], %[[CAPTURES]], %[[COUNT]])
 // CHECK: llvm.icmp "eq" %[[STATUS]]
 // CHECK: %[[SCOPE:.*]] = llvm.mlir.constant(10 : i64)
-// CHECK: llvm.call @obelisk_rt_v1_random_initialization_enter(%{{.*}}, %[[SCOPE]], %{{.*}})
-// CHECK: llvm.call @child.__obelisk_spawn
-// CHECK: llvm.call @obelisk_rt_v1_random_initialization_leave
-// CHECK-NOT: obelisk_rt_v1_random_initialization
+// CHECK: llvm.call @talos_rt_v1_random_initialization_enter(%{{.*}}, %[[SCOPE]], %{{.*}})
+// CHECK: llvm.call @child.__talos_spawn
+// CHECK: llvm.call @talos_rt_v1_random_initialization_leave
+// CHECK-NOT: talos_rt_v1_random_initialization
 // CHECK: llvm.return

@@ -8,22 +8,22 @@ struct {
   uint64_t value[4], mask[4];
   uint32_t valid, region;
   uint64_t transient[4];
-} __obelisk_aot_nba_accumulator_0;
-#define accumulator __obelisk_aot_nba_accumulator_0
+} __talos_aot_nba_accumulator_0;
+#define accumulator __talos_aot_nba_accumulator_0
 static uint64_t stages, commits;
 
 void specialized(void *, uint32_t, uint32_t *);
-uint32_t obelisk_rt_v1_static_nba_batch_guard(void *context, const void *p,
+uint32_t talos_rt_v1_static_nba_batch_guard(void *context, const void *p,
                                               uint32_t region) {
   assert(p == &plan);
   return 1;
 }
-void obelisk_rt_v1_static_nba_batch_knownness(void *context, uint64_t low,
+void talos_rt_v1_static_nba_batch_knownness(void *context, uint64_t low,
                                               uint64_t width, uint64_t old,
                                               uint64_t next) {
   assert(0 && "two-state commits cannot change knownness");
 }
-void obelisk_rt_v1_static_nba_batch_finish(void *context, uint64_t s,
+void talos_rt_v1_static_nba_batch_finish(void *context, uint64_t s,
                                            uint64_t c, uint32_t pending) {
   stages += s;
   commits += c;

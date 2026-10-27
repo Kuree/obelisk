@@ -4,12 +4,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODESERIALIZATION_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODESERIALIZATION_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODESERIALIZATION_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODESERIALIZATION_H
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -19,7 +19,7 @@
 #include <cstdint>
 #include <optional>
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 inline void append16(llvm::SmallVectorImpl<uint8_t> &output, uint16_t value) {
   output.push_back(static_cast<uint8_t>(value));
@@ -56,17 +56,17 @@ inline void alignTo(llvm::SmallVectorImpl<uint8_t> &output,
 
 inline uint64_t checksum(llvm::ArrayRef<uint8_t> data,
                          uint64_t checksumOffset) {
-  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
+  uint64_t hash = TALOS_STABLE_HASH_OFFSET_BASIS;
   for (auto [index, byte] : llvm::enumerate(data)) {
     uint8_t hashed =
         index >= checksumOffset && index < checksumOffset + 8 ? 0 : byte;
-    hash = obelisk_stable_hash_append_byte(hash, hashed);
+    hash = talos_stable_hash_append_byte(hash, hashed);
   }
   return hash;
 }
 
 inline uint64_t stableHash(llvm::StringRef text) {
-  return obelisk_stable_hash(text.data(), text.size());
+  return talos_stable_hash(text.data(), text.size());
 }
 
 inline bool containsLogic(mlir::Type type) {
@@ -84,6 +84,6 @@ llvm::SmallVector<uint8_t> serializeDesignDatabase(
     const llvm::DenseMap<uint64_t, uint64_t> &netOffsets,
     const llvm::DenseMap<uint64_t, uint64_t> &driverOffsets);
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODESERIALIZATION_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODESERIALIZATION_H

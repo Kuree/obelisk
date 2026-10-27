@@ -1,7 +1,7 @@
 //===- HostCRuntime.h - Host C-runtime discovery --------------*- C++ -*-===//
 
-#ifndef OBELISK_TOOLS_DRIVER_HOSTCRUNTIME_H
-#define OBELISK_TOOLS_DRIVER_HOSTCRUNTIME_H
+#ifndef TALOS_TOOLS_DRIVER_HOSTCRUNTIME_H
+#define TALOS_TOOLS_DRIVER_HOSTCRUNTIME_H
 
 #include "mlir/Support/LogicalResult.h"
 
@@ -11,7 +11,7 @@
 
 #include <string>
 
-namespace obelisk::driver {
+namespace talos::driver {
 
 /// Host C-runtime link inputs, discovered from clang's Driver by filesystem
 /// inspection only. The constructed Compilation's jobs are read, never run.
@@ -28,6 +28,6 @@ mlir::FailureOr<HostCRuntimeInputs> discoverHostCRuntime(
     llvm::StringRef triple, llvm::StringRef driverExecutablePath,
     llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> vfs = nullptr);
 
-} // namespace obelisk::driver
+} // namespace talos::driver
 
-#endif // OBELISK_TOOLS_DRIVER_HOSTCRUNTIME_H
+#endif // TALOS_TOOLS_DRIVER_HOSTCRUNTIME_H

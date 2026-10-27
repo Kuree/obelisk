@@ -5601,7 +5601,7 @@ add("37.24", S({vpiInterconnectNet}), vpiMember, Mode::Iterate,
        vpiInterconnectArray, vpiStructNet,       vpiPackedArrayNet}),
     Order::Declaration);
 // Hand-maintained GoogleTest oracle for IEEE 1800-2023 clauses 37.5-37.50.
-// This is test source, not an obelisk-tblgen output or build artifact.
+// This is test source, not an talos-tblgen output or build artifact.
 
 // 37.10 details2-3 apply to retained source expression occurrences.
 add("37.10", S({vpiConstant, vpiOperation, vpiBitSelect, vpiPartSelect, vpiIndexedPartSelect}),

@@ -2,8 +2,8 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -14,7 +14,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 namespace {
 
@@ -55,7 +55,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_string_create"),
+                               "talos_rt_v1_string_create"),
             ValueRange{lane, data,
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), bytes.size()),
@@ -100,7 +100,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_string_from_packed"),
+                                          "talos_rt_v1_string_from_packed"),
                        ValueRange{lane, value, unknown,
                                   llvmConstant(rewriter, op.getLoc(),
                                                rewriter.getI64Type(), *width),
@@ -132,7 +132,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_string_to_packed"),
+                               "talos_rt_v1_string_to_packed"),
             ValueRange{adaptor.getInput().front(), output,
                        LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
                        llvmConstant(rewriter, op.getLoc(),
@@ -169,7 +169,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_string_to_packed"),
+                               "talos_rt_v1_string_to_packed"),
             ValueRange{adaptor.getInput().front(), output,
                        LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
                        llvmConstant(rewriter, op.getLoc(),
@@ -182,7 +182,7 @@ public:
     Value length = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI64Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_string_length"),
+                                          "talos_rt_v1_string_length"),
                        adaptor.getInput())
                        .getResult();
     Value expected = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
@@ -225,7 +225,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_string_concat_many"),
+                                          "talos_rt_v1_string_concat_many"),
                        ValueRange{lane, spans,
                                   llvmConstant(rewriter, op.getLoc(), i64,
                                                adaptor.getInputs().size()),
@@ -303,7 +303,7 @@ public:
         op, LLVM::CallOp::create(
                 rewriter, op.getLoc(), TypeRange{rewriter.getI64Type()},
                 SymbolRefAttr::get(rewriter.getContext(),
-                                   "obelisk_rt_v1_string_length"),
+                                   "talos_rt_v1_string_length"),
                 adaptor.getInput().front())
                 .getResult());
     return success();
@@ -321,7 +321,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_string_getc"),
+                               "talos_rt_v1_string_getc"),
             ValueRange{adaptor.getInput().front(), adaptor.getIndex().front()})
             .getResult();
     rewriter.replaceOp(op,
@@ -339,8 +339,8 @@ public:
   matchAndRewrite(sim::SimStringCompareOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     StringRef symbol = op.getCaseInsensitive()
-                           ? "obelisk_rt_v1_string_compare_insensitive"
-                           : "obelisk_rt_v1_string_compare";
+                           ? "talos_rt_v1_string_compare_insensitive"
+                           : "talos_rt_v1_string_compare";
     rewriter.replaceOp(
         op, LLVM::CallOp::create(
                 rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
@@ -368,10 +368,10 @@ public:
         LLVM::ZeroOp::create(rewriter, op.getLoc(), rewriter.getI32Type()),
         output, 4);
     SmallVector<Value> operands{context, adaptor.getPath().front()};
-    StringRef symbol = "obelisk_rt_v1_file_open_string_mcd";
+    StringRef symbol = "talos_rt_v1_file_open_string_mcd";
     if constexpr (std::is_same_v<Op, sim::SimFileOpenStringOp>) {
       operands.push_back(adaptor.getMode().front());
-      symbol = "obelisk_rt_v1_file_open_string";
+      symbol = "talos_rt_v1_file_open_string";
     }
     operands.push_back(output);
     Value status =
@@ -404,7 +404,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_dump_open_string"),
+                                          "talos_rt_v1_dump_open_string"),
                        ValueRange{context, adaptor.getPath().front()})
                        .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -425,7 +425,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_dump_ports"),
+                                          "talos_rt_v1_dump_ports"),
                        ValueRange{context, adaptor.getPath().front(),
                                   adaptor.getScope().front(),
                                   adaptor.getTimescaleExponent().front()})
@@ -450,7 +450,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_dump_ports_control"),
+                                          "talos_rt_v1_dump_ports_control"),
                        ValueRange{context, adaptor.getPath().front(), action,
                                   adaptor.getValue().front()})
                        .getResult();
@@ -495,7 +495,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_string_scan_field"),
+                               "talos_rt_v1_string_scan_field"),
             ValueRange{
                 lane, adaptor.getInput().front(), adaptor.getCursor().front(),
                 prefixData,
@@ -606,8 +606,8 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               IsFile ? "obelisk_rt_v1_file_scan_raw"
-                                      : "obelisk_rt_v1_string_scan_raw"),
+                               IsFile ? "talos_rt_v1_file_scan_raw"
+                                      : "talos_rt_v1_string_scan_raw"),
             arguments)
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -670,7 +670,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_file_scan_field"),
+                               "talos_rt_v1_file_scan_field"),
             ValueRange{
                 context, lane, adaptor.getDescriptor().front(),
                 adaptor.getEnabled().front(), prefixData,
@@ -701,7 +701,7 @@ public:
     Type i64 = rewriter.getI64Type();
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     getOrDeclareLLVMFunction(op->getParentOfType<ModuleOp>(),
-                             "obelisk_rt_v1_scan_dynamic_validate", i32,
+                             "talos_rt_v1_scan_dynamic_validate", i32,
                              {pointer, i64, i32, i32, i32, i64, pointer});
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
@@ -712,7 +712,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_scan_dynamic_validate"),
+                               "talos_rt_v1_scan_dynamic_validate"),
             ValueRange{
                 context, adaptor.getFormat().front(),
                 adaptor.getPlanCursor().front(),
@@ -749,8 +749,8 @@ public:
     argumentTypes.append(
         {i32, i64, i64, i64, pointer, pointer, pointer, pointer, pointer});
     getOrDeclareLLVMFunction(op->template getParentOfType<ModuleOp>(),
-                             IsFile ? "obelisk_rt_v1_file_scan_dynamic"
-                                    : "obelisk_rt_v1_string_scan_dynamic",
+                             IsFile ? "talos_rt_v1_file_scan_dynamic"
+                                    : "talos_rt_v1_string_scan_dynamic",
                              i32, argumentTypes);
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     Value fieldOutput = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
@@ -794,8 +794,8 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               IsFile ? "obelisk_rt_v1_file_scan_dynamic"
-                                      : "obelisk_rt_v1_string_scan_dynamic"),
+                               IsFile ? "talos_rt_v1_file_scan_dynamic"
+                                      : "talos_rt_v1_string_scan_dynamic"),
             arguments)
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -826,7 +826,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{i32},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_plusarg_test"),
+                                          "talos_rt_v1_plusarg_test"),
                        ValueRange{context, adaptor.getName().front(), output})
                        .getResult();
     Value found = LLVM::LoadOp::create(rewriter, op.getLoc(), i32, output, 4);
@@ -857,7 +857,7 @@ public:
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
-            SymbolRefAttr::get(rewriter.getContext(), "obelisk_rt_v1_system"),
+            SymbolRefAttr::get(rewriter.getContext(), "talos_rt_v1_system"),
             ValueRange{context, adaptor.getCommand().front(), output})
             .getResult();
     Value result = LLVM::LoadOp::create(rewriter, op.getLoc(), i32, output, 4);
@@ -892,7 +892,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{i32},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_plusarg_value"),
+                                          "talos_rt_v1_plusarg_value"),
                        ValueRange{context, lane, adaptor.getPrefix().front(),
                                   tailOutput, foundOutput})
                        .getResult();
@@ -937,7 +937,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{i32},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_plusarg_scan"),
+                                          "talos_rt_v1_plusarg_scan"),
                        ValueRange{context, lane, adaptor.getFormat().front(),
                                   tailOutput, conversionOutput, foundOutput})
                        .getResult();
@@ -1087,7 +1087,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_plusarg_parse_logic"),
+                               "talos_rt_v1_plusarg_parse_logic"),
             ValueRange{
                 adaptor.getInput().front(),
                 llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
@@ -1138,7 +1138,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_plusarg_parse_logic"),
+                               "talos_rt_v1_plusarg_parse_logic"),
             ValueRange{
                 adaptor.getInput().front(),
                 llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
@@ -1187,29 +1187,29 @@ void populateManagedStringToLLVMConversionPatterns(RewritePatternSet &patterns,
                StringFileOpenConversion<sim::SimFileOpenStringOp>>(converter,
                                                                    context);
   patterns.add<StringFileQueryConversion<sim::SimFileGetlineStringOp>>(
-      converter, context, "obelisk_rt_v1_file_getline_string");
+      converter, context, "talos_rt_v1_file_getline_string");
   patterns.add<StringFileQueryConversion<sim::SimFileErrorStringOp>>(
-      converter, context, "obelisk_rt_v1_file_error_string");
+      converter, context, "talos_rt_v1_file_error_string");
   patterns.add<StringAllocatingCallConversion<sim::SimStringRepeatOp>>(
-      converter, context, "obelisk_rt_v1_string_repeat");
+      converter, context, "talos_rt_v1_string_repeat");
   patterns.add<StringAllocatingCallConversion<sim::SimStringPutcOp>>(
-      converter, context, "obelisk_rt_v1_string_putc");
+      converter, context, "talos_rt_v1_string_putc");
   patterns.add<StringAllocatingCallConversion<sim::SimStringSubstrOp>>(
-      converter, context, "obelisk_rt_v1_string_substr");
+      converter, context, "talos_rt_v1_string_substr");
   patterns.add<StringAllocatingCallConversion<sim::SimStringCaseConvertOp>>(
-      converter, context, "obelisk_rt_v1_string_case_convert");
+      converter, context, "talos_rt_v1_string_case_convert");
   patterns.add<StringAllocatingCallConversion<sim::SimStringFormatIntegerOp>>(
-      converter, context, "obelisk_rt_v1_string_format_integer");
+      converter, context, "talos_rt_v1_string_format_integer");
   patterns.add<StringAllocatingCallConversion<sim::SimStringFormatRealOp>>(
-      converter, context, "obelisk_rt_v1_string_format_real");
+      converter, context, "talos_rt_v1_string_format_real");
   patterns.add<StringParseConversion<sim::SimStringParseIntegerOp>>(
-      converter, context, "obelisk_rt_v1_string_parse_integer");
+      converter, context, "talos_rt_v1_string_parse_integer");
   patterns.add<StringParseConversion<sim::SimStringParseRealOp>>(
-      converter, context, "obelisk_rt_v1_string_parse_real");
+      converter, context, "talos_rt_v1_string_parse_real");
   patterns.add<StringParseConversion<sim::SimStringParseRealConstantOp>>(
-      converter, context, "obelisk_rt_v1_string_parse_real_constant");
+      converter, context, "talos_rt_v1_string_parse_real_constant");
   patterns.add<StringParseConversion<sim::SimPlusargParseRealOp>>(
-      converter, context, "obelisk_rt_v1_plusarg_parse_real");
+      converter, context, "talos_rt_v1_plusarg_parse_real");
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

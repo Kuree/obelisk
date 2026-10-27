@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // Member-default expressions are ordinary semantic expressions annotated with
 // the destination aggregate subelement by the prepare pass. Exercise that
 // expression-to-reference lowering without involving the frontend.
 
-!bit4 = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
+!bit4 = !talos.ranged_packed_array<3 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>
 !record = !simulation.unpacked_struct<[
   #simulation.field<name = "lo", type = !simulation.packed_array<3 : 0 x i1>, ordinal = 0, packedOffset = 0>,
   #simulation.field<name = "hi", type = !simulation.packed_array<3 : 0 x i1>, ordinal = 1, packedOffset = 0>
@@ -40,7 +40,7 @@ module {
           code_unit_id = 9600001 : i64,
           simulation.void_function
         } {
-      obelisk.sv.expression.integer_literal attributes {
+      talos.sv.expression.integer_literal attributes {
           node_id = 1 : i64, constant_value = "4'h5",
           semantic_type = !bit4,
           simulation.initialize_static = "top.value",
@@ -70,11 +70,11 @@ module {
           code_unit_id = 9600002 : i64,
           simulation.void_function
         } {
-      obelisk.sv.statement.variable_declaration attributes {
+      talos.sv.statement.variable_declaration attributes {
           node_id = 2 : i64, referenced_path = "local",
           referenced_symbol = @local,
           simulation.aggregate_member_initializers} {
-        obelisk.sv.expression.integer_literal attributes {
+        talos.sv.expression.integer_literal attributes {
             node_id = 3 : i64, constant_value = "4'h5",
             semantic_type = !bit4,
             simulation.initialize_subelement = 0 : i64} {

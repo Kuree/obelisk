@@ -1,6 +1,6 @@
 //===- CoverageDatabaseTest.cpp - Coverage codec tests -------------------===//
 
-#include "obelisk/Coverage/CoverageDatabase.h"
+#include "talos/Coverage/CoverageDatabase.h"
 
 #include "gtest/gtest.h"
 
@@ -15,7 +15,7 @@
 
 namespace {
 
-using namespace obelisk::coverage;
+using namespace talos::coverage;
 
 uint64_t realBits(double value) {
   uint64_t bits = 0;
@@ -588,7 +588,7 @@ Database makeTypedDatabase() {
   setConfiguration(db.resolvedCrossSelectorBindings, configuration);
   setConfiguration(db.resolvedFunctionalTupleSets, configuration);
 
-  obelisk::coverage::Run run;
+  talos::coverage::Run run;
   run.uuid[0] = 1;
   run.name = "test";
   run.flags = RunContainsFunctional;
@@ -1708,7 +1708,7 @@ TEST(CoverageDatabaseTest, SparseHierarchyAndCountersRoundTrip) {
   constexpr uint64_t count = 256;
   Database db;
   db.sourceFiles.push_back({UINT64_MAX, "large.sv", {}});
-  obelisk::coverage::Run run;
+  talos::coverage::Run run;
   run.uuid[0] = 1;
   run.flags = RunContainsLine;
   db.runs.push_back(run);

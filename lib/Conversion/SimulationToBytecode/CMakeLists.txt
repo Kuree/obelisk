@@ -1,4 +1,4 @@
-add_mlir_library(ObeliskSimulationToBytecode
+add_mlir_library(TalosSimulationToBytecode
   BytecodeAggregateEncoding.cpp
   BytecodeArithmeticEncoding.cpp
   BytecodeCallEncoding.cpp
@@ -19,16 +19,16 @@ add_mlir_library(ObeliskSimulationToBytecode
   SimulationToBytecode.cpp
 
   DEPENDS
-  ObeliskConversionPassIncGen
-  ObeliskDesignReflectionIncGen
-  ObeliskSimulationOpsIncGen
-  ObeliskVPIObjectModelIncGen
+  TalosConversionPassIncGen
+  TalosDesignReflectionIncGen
+  TalosSimulationOpsIncGen
+  TalosVPIObjectModelIncGen
 
   LINK_LIBS PUBLIC
-  ObeliskCoverage
-  ObeliskSimulationAnalysis
-  ObeliskSimulationIR
-  ObeliskSimulationToStandard
+  TalosCoverage
+  TalosSimulationAnalysis
+  TalosSimulationIR
+  TalosSimulationToStandard
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRIR
@@ -36,6 +36,6 @@ add_mlir_library(ObeliskSimulationToBytecode
   MLIRTransforms
 )
 
-target_include_directories(ObeliskSimulationToBytecode PRIVATE
+target_include_directories(TalosSimulationToBytecode PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )

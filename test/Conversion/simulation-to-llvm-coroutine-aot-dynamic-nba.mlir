@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba))' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba))' \
 // RUN:   -o %t.planned.mlir
-// RUN: obelisk-opt %t.planned.mlir \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %t.planned.mlir \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
 // Dynamic reads stay direct. The two NBA sites target different roots, so
@@ -68,17 +68,17 @@ module attributes {
   }
 }
 
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_aot_nba_accumulator_0
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_aot_nba_dirty_roots_v1
+// CHECK-DAG: llvm.mlir.global internal @__talos_aot_nba_accumulator_0
+// CHECK-DAG: llvm.mlir.global internal @__talos_aot_nba_dirty_roots_v1
 // CHECK-LABEL: llvm.func @process(
 // A fixed packed root uses a bounds-checked direct load. The invalid-handle
 // branch preserves zero/X fallback for an unknown or out-of-range selection.
 // CHECK: llvm.cond_br
-// CHECK: llvm.mlir.addressof @__obelisk_state_value
+// CHECK: llvm.mlir.addressof @__talos_state_value
 // CHECK: llvm.load
-// CHECK: llvm.mlir.addressof @__obelisk_state_unknown
+// CHECK: llvm.mlir.addressof @__talos_state_unknown
 // CHECK: llvm.load
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_scheduler_packed_slice_nba
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_load_plane
+// CHECK-COUNT-2: llvm.call @talos_rt_v1_scheduler_packed_slice_nba
 // CHECK-NOT: llvm.call @malloc
 // CHECK: llvm.return

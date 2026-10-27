@@ -1,68 +1,68 @@
 //===- SimulationRuntimeABILowering.cpp - Native runtime declarations -===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinTypes.h"
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 void declareNativeRuntimeABI(ModuleOp module) {
   MLIRContext *context = module.getContext();
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_strength_resolve", IntegerType::get(context, 16),
+      module, "talos_rt_v1_strength_resolve", IntegerType::get(context, 16),
       {IntegerType::get(context, 16), IntegerType::get(context, 16)});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_strength_resolve_kind",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_strength_resolve_kind",
                            IntegerType::get(context, 16),
                            {IntegerType::get(context, 16),
                             IntegerType::get(context, 16),
                             IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_signal",
+      module, "talos_rt_v1_scheduler_signal",
       LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_signal_transition",
+      module, "talos_rt_v1_scheduler_signal_transition",
       LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_static_transition",
+      module, "talos_rt_v1_scheduler_static_transition",
       LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_static_transition_owned",
+      module, "talos_rt_v1_scheduler_static_transition_owned",
       LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
        IntegerType::get(context, 32), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64)});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_handoff_pending",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_handoff_pending",
                            IntegerType::get(context, 32),
                            {LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_real_transition",
+      module, "talos_rt_v1_scheduler_real_transition",
       LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 32), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_static_specialization_guard",
+      module, "talos_rt_v1_static_specialization_guard",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
        IntegerType::get(context, 32), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_static_nba_specialization_guard",
+      module, "talos_rt_v1_static_nba_specialization_guard",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32)});
   bool guardedVisibility = false;
@@ -72,90 +72,90 @@ void declareNativeRuntimeABI(ModuleOp module) {
   });
   if (guardedVisibility)
     getOrDeclareLLVMFunction(
-        module, "obelisk_rt_v1_static_nba_specialization_guard_write",
+        module, "talos_rt_v1_static_nba_specialization_guard_write",
         IntegerType::get(context, 32),
         {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_event", LLVM::LLVMVoidType::get(context),
+      module, "talos_rt_v1_scheduler_event", LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 32)});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_event_create",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_event_create",
                            IntegerType::get(context, 32),
                            {LLVM::LLVMPointerType::get(context),
                             LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_event_after",
+      module, "talos_rt_v1_scheduler_event_after",
       LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 32), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_event_replace_after",
+      module, "talos_rt_v1_scheduler_event_replace_after",
       LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 32), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_event_triggered",
+      module, "talos_rt_v1_scheduler_event_triggered",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_clocking_output_track",
+      module, "talos_rt_v1_clocking_output_track",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_clocking_output_current",
+      module, "talos_rt_v1_clocking_output_current",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 32)});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_wait_order_failed",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_wait_order_failed",
                            IntegerType::get(context, 32),
                            {LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_clock_occurrence_consume",
+      module, "talos_rt_v1_clock_occurrence_consume",
       IntegerType::get(context, 64),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_nochange_update", IntegerType::get(context, 64),
+      module, "talos_rt_v1_nochange_update", IntegerType::get(context, 64),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_handle_offset",
+      module, "talos_rt_v1_native_handle_offset",
       IntegerType::get(context, 64),
       {IntegerType::get(context, 64), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_net_count_drivers", IntegerType::get(context, 32),
+      module, "talos_rt_v1_net_count_drivers", IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_pass_switch_control",
+      module, "talos_rt_v1_pass_switch_control",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
        IntegerType::get(context, 32), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_pass_switch_control_delayed",
+      module, "talos_rt_v1_pass_switch_control_delayed",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
        IntegerType::get(context, 32), IntegerType::get(context, 32),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_mos_drive_delayed", IntegerType::get(context, 32),
+      module, "talos_rt_v1_mos_drive_delayed", IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
        IntegerType::get(context, 32), IntegerType::get(context, 32),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_nba", IntegerType::get(context, 32),
+      module, "talos_rt_v1_scheduler_nba", IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_packed_slice_nba",
+      module, "talos_rt_v1_scheduler_packed_slice_nba",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -166,7 +166,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_driver_nba",
+      module, "talos_rt_v1_scheduler_driver_nba",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -174,7 +174,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_inertial_driver",
+      module, "talos_rt_v1_scheduler_inertial_driver",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -185,7 +185,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_inertial_path_driver",
+      module, "talos_rt_v1_scheduler_inertial_path_driver",
       IntegerType::get(context, 32), {LLVM::LLVMPointerType::get(context),
                                       LLVM::LLVMPointerType::get(context),
                                       LLVM::LLVMPointerType::get(context),
@@ -207,7 +207,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
                                       LLVM::LLVMPointerType::get(context),
                                       LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_inertial_path_driver_pulse",
+      module, "talos_rt_v1_scheduler_inertial_path_driver_pulse",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -222,7 +222,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_inertial_path_storage",
+      module, "talos_rt_v1_scheduler_inertial_path_storage",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -236,7 +236,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_inertial_path_storage_pulse",
+      module, "talos_rt_v1_scheduler_inertial_path_storage_pulse",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -252,7 +252,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_inertial_driver_strength_pair",
+      module, "talos_rt_v1_scheduler_inertial_driver_strength_pair",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -265,7 +265,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_inertial_path_strength_pair",
+      module, "talos_rt_v1_scheduler_inertial_path_strength_pair",
       IntegerType::get(context, 32), {LLVM::LLVMPointerType::get(context),
                                       LLVM::LLVMPointerType::get(context),
                                       LLVM::LLVMPointerType::get(context),
@@ -291,7 +291,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
                                       LLVM::LLVMPointerType::get(context),
                                       LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse",
+      module, "talos_rt_v1_scheduler_inertial_path_strength_pair_pulse",
       IntegerType::get(context, 32), {LLVM::LLVMPointerType::get(context),
                                       LLVM::LLVMPointerType::get(context),
                                       LLVM::LLVMPointerType::get(context),
@@ -320,13 +320,13 @@ void declareNativeRuntimeABI(ModuleOp module) {
                                       LLVM::LLVMPointerType::get(context),
                                       LLVM::LLVMPointerType::get(context),
                                       LLVM::LLVMPointerType::get(context)});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_resolve_drivers",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_resolve_drivers",
                            IntegerType::get(context, 32),
                            {LLVM::LLVMPointerType::get(context),
                             IntegerType::get(context, 64),
                             IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_clocking_nba",
+      module, "talos_rt_v1_scheduler_clocking_nba",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -334,7 +334,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_clocking_driver_nba",
+      module, "talos_rt_v1_scheduler_clocking_driver_nba",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -342,7 +342,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_static_nba",
+      module, "talos_rt_v1_scheduler_static_nba",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
@@ -350,14 +350,14 @@ void declareNativeRuntimeABI(ModuleOp module) {
        IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_static_nba_claim", IntegerType::get(context, 32),
+      module, "talos_rt_v1_static_nba_claim", IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_static_nba_packed",
+      module, "talos_rt_v1_scheduler_static_nba_packed",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
@@ -365,72 +365,72 @@ void declareNativeRuntimeABI(ModuleOp module) {
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_static_nba_stage_wide",
+      module, "talos_rt_v1_static_nba_stage_wide",
       LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_string_nba",
+      module, "talos_rt_v1_scheduler_string_nba",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_managed_nba",
+      module, "talos_rt_v1_scheduler_managed_nba",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_managed_nba_masked",
+      module, "talos_rt_v1_scheduler_managed_nba_masked",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        IntegerType::get(context, 64), IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_fail", LLVM::LLVMVoidType::get(context),
+      module, "talos_rt_v1_scheduler_fail", LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_state_alloc", IntegerType::get(context, 32),
+      module, "talos_rt_v1_native_state_alloc", IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_state_alloc_with_roots",
+      module, "talos_rt_v1_native_state_alloc_with_roots",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_state_alloc_with_typed_roots",
+      module, "talos_rt_v1_native_state_alloc_with_typed_roots",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_state_retain",
+      module, "talos_rt_v1_native_state_retain",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64)});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_release",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_native_state_release",
                            IntegerType::get(context, 32),
                            {LLVM::LLVMPointerType::get(context),
                             IntegerType::get(context, 64),
                             IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_state_load_plane",
+      module, "talos_rt_v1_native_state_load_plane",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 32),
        IntegerType::get(context, 32), LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_state_store_plane",
+      module, "talos_rt_v1_native_state_store_plane",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
@@ -438,7 +438,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_state_store_continuous_plane",
+      module, "talos_rt_v1_native_state_store_continuous_plane",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
@@ -446,7 +446,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_override", IntegerType::get(context, 32),
+      module, "talos_rt_v1_native_override", IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
@@ -454,7 +454,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_dynamic_override",
+      module, "talos_rt_v1_native_dynamic_override",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -464,14 +464,14 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_release_override",
+      module, "talos_rt_v1_native_release_override",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64), IntegerType::get(context, 64),
        IntegerType::get(context, 32), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_argument_ref_load", IntegerType::get(context, 32),
+      module, "talos_rt_v1_argument_ref_load", IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -480,7 +480,7 @@ void declareNativeRuntimeABI(ModuleOp module) {
        IntegerType::get(context, 32), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_argument_ref_store", IntegerType::get(context, 32),
+      module, "talos_rt_v1_argument_ref_store", IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
@@ -492,177 +492,177 @@ void declareNativeRuntimeABI(ModuleOp module) {
   Type managedI32 = IntegerType::get(context, 32);
   Type managedI64 = IntegerType::get(context, 64);
   Type managedF64 = Float64Type::get(context);
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_current_lane",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_gc_current_lane",
                            managedPointer, {managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_root_push", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_gc_root_push", managedI32,
                            {managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_root_pop", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_gc_root_pop", managedI32,
                            {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_gc_root_range_push", managedI32,
+      module, "talos_rt_v1_gc_root_range_push", managedI32,
       {managedPointer, managedPointer, managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_root_range_pop",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_gc_root_range_pop",
                            managedI32, {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_gc_managed_root_range_push", managedI32,
+      module, "talos_rt_v1_gc_managed_root_range_push", managedI32,
       {managedPointer, managedPointer, managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_managed_root_range_pop",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_gc_managed_root_range_pop",
                            managedI32, {managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_candidate_root",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_gc_candidate_root",
                            managedI64,
                            {managedPointer, managedI64, managedI32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_safepoint", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_gc_safepoint", managedI32,
                            {managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_allocate", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_object_allocate", managedI32,
                            {managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_reference_path_index_create", managedI32,
+      module, "talos_rt_v1_reference_path_index_create", managedI32,
       {managedPointer, managedPointer, managedI64, managedPointer, managedI64,
        managedI32, managedPointer, managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_reference_path_covergroup_option_create",
+      module, "talos_rt_v1_reference_path_covergroup_option_create",
       managedI32,
       {managedPointer, managedI64, managedI64, managedI64, managedI32,
        managedI64, managedI64, managedI32, managedPointer, managedI64,
        managedI32, managedPointer, managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_reference_path_string_character_create",
+      module, "talos_rt_v1_reference_path_string_character_create",
       managedI32,
       {managedPointer, managedI64, managedI64, managedPointer, managedI64,
        managedI32, managedPointer, managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_reference_path_aggregate_element_create",
+      module, "talos_rt_v1_reference_path_aggregate_element_create",
       managedI32, {managedPointer, managedPointer, managedI64,    managedI32,
                    managedPointer, managedPointer, managedI64,    managedI64,
                    managedI64,     managedI64,     managedI64,    managedI64,
                    managedI64,     managedI32,     managedI64,    managedI32,
                    managedI32,     managedI64,     managedI64,    managedI64,
                    managedPointer, managedI64,     managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_size", managedI64,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_container_size", managedI64,
                            {managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_frame_bind", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_vpi_frame_bind", managedI32,
                            {managedPointer, managedI64, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_box_bind_type", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_box_bind_type", managedI32,
                            {managedPointer, managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_box_is_type", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_box_is_type", managedI32,
                            {managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_read_checked",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_container_read_checked",
                            managedI32,
                            {managedPointer, managedI64, managedPointer,
                             managedI64, managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_create_like",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_container_create_like",
                            managedI32,
                            {managedPointer, managedPointer, managedPointer,
                             managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_container_create_typed", managedI32,
+      module, "talos_rt_v1_container_create_typed", managedI32,
       {managedPointer, managedI32, managedI64, managedI32, managedI32,
        managedI64, managedI64, managedI64, managedPointer, managedI64,
        managedI64, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_container_create_typed_pattern", managedI32,
+      module, "talos_rt_v1_container_create_typed_pattern", managedI32,
       {managedPointer, managedI32, managedI64, managedI32, managedI32,
        managedI64, managedI64, managedI64, managedPointer, managedI64,
        managedPointer, managedI64, managedI64, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_mailbox_create_typed",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_mailbox_create_typed",
                            managedI32,
                            {managedPointer, managedI64, managedI32, managedI32,
                             managedI64, managedI64, managedI64, managedPointer,
                             managedI64, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_clone", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_container_clone", managedI32,
                            {managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_swap", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_container_swap", managedI32,
                            {managedPointer, managedI64, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_container_import_fixed", managedI32,
+      module, "talos_rt_v1_container_import_fixed", managedI32,
       {managedPointer, managedPointer, managedPointer, managedPointer,
        managedI64, managedI64, managedI32, managedI64, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_container_export_fixed", managedI32,
+      module, "talos_rt_v1_container_export_fixed", managedI32,
       {managedPointer, managedPointer, managedPointer, managedI64, managedI64,
        managedI32, managedI64, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_delete", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_container_delete", managedI32,
                            {managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_queue_delete_index",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_queue_delete_index",
                            managedI32, {managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_queue_insert", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_queue_insert", managedI32,
                            {managedPointer, managedPointer, managedI64,
                             managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_mailbox_try_put", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_mailbox_try_put", managedI32,
                            {managedPointer, managedPointer, managedPointer,
                             managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_mailbox_num", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_mailbox_num", managedI32,
                            {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_mailbox_try_peek", managedI32,
+      module, "talos_rt_v1_mailbox_try_peek", managedI32,
       {managedPointer, managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_mailbox_try_get", managedI32,
+      module, "talos_rt_v1_mailbox_try_get", managedI32,
       {managedPointer, managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_semaphore_create", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_semaphore_create", managedI32,
                            {managedPointer, managedI32, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_semaphore_put", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_semaphore_put", managedI32,
                            {managedPointer, managedI32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_semaphore_try_get",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_semaphore_try_get",
                            managedI32,
                            {managedPointer, managedI32, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_bounded", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_random_bounded", managedI32,
                            {managedPointer, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_distribution",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_random_distribution",
                            managedI32,
                            {managedPointer, managedI32, managedI32, managedI32,
                             managedI32, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_stochastic_queue", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_stochastic_queue", managedI32,
                            {managedPointer, managedI32, managedI32, managedI32,
                             managedI32, managedI32, managedI32, managedI32,
                             managedI64, managedPointer, managedPointer,
                             managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_random_cycle_next", managedI32,
+      module, "talos_rt_v1_random_cycle_next", managedI32,
       {managedI64, managedI64, managedI32, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_next", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_random_next", managedI32,
                            {managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_initialization_enter",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_random_initialization_enter",
                            managedI32,
                            {managedPointer, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_initialization_leave",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_random_initialization_leave",
                            managedI32, {managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_legacy", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_random_legacy", managedI32,
                            {managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_get_state", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_random_get_state", managedI32,
                            {managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_set_state", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_random_set_state", managedI32,
                            {managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_random_seed", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_random_seed", managedI32,
                            {managedPointer, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_sampled_read", managedI32,
+      module, "talos_rt_v1_sampled_read", managedI32,
       {managedPointer, managedI64, managedI64, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_sampled_history", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_sampled_history", managedI32,
                            {managedPointer, managedI64, managedI64, managedI64,
                             managedI32, managedI32, managedPointer,
                             managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_clocked_sample_update", managedI32,
+      module, "talos_rt_v1_clocked_sample_update", managedI32,
       {managedPointer, managedI64, managedI64, managedI64, managedI32,
        managedI32, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_clocked_sample_read", managedI32,
+      module, "talos_rt_v1_clocked_sample_read", managedI32,
       {managedPointer, managedI64, managedI64, managedI64, managedI64,
        managedI32, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_random_solve_modes_state", managedI32,
+      module, "talos_rt_v1_random_solve_modes_state", managedI32,
       {managedPointer, managedPointer, managedI64, managedI64, managedI64,
        managedI64, managedI64, managedI64, managedI64, managedPointer,
        managedI64, managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_random_solve_wide_modes_state", managedI32,
+      module, "talos_rt_v1_random_solve_wide_modes_state", managedI32,
       {managedPointer, managedPointer, managedI64, managedPointer,
        managedPointer, managedI64, managedI64, managedI64, managedI64,
        managedI64, managedPointer, managedI64, managedPointer, managedI64,
        managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_random_cycle_sample", managedI32,
+      module, "talos_rt_v1_random_cycle_sample", managedI32,
       {managedPointer, managedPointer, managedI64,     managedPointer,
        managedPointer, managedI64,     managedI64,     managedI64,
        managedI64,     managedI64,     managedI64,     managedI64,
@@ -671,407 +671,407 @@ void declareNativeRuntimeABI(ModuleOp module) {
        managedPointer, managedPointer, managedPointer, managedPointer});
   for (Type floating : {Type(Float32Type::get(module.getContext())),
                         Type(Float64Type::get(module.getContext()))}) {
-    std::string prefix = floating.isF32() ? "obelisk_rt_v1_random_real32"
-                                          : "obelisk_rt_v1_random_real64";
+    std::string prefix = floating.isF32() ? "talos_rt_v1_random_real32"
+                                          : "talos_rt_v1_random_real64";
     getOrDeclareLLVMFunction(module, prefix + "_to_rank", managedI32,
                              {floating, managedPointer, managedI64});
     getOrDeclareLLVMFunction(module, prefix + "_from_rank", managedI32,
                              {managedPointer, managedI64, managedPointer});
   }
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_set_enabled", managedI32,
+      module, "talos_rt_v1_covergroup_set_enabled", managedI32,
       {managedPointer, managedI64, managedI64, managedI32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_covergroup_set_name",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_covergroup_set_name",
                            managedI32,
                            {managedPointer, managedI64, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_set_integer_option", managedI32,
+      module, "talos_rt_v1_covergroup_set_integer_option", managedI32,
       {managedPointer, managedI64, managedI64, managedI32, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_get_integer_option", managedI32,
+      module, "talos_rt_v1_covergroup_get_integer_option", managedI32,
       {managedPointer, managedI64, managedI64, managedI32, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_set_string_option", managedI32,
+      module, "talos_rt_v1_covergroup_set_string_option", managedI32,
       {managedPointer, managedI64, managedI64, managedI32, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_get_string_option", managedI32,
+      module, "talos_rt_v1_covergroup_get_string_option", managedI32,
       {managedPointer, managedI64, managedI64, managedI32, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_set_type_integer_option", managedI32,
+      module, "talos_rt_v1_covergroup_set_type_integer_option", managedI32,
       {managedPointer, managedI64, managedI64, managedI32, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_set_type_string_option", managedI32,
+      module, "talos_rt_v1_covergroup_set_type_string_option", managedI32,
       {managedPointer, managedI64, managedI64, managedI32, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_covergroup_sample_enabled",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_covergroup_sample_enabled",
                            managedI32,
                            {managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_clock_event_register", managedI32,
+      module, "talos_rt_v1_covergroup_clock_event_register", managedI32,
       {managedPointer, managedPointer, managedI64, managedI32, managedI64,
        managedPointer, managedI32});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_block_event_register", managedI32,
+      module, "talos_rt_v1_covergroup_block_event_register", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64, managedPointer,
        managedI32, managedPointer, managedPointer, managedI32});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_block_event_fire", managedI32,
+      module, "talos_rt_v1_covergroup_block_event_fire", managedI32,
       {managedPointer, managedI64, managedI32, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_prepare", managedI32,
+      module, "talos_rt_v1_covergroup_prepare", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_candidates", managedI32,
+      module, "talos_rt_v1_covergroup_candidates", managedI32,
       {managedPointer, managedI64, managedI64, managedPointer, managedI32});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_bind_with", managedI32,
+      module, "talos_rt_v1_covergroup_bind_with", managedI32,
       {managedPointer, managedI64, managedI64, managedPointer});
   getOrDeclareLLVMFunction(module,
-                           "obelisk_rt_v1_covergroup_release_preparation",
+                           "talos_rt_v1_covergroup_release_preparation",
                            managedI32, {managedPointer, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_create", managedI32,
+      module, "talos_rt_v1_covergroup_create", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64, managedPointer,
        managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_formal_read", managedI32,
+      module, "talos_rt_v1_covergroup_formal_read", managedI32,
       {managedPointer, managedI64, managedI64, managedI32, managedI64,
        managedI64, managedPointer, managedPointer, managedI64, managedPointer,
        managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_covergroup_sample", managedI32,
+      module, "talos_rt_v1_covergroup_sample", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_covergroup_instance_query",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_covergroup_instance_query",
                            managedI32,
                            {managedPointer, managedI64, managedI64,
                             managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_covergroup_type_query",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_covergroup_type_query",
                            managedI32,
                            {managedPointer, managedI64, managedI64,
                             managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_point_hit",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_coverage_point_hit",
                            managedI32,
                            {managedPointer, managedI64, managedI32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_control_definition",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_coverage_control_definition",
                            managedI32,
                            {managedPointer, managedI32, managedI32, managedI32,
                             managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_control_instance",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_coverage_control_instance",
                            managedI32,
                            {managedPointer, managedI32, managedI32, managedI32,
                             managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_query_definition",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_coverage_query_definition",
                            managedI32,
                            {managedPointer, managedI32, managedI32, managedI64,
                             managedI32, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_query_instance",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_coverage_query_instance",
                            managedI32,
                            {managedPointer, managedI32, managedI32, managedI64,
                             managedI32, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_coverage_database_save", managedI32,
+      module, "talos_rt_v1_coverage_database_save", managedI32,
       {managedPointer, managedI32, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_coverage_database_merge", managedI32,
+      module, "talos_rt_v1_coverage_database_merge", managedI32,
       {managedPointer, managedI32, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_functional_coverage_get",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_functional_coverage_get",
                            managedI32, {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(module,
-                           "obelisk_rt_v1_functional_coverage_set_db_name",
+                           "talos_rt_v1_functional_coverage_set_db_name",
                            managedI32, {managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_functional_coverage_load_db",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_functional_coverage_load_db",
                            managedI32, {managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_finalize",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_coverage_finalize",
                            managedI32,
                            {managedPointer, managedI64, managedI64,
                             managedPointer, managedPointer, managedI32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_snapshot",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_coverage_snapshot",
                            managedI32,
                            {managedPointer, managedI32, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_container_read", managedI32,
+      module, "talos_rt_v1_container_read", managedI32,
       {managedPointer, managedI64, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_container_write", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_container_write", managedI32,
                            {managedPointer, managedPointer, managedI64,
                             managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_assoc_create_typed", managedI32,
+      module, "talos_rt_v1_assoc_create_typed", managedI32,
       {managedPointer, managedI64, managedI32, managedI32, managedI64,
        managedI64, managedI64, managedPointer, managedI64, managedI32,
        managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_assoc_create_element_keyed", managedI32,
+      module, "talos_rt_v1_assoc_create_element_keyed", managedI32,
       {managedPointer, managedI64, managedI32,     managedI32, managedI64,
        managedI64,     managedI64, managedPointer, managedI64, managedI64,
        managedI32,     managedI32, managedI64,     managedI64, managedI64,
        managedPointer, managedI64, managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_assoc_read_checked", managedI32,
+      module, "talos_rt_v1_assoc_read_checked", managedI32,
       {managedPointer, managedPointer, managedPointer, managedI64,
        managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_assoc_write_checked", managedI32,
+      module, "talos_rt_v1_assoc_write_checked", managedI32,
       {managedPointer, managedPointer, managedPointer, managedPointer,
        managedI64, managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assoc_exists", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_assoc_exists", managedI32,
                            {managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assoc_delete", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_assoc_delete", managedI32,
                            {managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assoc_set_default_checked",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_assoc_set_default_checked",
                            managedI32,
                            {managedPointer, managedPointer, managedPointer,
                             managedI64, managedPointer, managedI64});
   for (StringRef name :
-       {"obelisk_rt_v1_assoc_first", "obelisk_rt_v1_assoc_last",
-        "obelisk_rt_v1_assoc_next", "obelisk_rt_v1_assoc_prev"})
+       {"talos_rt_v1_assoc_first", "talos_rt_v1_assoc_last",
+        "talos_rt_v1_assoc_next", "talos_rt_v1_assoc_prev"})
     getOrDeclareLLVMFunction(
         module, name, managedI32,
         {managedPointer, managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_reference_path_assoc_create", managedI32,
+      module, "talos_rt_v1_reference_path_assoc_create", managedI32,
       {managedPointer, managedPointer, managedPointer, managedPointer,
        managedI64, managedI32, managedPointer, managedPointer, managedI64,
        managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_object_shallow_copy", managedI32,
+      module, "talos_rt_v1_object_shallow_copy", managedI32,
       {managedPointer, managedPointer, managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_object_read", managedI32,
+      module, "talos_rt_v1_object_read", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_object_write", managedI32,
+      module, "talos_rt_v1_object_write", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_bits_insert",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_object_bits_insert",
                            managedI32,
                            {managedPointer, managedI64, managedI64, managedI64,
                             managedI32, managedI64, managedI32});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_object_read_planes", managedI32,
+      module, "talos_rt_v1_object_read_planes", managedI32,
       {managedPointer, managedI64, managedPointer, managedPointer, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_object_write_planes", managedI32,
+      module, "talos_rt_v1_object_write_planes", managedI32,
       {managedPointer, managedI64, managedPointer, managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_field_load",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_object_field_load",
                            managedI32,
                            {managedPointer, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_field_store",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_object_field_store",
                            managedI32,
                            {managedPointer, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_override", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_object_override", managedI32,
                            {managedPointer, managedI64, managedI64, managedI32,
                             managedI32, managedI32, managedI64, managedI32,
                             managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_object_release_override", managedI32,
+      module, "talos_rt_v1_object_release_override", managedI32,
       {managedPointer, managedI64, managedI64, managedI32, managedI32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_is_instance",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_object_is_instance",
                            managedI32, {managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_id", managedI64,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_object_id", managedI64,
                            {managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_managed_watch", managedI64,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_managed_watch", managedI64,
                            {managedPointer, managedI32, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_object_cast", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_object_cast", managedI32,
                            {managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_method_invoke", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_method_invoke", managedI32,
                            {managedPointer, managedPointer, managedI64,
                             managedI64, managedPointer, managedI32,
                             managedPointer, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_interface_method_invoke", managedI32,
+      module, "talos_rt_v1_interface_method_invoke", managedI32,
       {managedPointer, managedPointer, managedI64, managedI64, managedI64,
        managedPointer, managedI32, managedPointer, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_method_task_activate", managedI32,
+      module, "talos_rt_v1_method_task_activate", managedI32,
       {managedPointer, managedPointer, managedI64, managedI64, managedPointer,
        managedI32, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_interface_method_task_activate", managedI32,
+      module, "talos_rt_v1_interface_method_task_activate", managedI32,
       {managedPointer, managedPointer, managedI64, managedI64, managedI64,
        managedPointer, managedI32, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_weak_create", managedI32,
+      module, "talos_rt_v1_weak_create", managedI32,
       {managedPointer, managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_weak_get", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_weak_get", managedI32,
                            {managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_weak_clear", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_weak_clear", managedI32,
                            {managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_create", managedI32,
+      module, "talos_rt_v1_string_create", managedI32,
       {managedPointer, managedPointer, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_from_packed",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_string_from_packed",
                            managedI32,
                            {managedPointer, managedPointer, managedPointer,
                             managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_to_packed", managedI32,
+      module, "talos_rt_v1_string_to_packed", managedI32,
       {managedI64, managedPointer, managedPointer, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_concat_many", managedI32,
+      module, "talos_rt_v1_string_concat_many", managedI32,
       {managedPointer, managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_repeat", managedI32,
+      module, "talos_rt_v1_string_repeat", managedI32,
       {managedPointer, managedI64, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_length", managedI64,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_string_length", managedI64,
                            {managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_getc", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_string_getc", managedI32,
                            {managedI64, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_putc", managedI32,
+      module, "talos_rt_v1_string_putc", managedI32,
       {managedPointer, managedI64, managedI64, managedI32, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_substr", managedI32,
+      module, "talos_rt_v1_string_substr", managedI32,
       {managedPointer, managedI64, managedI64, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_compare", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_string_compare", managedI32,
                            {managedI64, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_compare_insensitive",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_string_compare_insensitive",
                            managedI32, {managedI64, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_case_convert", managedI32,
+      module, "talos_rt_v1_string_case_convert", managedI32,
       {managedPointer, managedI64, managedI32, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_parse_integer",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_string_parse_integer",
                            managedI32,
                            {managedI64, managedI32, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_parse_logic", managedI32,
+      module, "talos_rt_v1_string_parse_logic", managedI32,
       {managedI64, managedI32, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_parse_real",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_string_parse_real",
                            managedI32, {managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_parse_real_constant",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_string_parse_real_constant",
                            managedI32, {managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_format_integer", managedI32,
+      module, "talos_rt_v1_string_format_integer", managedI32,
       {managedPointer, managedI64, managedI32, managedI32, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_format_real",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_string_format_real",
                            managedI32,
                            {managedPointer, managedF64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_file_open_string_mcd",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_file_open_string_mcd",
                            managedI32,
                            {managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_file_open_string", managedI32,
+      module, "talos_rt_v1_file_open_string", managedI32,
       {managedPointer, managedI64, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dump_open_string", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_dump_open_string", managedI32,
                            {managedPointer, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_dump_ports", managedI32,
+      module, "talos_rt_v1_dump_ports", managedI32,
       {managedPointer, managedI64, managedI64, managedI32});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_dump_ports_control", managedI32,
+      module, "talos_rt_v1_dump_ports_control", managedI32,
       {managedPointer, managedI64, managedI32, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_file_getline_string",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_file_getline_string",
                            managedI32,
                            {managedPointer, managedPointer, managedI32,
                             managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_file_scan_field", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_file_scan_field", managedI32,
                            {managedPointer, managedPointer, managedI32,
                             managedI32, managedPointer, managedI64, managedI32,
                             managedI64, managedPointer, managedPointer,
                             managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_file_scan_raw", managedI32,
+      module, "talos_rt_v1_file_scan_raw", managedI32,
       {managedPointer, managedI32, managedI32, managedPointer, managedI64,
        managedI64, managedI64, managedI32, managedI64, managedPointer,
        managedI64, managedPointer, managedI64, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_file_error_string",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_file_error_string",
                            managedI32,
                            {managedPointer, managedPointer, managedI32,
                             managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_string_scan_field", managedI32,
+      module, "talos_rt_v1_string_scan_field", managedI32,
       {managedPointer, managedI64, managedI32, managedPointer, managedI64,
        managedI32, managedI64, managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_scan_raw", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_string_scan_raw", managedI32,
                            {managedI64, managedI32, managedPointer, managedI64,
                             managedI64, managedI64, managedI32, managedI64,
                             managedPointer, managedI64, managedPointer,
                             managedI64, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_test", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_plusarg_test", managedI32,
                            {managedPointer, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_value", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_plusarg_value", managedI32,
                            {managedPointer, managedPointer, managedI64,
                             managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_scan", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_plusarg_scan", managedI32,
                            {managedPointer, managedPointer, managedI64,
                             managedPointer, managedPointer, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_parse_logic",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_plusarg_parse_logic",
                            managedI32,
                            {managedI64, managedI32, managedI64, managedPointer,
                             managedI64, managedPointer, managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_plusarg_parse_real",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_plusarg_parse_real",
                            managedI32, {managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_system", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_system", managedI32,
                            {managedPointer, managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_import_call", managedI32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_import_call", managedI32,
                            {managedPointer, managedPointer, managedPointer,
                             managedI32, managedPointer, managedI32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_import_call_noncontext",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_import_call_noncontext",
                            managedI32,
                            {managedPointer, managedPointer, managedPointer,
                             managedI32, managedPointer, managedI32});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_import_call_guarded", managedI32,
+      module, "talos_rt_v1_import_call_guarded", managedI32,
       {managedI32, managedPointer, managedPointer, managedPointer, managedI32,
        managedPointer, managedI32});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_import_call_noncontext_guarded", managedI32,
+      module, "talos_rt_v1_import_call_noncontext_guarded", managedI32,
       {managedI32, managedPointer, managedPointer, managedPointer, managedI32,
        managedPointer, managedI32});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_dpi_open_array_pack", managedI32,
+      module, "talos_rt_v1_dpi_open_array_pack", managedI32,
       {managedPointer, managedPointer, managedI64, managedI64, managedI32,
        managedI32, managedI32, managedI64, managedI32, managedPointer,
        managedI64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_open_array_unpack",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_open_array_unpack",
                            managedI32,
                            {managedPointer, managedI64, managedI32, managedI32,
                             managedI64, managedPointer, managedPointer,
                             managedI64, managedI64, managedI32, managedI32});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_dpi_open_array_aggregate_pack", managedI32,
+      module, "talos_rt_v1_dpi_open_array_aggregate_pack", managedI32,
       {managedPointer, managedPointer, managedI64, managedI64, managedI32,
        managedI32, managedI64, managedI32, managedPointer, managedI32,
        managedPointer, managedI64, managedI64, managedI64, managedI64,
        managedPointer, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_dpi_open_array_aggregate_unpack", managedI32,
+      module, "talos_rt_v1_dpi_open_array_aggregate_unpack", managedI32,
       {managedPointer, managedPointer, managedI64, managedI64, managedPointer,
        managedI64, managedI64, managedI32, managedPointer, managedI32,
        managedPointer, managedPointer, managedI64, managedI64, managedI32,
        managedI32});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_dpi_open_array_prepare_recursive", managedI32,
+      module, "talos_rt_v1_dpi_open_array_prepare_recursive", managedI32,
       {managedPointer, managedPointer, managedI64, managedI64, managedI32,
        managedI32, managedI32, managedI32, managedI32, managedI32, managedI32,
        managedI64, managedI32, managedI64, managedPointer, managedI64,
        managedPointer, managedI32, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_dpi_open_array_finish_recursive", managedI32,
+      module, "talos_rt_v1_dpi_open_array_finish_recursive", managedI32,
       {managedI32, managedPointer, managedPointer, managedPointer,
        managedPointer, managedI64, managedI64, managedI32, managedI32,
        managedI32, managedI64, managedPointer, managedI64, managedPointer,
        managedI32});
   getOrDeclareLLVMFunction(module,
-                           "obelisk_rt_v1_dpi_open_array_release_recursive",
+                           "talos_rt_v1_dpi_open_array_release_recursive",
                            LLVM::LLVMVoidType::get(context), {managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_dpi_aggregate_pack", managedI32,
+      module, "talos_rt_v1_dpi_aggregate_pack", managedI32,
       {managedPointer, managedPointer, managedI64, managedI64, managedI32,
        managedPointer, managedI64, managedI64, managedPointer, managedI64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_dpi_aggregate_unpack", managedI32,
+      module, "talos_rt_v1_dpi_aggregate_unpack", managedI32,
       {managedPointer, managedPointer, managedI64, managedPointer, managedI64,
        managedPointer, managedPointer, managedI64, managedI64, managedI32});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_dpi_aggregate_roots_push", managedI32,
+      module, "talos_rt_v1_dpi_aggregate_roots_push", managedI32,
       {managedPointer, managedPointer, managedI64, managedI64, managedPointer,
        managedI64, managedPointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_aggregate_roots_pop",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_aggregate_roots_pop",
                            managedI32, {managedPointer, managedPointer});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_dpi_aggregate_export_pack", managedI32,
+      module, "talos_rt_v1_dpi_aggregate_export_pack", managedI32,
       {managedPointer, managedPointer, managedI64, managedI64, managedI32,
        managedPointer, managedI64, managedPointer, managedI64, managedI32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_current_context",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_current_context",
                            managedPointer, {});
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

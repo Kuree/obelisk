@@ -1,22 +1,22 @@
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 //===- BytecodeWaitEncoding.cpp - Bytecode suspension encoding -----------===//
 
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
-#include "obelisk/Conversion/SimulationRuntime.h"
+#include "talos/Conversion/SimulationRuntime.h"
 
 #include <cstddef>
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 static uint32_t computedCaptureTransferSize(Type type) {
   if (isa<sim::ArgumentRefType>(type))
     return 3 * sizeof(uint64_t);
   if (sim::isManagedHandleType(type) || isa<sim::CovergroupHandleType>(type))
     return sizeof(uint64_t);
-  return sizeof(obelisk_rt_computed_capture_v1);
+  return sizeof(talos_rt_computed_capture_v1);
 }
 
 LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
@@ -78,19 +78,19 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
     if (index < primaryCount)
       previousLimbs += (*width + 63) / 64;
   }
-  uint64_t observersOffset = sizeof(obelisk_rt_computed_wait_record_v1);
+  uint64_t observersOffset = sizeof(talos_rt_computed_wait_record_v1);
   uint64_t capturesOffset =
       observersOffset +
-      uint64_t{observerCount} * sizeof(obelisk_rt_computed_observer_v1);
+      uint64_t{observerCount} * sizeof(talos_rt_computed_observer_v1);
   uint64_t dependenciesOffset =
       capturesOffset +
-      uint64_t{captureCount} * sizeof(obelisk_rt_computed_capture_v1);
+      uint64_t{captureCount} * sizeof(talos_rt_computed_capture_v1);
   uint64_t clausesOffset =
       dependenciesOffset +
-      uint64_t{dependencyCount} * sizeof(obelisk_rt_computed_dependency_v1);
+      uint64_t{dependencyCount} * sizeof(talos_rt_computed_dependency_v1);
   uint64_t previousOffset =
       clausesOffset +
-      uint64_t{primaryCount} * sizeof(obelisk_rt_computed_clause_v1);
+      uint64_t{primaryCount} * sizeof(talos_rt_computed_clause_v1);
   uint64_t totalSize =
       previousOffset + uint64_t{previousLimbs} * sizeof(uint64_t) * 2;
   if (totalSize > suspension->waitSize)
@@ -98,9 +98,9 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
         "computed wait exceeds its canonical frame field");
 
   SmallVector<uint8_t> bytes(suspension->waitSize, 0);
-  write32(bytes, 0, OBELISK_RT_VERSION);
-  write32(bytes, 4, OBELISK_RT_SUSPEND_OBSERVER);
-  write32(bytes, 8, OBELISK_RT_COMPUTED_WAIT_INTERLEAVED);
+  write32(bytes, 0, TALOS_RT_VERSION);
+  write32(bytes, 4, TALOS_RT_SUSPEND_OBSERVER);
+  write32(bytes, 8, TALOS_RT_COMPUTED_WAIT_INTERLEAVED);
   write32(bytes, 12, primaryCount);
   write32(bytes, 16, observerCount);
   write32(bytes, 20, captureCount);
@@ -123,7 +123,7 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
       return binding.emitOpError("observer evaluator has no bytecode body");
     FunctionPlan &evaluator = plans[found->second];
     uint64_t entry =
-        observersOffset + index * sizeof(obelisk_rt_computed_observer_v1);
+        observersOffset + index * sizeof(talos_rt_computed_observer_v1);
     write64(bytes, entry, evaluator.stableID);
     write32(bytes, entry + 8, captureCursor);
     write32(bytes, entry + 12, binding.getCaptures().size());
@@ -139,7 +139,7 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
     for (Value dependency : binding.getDependencies()) {
       uint64_t entryOffset =
           dependenciesOffset + uint64_t{dependencyCursor} *
-                                   sizeof(obelisk_rt_computed_dependency_v1);
+                                   sizeof(talos_rt_computed_dependency_v1);
       if (auto reference =
               dyn_cast<sim::ArgumentRefType>(dependency.getType())) {
         auto capture = llvm::find(binding.getCaptures(), dependency);
@@ -156,14 +156,14 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
               "argument-ref dependency exceeds the computed-wait v1 ABI");
         write64(bytes, entryOffset, absolute);
         write32(bytes, entryOffset + 8,
-                OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF);
+                TALOS_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF);
         write32(bytes, entryOffset + 12, *width);
       } else if (isa<sim::ManagedWatchType>(dependency.getType())) {
-        write32(bytes, entryOffset + 8, OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED);
+        write32(bytes, entryOffset + 8, TALOS_RT_OBSERVER_DEPENDENCY_MANAGED);
         write32(bytes, entryOffset + 12, 1);
       } else if (auto event = dyn_cast<sim::EventType>(dependency.getType())) {
         (void)event;
-        write32(bytes, entryOffset + 8, OBELISK_RT_OBSERVER_DEPENDENCY_EVENT);
+        write32(bytes, entryOffset + 8, TALOS_RT_OBSERVER_DEPENDENCY_EVENT);
         write32(bytes, entryOffset + 12, 1);
       } else {
         Type element =
@@ -174,7 +174,7 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
         if (!width)
           return operation.emitOpError(
               "observer dependency has no simulation storage width");
-        write32(bytes, entryOffset + 8, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL);
+        write32(bytes, entryOffset + 8, TALOS_RT_OBSERVER_DEPENDENCY_SIGNAL);
         write32(bytes, entryOffset + 12, *width);
       }
       ++dependencyCursor;
@@ -183,24 +183,24 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
       previousCursor += (uint64_t{widths[index]} + 63) / 64;
   }
   bool levelTrue =
-      ::obelisk::schedule::has<
-          ::obelisk::schedule::Field::ConcurrentCancelLevelTrue>(operation) ||
-      ::obelisk::schedule::has<
-          ::obelisk::schedule::Field::ConcurrentAbortLevelTrue>(operation);
+      ::talos::schedule::has<
+          ::talos::schedule::Field::ConcurrentCancelLevelTrue>(operation) ||
+      ::talos::schedule::has<
+          ::talos::schedule::Field::ConcurrentAbortLevelTrue>(operation);
   for (uint32_t index = 0; index != primaryCount; ++index) {
     uint64_t clause =
-        clausesOffset + uint64_t{index} * sizeof(obelisk_rt_computed_clause_v1);
+        clausesOffset + uint64_t{index} * sizeof(talos_rt_computed_clause_v1);
     int32_t condition = operation.getConditionIndices()[index];
     write32(bytes, clause, index);
     write32(bytes, clause + 4,
-            condition < 0 ? OBELISK_RT_OBSERVER_CONDITION_NONE
+            condition < 0 ? TALOS_RT_OBSERVER_CONDITION_NONE
                           : primaryCount + static_cast<uint32_t>(condition));
     write32(bytes, clause + 8, operation.getEdges()[index]);
     write32(bytes, clause + 12,
-            ::obelisk::schedule::has<::obelisk::schedule::Field::EventPrimary>(
+            ::talos::schedule::has<::talos::schedule::Field::EventPrimary>(
                 bindings[index])
-                ? OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY
-                : (levelTrue ? OBELISK_RT_COMPUTED_CLAUSE_LEVEL_TRUE : 0));
+                ? TALOS_RT_COMPUTED_CLAUSE_EVENT_PRIMARY
+                : (levelTrue ? TALOS_RT_COMPUTED_CLAUSE_LEVEL_TRUE : 0));
   }
 
   Layout record{Bits,
@@ -229,7 +229,7 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
       emitFrameTransfer(plan, StoreFrame, capture,
                         suspension->waitOffset + capturesOffset +
                             uint64_t{captureCursor++} *
-                                sizeof(obelisk_rt_computed_capture_v1),
+                                sizeof(talos_rt_computed_capture_v1),
                         transferSize);
     }
     for (Value dependency : binding.getDependencies()) {
@@ -241,7 +241,7 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
         emitFrameTransfer(plan, StoreFrame, dependency,
                           suspension->waitOffset + dependenciesOffset +
                               uint64_t{dependencyCursor++} *
-                                  sizeof(obelisk_rt_computed_dependency_v1),
+                                  sizeof(talos_rt_computed_dependency_v1),
                           sizeof(uint64_t));
         continue;
       }
@@ -253,7 +253,7 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
       emit({StoreFrame, 0, 0, stableID, 0, 0, 0,
             suspension->waitOffset + dependenciesOffset +
                 uint64_t{dependencyCursor++} *
-                    sizeof(obelisk_rt_computed_dependency_v1)});
+                    sizeof(talos_rt_computed_dependency_v1)});
     }
   }
   previousCursor = 0;
@@ -277,15 +277,15 @@ LogicalResult Encoder::encodeObserverWait(FunctionPlan &plan,
   uint32_t actionFlags = getRuntimeResumeActionFlags(operation);
   if (actionFlags == UINT32_MAX)
     return operation.emitOpError("has no executable resume region");
-  emit({Suspend, OBELISK_RT_SUSPEND_OBSERVER, 0, offsetRegister, 0, 0,
+  emit({Suspend, TALOS_RT_SUSPEND_OBSERVER, 0, offsetRegister, 0, 0,
         actionFlags, suspension->continuationID});
   return success();
 }
 
 LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
                                   ValueRange continuationOperands,
-                                  obelisk_rt_suspend_kind kind,
-                                  obelisk_rt_wait_flags flags,
+                                  talos_rt_suspend_kind kind,
+                                  talos_rt_wait_flags flags,
                                   ArrayRef<uint32_t> edges,
                                   ArrayRef<Value> watched, Value delay,
                                   uint64_t payload, uint64_t auxiliary) {
@@ -327,8 +327,8 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
   plan.layouts.push_back(record);
   SmallVector<uint8_t> bytes(suspension->waitSize, 0);
   bool signalWait =
-      kind == OBELISK_RT_SUSPEND_CHANGE || kind == OBELISK_RT_SUSPEND_EDGE;
-  write32(bytes, 0, OBELISK_RT_VERSION);
+      kind == TALOS_RT_SUSPEND_CHANGE || kind == TALOS_RT_SUSPEND_EDGE;
+  write32(bytes, 0, TALOS_RT_VERSION);
   write32(bytes, 4, kind);
   write32(bytes, 8, flags);
   write32(bytes, 12, edges.size());
@@ -354,7 +354,7 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
         if (edge != static_cast<uint32_t>(sim::EdgeKind::Change))
           return operation->emitOpError(
               "managed waits only support change events");
-        write32(bytes, 32 + index * 16 + 12, OBELISK_RT_WAIT_WIDTH_MANAGED);
+        write32(bytes, 32 + index * 16 + 12, TALOS_RT_WAIT_WIDTH_MANAGED);
         continue;
       }
       Type element;
@@ -369,14 +369,14 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
         return operation->emitOpError(
             "signal wait handle has no fixed-width element");
       bool customTransition =
-          (edge & ~OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) ==
-              OBELISK_RT_WAIT_EDGE_TRANSITION_MASK &&
-          (edge & OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) != 0;
+          (edge & ~TALOS_RT_WAIT_EDGE_TRANSITION_CLASSES) ==
+              TALOS_RT_WAIT_EDGE_TRANSITION_MASK &&
+          (edge & TALOS_RT_WAIT_EDGE_TRANSITION_CLASSES) != 0;
       // IEEE 1800-2017 31.8 applies a noncanonical edge descriptor across the
       // full timing-check vector; its one packed publication still coalesces
       // to one event. Canonical edge waits retain their scalar-LSB ABI.
       if (edge != static_cast<uint32_t>(sim::EdgeKind::Change) &&
-          edge != OBELISK_RT_WAIT_EDGE_NONE && !customTransition)
+          edge != TALOS_RT_WAIT_EDGE_NONE && !customTransition)
         *width = 1;
       write32(bytes, 32 + index * 16 + 12, *width);
     }
@@ -387,15 +387,15 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
   emit({StoreFrame, 0, 0, recordRegister, 0, 0, 0, suspension->waitOffset});
   uint64_t captureCursor = 0;
   uint64_t capturesOffset =
-      sizeof(obelisk_rt_wait_record_v1) +
-      uint64_t{edges.size()} * sizeof(obelisk_rt_wait_entry_v1);
+      sizeof(talos_rt_wait_record_v1) +
+      uint64_t{edges.size()} * sizeof(talos_rt_wait_entry_v1);
   for (auto [index, handle] : llvm::enumerate(watched)) {
     if (auto binding = handle.getDefiningOp<sim::SimObserverBindOp>()) {
       for (Value capture : binding.getCaptures()) {
         emitFrameTransfer(plan, StoreFrame, capture,
                           suspension->waitOffset + capturesOffset +
                               captureCursor++ *
-                                  sizeof(obelisk_rt_computed_capture_v1),
+                                  sizeof(talos_rt_computed_capture_v1),
                           computedCaptureTransferSize(capture.getType()));
       }
       continue;
@@ -405,8 +405,8 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
     if (isa<sim::ProcessType, sim::MailboxType, sim::SemaphoreType,
             sim::ManagedWatchType>(handle.getType())) {
       emit({StoreFrame, 0, 0, reg(plan, handle), 0, 0, 0,
-            suspension->waitOffset + sizeof(obelisk_rt_wait_record_v1) +
-                index * sizeof(obelisk_rt_wait_entry_v1)});
+            suspension->waitOffset + sizeof(talos_rt_wait_record_v1) +
+                index * sizeof(talos_rt_wait_entry_v1)});
       continue;
     }
     uint32_t stableID =
@@ -415,13 +415,13 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
       return failure();
     emit({HandleID, 0, stableID, reg(plan, handle)});
     emit({StoreFrame, 0, 0, stableID, 0, 0, 0,
-          suspension->waitOffset + sizeof(obelisk_rt_wait_record_v1) +
-              index * sizeof(obelisk_rt_wait_entry_v1)});
+          suspension->waitOffset + sizeof(talos_rt_wait_record_v1) +
+              index * sizeof(talos_rt_wait_entry_v1)});
   }
   if (delay)
     emit({StoreFrame, 0, 0, reg(plan, delay), 0, 0, 0,
           suspension->waitOffset +
-              offsetof(obelisk_rt_wait_record_v1, payload)});
+              offsetof(talos_rt_wait_record_v1, payload)});
   Layout offsetLayout{Bits, 0, 64, 0, 8, 0};
   uint32_t offsetRegister = plan.layouts.size();
   offsetLayout.offset = llvm::alignTo(plan.scratchSize, uint64_t{8});
@@ -438,4 +438,4 @@ LogicalResult Encoder::encodeWait(FunctionPlan &plan, Operation *operation,
   return success();
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

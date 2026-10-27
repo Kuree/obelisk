@@ -1,14 +1,14 @@
 //===- SimulationDialect.cpp - Executable simulation dialect ------------===//
 
 #include "SimulationVerifiers.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -37,18 +37,18 @@
 
 using namespace mlir;
 
-#include "obelisk/Dialect/Simulation/SimulationDialect.cpp.inc"
-#include "obelisk/Dialect/Simulation/SimulationEnums.cpp.inc"
+#include "talos/Dialect/Simulation/SimulationDialect.cpp.inc"
+#include "talos/Dialect/Simulation/SimulationEnums.cpp.inc"
 
 #define GET_ATTRDEF_CLASSES
-#include "obelisk/Dialect/Simulation/SimulationAttrs.cpp.inc"
+#include "talos/Dialect/Simulation/SimulationAttrs.cpp.inc"
 
 #define GET_TYPEDEF_CLASSES
-#include "obelisk/Dialect/Simulation/SimulationTypes.cpp.inc"
+#include "talos/Dialect/Simulation/SimulationTypes.cpp.inc"
 
 // The op definitions are compiled by the SimulationOpDefs*.cpp shards.
 
-namespace obelisk::sim {
+namespace talos::sim {
 
 bool isSuspensionOp(Operation *operation) {
   return isa<
@@ -461,9 +461,9 @@ LogicalResult normalizeClassDirectCalls(Operation *root, uint64_t *count) {
 }
 
 /// Enforce unconditional simulation legality for every MLIR inlining client
-/// and supply CFG/SSA rewriting mechanics. The Obelisk pass separately owns
+/// and supply CFG/SSA rewriting mechanics. The Talos pass separately owns
 /// profitability, budgets, diagnostics, and statistics.
-struct ObeliskSimulationInlinerInterface final
+struct TalosSimulationInlinerInterface final
     : public DialectInlinerInterface {
   using DialectInlinerInterface::DialectInlinerInterface;
 
@@ -516,7 +516,7 @@ struct ObeliskSimulationInlinerInterface final
       Operation *call,
       iterator_range<Region::iterator> inlinedBlocks) const final {
     auto sourceOwner =
-        ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(call);
+        ::talos::schedule::get<schedule::metadata::evalSourceOwner>(call);
     if (!sourceOwner)
       return;
     for (Block &block : inlinedBlocks)
@@ -525,19 +525,19 @@ struct ObeliskSimulationInlinerInterface final
         // the logical process from which it was cloned. Preserve that fact;
         // otherwise inherit the caller's identity through arbitrary helper
         // depth before the call operation is erased by the inliner.
-        if (::obelisk::schedule::has<schedule::metadata::evalSourceOwner>(
+        if (::talos::schedule::has<schedule::metadata::evalSourceOwner>(
                 operation))
           return;
         Attribute inheritedOwner = sourceOwner;
         for (Operation *parent = operation->getParentOp(); parent;
              parent = parent->getParentOp())
           if (auto parentOwner =
-                  ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(
+                  ::talos::schedule::get<schedule::metadata::evalSourceOwner>(
                       parent)) {
             inheritedOwner = parentOwner;
             break;
           }
-        ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(
+        ::talos::schedule::set<schedule::metadata::evalSourceOwner>(
             operation, cast<schedule::SourceOwnerAttr>(inheritedOwner));
       });
   }
@@ -924,7 +924,7 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
 }
 
 LogicalResult
-ObeliskSimulationDialect::verifyOperationAttribute(Operation *operation,
+TalosSimulationDialect::verifyOperationAttribute(Operation *operation,
                                                    NamedAttribute attribute) {
   if (attribute.getName().strref() == metadata::IntegerRange::getNameStr())
     return operation->emitOpError("attribute '")
@@ -932,27 +932,27 @@ ObeliskSimulationDialect::verifyOperationAttribute(Operation *operation,
   return verifyDeclaredAttribute(operation, attribute);
 }
 
-LogicalResult ObeliskSimulationDialect::verifyRegionArgAttribute(
+LogicalResult TalosSimulationDialect::verifyRegionArgAttribute(
     Operation *operation, unsigned, unsigned, NamedAttribute attribute) {
   return verifyDeclaredAttribute(operation, attribute);
 }
 
-void ObeliskSimulationDialect::initialize() {
-  addInterfaces<ObeliskSimulationInlinerInterface>();
+void TalosSimulationDialect::initialize() {
+  addInterfaces<TalosSimulationInlinerInterface>();
   addAttributes<
 #define GET_ATTRDEF_LIST
-#include "obelisk/Dialect/Simulation/SimulationAttrs.cpp.inc"
+#include "talos/Dialect/Simulation/SimulationAttrs.cpp.inc"
       >();
   addTypes<
 #define GET_TYPEDEF_LIST
-#include "obelisk/Dialect/Simulation/SimulationTypes.cpp.inc"
+#include "talos/Dialect/Simulation/SimulationTypes.cpp.inc"
       >();
   // Registration for the sharded op definitions. Each shard registers its
   // own slice, so no translation unit sees every op class.
-  registerObeliskSimulationDialectOperations(this);
+  registerTalosSimulationDialectOperations(this);
 }
 
-Operation *ObeliskSimulationDialect::materializeConstant(OpBuilder &builder,
+Operation *TalosSimulationDialect::materializeConstant(OpBuilder &builder,
                                                          Attribute value,
                                                          Type type,
                                                          Location location) {
@@ -1027,18 +1027,18 @@ Operation *ObeliskSimulationDialect::materializeConstant(OpBuilder &builder,
 
 OpFoldResult SimBytesConstantOp::fold(FoldAdaptor) { return getValueAttr(); }
 
-#define OBELISK_NULL_FOLD(OP)                                                  \
+#define TALOS_NULL_FOLD(OP)                                                  \
   OpFoldResult OP::fold(FoldAdaptor) { return UnitAttr::get(getContext()); }
 
-OBELISK_NULL_FOLD(SimCovergroupNullOp)
-OBELISK_NULL_FOLD(SimVirtualInterfaceNullOp)
-OBELISK_NULL_FOLD(SimChandleNullOp)
-OBELISK_NULL_FOLD(SimClassNullOp)
-OBELISK_NULL_FOLD(SimManagedNullOp)
-OBELISK_NULL_FOLD(SimEventNullOp)
-OBELISK_NULL_FOLD(SimManagedWatchNullOp)
-OBELISK_NULL_FOLD(SimProcessNullOp)
+TALOS_NULL_FOLD(SimCovergroupNullOp)
+TALOS_NULL_FOLD(SimVirtualInterfaceNullOp)
+TALOS_NULL_FOLD(SimChandleNullOp)
+TALOS_NULL_FOLD(SimClassNullOp)
+TALOS_NULL_FOLD(SimManagedNullOp)
+TALOS_NULL_FOLD(SimEventNullOp)
+TALOS_NULL_FOLD(SimManagedWatchNullOp)
+TALOS_NULL_FOLD(SimProcessNullOp)
 
-#undef OBELISK_NULL_FOLD
+#undef TALOS_NULL_FOLD
 
-} // namespace obelisk::sim
+} // namespace talos::sim

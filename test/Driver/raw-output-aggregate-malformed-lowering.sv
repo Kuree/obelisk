@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-sim -O0 --vpi=off %s | FileCheck %s
+// RUN: talos -emit-sim -O0 --vpi=off %s | FileCheck %s
 
 // A malformed literal fails before consuming an argument at runtime. The
 // compile-time specialization tracker must therefore leave the following

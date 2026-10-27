@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-static-superstep))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-plan-static-superstep))' | FileCheck %s
 
 // A statically indexed native convergence group is a clean-superstep
 // candidate even when it contains multiple fragments. Net watches are exact

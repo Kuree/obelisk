@@ -1,9 +1,9 @@
 // REQUIRES: native-elf
 // RUN: %split-file %s %t
 // RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -o %t/plugin.so
-// RUN: obelisk -O3 --vpi=full --native-scheduler=eval --mlir-timing %t/design.sv %t/plugin.so -o %t/eval 2> %t.timing
+// RUN: talos -O3 --vpi=full --native-scheduler=eval --mlir-timing %t/design.sv %t/plugin.so -o %t/eval 2> %t.timing
 // RUN: FileCheck %s --check-prefix=PLAN < %t.timing
-// RUN: obelisk -O3 --vpi=full --execution-tier=bytecode %t/design.sv %t/plugin.so -o %t/bytecode
+// RUN: talos -O3 --vpi=full --execution-tier=bytecode %t/design.sv %t/plugin.so -o %t/bytecode
 // RUN: %t/eval > %t/eval.out
 // RUN: %t/bytecode | diff -u %t/eval.out -
 // RUN: FileCheck %s < %t/eval.out
@@ -15,7 +15,7 @@
 // (10.6.2, 38.34), while the independent counter consumes each NBA once.
 // Opaque source DPI retains canonical pending work. The local-write service
 // and scoped Tier-1 routing are tested separately with closed source effects.
-// PLAN: obelisk eval transaction source roots: 0/3
+// PLAN: talos eval transaction source roots: 0/3
 // CHECK: vpi forced=7 untouched=1 q=ab01
 // CHECK-NEXT: deposited=ab0x
 // CHECK-NEXT: released=8 untouched=2 q=abxx

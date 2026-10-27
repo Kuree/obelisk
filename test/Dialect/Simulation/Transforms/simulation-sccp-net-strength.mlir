@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp{vpi=off}))' | FileCheck %s
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp{vpi=read}))' | FileCheck %s
-// RUN: obelisk-opt %s --test-obelisk-sim-state-domain -o /dev/null 2>&1 | FileCheck %s --check-prefix=DOMAIN
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-sccp{vpi=off}))' | FileCheck %s
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(talos-sim-sccp{vpi=read}))' | FileCheck %s
+// RUN: talos-opt %s --test-talos-sim-state-domain -o /dev/null 2>&1 | FileCheck %s --check-prefix=DOMAIN
 
 // A high-Z strength turns a known driver payload into Z (LRM 6.3.2, 6.6).
 // Test each polarity, and retain ordinary one-driver constant propagation.

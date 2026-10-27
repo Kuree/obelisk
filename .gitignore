@@ -4,8 +4,8 @@
 /tmp/
 /site/
 /.ccache/
-/web/obelisk.js
-/web/obelisk.wasm
+/web/talos.js
+/web/talos.wasm
 /web/toolchain/
 *.vcd
 *.o

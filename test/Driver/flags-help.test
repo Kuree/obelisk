@@ -1,8 +1,8 @@
 // Help output lists the public and hidden driver options.
-// RUN: obelisk -h | FileCheck %s --check-prefix=SHORT-HELP
-// RUN: obelisk --help-hidden | FileCheck %s --check-prefix=HIDDEN-HELP
+// RUN: talos -h | FileCheck %s --check-prefix=SHORT-HELP
+// RUN: talos --help-hidden | FileCheck %s --check-prefix=HIDDEN-HELP
 
-// SHORT-HELP: OVERVIEW: Obelisk ahead-of-time SystemVerilog compiler
+// SHORT-HELP: OVERVIEW: Talos ahead-of-time SystemVerilog compiler
 // SHORT-HELP: -emit-slang
 // SHORT-HELP-DAG: --two-state
 // SHORT-HELP-DAG: --no-two-state-specialization

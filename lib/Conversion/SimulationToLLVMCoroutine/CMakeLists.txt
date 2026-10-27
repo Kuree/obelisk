@@ -1,4 +1,4 @@
-add_mlir_library(ObeliskSimulationToLLVMCoroutine
+add_mlir_library(TalosSimulationToLLVMCoroutine
   NativePipeline.cpp
   NativeStateBases.cpp
   NativeScalarFolding.cpp
@@ -70,19 +70,19 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   SimulationWideIntegerLowering.cpp
 
   DEPENDS
-  ObeliskConversionPassIncGen
-  ObeliskSimulationOpsIncGen
+  TalosConversionPassIncGen
+  TalosSimulationOpsIncGen
 
   LINK_LIBS PUBLIC
-  ObeliskCoverage
-  ObeliskSimulationToScheduleNative
-  ObeliskScheduleNativeTransforms
-  ObeliskSimulationAnalysis
-  ObeliskRuntimeIR
-  ObeliskRuntimeToLLVM
-  ObeliskSimulationIR
-  ObeliskSimulationToRuntime
-  ObeliskSimulationToStandard
+  TalosCoverage
+  TalosSimulationToScheduleNative
+  TalosScheduleNativeTransforms
+  TalosSimulationAnalysis
+  TalosRuntimeIR
+  TalosRuntimeToLLVM
+  TalosSimulationIR
+  TalosSimulationToRuntime
+  TalosSimulationToStandard
   MLIRAnalysis
   MLIRArithDialect
   MLIRArithToLLVM
@@ -105,6 +105,6 @@ add_mlir_library(ObeliskSimulationToLLVMCoroutine
   MLIRTargetLLVMIRExport
 )
 
-target_include_directories(ObeliskSimulationToLLVMCoroutine PRIVATE
+target_include_directories(TalosSimulationToLLVMCoroutine PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )

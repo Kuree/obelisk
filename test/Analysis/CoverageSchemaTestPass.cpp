@@ -8,9 +8,9 @@
 
 #include "AnalysisTestPasses.h"
 
-#include "obelisk/Coverage/CoverageDatabase.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Coverage/CoverageDatabase.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -22,7 +22,7 @@
 #include <optional>
 
 using namespace mlir;
-namespace coverage = obelisk::coverage;
+namespace coverage = talos::coverage;
 
 namespace {
 
@@ -78,7 +78,7 @@ public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CoverageSchemaTestPass)
 
   StringRef getArgument() const final {
-    return "test-obelisk-print-coverage-schema";
+    return "test-talos-print-coverage-schema";
   }
   StringRef getDescription() const final {
     return "print embedded coverage schema records and check sample operands";
@@ -87,7 +87,7 @@ public:
   void runOnOperation() final {
     SmallVector<ModuleOp> modules;
     getOperation()->walk([&](ModuleOp module) {
-      if (obelisk::runtime::has<obelisk::runtime::CoverageSchemaBlob>(module))
+      if (talos::runtime::has<talos::runtime::CoverageSchemaBlob>(module))
         modules.push_back(module);
     });
     if (modules.empty()) {
@@ -98,7 +98,7 @@ public:
     raw_ostream &os = llvm::errs();
     for (auto [index, module] : llvm::enumerate(modules)) {
       DenseI8ArrayAttr blob =
-          obelisk::runtime::get<obelisk::runtime::CoverageSchemaBlob>(module);
+          talos::runtime::get<talos::runtime::CoverageSchemaBlob>(module);
       if (!blob) {
         module.emitError("coverage schema blob must be an i8 array");
         return signalPassFailure();
@@ -120,7 +120,7 @@ public:
         return signalPassFailure();
     }
     WalkResult result = getOperation()->walk(
-        [&](obelisk::sim::SimCovergroupSampleOp sample) {
+        [&](talos::sim::SimCovergroupSampleOp sample) {
           return failed(checkSample(sample, expressions))
                      ? WalkResult::interrupt()
                      : WalkResult::advance();
@@ -364,7 +364,7 @@ private:
   /// A sample batch passes sample-phase expression results in result-ordinal
   /// order, each typed by the expression's result kind.
   static LogicalResult checkSample(
-      obelisk::sim::SimCovergroupSampleOp sample,
+      talos::sim::SimCovergroupSampleOp sample,
       const llvm::DenseMap<uint64_t, coverage::FunctionalExpression>
           &expressions) {
     ArrayRef<int64_t> ids = sample.getExpressionIds();
@@ -389,7 +389,7 @@ private:
       unsigned width = 0;
       if (auto integer = dyn_cast<IntegerType>(type))
         width = integer.getWidth();
-      else if (auto logic = dyn_cast<obelisk::sim::LogicType>(type))
+      else if (auto logic = dyn_cast<talos::sim::LogicType>(type))
         width = logic.getWidth();
       bool matches = true;
       switch (expression.resultKind) {
@@ -403,7 +403,7 @@ private:
         matches = type.isF64();
         break;
       case coverage::FunctionalExpressionResultKind::Aggregate:
-        matches = isa<obelisk::sim::ReferencePathType>(type);
+        matches = isa<talos::sim::ReferencePathType>(type);
         break;
       default:
         break;
@@ -418,8 +418,8 @@ private:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 void registerCoverageSchemaTestPass() {
   PassRegistration<CoverageSchemaTestPass>();
 }
-} // namespace obelisk
+} // namespace talos

@@ -1,8 +1,8 @@
 //===- SolverZ3.cpp - Execute MLIR SMT formulas with Z3 -------*- C++ -*-===//
 
-#include "obelisk/Solver/ConstraintSolver.h"
+#include "talos/Solver/ConstraintSolver.h"
 
-#ifdef OBELISK_ENABLE_Z3
+#ifdef TALOS_ENABLE_Z3
 
 #include "RandomProgramSMT.h"
 #include "Z3Support.h"
@@ -21,7 +21,7 @@
 #include <climits>
 #include <cstdint>
 #include <unordered_set>
-#ifdef OBELISK_Z3_SINGLE_THREADED
+#ifdef TALOS_Z3_SINGLE_THREADED
 #include <mutex>
 #endif
 #include <optional>
@@ -29,7 +29,7 @@
 #include <utility>
 #include <vector>
 
-namespace obelisk::solver {
+namespace talos::solver {
 namespace {
 
 uint64_t variableKey(uint32_t offset, unsigned width) {
@@ -348,7 +348,7 @@ private:
 
 } // namespace
 
-#ifdef OBELISK_Z3_SINGLE_THREADED
+#ifdef TALOS_Z3_SINGLE_THREADED
 std::mutex &detail::getZ3Mutex() {
   static std::mutex mutex;
   return mutex;
@@ -358,7 +358,7 @@ std::mutex &detail::getZ3Mutex() {
 Satisfiability
 detail::checkRandomDomainOverlapZ3(llvm::ArrayRef<RandomDomainPattern> patterns,
                                    uint64_t resourceLimit) {
-#ifdef OBELISK_Z3_SINGLE_THREADED
+#ifdef TALOS_Z3_SINGLE_THREADED
   std::lock_guard<std::mutex> lock(detail::getZ3Mutex());
 #endif
   try {
@@ -426,14 +426,14 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
   if (!smt)
     return analysis;
 
-#ifdef OBELISK_Z3_SINGLE_THREADED
+#ifdef TALOS_Z3_SINGLE_THREADED
   // The non-pthread wasm build removes Z3's internal synchronization. Native
   // compilers instead use the thread-safe build and enter here concurrently
   // with one context per worker invocation.
   std::lock_guard<std::mutex> lock(detail::getZ3Mutex());
 #endif
 
-  // Z3 uses exceptions internally even though the rest of Obelisk follows
+  // Z3 uses exceptions internally even though the rest of Talos follows
   // LLVM's no-exceptions convention. They are contained within this
   // translation unit and converted into conservative Unknown results.
   try {
@@ -1362,6 +1362,6 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
   return analysis;
 }
 
-} // namespace obelisk::solver
+} // namespace talos::solver
 
 #endif

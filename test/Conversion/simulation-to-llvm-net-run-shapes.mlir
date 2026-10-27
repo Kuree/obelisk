@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines --canonicalize --cse \
+// RUN: talos-opt %s --split-input-file \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines --canonicalize --cse \
 // RUN:   | FileCheck %s
 
 // Run resolution tabulates every driver state combination, so a bit with more
@@ -32,8 +32,8 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @five_drivers
-// CHECK-COUNT-5: llvm.call @obelisk_rt_v1_strength_resolve_kind
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-COUNT-5: llvm.call @talos_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -66,7 +66,7 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @reversed_offsets
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK-DAG: %[[C0:.*]] = llvm.mlir.constant(0 : i64) : i64
 // CHECK-DAG: %[[C8:.*]] = llvm.mlir.constant(8 : i64) : i64
 // CHECK-DAG: %[[C64:.*]] = llvm.mlir.constant(64 : i64) : i64
@@ -74,13 +74,13 @@ module attributes {
 // CHECK: %[[REVLOW:.*]] = llvm.intr.bitreverse(%[[LOW]]) : (i64) -> i64
 // CHECK: %[[HIGH:.*]] = llvm.trunc %{{.*}} : i72 to i8
 // CHECK: %[[REVHIGH:.*]] = llvm.intr.bitreverse(%[[HIGH]]) : (i8) -> i8
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[C8]], %[[C64]], %{{.*}}, %{{.*}}, %[[REVLOW]], %{{.*}})
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[C0]], %[[C64]], %{{.*}}, %{{.*}}, %[[LOW]], %{{.*}})
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[C8]], %[[C64]], %{{.*}}, %{{.*}}, %[[REVLOW]], %{{.*}})
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[C0]], %[[C64]], %{{.*}}, %{{.*}}, %[[LOW]], %{{.*}})
 // CHECK: %[[REVHIGH64:.*]] = llvm.zext %[[REVHIGH]] : i8 to i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[C0]], %[[C8]], %{{.*}}, %{{.*}}, %[[REVHIGH64]], %{{.*}})
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[C0]], %[[C8]], %{{.*}}, %{{.*}}, %[[REVHIGH64]], %{{.*}})
 // CHECK: %[[HIGH64:.*]] = llvm.zext %[[HIGH]] : i8 to i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[C64]], %[[C8]], %{{.*}}, %{{.*}}, %[[HIGH64]], %{{.*}})
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition(%{{.*}}, %{{.*}}, %[[C64]], %[[C8]], %{{.*}}, %{{.*}}, %[[HIGH64]], %{{.*}})
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
 
 // -----
@@ -111,16 +111,16 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @integer_member
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64) : i64
-// CHECK: %[[VALUES:.*]] = llvm.mlir.addressof @__obelisk_state_value
+// CHECK: %[[VALUES:.*]] = llvm.mlir.addressof @__talos_state_value
 // CHECK: %[[OLD:.*]] = llvm.load %[[VALUES]] {{.*}} -> i8
 // CHECK-NEXT: %[[KNOWN:.*]] = llvm.xor %{{.*}}, %{{.*}} : i8
 // CHECK-NEXT: %[[VALUE:.*]] = llvm.and %{{.*}}, %[[KNOWN]] : i8
 // CHECK: %[[NEW:.*]] = llvm.zext %[[VALUE]] : i8 to i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition({{.*}}, %[[ZERO]], %[[NEW]], %[[ZERO]])
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition({{.*}}, %[[ZERO]], %[[NEW]], %[[ZERO]])
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition({{.*}}, %[[ZERO]], %[[NEW]], %[[ZERO]])
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition({{.*}}, %[[ZERO]], %[[NEW]], %[[ZERO]])
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
 
 // -----
@@ -153,14 +153,14 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @two_state_own
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: %[[OTHERV:.*]] = llvm.load %{{.*}} -> i8
 // CHECK: llvm.load %{{.*}} -> i8
 // CHECK-NOT: llvm.load
 // CHECK: %[[VALUE:.*]] = llvm.and %[[OTHERV]], %arg1 : i8
 // CHECK: %[[NEW:.*]] = llvm.zext %[[VALUE]] : i8 to i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition({{.*}}, %[[NEW]], %{{.*}})
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition({{.*}}, %[[NEW]], %{{.*}})
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: llvm.return
 
 // -----
@@ -193,12 +193,12 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @tri1
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: %[[NOTV:.*]] = llvm.xor %arg1, %{{.*}} : i4
 // CHECK-NEXT: %[[UNKNOWN:.*]] = llvm.and %arg2, %[[NOTV]] : i4
 // CHECK: %[[NEWV:.*]] = llvm.zext %arg1 : i4 to i64
 // CHECK-NEXT: %[[NEWU:.*]] = llvm.zext %[[UNKNOWN]] : i4 to i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition({{.*}}, %[[NEWV]], %[[NEWU]])
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition({{.*}}, %[[NEWV]], %[[NEWU]])
 // CHECK: llvm.return
 
 // -----
@@ -252,12 +252,12 @@ module attributes {
 // CHECK-LABEL: llvm.func @supply0
 // CHECK: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64) : i64
 // CHECK-NOT: llvm.and
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition({{.*}}, %[[ZERO]], %[[ZERO]])
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition({{.*}}, %[[ZERO]], %[[ZERO]])
 // CHECK: llvm.return
 
 // CHECK-LABEL: llvm.func @wor
 // CHECK-DAG: %[[ONES:.*]] = llvm.mlir.constant(3 : i64) : i64
 // CHECK-DAG: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64) : i64
 // CHECK-NOT: llvm.and
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition({{.*}}, %[[ONES]], %[[ZERO]])
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition({{.*}}, %[[ONES]], %[[ZERO]])
 // CHECK: llvm.return

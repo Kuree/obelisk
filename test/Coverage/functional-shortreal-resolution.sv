@@ -1,8 +1,8 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov > %t.out 2> %t.err
 // RUN: FileCheck %s --check-prefix=QUERY < %t.out
 // RUN: FileCheck %s --check-prefix=WARNING < %t.err
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 
 // IEEE 1800-2023 19.5.7: lossy implicit casts exclude singleton bin values. Explicit
 // casts retain their value, and ranges intersect the effective type's domain.

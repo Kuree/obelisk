@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
+// RUN: talos-opt %s | talos-opt | FileCheck %s
 
 // CHECK-LABEL: func.func private @import
 // CHECK-SAME: dpi.abi_signature = [#dpi.abi<kind = int, direction = input, width = 32, fourState = false, isSigned = true>, #dpi.abi<kind = unpacked_aggregate, direction = output, width = 64, fourState = false, isSigned = false>]

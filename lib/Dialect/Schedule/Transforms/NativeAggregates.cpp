@@ -9,16 +9,16 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/CSE.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/ScopedIntegerRangeAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_OPTIMIZENATIVEAGGREGATESPASS
 #define GEN_PASS_DEF_PREPARENATIVEAGGREGATESPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 namespace {
 // A certificate is tied to the original selector and array type. Greedy
 // rewriting may change the array's producer, but may not reuse a bounds proof
@@ -175,4 +175,4 @@ class PrepareNativeAggregatesPass final
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

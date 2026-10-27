@@ -1,15 +1,15 @@
 //===- VPIExpressionValue.h - Integral expression values ----------------===//
 
-#ifndef OBELISK_RUNTIME_LIB_VPIEXPRESSIONVALUE_H
-#define OBELISK_RUNTIME_LIB_VPIEXPRESSIONVALUE_H
+#ifndef TALOS_RUNTIME_LIB_VPIEXPRESSIONVALUE_H
+#define TALOS_RUNTIME_LIB_VPIEXPRESSIONVALUE_H
 
 #include "DesignBytecodeLogic.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Reflection/VPIObjectModel.h"
+#include "talos/Runtime/Runtime.h"
 #include <array>
 #include <optional>
 
-namespace obelisk::vpiexpression {
+namespace talos::vpiexpression {
 using designbytecode::LimbVector;
 using designbytecode::Logic;
 using reflection::VPIIntegralExpressionShape;
@@ -218,9 +218,9 @@ inline Logic evaluate(uint32_t code, VPIIntegralExpressionShape result,
   }
   if (rule == Rule::Left) {
     if (code != 43) {
-      uint16_t opcode = code == 22 || code == 41        ? OBELISK_RT_DB_SHL
-                        : code == 42 && result.isSigned ? OBELISK_RT_DB_ASHR
-                                                        : OBELISK_RT_DB_LSHR;
+      uint16_t opcode = code == 22 || code == 41        ? TALOS_RT_DB_SHL
+                        : code == 42 && result.isSigned ? TALOS_RT_DB_ASHR
+                                                        : TALOS_RT_DB_LSHR;
       return shift(left, values[1], opcode);
     }
     const Logic &exponent = values[1];
@@ -255,17 +255,17 @@ inline Logic evaluate(uint32_t code, VPIIntegralExpressionShape result,
   case 13:
     return divide(left, right, result.isSigned).second;
   case 28:
-    return bitwise(left, right, OBELISK_RT_DB_AND);
+    return bitwise(left, right, TALOS_RT_DB_AND);
   case 29:
-    return bitwise(left, right, OBELISK_RT_DB_OR);
+    return bitwise(left, right, TALOS_RT_DB_OR);
   case 30:
-    return bitwise(left, right, OBELISK_RT_DB_XOR);
+    return bitwise(left, right, TALOS_RT_DB_XOR);
   case 31:
-    return inverted(bitwise(left, right, OBELISK_RT_DB_XOR));
+    return inverted(bitwise(left, right, TALOS_RT_DB_XOR));
   default:
     return allX(width, result.fourState);
   }
 }
-} // namespace obelisk::vpiexpression
+} // namespace talos::vpiexpression
 
-#endif // OBELISK_RUNTIME_LIB_VPIEXPRESSIONVALUE_H
+#endif // TALOS_RUNTIME_LIB_VPIEXPRESSIONVALUE_H

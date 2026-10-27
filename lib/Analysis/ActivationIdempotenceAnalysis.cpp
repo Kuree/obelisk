@@ -1,13 +1,13 @@
 //===- ActivationIdempotenceAnalysis.cpp - Stable-input state proof
 //--------===//
-#include "obelisk/Analysis/ActivationIdempotenceAnalysis.h"
+#include "talos/Analysis/ActivationIdempotenceAnalysis.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/SmallBitVector.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 using Range = ActivationMemoryAnalysis::Range;
 bool overlaps(Range a, Range b) {
@@ -197,4 +197,4 @@ bool hasIdempotentStateTransition(sim::SimFuncOp function,
   }
   return true;
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

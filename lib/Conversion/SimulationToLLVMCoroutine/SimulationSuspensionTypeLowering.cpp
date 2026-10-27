@@ -1,11 +1,11 @@
 //===- SimulationSuspensionTypeLowering.cpp - Suspension type rewrites ----===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
@@ -16,7 +16,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 SmallVector<int32_t> suspensionWaitWidths(Operation *operation) {
@@ -52,9 +52,9 @@ SmallVector<int32_t> suspensionWaitWidths(Operation *operation) {
         for (int32_t edge : op.getEdges()) {
           uint32_t encoded = static_cast<uint32_t>(edge);
           bool customTransition =
-              (encoded & ~OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) ==
-                  OBELISK_RT_WAIT_EDGE_TRANSITION_MASK &&
-              (encoded & OBELISK_RT_WAIT_EDGE_TRANSITION_CLASSES) != 0;
+              (encoded & ~TALOS_RT_WAIT_EDGE_TRANSITION_CLASSES) ==
+                  TALOS_RT_WAIT_EDGE_TRANSITION_MASK &&
+              (encoded & TALOS_RT_WAIT_EDGE_TRANSITION_CLASSES) != 0;
           // IEEE 1800-2017 31.8 applies an edge-control descriptor to every
           // bit of a timing-check vector and coalesces one packed publication.
           // Canonical pos/negedge remains the historical scalar-LSB wait.
@@ -99,7 +99,7 @@ SmallVector<int32_t> suspensionWaitWidths(Operation *operation) {
     }
     Type type = value.getType();
     if (isa<sim::ManagedWatchType>(type)) {
-      widths.push_back(static_cast<int32_t>(OBELISK_RT_WAIT_WIDTH_MANAGED));
+      widths.push_back(static_cast<int32_t>(TALOS_RT_WAIT_WIDTH_MANAGED));
       continue;
     }
     if (auto reference = dyn_cast<sim::RefType>(type))
@@ -149,13 +149,13 @@ public:
     SmallVector<int32_t> dependencyCaptureIndices;
     for (Value dependency : operation.getDependencies()) {
       if (isa<sim::ManagedWatchType>(dependency.getType())) {
-        dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED);
+        dependencyKinds.push_back(TALOS_RT_OBSERVER_DEPENDENCY_MANAGED);
         dependencyWidths.push_back(1);
         dependencyCaptureIndices.push_back(-1);
         continue;
       }
       if (isa<sim::EventType>(dependency.getType())) {
-        dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_EVENT);
+        dependencyKinds.push_back(TALOS_RT_OBSERVER_DEPENDENCY_EVENT);
         dependencyWidths.push_back(1);
         dependencyCaptureIndices.push_back(-1);
         continue;
@@ -171,7 +171,7 @@ public:
         if (!width)
           return operation.emitOpError(
               "argument-ref dependency must have a simulation storage width");
-        dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF);
+        dependencyKinds.push_back(TALOS_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF);
         dependencyWidths.push_back(static_cast<int32_t>(*width));
         dependencyCaptureIndices.push_back(static_cast<int32_t>(
             std::distance(operation.getCaptures().begin(), capture)));
@@ -189,7 +189,7 @@ public:
         return operation.emitOpError(
             "observer signal dependency must have a simulation storage "
             "width");
-      dependencyKinds.push_back(OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL);
+      dependencyKinds.push_back(TALOS_RT_OBSERVER_DEPENDENCY_SIGNAL);
       dependencyWidths.push_back(static_cast<int32_t>(*width));
       dependencyCaptureIndices.push_back(-1);
     }
@@ -201,21 +201,21 @@ public:
     for (NamedAttribute attribute : operation->getAttrs())
       if (auto field = schedule::symbolizeField(attribute.getName().getValue()))
         schedule::set(bridge, *field, attribute.getValue());
-    ::obelisk::schedule::set<::obelisk::schedule::Field::NativeObserverId>(
+    ::talos::schedule::set<::talos::schedule::Field::NativeObserverId>(
         bridge, rewriter.getI64IntegerAttr(
                     static_cast<uint64_t>(*evaluator.getCodeUnitId())));
-    ::obelisk::schedule::set<::obelisk::schedule::Field::NativeObserverWidth>(
+    ::talos::schedule::set<::talos::schedule::Field::NativeObserverWidth>(
         bridge, rewriter.getI32IntegerAttr(*resultWidth));
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::NativeObserverFourState>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::NativeObserverFourState>(
         bridge, rewriter.getBoolAttr(isa<sim::LogicType>(observerType)));
-    ::obelisk::schedule::set<::obelisk::schedule::Field::NativeDependencyKinds>(
+    ::talos::schedule::set<::talos::schedule::Field::NativeDependencyKinds>(
         bridge, rewriter.getDenseI32ArrayAttr(dependencyKinds));
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::NativeDependencyWidths>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::NativeDependencyWidths>(
         bridge, rewriter.getDenseI32ArrayAttr(dependencyWidths));
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::NativeDependencyCaptureIndices>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::NativeDependencyCaptureIndices>(
         bridge, rewriter.getDenseI32ArrayAttr(dependencyCaptureIndices));
     rewriter.replaceOp(operation, bridge.getResult());
     return success();
@@ -266,16 +266,16 @@ public:
     state.addSuccessors(operation->getSuccessors());
     state.addAttributes(operation->getAttrs());
     state.addAttribute(
-        ::obelisk::schedule::getFieldName(
-            ::obelisk::schedule::Field::NativeInitialPlaneCounts),
+        ::talos::schedule::getFieldName(
+            ::talos::schedule::Field::NativeInitialPlaneCounts),
         rewriter.getDenseI32ArrayAttr(initialPlaneCounts));
     state.addAttribute(
-        ::obelisk::schedule::getFieldName(
-            ::obelisk::schedule::Field::NativeConditionOperandBegin),
+        ::talos::schedule::getFieldName(
+            ::talos::schedule::Field::NativeConditionOperandBegin),
         rewriter.getI64IntegerAttr(conditionBegin));
     state.addAttribute(
-        ::obelisk::schedule::getFieldName(
-            ::obelisk::schedule::Field::NativeContinuationOperandBegin),
+        ::talos::schedule::getFieldName(
+            ::talos::schedule::Field::NativeContinuationOperandBegin),
         rewriter.getI64IntegerAttr(continuationBegin));
     rewriter.replaceOp(operation, rewriter.create(state));
     return success();
@@ -322,8 +322,8 @@ public:
     state.addAttributes(operation->getAttrs());
     SmallVector<int32_t> waitWidths = suspensionWaitWidths(operation);
     if (!waitWidths.empty())
-      state.addAttribute(::obelisk::schedule::getFieldName(
-                             ::obelisk::schedule::Field::NativeWaitWidths),
+      state.addAttribute(::talos::schedule::getFieldName(
+                             ::talos::schedule::Field::NativeWaitWidths),
                          rewriter.getDenseI32ArrayAttr(waitWidths));
     rewriter.replaceOp(operation, rewriter.create(state));
     return success();
@@ -371,4 +371,4 @@ void populateSuspensionTypeConversionPatterns(RewritePatternSet &patterns,
       converter, patterns.getContext());
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // Frozen after scheduling. This single-pass fixture has periodic generators on
 // bits 0 and 1 of one root; the forwarding alias captures bit 1 through
@@ -34,7 +34,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.nba.enqueue %0 to %arg1 {site = #schedule.nba_site<id = 0, commit = 13, storage = fixed_slot>} : (!simulation.logic<8>, !simulation.ref<!simulation.logic<8>>) -> ()
       simulation.return
     }
-    simulation.func @watcher(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<8>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {code_unit_id = 3 : i64, domain = 0 : i32, effect_summary = [#schedule.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 8, dynamic = false, deferred = false, trigger = change>], entry_kind = 3 : i32, fragment_abi = #schedule.fragment_abi<version = 1, fragments = [10, 11, 12]>, home_region = 2 : i32, schedule.eval.body = @watcher.__obelisk_eval_body_0} {
+    simulation.func @watcher(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<8>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {code_unit_id = 3 : i64, domain = 0 : i32, effect_summary = [#schedule.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 8, dynamic = false, deferred = false, trigger = change>], entry_kind = 3 : i32, fragment_abi = #schedule.fragment_abi<version = 1, fragments = [10, 11, 12]>, home_region = 2 : i32, schedule.eval.body = @watcher.__talos_eval_body_0} {
       cf.br ^bb1
     ^bb1:  // 2 preds: ^bb0, ^bb2
       simulation.suspend.change %arg1 to ^bb2 {site = #schedule.continuation<id = 12>} : !simulation.ref<!simulation.logic<8>>
@@ -70,8 +70,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.driver.drive %arg2 = %0 : !simulation.driver<!simulation.logic<1>>, !simulation.logic<1>
       simulation.suspend.change %arg1 to ^bb1 {site = #schedule.continuation<id = 7>} : !simulation.ref<!simulation.logic<1>>
     }
-    simulation.code_unit.decl 7 in 0 function hierarchy "watcher.__obelisk_eval_body_0" debug "generated native eval body" {internal}
-    simulation.func private @watcher.__obelisk_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<8>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {code_unit_id = 7 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 12 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 3 : i64, continuation = 12 : i32>]} {
+    simulation.code_unit.decl 7 in 0 function hierarchy "watcher.__talos_eval_body_0" debug "generated native eval body" {internal}
+    simulation.func private @watcher.__talos_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<8>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {code_unit_id = 7 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 12 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 3 : i64, continuation = 12 : i32>]} {
       cf.br ^bb1
     ^bb1:  // pred: ^bb0
       simulation.return
@@ -79,9 +79,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-// CHECK-LABEL: llvm.mlir.global internal constant @__obelisk_periodic_alias_plan_v1
+// CHECK-LABEL: llvm.mlir.global internal constant @__talos_periodic_alias_plan_v1
 // CHECK-SAME: {{\[\[}}2 : i32, 5 : i32, 7 : i32, 3 : i32, 9, 16, 24]]
-// CHECK-LABEL: llvm.mlir.global internal constant @__obelisk_periodic_clock_plan_v1
+// CHECK-LABEL: llvm.mlir.global internal constant @__talos_periodic_clock_plan_v1
 // CHECK-SAME: !llvm.array<2 x
 // CHECK: %[[CLOCK0:.*]] = llvm.mlir.constant(8 : i64)
 // CHECK: llvm.insertvalue %[[CLOCK0]], {{.*}}[4]

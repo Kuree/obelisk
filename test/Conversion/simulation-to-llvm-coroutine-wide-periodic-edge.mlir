@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // Frozen post-planning Simulation IR. The periodic generator toggles bit 1 of
 // a two-bit vector. A wide change wait must join periodic direct dispatch,
@@ -35,7 +35,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.ref.store %2 to %arg1 : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
       cf.br ^bb1
     }
-    simulation.func @change(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<2>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 3 : i64, domain = 0 : i32, effect_summary = [#schedule.effect<effect = read, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #schedule.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 2, dynamic = false, deferred = false, trigger = change>], entry_kind = 3 : i32, fragment_abi = #schedule.fragment_abi<version = 1, fragments = [0, 1, 2]>, home_region = 2 : i32, schedule.eval.body = @change.__obelisk_eval_body_0} {
+    simulation.func @change(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<2>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 3 : i64, domain = 0 : i32, effect_summary = [#schedule.effect<effect = read, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #schedule.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 2, dynamic = false, deferred = false, trigger = change>], entry_kind = 3 : i32, fragment_abi = #schedule.fragment_abi<version = 1, fragments = [0, 1, 2]>, home_region = 2 : i32, schedule.eval.body = @change.__talos_eval_body_0} {
       cf.br ^bb1
     ^bb1:  // 2 preds: ^bb0, ^bb2
       simulation.suspend.change %arg1 to ^bb2 {site = #schedule.continuation<id = 2>} : !simulation.ref<!simulation.logic<2>>
@@ -45,7 +45,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.ref.store %1 to %arg2 : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
       cf.br ^bb1
     }
-    simulation.func @edge(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<2>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {code_unit_id = 4 : i64, domain = 0 : i32, effect_summary = [#schedule.effect<effect = read, resource = storage, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #schedule.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 2, dynamic = false, deferred = false, trigger = posedge>], entry_kind = 3 : i32, fragment_abi = #schedule.fragment_abi<version = 1, fragments = [6, 7, 8]>, home_region = 2 : i32, schedule.eval.body = @edge.__obelisk_eval_body_0} {
+    simulation.func @edge(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<2>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {code_unit_id = 4 : i64, domain = 0 : i32, effect_summary = [#schedule.effect<effect = read, resource = storage, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = none>, #schedule.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 2, dynamic = false, deferred = false, trigger = posedge>], entry_kind = 3 : i32, fragment_abi = #schedule.fragment_abi<version = 1, fragments = [6, 7, 8]>, home_region = 2 : i32, schedule.eval.body = @edge.__talos_eval_body_0} {
       cf.br ^bb1
     ^bb1:  // 2 preds: ^bb0, ^bb2
       simulation.suspend.edge posedge %arg1 to ^bb2 {site = #schedule.continuation<id = 8>} : !simulation.ref<!simulation.logic<2>>
@@ -55,8 +55,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.ref.store %1 to %arg2 : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
       cf.br ^bb1
     }
-    simulation.code_unit.decl 5 in 0 function hierarchy "change.__obelisk_eval_body_0" debug "generated native eval body" {internal}
-    simulation.func private @change.__obelisk_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<2>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 5 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 2 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 3 : i64, continuation = 2 : i32>]} {
+    simulation.code_unit.decl 5 in 0 function hierarchy "change.__talos_eval_body_0" debug "generated native eval body" {internal}
+    simulation.func private @change.__talos_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<2>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 5 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 2 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 3 : i64, continuation = 2 : i32>]} {
       cf.br ^bb1
     ^bb1:  // pred: ^bb0
       %0 = simulation.ref.load %arg2 : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
@@ -64,8 +64,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.ref.store %1 to %arg2 : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
       simulation.return
     }
-    simulation.code_unit.decl 6 in 0 function hierarchy "edge.__obelisk_eval_body_0" debug "generated native eval body" {internal}
-    simulation.func private @edge.__obelisk_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<2>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {code_unit_id = 6 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 8 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 4 : i64, continuation = 8 : i32>]} {
+    simulation.code_unit.decl 6 in 0 function hierarchy "edge.__talos_eval_body_0" debug "generated native eval body" {internal}
+    simulation.func private @edge.__talos_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<2>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {code_unit_id = 6 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 8 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 4 : i64, continuation = 8 : i32>]} {
       cf.br ^bb1
     ^bb1:  // pred: ^bb0
       %0 = simulation.ref.load %arg2 : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
@@ -75,7 +75,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     }
   }
 }
-// CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1
-// CHECK: llvm.call @__obelisk_direct_fragment_2_2.__obelisk_execute
-// CHECK-NOT: llvm.call @__obelisk_direct_fragment_3_8.__obelisk_execute
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
+// CHECK-LABEL: llvm.func @__talos_aot_schedule_run_v1
+// CHECK: llvm.call @__talos_direct_fragment_2_2.__talos_execute
+// CHECK-NOT: llvm.call @__talos_direct_fragment_3_8.__talos_execute
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1

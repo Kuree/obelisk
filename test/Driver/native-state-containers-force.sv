@@ -1,8 +1,8 @@
-// RUN: obelisk -O0 %s -o %t.o0
+// RUN: talos -O0 %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 %s -o %t.o3
+// RUN: talos -O3 %s -o %t.o3
 // RUN: %t.o3 | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 // CHECK: container force passed
 

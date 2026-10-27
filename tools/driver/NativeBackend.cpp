@@ -38,15 +38,15 @@ using namespace mlir;
 
 LLD_HAS_DRIVER(elf)
 
-namespace obelisk::driver {
+namespace talos::driver {
 namespace {
 
-constexpr StringLiteral kTargetTriple = OBELISK_NATIVE_TARGET_TRIPLE;
+constexpr StringLiteral kTargetTriple = TALOS_NATIVE_TARGET_TRIPLE;
 
 LogicalResult sanitizeBundledBuildPaths(StringRef path, StringRef supportRoot) {
   ErrorOr<std::unique_ptr<MemoryBuffer>> input = MemoryBuffer::getFile(path);
   if (!input) {
-    errs() << "obelisk: error: could not inspect linked output '" << path
+    errs() << "talos: error: could not inspect linked output '" << path
            << "': " << input.getError().message() << '\n';
     return failure();
   }
@@ -55,7 +55,7 @@ LogicalResult sanitizeBundledBuildPaths(StringRef path, StringRef supportRoot) {
   ErrorOr<std::unique_ptr<MemoryBuffer>> manifest =
       MemoryBuffer::getFile(manifestPath);
   if (!manifest) {
-    errs() << "obelisk: error: could not inspect native-support build-prefix "
+    errs() << "talos: error: could not inspect native-support build-prefix "
               "manifest '"
            << manifestPath << "': " << manifest.getError().message() << '\n';
     return failure();
@@ -69,7 +69,7 @@ LogicalResult sanitizeBundledBuildPaths(StringRef path, StringRef supportRoot) {
     if (prefix.empty() || !contents.contains(prefix))
       continue;
     std::string replacement(prefix.size(), '_');
-    constexpr StringLiteral neutral = "/obelisk-sdk";
+    constexpr StringLiteral neutral = "/talos-sdk";
     size_t neutralSize = std::min(neutral.size(), replacement.size());
     replacement.replace(0, neutralSize, neutral.data(), neutralSize);
     size_t offset = 0;
@@ -85,14 +85,14 @@ LogicalResult sanitizeBundledBuildPaths(StringRef path, StringRef supportRoot) {
   std::error_code error;
   raw_fd_ostream output(path, error, sys::fs::OF_None);
   if (error) {
-    errs() << "obelisk: error: could not sanitize linked output '" << path
+    errs() << "talos: error: could not sanitize linked output '" << path
            << "': " << error.message() << '\n';
     return failure();
   }
   output.write(rewritten.data(), rewritten.size());
   output.flush();
   if (output.has_error()) {
-    errs() << "obelisk: error: failed while sanitizing linked output '" << path
+    errs() << "talos: error: failed while sanitizing linked output '" << path
            << "': " << output.error().message() << '\n';
     output.clear_error();
     return failure();
@@ -126,7 +126,7 @@ LogicalResult checkUnifiedLTOInputs(ArrayRef<NativeLinkInput> inputs) {
         continue;
       }
       if (!info->UnifiedLTO) {
-        errs() << "obelisk: error: LTO input '" << input.path
+        errs() << "talos: error: LTO input '" << input.path
                << "' is not unified LTO bitcode; compile it with "
                   "-funified-lto\n";
         return failure();
@@ -154,15 +154,15 @@ LogicalResult linkELFExecutable(
     SmallString<256> path(supportRoot);
     sys::path::append(path, name);
     if (!sys::fs::exists(path)) {
-      errs() << "obelisk: error: native support is missing '" << path << "'\n";
+      errs() << "talos: error: native support is missing '" << path << "'\n";
       return failure();
     }
     return path.str().str();
   };
   SmallVector<std::string> staticInputs;
-  StringRef runtimeArchive = fullLTO   ? "libobelisk_rt_lto.a"
-                             : thinLTO ? "libobelisk_rt_prelinked.a"
-                                       : "libobelisk_rt.a";
+  StringRef runtimeArchive = fullLTO   ? "libtalos_rt_lto.a"
+                             : thinLTO ? "libtalos_rt_prelinked.a"
+                                       : "libtalos_rt.a";
   SmallVector<StringRef> staticInputNames{
       "clang_rt.crtbegin.o", runtimeArchive, "libc++.a",
       "libc++abi.a",         "libunwind.a",  "clang_rt.crtend.o"};
@@ -176,7 +176,7 @@ LogicalResult linkELFExecutable(
   FailureOr<SmallString<256>> temporary =
       makeTemporaryBeside(outputPath, ".elf");
   if (failed(temporary)) {
-    errs() << "obelisk: error: could not create temporary executable beside '"
+    errs() << "talos: error: could not create temporary executable beside '"
            << outputPath << "'\n";
     return failure();
   }
@@ -190,7 +190,7 @@ LogicalResult linkELFExecutable(
     owned.push_back("--export-dynamic-symbol=sv*");
   if (vpiEnabled) {
     owned.push_back("--export-dynamic-symbol=vpi*");
-    owned.push_back("--export-dynamic-symbol=obelisk_rt_v1_vpi_object_model");
+    owned.push_back("--export-dynamic-symbol=talos_rt_v1_vpi_object_model");
   }
   owned.push_back((Twine("--threads=") + Twine(linkThreads)).str());
   if (fullLTO) {
@@ -219,7 +219,7 @@ LogicalResult linkELFExecutable(
       cacheDir = thinLTOCacheDir;
     }
     if (std::error_code error = sys::fs::create_directories(cacheDir)) {
-      errs() << "obelisk: error: could not create ThinLTO cache '" << cacheDir
+      errs() << "talos: error: could not create ThinLTO cache '" << cacheDir
              << "': " << error.message() << '\n';
       sys::fs::remove(*temporary);
       return failure();
@@ -248,7 +248,7 @@ LogicalResult linkELFExecutable(
       continue;
     }
     if (linkInput.sharedLibraryIndex >= sharedLibraryInputs.size()) {
-      errs() << "obelisk: error: invalid classified shared-library input\n";
+      errs() << "talos: error: invalid classified shared-library input\n";
       return failure();
     }
     if (!noAsNeeded) {
@@ -328,7 +328,7 @@ LogicalResult linkELFExecutable(
   if (std::error_code error = sys::fs::setPermissions(
           *temporary, sys::fs::perms::all_read | sys::fs::perms::all_exe |
                           sys::fs::perms::owner_write)) {
-    errs() << "obelisk: error: could not make '" << outputPath
+    errs() << "talos: error: could not make '" << outputPath
            << "' executable: " << error.message() << '\n';
     sys::fs::remove(*temporary);
     return failure();
@@ -398,4 +398,4 @@ std::unique_ptr<TargetBackend> createNativeBackend() {
   return std::make_unique<NativeBackend>();
 }
 
-} // namespace obelisk::driver
+} // namespace talos::driver

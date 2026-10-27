@@ -1,11 +1,11 @@
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=generic %s -o %t.native
+// RUN: talos --std=1800-2023 -O3 --native-scheduler=generic %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.native.out
-// RUN: obelisk --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
-// RUN: obelisk --std=1800-2023 -O0 --native-scheduler=generic -emit-llvm %s | FileCheck %s --check-prefix=GENERIC --implicit-check-not=__obelisk_bytecode_image_v1
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot -emit-llvm %s | FileCheck %s --check-prefix=AOT
-// RUN: obelisk --std=1800-2023 -O0 --native-scheduler=generic -emit-llvm %S/declaration-initializers.sv | FileCheck %s --check-prefix=NO-SAMPLED --implicit-check-not=obelisk_rt_v1_native_state_sync --implicit-check-not=__obelisk_execution_extension_v1
+// RUN: talos --std=1800-2023 -O0 --native-scheduler=generic -emit-llvm %s | FileCheck %s --check-prefix=GENERIC --implicit-check-not=__talos_bytecode_image_v1
+// RUN: talos --std=1800-2023 -O3 --native-scheduler=aot -emit-llvm %s | FileCheck %s --check-prefix=AOT
+// RUN: talos --std=1800-2023 -O0 --native-scheduler=generic -emit-llvm %S/declaration-initializers.sv | FileCheck %s --check-prefix=NO-SAMPLED --implicit-check-not=talos_rt_v1_native_state_sync --implicit-check-not=__talos_execution_extension_v1
 
 module native_sampled_ranges;
   logic clk = 0;
@@ -36,15 +36,15 @@ endmodule
 // OUTPUT: sampled stored=101 net=1010
 // OUTPUT-NEXT: sampled stored=010 net=0011
 
-// GENERIC: @__obelisk_execution_descriptor_v1 = constant
+// GENERIC: @__talos_execution_descriptor_v1 = constant
 // GENERIC-SAME: { i32 1, i32 1056, i64 120,
-// GENERIC-SAME: { i32 1, i32 72, ptr @__obelisk_sampled_ranges_v1, i64 2,
-// GENERIC: @__obelisk_sampled_ranges_v1 = internal constant [2 x { i64, i64, i64 }] [{ i64, i64, i64 } { i64 16, i64 0, i64 3 }, { i64, i64, i64 } { i64 32, i64 1, i64 4 }]
+// GENERIC-SAME: { i32 1, i32 72, ptr @__talos_sampled_ranges_v1, i64 2,
+// GENERIC: @__talos_sampled_ranges_v1 = internal constant [2 x { i64, i64, i64 }] [{ i64, i64, i64 } { i64 16, i64 0, i64 3 }, { i64, i64, i64 } { i64 32, i64 1, i64 4 }]
 
-// AOT: @__obelisk_execution_descriptor_v1 = constant
+// AOT: @__talos_execution_descriptor_v1 = constant
 // AOT-SAME: { i32 1, i32 1057, i64 120,
-// AOT-SAME: { i32 1, i32 72, ptr @__obelisk_sampled_ranges_v1, i64 2,
-// AOT: @__obelisk_sampled_ranges_v1 = internal constant [2 x { i64, i64, i64 }] [{ i64, i64, i64 } { i64 16, i64 0, i64 3 }, { i64, i64, i64 } { i64 32, i64 1, i64 4 }]
+// AOT-SAME: { i32 1, i32 72, ptr @__talos_sampled_ranges_v1, i64 2,
+// AOT: @__talos_sampled_ranges_v1 = internal constant [2 x { i64, i64, i64 }] [{ i64, i64, i64 } { i64 16, i64 0, i64 3 }, { i64, i64, i64 } { i64 32, i64 1, i64 4 }]
 
-// NO-SAMPLED: @__obelisk_execution_descriptor_v1 = constant
+// NO-SAMPLED: @__talos_execution_descriptor_v1 = constant
 // NO-SAMPLED-SAME: { i32 1, i32 1024, i64 0, ptr null, i64 0,

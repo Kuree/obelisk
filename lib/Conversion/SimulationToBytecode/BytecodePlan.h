@@ -4,11 +4,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEPLAN_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEPLAN_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEPLAN_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEPLAN_H
 
 #include "BytecodeLayout.h"
-#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
+#include "talos/Analysis/SimulationProcessFrameAnalysis.h"
 
 
 #include "llvm/ADT/DenseMap.h"
@@ -19,10 +19,10 @@
 #include <memory>
 #include <utility>
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 struct Instruction {
-  uint16_t opcode = OBELISK_RT_DB_NOP;
+  uint16_t opcode = TALOS_RT_DB_NOP;
   uint16_t flags = 0;
   uint32_t destination = 0;
   uint32_t source0 = 0;
@@ -103,6 +103,6 @@ llvm::SmallVector<uint8_t> serializeBytecodeImage(
     llvm::ArrayRef<IntrinsicSite> intrinsicSites,
     llvm::ArrayRef<CaptureRecord> captureRecords, const StateLayout &state);
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEPLAN_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEPLAN_H

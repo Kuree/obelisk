@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
+// RUN: talos-opt %s --talos-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-native-group-dataflow.test.
@@ -24,9 +24,9 @@
 // CHECK: llvm.call @group.fallback()
 // CHECK-LABEL: llvm.func @group.fallback()
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
-  llvm.mlir.global internal @__obelisk_state_value(dense<[7, 99, 0]> : tensor<3xi8>) : !llvm.array<3 x i8>
+  llvm.mlir.global internal @__talos_state_value(dense<[7, 99, 0]> : tensor<3xi8>) : !llvm.array<3 x i8>
   llvm.mlir.global internal @ready(dense<[2, 1, 0]> : tensor<3xi64>) : !llvm.array<3 x i64>
-  llvm.mlir.global internal @__obelisk_eval_promotion_pending_mask_v1(dense<0> : tensor<2xi64>) : !llvm.array<2 x i64>
+  llvm.mlir.global internal @__talos_eval_promotion_pending_mask_v1(dense<0> : tensor<2xi64>) : !llvm.array<2 x i64>
   llvm.mlir.global internal @slow_count(0 : i32) : i32
   llvm.func @group() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.ready_word_count = 2 : i64} {
     %p = llvm.mlir.addressof @slow_count : !llvm.ptr
@@ -35,7 +35,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.return
   }
   llvm.func @dataflow() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group, schedule.eval.ready_word_count = 2 : i64} {
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %middle = llvm.getelementptr %base[1] : (!llvm.ptr) -> !llvm.ptr, i8
     %output = llvm.getelementptr %base[2] : (!llvm.ptr) -> !llvm.ptr, i8
     %ready = llvm.mlir.addressof @ready : !llvm.ptr
@@ -97,7 +97,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.return
   }
   llvm.func @main() -> i32 {
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %middle = llvm.getelementptr %base[1] : (!llvm.ptr) -> !llvm.ptr, i8
     %output = llvm.getelementptr %base[2] : (!llvm.ptr) -> !llvm.ptr, i8
     %ready = llvm.mlir.addressof @ready : !llvm.ptr

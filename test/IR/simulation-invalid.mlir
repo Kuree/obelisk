@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 module {
   simulation.design @duplicate {

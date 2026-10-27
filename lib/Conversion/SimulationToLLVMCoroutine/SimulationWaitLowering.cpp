@@ -1,13 +1,13 @@
 //===- SimulationWaitLowering.cpp - Runtime wait-record lowering ----------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -16,52 +16,52 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 LogicalResult
 serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
                      uint32_t count, OpBuilder &builder,
                      SmallVectorImpl<Operation *> &observerBindings) {
-  constexpr uint64_t waitHeaderSize = sizeof(obelisk_rt_wait_record_v1);
-  constexpr uint64_t waitEntrySize = sizeof(obelisk_rt_wait_entry_v1);
+  constexpr uint64_t waitHeaderSize = sizeof(talos_rt_wait_record_v1);
+  constexpr uint64_t waitEntrySize = sizeof(talos_rt_wait_entry_v1);
   constexpr uint32_t noEdge = std::numeric_limits<uint32_t>::max();
   Location location = operation->getLoc();
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
 
   storeAt(builder, location, wait, 0,
-          llvmConstant(builder, location, i32, OBELISK_RT_VERSION), 4);
+          llvmConstant(builder, location, i32, TALOS_RT_VERSION), 4);
   storeAt(builder, location, wait, 4,
           llvmConstant(builder, location, i32, kind), 4);
   uint32_t waitFlags = 0;
   if (auto join = dyn_cast<schedule::NativeSuspendJoinOp>(operation))
     waitFlags = static_cast<uint32_t>(join.getKind());
   else if (isa<schedule::NativeSuspendLevelOp>(operation))
-    waitFlags = OBELISK_RT_WAIT_LEVEL_TRUE;
+    waitFlags = TALOS_RT_WAIT_LEVEL_TRUE;
   else if (isa<schedule::NativeSuspendEdgeIffOp>(operation))
-    waitFlags = OBELISK_RT_WAIT_EDGE_IFF;
+    waitFlags = TALOS_RT_WAIT_EDGE_IFF;
   else if (isa<schedule::NativeSuspendClockSetOp>(operation)) {
-    waitFlags = OBELISK_RT_WAIT_CLOCK_OCCURRENCE;
+    waitFlags = TALOS_RT_WAIT_CLOCK_OCCURRENCE;
     if (cast<schedule::NativeSuspendClockSetOp>(operation).getSlotFinal())
-      waitFlags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL;
+      waitFlags |= TALOS_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL;
     auto clocks = cast<schedule::NativeSuspendClockSetOp>(operation);
     if (llvm::any_of(clocks.getConditions(), [](Value condition) {
           return getConvertedObserverBinding(condition) != nullptr;
         }))
-      waitFlags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS;
+      waitFlags |= TALOS_RT_WAIT_CLOCK_OCCURRENCE_OBSERVERS;
   } else if (auto mailbox =
                  dyn_cast<schedule::NativeSuspendMailboxOp>(operation))
     waitFlags = static_cast<uint32_t>(mailbox.getKind());
-  if ((::obelisk::schedule::has<schedule::metadata::topLevelWildcardWait>(
+  if ((::talos::schedule::has<schedule::metadata::topLevelWildcardWait>(
            operation) ||
-       ::obelisk::schedule::has<schedule::metadata::proceduralEventWait>(
+       ::talos::schedule::has<schedule::metadata::proceduralEventWait>(
            operation)) &&
-      !::obelisk::schedule::has<schedule::metadata::repeatingAlwaysWait>(
+      !::talos::schedule::has<schedule::metadata::repeatingAlwaysWait>(
           operation) &&
       isa<schedule::NativeSuspendChangeOp, schedule::NativeSuspendEdgeOp,
           schedule::NativeSuspendEdgeIffOp, schedule::NativeSuspendAnyOp>(
           operation))
-    waitFlags |= OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF;
+    waitFlags |= TALOS_RT_WAIT_SUPPRESS_ACTIVE_SELF;
   storeAt(builder, location, wait, 8,
           llvmConstant(builder, location, i32, waitFlags), 4);
   storeAt(builder, location, wait, 12,
@@ -121,9 +121,9 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
           uint32_t predicate = predicates ? predicates[index] : 0;
           watchedEdges.push_back(
               getConvertedObserverBinding(condition)
-                  ? OBELISK_RT_WAIT_CONDITION_OBSERVER + predicate
+                  ? TALOS_RT_WAIT_CONDITION_OBSERVER + predicate
                   : (predicates
-                         ? OBELISK_RT_WAIT_CONDITION_PREDICATE + predicate
+                         ? TALOS_RT_WAIT_CONDITION_PREDICATE + predicate
                          : noEdge));
         }
       })
@@ -154,7 +154,7 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
   if (watched.size() != watchedEdges.size())
     return operation->emitError("wait handle and edge inventories disagree");
   auto waitWidths =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::NativeWaitWidths>(
+      ::talos::schedule::get<::talos::schedule::Field::NativeWaitWidths>(
           operation);
   if (!watched.empty() &&
       (!waitWidths || static_cast<size_t>(waitWidths.size()) != watched.size()))
@@ -165,8 +165,8 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
     uint64_t entryOffset = waitHeaderSize + index * waitEntrySize;
     Operation *binding = getConvertedObserverBinding(value);
     if (binding) {
-      auto observerID = ::obelisk::schedule::get<
-          ::obelisk::schedule::Field::NativeObserverId>(binding);
+      auto observerID = ::talos::schedule::get<
+          ::talos::schedule::Field::NativeObserverId>(binding);
       auto captures = getConvertedObserverCaptures(binding);
       if (!observerID || captures.size() > UINT32_MAX)
         return binding->emitOpError("has malformed clock-condition metadata");
@@ -181,7 +181,7 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
       for (Value capture : captures) {
         uint64_t offset =
             capturesOffset +
-            captureCursor++ * sizeof(obelisk_rt_computed_capture_v1);
+            captureCursor++ * sizeof(talos_rt_computed_capture_v1);
         storeAt(builder, location, wait, offset,
                 asI64(builder, location, capture), 8);
         for (uint64_t word = 1; word != 4; ++word)
@@ -204,4 +204,4 @@ serializeRuntimeWait(Operation *operation, Value wait, uint32_t kind,
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

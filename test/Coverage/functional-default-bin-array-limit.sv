@@ -1,4 +1,4 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: not %t --no-coverage-dump 2>&1 | FileCheck %s
 // RUN: not %t +automatic --no-coverage-dump 2>&1 | FileCheck %s
 

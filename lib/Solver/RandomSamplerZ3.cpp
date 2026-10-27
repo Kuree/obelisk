@@ -1,10 +1,10 @@
 //===- RandomSamplerZ3.cpp - Compile exact parameterized sampling plans ---===//
 
 #include "../../runtime/lib/RandModelCount.h"
-#include "obelisk/Runtime/RandomSamplerPlan.h"
-#include "obelisk/Solver/ConstraintSolver.h"
+#include "talos/Runtime/RandomSamplerPlan.h"
+#include "talos/Solver/ConstraintSolver.h"
 
-#ifdef OBELISK_ENABLE_Z3
+#ifdef TALOS_ENABLE_Z3
 #include "RandomRealZ3.h"
 #include <algorithm>
 #include <functional>
@@ -15,7 +15,7 @@
 
 #include <z3.h>
 
-namespace obelisk::solver {
+namespace talos::solver {
 namespace {
 using random::BooleanCircuit;
 using random::PlanOpcode;
@@ -144,17 +144,17 @@ public:
     if (random::isRealInstruction(opcode))
       return realUnary(opcode, input, width, sign);
     if (input.real) {
-      if (opcode == OBELISK_RT_RANDOM_LOGICAL_NOT_V1)
+      if (opcode == TALOS_RT_RANDOM_LOGICAL_NOT_V1)
         return boolean(Z3_mk_not(context, truth(input)), width);
-      if ((opcode == OBELISK_RT_RANDOM_POS_V1 ||
-           opcode == OBELISK_RT_RANDOM_NEG_V1) &&
+      if ((opcode == TALOS_RT_RANDOM_POS_V1 ||
+           opcode == TALOS_RT_RANDOM_NEG_V1) &&
           (width == 32 || width == 64)) {
         Z3_ast value = resize(input, width);
         Z3_ast representation =
             input.width == width ? input.representation : nullptr;
-        if (opcode == OBELISK_RT_RANDOM_NEG_V1)
+        if (opcode == TALOS_RT_RANDOM_NEG_V1)
           value = Z3_mk_fpa_neg(context, value);
-        if (representation && opcode == OBELISK_RT_RANDOM_NEG_V1)
+        if (representation && opcode == TALOS_RT_RANDOM_NEG_V1)
           representation =
               Z3_mk_bvxor(context, representation,
                           constant(uint64_t{1} << (width - 1), width));
@@ -162,19 +162,19 @@ public:
                     width,
                     true,
                     representation,
-                    opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
+                    opcode == TALOS_RT_RANDOM_POS_V1 && input.width == width
                         ? input.coordinate
                         : nullptr,
-                    opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
+                    opcode == TALOS_RT_RANDOM_POS_V1 && input.width == width
                         ? input.coordinateGuard
                         : nullptr,
-                    opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
+                    opcode == TALOS_RT_RANDOM_POS_V1 && input.width == width
                         ? input.coordinateState
                         : nullptr};
         if (input.width == width && input.numericPayload) {
           result.numericPayload = input.numericPayload;
           result.numericWidth = input.numericWidth;
-          if (opcode == OBELISK_RT_RANDOM_NEG_V1)
+          if (opcode == TALOS_RT_RANDOM_NEG_V1)
             result.numericPayload =
                 Z3_mk_bvxor(context, result.numericPayload,
                             constant(uint64_t{1} << (result.numericWidth - 1),
@@ -186,41 +186,41 @@ public:
     }
     Z3_ast result = nullptr;
     switch (opcode) {
-    case OBELISK_RT_RANDOM_CAST_V1:
-    case OBELISK_RT_RANDOM_POS_V1:
+    case TALOS_RT_RANDOM_CAST_V1:
+    case TALOS_RT_RANDOM_POS_V1:
       result = resize(input, width, sign);
       break;
-    case OBELISK_RT_RANDOM_NEG_V1:
+    case TALOS_RT_RANDOM_NEG_V1:
       result = Z3_mk_bvneg(context, resize(input, width, sign));
       break;
-    case OBELISK_RT_RANDOM_BIT_NOT_V1:
+    case TALOS_RT_RANDOM_BIT_NOT_V1:
       result = Z3_mk_bvnot(context, resize(input, width, sign));
       break;
-    case OBELISK_RT_RANDOM_REDUCE_AND_V1:
-    case OBELISK_RT_RANDOM_REDUCE_NAND_V1: {
+    case TALOS_RT_RANDOM_REDUCE_AND_V1:
+    case TALOS_RT_RANDOM_REDUCE_NAND_V1: {
       Z3_ast ones = Z3_mk_bvnot(context, constant(0, input.width));
       Z3_ast predicate = Z3_mk_eq(context, input.value, ones);
-      if (opcode == OBELISK_RT_RANDOM_REDUCE_NAND_V1)
+      if (opcode == TALOS_RT_RANDOM_REDUCE_NAND_V1)
         predicate = Z3_mk_not(context, predicate);
       return boolean(predicate, width);
     }
-    case OBELISK_RT_RANDOM_REDUCE_OR_V1:
+    case TALOS_RT_RANDOM_REDUCE_OR_V1:
       return boolean(truth(input), width);
-    case OBELISK_RT_RANDOM_REDUCE_NOR_V1:
-    case OBELISK_RT_RANDOM_LOGICAL_NOT_V1:
+    case TALOS_RT_RANDOM_REDUCE_NOR_V1:
+    case TALOS_RT_RANDOM_LOGICAL_NOT_V1:
       return boolean(Z3_mk_not(context, truth(input)), width);
-    case OBELISK_RT_RANDOM_REDUCE_XOR_V1:
-    case OBELISK_RT_RANDOM_REDUCE_XNOR_V1: {
+    case TALOS_RT_RANDOM_REDUCE_XOR_V1:
+    case TALOS_RT_RANDOM_REDUCE_XNOR_V1: {
       Z3_ast parity = Z3_mk_false(context);
       for (unsigned bit = 0; bit != input.width; ++bit) {
         Bits selected{Z3_mk_extract(context, bit, bit, input.value), 1};
         parity = Z3_mk_xor(context, parity, truth(selected));
       }
-      if (opcode == OBELISK_RT_RANDOM_REDUCE_XNOR_V1)
+      if (opcode == TALOS_RT_RANDOM_REDUCE_XNOR_V1)
         parity = Z3_mk_not(context, parity);
       return boolean(parity, width);
     }
-    case OBELISK_RT_RANDOM_COUNT_ONES_V1: {
+    case TALOS_RT_RANDOM_COUNT_ONES_V1: {
       unsigned countWidth = std::min(width, 32u - __builtin_clz(input.width));
       // A shared prefix sum takes linear construction work. Its low-to-high
       // order also lets equal partial counts share the same cofactor after
@@ -234,7 +234,7 @@ public:
       result = resize({result, countWidth}, width);
       break;
     }
-    case OBELISK_RT_RANDOM_CLOG2_V1: {
+    case TALOS_RT_RANDOM_CLOG2_V1: {
       // $clog2 is at most the input width, so select among indices only as
       // wide as that bound and zero-extend once, as for $countones.
       unsigned indexWidth = std::min(width, 32u - __builtin_clz(input.width));
@@ -255,7 +255,7 @@ public:
     default:
       break;
     }
-    if (opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 &&
+    if (opcode == TALOS_RT_RANDOM_COUNT_ONES_V1 &&
         width >= 32u - __builtin_clz(input.width))
       popcounts.emplace(result, input);
     return {result, width};
@@ -308,8 +308,8 @@ public:
     unsigned commonWidth = std::max(lhs.width, rhs.width);
     Z3_ast a = resize(lhs, commonWidth, sign);
     Z3_ast b = resize(rhs, commonWidth, sign);
-    if (opcode == OBELISK_RT_RANDOM_EQ_V1 ||
-        opcode == OBELISK_RT_RANDOM_NE_V1) {
+    if (opcode == TALOS_RT_RANDOM_EQ_V1 ||
+        opcode == TALOS_RT_RANDOM_NE_V1) {
       for (auto pair : {std::make_pair(a, b), std::make_pair(b, a)}) {
         auto count = popcounts.find(pair.first);
         if (count == popcounts.end())
@@ -333,45 +333,45 @@ public:
           // a width-sized predicate for every possible count is quadratic.
           match = Z3_mk_eq(context, pair.first, pair.second);
         }
-        if (opcode == OBELISK_RT_RANDOM_NE_V1)
+        if (opcode == TALOS_RT_RANDOM_NE_V1)
           match = Z3_mk_not(context, match);
         return boolean(match, width);
       }
     }
     Z3_ast predicate = nullptr;
     switch (opcode) {
-    case OBELISK_RT_RANDOM_EQ_V1:
+    case TALOS_RT_RANDOM_EQ_V1:
       predicate = Z3_mk_eq(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_NE_V1:
+    case TALOS_RT_RANDOM_NE_V1:
       predicate = Z3_mk_not(context, Z3_mk_eq(context, a, b));
       break;
-    case OBELISK_RT_RANDOM_GE_V1:
+    case TALOS_RT_RANDOM_GE_V1:
       predicate =
           sign ? Z3_mk_bvsge(context, a, b) : Z3_mk_bvuge(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_GT_V1:
+    case TALOS_RT_RANDOM_GT_V1:
       predicate =
           sign ? Z3_mk_bvsgt(context, a, b) : Z3_mk_bvugt(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_LE_V1:
+    case TALOS_RT_RANDOM_LE_V1:
       predicate =
           sign ? Z3_mk_bvsle(context, a, b) : Z3_mk_bvule(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_LT_V1:
+    case TALOS_RT_RANDOM_LT_V1:
       predicate =
           sign ? Z3_mk_bvslt(context, a, b) : Z3_mk_bvult(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_LOGICAL_AND_V1:
+    case TALOS_RT_RANDOM_LOGICAL_AND_V1:
       predicate = conjunction(truth(lhs), truth(rhs));
       break;
-    case OBELISK_RT_RANDOM_LOGICAL_OR_V1:
+    case TALOS_RT_RANDOM_LOGICAL_OR_V1:
       predicate = disjunction(truth(lhs), truth(rhs));
       break;
-    case OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1:
+    case TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1:
       predicate = Z3_mk_implies(context, truth(lhs), truth(rhs));
       break;
-    case OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1:
+    case TALOS_RT_RANDOM_LOGICAL_EQUIV_V1:
       predicate = Z3_mk_eq(context, truth(lhs), truth(rhs));
       break;
     default:
@@ -383,47 +383,47 @@ public:
     b = resize(rhs, width, sign);
     Z3_ast result = nullptr;
     switch (opcode) {
-    case OBELISK_RT_RANDOM_ADD_V1:
+    case TALOS_RT_RANDOM_ADD_V1:
       result = Z3_mk_bvadd(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_SUB_V1:
+    case TALOS_RT_RANDOM_SUB_V1:
       result = Z3_mk_bvsub(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_MUL_V1:
+    case TALOS_RT_RANDOM_MUL_V1:
       result = Z3_mk_bvmul(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_BIT_AND_V1:
+    case TALOS_RT_RANDOM_BIT_AND_V1:
       result = Z3_mk_bvand(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_BIT_OR_V1:
+    case TALOS_RT_RANDOM_BIT_OR_V1:
       result = Z3_mk_bvor(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_BIT_XOR_V1:
+    case TALOS_RT_RANDOM_BIT_XOR_V1:
       result = Z3_mk_bvxor(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_BIT_XNOR_V1:
+    case TALOS_RT_RANDOM_BIT_XNOR_V1:
       result = Z3_mk_bvnot(context, Z3_mk_bvxor(context, a, b));
       break;
-    case OBELISK_RT_RANDOM_DIV_V1:
+    case TALOS_RT_RANDOM_DIV_V1:
       result = sign ? Z3_mk_bvsdiv(context, a, b) : Z3_mk_bvudiv(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_MOD_V1:
+    case TALOS_RT_RANDOM_MOD_V1:
       result = sign ? Z3_mk_bvsrem(context, a, b) : Z3_mk_bvurem(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_SHIFT_LEFT_V1:
-    case OBELISK_RT_RANDOM_SHIFT_RIGHT_V1:
-    case OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1: {
+    case TALOS_RT_RANDOM_SHIFT_LEFT_V1:
+    case TALOS_RT_RANDOM_SHIFT_RIGHT_V1:
+    case TALOS_RT_RANDOM_SHIFT_RIGHT_ARITH_V1: {
       unsigned operationWidth = std::max(width, rhs.width);
-      bool arithmetic = opcode == OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1;
+      bool arithmetic = opcode == TALOS_RT_RANDOM_SHIFT_RIGHT_ARITH_V1;
       a = resize({resize(lhs, width, sign), width}, operationWidth, arithmetic);
       b = resize(rhs, operationWidth);
-      result = opcode == OBELISK_RT_RANDOM_SHIFT_LEFT_V1
+      result = opcode == TALOS_RT_RANDOM_SHIFT_LEFT_V1
                    ? Z3_mk_bvshl(context, a, b)
                : arithmetic ? Z3_mk_bvashr(context, a, b)
                             : Z3_mk_bvlshr(context, a, b);
       return {resize({result, operationWidth}, width), width};
     }
-    case OBELISK_RT_RANDOM_POWER_V1: {
+    case TALOS_RT_RANDOM_POWER_V1: {
       result = constant(1, width);
       for (unsigned bit = 0; bit != rhs.width; ++bit) {
         Bits selected{Z3_mk_extract(context, bit, bit, rhs.value), 1};
@@ -447,7 +447,7 @@ public:
   Z3_ast rounding() { return Z3_mk_fpa_round_nearest_ties_to_even(context); }
 
   Z3_ast rankValid(Bits input) {
-    bool shortReal = input.width == OBELISK_RT_REAL32_RANK_BITS;
+    bool shortReal = input.width == TALOS_RT_REAL32_RANK_BITS;
     unsigned fraction = shortReal ? 23 : 52;
     unsigned exponent = shortReal ? 254 : 2046;
     Z3_ast maximum = Z3_mk_bvshl(
@@ -462,15 +462,15 @@ public:
 
   Bits realUnary(uint8_t opcode, Bits input, unsigned width, bool sign) {
     bool format = width == 32 || width == 64;
-    if (opcode == OBELISK_RT_RANDOM_REAL_IS_FINITE_V1) {
+    if (opcode == TALOS_RT_RANDOM_REAL_IS_FINITE_V1) {
       if (!input.real || sign || width != 1)
         return {nullptr, width};
       return boolean(conjunction(
           Z3_mk_not(context, Z3_mk_fpa_is_nan(context, input.value)),
           Z3_mk_not(context, Z3_mk_fpa_is_infinite(context, input.value))));
     }
-    if (opcode == OBELISK_RT_RANDOM_REAL_TO_INTEGER_V1 ||
-        opcode == OBELISK_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1) {
+    if (opcode == TALOS_RT_RANDOM_REAL_TO_INTEGER_V1 ||
+        opcode == TALOS_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1) {
       if (!input.real || sign || !width)
         return {nullptr, width};
       hasReal = true;
@@ -490,26 +490,26 @@ public:
         payload = Z3_mk_fpa_to_ieee_bv(context, safe);
         return {detail::realIntegerBits(
                     context, payload, input.width, width,
-                    opcode == OBELISK_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1),
+                    opcode == TALOS_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1),
                 width};
       }
       return {detail::realIntegerBits(
                   context, payload,
                   input.representation ? input.width : input.numericWidth,
-                  width, opcode == OBELISK_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1),
+                  width, opcode == TALOS_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1),
               width};
     }
-    if (opcode == OBELISK_RT_RANDOM_REAL_RANK_VALID_V1) {
+    if (opcode == TALOS_RT_RANDOM_REAL_RANK_VALID_V1) {
       if (input.real || sign || width != 1 ||
-          (input.width != OBELISK_RT_REAL32_RANK_BITS &&
-           input.width != OBELISK_RT_REAL64_RANK_BITS))
+          (input.width != TALOS_RT_REAL32_RANK_BITS &&
+           input.width != TALOS_RT_REAL64_RANK_BITS))
         return {nullptr, width};
       return boolean(rankValid(input));
     }
     if (!format)
       return {nullptr, width};
     hasReal = true;
-    if (opcode == OBELISK_RT_RANDOM_REAL_CAST_V1) {
+    if (opcode == TALOS_RT_RANDOM_REAL_CAST_V1) {
       bool retainsCoordinate =
           input.real &&
           (input.width == width || (input.width == 32 && width == 64));
@@ -537,7 +537,7 @@ public:
       }
       return result;
     }
-    if (opcode == OBELISK_RT_RANDOM_REAL_TO_BITS_V1) {
+    if (opcode == TALOS_RT_RANDOM_REAL_TO_BITS_V1) {
       if (!input.real || input.width != width || sign)
         return {nullptr, width};
       // Preserve payloads of bitcasts and rank decoders. Floating arithmetic
@@ -546,20 +546,20 @@ public:
     }
     if (input.real || sign)
       return {nullptr, width};
-    if (opcode == OBELISK_RT_RANDOM_REAL32_BITS_V1 ||
-        opcode == OBELISK_RT_RANDOM_REAL64_BITS_V1) {
+    if (opcode == TALOS_RT_RANDOM_REAL32_BITS_V1 ||
+        opcode == TALOS_RT_RANDOM_REAL64_BITS_V1) {
       if (input.width != width ||
-          width != (opcode == OBELISK_RT_RANDOM_REAL32_BITS_V1 ? 32u : 64u))
+          width != (opcode == TALOS_RT_RANDOM_REAL32_BITS_V1 ? 32u : 64u))
         return {nullptr, width};
       return {Z3_mk_fpa_to_fp_bv(context, input.value, realSort(width)), width,
               true, input.value};
     }
     unsigned rankWidth =
-        width == 32 ? OBELISK_RT_REAL32_RANK_BITS : OBELISK_RT_REAL64_RANK_BITS;
-    if ((opcode != OBELISK_RT_RANDOM_REAL32_FROM_RANK_V1 &&
-         opcode != OBELISK_RT_RANDOM_REAL64_FROM_RANK_V1) ||
+        width == 32 ? TALOS_RT_REAL32_RANK_BITS : TALOS_RT_REAL64_RANK_BITS;
+    if ((opcode != TALOS_RT_RANDOM_REAL32_FROM_RANK_V1 &&
+         opcode != TALOS_RT_RANDOM_REAL64_FROM_RANK_V1) ||
         input.width != rankWidth ||
-        width != (opcode == OBELISK_RT_RANDOM_REAL32_FROM_RANK_V1 ? 32u : 64u))
+        width != (opcode == TALOS_RT_RANDOM_REAL32_FROM_RANK_V1 ? 32u : 64u))
       return {nullptr, width};
     unsigned fraction = width == 32 ? 23 : 52;
     unsigned exponent = width == 32 ? 8 : 11;
@@ -645,7 +645,7 @@ public:
                            unsigned precision,
                            std::pair<Z3_ast, Z3_ast> capturedCell = {nullptr,
                                                                      nullptr}) {
-    if (rank.width == OBELISK_RT_REAL32_RANK_BITS && precision == 64) {
+    if (rank.width == TALOS_RT_REAL32_RANK_BITS && precision == 64) {
       // Widening shortreal is exact. Its order against a real endpoint is
       // determined by that endpoint's nearest shortreal and which side the
       // endpoint lies on. No candidate coordinate decoder is needed.
@@ -682,29 +682,29 @@ public:
         return compareCoordinate(kind, rank, nearestPayload, 32, cell);
       };
       switch (opcode) {
-      case OBELISK_RT_RANDOM_EQ_V1:
-      case OBELISK_RT_RANDOM_NE_V1: {
+      case TALOS_RT_RANDOM_EQ_V1:
+      case TALOS_RT_RANDOM_NE_V1: {
         Z3_ast equal = conjunction(Z3_mk_fpa_eq(context, widened, target),
-                                   compare(OBELISK_RT_RANDOM_EQ_V1));
-        return opcode == OBELISK_RT_RANDOM_EQ_V1 ? equal
+                                   compare(TALOS_RT_RANDOM_EQ_V1));
+        return opcode == TALOS_RT_RANDOM_EQ_V1 ? equal
                                                  : Z3_mk_not(context, equal);
       }
-      case OBELISK_RT_RANDOM_LT_V1:
+      case TALOS_RT_RANDOM_LT_V1:
         return Z3_mk_ite(context, Z3_mk_fpa_lt(context, widened, target),
-                         compare(OBELISK_RT_RANDOM_LE_V1),
-                         compare(OBELISK_RT_RANDOM_LT_V1));
-      case OBELISK_RT_RANDOM_LE_V1:
+                         compare(TALOS_RT_RANDOM_LE_V1),
+                         compare(TALOS_RT_RANDOM_LT_V1));
+      case TALOS_RT_RANDOM_LE_V1:
         return Z3_mk_ite(context, Z3_mk_fpa_leq(context, widened, target),
-                         compare(OBELISK_RT_RANDOM_LE_V1),
-                         compare(OBELISK_RT_RANDOM_LT_V1));
-      case OBELISK_RT_RANDOM_GT_V1:
+                         compare(TALOS_RT_RANDOM_LE_V1),
+                         compare(TALOS_RT_RANDOM_LT_V1));
+      case TALOS_RT_RANDOM_GT_V1:
         return Z3_mk_ite(context, Z3_mk_fpa_gt(context, widened, target),
-                         compare(OBELISK_RT_RANDOM_GE_V1),
-                         compare(OBELISK_RT_RANDOM_GT_V1));
-      case OBELISK_RT_RANDOM_GE_V1:
+                         compare(TALOS_RT_RANDOM_GE_V1),
+                         compare(TALOS_RT_RANDOM_GT_V1));
+      case TALOS_RT_RANDOM_GE_V1:
         return Z3_mk_ite(context, Z3_mk_fpa_geq(context, widened, target),
-                         compare(OBELISK_RT_RANDOM_GE_V1),
-                         compare(OBELISK_RT_RANDOM_GT_V1));
+                         compare(TALOS_RT_RANDOM_GE_V1),
+                         compare(TALOS_RT_RANDOM_GT_V1));
       default:
         return nullptr;
       }
@@ -761,32 +761,32 @@ public:
     Z3_ast minimumRank = Z3_mk_eq(context, rank.value, minimum);
     Z3_ast finite = nullptr, infinite = nullptr;
     switch (opcode) {
-    case OBELISK_RT_RANDOM_EQ_V1:
-    case OBELISK_RT_RANDOM_NE_V1:
+    case TALOS_RT_RANDOM_EQ_V1:
+    case TALOS_RT_RANDOM_NE_V1:
       finite =
           conjunction(Z3_mk_not(context, coordinateOrder(rank.value, first,
                                                          rank.width, false)),
                       coordinateOrder(rank.value, last, rank.width, true));
       infinite = conjunction(negative, minimumRank);
-      if (opcode == OBELISK_RT_RANDOM_NE_V1) {
+      if (opcode == TALOS_RT_RANDOM_NE_V1) {
         finite = Z3_mk_not(context, finite);
         infinite = Z3_mk_not(context, infinite);
       }
       break;
-    case OBELISK_RT_RANDOM_LT_V1:
+    case TALOS_RT_RANDOM_LT_V1:
       finite = coordinateOrder(rank.value, first, rank.width, false);
       infinite = Z3_mk_not(context, negative);
       break;
-    case OBELISK_RT_RANDOM_LE_V1:
+    case TALOS_RT_RANDOM_LE_V1:
       finite = coordinateOrder(rank.value, last, rank.width, true);
       infinite = disjunction(Z3_mk_not(context, negative), minimumRank);
       break;
-    case OBELISK_RT_RANDOM_GT_V1:
+    case TALOS_RT_RANDOM_GT_V1:
       finite = Z3_mk_not(context,
                          coordinateOrder(rank.value, last, rank.width, true));
       infinite = conjunction(negative, Z3_mk_not(context, minimumRank));
       break;
-    case OBELISK_RT_RANDOM_GE_V1:
+    case TALOS_RT_RANDOM_GE_V1:
       finite = Z3_mk_not(context,
                          coordinateOrder(rank.value, first, rank.width, false));
       infinite = negative;
@@ -801,26 +801,26 @@ public:
         special, Z3_mk_not(context, Z3_mk_eq(context, fractionBits,
                                              constant(0, fraction))));
     return Z3_mk_ite(context, nan,
-                     opcode == OBELISK_RT_RANDOM_NE_V1 ? Z3_mk_true(context)
+                     opcode == TALOS_RT_RANDOM_NE_V1 ? Z3_mk_true(context)
                                                        : Z3_mk_false(context),
                      Z3_mk_ite(context, special, infinite, finite));
   }
 
   Bits realBinary(uint8_t opcode, Bits lhs, Bits rhs, unsigned width) {
     switch (opcode) {
-    case OBELISK_RT_RANDOM_LOGICAL_AND_V1:
+    case TALOS_RT_RANDOM_LOGICAL_AND_V1:
       return boolean(conjunction(truth(lhs), truth(rhs)), width);
-    case OBELISK_RT_RANDOM_LOGICAL_OR_V1:
+    case TALOS_RT_RANDOM_LOGICAL_OR_V1:
       return boolean(disjunction(truth(lhs), truth(rhs)), width);
-    case OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1:
+    case TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1:
       return boolean(Z3_mk_implies(context, truth(lhs), truth(rhs)), width);
-    case OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1:
+    case TALOS_RT_RANDOM_LOGICAL_EQUIV_V1:
       return boolean(Z3_mk_eq(context, truth(lhs), truth(rhs)), width);
     }
     if (!lhs.real || !rhs.real)
       return {nullptr, width};
-    if (lhs.width == rhs.width && opcode >= OBELISK_RT_RANDOM_EQ_V1 &&
-        opcode <= OBELISK_RT_RANDOM_LT_V1) {
+    if (lhs.width == rhs.width && opcode >= TALOS_RT_RANDOM_EQ_V1 &&
+        opcode <= TALOS_RT_RANDOM_LT_V1) {
       if (lhs.coordinate && rhs.representation && !rhs.coordinate) {
         unsigned rankWidth =
             Z3_get_bv_sort_size(context, Z3_get_sort(context, lhs.coordinate));
@@ -845,17 +845,17 @@ public:
             Z3_get_bv_sort_size(context, Z3_get_sort(context, rhs.coordinate));
         uint8_t reversed = opcode;
         switch (opcode) {
-        case OBELISK_RT_RANDOM_GE_V1:
-          reversed = OBELISK_RT_RANDOM_LE_V1;
+        case TALOS_RT_RANDOM_GE_V1:
+          reversed = TALOS_RT_RANDOM_LE_V1;
           break;
-        case OBELISK_RT_RANDOM_GT_V1:
-          reversed = OBELISK_RT_RANDOM_LT_V1;
+        case TALOS_RT_RANDOM_GT_V1:
+          reversed = TALOS_RT_RANDOM_LT_V1;
           break;
-        case OBELISK_RT_RANDOM_LE_V1:
-          reversed = OBELISK_RT_RANDOM_GE_V1;
+        case TALOS_RT_RANDOM_LE_V1:
+          reversed = TALOS_RT_RANDOM_GE_V1;
           break;
-        case OBELISK_RT_RANDOM_LT_V1:
-          reversed = OBELISK_RT_RANDOM_GT_V1;
+        case TALOS_RT_RANDOM_LT_V1:
+          reversed = TALOS_RT_RANDOM_GT_V1;
           break;
         }
         if (Z3_ast predicate =
@@ -880,22 +880,22 @@ public:
     Z3_ast a = resize(lhs, precision), b = resize(rhs, precision);
     Z3_ast predicate = nullptr;
     switch (opcode) {
-    case OBELISK_RT_RANDOM_EQ_V1:
+    case TALOS_RT_RANDOM_EQ_V1:
       predicate = Z3_mk_fpa_eq(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_NE_V1:
+    case TALOS_RT_RANDOM_NE_V1:
       predicate = Z3_mk_not(context, Z3_mk_fpa_eq(context, a, b));
       break;
-    case OBELISK_RT_RANDOM_GE_V1:
+    case TALOS_RT_RANDOM_GE_V1:
       predicate = Z3_mk_fpa_geq(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_GT_V1:
+    case TALOS_RT_RANDOM_GT_V1:
       predicate = Z3_mk_fpa_gt(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_LE_V1:
+    case TALOS_RT_RANDOM_LE_V1:
       predicate = Z3_mk_fpa_leq(context, a, b);
       break;
-    case OBELISK_RT_RANDOM_LT_V1:
+    case TALOS_RT_RANDOM_LT_V1:
       predicate = Z3_mk_fpa_lt(context, a, b);
       break;
     }
@@ -907,16 +907,16 @@ public:
     b = resize(rhs, width);
     Z3_ast value = nullptr;
     switch (opcode) {
-    case OBELISK_RT_RANDOM_ADD_V1:
+    case TALOS_RT_RANDOM_ADD_V1:
       value = Z3_mk_fpa_add(context, rounding(), a, b);
       break;
-    case OBELISK_RT_RANDOM_SUB_V1:
+    case TALOS_RT_RANDOM_SUB_V1:
       value = Z3_mk_fpa_sub(context, rounding(), a, b);
       break;
-    case OBELISK_RT_RANDOM_MUL_V1:
+    case TALOS_RT_RANDOM_MUL_V1:
       value = Z3_mk_fpa_mul(context, rounding(), a, b);
       break;
-    case OBELISK_RT_RANDOM_DIV_V1:
+    case TALOS_RT_RANDOM_DIV_V1:
       value = Z3_mk_fpa_div(context, rounding(), a, b);
       break;
     }
@@ -1045,8 +1045,8 @@ public:
       auto found = realCaptureCells.find(key);
       if (found != realCaptureCells.end())
         return found->second;
-      unsigned width = precision == 32 ? OBELISK_RT_REAL32_RANK_BITS
-                                       : OBELISK_RT_REAL64_RANK_BITS;
+      unsigned width = precision == 32 ? TALOS_RT_REAL32_RANK_BITS
+                                       : TALOS_RT_REAL64_RANK_BITS;
       PlanOpcode first = narrowed          ? PlanOpcode::Real32From64FirstBit
                          : precision == 32 ? PlanOpcode::Real32FirstBit
                                            : PlanOpcode::Real64FirstBit;
@@ -1228,8 +1228,8 @@ public:
       else if (node.opcode == PlanOpcode::CaptureBit)
         columns[index] = node.b;
       else if (unsigned precision = random::realCellPrecision(node.opcode))
-        columns[index] = (precision == 32 ? OBELISK_RT_REAL32_RANK_BITS
-                                          : OBELISK_RT_REAL64_RANK_BITS) -
+        columns[index] = (precision == 32 ? TALOS_RT_REAL32_RANK_BITS
+                                          : TALOS_RT_REAL64_RANK_BITS) -
                          1 - node.b;
     }
     // Each attempt traverses only its own subcircuit, and a failed one also
@@ -1425,12 +1425,12 @@ private:
 std::optional<std::vector<uint8_t>>
 compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
                          const std::vector<uint32_t> &captureWidths) {
-  if (programSize < OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE ||
-      read32(program) != OBELISK_RT_RANDOM_PROGRAM_MAGIC)
+  if (programSize < TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE ||
+      read32(program) != TALOS_RT_RANDOM_PROGRAM_MAGIC)
     return std::nullopt;
-  bool wide = read16(program + 4) == OBELISK_RT_RANDOM_PROGRAM_VERSION_V2;
-  size_t header = wide ? OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2
-                       : OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
+  bool wide = read16(program + 4) == TALOS_RT_RANDOM_PROGRAM_VERSION_V2;
+  size_t header = wide ? TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2
+                       : TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE;
   unsigned width = read32(program + 8), instructions = read32(program + 12);
   if (programSize < header || instructions > (programSize - header) / 16 ||
       captureWidths.size() != read32(program + 16))
@@ -1445,7 +1445,7 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
   boundary[0] = boundary[width] = true;
   for (unsigned index = 0; index != instructions; ++index) {
     const uint8_t *p = program + header + size_t(index) * 16;
-    if (p[0] != OBELISK_RT_RANDOM_PUSH_VARIABLE_V1)
+    if (p[0] != TALOS_RT_RANDOM_PUSH_VARIABLE_V1)
       continue;
     unsigned bits = wide ? read32(p + 4) : p[1];
     unsigned offset = read32(p + (wide ? 8 : 4));
@@ -1461,11 +1461,11 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
   // Numeric real intervals prune high prefixes first. Integral fields retain
   // their low-prefix order, which is useful for modular arithmetic and counts.
   std::vector<bool> descending(boundaries.size(), false);
-  if (read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL)
+  if (read32(program + 20) & TALOS_RT_RANDOM_PROGRAM_HAS_REAL)
     for (size_t field = 1; field != boundaries.size(); ++field) {
       unsigned fieldWidth = boundaries[field] - boundaries[field - 1];
-      descending[field] = fieldWidth == OBELISK_RT_REAL32_RANK_BITS ||
-                          fieldWidth == OBELISK_RT_REAL64_RANK_BITS;
+      descending[field] = fieldWidth == TALOS_RT_REAL32_RANK_BITS ||
+                          fieldWidth == TALOS_RT_REAL64_RANK_BITS;
     }
   unsigned ordinal = 0;
   // Keep only unfinished fields in the column traversal. Each declared bit
@@ -1506,18 +1506,18 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
   std::vector<std::pair<unsigned, ID>> roots;
   random::DistBitSequence distBits(
       captureWidths.size(), std::nullopt,
-      read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED);
+      read32(program + 20) & TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED);
   for (unsigned index = 0; index != instructions; ++index) {
     const uint8_t *p = program + header + size_t(index) * 16;
     unsigned opcode = p[0], bits = wide ? read32(p + 4) : p[1];
     uint8_t instructionFlags = wide ? p[1] : p[2];
-    bool sign = (instructionFlags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
+    bool sign = (instructionFlags & TALOS_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
     unsigned operand = read32(p + (wide ? 8 : 4));
     uint64_t auxiliary = wide ? read32(p + 12) : read64(p + 8);
     if (!distBits.visit(opcode, bits, instructionFlags, operand, auxiliary))
       return std::nullopt;
     if (random::isRealInstruction(opcode)) {
-      if (!(read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL) ||
+      if (!(read32(program + 20) & TALOS_RT_RANDOM_PROGRAM_HAS_REAL) ||
           stack.empty() ||
           !random::validRealInstruction(opcode, bits, instructionFlags, operand,
                                         auxiliary, stack.back().width))
@@ -1525,17 +1525,17 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
     }
     if (!bits)
       return std::nullopt;
-    if (opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1) {
+    if (opcode == TALOS_RT_RANDOM_PUSH_VARIABLE_V1) {
       if (operand > width || bits > width - operand)
         return std::nullopt;
       stack.push_back(
           {Z3_mk_extract(f.context, operand + bits - 1, operand, variable),
            bits});
-    } else if (opcode == OBELISK_RT_RANDOM_PUSH_CAPTURE_V1) {
+    } else if (opcode == TALOS_RT_RANDOM_PUSH_CAPTURE_V1) {
       if (operand >= captures.size())
         return std::nullopt;
       stack.push_back({f.resize(captures[operand], bits), bits});
-    } else if (opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
+    } else if (opcode == TALOS_RT_RANDOM_PUSH_LITERAL_V1) {
       if (wide) {
         size_t count = (uint64_t(bits) + 63) / 64;
         if (auxiliary > literalWords || count > literalWords - auxiliary)
@@ -1549,17 +1549,17 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
           return std::nullopt;
         stack.push_back({f.constant(auxiliary, bits), bits});
       }
-    } else if (opcode == OBELISK_RT_RANDOM_STORE_VALUE_V1) {
+    } else if (opcode == TALOS_RT_RANDOM_STORE_VALUE_V1) {
       if (stack.empty() || instructionFlags != 0 || auxiliary != 0 ||
           operand != temporaries.size() || bits != stack.back().width)
         return std::nullopt;
       temporaries.push_back(stack.back());
-    } else if (opcode == OBELISK_RT_RANDOM_LOAD_VALUE_V1) {
+    } else if (opcode == TALOS_RT_RANDOM_LOAD_VALUE_V1) {
       if (instructionFlags != 0 || auxiliary != 0 ||
           operand >= temporaries.size() || bits != temporaries[operand].width)
         return std::nullopt;
       stack.push_back(temporaries[operand]);
-    } else if (opcode == OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
+    } else if (opcode == TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
       if (operand >= 64)
         return std::nullopt;
       auto found = enabled.find(operand);
@@ -1573,7 +1573,7 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
     } else if (random::isDistExportInstruction(opcode)) {
       if (stack.size() != 1 || stack.back().real ||
           stack.back().width != bits ||
-          (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 &&
+          (opcode == TALOS_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 &&
            bits != captureWidths[operand]))
         return std::nullopt;
       Bits selected{
@@ -1585,9 +1585,9 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
       roots.emplace_back(index, root);
       if (auxiliary + 1 == bits)
         stack.clear();
-    } else if (opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||
-               opcode == OBELISK_RT_RANDOM_END_SOFT_V1 ||
-               opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
+    } else if (opcode == TALOS_RT_RANDOM_END_HARD_V1 ||
+               opcode == TALOS_RT_RANDOM_END_SOFT_V1 ||
+               opcode == TALOS_RT_RANDOM_END_DIST_GUARD_V1) {
       if (stack.size() != 1)
         return std::nullopt;
       ID root;
@@ -1595,7 +1595,7 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
         return std::nullopt;
       roots.emplace_back(index, root);
       stack.clear();
-    } else if (opcode == OBELISK_RT_RANDOM_SELECT_V1) {
+    } else if (opcode == TALOS_RT_RANDOM_SELECT_V1) {
       if (stack.size() < 3)
         return std::nullopt;
       Bits no = stack.back();
@@ -1670,10 +1670,10 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
         result.numericWidth = yes.numericWidth;
       }
       stack.push_back(result);
-    } else if ((opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
-                opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
-               opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
-               opcode == OBELISK_RT_RANDOM_CLOG2_V1 ||
+    } else if ((opcode >= TALOS_RT_RANDOM_CAST_V1 &&
+                opcode <= TALOS_RT_RANDOM_LOGICAL_NOT_V1) ||
+               opcode == TALOS_RT_RANDOM_COUNT_ONES_V1 ||
+               opcode == TALOS_RT_RANDOM_CLOG2_V1 ||
                random::isRealInstruction(opcode)) {
       if (stack.empty())
         return std::nullopt;
@@ -1777,13 +1777,13 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
   append64(planSize);
   return plan;
 }
-} // namespace obelisk::solver
+} // namespace talos::solver
 #else
-namespace obelisk::solver {
+namespace talos::solver {
 std::optional<std::vector<uint8_t>>
 compileRandomSamplerPlan(const uint8_t *, size_t,
                          const std::vector<uint32_t> &) {
   return std::nullopt;
 }
-} // namespace obelisk::solver
+} // namespace talos::solver
 #endif

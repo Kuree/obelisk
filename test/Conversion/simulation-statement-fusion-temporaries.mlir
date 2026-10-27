@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o %t 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' -o %t 2>&1 | FileCheck %s --check-prefix=PLAN
 // RUN: FileCheck %s < %t
 // A join carries two values with different control dependence. Once the
 // unrelated publication is sliced away, both response branches choose the
@@ -6,9 +6,9 @@
 // retaining dead control flow, invents combinational feedback. The shared
 // temporary must not merge both independent consumers back into one slice.
 // PLAN: 1 plans (1 data-dependence order)
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn
-// CHECK: simulation.func private @__obelisk_region_kernel_0_0
+// CHECK: simulation.func private @__talos_region_kernel_0_0
 // CHECK: simulation.suspend.any
 module {
   simulation.design @control_lanes {

@@ -1,0 +1,114 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+
+// IEEE 1800-2017 21.3.7: $ferror writes a description of the most recent file
+// error into `str`, which should be a packed array of at least 640 bits or a
+// string type.  A packed destination therefore takes the same bytes a string
+// one would, through the string-to-packed conversion of 5.9.
+
+module {
+  talos.sv.symbol.definition @s0.t attributes {
+    definition_kind = 0 : i32, hierarchical_name = "t", name = "t",
+    node_id = 0 : i64
+  } {
+  }
+  talos.sv.symbol.root @s1.$root attributes {
+    hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64
+  } {
+    talos.sv.symbol.compilation_unit @s2 attributes {
+      hierarchical_name = "$unit", node_id = 2 : i64
+    } {
+    }
+    talos.sv.symbol.instance @s3.t attributes {
+      hierarchical_name = "t", is_uninstantiated = false, name = "t",
+      node_id = 3 : i64, referenced_path = "t", referenced_symbol = @s0.t
+    } {
+      talos.sv.symbol.instance_body @s4.t attributes {
+        hierarchical_name = "t", name = "t", node_id = 4 : i64,
+        time_precision_fs = 1000000 : i64,
+        time_unit_fs = 1000000 : i64
+      } {
+        talos.sv.symbol.variable @s5.i attributes {
+          hierarchical_name = "t.i", lifetime = 1 : i32, name = "i",
+          node_id = 5 : i64,
+          semantic_type = !talos.integral<32, true, true, 31 : 0, integer>
+        } {
+        }
+        talos.sv.symbol.variable @s6.letterl attributes {
+          hierarchical_name = "t.letterl", lifetime = 1 : i32,
+          name = "letterl", node_id = 6 : i64,
+          semantic_type = !talos.ranged_packed_array<800 : 1 x !talos.integral<1, false, true, 0 : 0, reg>>
+        } {
+        }
+        talos.sv.symbol.procedural_block @s7 attributes {
+          hierarchical_name = "t", node_id = 7 : i64, procedure_kind = 0 : i32,
+          time_precision_fs = 1000000 : i64,
+          time_unit_fs = 1000000 : i64
+        } {
+          talos.sv.statement.expression_statement attributes {
+            node_id = 8 : i64
+          } {
+            talos.sv.expression.assignment attributes {
+              assignment_kind = 0 : i32, is_signed = true, node_id = 9 : i64,
+              semantic_type = !talos.integral<32, true, true, 31 : 0, integer>
+            } {
+              talos.sv.expression.named_value attributes {
+                is_signed = true, node_id = 10 : i64, referenced_path = "t.i",
+                referenced_symbol = @s1.$root::@s3.t::@s4.t::@s5.i,
+                semantic_type = !talos.integral<32, true, true, 31 : 0, integer>
+              } {
+              }
+              talos.sv.expression.call attributes {
+                argument_count = 2 : i64, callee_name = "$ferror",
+                constraint_restrictions = [],
+                defaulted_arguments = array<i64: 0, 0>,
+                has_inline_constraints = false,
+                has_iterator_expression = false, has_output_arguments = true,
+                has_this_class = false, is_signed = true,
+                is_super_class = false, is_system_call = true,
+                node_id = 11 : i64,
+                semantic_type = !talos.integral<32, true, true, 31 : 0, integer>,
+                subroutine_kind = 0 : i32, system_library_cell = "work.t",
+                system_scope_path = "t",
+                system_scope_symbol = @s1.$root::@s3.t::@s4.t
+              } {
+                talos.sv.expression.integer_literal attributes {
+                  constant_value = "0", is_declared_unsized = true,
+                  is_signed = true, node_id = 12 : i64,
+                  semantic_type = !talos.integral<32, true, false, 31 : 0, int>
+                } {
+                }
+                talos.sv.expression.assignment attributes {
+                  assignment_kind = 0 : i32, is_signed = false,
+                  node_id = 13 : i64,
+                  semantic_type = !talos.ranged_packed_array<800 : 1 x !talos.integral<1, false, true, 0 : 0, reg>>
+                } {
+                  talos.sv.expression.named_value attributes {
+                    is_signed = false, node_id = 14 : i64,
+                    referenced_path = "t.letterl",
+                    referenced_symbol = @s1.$root::@s3.t::@s4.t::@s6.letterl,
+                    semantic_type = !talos.ranged_packed_array<800 : 1 x !talos.integral<1, false, true, 0 : 0, reg>>
+                  } {
+                  }
+                  talos.sv.expression.empty_argument attributes {
+                    is_signed = false, node_id = 15 : i64,
+                    semantic_type = !talos.ranged_packed_array<800 : 1 x !talos.integral<1, false, true, 0 : 0, reg>>
+                  } {
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[MSG:.*]], %[[CODE:.*]] = simulation.file.error_string
+// CHECK: %[[BITS:.*]] = simulation.string.to_packed %[[MSG]] : (!simulation.string) -> i800
+// CHECK: %[[LOGIC:.*]] = simulation.logic.from_bits %[[BITS]] : i800 -> !simulation.logic<800>
+// CHECK: %[[PACKED:.*]] = simulation.packed.unflatten %[[LOGIC]]
+// CHECK: simulation.ref.store %[[PACKED]] to %arg2
+// CHECK: %[[ERRNO:.*]] = simulation.logic.from_bits %[[CODE]] : i32 -> !simulation.logic<32>
+// CHECK: simulation.ref.store %[[ERRNO]] to %arg1

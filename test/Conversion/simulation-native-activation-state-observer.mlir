@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups | FileCheck %s
+// RUN: talos-opt %s --talos-materialize-native-eval-groups | FileCheck %s
 
 // IEEE 1800-2023 4.3, 4.6(a), 4.9.3: forward current blocking values
 // through address arithmetic and explicit proof notifications. An unrelated
 // byte copy is not an observation cut for this lane. An opaque observer must
 // see the latest value, and its mutation must be acquired before continuing.
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"} {
-  llvm.mlir.global internal @__obelisk_state_value(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
+  llvm.mlir.global internal @__talos_state_value(dense<0> : tensor<8xi8>) : !llvm.array<8 x i8>
   llvm.mlir.global internal @source(42 : i8) : i8
   llvm.mlir.global internal @proof(0 : i64) : i64
   llvm.func @observer()
@@ -15,7 +15,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"} {
     llvm.return
   }
   llvm.func @activation() attributes {schedule.eval.raw_captures} {
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %one = llvm.mlir.constant(1 : i8) : i8
     %old = llvm.load %base : !llvm.ptr -> i8
     %next = llvm.add %old, %one : i8
@@ -37,13 +37,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"} {
     llvm.return
   }
   llvm.func @read_state(%index: i64) -> i8 {
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %address = llvm.getelementptr %base[%index] : (!llvm.ptr, i64) -> !llvm.ptr, i8
     %value = llvm.load %address : !llvm.ptr -> i8
     llvm.return %value : i8
   }
   llvm.func @write_state(%value: i8) {
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     llvm.store %value, %base : i8, !llvm.ptr
     llvm.return
   }

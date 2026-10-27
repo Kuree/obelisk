@@ -1,10 +1,10 @@
 #include "AnalysisTestPasses.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
-#include "obelisk/Analysis/NBAInfluenceAnalysis.h"
-#include "obelisk/Analysis/SSAValueAnalysis.h"
-#include "obelisk/Analysis/StorageWriteAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/NBAInfluenceAnalysis.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
+#include "talos/Analysis/StorageWriteAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
 namespace {
@@ -12,14 +12,14 @@ class NBAInfluenceTestPass
     : public PassWrapper<NBAInfluenceTestPass, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(NBAInfluenceTestPass)
-  StringRef getArgument() const final { return "test-obelisk-nba-influence"; }
+  StringRef getArgument() const final { return "test-talos-nba-influence"; }
   StringRef getDescription() const final {
     return "print NBA observer influence cones";
   }
   void runOnOperation() final {
-    namespace sim = obelisk::sim;
-    using Analysis = obelisk::analysis::NBAInfluenceAnalysis;
-    using Resource = obelisk::schedule::ComputeResourceKind;
+    namespace sim = talos::sim;
+    using Analysis = talos::analysis::NBAInfluenceAnalysis;
+    using Resource = talos::schedule::ComputeResourceKind;
     getOperation().walk([&](sim::SimDesignOp design) {
       SmallVector<Analysis::Root> roots, seeds;
       design.walk([&](sim::SimStorageDeclOp op) {
@@ -53,25 +53,25 @@ public:
       : PassWrapper(other) {}
   Option<std::string> functions{*this, "functions", llvm::cl::init("")};
   Option<bool> execution{*this, "execution", llvm::cl::init(true)};
-  StringRef getArgument() const final { return "test-obelisk-storage-writes"; }
+  StringRef getArgument() const final { return "test-talos-storage-writes"; }
   StringRef getDescription() const final {
     return "print storage-write lattice facts";
   }
   void runOnOperation() final {
-    getOperation().walk([&](obelisk::sim::SimFuncOp function) {
+    getOperation().walk([&](talos::sim::SimFuncOp function) {
       if (!functions.empty() && function.getSymName() != functions)
         return;
-      obelisk::analysis::HandleDataflowAnalysis handles(
-          function->getParentOfType<obelisk::sim::SimDesignOp>());
-      obelisk::analysis::StorageWriteAnalysis analysis(
+      talos::analysis::HandleDataflowAnalysis handles(
+          function->getParentOfType<talos::sim::SimDesignOp>());
+      talos::analysis::StorageWriteAnalysis analysis(
           function, handles.analyze(function), execution);
       llvm::errs() << "function " << function.getSymName() << '\n';
       SmallVector<Operation *> writes;
       function.walk([&](Operation *op) {
         Value destination;
-        if (auto store = dyn_cast<obelisk::sim::SimRefStoreOp>(op))
+        if (auto store = dyn_cast<talos::sim::SimRefStoreOp>(op))
           destination = store.getReference();
-        else if (auto enqueue = dyn_cast<obelisk::sim::SimNBAEnqueueOp>(op))
+        else if (auto enqueue = dyn_cast<talos::sim::SimNBAEnqueueOp>(op))
           destination = enqueue.getDestination();
         if (!destination)
           return;
@@ -109,12 +109,12 @@ class StorageFlowTestPass
     : public PassWrapper<StorageFlowTestPass, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(StorageFlowTestPass)
-  StringRef getArgument() const final { return "test-obelisk-storage-flow"; }
+  StringRef getArgument() const final { return "test-talos-storage-flow"; }
   StringRef getDescription() const final {
     return "print activation definitions and lifetime execution bounds";
   }
   void runOnOperation() final {
-    namespace sim = obelisk::sim;
+    namespace sim = talos::sim;
     getOperation().walk([&](sim::SimFuncOp function) {
       SmallVector<Operation *> definitions;
       function.walk([&](sim::SimRefStoreOp op) { definitions.push_back(op); });
@@ -122,10 +122,10 @@ public:
         return sim::isSuspensionOp(op) ||
                isa<sim::SimCallOp, sim::SimSpawnOp>(op);
       };
-      obelisk::analysis::MustDefinitionAnalysis must(function, definitions,
+      talos::analysis::MustDefinitionAnalysis must(function, definitions,
                                                      isBarrier);
-      obelisk::analysis::NoBarrierAnalysis prefix(function, isBarrier);
-      obelisk::analysis::WriteExecutionBounds lifetime(function, definitions,
+      talos::analysis::NoBarrierAnalysis prefix(function, isBarrier);
+      talos::analysis::WriteExecutionBounds lifetime(function, definitions,
                                                        true, false);
       llvm::errs() << "function " << function.getSymName() << '\n';
       for (auto [index, definition] : llvm::enumerate(definitions))
@@ -149,13 +149,13 @@ class SemanticRootsTestPass
     : public PassWrapper<SemanticRootsTestPass, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SemanticRootsTestPass)
-  StringRef getArgument() const final { return "test-obelisk-semantic-roots"; }
+  StringRef getArgument() const final { return "test-talos-semantic-roots"; }
   StringRef getDescription() const final {
     return "print CFG semantic value roots";
   }
   void runOnOperation() final {
-    getOperation().walk([&](obelisk::sim::SimFuncOp function) {
-      obelisk::analysis::SemanticValueRootAnalysis roots(function);
+    getOperation().walk([&](talos::sim::SimFuncOp function) {
+      talos::analysis::SemanticValueRootAnalysis roots(function);
       DenseMap<Block *, unsigned> blocks;
       for (auto [index, block] : llvm::enumerate(function.getBody()))
         blocks[&block] = index;
@@ -181,7 +181,7 @@ public:
   }
 };
 } // namespace
-void obelisk::registerStorageWriteAnalysisTestPass() {
+void talos::registerStorageWriteAnalysisTestPass() {
   PassRegistration<NBAInfluenceTestPass>();
   PassRegistration<StorageWriteAnalysisTestPass>();
   PassRegistration<StorageFlowTestPass>();

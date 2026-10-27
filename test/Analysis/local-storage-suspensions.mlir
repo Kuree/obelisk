@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-local-storage=allocations=1 -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+// RUN: talos-opt %s --test-talos-local-storage=allocations=1 -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
 
 // Storage dead at every suspension stays private to one invocation even in a
 // suspending process (LRM 6.21). A reference live across a suspension keeps
@@ -23,11 +23,11 @@ module attributes {
 
     // CHECK-LABEL: function activation_snapshot
     // CHECK-NEXT: local allocation
-    // LLVM-LABEL: llvm.func @activation_snapshot.__obelisk_coro_ramp
-    // LLVM-NOT: obelisk_rt_v1_native_state_alloc
+    // LLVM-LABEL: llvm.func @activation_snapshot.__talos_coro_ramp
+    // LLVM-NOT: talos_rt_v1_native_state_alloc
     // LLVM: llvm.alloca %{{.*}} x !llvm.struct<(array<4 x i32>, i8)>
-    // LLVM-NOT: obelisk_rt_v1_native_state_alloc
-    // LLVM-LABEL: llvm.func @activation_snapshot.__obelisk_native_requirements
+    // LLVM-NOT: talos_rt_v1_native_state_alloc
+    // LLVM-LABEL: llvm.func @activation_snapshot.__talos_native_requirements
     simulation.func @activation_snapshot(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %clock: !simulation.ref<i1> {simulation.capture_kind = 1 : i32},
@@ -51,11 +51,11 @@ module attributes {
     // allocation, which then dominates resumes as well.
     // CHECK-LABEL: function entry_dynamic_index
     // CHECK-NEXT: local allocation
-    // LLVM-LABEL: llvm.func @entry_dynamic_index.__obelisk_coro_ramp
-    // LLVM-NOT: obelisk_rt_v1_native_state_alloc
+    // LLVM-LABEL: llvm.func @entry_dynamic_index.__talos_coro_ramp
+    // LLVM-NOT: talos_rt_v1_native_state_alloc
     // LLVM: llvm.alloca %{{.*}} x !llvm.struct<(array<4 x i32>, i8)>
-    // LLVM-NOT: obelisk_rt_v1_native_state_alloc
-    // LLVM-LABEL: llvm.func @entry_dynamic_index.__obelisk_native_requirements
+    // LLVM-NOT: talos_rt_v1_native_state_alloc
+    // LLVM-LABEL: llvm.func @entry_dynamic_index.__talos_native_requirements
     simulation.func @entry_dynamic_index(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %slot: !simulation.ref<i32> {simulation.capture_kind = 1 : i32},
@@ -77,8 +77,8 @@ module attributes {
 
     // CHECK-LABEL: function live_across_delay
     // CHECK-NEXT: runtime
-    // LLVM-LABEL: llvm.func @live_across_delay.__obelisk_coro_ramp
-    // LLVM: llvm.call @obelisk_rt_v1_native_state_alloc
+    // LLVM-LABEL: llvm.func @live_across_delay.__talos_coro_ramp
+    // LLVM: llvm.call @talos_rt_v1_native_state_alloc
     simulation.func @live_across_delay(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %capture: i64 {simulation.capture_kind = 2 : i32})

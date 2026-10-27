@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s '--pass-pipeline=builtin.module(simulation.design(simulation.func(schedule-specialize-reference-joins)),schedule-optimize-native-words)' | FileCheck %s
+// RUN: talos-opt %s '--pass-pipeline=builtin.module(simulation.design(simulation.func(schedule-specialize-reference-joins)),schedule-optimize-native-words)' | FileCheck %s
 // Predicating a loop in a fused body must preserve storage alternatives in
 // unrelated blocks. Native lowering requires their separate root identities.
 // CHECK-LABEL: simulation.func @preserve_references

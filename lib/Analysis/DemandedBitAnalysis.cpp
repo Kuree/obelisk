@@ -1,4 +1,4 @@
-#include "obelisk/Analysis/DemandedBitAnalysis.h"
+#include "talos/Analysis/DemandedBitAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
@@ -6,9 +6,9 @@
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 unsigned bitWidth(Value value) {
   auto width = sim::getPackedWidth(value.getType());
@@ -179,4 +179,4 @@ DemandedBitAnalysis::DemandedBitAnalysis(Operation *function,
           demands.try_emplace(result, *state->getValue().bits);
   });
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

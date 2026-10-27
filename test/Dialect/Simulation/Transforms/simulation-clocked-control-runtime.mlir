@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --obelisk-sim-materialize-clocked-control | FileCheck %s --check-prefix=STATE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --talos-sim-materialize-clocked-control | FileCheck %s --check-prefix=STATE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-materialize-clocked-control,talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-clocked-control-runtime.test.
@@ -14,8 +14,8 @@
 // STATE: simulation.ref.store
 // STATE-COUNT-1: simulation.suspend.edge posedge
 // STATE-NOT: simulation.suspend.edge
-// PLAN: __obelisk_eval_body
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// PLAN: __talos_eval_body
+// PLAN: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

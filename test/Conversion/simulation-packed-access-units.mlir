@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -passes='default<O3>,verify' -S | FileCheck %s --check-prefix=OPT
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.optimization_level = 3 : i32}"' --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=COMPACT
+// RUN: talos-opt %s --talos-sim-build-compute-graph='vpi=off' --talos-sim-specialize-static-state-nba --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --talos-sim-build-compute-graph='vpi=off' --talos-sim-specialize-static-state-nba --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | opt -passes='default<O3>,verify' -S | FileCheck %s --check-prefix=OPT
+// RUN: talos-opt %s '--test-talos-set-module-attributes=attrs="{native.optimization_level = 3 : i32}"' --talos-sim-build-compute-graph='vpi=off' --talos-sim-specialize-static-state-nba --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=COMPACT
 
 // Clang's packed bit-field access units: these fields share bytes all the
 // way across a 95-bit record, so each uses the same i96 unit. The untouched
@@ -102,17 +102,17 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // need fresh loads, and neither write may be removed or reordered.
 // COMPACT-LABEL: llvm.func @state_fields(
 // COMPACT: llvm.mlir.constant(-8589934591 : i96)
-// COMPACT: %[[STATE:.*]] = llvm.mlir.addressof @__obelisk_state_value
+// COMPACT: %[[STATE:.*]] = llvm.mlir.addressof @__talos_state_value
 // COMPACT: llvm.load %[[STATE]] {{.*}} -> i96
 // COMPACT-NOT: llvm.load {{.*}} -> i96
 // COMPACT-NOT: llvm.xor
 // COMPACT: llvm.store {{.*}}, %[[STATE]] {{.*}} : i96, !llvm.ptr
-// COMPACT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// COMPACT: llvm.call @talos_rt_v1_scheduler_signal_transition
 // COMPACT: llvm.load %[[STATE]] {{.*}} -> i96
 // COMPACT-NOT: llvm.load {{.*}} -> i96
 // COMPACT-NOT: llvm.xor
 // COMPACT: llvm.store {{.*}}, %[[STATE]] {{.*}} : i96, !llvm.ptr
-// COMPACT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// COMPACT: llvm.call @talos_rt_v1_scheduler_signal_transition
 // COMPACT: llvm.load %[[STATE]] {{.*}} -> i96
 // COMPACT: llvm.return
 // Whole words use i32 accesses even when the index needs a validity guard.

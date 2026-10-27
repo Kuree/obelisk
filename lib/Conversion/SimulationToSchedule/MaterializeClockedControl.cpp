@@ -1,12 +1,12 @@
 //===- MaterializeClockedControl.cpp - Explicit clock-control state
 //--------===//
 
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -16,18 +16,18 @@
 
 using namespace mlir;
 
-namespace obelisk {
-#define GEN_PASS_DEF_OBELISKSIMMATERIALIZECLOCKEDCONTROLPASS
-#include "obelisk/Conversion/Passes.h.inc"
+namespace talos {
+#define GEN_PASS_DEF_TALOSSIMMATERIALIZECLOCKEDCONTROLPASS
+#include "talos/Conversion/Passes.h.inc"
 
 namespace {
-class ObeliskSimMaterializeClockedControlPass final
-    : public impl::ObeliskSimMaterializeClockedControlPassBase<
-          ObeliskSimMaterializeClockedControlPass> {
+class TalosSimMaterializeClockedControlPass final
+    : public impl::TalosSimMaterializeClockedControlPassBase<
+          TalosSimMaterializeClockedControlPass> {
   void runOnOperation() override;
 };
 
-void ObeliskSimMaterializeClockedControlPass::runOnOperation() {
+void TalosSimMaterializeClockedControlPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   // This executable rewrite must precede persistent graph construction.
   if (design.getComputeGraphAttr())
@@ -44,9 +44,9 @@ void ObeliskSimMaterializeClockedControlPass::runOnOperation() {
   for (auto function : design.getBody().front().getOps<sim::SimFuncOp>()) {
     if (function.isExternal() ||
         (function.getEntryKind() != sim::EntryKind::Initial &&
-         !::obelisk::schedule::has<schedule::metadata::periodicControl>(
+         !::talos::schedule::has<schedule::metadata::periodicControl>(
              function)) ||
-        ::obelisk::schedule::has<schedule::metadata::clockedControl>(function))
+        ::talos::schedule::has<schedule::metadata::clockedControl>(function))
       continue;
     auto found = spawns.find(function.getSymNameAttr());
     if (found == spawns.end() || found->second.size() != 1)
@@ -152,9 +152,9 @@ void ObeliskSimMaterializeClockedControlPass::runOnOperation() {
         builder, waits.front().getLoc(), waits.front().getEdge(), watched,
         ValueRange{}, waits.front().getSiteAttr(), sim::EventRegionAttr{},
         dispatch);
-    if (::obelisk::schedule::has<schedule::metadata::proceduralEventWait>(
+    if (::talos::schedule::has<schedule::metadata::proceduralEventWait>(
             waits.front()))
-      ::obelisk::schedule::set<schedule::metadata::proceduralEventWait>(
+      ::talos::schedule::set<schedule::metadata::proceduralEventWait>(
           merged, builder.getUnitAttr());
     builder.setInsertionPointToEnd(retired);
     sim::SimReturnOp::create(builder, function.getLoc(), ValueRange{});
@@ -197,9 +197,9 @@ void ObeliskSimMaterializeClockedControlPass::runOnOperation() {
       dispatch = next;
       wait.erase();
     }
-    ::obelisk::schedule::set<schedule::metadata::clockedControl>(
+    ::talos::schedule::set<schedule::metadata::clockedControl>(
         function, builder.getUnitAttr());
   }
 }
 } // namespace
-} // namespace obelisk
+} // namespace talos

@@ -1,8 +1,8 @@
 # RUN: %coverage-fixture %t.left.obcov 9 cross-left 1 cross 1 1 0 shared 1 1 1 left
 # RUN: %coverage-fixture %t.right.obcov 10 cross-right 1 cross 1 1 0 shared 1 1 1 right
-# RUN: obelisk-cov report --format=text %t.left.obcov | FileCheck %s --check-prefix=TEXT
-# RUN: obelisk-cov report --format=json %t.left.obcov %t.right.obcov | FileCheck %s --check-prefix=UNION
-# RUN: obelisk-cov report --format=json --test=cross-left %t.left.obcov %t.right.obcov | FileCheck %s --check-prefix=FILTERED
+# RUN: talos-cov report --format=text %t.left.obcov | FileCheck %s --check-prefix=TEXT
+# RUN: talos-cov report --format=json %t.left.obcov %t.right.obcov | FileCheck %s --check-prefix=UNION
+# RUN: talos-cov report --format=json --test=cross-left %t.left.obcov %t.right.obcov | FileCheck %s --check-prefix=FILTERED
 
 # Two runs that hit different bins of one cross (IEEE 1800-2023 19.6) keep
 # separate instance groups under merge_instances: each group has its own

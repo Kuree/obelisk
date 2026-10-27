@@ -122,7 +122,7 @@ function applyDiagnostics(text) {
           : monaco.MarkerSeverity.Info,
     });
   }
-  monaco.editor.setModelMarkers(editor.getModel(), 'obelisk', markers);
+  monaco.editor.setModelMarkers(editor.getModel(), 'talos', markers);
   return { errors, warnings };
 }
 
@@ -258,7 +258,7 @@ function compileStage(stageId) {
 function invalidate() {
   results.clear();
   scheduleSourceHighlight?.clear();
-  if (monaco && editor) monaco.editor.setModelMarkers(editor.getModel(), 'obelisk', []);
+  if (monaco && editor) monaco.editor.setModelMarkers(editor.getModel(), 'talos', []);
 }
 
 function run() {
@@ -661,7 +661,7 @@ async function initEditor(initialSource) {
 
   // Dracula, following the official palette's part of speech: pink keywords,
   // cyan italic types, green functions, purple numbers, yellow strings.
-  monaco.editor.defineTheme('obelisk-dracula', {
+  monaco.editor.defineTheme('talos-dracula', {
     base: 'vs-dark',
     inherit: true,
     rules: [
@@ -703,7 +703,7 @@ async function initEditor(initialSource) {
   editor = monaco.editor.create(ui.editor, {
     value: initialSource,
     language: SV_LANGUAGE_ID,
-    theme: 'obelisk-dracula',
+    theme: 'talos-dracula',
     fontSize: 13,
     fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
     minimap: { enabled: false },
@@ -718,7 +718,7 @@ async function initEditor(initialSource) {
   irModel = monaco.editor.createModel('', MLIR_LANGUAGE_ID);
   irEditor = monaco.editor.create(ui.irEditor, {
     model: irModel,
-    theme: 'obelisk-dracula',
+    theme: 'talos-dracula',
     readOnly: true,
     domReadOnly: true,
     fontSize: 12.5,
@@ -869,10 +869,10 @@ const EMBED_NOTES = {
     'scripts, so Run does not appear there.',
 };
 
-const EMBED_STORAGE_KEY = 'obelisk.embed';
+const EMBED_STORAGE_KEY = 'talos.embed';
 
 // Baked snippet colors come from the compiler's own lexer, so they agree with
-// how Obelisk reads the design. Listing tokens is a short job on the shared
+// how Talos reads the design. Listing tokens is a short job on the shared
 // session once the compiler has loaded; while it is still downloading, when a
 // run holds the session, or when the compiler is unavailable, it resolves to
 // null and the built-in tokenizer colors the snippet instead.

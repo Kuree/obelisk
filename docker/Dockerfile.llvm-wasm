@@ -1,28 +1,28 @@
-# LLVM + MLIR + LLD 22.1.6 built for wasm, for the in-browser Obelisk compiler.
+# LLVM + MLIR + LLD 22.1.6 built for wasm, for the in-browser Talos compiler.
 #
 # This SDK is unconditionally wasm32: no Safari release implements the
 # Memory64 proposal, and the surrounding compiler/runtime build now has one
 # target ABI instead of a partially supported build argument.
 #
-# Produces the same CMake package layout Obelisk's top-level CMakeLists.txt
+# Produces the same CMake package layout Talos's top-level CMakeLists.txt
 # validates (lib/cmake/{llvm,mlir,lld}), so the result is consumable through
-# the existing OBELISK_LLVM_PREBUILT_URL file:// path with no code change.
+# the existing TALOS_LLVM_PREBUILT_URL file:// path with no code change.
 #
 # Build the artifact (tarball lands in ./dist):
 #   DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.llvm-wasm \
 #     --target artifact --output type=local,dest=./dist docker/
 #
-# Then configure Obelisk against it:
+# Then configure Talos against it:
 #   cmake -S . -B build-wasm -G Ninja \
-#     -DOBELISK_LLVM_PREBUILT_URL=file:///abs/path/dist/llvm-mlir-lld-wasm32.tar.xz \
-#     -DOBELISK_LLVM_PREBUILT_SHA256=<sha printed at the end of the build>
+#     -DTALOS_LLVM_PREBUILT_URL=file:///abs/path/dist/llvm-mlir-lld-wasm32.tar.xz \
+#     -DTALOS_LLVM_PREBUILT_SHA256=<sha printed at the end of the build>
 #
 # Scope notes:
-#   * clang is deliberately NOT built. Obelisk links LLVM, MLIR and LLD only.
+#   * clang is deliberately NOT built. Talos links LLVM, MLIR and LLD only.
 #   * LLVM_TARGETS_TO_BUILD=WebAssembly only. This SDK can emit wasm and nothing
 #     else; it is for the compiler that runs in the browser and generates wasm
 #     simulations. The native x86-64 host build keeps using the official archive.
-#   * Threads are off. Obelisk simulations do not need pthreads (verified), and
+#   * Threads are off. Talos simulations do not need pthreads (verified), and
 #     avoiding SharedArrayBuffer is what keeps COOP/COEP-less hosting viable.
 #   * MinSizeRel/-Oz. Optimizing this SDK for size costs no simulation speed,
 #     because designs are compiled to a separate module at -O3 at runtime.
@@ -47,10 +47,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # LLVM #1 of 2: the native x86-64 distribution, at /opt/llvm-native.
 #
 # A cross build needs host-executable tools, and those can never be the wasm
-# build's own binaries. This is the official release archive Obelisk already
+# build's own binaries. This is the official release archive Talos already
 # pins, so it arrives prebuilt and carries clang++, llvm-ar and llvm-ranlib --
 # the tools cmake/TargetNativeSupport.cmake requires -- with no build cost.
-# It also makes the image able to produce a normal native Obelisk.
+# It also makes the image able to produce a normal native Talos.
 #-----------------------------------------------------------------------------
 WORKDIR /src
 RUN curl -fsSL -o llvm-native.tar.xz \
@@ -64,7 +64,7 @@ RUN curl -fsSL -o llvm-native.tar.xz \
  && test -x /opt/llvm-native/bin/llvm-ranlib
 
 #-----------------------------------------------------------------------------
-# Matching source, checksum-pinned like every other Obelisk dependency.
+# Matching source, checksum-pinned like every other Talos dependency.
 #-----------------------------------------------------------------------------
 RUN curl -fsSL -o llvm.tar.xz \
       "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/llvm-project-${LLVM_VERSION}.src.tar.xz" \
@@ -165,14 +165,14 @@ RUN source /emsdk/emsdk_env.sh \
 #-----------------------------------------------------------------------------
 # Ship the native TableGen tools and clang inside the SDK.
 #
-# Obelisk's CMakeLists.txt requires bin/llvm-tblgen and bin/mlir-tblgen in the
+# Talos's CMakeLists.txt requires bin/llvm-tblgen and bin/mlir-tblgen in the
 # distribution and hard-fails without them. These are host x86-64 executables,
 # which is exactly what a cross build needs to run, so carrying them here keeps
 # the SDK drop-in compatible with the existing prebuilt-archive path.
 #-----------------------------------------------------------------------------
 # Copy an explicit list, never a wildcard: /opt/llvm-native is the full
 # official distribution (172 binaries, 8.9 GB -- mlir-opt alone is 412 MB).
-# Clang remains available as part of the general SDK, but Obelisk's target
+# Clang remains available as part of the general SDK, but Talos's target
 # runtime is compiled to ordinary wasm objects by Emscripten so its exception
 # ABI matches Emscripten's libc++ and libunwind archives.
 RUN for tool in llvm-tblgen mlir-tblgen llvm-min-tblgen mlir-pdll \
@@ -191,7 +191,7 @@ RUN for tool in llvm-tblgen mlir-tblgen llvm-min-tblgen mlir-pdll \
 
 #-----------------------------------------------------------------------------
 # Package. Deterministic tar so the SHA-256 is stable across rebuilds, which
-# matters because Obelisk's CMake verifies OBELISK_LLVM_PREBUILT_SHA256.
+# matters because Talos's CMake verifies TALOS_LLVM_PREBUILT_SHA256.
 #-----------------------------------------------------------------------------
 #
 # xz settings are deliberate. At the default -6 on one core, compressing this
@@ -221,16 +221,16 @@ COPY --from=builder /out/ /
 #
 # Deliberately NOT `FROM builder`. That stage carries the 8.9 GB native LLVM
 # archive and the LLVM source and build trees, none of which are needed to
-# build Obelisk for wasm -- only the SDK is. Starting again from emsdk keeps
+# build Talos for wasm -- only the SDK is. Starting again from emsdk keeps
 # the published image to roughly emsdk plus 74 MB.
 #
 # The SDK is carried as the tarball rather than an extracted tree because
-# CMakeLists.txt always downloads and extracts OBELISK_LLVM_PREBUILT_URL. A
+# CMakeLists.txt always downloads and extracts TALOS_LLVM_PREBUILT_URL. A
 # file:// URL into this image therefore needs no source change:
 #
 #   emcmake cmake -S . -B build-wasm -G Ninja \
-#     -DOBELISK_LLVM_PREBUILT_URL="file://$OBELISK_LLVM_WASM_SDK" \
-#     -DOBELISK_LLVM_PREBUILT_SHA256="$OBELISK_LLVM_WASM_SHA256"
+#     -DTALOS_LLVM_PREBUILT_URL="file://$OBELISK_LLVM_WASM_SDK" \
+#     -DTALOS_LLVM_PREBUILT_SHA256="$(cat "$OBELISK_LLVM_WASM_SHA256_FILE")"
 #-----------------------------------------------------------------------------
 FROM emscripten/emsdk:${EMSDK_VERSION} AS toolchain
 
@@ -243,6 +243,7 @@ COPY --from=builder /out/ /opt/obelisk-sdk/
 # The bare checksum lands in a file consumers can read; it cannot be an ENV
 # because its value is only known at build time. Verified here so a corrupted
 # layer fails at image build rather than at someone else's configure step.
+# Keep the published SDK image's environment variables and filesystem layout.
 ENV OBELISK_LLVM_WASM_SDK=/opt/obelisk-sdk/llvm-mlir-lld-wasm32.tar.xz \
     OBELISK_LLVM_WASM_SHA256_FILE=/opt/obelisk-sdk/SHA256
 RUN cut -d' ' -f1 /opt/obelisk-sdk/llvm-mlir-lld-wasm32.tar.xz.sha256 \

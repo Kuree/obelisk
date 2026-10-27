@@ -1,0 +1,90 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' \
+// RUN:   '--encode-talos-sim-to-bytecode=vpi=off' -o /dev/null
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines -o /dev/null
+
+// IEEE 1800-2017 13.5: an inout formal is copied in on the call and assigned
+// back to the actual on return. The formal here is an `integer` and the actual
+// is a one-bit `reg`, so the formal cannot share the actual's storage: the
+// call allocates storage of the formal's own type and converts in both
+// directions.
+
+module attributes {
+  llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
+  talos.sv.symbol.definition @s0.task_copy_out_convert attributes {definition_kind = 0 : i32, hierarchical_name = "task_copy_out_convert", name = "task_copy_out_convert", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.task_copy_out_convert attributes {hierarchical_name = "task_copy_out_convert", is_uninstantiated = false, name = "task_copy_out_convert", node_id = 3 : i64, referenced_path = "task_copy_out_convert", referenced_symbol = @s0.task_copy_out_convert} {
+      talos.sv.symbol.instance_body @s4.task_copy_out_convert attributes {hierarchical_name = "task_copy_out_convert", name = "task_copy_out_convert", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        talos.sv.symbol.variable @s5.flag attributes {hierarchical_name = "task_copy_out_convert.flag", lifetime = 1 : i32, name = "flag", node_id = 5 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, reg>} {
+        }
+        talos.sv.symbol.subroutine @s6.t attributes {default_lifetime = 1 : i32, hierarchical_name = "task_copy_out_convert.t", name = "t", node_id = 6 : i64, semantic_type = !talos.subroutine<(!talos.integral<32, true, true, 31 : 0, integer>) -> (), true>, subroutine_kind = 1 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.expression_statement attributes {node_id = 7 : i64} {
+            talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = true, node_id = 8 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+              talos.sv.expression.named_value attributes {is_signed = true, node_id = 9 : i64, referenced_path = "task_copy_out_convert.t.v", referenced_symbol = @s1.$root::@s3.task_copy_out_convert::@s4.task_copy_out_convert::@s6.t::@s7.v, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+              }
+              talos.sv.expression.binary_op attributes {is_signed = true, node_id = 10 : i64, operator_kind = 0 : i32, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                talos.sv.expression.named_value attributes {is_signed = true, node_id = 11 : i64, referenced_path = "task_copy_out_convert.t.v", referenced_symbol = @s1.$root::@s3.task_copy_out_convert::@s4.task_copy_out_convert::@s6.t::@s7.v, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                }
+                talos.sv.expression.conversion attributes {folded_constant = "1", is_signed = true, node_id = 12 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                  talos.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 13 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+              }
+            }
+          }
+          talos.sv.symbol.formal_argument @s7.v attributes {direction = 2 : i32, hierarchical_name = "task_copy_out_convert.t.v", lifetime = 1 : i32, name = "v", node_id = 14 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+          }
+        }
+        talos.sv.symbol.procedural_block @s8 attributes {hierarchical_name = "task_copy_out_convert", node_id = 15 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.block attributes {node_id = 16 : i64} {
+            talos.sv.statement.list attributes {node_id = 17 : i64} {
+              talos.sv.statement.expression_statement attributes {node_id = 18 : i64} {
+                talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 19 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, reg>} {
+                  talos.sv.expression.named_value attributes {is_signed = false, node_id = 20 : i64, referenced_path = "task_copy_out_convert.flag", referenced_symbol = @s1.$root::@s3.task_copy_out_convert::@s4.task_copy_out_convert::@s5.flag, semantic_type = !talos.integral<1, false, true, 0 : 0, reg>} {
+                  }
+                  talos.sv.expression.conversion attributes {folded_constant = "1'b0", is_signed = false, node_id = 21 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, reg>} {
+                    talos.sv.expression.conversion attributes {folded_constant = "0", is_signed = true, node_id = 22 : i64, semantic_type = !talos.ranged_packed_array<31 : 0 x !talos.integral<1, true, true, 0 : 0, logic>>} {
+                      talos.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 23 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                      }
+                    }
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 24 : i64} {
+                talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "t", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = false, node_id = 25 : i64, referenced_path = "task_copy_out_convert.t", referenced_symbol = @s1.$root::@s3.task_copy_out_convert::@s4.task_copy_out_convert::@s6.t, semantic_type = !talos.void, subroutine_kind = 1 : i32} {
+                  talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 26 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, reg>} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 27 : i64, referenced_path = "task_copy_out_convert.flag", referenced_symbol = @s1.$root::@s3.task_copy_out_convert::@s4.task_copy_out_convert::@s5.flag, semantic_type = !talos.integral<1, false, true, 0 : 0, reg>} {
+                    }
+                    talos.sv.expression.conversion attributes {is_signed = false, node_id = 28 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, reg>} {
+                      talos.sv.expression.empty_argument attributes {is_signed = true, node_id = 29 : i64, semantic_type = !talos.integral<32, true, true, 31 : 0, integer>} {
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// CHECK: simulation.func private @unit_1(
+// CHECK-SAME: %[[FLAG:[^:]*]]: !simulation.ref<!simulation.logic<1>>
+// CHECK: %[[IN:.*]] = simulation.logic.resize
+// CHECK-SAME: !simulation.logic<1> -> !simulation.logic<32>
+// CHECK: %[[FORMAL:.*]] = simulation.ref.alloc %[[IN]]
+// CHECK-SAME: -> !simulation.ref<!simulation.logic<32>>
+// CHECK: simulation.task.call @unit_0(%{{.*}}, %[[IN]], %[[FORMAL]]
+// CHECK: ^bb1(%[[RETURNED:.*]]: !simulation.ref<!simulation.logic<32>>):
+// CHECK: %[[OUT:.*]] = simulation.ref.load %[[RETURNED]]
+// CHECK: %[[NARROWED:.*]] = simulation.logic.extract %[[OUT]] from 0
+// CHECK-SAME: !simulation.logic<32> -> !simulation.logic<1>
+// CHECK: simulation.ref.store %[[NARROWED]] to %[[FLAG]]

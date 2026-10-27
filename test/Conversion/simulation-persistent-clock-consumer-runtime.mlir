@@ -1,15 +1,15 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
 // A persistent procedural clock consumer outlives the finite periodic startup
 // budget. Keep Tier-2 fragments native while rearming its runtime subscription;
 // reject neither the lifecycle nor NBA writes, and do not exit early.
-// PLAN-COUNT-2: llvm.mlir.global internal @__obelisk_eval_nba_valid_
-// PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
-// PLAN-LABEL: llvm.func @__obelisk_aot_runtime_nba_commit_v1(
-// PLAN: llvm.call @obelisk_rt_v1_static_nba_commit_roots
+// PLAN-COUNT-2: llvm.mlir.global internal @__talos_eval_nba_valid_
+// PLAN-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// PLAN: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
+// PLAN: llvm.call @talos_rt_v1_scheduler_run_aot_nodes
+// PLAN-LABEL: llvm.func @__talos_aot_runtime_nba_commit_v1(
+// PLAN: llvm.call @talos_rt_v1_static_nba_commit_roots
 
 !words = !simulation.unpacked_array<0 : 31 x !simulation.logic<32>>
 

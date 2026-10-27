@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 // expected-error @+1 {{logic width must be greater than zero}}
 func.func private @zero_width(%arg: !simulation.logic<0>)

@@ -20,7 +20,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Matchers.h"
@@ -32,10 +32,10 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
-constexpr StringLiteral unknownPlaneName = "__obelisk_state_unknown";
+constexpr StringLiteral unknownPlaneName = "__talos_state_unknown";
 // A copy of at most this many words compares each source word with the
 // patterns it lands on; a longer one, such as a memory's, reports its roots
 // unconditionally.
@@ -190,7 +190,7 @@ public:
         } else if (auto call = dyn_cast<LLVM::CallOp>(user)) {
           // Runtime services report the writes they make.
           if (!call.getCallee() ||
-              !call.getCallee()->starts_with("obelisk_rt_"))
+              !call.getCallee()->starts_with("talos_rt_"))
             escapes.push_back(user);
         } else if (auto branch = dyn_cast<BranchOpInterface>(user)) {
           for (unsigned index = 0; index != user->getNumSuccessors(); ++index) {
@@ -254,10 +254,10 @@ private:
     Value context = LLVM::LoadOp::create(
         builder, location, ptr,
         LLVM::AddressOfOp::create(builder, location, ptr,
-                                  "__obelisk_current_context"),
+                                  "__talos_current_context"),
         8);
     LLVM::CallOp::create(builder, location, TypeRange{},
-                         "obelisk_rt_v1_native_state_mark_unknown",
+                         "talos_rt_v1_native_state_mark_unknown",
                          ValueRange{context, bitOffset, bitWidth});
   }
 
@@ -506,4 +506,4 @@ std::unique_ptr<Pass> createPublishNativeUnknownSummaryPass() {
   return std::make_unique<PublishNativeUnknownSummaryPass>();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

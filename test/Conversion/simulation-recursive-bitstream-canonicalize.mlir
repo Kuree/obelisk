@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
 
 module attributes {simulation.class_bitstream_source} {
   func.func @null_source() -> (i24, i1, !simulation.managed_watch) {
@@ -17,13 +17,13 @@ module attributes {simulation.class_bitstream_source} {
 
   func.func @null_class() -> (i8, i1, !simulation.managed_watch) {
     %null = simulation.class.null :
-        !simulation.class_handle<@__obelisk_class_s3_C>
+        !simulation.class_handle<@__talos_class_s3_C>
     %result, %matched, %watch =
         simulation.recursive.export_bitstream %null {
           class_site_id = 1 : i64,
           plan = array<i64: 9702691408, 1, 64, 0,
-              5, 0, 3235077357463657086, 0, 64, 0>
-        } : (!simulation.class_handle<@__obelisk_class_s3_C>) ->
+              5, 0, -7123445604761477980, 0, 64, 0>
+        } : (!simulation.class_handle<@__talos_class_s3_C>) ->
             (i8, i1, !simulation.managed_watch)
     return %result, %matched, %watch : i8, i1, !simulation.managed_watch
   }

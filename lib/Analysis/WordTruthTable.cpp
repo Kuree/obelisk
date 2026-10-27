@@ -2,11 +2,11 @@
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "obelisk/Analysis/NativeWordAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/NativeWordAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 bool isWordLaneType(Type type) {
   Type scalar = sim::getPackedScalarType(type);
   return scalar && (scalar.isInteger(1) ||
@@ -119,4 +119,4 @@ std::optional<WordTruthTable> computeWordTruthTable(Operation *op) {
   }
   return table;
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

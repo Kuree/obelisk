@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-"""Run Obelisk against an external SystemVerilog test suite and report progress.
+"""Run Talos against an external SystemVerilog test suite and report progress.
 
-This is the entry point for the conformance benchmark. It resolves the Obelisk
+This is the entry point for the conformance benchmark. It resolves the Talos
 binary and a suite checkout, drives the suite through the shared shims, classifies
 the diagnostics into a feature-level roadmap, and — with --record — appends the
 run to the suite's tracked history so the pass rate can be watched over time.
@@ -22,8 +22,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from obelisk_bench import classify, history, locate, model, runner  # noqa: E402
-from obelisk_bench.suites import REGISTRY  # noqa: E402
+from talos_bench import classify, history, locate, model, runner  # noqa: E402
+from talos_bench.suites import REGISTRY  # noqa: E402
 
 
 def _print_summary(summary: dict) -> None:
@@ -55,7 +55,7 @@ def _print_skips(outcomes: dict[str, model.Outcome]) -> None:
         print(textwrap.fill(reason or "no reason given", width=78,
                             initial_indent="    ", subsequent_indent="    "))
     print("  A skip is neither a pass nor a failure: the suite decided the "
-          "expectation is not\n  Obelisk's to meet, and named the clause it "
+          "expectation is not\n  Talos's to meet, and named the clause it "
           "read to decide that.")
 
 
@@ -75,7 +75,7 @@ def _print_failures(outcomes: dict[str, model.Outcome]) -> None:
 
 def command_run(args) -> int:
     suite = REGISTRY[args.suite]
-    args.obelisk_binary = str(locate.resolve_compiler(args.obelisk))
+    args.talos_binary = str(locate.resolve_compiler(args.talos))
     root = locate.resolve_suite_root(suite.NAME, args.suite_root, args.fetch,
                                      suite.SOURCE)
 
@@ -105,7 +105,7 @@ def command_run(args) -> int:
         blockers = dict(counters["blocks"].most_common(20))
         record = history.build_record(
             suite.NAME,
-            locate.obelisk_revision(),
+            locate.talos_revision(),
             locate.suite_revision(root),
             summary,
             blockers,
@@ -130,10 +130,10 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--suite-root", help="local checkout to use instead of the cache")
         sub.add_argument("--fetch", action="store_true",
                          help="fetch the pinned revision into benchmark/cache/")
-        sub.add_argument("--obelisk", help="path to the Obelisk driver binary")
+        sub.add_argument("--talos", help="path to the Talos driver binary")
         sub.add_argument(
             "--vpi", choices=("off", "read", "full"), default=None,
-            help="Obelisk VPI capability mode (default: full with VPI code, "
+            help="Talos VPI capability mode (default: full with VPI code, "
                  "off otherwise)")
         sub.add_argument(
             "--vpi-code", action="append", default=[], metavar="PATH",

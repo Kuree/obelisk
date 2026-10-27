@@ -1,13 +1,13 @@
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 //===- SimulationProcessActivationLowering.cpp - Activation helpers ---===//
 
 #include "SimulationProcessActivationLowering.h"
 #include "SimulationProcessRuntimeABI.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Conversion/SimulationRuntime.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Conversion/SimulationRuntime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -18,7 +18,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 // Bootstrap helpers may still be nested in a simulation design. Match module
 // lookup scope and retain the first symbol on a collision, leaving duplicate
 // symbol diagnostics intact instead of allowing automatic renaming.
@@ -48,9 +48,9 @@ makeProcessActivationHelper(ModuleOp module, SymbolTable &symbols,
   if (auto references = native::get<native::TransferredReferences>(function))
     transferredReferences = references.asArrayRef();
   std::string checkedHelperName =
-      (function.getSymName() + ".__obelisk_activate_checked").str();
+      (function.getSymName() + ".__talos_activate_checked").str();
   std::string helperName =
-      (function.getSymName() + ".__obelisk_activate").str();
+      (function.getSymName() + ".__talos_activate").str();
   if (symbols.lookup(checkedHelperName) || symbols.lookup(helperName))
     return success();
   builder.setInsertionPointAfter(function);
@@ -80,12 +80,12 @@ makeProcessActivationHelper(ModuleOp module, SymbolTable &symbols,
                         outInstance, 8);
   Value descriptor = LLVM::AddressOfOp::create(
       builder, location, pointer,
-      (function.getSymName() + ".__obelisk_process_descriptor").str());
+      (function.getSymName() + ".__talos_process_descriptor").str());
   Value status =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
           SymbolRefAttr::get(
-              context, "obelisk_rt_v1_process_instance_create_for_context"),
+              context, "talos_rt_v1_process_instance_create_for_context"),
           ValueRange{entry->getArgument(0), descriptor, outInstance})
           .getResult();
   Value succeeded =
@@ -165,14 +165,14 @@ makeProcessActivationHelper(ModuleOp module, SymbolTable &symbols,
       return helper.emitError("has an invalid transferred-reference index");
     LLVM::CallOp::create(
         builder, location, TypeRange{i32},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_release"),
+        SymbolRefAttr::get(context, "talos_rt_v1_native_state_release"),
         ValueRange{wrapperEntry->getArgument(0),
                    wrapperEntry->getArgument(static_cast<unsigned>(index)),
                    llvmConstant(builder, location, i32, 0)});
   }
   LLVM::CallOp::create(
       builder, location, TypeRange{},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+      SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
       ValueRange{wrapperEntry->getArgument(0), wrapperStatus});
   LLVM::ReturnOp::create(builder, location,
                          llvmConstant(builder, location, i64, 0));
@@ -197,15 +197,15 @@ FailureOr<LLVM::LLVMFuncOp> makeProcessSpawnHelper(
   SmallVector<Type> arguments;
   for (BlockArgument argument : function.getBody().front().getArguments())
     arguments.push_back(convertProcessType(argument.getType(), context));
-  std::string helperName = (function.getSymName() + ".__obelisk_spawn").str();
+  std::string helperName = (function.getSymName() + ".__talos_spawn").str();
   if (auto helper = symbols.lookup<LLVM::LLVMFuncOp>(helperName))
     return helper;
   std::string continuationName =
-      (function.getSymName() + ".__obelisk_schedule_continuations").str();
+      (function.getSymName() + ".__talos_schedule_continuations").str();
   std::string rankName =
-      (function.getSymName() + ".__obelisk_schedule_ranks").str();
+      (function.getSymName() + ".__talos_schedule_ranks").str();
   std::string bytecodeContinuationName =
-      (function.getSymName() + ".__obelisk_bytecode_continuations").str();
+      (function.getSymName() + ".__talos_bytecode_continuations").str();
   if (!schedule.continuations.empty()) {
     auto arrayType =
         LLVM::LLVMArrayType::get(i32, schedule.continuations.size());
@@ -242,11 +242,11 @@ FailureOr<LLVM::LLVMFuncOp> makeProcessSpawnHelper(
            failure();
   sim::EntryKind entryKind = function.getEntryKind();
   bool primeOnSpawn =
-      ::obelisk::schedule::has<::obelisk::schedule::Field::PrimeOnSpawn>(
+      ::talos::schedule::has<::talos::schedule::Field::PrimeOnSpawn>(
           function);
   if (primeOnSpawn &&
       (!function->hasAttr("internal") ||
-       !::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+       !::talos::schedule::has<::talos::schedule::Field::DetachedControls>(
            function) ||
        entryKind != sim::EntryKind::Fork))
     return function.emitError(
@@ -255,16 +255,16 @@ FailureOr<LLVM::LLVMFuncOp> makeProcessSpawnHelper(
   bool startup = sim::isStartupEntryKind(entryKind) ||
                  (entryKind == sim::EntryKind::Initial &&
                   function.getHomeRegion() == sim::EventRegion::Active);
-  bool prioritySignalResume = ::obelisk::schedule::has<
-      ::obelisk::schedule::Field::PrioritySignalResume>(function);
+  bool prioritySignalResume = ::talos::schedule::has<
+      ::talos::schedule::Field::PrioritySignalResume>(function);
   bool concurrentSignalObserver =
-      ::obelisk::schedule::has<::obelisk::schedule::Field::ConcurrentCancel>(
+      ::talos::schedule::has<::talos::schedule::Field::ConcurrentCancel>(
           function) ||
-      ::obelisk::schedule::has<::obelisk::schedule::Field::ConcurrentAbort>(
+      ::talos::schedule::has<::talos::schedule::Field::ConcurrentAbort>(
           function);
   if (prioritySignalResume &&
       (!function->hasAttr("internal") || !concurrentSignalObserver ||
-       !::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+       !::talos::schedule::has<::talos::schedule::Field::DetachedControls>(
            function) ||
        entryKind != sim::EntryKind::Fork ||
        function.getHomeRegion() != sim::EventRegion::Reactive))
@@ -273,16 +273,16 @@ FailureOr<LLVM::LLVMFuncOp> makeProcessSpawnHelper(
                "cancellation or abort observers"),
            failure();
   uint32_t scheduleFlags =
-      OBELISK_RT_SCHEDULE_HOME(homeRegion) |
-      (entryKind == sim::EntryKind::Final ? OBELISK_RT_SCHEDULE_FINAL : 0) |
-      (entryKind == sim::EntryKind::Initial ? OBELISK_RT_SCHEDULE_INITIAL : 0) |
-      (startup ? OBELISK_RT_SCHEDULE_STARTUP : 0) |
-      (::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+      TALOS_RT_SCHEDULE_HOME(homeRegion) |
+      (entryKind == sim::EntryKind::Final ? TALOS_RT_SCHEDULE_FINAL : 0) |
+      (entryKind == sim::EntryKind::Initial ? TALOS_RT_SCHEDULE_INITIAL : 0) |
+      (startup ? TALOS_RT_SCHEDULE_STARTUP : 0) |
+      (::talos::schedule::has<::talos::schedule::Field::DetachedControls>(
            function)
-           ? OBELISK_RT_SCHEDULE_DETACHED_CONTROLS
+           ? TALOS_RT_SCHEDULE_DETACHED_CONTROLS
            : 0) |
-      (prioritySignalResume ? OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL : 0) |
-      (entryKind == sim::EntryKind::RootInitializer ? OBELISK_RT_SCHEDULE_ROOT
+      (prioritySignalResume ? TALOS_RT_SCHEDULE_PRIORITY_SIGNAL : 0) |
+      (entryKind == sim::EntryKind::RootInitializer ? TALOS_RT_SCHEDULE_ROOT
                                                     : 0);
   // Entry captures form a prefix of the canonical frame. Marshal only that
   // prefix; never copy continuation lanes, waits, or native scratch.
@@ -300,15 +300,15 @@ FailureOr<LLVM::LLVMFuncOp> makeProcessSpawnHelper(
     }
   }
   auto owner =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::ProgramOwnerId>(
+      ::talos::schedule::get<::talos::schedule::Field::ProgramOwnerId>(
           function);
-  uint32_t options = (primeOnSpawn ? OBELISK_RT_SPAWN_PRIME : 0) |
-                     (owner ? OBELISK_RT_SPAWN_PROGRAM_OWNER : 0);
+  uint32_t options = (primeOnSpawn ? TALOS_RT_SPAWN_PRIME : 0) |
+                     (owner ? TALOS_RT_SPAWN_PROGRAM_OWNER : 0);
   auto planType = LLVM::LLVMStructType::getLiteral(
       context, {pointer, i64, pointer, pointer, pointer, i64, i32, i32, i32,
                 i32, i32, i32});
   std::string planName =
-      (function.getSymName() + ".__obelisk_spawn_plan").str();
+      (function.getSymName() + ".__talos_spawn_plan").str();
   auto plan = makeConstantGlobal(
       module, location, planType, planName, LLVM::Linkage::Internal, 8,
       [&](OpBuilder &initializer) {
@@ -325,7 +325,7 @@ FailureOr<LLVM::LLVMFuncOp> makeProcessSpawnHelper(
                               field);
         };
         address(
-            0, (function.getSymName() + ".__obelisk_process_descriptor").str());
+            0, (function.getSymName() + ".__talos_process_descriptor").str());
         integer(1, i64, captureSize);
         if (!schedule.continuations.empty()) {
           address(2, continuationName);
@@ -411,7 +411,7 @@ makeProcessSpawnBody(LLVM::LLVMFuncOp helper,
       LLVM::AddressOfOp::create(builder, location, pointer, planName);
   Value token = LLVM::CallOp::create(
                     builder, location, TypeRange{i64},
-                    SymbolRefAttr::get(context, "obelisk_rt_v1_process_spawn"),
+                    SymbolRefAttr::get(context, "talos_rt_v1_process_spawn"),
                     ValueRange{entry->getArgument(0), planAddress, captures})
                     .getResult();
   LLVM::ReturnOp::create(builder, location, token);
@@ -425,91 +425,91 @@ void declareProcessSpawnRuntimeABI(ModuleOp module) {
   Type i32 = builder.getI32Type();
   Type i64 = builder.getI64Type();
 
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_spawn", i64,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_process_spawn", i64,
                            {pointer, pointer, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_spawn_batch", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_process_spawn_batch", i32,
                            {pointer, pointer, pointer, i32});
   getOrDeclareLLVMFunction(module,
-                           "obelisk_rt_v1_process_instance_create_for_context",
+                           "talos_rt_v1_process_instance_create_for_context",
                            i32, {pointer, pointer, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_add_planned", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_add_planned", i32,
                            {pointer, pointer, i32, i32, pointer, pointer, i32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_prime", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_prime", i32,
                            {pointer, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_program_register",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_program_register",
                            i32, {pointer, i64, i64});
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_add_aot", i32,
+      module, "talos_rt_v1_scheduler_add_aot", i32,
       {pointer, pointer, i32, i32, i32, pointer, pointer, i32, pointer, i32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_process_token", i64,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_process_token", i64,
                            {pointer, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_current", i64,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_process_current", i64,
                            {pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_status", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_process_status", i32,
                            {pointer, i64, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_random_get", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_process_random_get", i32,
                            {pointer, i64, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_random_set", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_process_random_set", i32,
                            {pointer, i64, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_control", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_process_control", i32,
                            {pointer, i64, i32, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_fail",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_fail",
                            LLVM::LLVMVoidType::get(context), {pointer, i32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_disable_children",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_disable_children",
                            i32, {pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_resolution_prepare", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_vpi_resolution_prepare", i32,
                            {pointer, i64, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_call_prepare", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_vpi_call_prepare", i32,
                            {pointer, i64, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_frame_enter_prepared",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_vpi_frame_enter_prepared",
                            i32, {pointer, i64, i32, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_frame_enter", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_vpi_frame_enter", i32,
                            {pointer, i64, i32, i64, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_frame_checkpoint", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_vpi_frame_checkpoint", i32,
                            {pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_frame_leave", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_vpi_frame_leave", i32,
                            {pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_vpi_call_finish", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_vpi_call_finish", i32,
                            {pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_enter", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_control_enter", i32,
                            {pointer, i64, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_boundary", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_control_boundary", i32,
                            {pointer, i64, i32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_leave", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_control_leave", i32,
                            {pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_disable", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_control_disable", i32,
                            {pointer, i64, i64, i32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_disable_selected",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_control_disable_selected",
                            i32, {pointer, i64, i64, i32, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_control_escape_pending", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_control_escape_pending", i32,
                            {pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_once", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_static_once", i32,
                            {pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_deferred_once", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_deferred_once", i32,
                            {pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_deferred_enqueue", i64,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_deferred_enqueue", i64,
                            {pointer, i64});
   getOrDeclareLLVMFunction(module,
-                           "obelisk_rt_v1_deferred_enqueue_for_assertion", i64,
+                           "talos_rt_v1_deferred_enqueue_for_assertion", i64,
                            {pointer, i64, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_deferred_mature", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_deferred_mature", i32,
                            {pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assertion_control", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_assertion_control", i32,
                            {pointer, i32, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assertion_enabled", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_assertion_enabled", i32,
                            {pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assertion_action_state", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_assertion_action_state", i32,
                            {pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_assertion_kill_epoch", i64,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_assertion_kill_epoch", i64,
                            {pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_register_logical",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_monitor_register_logical",
                            i32, {pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_control", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_monitor_control", i32,
                            {pointer, i32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_monitor_current", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_monitor_current", i32,
                            {pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_process_instance_destroy",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_process_instance_destroy",
                            i32, {pointer});
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

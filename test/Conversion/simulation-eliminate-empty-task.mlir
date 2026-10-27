@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3},symbol-dce))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=3},symbol-dce))' | FileCheck %s
 
 module {
   simulation.design @empty_task {

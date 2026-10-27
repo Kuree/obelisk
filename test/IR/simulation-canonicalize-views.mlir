@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
-// RUN: obelisk-opt %s --canonicalize="top-down=false" | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize="top-down=false" | FileCheck %s
 
 !mixed = !simulation.packed_union<fields = [#simulation.field<name = "four", type = !simulation.logic<16>, ordinal = 0, packedOffset = 0>, #simulation.field<name = "two", type = i16, ordinal = 1, packedOffset = 0>], isTagged = false>
 !struct = !simulation.packed_struct<[

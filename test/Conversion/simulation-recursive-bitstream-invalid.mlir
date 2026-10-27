@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --verify-diagnostics
+// RUN: talos-opt %s --verify-diagnostics
 
 module {
   func.func @corrupt_plan(

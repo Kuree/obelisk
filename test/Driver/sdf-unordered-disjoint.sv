@@ -1,4 +1,4 @@
-// RUN: cd %S && obelisk -emit-slang %s -o %t.mlir
+// RUN: cd %S && talos -emit-slang %s -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 
 `timescale 1ns / 1ns
@@ -18,4 +18,4 @@ module sdf_unordered_disjoint;
 endmodule
 
 // CHECK-COUNT-2: timing_delay_fs = array<i64: 2000000>
-// CHECK-COUNT-2: obelisk.sdf_compile_time_applied
+// CHECK-COUNT-2: talos.sdf_compile_time_applied

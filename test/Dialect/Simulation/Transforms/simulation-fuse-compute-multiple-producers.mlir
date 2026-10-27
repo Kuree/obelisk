@@ -1,10 +1,10 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O3 -emit-sim %t/multiple-producers.sv -o %t/multiple-producers.mlir
+// RUN: talos -O3 -emit-sim %t/multiple-producers.sv -o %t/multiple-producers.mlir
 // RUN: FileCheck %s --check-prefix=MULTIPLE-PRODUCERS < %t/multiple-producers.mlir
 
 // MULTIPLE-PRODUCERS: simulation.design
 // MULTIPLE-PRODUCERS-NOT: schedule.static_fusion
-// MULTIPLE-PRODUCERS: __obelisk_fused_
+// MULTIPLE-PRODUCERS: __talos_fused_
 
 //--- multiple-producers.sv
 module multiple_clock_producers;

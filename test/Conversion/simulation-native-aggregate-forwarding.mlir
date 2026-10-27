@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(schedule-optimize-native-aggregates)))' -o %t.forwarded
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(schedule-optimize-native-aggregates)))' -o %t.forwarded
 // RUN: FileCheck %s --check-prefix=IR < %t.forwarded
-// RUN: obelisk-opt %t.forwarded --convert-obelisk-sim-processes-to-llvm-coroutines="native-aggregates=false" -o /dev/null
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines="native-words=false native-aggregates=false" -o /dev/null
+// RUN: talos-opt %t.forwarded --convert-talos-sim-processes-to-llvm-coroutines="native-aggregates=false" -o /dev/null
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines="native-words=false native-aggregates=false" -o /dev/null
 
 // LRM 7.4.5 and 11.5: eliminate repeated reconstruction of a 288-bit array,
 // retaining every four-state field and the defaults for invalid reads.

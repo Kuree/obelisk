@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops),obelisk-sim-sccp,simulation.func(canonicalize,cse),obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s --check-prefix=LOCAL
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops),obelisk-sim-sccp,simulation.func(canonicalize,cse),obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion,schedule-localize-private-eval-storage,schedule-promote-eval-storage))' | FileCheck %s --check-prefix=SSA
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-unroll-bounded-loops),talos-sim-sccp,simulation.func(canonicalize,cse),talos-sim-build-compute-graph,talos-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s --check-prefix=LOCAL
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-unroll-bounded-loops),talos-sim-sccp,simulation.func(canonicalize,cse),talos-sim-build-compute-graph,talos-sim-materialize-compute-fusion,schedule-localize-private-eval-storage,schedule-promote-eval-storage))' | FileCheck %s --check-prefix=SSA
 
 // Static storage retains its value between assignments (LRM 6.8/6.21).
 // This private array is written before each read in every activation, so its
@@ -51,7 +51,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
   }
 }
-// LOCAL-LABEL: simulation.func private @process.__obelisk_eval_body_
+// LOCAL-LABEL: simulation.func private @process.__talos_eval_body_
 // LOCAL: %[[SLOT:.*]] = simulation.ref.alloc
 // LOCAL-NOT: simulation.ref.array_element
 // LOCAL: simulation.ref.subelement %[[SLOT]]{{\[\[3\]\]}}
@@ -59,7 +59,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
 // LOCAL: simulation.ref.subelement %[[SLOT]]{{\[\[1\]\]}}
 // LOCAL: simulation.ref.subelement %[[SLOT]]{{\[\[0\]\]}}
 // LOCAL: simulation.return
-// SSA-LABEL: simulation.func private @process.__obelisk_eval_body_
+// SSA-LABEL: simulation.func private @process.__talos_eval_body_
 // SSA-NOT: simulation.ref.alloc
 // SSA-NOT: simulation.ref.array_element
 // SSA-NOT: simulation.ref.subelement

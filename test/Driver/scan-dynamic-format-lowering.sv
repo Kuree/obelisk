@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-sim -O0 --vpi=off %s | FileCheck %s
+// RUN: talos -emit-sim -O0 --vpi=off %s | FileCheck %s
 
 // Runtime-format dispatch is constant in the destination count and conversion
 // families, never the destination width or format length. One destination and

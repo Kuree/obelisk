@@ -1,6 +1,6 @@
 //===- SDFDialect.cpp - Transient normalized SDF dialect ----------------===//
 
-#include "obelisk/Dialect/SDF/SDFOps.h"
+#include "talos/Dialect/SDF/SDFOps.h"
 
 #include "mlir/IR/Diagnostics.h"
 #include "llvm/ADT/STLExtras.h"
@@ -11,25 +11,25 @@
 
 using namespace mlir;
 
-#include "obelisk/Dialect/SDF/SDFDialect.cpp.inc"
-#include "obelisk/Dialect/SDF/SDFEnums.cpp.inc"
+#include "talos/Dialect/SDF/SDFDialect.cpp.inc"
+#include "talos/Dialect/SDF/SDFEnums.cpp.inc"
 
 #define GET_ATTRDEF_CLASSES
-#include "obelisk/Dialect/SDF/SDFAttrs.cpp.inc"
+#include "talos/Dialect/SDF/SDFAttrs.cpp.inc"
 
 #define GET_OP_CLASSES
-#include "obelisk/Dialect/SDF/SDFOps.cpp.inc"
+#include "talos/Dialect/SDF/SDFOps.cpp.inc"
 
-namespace obelisk::sdf {
+namespace talos::sdf {
 
-void ObeliskSDFDialect::initialize() {
+void TalosSDFDialect::initialize() {
   addAttributes<
 #define GET_ATTRDEF_LIST
-#include "obelisk/Dialect/SDF/SDFAttrs.cpp.inc"
+#include "talos/Dialect/SDF/SDFAttrs.cpp.inc"
       >();
   addOperations<
 #define GET_OP_LIST
-#include "obelisk/Dialect/SDF/SDFOps.cpp.inc"
+#include "talos/Dialect/SDF/SDFOps.cpp.inc"
       >();
 }
 
@@ -217,7 +217,7 @@ LogicalResult SDFDelayFileOp::verify() {
     return emitOpError("requires one body block");
   for (Operation &operation : getBody().front())
     if (!isa<SDFCellOp>(operation))
-      return emitOpError("body may contain only obelisk_sdf.cell operations");
+      return emitOpError("body may contain only talos_sdf.cell operations");
   return success();
 }
 
@@ -290,4 +290,4 @@ LogicalResult SDFPulseOp::verify() {
   return success();
 }
 
-} // namespace obelisk::sdf
+} // namespace talos::sdf

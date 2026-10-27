@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s -o /dev/null --pass-pipeline='builtin.module(test-obelisk-sim-known-versioning)' 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(schedule-version-known-regions)' | FileCheck %s --check-prefix=COPY
+// RUN: talos-opt %s -o /dev/null --pass-pipeline='builtin.module(test-talos-sim-known-versioning)' 2>&1 | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(schedule-version-known-regions)' | FileCheck %s --check-prefix=COPY
 
 // Known-state versioning admits a region only when every operation maps known
 // operands to known results, every four-state read can be checked at the

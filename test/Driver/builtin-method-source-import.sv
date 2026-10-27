@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s -o /dev/null
-// RUN: obelisk -emit-obelisk %s -o /dev/null
+// RUN: talos -emit-slang %s -o /dev/null
+// RUN: talos -emit-talos %s -o /dev/null
 
 // Both source emit modes accept explicit and implicit method receiver forms.
 class C;

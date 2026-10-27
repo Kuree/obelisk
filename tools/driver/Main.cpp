@@ -1,4 +1,4 @@
-//===- Main.cpp - Production Obelisk driver entry point ------------------===//
+//===- Main.cpp - Production Talos driver entry point ------------------===//
 
 #include "DriverMain.h"
 
@@ -6,5 +6,5 @@
 
 int main(int argc, char **argv) {
   llvm::InitLLVM initLLVM(argc, argv);
-  return obelisk::driver::runObeliskDriver(argc, argv);
+  return talos::driver::runTalosDriver(argc, argv);
 }

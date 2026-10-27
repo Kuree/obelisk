@@ -1,11 +1,11 @@
 //===- CoverageCountProjectionIndex.h - bounded relational counts --------===//
 
-#ifndef OBELISK_LIB_COVERAGE_COVERAGECOUNTPROJECTIONINDEX_H
-#define OBELISK_LIB_COVERAGE_COVERAGECOUNTPROJECTIONINDEX_H
+#ifndef TALOS_LIB_COVERAGE_COVERAGECOUNTPROJECTIONINDEX_H
+#define TALOS_LIB_COVERAGE_COVERAGECOUNTPROJECTIONINDEX_H
 
 #include "CoverageDecisionIndex.h"
 
-namespace obelisk::coverage::detail {
+namespace talos::coverage::detail {
 
 /// Count removed-variable assignments separately for each retained assignment.
 /// Counts saturate at cap and use shared Boolean graphs for their binary
@@ -285,6 +285,6 @@ public:
   }
 };
 
-} // namespace obelisk::coverage::detail
+} // namespace talos::coverage::detail
 
 #endif

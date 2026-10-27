@@ -1,6 +1,6 @@
 # RUN: %coverage-fixture %t.obcov 26 transition-report 1 transition
-# RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s
-# RUN: obelisk-cov report --format=html -o %t.html %t.obcov
+# RUN: talos-cov report --format=json %t.obcov | FileCheck %s
+# RUN: talos-cov report --format=html -o %t.html %t.obcov
 # RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html 'five_then_nine = 0x5 => 0x9' %}
 
 # A transition bin (IEEE 1800-2023 19.5.2) is reported as a bin of kind 2

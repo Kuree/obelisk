@@ -1,13 +1,13 @@
 ; REQUIRES: llvm-pass-plugin
-; RUN: %llvm_dist/bin/opt -load-pass-plugin=%pass_plugin -passes=obelisk-clocked-guard-layout -S %s | FileCheck %s
+; RUN: %llvm_dist/bin/opt -load-pass-plugin=%pass_plugin -passes=talos-clocked-guard-layout -S %s | FileCheck %s
 
 ; One-armed guards in a clocked kernel body get an unlikely arm edge in either
 ; orientation, including an arm with internal control flow. A diamond, an
 ; existing weight, an arm with a second predecessor, an arm that leaves the
 ; function, and every function outside a clocked kernel keep their layout.
 
-; CHECK-LABEL: define i32 @__obelisk_clocked_3_1_0.__obelisk_eval_body_0
-define i32 @__obelisk_clocked_3_1_0.__obelisk_eval_body_0(ptr %state, i1 %c0, i1 %c1, i1 %c2, i1 %c3, i1 %c4, i1 %c5, i1 %c6, i1 %c7) {
+; CHECK-LABEL: define i32 @__talos_clocked_3_1_0.__talos_eval_body_0
+define i32 @__talos_clocked_3_1_0.__talos_eval_body_0(ptr %state, i1 %c0, i1 %c1, i1 %c2, i1 %c3, i1 %c4, i1 %c5, i1 %c6, i1 %c7) {
 entry:
   ; CHECK: br i1 %c0, label %arm0, label %join0, !prof ![[UNLIKELY_TRUE:[0-9]+]]
   br i1 %c0, label %arm0, label %join0
@@ -69,9 +69,9 @@ exit:
   ret i32 0
 }
 
-; CHECK-LABEL: define i32 @__obelisk_region_kernel_0_0.__obelisk_eval_body_0
+; CHECK-LABEL: define i32 @__talos_region_kernel_0_0.__talos_eval_body_0
 ; CHECK-NOT: !prof
-define i32 @__obelisk_region_kernel_0_0.__obelisk_eval_body_0(ptr %state, i1 %c0) {
+define i32 @__talos_region_kernel_0_0.__talos_eval_body_0(ptr %state, i1 %c0) {
 entry:
   br i1 %c0, label %arm, label %join
 arm:

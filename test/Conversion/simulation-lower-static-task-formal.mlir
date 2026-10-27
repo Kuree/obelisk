@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // A static task formal has both a value argument for each invocation and a
 // descriptor-backed shared location.  After copy-in, semantic reads and writes
 // must consistently use the descriptor rather than the temporary local.
 
-!int = !obelisk.integral<32, true, false, 31 : 0, int>
+!int = !talos.integral<32, true, false, 31 : 0, int>
 
 module {
   simulation.design @static_task_formal {
@@ -40,15 +40,15 @@ module {
           ],
           code_unit_id = 9400001 : i64
         } {
-      obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 1 : i64} {
+        talos.sv.expression.assignment attributes {
             node_id = 2 : i64, assignment_kind = 0 : i32,
             semantic_type = !int} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 3 : i64, referenced_path = "top.mutate.value",
               referenced_symbol = @value, semantic_type = !int} {
           }
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               node_id = 4 : i64, constant_value = "9",
               semantic_type = !int} {
           }

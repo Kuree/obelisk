@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-propagate-initialized-storage))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-propagate-initialized-storage{vpi=read}))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-propagate-initialized-storage{vpi=full}))' | FileCheck %s --check-prefix=FULL
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-propagate-initialized-storage))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-propagate-initialized-storage{vpi=read}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-propagate-initialized-storage{vpi=full}))' | FileCheck %s --check-prefix=FULL
 
 // IEEE 1800-2023 6.8, 11.5.1: initialization precedes process startup,
 // including after inlining. Fixed read-only aliases preserve both X/Z planes.

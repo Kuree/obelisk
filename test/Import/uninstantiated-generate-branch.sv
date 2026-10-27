@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s | FileCheck %s
+// RUN: talos -emit-slang %s | FileCheck %s
 
 // slang elaborates only the selected arm of a generate condition and models the
 // other one with Invalid* placeholders, reporting nothing about it because that

@@ -1,4 +1,4 @@
-// RUN: not obelisk-translate --import-sdf --sdf-max-input-bytes=16 %s -o %t.mlir 2>&1 | FileCheck %s
+// RUN: not talos-translate --import-sdf --sdf-max-input-bytes=16 %s -o %t.mlir 2>&1 | FileCheck %s
 // RUN: test ! -e %t.mlir
 
 // Clause 32 admits external annotation files, but the test-only translator

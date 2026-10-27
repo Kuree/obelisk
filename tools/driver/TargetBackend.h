@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef OBELISK_TOOLS_DRIVER_TARGETBACKEND_H
-#define OBELISK_TOOLS_DRIVER_TARGETBACKEND_H
+#ifndef TALOS_TOOLS_DRIVER_TARGETBACKEND_H
+#define TALOS_TOOLS_DRIVER_TARGETBACKEND_H
 
 #include "mlir/Support/LogicalResult.h"
 
@@ -28,7 +28,7 @@ namespace mlir {
 class ModuleOp;
 }
 
-namespace obelisk::driver {
+namespace talos::driver {
 
 enum class NativeOutputKind { Object, LLVMIR, Executable };
 
@@ -66,7 +66,7 @@ struct NativeLinkInput {
 
 /// Writes the whole module before or after the first run of the pass with a
 /// given argument, then exits, so that one slow pass of a large design can be
-/// replayed with obelisk-opt. A path ending in ".mlirbc" receives bytecode;
+/// replayed with talos-opt. A path ending in ".mlirbc" receives bytecode;
 /// any other path receives textual IR without locations.
 struct PassIRDumpOptions {
   std::string before, after, path;
@@ -155,6 +155,6 @@ mlir::LogicalResult configureTargetLayout(mlir::ModuleOp module,
 mlir::LogicalResult emitTargetOutput(mlir::ModuleOp module,
                                      const NativeOutputOptions &options);
 
-} // namespace obelisk::driver
+} // namespace talos::driver
 
-#endif // OBELISK_TOOLS_DRIVER_TARGETBACKEND_H
+#endif // TALOS_TOOLS_DRIVER_TARGETBACKEND_H

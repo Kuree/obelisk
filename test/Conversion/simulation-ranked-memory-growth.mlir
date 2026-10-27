@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-replicate,convert-scf-to-cf,simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2> %t.trace
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-replicate,convert-scf-to-cf,simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o /dev/null 2> %t.trace
 // RUN: FileCheck %s < %t.trace
 
 // Over a hundred CFG fragments (32 replicated diamonds) must not duplicate
 // this owner's whole summary. Its 32 independent state bits and one trigger
 // have 33 read ranges and 32 write ranges, independent of the number of
 // fragment identities.
-// CHECK: obelisk ranked memory: body=chain.__obelisk_eval_body_0 reads=33 writes=32{{$}}
+// CHECK: talos ranked memory: body=chain.__talos_eval_body_0 reads=33 writes=32{{$}}
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

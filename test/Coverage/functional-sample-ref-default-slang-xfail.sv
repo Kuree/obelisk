@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk --std=1800-2023 -O0 --target=native --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --target=native --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
 
 // IEEE 1800-2023 13.5.3 resolves defaults in the declaration's enclosing scope.

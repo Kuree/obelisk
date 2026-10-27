@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode --test-obelisk-print-bytecode=state=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode --test-talos-print-bytecode=state=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 // IEEE 1800-2017 4.9.1, 6.7.1, 10.3.3, and 30.5: a net and an ordinary
 // continuous-assignment contribution start at Z while the time-zero
@@ -124,9 +124,9 @@ module attributes {
 // Each net and ordinary delayed driver starts at Z. Module-path delayed
 // drivers start at X. Every four-state slot therefore has its unknown plane
 // set, while the value plane distinguishes Z from X.
-// NATIVE: llvm.mlir.global internal constant @__obelisk_state_initializers_v1(dense<[0, 1, 1, 1, 8, 1, 1, 1, 16, 1, 0, 1, 24, 1, 1, 1, 32, 1, 1, 1, 40, 1, 1, 1, 48, 1, 1, 1, 56, 1, 0, 1, 64, 1, 0, 1]> : tensor<36xi64>)
-// NATIVE: llvm.mlir.global internal @__obelisk_state_unknown()
-// NATIVE: llvm.mlir.global internal @__obelisk_state_value()
+// NATIVE: llvm.mlir.global internal constant @__talos_state_initializers_v1(dense<[0, 1, 1, 1, 8, 1, 1, 1, 16, 1, 0, 1, 24, 1, 1, 1, 32, 1, 1, 1, 40, 1, 1, 1, 48, 1, 1, 1, 56, 1, 0, 1, 64, 1, 0, 1]> : tensor<36xi64>)
+// NATIVE: llvm.mlir.global internal @__talos_state_unknown()
+// NATIVE: llvm.mlir.global internal @__talos_state_value()
 
 // Bit 14 records initial X only on module-path driver descriptors, including
 // both strength banks.

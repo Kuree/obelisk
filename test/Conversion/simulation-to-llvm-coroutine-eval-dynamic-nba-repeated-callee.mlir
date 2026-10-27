@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
 // This preplanned Eval body invokes an NBA-bearing direct callee twice. The
@@ -33,7 +33,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.ref.store %2 to %arg1 : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
       cf.br ^bb1
     }
-    simulation.func @update(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.unpacked_array<0 : 1 x !simulation.logic<32>>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %arg3: !simulation.ref<!simulation.logic<64>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {code_unit_id = 3 : i64, domain = 0 : i32, effect_summary = [#schedule.effect<effect = read, resource = storage, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 64, dynamic = false, deferred = false, trigger = none>, #schedule.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>, #schedule.effect<effect = nba, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 64, dynamic = true, deferred = false, trigger = none>], entry_kind = 3 : i32, fragment_abi = #schedule.fragment_abi<version = 1, fragments = [4, 5, 6]>, home_region = 2 : i32, schedule.eval.body = @update.__obelisk_eval_body_0} {
+    simulation.func @update(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.unpacked_array<0 : 1 x !simulation.logic<32>>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %arg3: !simulation.ref<!simulation.logic<64>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {code_unit_id = 3 : i64, domain = 0 : i32, effect_summary = [#schedule.effect<effect = read, resource = storage, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 64, dynamic = false, deferred = false, trigger = none>, #schedule.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>, #schedule.effect<effect = nba, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 64, dynamic = true, deferred = false, trigger = none>], entry_kind = 3 : i32, fragment_abi = #schedule.fragment_abi<version = 1, fragments = [4, 5, 6]>, home_region = 2 : i32, schedule.eval.body = @update.__talos_eval_body_0} {
       cf.br ^bb1
     ^bb1:  // 2 preds: ^bb0, ^bb2
       simulation.suspend.change %arg1 to ^bb2 {site = #schedule.continuation<id = 6>} : !simulation.ref<!simulation.logic<1>>
@@ -42,8 +42,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.call @stage(%arg0) : (!simulation.context) -> ()
       cf.br ^bb1
     }
-    simulation.code_unit.decl 4 in 0 function hierarchy "update.__obelisk_eval_body_0" debug "generated native eval body" {internal}
-    simulation.func private @update.__obelisk_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.unpacked_array<0 : 1 x !simulation.logic<32>>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %arg3: !simulation.ref<!simulation.logic<64>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {code_unit_id = 4 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 6 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 3 : i64, continuation = 6 : i32>]} {
+    simulation.code_unit.decl 4 in 0 function hierarchy "update.__talos_eval_body_0" debug "generated native eval body" {internal}
+    simulation.func private @update.__talos_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.unpacked_array<0 : 1 x !simulation.logic<32>>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %arg3: !simulation.ref<!simulation.logic<64>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {code_unit_id = 4 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 6 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 3 : i64, continuation = 6 : i32>]} {
       cf.br ^bb1
     ^bb1:  // pred: ^bb0
       simulation.call @stage(%arg0) : (!simulation.context) -> ()
@@ -63,12 +63,12 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 }
 
 // CHECK-LABEL: module attributes
-// CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
-// CHECK-NOT: llvm.func @__obelisk_eval_dispatch_v1
-// CHECK-LABEL: llvm.func @update.__obelisk_coro_ramp(
+// CHECK-NOT: llvm.mlir.global internal @__talos_eval_nba_valid_
+// CHECK-NOT: llvm.func @__talos_eval_dispatch_v1
+// CHECK-LABEL: llvm.func @update.__talos_coro_ramp(
 // CHECK-COUNT-2: llvm.call @stage
-// CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
+// CHECK-LABEL: llvm.func @update.__talos_eval_body_0(
 // CHECK-COUNT-2: llvm.call @stage
 // CHECK-LABEL: llvm.func @stage(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_nba
-// CHECK-NEXT: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK: llvm.call @talos_rt_v1_scheduler_nba
+// CHECK-NEXT: llvm.call @talos_rt_v1_scheduler_fail

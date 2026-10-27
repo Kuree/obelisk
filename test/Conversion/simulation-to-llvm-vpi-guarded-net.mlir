@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=off},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=OFF
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=off},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=OFF
 
 // Writable VPI is a capability, not an active consumer. Fixed net reads retain
 // guarded direct access. A whole-driver fast path needs the GLOBAL clean flag,
@@ -52,27 +52,27 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @read_net(
-// CHECK: llvm.mlir.addressof @__obelisk_state_specialization_fast_v1
+// CHECK: llvm.mlir.addressof @__talos_state_specialization_fast_v1
 // CHECK: llvm.cond_br
-// CHECK: llvm.call @obelisk_rt_v1_static_specialization_guard
-// CHECK: llvm.mlir.addressof @__obelisk_state_value
+// CHECK: llvm.call @talos_rt_v1_static_specialization_guard
+// CHECK: llvm.mlir.addressof @__talos_state_value
 // CHECK: llvm.load
-// CHECK: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK: llvm.call @talos_rt_v1_native_state_load_plane
 // CHECK-LABEL: llvm.func @drive_net(
-// CHECK: llvm.mlir.addressof @__obelisk_state_specialization_fast_v1
+// CHECK: llvm.mlir.addressof @__talos_state_specialization_fast_v1
 // CHECK: llvm.cond_br
-// CHECK-NOT: llvm.call @obelisk_rt_v1_static_specialization_guard
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_store_plane
-// CHECK: llvm.mlir.addressof @__obelisk_state_value
+// CHECK-NOT: llvm.call @talos_rt_v1_static_specialization_guard
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_store_plane
+// CHECK: llvm.mlir.addressof @__talos_state_value
 // CHECK: llvm.store
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_store_plane
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK: llvm.call @obelisk_rt_v1_native_state_store_plane
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_store_plane
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_native_state_store_plane
 
 // OFF-LABEL: llvm.func @read_net(
-// OFF-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+// OFF-NOT: llvm.call @talos_rt_v1_native_state_load_plane
 // OFF: llvm.return
 // OFF-LABEL: llvm.func @drive_net(
-// OFF-NOT: llvm.call @obelisk_rt_v1_native_state_store_plane
-// OFF-NOT: llvm.mlir.addressof @__obelisk_state_specialization_fast_v1
-// OFF: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// OFF-NOT: llvm.call @talos_rt_v1_native_state_store_plane
+// OFF-NOT: llvm.mlir.addressof @__talos_state_specialization_fast_v1
+// OFF: llvm.call @talos_rt_v1_scheduler_static_transition

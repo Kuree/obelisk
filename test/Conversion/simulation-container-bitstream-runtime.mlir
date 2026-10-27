@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=LOWER
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=LOWER
 
 // Runtime behavior is checked in ../Runtime/simulation-container-bitstream-runtime.test.
 
-// LOWER: llvm.call @obelisk_rt_v1_container_bitstream_link_anchor
+// LOWER: llvm.call @talos_rt_v1_container_bitstream_link_anchor
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -15,7 +15,7 @@ module attributes {
     simulation.code_unit.decl 9910001 in 0 initial
         hierarchy "container_bitstream_runtime.initial"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9910000 : i64} {
       %process = simulation.spawn @initial(%ctx) :

@@ -1,12 +1,12 @@
 //===- StateDomainAnalysis.cpp - Whole-value X/Z analysis ----------------===//
 
-#include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Analysis/ClassDispatchAnalysis.h"
-#include "obelisk/Analysis/LogicBitAnalysis.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
+#include "talos/Analysis/ClassDispatchAnalysis.h"
+#include "talos/Analysis/LogicBitAnalysis.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -33,7 +33,7 @@
 #include <numeric>
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 namespace {
 
 using RootKey = std::pair<unsigned, uint64_t>;
@@ -1907,4 +1907,4 @@ bool StateDomainAnalysis::isInductivelyTwoState(
                             InductiveStateRoot{resource, descriptor});
 }
 
-} // namespace obelisk
+} // namespace talos

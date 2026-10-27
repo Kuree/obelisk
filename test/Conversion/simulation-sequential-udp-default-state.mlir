@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' \
 // RUN:   | FileCheck %s --check-prefix=LOWER
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)),convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)),encode-obelisk-sim-to-bytecode,test-obelisk-print-bytecode{state=true})' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)),encode-talos-sim-to-bytecode,test-talos-print-bytecode{state=true})' \
 // RUN:   -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
@@ -14,7 +14,7 @@
 // changes it. The initial driver contribution must therefore be X, not the
 // ordinary undriven Z sentinel.
 
-!logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
+!logic1 = !talos.integral<1, false, true, 0 : 0, logic>
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -42,16 +42,16 @@ module attributes {
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.input", argument = 1, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.out", argument = 2, kind = lvalue_only, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {
+      talos.sv.expression.assignment attributes {
           assignment_kind = 0 : i32, node_id = 1 : i64,
           semantic_type = !logic1} {
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 2 : i64, referenced_path = "top.out",
             referenced_symbol = @out, semantic_type = !logic1} {}
-        obelisk.sv.expression.empty_argument attributes {
+        talos.sv.expression.empty_argument attributes {
             node_id = 3 : i64, semantic_type = !logic1} {}
       }
-      obelisk.sv.expression.named_value attributes {
+      talos.sv.expression.named_value attributes {
           node_id = 4 : i64, referenced_path = "top.input",
           referenced_symbol = @input, semantic_type = !logic1} {}
       simulation.return
@@ -63,8 +63,8 @@ module attributes {
 
 // Independently addressable storage, net, and driver roots occupy separate
 // bytes. The unresolved net is Z; the storage and certified UDP driver are X.
-// NATIVE: llvm.mlir.global internal constant @__obelisk_state_initializers_v1(dense<[0, 1, 0, 1, 8, 1, 1, 1, 16, 1, 0, 1]> : tensor<12xi64>)
-// NATIVE: llvm.mlir.global internal @__obelisk_state_unknown()
-// NATIVE: llvm.mlir.global internal @__obelisk_state_value()
+// NATIVE: llvm.mlir.global internal constant @__talos_state_initializers_v1(dense<[0, 1, 0, 1, 8, 1, 1, 1, 16, 1, 0, 1]> : tensor<12xi64>)
+// NATIVE: llvm.mlir.global internal @__talos_state_unknown()
+// NATIVE: llvm.mlir.global internal @__talos_state_value()
 
 // BYTECODE: kind=driver flags=17337

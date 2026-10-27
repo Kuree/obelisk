@@ -1,9 +1,9 @@
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
+// RUN: talos -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
 // RUN: FileCheck %s --check-prefix=SAMPLER < %t.timing
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.generic > %t.generic.out
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto 2> %t.auto.diag | diff -u %t.generic.out -
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.auto 2> %t.auto.diag | diff -u %t.generic.out -
 // RUN: FileCheck %s --check-prefix=DIAG < %t.auto.diag
 
 // A task without time control completes inside the caller's activation (IEEE
@@ -63,5 +63,5 @@ endmodule
 // ADMISSION: native withheld actor: cost={{[0-9]+}} at=loc("{{.*}}native-aot-delayed-waiter-task-call.sv":[[# @LINE - 21]]:3) reason=task, await, or join control is present
 // SAMPLER-NOT: native withheld actor: {{.*}}native-aot-delayed-waiter-task-call.sv":[[# @LINE - 17]]:3)
 // ADMISSION: native eligibility: eligible=1 fully_eligible=0
-// DIAG: obelisk-signal-diagnostics
+// DIAG: talos-signal-diagnostics
 // DIAG-SAME: aot_fallbacks=0

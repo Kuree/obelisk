@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --schedule-optimize-native-words | FileCheck %s
+// RUN: talos-opt %s --schedule-optimize-native-words | FileCheck %s
 // Eight three-bit values occupy eight LLVM byte slots. Word access and
 // reversal use byte strides; stores clear padding without converting Z to X.
 // CHECK: schedule.word.region 64

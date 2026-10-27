@@ -1,12 +1,12 @@
 //===- SimulationDPIExportBridge.cpp - Scope-local DPI export bridges ----===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Conversion/SimulationToLLVMCoroutine.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
@@ -22,10 +22,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMMATERIALIZEDPIEXPORTSPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMMATERIALIZEDPIEXPORTSPASS
+#include "talos/Conversion/Passes.h.inc"
 
 namespace {
 
@@ -124,7 +124,7 @@ FailureOr<Value> materializeDescriptorCapture(OpBuilder &builder, Location loc,
 }
 
 class MaterializeDPIExportsPass final
-    : public impl::ObeliskSimMaterializeDPIExportsPassBase<
+    : public impl::TalosSimMaterializeDPIExportsPassBase<
           MaterializeDPIExportsPass> {
 public:
   using Base::Base;
@@ -140,7 +140,7 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
   if (!dpi::has<dpi::HasExports>(module))
     return success();
   SmallVector<sim::SimFuncOp> exports;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         if (dpi::has<dpi::Export>(function) &&
             !dpi::has<dpi::ExportBridge>(function))
@@ -150,14 +150,14 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
     return success();
 
   llvm::DenseSet<std::pair<Operation *, StringAttr>> siblingSymbols;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         siblingSymbols.insert(
             {function->getParentOp(), function.getSymNameAttr()});
       });
   llvm::DenseSet<uint64_t> codeUnitIDs;
   llvm::DenseMap<uint64_t, sim::SimCodeUnitDeclOp> codeUnitDeclarations;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         if (std::optional<int64_t> id = function.getCodeUnitId(); id && *id > 0)
           codeUnitIDs.insert(static_cast<uint64_t>(*id));
@@ -200,7 +200,7 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
           "DPI export has no matching code-unit declaration");
 
     std::string symbol =
-        (function.getSymName() + ".__obelisk_dpi_export_bridge").str();
+        (function.getSymName() + ".__talos_dpi_export_bridge").str();
     StringAttr symbolAttr = StringAttr::get(module.getContext(), symbol);
     auto siblingKey = std::make_pair(function->getParentOp(), symbolAttr);
     if (siblingSymbols.contains(siblingKey))
@@ -210,7 +210,7 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
       std::string identity = discriminator == 0
                                  ? symbol
                                  : (symbol + "." + Twine(discriminator)).str();
-      codeUnitID = obelisk_stable_hash(identity.data(), identity.size()) &
+      codeUnitID = talos_stable_hash(identity.data(), identity.size()) &
                    uint64_t{std::numeric_limits<int64_t>::max()};
       if (codeUnitID != 0 && codeUnitIDs.insert(codeUnitID).second)
         break;
@@ -319,4 +319,4 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
   return success();
 }
 
-} // namespace obelisk
+} // namespace talos

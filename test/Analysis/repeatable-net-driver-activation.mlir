@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,test-obelisk-repeatable-activations))' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,test-talos-repeatable-activations))' -o /dev/null 2>&1 | FileCheck %s
 
 // A continuous driver of bits that no other strong contribution reaches writes
 // the resolved value of those bits (IEEE 1800-2023 6.6.1): re-driving them with

@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s
 // Standalone activation outlining must place the wait hit on rearm, not on
 // entry: a terminating activation executes its body but never waits again.
-// CHECK-LABEL: simulation.func private @actor.__obelisk_eval_body_0(
+// CHECK-LABEL: simulation.func private @actor.__talos_eval_body_0(
 // CHECK-NOT: simulation.coverage.point_hit
 // CHECK: cf.br
 // CHECK: simulation.coverage.point_hit {{.*}}[2]

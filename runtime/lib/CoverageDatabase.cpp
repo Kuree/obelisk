@@ -11,7 +11,7 @@
 #include <filesystem>
 #include <system_error>
 
-namespace obelisk::coverage::detail {
+namespace talos::coverage::detail {
 
 bool atomicReplaceFile(const std::string &temporary, const std::string &output,
                        std::string &error) {
@@ -23,6 +23,6 @@ bool atomicReplaceFile(const std::string &temporary, const std::string &output,
   return false;
 }
 
-} // namespace obelisk::coverage::detail
+} // namespace talos::coverage::detail
 
 #include "../../lib/Coverage/CoverageDatabase.cpp"

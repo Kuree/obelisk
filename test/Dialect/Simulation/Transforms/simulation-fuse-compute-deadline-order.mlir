@@ -1,10 +1,10 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O3 -emit-sim %t/deadline-order.sv -o %t/deadline-order.mlir
+// RUN: talos -O3 -emit-sim %t/deadline-order.sv -o %t/deadline-order.mlir
 // RUN: FileCheck %s --check-prefix=COHORT < %t/deadline-order.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-deadline-order.test.
 
-// COHORT: __obelisk_fused_
+// COHORT: __talos_fused_
 
 //--- deadline-order.sv
 module deadline_activation_order;

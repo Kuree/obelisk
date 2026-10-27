@@ -1,4 +1,4 @@
-#include "obelisk/Analysis/SourceMemoryAnalysis.h"
+#include "talos/Analysis/SourceMemoryAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
@@ -6,11 +6,11 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "obelisk/Analysis/HandleDataflowAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/HandleDataflowAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 // Identity distinguishes two exact dynamically selected addresses whose
 // may-access hulls overlap. The hull is used for kills, never for equality.
@@ -358,4 +358,4 @@ forwardSourceMemoryLoads(sim::SimFuncOp function, bool canonicalWrites,
     load.erase();
   return forwarded.size();
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

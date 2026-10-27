@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(symbol-dce))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(symbol-dce))' | FileCheck %s
 
 module {
   simulation.design @dce {
@@ -22,10 +22,10 @@ module {
 
     // CHECK-NOT: @unused_definition
     // CHECK-NOT: @unused_declaration
-    // CHECK-LABEL: simulation.func @__obelisk_root
+    // CHECK-LABEL: simulation.func @__talos_root
     // CHECK: simulation.call @recursive_a
     // CHECK: simulation.spawn @live_process
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32} {
       simulation.call @recursive_a(%ctx) : (!simulation.context) -> ()

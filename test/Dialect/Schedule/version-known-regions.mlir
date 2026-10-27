@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(schedule-version-known-regions)' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(schedule-version-known-regions)' | FileCheck %s
 
 // Structural regressions for known-state versioning. The output must verify:
 // every region keeps a single entry, values leaving a region merge only where

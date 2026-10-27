@@ -1,17 +1,17 @@
-// RUN: obelisk-opt %s --convert-native-schedule-actions-to-llvm -o %t.lowered
+// RUN: talos-opt %s --convert-native-schedule-actions-to-llvm -o %t.lowered
 // RUN: FileCheck %s --implicit-check-not="llvm.mlir.addressof @constant_offset" --implicit-check-not=llvm.intr.cttz --implicit-check-not=llvm.switch < %t.lowered
-// RUN: %llvm_dist/bin/mlir-opt %t.lowered --convert-arith-to-llvm --convert-cf-to-llvm | obelisk-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/mlir-opt %t.lowered --convert-arith-to-llvm --convert-cf-to-llvm | talos-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang -O2 %t.o %S/Inputs/native-nba-batch.c -o %t.exe
 // RUN: %t.exe
 
 // The layout survives as an explicit region certificate until conversion.
 // Conversion selects dirty roots, emits their stores, and groups readiness.
-// CHECK-NOT: llvm.call @obelisk_rt_v1_static_nba_commit_batch(
+// CHECK-NOT: llvm.call @talos_rt_v1_static_nba_commit_batch(
 // CHECK: llvm.func @specialized
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_batch_guard
+// CHECK: llvm.call @talos_rt_v1_static_nba_batch_guard
 // CHECK: cf.cond_br
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_batch_knownness
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_batch_finish
+// CHECK: llvm.call @talos_rt_v1_static_nba_batch_knownness
+// CHECK: llvm.call @talos_rt_v1_static_nba_batch_finish
 // CHECK-NOT: schedule.nba
 #batch = #schedule.nba_batch_layout<plan = @plan, value = @value, unknown = @unknown, dirty = @dirty, summary = @summary, ingress = @ingress, bitCount = 256, rootCount = 66, capacity = 130>
 #consumer = #schedule.nba_consumer<low = 64, width = 65, bit = 129>

@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s --check-prefix=READ
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=read},talos-sim-materialize-compute-fusion,schedule-localize-private-eval-storage))' | FileCheck %s --check-prefix=READ
 
 // Evaluator localization through ordinary function calls and of scalar roots.
 // IEEE 1800-2023 13.4 prohibits blocking timing controls in a function. The
@@ -222,37 +222,37 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
   }
 }
-// CHECK-LABEL: simulation.func private @pure_call.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @pure_call.__talos_eval_body_
 // CHECK: %[[LOCAL:.*]] = simulation.ref.alloc
 // CHECK: %[[ELEMENT:.*]] = simulation.ref.subelement %[[LOCAL]][
 // CHECK: simulation.call @increment
 // CHECK: simulation.ref.store %{{.*}} to %[[ELEMENT]]
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @scalar_bits.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @scalar_bits.__talos_eval_body_
 // CHECK: %[[ZERO:.*]] = arith.constant 0 : i3
 // CHECK: %[[SLOT:.*]] = simulation.ref.alloc %[[ZERO]] : i3
 // CHECK: simulation.ref.store %{{.*}} to %[[SLOT]]
 // CHECK: simulation.ref.load %[[SLOT]]
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @scalar_logic.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @scalar_logic.__talos_eval_body_
 // CHECK: %[[KNOWN:.*]] = simulation.logic.constant 0 : i3, 0 : i3 : !simulation.logic<3>
 // CHECK: %[[LOGIC:.*]] = simulation.ref.alloc %[[KNOWN]] : !simulation.logic<3>
 // CHECK: simulation.ref.store %{{.*}} to %[[LOGIC]]
 // CHECK: simulation.ref.load %[[LOGIC]]
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @callee_capture.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @callee_capture.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.call @peek
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @reference_formal.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @reference_formal.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.call @dereference
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @callee_writes.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @callee_writes.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.call @record
 // CHECK: simulation.return
-// CHECK-LABEL: simulation.func private @scalar_live_in.__obelisk_eval_body_
+// CHECK-LABEL: simulation.func private @scalar_live_in.__talos_eval_body_
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.return
 // READ-NOT: simulation.ref.alloc

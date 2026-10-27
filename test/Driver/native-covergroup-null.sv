@@ -1,6 +1,6 @@
-// RUN: obelisk -O0 %s -o %t.native
+// RUN: talos -O0 %s -o %t.native
 // RUN: not %t.native
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: not %t.bytecode
 
 module native_covergroup_null;

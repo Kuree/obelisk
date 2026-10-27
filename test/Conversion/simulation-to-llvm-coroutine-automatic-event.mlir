@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // An automatic event variable captured by a spawned branch lives in an
 // automatic reference cell. The cell holds an event handle, so it has to be
@@ -44,11 +44,11 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @waiter.__obelisk_coro_ramp
+// CHECK-LABEL: llvm.func @waiter.__talos_coro_ramp
 // CHECK: %[[LOAD_BITS:.*]] = llvm.mlir.constant(64 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_native_state_load_plane({{.*}}, %[[LOAD_BITS]], {{.*}}, %[[SLOT:[0-9a-zA-Z_]+]])
+// CHECK: llvm.call @talos_rt_v1_native_state_load_plane({{.*}}, %[[LOAD_BITS]], {{.*}}, %[[SLOT:[0-9a-zA-Z_]+]])
 // CHECK: llvm.load %[[SLOT]] {{.*}} : !llvm.ptr -> i64
 
 // CHECK-LABEL: llvm.func @spawner
 // CHECK: %[[ALLOC_BITS:.*]] = llvm.mlir.constant(64 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_native_state_alloc({{.*}}, %[[ALLOC_BITS]],
+// CHECK: llvm.call @talos_rt_v1_native_state_alloc({{.*}}, %[[ALLOC_BITS]],

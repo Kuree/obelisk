@@ -1,7 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=SIZE
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=SIZE
 
 // IEEE 19.3, 19.8.1 and 13.5: inputs copy array values at actual evaluation;
 // refs retain storage aliases, including reassignment. Sample inputs are local

@@ -3,7 +3,7 @@
 ## `Dockerfile.llvm-wasm`
 
 Builds LLVM + MLIR + LLD 22.1.6 for **wasm**, producing the CMake package
-layout Obelisk's top-level `CMakeLists.txt` already validates. This is the
+layout Talos's top-level `CMakeLists.txt` already validates. This is the
 dependency the in-browser compiler needs; there is no upstream prebuilt
 LLVM/MLIR wasm distribution to consume.
 
@@ -21,7 +21,7 @@ tools and those can never be the wasm build's own binaries:
 No clang is *built* — the native one comes prebuilt in the official archive at
 no build cost, and the wasm side is LLVM + MLIR + LLD only.
 
-Toolchain image (can build either a native or a wasm Obelisk):
+Toolchain image (can build either a native or a wasm Talos):
 
 ```sh
 docker build -f docker/Dockerfile.llvm-wasm \
@@ -44,15 +44,17 @@ Consume it through the existing prebuilt-archive path, no source change needed:
 
 ```sh
 cmake -S . -B build-wasm -G Ninja \
-  -DOBELISK_LLVM_PREBUILT_URL=file://$PWD/dist/llvm-mlir-lld-wasm32.tar.xz \
-  -DOBELISK_LLVM_PREBUILT_SHA256=$(cut -d' ' -f1 dist/llvm-mlir-lld-wasm32.tar.xz.sha256)
+  -DTALOS_LLVM_PREBUILT_URL=file://$PWD/dist/llvm-mlir-lld-wasm32.tar.xz \
+  -DTALOS_LLVM_PREBUILT_SHA256=$(cut -d' ' -f1 dist/llvm-mlir-lld-wasm32.tar.xz.sha256)
 ```
 
 ### CI image
 
 Normal CI pulls the public image by immutable digest instead of rebuilding
 LLVM. Rebuild and publish the image only when this Dockerfile or its LLVM pin
-changes. A local image can still be built with:
+changes. The published image keeps its original `obelisk-llvm-wasm32` name,
+`OBELISK_LLVM_WASM_*` variables, and `/opt/obelisk-sdk` paths so Talos can use
+the existing SDK without rebuilding it. A local image can still be built with:
 
 ```sh
 docker build --target toolchain -f docker/Dockerfile.llvm-wasm \
@@ -63,8 +65,8 @@ The image provides:
 
 | Variable | Meaning |
 | --- | --- |
-| `OBELISK_LLVM_WASM_SDK` | Path to the SDK tarball, for `OBELISK_LLVM_PREBUILT_URL` as a `file://` URL |
-| `OBELISK_LLVM_WASM_SHA256_FILE` | File holding its bare checksum, for `OBELISK_LLVM_PREBUILT_SHA256` |
+| `OBELISK_LLVM_WASM_SDK` | Path to the SDK tarball, for `TALOS_LLVM_PREBUILT_URL` as a `file://` URL |
+| `OBELISK_LLVM_WASM_SHA256_FILE` | File holding its bare checksum, for `TALOS_LLVM_PREBUILT_SHA256` |
 
 ### Why these settings
 
@@ -81,7 +83,7 @@ The image provides:
 The wasm target runtime is compiled ahead of time by Emscripten into ordinary
 wasm32 objects. Those are built `-fno-exceptions`, so the simulation module
 carries no exception opcodes and no JavaScript trampolines, and are archived
-as `libobelisk_rt.a`; the in-browser linker does not consume runtime LLVM
+as `libtalos_rt.a`; the in-browser linker does not consume runtime LLVM
 bitcode. The matching native `clang++` currently carried in the SDK is not used
 for this runtime build.
 

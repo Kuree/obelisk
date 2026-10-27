@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-obelisk %s -o %t.mlir
-// RUN: obelisk -emit-sim %s -o %t.sim.mlir
+// RUN: talos -emit-talos %s -o %t.mlir
+// RUN: talos -emit-sim %s -o %t.sim.mlir
 module top;
   function automatic void work;
     typedef int same_t;

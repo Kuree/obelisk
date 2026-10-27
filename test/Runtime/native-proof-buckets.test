@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %S/../Conversion/native-proof-buckets.mlir --materialize-native-promotion-range-index='bucket-min-entries=1' -o %t.mlir
-// RUN: obelisk-translate --mlir-to-llvmir %t.mlir > %t.ll
+// RUN: talos-opt %S/../Conversion/native-proof-buckets.mlir --materialize-native-promotion-range-index='bucket-min-entries=1' -o %t.mlir
+// RUN: talos-translate --mlir-to-llvmir %t.mlir > %t.ll
 // RUN: %target_cxx -O0 %t.ll %S/Inputs/check-native-proof-buckets.cpp %runtime_link_flags -o %t.o0
 // RUN: %t.o0
 // RUN: %target_cxx -O3 %t.ll %S/Inputs/check-native-proof-buckets.cpp %runtime_link_flags -o %t.o3

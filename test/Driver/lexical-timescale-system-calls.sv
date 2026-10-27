@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --top=lexical_timescale_system_calls %s -o %t.native
+// RUN: talos -O3 --top=lexical_timescale_system_calls %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --top=lexical_timescale_system_calls --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --top=lexical_timescale_system_calls --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
 
 // Preserve the lexical time scope on system calls in subroutines. Such calls

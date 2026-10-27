@@ -1,6 +1,6 @@
 // Runtime semantics for ../Conversion/simulation-native-unbound-dynamic-state-runtime.mlir.
 
-// RUN: obelisk-opt %S/../Conversion/simulation-native-unbound-dynamic-state-runtime.mlir --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %S/../Conversion/simulation-native-unbound-dynamic-state-runtime.mlir --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %s --check-prefix=OUTPUT
 

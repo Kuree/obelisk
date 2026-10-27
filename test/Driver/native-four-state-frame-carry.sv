@@ -4,10 +4,10 @@
 // two planes one limb apart, so the tiers must marshal the planes separately.
 // Copying one contiguous run instead turns x and z into 0 for every logic
 // value narrower than a limb.
-// RUN: obelisk -O3 --native-scheduler=aot %s -o %t.native
+// RUN: talos -O3 --native-scheduler=aot %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
 
 module native_four_state_frame_carry;

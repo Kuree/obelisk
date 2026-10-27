@@ -1,6 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov 2>&1 | FileCheck %s --check-prefix=WARN
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s
 
 module top;
   bit [7:0] sampled;

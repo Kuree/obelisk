@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang --top=top %s | FileCheck %s
+// RUN: talos -emit-slang --top=top %s | FileCheck %s
 
 // A definition with a required parameter is semantically checked by slang in
 // an uninstantiated context. Parameter-dependent member types are deliberately

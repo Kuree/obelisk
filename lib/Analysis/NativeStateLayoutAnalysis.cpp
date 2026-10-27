@@ -1,10 +1,10 @@
 //===- NativeStateLayoutAnalysis.cpp - Stable native state layout -------===//
 
-#include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
+#include "talos/Analysis/NativeStateLayoutAnalysis.h"
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/IR/BuiltinOps.h"
 
@@ -17,7 +17,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
 /// Storage roots wider than this are allocated after all other state. Such
@@ -27,7 +27,7 @@ namespace {
 constexpr uint64_t maximumLeadingRootBits = uint64_t(1) << 16;
 
 uint64_t encodeStaticHandle(uint32_t id) {
-  return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, id,
+  return talos_rt_stable_handle_encode(TALOS_RT_STABLE_HANDLE_STATIC, id,
                                          0);
 }
 
@@ -75,7 +75,7 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
                       uint64_t &handle) -> LogicalResult {
     std::optional<unsigned> width = getSimulationStorageBitWidth(type);
     if (!width || *width == 0 || *width > INT32_MAX || nextHandleID == 0 ||
-        nextHandleID > OBELISK_RT_STABLE_HANDLE_MAX_STATIC_ID)
+        nextHandleID > TALOS_RT_STABLE_HANDLE_MAX_STATIC_ID)
       return failure();
     SmallVector<uint64_t, 2> managedRootOffsets;
     SmallVector<sim::ManagedHandleSlot, 2> managedRootSlots;
@@ -464,7 +464,7 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       }
     }
   }
-  if (layout.bitCount >= OBELISK_RT_STABLE_HANDLE_STATIC_TAG) {
+  if (layout.bitCount >= TALOS_RT_STABLE_HANDLE_STATIC_TAG) {
     module.emitError("native static state exceeds the handle address space");
     return failure();
   }
@@ -474,4 +474,4 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
   return layout;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

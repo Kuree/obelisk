@@ -8,8 +8,8 @@
 #include "BytecodePlan.h"
 #include "BytecodeSerialization.h"
 
-#include "obelisk/Conversion/SimulationRuntime.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Conversion/SimulationRuntime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -18,7 +18,7 @@
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 static uint32_t encodeResolution(sim::NetResolutionKind resolution,
                                  bool driver) {
@@ -47,7 +47,7 @@ SmallVector<uint8_t> serializeBytecodeImage(
     ArrayRef<IntrinsicSignature> intrinsicSignatures,
     ArrayRef<IntrinsicSite> intrinsicSites,
     ArrayRef<CaptureRecord> captureRecords, const StateLayout &state) {
-  using Header = obelisk_rt_design_bytecode_header_v1;
+  using Header = talos_rt_design_bytecode_header_v1;
   SmallVector<uint8_t> serializedConstants(constants.begin(), constants.end());
   SmallVector<uint64_t> netDelayOffsets(state.netLayouts.size(), UINT64_MAX);
   SmallVector<bool> netDelayBitwise(state.netLayouts.size(), false);
@@ -75,15 +75,15 @@ SmallVector<uint8_t> serializeBytecodeImage(
         append64(serializedConstants,
                  triple ? (*triple)[transition] : UINT64_MAX);
   }
-  SmallVector<uint8_t> output(OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE, 0);
-  static constexpr char magic[] = OBELISK_RT_DESIGN_BYTECODE_MAGIC;
+  SmallVector<uint8_t> output(TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE, 0);
+  static constexpr char magic[] = TALOS_RT_DESIGN_BYTECODE_MAGIC;
   static_assert(sizeof(magic) == sizeof(Header::magic));
   std::copy(std::begin(magic), std::end(magic),
             output.begin() + offsetof(Header, magic));
-  write32(output, offsetof(Header, version), OBELISK_RT_VERSION);
+  write32(output, offsetof(Header, version), TALOS_RT_VERSION);
   write32(output, offsetof(Header, reserved), 0);
   write32(output, offsetof(Header, header_size),
-          OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+          TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
 
   alignTo(output, 8);
   uint64_t functionOffset = output.size();
@@ -107,17 +107,17 @@ SmallVector<uint8_t> serializeBytecodeImage(
          plan.function.getEntryKind() == sim::EntryKind::Observer)
             ? 0
             : (plan.frame->getFrameSize() << 1) |
-                  OBELISK_RT_DESIGN_FUNCTION_PROCESS;
+                  TALOS_RT_DESIGN_FUNCTION_PROCESS;
     if (plan.function.getEntryKind() == sim::EntryKind::Final)
-      functionFlags |= OBELISK_RT_DESIGN_FUNCTION_FINAL;
-    if ((functionFlags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0) {
+      functionFlags |= TALOS_RT_DESIGN_FUNCTION_FINAL;
+    if ((functionFlags & TALOS_RT_DESIGN_FUNCTION_PROCESS) != 0) {
       uint32_t homeRegion =
           getRuntimeEventRegion(plan.function.getHomeRegion());
       if (homeRegion == UINT32_MAX) {
         plan.function.emitOpError("has no executable runtime home region");
         return {};
       }
-      functionFlags |= OBELISK_RT_DESIGN_FUNCTION_HOME(homeRegion);
+      functionFlags |= TALOS_RT_DESIGN_FUNCTION_HOME(homeRegion);
     }
     append64(output, functionFlags);
     layoutCursor += plan.layouts.size();
@@ -218,7 +218,7 @@ SmallVector<uint8_t> serializeBytecodeImage(
     append32(output, 1u | encodeResolution(driver.resolution, true) |
                          (strength0 << 3) | (strength1 << 7) |
                          (driver.strengthBank == 1 ? uint32_t{1} << 11 : 0) |
-                         (driver.initialX ? OBELISK_RT_DB_DRIVER_INITIAL_X
+                         (driver.initialX ? TALOS_RT_DB_DRIVER_INITIAL_X
                                           : uint32_t{0}));
     append64(output, driver.offset + driver.drivenLow);
     append64(output, driver.netOffset + driver.drivenLow);
@@ -275,4 +275,4 @@ SmallVector<uint8_t> serializeBytecodeImage(
   return output;
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

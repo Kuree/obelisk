@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3 missed-remarks=true}))' 2> %t.remarks | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=3 missed-remarks=true}))' 2> %t.remarks | FileCheck %s
 // RUN: FileCheck %s --check-prefix=REMARK < %t.remarks
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(inline)' | FileCheck %s --check-prefix=STOCK
+// RUN: talos-opt %s --pass-pipeline='builtin.module(inline)' | FileCheck %s --check-prefix=STOCK
 
 module {
   simulation.design @late_metadata {

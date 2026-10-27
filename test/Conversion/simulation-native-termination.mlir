@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // IEEE 1800-2023 20.2: $finish, $stop and $fatal end the current time step.
 // An explicit termination inside an eval checkpoint body calls its own runtime
@@ -7,16 +7,16 @@
 // after every body and stops dispatching once termination was requested, so
 // no further activation or NBA commit runs in that time step.
 
-// CHECK-LABEL: llvm.func @__obelisk_eval_checkpoint_body_v1_0(
+// CHECK-LABEL: llvm.func @__talos_eval_checkpoint_body_v1_0(
 // CHECK: llvm.store {{.*}}schedule.eval.pending_dirty_root
-// CHECK: %[[STATUS:.*]] = llvm.call @obelisk_rt_v1_scheduler_fatal(%arg0,
+// CHECK: %[[STATUS:.*]] = llvm.call @talos_rt_v1_scheduler_fatal(%arg0,
 // CHECK-NEXT: %[[ZERO:.*]] = llvm.mlir.constant(0 : i32)
 // CHECK-NEXT: %[[CONTINUE:.*]] = llvm.icmp "eq" %[[STATUS]], %[[ZERO]]
 // CHECK-NEXT: llvm.cond_br %[[CONTINUE]]
-// CHECK-LABEL: llvm.func @__obelisk_eval_four_state_fallback_v1_0(
-// CHECK: %[[BODY:.*]] = llvm.call @__obelisk_eval_checkpoint_body_v1_0(%arg0)
+// CHECK-LABEL: llvm.func @__talos_eval_four_state_fallback_v1_0(
+// CHECK: %[[BODY:.*]] = llvm.call @__talos_eval_checkpoint_body_v1_0(%arg0)
 // CHECK: %[[IDLE:.*]] = llvm.icmp "eq" %[[BODY]],
-// CHECK: %[[REQUESTED:.*]] = llvm.call @obelisk_rt_v1_scheduler_termination_requested(%arg0)
+// CHECK: %[[REQUESTED:.*]] = llvm.call @talos_rt_v1_scheduler_termination_requested(%arg0)
 // CHECK: %[[RUNNING:.*]] = llvm.icmp "eq" %[[REQUESTED]],
 // CHECK: %[[NEXT:.*]] = llvm.and %[[IDLE]], %[[RUNNING]]
 // CHECK: llvm.cond_br %[[NEXT]]
@@ -89,16 +89,16 @@ module attributes {
 
 // -----
 
-// CHECK-LABEL: llvm.func @__obelisk_eval_checkpoint_body_v1_0(
+// CHECK-LABEL: llvm.func @__talos_eval_checkpoint_body_v1_0(
 // CHECK: llvm.store {{.*}}schedule.eval.pending_dirty_root
-// CHECK: %[[STATUS:.*]] = llvm.call @obelisk_rt_v1_scheduler_finish(%arg0,
+// CHECK: %[[STATUS:.*]] = llvm.call @talos_rt_v1_scheduler_finish(%arg0,
 // CHECK-NEXT: %[[ZERO:.*]] = llvm.mlir.constant(0 : i32)
 // CHECK-NEXT: %[[CONTINUE:.*]] = llvm.icmp "eq" %[[STATUS]], %[[ZERO]]
 // CHECK-NEXT: llvm.cond_br %[[CONTINUE]]
-// CHECK-LABEL: llvm.func @__obelisk_eval_four_state_fallback_v1_0(
-// CHECK: %[[BODY:.*]] = llvm.call @__obelisk_eval_checkpoint_body_v1_0(%arg0)
+// CHECK-LABEL: llvm.func @__talos_eval_four_state_fallback_v1_0(
+// CHECK: %[[BODY:.*]] = llvm.call @__talos_eval_checkpoint_body_v1_0(%arg0)
 // CHECK: %[[IDLE:.*]] = llvm.icmp "eq" %[[BODY]],
-// CHECK: %[[REQUESTED:.*]] = llvm.call @obelisk_rt_v1_scheduler_termination_requested(%arg0)
+// CHECK: %[[REQUESTED:.*]] = llvm.call @talos_rt_v1_scheduler_termination_requested(%arg0)
 // CHECK: %[[RUNNING:.*]] = llvm.icmp "eq" %[[REQUESTED]],
 // CHECK: %[[NEXT:.*]] = llvm.and %[[IDLE]], %[[RUNNING]]
 // CHECK: llvm.cond_br %[[NEXT]]
@@ -171,16 +171,16 @@ module attributes {
 
 // -----
 
-// CHECK-LABEL: llvm.func @__obelisk_eval_checkpoint_body_v1_0(
+// CHECK-LABEL: llvm.func @__talos_eval_checkpoint_body_v1_0(
 // CHECK: llvm.store {{.*}}schedule.eval.pending_dirty_root
-// CHECK: %[[STATUS:.*]] = llvm.call @obelisk_rt_v1_scheduler_stop(%arg0,
+// CHECK: %[[STATUS:.*]] = llvm.call @talos_rt_v1_scheduler_stop(%arg0,
 // CHECK-NEXT: %[[ZERO:.*]] = llvm.mlir.constant(0 : i32)
 // CHECK-NEXT: %[[CONTINUE:.*]] = llvm.icmp "eq" %[[STATUS]], %[[ZERO]]
 // CHECK-NEXT: llvm.cond_br %[[CONTINUE]]
-// CHECK-LABEL: llvm.func @__obelisk_eval_four_state_fallback_v1_0(
-// CHECK: %[[BODY:.*]] = llvm.call @__obelisk_eval_checkpoint_body_v1_0(%arg0)
+// CHECK-LABEL: llvm.func @__talos_eval_four_state_fallback_v1_0(
+// CHECK: %[[BODY:.*]] = llvm.call @__talos_eval_checkpoint_body_v1_0(%arg0)
 // CHECK: %[[IDLE:.*]] = llvm.icmp "eq" %[[BODY]],
-// CHECK: %[[REQUESTED:.*]] = llvm.call @obelisk_rt_v1_scheduler_termination_requested(%arg0)
+// CHECK: %[[REQUESTED:.*]] = llvm.call @talos_rt_v1_scheduler_termination_requested(%arg0)
 // CHECK: %[[RUNNING:.*]] = llvm.icmp "eq" %[[REQUESTED]],
 // CHECK: %[[NEXT:.*]] = llvm.and %[[IDLE]], %[[RUNNING]]
 // CHECK: llvm.cond_br %[[NEXT]]

@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),encode-obelisk-sim-to-bytecode,convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=DYNAMIC
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba),encode-talos-sim-to-bytecode,convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=DYNAMIC
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -44,13 +44,13 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @root(
-// CHECK: llvm.call @obelisk_rt_v1_native_override
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_dynamic_override
-// CHECK: llvm.call @obelisk_rt_v1_native_release_override
+// CHECK: llvm.call @talos_rt_v1_native_override
+// CHECK-COUNT-2: llvm.call @talos_rt_v1_native_dynamic_override
+// CHECK: llvm.call @talos_rt_v1_native_release_override
 // CHECK-NOT: simulation.override
 // CHECK-NOT: simulation.dynamic_override
 // CHECK-NOT: simulation.release_override
 
 // DYNAMIC-LABEL: llvm.func @unrelated_dynamic(
-// DYNAMIC: llvm.call @obelisk_rt_v1_native_state_load_plane
+// DYNAMIC: llvm.call @talos_rt_v1_native_state_load_plane
 // DYNAMIC: llvm.return

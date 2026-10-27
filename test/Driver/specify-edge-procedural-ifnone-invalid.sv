@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not talos -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
 module procedural_ifnone(input wire clock, data, output logic q);
   always @(posedge clock)
     q = data;

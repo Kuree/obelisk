@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' > %t.off
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' > %t.off
 // RUN: FileCheck %s --check-prefix=CHECK < %t.off
 // RUN: FileCheck %s --check-prefix=OFF < %t.off
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=READ
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=read},talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=READ
 
 // Generated eval bodies retain a stable continuation in the normalized
 // internal continuation namespace. Source diagnostic id 42 is intentionally
@@ -115,7 +115,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
   }
 }
 
-// CHECK-LABEL: simulation.func private @project_clock.__obelisk_eval_body_0
+// CHECK-LABEL: simulation.func private @project_clock.__talos_eval_body_0
 // CHECK-SAME: schedule.eval.borrowed_captures
 // CHECK-SAME: schedule.eval.continuation = 1 : i32
 // CHECK-SAME: schedule.eval.raw_captures
@@ -150,7 +150,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
 // READ: simulation.ref.load
 // READ: simulation.return
 // READ-NOT: schedule.eval.discardable_store
-// READ-LABEL: simulation.func private @project_clock.__obelisk_eval_body_{{[0-9]+}}(
+// READ-LABEL: simulation.func private @project_clock.__talos_eval_body_{{[0-9]+}}(
 // READ-NOT: simulation.context.storage %{{.*}}[2]
 // READ-COUNT-1: simulation.ref.store
 // READ-NOT: simulation.ref.subelement

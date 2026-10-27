@@ -1,4 +1,4 @@
-/* Obelisk playground — Dracula.
+/* Talos playground — Dracula.
  *
  * Official Dracula values throughout. The accent hues are assigned by meaning
  * rather than decoration, so they carry the four-state logic vocabulary this
@@ -54,6 +54,7 @@ button, select, input { font: inherit; color: inherit; }
 /* ================================================================ masthead */
 
 .masthead {
+  position: relative;
   height: var(--masthead);
   display: flex;
   align-items: center;
@@ -64,12 +65,13 @@ button, select, input { font: inherit; color: inherit; }
   background: var(--panel);
 }
 
-.identity { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
 .glyph {
-  width: 16px;
-  height: 16px;
-  fill: var(--signal);
+  width: 24px;
+  height: 24px;
+  display: block;
+  flex: none;
 }
 
 .masthead h1 {
@@ -97,6 +99,16 @@ button, select, input { font: inherit; color: inherit; }
 }
 .ghost:hover { border-color: var(--rule-lit); color: var(--fg); background: var(--raised); }
 .ghost.tiny { padding: 3px 8px; font-size: 11.5px; }
+
+.githubLink {
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  text-decoration: none;
+  flex: none;
+}
+.githubLink svg { fill: currentColor; flex: none; }
 
 .chev { width: 10px; height: 6px; fill: none; stroke: currentColor; stroke-width: 1.6; transition: transform .16s; }
 .ghost[aria-expanded="true"] .chev { transform: rotate(180deg); }
@@ -667,7 +679,14 @@ button, select, input { font: inherit; color: inherit; }
       max(10px, env(safe-area-inset-left));
   }
 
-  .identity { height: 27px; align-items: flex-end; gap: 9px; }
+  .identity { height: 27px; align-items: center; gap: 9px; }
+  .githubLink {
+    position: absolute;
+    top: 12px;
+    right: max(10px, env(safe-area-inset-right));
+    width: 28px;
+    height: 28px;
+  }
   .actions {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -700,6 +719,7 @@ button, select, input { font: inherit; color: inherit; }
 
 @media (max-width: 340px) {
   .ghost, .run { padding-inline: 7px; font-size: 12px; }
+  .githubLink { padding: 0; }
   .grid { grid-template-columns: 1fr; }
 }
 

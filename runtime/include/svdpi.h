@@ -1,5 +1,5 @@
 /*
- * IEEE 1800-2017 Annex I DPI-C include surface provided by Obelisk.
+ * IEEE 1800-2017 Annex I DPI-C include surface provided by Talos.
  * The optional deprecated SV3.1a portion is intentionally omitted.
  */
 #ifndef INCLUDED_SVDPI

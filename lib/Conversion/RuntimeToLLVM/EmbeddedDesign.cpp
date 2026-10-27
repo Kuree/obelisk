@@ -1,13 +1,13 @@
 //===- EmbeddedDesign.cpp - Materialize embedded simulation design --------===//
 
-#include "obelisk/Analysis/ManagedCollectionAnalysis.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Conversion/RuntimeToLLVM.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/ManagedCollectionAnalysis.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Conversion/RuntimeToLLVM.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -28,7 +28,7 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 Type getNativeProcessDescriptorType(MLIRContext *context) {
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i32 = IntegerType::get(context, 32);
@@ -40,18 +40,18 @@ Type getNativeProcessDescriptorType(MLIRContext *context) {
 }
 namespace {
 
-constexpr StringLiteral kExecutionName = "__obelisk_execution_descriptor_v1";
-constexpr StringLiteral kBytecodeName = "__obelisk_bytecode_image_v1";
-constexpr StringLiteral kDatabaseName = "__obelisk_design_database_v1";
-constexpr StringLiteral kDPIScopesName = "__obelisk_dpi_scopes_v1";
-constexpr StringLiteral kActivationsName = "__obelisk_activations_v1";
-constexpr StringLiteral kObserversName = "__obelisk_observers_v1";
-constexpr StringLiteral kSampledRangesName = "__obelisk_sampled_ranges_v1";
-constexpr StringLiteral kExportsName = "__obelisk_dpi_exports_v1";
+constexpr StringLiteral kExecutionName = "__talos_execution_descriptor_v1";
+constexpr StringLiteral kBytecodeName = "__talos_bytecode_image_v1";
+constexpr StringLiteral kDatabaseName = "__talos_design_database_v1";
+constexpr StringLiteral kDPIScopesName = "__talos_dpi_scopes_v1";
+constexpr StringLiteral kActivationsName = "__talos_activations_v1";
+constexpr StringLiteral kObserversName = "__talos_observers_v1";
+constexpr StringLiteral kSampledRangesName = "__talos_sampled_ranges_v1";
+constexpr StringLiteral kExportsName = "__talos_dpi_exports_v1";
 constexpr StringLiteral kClassBitstreamName =
-    "__obelisk_class_bitstream_blob_v1";
+    "__talos_class_bitstream_blob_v1";
 constexpr StringLiteral kCoverageSchemaName =
-    "__obelisk_coverage_schema_blob_v1";
+    "__talos_coverage_schema_blob_v1";
 constexpr uint32_t kActivationHasNative = UINT32_C(1) << 0;
 constexpr uint32_t kActivationHasBytecode = UINT32_C(1) << 1;
 constexpr uint32_t kActivationNoBytecode = UINT32_MAX;
@@ -284,7 +284,7 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
   for (const ExportInfo &info : exports) {
     if (bytecodeOnly && !info.isTask)
       continue;
-    std::string thunkName = info.symbol + ".__obelisk_dpi_export";
+    std::string thunkName = info.symbol + ".__talos_dpi_export";
     if (directSymbols.contains(thunkName))
       return module.emitError()
              << "symbol collision for DPI export thunk '" << thunkName << "'";
@@ -370,11 +370,11 @@ LLVM_ATTRIBUTE_NOINLINE LogicalResult materializeDPIExportDescriptors(
               builder, module.getLoc(), record,
               integerConstant(builder, module.getLoc(), i32, info.exportID), 0);
           if (!bytecodeOnly && !info.isTask)
-            exportFlags |= OBELISK_RT_EXPORT_HAS_NATIVE;
+            exportFlags |= TALOS_RT_EXPORT_HAS_NATIVE;
           if (bytecodeOnly && info.bytecodeFunction)
-            exportFlags |= OBELISK_RT_EXPORT_HAS_BYTECODE;
+            exportFlags |= TALOS_RT_EXPORT_HAS_BYTECODE;
           if (info.isTask)
-            exportFlags |= OBELISK_RT_EXPORT_TASK;
+            exportFlags |= TALOS_RT_EXPORT_TASK;
           record = insertValue(
               builder, module.getLoc(), record,
               integerConstant(builder, module.getLoc(), i32, exportFlags), 1);
@@ -401,14 +401,14 @@ LLVM_ATTRIBUTE_NOINLINE LogicalResult materializeDPIExportDescriptors(
               builder, module.getLoc(), record,
               integerConstant(builder, module.getLoc(), i32,
                               bytecodeOnly ? info.bytecodeFunction.value_or(
-                                                 OBELISK_RT_EXPORT_NO_BYTECODE)
-                                           : OBELISK_RT_EXPORT_NO_BYTECODE),
+                                                 TALOS_RT_EXPORT_NO_BYTECODE)
+                                           : TALOS_RT_EXPORT_NO_BYTECODE),
               7);
           if (!bytecodeOnly || info.isTask)
             record = insertValue(builder, module.getLoc(), record,
                                  LLVM::AddressOfOp::create(
                                      builder, module.getLoc(), pointer,
-                                     info.symbol + ".__obelisk_dpi_export"),
+                                     info.symbol + ".__talos_dpi_export"),
                                  9);
           records = LLVM::InsertValueOp::create(
               builder, module.getLoc(), records, record,
@@ -592,7 +592,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   bool invalidObserver = false;
   module.walk([&](sim::SimFuncOp function) {
     if (function.getEntryKind() != sim::EntryKind::Observer ||
-        ::obelisk::schedule::has<::obelisk::schedule::Field::OverrideEvaluator>(
+        ::talos::schedule::has<::talos::schedule::Field::OverrideEvaluator>(
             function))
       return;
     std::optional<int64_t> codeUnitID = function.getCodeUnitId();
@@ -640,11 +640,11 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
         kind = 4,
         captureWidth = widthOf(cast<sim::DriverType>(type).getElementType());
       else if (isa<sim::CovergroupHandleType>(type))
-        kind = OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP, captureWidth = 64;
+        kind = TALOS_RT_OBSERVER_CAPTURE_COVERGROUP, captureWidth = 64;
       else if (sim::isManagedHandleType(type))
-        kind = OBELISK_RT_OBSERVER_CAPTURE_MANAGED, captureWidth = 64;
+        kind = TALOS_RT_OBSERVER_CAPTURE_MANAGED, captureWidth = 64;
       else if (auto reference = dyn_cast<sim::ArgumentRefType>(type))
-        kind = OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF,
+        kind = TALOS_RT_OBSERVER_CAPTURE_ARGUMENT_REF,
         captureWidth = widthOf(reference.getElementType());
       if (kind == 0 || captureWidth == 0) {
         function.emitError() << "observer capture #" << index - 1
@@ -655,7 +655,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
       info.captures.push_back({kind, captureWidth});
     }
     info.capturesSymbol =
-        (Twine("__obelisk_observer_capture_") + Twine(info.codeUnitID)).str();
+        (Twine("__talos_observer_capture_") + Twine(info.codeUnitID)).str();
     if (!invalidObserver)
       observers.push_back(std::move(info));
   });
@@ -678,7 +678,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     SymbolTable symbols(module);
     OpBuilder builder(context);
     for (const ObserverInfo &observer : observers) {
-      std::string thunkName = observer.symbol + ".__obelisk_observer";
+      std::string thunkName = observer.symbol + ".__talos_observer";
       if (symbols.lookup<LLVM::LLVMFuncOp>(thunkName))
         continue;
       builder.setInsertionPointToStart(module.getBody());
@@ -701,7 +701,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     OpBuilder builder(context);
     builder.setInsertionPointToStart(module.getBody());
     for (const ActivationInfo &activation : activations) {
-      std::string name = activation.symbol + ".__obelisk_process_descriptor";
+      std::string name = activation.symbol + ".__talos_process_descriptor";
       if (symbols.lookup(name))
         return module.emitError("duplicate native process descriptor symbol: ")
                << name;
@@ -734,7 +734,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
                   builder, module.getLoc(), record,
                   LLVM::AddressOfOp::create(
                       builder, module.getLoc(), pointer,
-                      activation.symbol + ".__obelisk_process_descriptor"),
+                      activation.symbol + ".__talos_process_descriptor"),
                   1);
               flags |= kActivationHasNative;
             }
@@ -823,9 +823,9 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
                 builder, module.getLoc(), record,
                 integerConstant(
                     builder, module.getLoc(), i32,
-                    (observer.fourState ? OBELISK_RT_OBSERVER_FOUR_STATE : 0) |
-                        (observer.real32 ? OBELISK_RT_OBSERVER_REAL32 : 0) |
-                        (observer.real64 ? OBELISK_RT_OBSERVER_REAL64 : 0)),
+                    (observer.fourState ? TALOS_RT_OBSERVER_FOUR_STATE : 0) |
+                        (observer.real32 ? TALOS_RT_OBSERVER_REAL32 : 0) |
+                        (observer.real64 ? TALOS_RT_OBSERVER_REAL64 : 0)),
                 4);
             record = insertValue(
                 builder, module.getLoc(), record,
@@ -836,7 +836,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
               record = insertValue(builder, module.getLoc(), record,
                                    LLVM::AddressOfOp::create(
                                        builder, module.getLoc(), pointer,
-                                       observer.symbol + ".__obelisk_observer"),
+                                       observer.symbol + ".__talos_observer"),
                                    6);
             records = LLVM::InsertValueOp::create(
                 builder, module.getLoc(), records, record,
@@ -869,7 +869,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
         name = ("scope." + Twine(index)).str();
       dpiScopeNames.push_back(name);
       std::string globalName =
-          ("__obelisk_dpi_scope_name_" + Twine(index)).str();
+          ("__talos_dpi_scope_name_" + Twine(index)).str();
       OpBuilder nameBuilder(context);
       nameBuilder.setInsertionPointToStart(module.getBody());
       Type nameType =
@@ -1004,7 +1004,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
       snapshotBytes += (width + 7) / 8;
     }
   }
-  if (((flags & OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT) != 0) !=
+  if (((flags & TALOS_RT_EXECUTION_PREPONED_SNAPSHOT) != 0) !=
       !sampledRanges.empty())
     return module.emitError(
         "Preponed snapshot flag and sampled ranges must agree");
@@ -1090,7 +1090,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
             LLVM::ZeroOp::create(builder, module.getLoc(), executionType);
         value = insertValue(
             builder, module.getLoc(), value,
-            integerConstant(builder, module.getLoc(), i32, OBELISK_RT_VERSION),
+            integerConstant(builder, module.getLoc(), i32, TALOS_RT_VERSION),
             0);
         value = insertValue(
             builder, module.getLoc(), value,
@@ -1172,7 +1172,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
         extension =
             insertValue(builder, module.getLoc(), extension,
                         integerConstant(builder, module.getLoc(), i32,
-                                        OBELISK_RT_EXECUTION_EXTENSION_VERSION),
+                                        TALOS_RT_EXECUTION_EXTENSION_VERSION),
                         0);
         extension = insertValue(
             builder, module.getLoc(), extension,
@@ -1252,7 +1252,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     if (index != 0 && entries[index - 1].first == entry.first)
       return module.emitError()
              << "duplicate bytecode symbol '" << entry.first << "'";
-    std::string name = entry.first + ".__obelisk_bytecode_entry";
+    std::string name = entry.first + ".__talos_bytecode_entry";
     if (symbols.lookup(name))
       return module.emitError()
              << "symbol collision for bytecode entry '" << name << "'";
@@ -1303,4 +1303,4 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   return success();
 }
 
-} // namespace obelisk
+} // namespace talos

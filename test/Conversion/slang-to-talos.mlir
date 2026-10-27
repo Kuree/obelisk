@@ -1,0 +1,420 @@
+// RUN: talos-opt %s | talos-opt --convert-slang-to-talos \
+// RUN:   | FileCheck %s
+//
+// Exhaustive check that the Slang-to-Talos conversion maps every semantic
+// type to its concrete Talos counterpart and leaves no source dialect entity
+// behind. Operations from other dialects survive untouched when they carry no
+// Slang type.
+
+module attributes {talos.enum_domains = [
+  {type = !slang.enum<"state_t", !slang.integral<2, false, false, 1 : 0, generic>>,
+   values = ["0", "3"]}
+]} {
+  // A foreign operation with no Slang type must be preserved verbatim.
+  %zero = arith.constant 0 : i32
+
+  slang.symbol.root @root attributes {
+    hierarchical_name = "$root", node_id = 0 : i64
+  } {
+    slang.symbol.definition @bus attributes {
+      definition_kind = 1 : i32, node_id = 1 : i64
+    } {
+    }
+
+    // Integral, enum, and alias types.
+    slang.symbol.variable @word attributes {
+      lifetime = 0 : i32, node_id = 2 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.integral<8, false, true, 7 : 0, generic>
+    } {
+    }
+    slang.type.enum_type @state_t attributes {
+      node_id = 3 : i64,
+      semantic_type = !slang.enum<"state_t", !slang.integral<2, false, false, 1 : 0, generic>>
+    } {
+    }
+    slang.type.type_alias @byte_t attributes {
+      name = "byte_t", node_id = 4 : i64,
+      semantic_type = !slang.integral<8, false, true, 7 : 0, generic>
+    } {
+    }
+
+    // Every scalar semantic type.
+    slang.symbol.variable @str attributes {
+      lifetime = 0 : i32, node_id = 5 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.string
+    } {
+    }
+    slang.symbol.variable @r attributes {
+      lifetime = 0 : i32, node_id = 6 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.real
+    } {
+    }
+    slang.symbol.variable @rt attributes {
+      lifetime = 0 : i32, node_id = 7 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.realtime
+    } {
+    }
+    slang.symbol.variable @sr attributes {
+      lifetime = 0 : i32, node_id = 8 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.shortreal
+    } {
+    }
+    slang.symbol.variable @tm attributes {
+      lifetime = 0 : i32, node_id = 9 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.time
+    } {
+    }
+    slang.symbol.variable @ch attributes {
+      lifetime = 0 : i32, node_id = 10 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.chandle
+    } {
+    }
+    slang.symbol.variable @ev attributes {
+      lifetime = 0 : i32, node_id = 11 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.event
+    } {
+    }
+    slang.symbol.variable @vd attributes {
+      lifetime = 0 : i32, node_id = 12 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.void
+    } {
+    }
+    slang.symbol.variable @nl attributes {
+      lifetime = 0 : i32, node_id = 13 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.null
+    } {
+    }
+    slang.symbol.variable @ub attributes {
+      lifetime = 0 : i32, node_id = 14 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.unbounded
+    } {
+    }
+    slang.symbol.variable @ut attributes {
+      lifetime = 0 : i32, node_id = 15 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.untyped
+    } {
+    }
+    slang.symbol.variable @tr attributes {
+      lifetime = 0 : i32, node_id = 16 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.type_reference
+    } {
+    }
+    slang.symbol.variable @prop attributes {
+      lifetime = 0 : i32, node_id = 17 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.property
+    } {
+    }
+
+    // Every aggregate and container semantic type.
+    slang.symbol.variable @packed_word attributes {
+      lifetime = 0 : i32, node_id = 18 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.packed_array<15 : 0 x !slang.integral<1, false, true, 0 : 0, logic>>
+    } {
+    }
+    slang.symbol.variable @unpacked_word attributes {
+      lifetime = 0 : i32, node_id = 19 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.unpacked_array<3 : 0 x !slang.integral<8, false, true, 7 : 0, generic>>
+    } {
+    }
+    slang.symbol.variable @dyn_word attributes {
+      lifetime = 0 : i32, node_id = 20 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.dynamic_array<!slang.integral<8, false, true, 7 : 0, generic>>
+    } {
+    }
+    slang.symbol.variable @open_word attributes {
+      lifetime = 0 : i32, node_id = 21 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.open_array<!slang.integral<8, false, true, 7 : 0, generic>, true>
+    } {
+    }
+    slang.symbol.variable @queue_word attributes {
+      lifetime = 0 : i32, node_id = 22 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.queue<!slang.integral<8, false, true, 7 : 0, generic>, 0>
+    } {
+    }
+    slang.symbol.variable @assoc_word attributes {
+      lifetime = 0 : i32, node_id = 23 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.associative_array<!slang.string, !slang.real, false>
+    } {
+    }
+    slang.symbol.variable @record attributes {
+      lifetime = 0 : i32, node_id = 24 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.aggregate<"record_t", true, false, false, false, true, false, 16, 16, 16, 0, [{name = "high", ordinal = 0 : i32, packed_offset = 8 : i64, type = !slang.packed_array<7 : 0 x !slang.integral<1, false, true, 0 : 0, logic>>}, {name = "low", ordinal = 1 : i32, packed_offset = 0 : i64, type = !slang.integral<8, false, false, 7 : 0, bit>}]>
+    } {
+    }
+
+    // Symbol-referencing handle types.
+    slang.symbol.variable @virtual_bus attributes {
+      lifetime = 0 : i32, node_id = 25 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.virtual_interface<@bus, "master">
+    } {
+    }
+    slang.type.covergroup_type @cg_t attributes {
+      constructor_argument_count = 0 : i64,
+      constructor_formals = [],
+      coverage_event_kind = 0 : i32,
+      has_coverage_event = false,
+      node_id = 26 : i64,
+      sample_formal_count = 0 : i64, sample_formals = [],
+      semantic_type = !slang.covergroup_handle<@cg_t>
+    } {
+      slang.symbol.covergroup_body @cg_body attributes {
+        node_id = 260 : i64, option_count = 0 : i64
+      } {
+        slang.symbol.coverpoint @cp attributes {
+          expression_roles = [0 : i32], has_iff = false,
+          node_id = 261 : i64, option_count = 0 : i64,
+          semantic_type = !slang.integral<8, false, true, 7 : 0, generic>
+        } {
+          slang.expression.integer_literal attributes {
+            constant_value = "1", node_id = 262 : i64,
+            semantic_type = !slang.integral<8, false, true, 7 : 0, generic>
+          } {
+          }
+          slang.symbol.coverage_bin @named_bin attributes {
+            bins_kind = 0 : i32, child_roles = array<i64: 5>, has_iff = false,
+            has_number_of_bins = false, has_set_coverage = false,
+            has_with = false, is_array = false, is_default = false,
+            is_default_sequence = false, is_wildcard = false,
+            node_id = 263 : i64,
+            transition_range_has_repeat_from = array<i64>,
+            transition_range_has_repeat_to = array<i64>,
+            transition_range_item_counts = array<i64>,
+            transition_range_repeat_kinds = array<i64>,
+            transition_set_count = 0 : i64,
+            transition_set_range_counts = array<i64>, value_count = 1 : i64
+          } {
+            slang.expression.integer_literal attributes {
+              constant_value = "1", node_id = 264 : i64,
+              semantic_type = !slang.integral<8, false, true, 7 : 0, generic>
+            } {
+            }
+          }
+        }
+      }
+    }
+    slang.symbol.variable @cg_handle attributes {
+      lifetime = 0 : i32, node_id = 27 : i64, rand_mode = 0 : i32,
+      semantic_type = !slang.covergroup_handle<@cg_t>
+    } {
+    }
+    slang.expression.new_covergroup attributes {
+      argument_count = 0 : i64, node_id = 271 : i64,
+      semantic_type = !slang.covergroup_handle<@cg_t>
+    } {
+    }
+    slang.expression.call attributes {
+      argument_count = 2 : i64, callee_name = "get_inst_coverage",
+      constraint_restrictions = [], defaulted_arguments = array<i64: 1, 1>,
+      has_inline_constraints = false, has_iterator_expression = false,
+      has_output_arguments = true, has_this_class = true,
+      is_super_class = false, is_system_call = false, node_id = 272 : i64,
+      semantic_type = !slang.real, subroutine_kind = 0 : i32
+    } {
+      slang.expression.integer_literal attributes {
+        constant_value = "0", node_id = 273 : i64,
+        semantic_type = !slang.integral<32, true, false, 31 : 0, int>
+      } {
+      }
+      slang.expression.integer_literal attributes {
+        constant_value = "0", node_id = 274 : i64,
+        semantic_type = !slang.integral<32, true, false, 31 : 0, int>
+      } {
+      }
+    }
+    slang.symbol.subroutine @convert attributes {
+      default_lifetime = 0 : i32, is_virtual, node_id = 28 : i64,
+      member_visibility = 0 : i32,
+      subroutine_kind = 0 : i32,
+      semantic_type = !slang.subroutine<(!slang.string) -> !slang.shortreal, false>
+    } {
+    }
+
+    // A cross-section of operation categories beyond declarations.
+    slang.statement.conditional attributes {
+      check_kind = 0 : i32, condition_count = 1 : i64,
+      condition_pattern_flags = array<i64: 0>,
+      has_else = false, node_id = 29 : i64
+    } {
+      slang.expression.integer_literal attributes {
+        constant_value = "1", node_id = 40 : i64,
+        semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+      } {
+      }
+      slang.statement.list attributes {node_id = 41 : i64} {
+      }
+    }
+    slang.statement.for_loop attributes {
+      has_condition = false, initializer_count = 0 : i64,
+      node_id = 42 : i64, step_count = 0 : i64
+    } {
+      slang.statement.empty attributes {node_id = 43 : i64} {
+      }
+    }
+    slang.expression.integer_literal attributes {
+      constant_value = "42", is_declared_unsized = true, node_id = 30 : i64,
+      semantic_type = !slang.integral<32, true, false, 31 : 0, int>
+    } {
+    }
+    slang.expression.conditional_op attributes {
+      condition_count = 2 : i64,
+      condition_pattern_flags = array<i64: 1, 0>, node_id = 44 : i64,
+      semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+    } {
+      slang.expression.integer_literal attributes {
+        constant_value = "1'bx", node_id = 45 : i64,
+        semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+      } {
+      }
+      slang.pattern.constant attributes {node_id = 48 : i64} {
+      }
+      slang.expression.integer_literal attributes {
+        constant_value = "1'b1", node_id = 46 : i64,
+        semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+      } {
+      }
+      slang.expression.integer_literal attributes {
+        constant_value = "1'b1", node_id = 49 : i64,
+        semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+      } {
+      }
+      slang.expression.integer_literal attributes {
+        constant_value = "1'b0", node_id = 47 : i64,
+        semantic_type = !slang.integral<1, false, true, 0 : 0, logic>
+      } {
+      }
+    }
+    slang.expression.binary_op attributes {
+      node_id = 31 : i64, operator_kind = 0 : i32,
+      semantic_type = !slang.packed_array<15 : 8 x !slang.integral<1, false, true, 0 : 0, logic>>
+    } {
+    }
+    slang.expression.assignment attributes {
+      assignment_kind = 1 : i32, node_id = 32 : i64,
+      semantic_type = !slang.integral<8, false, true, 7 : 0, generic>
+    } {
+    }
+    slang.timing.delay attributes {node_id = 33 : i64} {
+    }
+    slang.constraint.expression attributes {is_soft = true, node_id = 34 : i64} {
+    }
+    slang.assertion.simple attributes {
+      has_repetition = false, is_null = false, node_id = 35 : i64,
+      repetition_is_unbounded = false, semantic_type = !slang.sequence
+    } {
+    }
+    slang.pattern.constant attributes {node_id = 37 : i64} {
+    }
+    slang.rand_seq.item attributes {node_id = 38 : i64} {
+    }
+
+    // A nested aggregate value in a builtin container attribute must also be
+    // rewritten, proving attribute walking is recursive.
+    slang.symbol.variable @nested attributes {
+      lifetime = 0 : i32, node_id = 39 : i64, rand_mode = 0 : i32,
+      semantic_type = tensor<1x!slang.integral<1, false, true, 0 : 0, logic>>
+    } {
+    }
+    slang.symbol.generate_block @active_generate attributes {
+      is_uninstantiated = false, node_id = 40 : i64
+    } {
+      slang.symbol.variable @active_marker attributes {
+        lifetime = 0 : i32, node_id = 41 : i64, rand_mode = 0 : i32,
+        semantic_type = !slang.integral<1, false, false, 0 : 0, bit>
+      } {
+      }
+    }
+    slang.symbol.generate_block @inactive_generate attributes {
+      is_uninstantiated = true, node_id = 42 : i64
+    } {
+      slang.symbol.variable @inactive_marker attributes {
+        lifetime = 0 : i32, node_id = 43 : i64, rand_mode = 0 : i32,
+        semantic_type = !slang.integral<1, false, false, 0 : 0, bit>
+      } {
+      }
+    }
+  }
+}
+
+// CHECK: module attributes {talos.enum_domains = [{type = !talos.enum<"state_t", !talos.integral<2, false, false, 1 : 0, generic>>, values = ["0", "3"]}]}
+// CHECK: %{{.*}} = arith.constant 0 : i32
+// CHECK: talos.sv.symbol.root
+// CHECK: talos.sv.symbol.definition
+
+// CHECK: talos.sv.symbol.variable
+// CHECK-SAME: semantic_type = !talos.integral<8, false, true, 7 : 0, generic>
+// CHECK: talos.sv.type.enum_type
+// CHECK-SAME: !talos.enum<"state_t", !talos.integral<2, false, false, 1 : 0, generic>>
+// CHECK: talos.sv.type.type_alias
+
+// CHECK: semantic_type = !talos.string
+// CHECK: semantic_type = !talos.real
+// CHECK: semantic_type = !talos.realtime
+// CHECK: semantic_type = !talos.shortreal
+// CHECK: semantic_type = !talos.time
+// CHECK: semantic_type = !talos.chandle
+// CHECK: semantic_type = !talos.event
+// CHECK: semantic_type = !talos.void
+// CHECK: semantic_type = !talos.null
+// CHECK: semantic_type = !talos.unbounded
+// CHECK: semantic_type = !talos.untyped
+// CHECK: semantic_type = !talos.type_reference
+// CHECK: semantic_type = !talos.property
+
+// CHECK: !talos.ranged_packed_array<15 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>
+// CHECK: !talos.ranged_unpacked_array<3 : 0 x !talos.integral<8, false, true, 7 : 0, generic>>
+// CHECK: !talos.dynarray<!talos.integral<8, false, true, 7 : 0, generic>>
+// CHECK: !talos.open_array<!talos.integral<8, false, true, 7 : 0, generic>, true>
+// CHECK: !talos.queue<!talos.integral<8, false, true, 7 : 0, generic>, 0>
+// CHECK: !talos.assoc<!talos.string, !talos.real, false>
+// CHECK: !talos.source_aggregate<"record_t", true, false, false, false, true, false, 16, 16, 16, 0, [{name = "high", ordinal = 0 : i32, packed_offset = 8 : i64, type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>}, {name = "low", ordinal = 1 : i32, packed_offset = 0 : i64, type = !talos.integral<8, false, false, 7 : 0, bit>}]>
+
+// CHECK: !talos.virtual_interface<@bus, "master">
+// CHECK: talos.sv.type.covergroup_type
+// CHECK-SAME: constructor_argument_count = 0
+// CHECK-SAME: constructor_formals = []
+// CHECK-SAME: coverage_event_kind = 0 : i32
+// CHECK-SAME: has_coverage_event = false
+// CHECK-SAME: sample_formal_count = 0
+// CHECK-SAME: sample_formals = []
+// CHECK: !talos.covergroup_handle<@cg_t>
+// CHECK: talos.sv.symbol.covergroup_body
+// CHECK-SAME: option_count = 0
+// CHECK: talos.sv.symbol.coverpoint
+// CHECK-SAME: expression_roles = [0 : i32]
+// CHECK-SAME: has_iff = false
+// CHECK-SAME: option_count = 0
+// CHECK: talos.sv.symbol.coverage_bin
+// CHECK-SAME: has_iff = false
+// CHECK-SAME: transition_set_count = 0
+// CHECK-SAME: value_count = 1
+// CHECK: talos.sv.expression.new_covergroup
+// CHECK-SAME: argument_count = 0
+// CHECK: talos.sv.expression.call
+// CHECK-SAME: callee_name = "get_inst_coverage"
+// CHECK-SAME: defaulted_arguments = array<i64: 1, 1>
+// CHECK: !talos.subroutine<(!talos.string) -> !talos.shortreal, false>
+
+// CHECK: talos.sv.statement.conditional
+// CHECK: talos.sv.statement.for_loop
+// CHECK-SAME: has_condition = false
+// CHECK-SAME: initializer_count = 0 : i64
+// CHECK-SAME: step_count = 0 : i64
+// CHECK: talos.sv.expression.integer_literal attributes {constant_value = "42", is_declared_unsized = true
+// CHECK: talos.sv.expression.conditional_op
+// CHECK-SAME: condition_count = 2 : i64
+// CHECK-SAME: condition_pattern_flags = array<i64: 1, 0>
+// CHECK: talos.sv.expression.binary_op
+// CHECK: talos.sv.expression.assignment
+// CHECK-SAME: assignment_kind = 1 : i32
+// CHECK: talos.sv.timing.delay
+// CHECK: talos.sv.constraint.expression
+// CHECK: talos.sv.assertion.simple
+// CHECK-SAME: semantic_type = !talos.sequence
+// CHECK: talos.sv.pattern.constant
+// CHECK: talos.sv.rand_seq.item
+// CHECK: tensor<1x!talos.integral<1, false, true, 0 : 0, logic>>
+// CHECK: talos.sv.symbol.generate_block @active_generate attributes
+// CHECK: talos.sv.symbol.variable @active_marker attributes
+// CHECK-NOT: inactive_generate
+// CHECK-NOT: inactive_marker
+// CHECK-NOT: slang.

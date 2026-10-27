@@ -1,0 +1,602 @@
+//===- RuntimeOps.td - Typed runtime ABI operations -----------*- tablegen -*-===//
+
+#ifndef TALOS_DIALECT_RUNTIME_RUNTIMEOPS_TD
+#define TALOS_DIALECT_RUNTIME_RUNTIMEOPS_TD
+
+include "talos/Dialect/Runtime/RuntimeAttrs.td"
+include "talos/Dialect/Runtime/RuntimeDialect.td"
+include "talos/Dialect/Runtime/RuntimeTypes.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
+
+def RTRuntimeResource : Resource<"::talos::runtime::RuntimeResource">;
+def RTIOResource : Resource<"::talos::runtime::IOResource">;
+
+class RTOp<string mnemonic, list<Trait> traits = []>
+    : Op<TalosRuntimeDialect, mnemonic, traits> {
+  let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
+}
+
+// Compiler materializers. These operations make all target-layout-sensitive
+// records and storage explicit before the LLVM boundary.
+def RTBytesConstantOp : RTOp<"bytes.constant", [Pure, ConstantLike]> {
+  let arguments = (ins StrAttr:$value);
+  let results = (outs RTByteSpanType:$result);
+  let assemblyFormat = "$value attr-dict";
+  let hasFolder = 1;
+}
+
+def RTScratchOp : RTOp<"bytes.scratch", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins I64Attr:$size);
+  let results = (outs RTMutableByteSpanType:$result);
+  let assemblyFormat = "$size attr-dict";
+  let hasVerifier = 1;
+}
+
+def RTBytesSizeOp : RTOp<"bytes.size", [Pure]> {
+  let arguments = (ins AnyType:$bytes);
+  let results = (outs I64:$size);
+  let assemblyFormat = "$bytes attr-dict `:` type($bytes)";
+  let hasVerifier = 1;
+}
+
+def RTPackedFromBytesOp : RTOp<"bytes.to_packed", [MemoryEffects<[MemRead]>]> {
+  let arguments = (ins AnyType:$bytes, I64:$count,
+                       BoolAttr:$high_alignment,
+                       DefaultValuedAttr<BoolAttr, "false">:
+                           $least_significant_byte_first);
+  let results = (outs AnyInteger:$result);
+  let hasVerifier = 1;
+}
+
+def RTArgumentEmptyOp : RTOp<"argument.empty", [Pure]> {
+  let results = (outs RTArgumentType:$result);
+  let assemblyFormat = "attr-dict";
+  let hasVerifier = 1;
+}
+
+def RTArgumentPackedOp : RTOp<"argument.packed", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins AnyInteger:$value, Optional<AnyInteger>:$unknown,
+                       BoolAttr:$is_signed);
+  let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
+}
+
+def RTArgumentEnumOp : RTOp<"argument.enum", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins AnyInteger:$value, Optional<AnyInteger>:$unknown,
+                       I64:$name, BoolAttr:$is_signed);
+  let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
+}
+
+def RTArgumentNetOp : RTOp<"argument.net", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins AnyInteger:$value, Optional<AnyInteger>:$unknown,
+                       I64:$handle, BoolAttr:$is_signed);
+  let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
+}
+
+def RTArgumentRawAggregateOp
+    : RTOp<"argument.raw_aggregate", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins I64:$pattern, I64:$two_state, I64:$four_state);
+  let results = (outs RTArgumentType:$result);
+  let assemblyFormat = "$pattern `,` $two_state `,` $four_state attr-dict";
+  let hasVerifier = 1;
+}
+
+def RTArgumentRealOp : RTOp<"argument.real", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins F64:$value,
+                       DefaultValuedAttr<BoolAttr, "false">:$is_time);
+  let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
+}
+
+def RTArgumentBytesOp : RTOp<"argument.bytes", [Pure]> {
+  let arguments = (ins RTByteSpanType:$value,
+                       BoolAttr:$is_format_string,
+                       DefaultValuedAttr<BoolAttr, "false">:$designated_format);
+  let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
+}
+
+def RTArgumentManagedStringOp
+    : RTOp<"argument.managed_string", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins I64:$value, BoolAttr:$is_format_string,
+                       DefaultValuedAttr<BoolAttr, "false">:$designated_format);
+  let results = (outs RTArgumentType:$result);
+  let hasVerifier = 1;
+}
+
+def RTArgumentManagedContainerOp
+    : RTOp<"argument.managed_container", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins I64:$value);
+  let results = (outs RTArgumentType:$result);
+  let assemblyFormat = "$value attr-dict";
+}
+
+def RTArgumentManagedObjectOp
+    : RTOp<"argument.managed_object", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins I64:$value);
+  let results = (outs RTArgumentType:$result);
+  let assemblyFormat = "$value attr-dict";
+}
+
+def RTArgumentVirtualInterfaceOp
+    : RTOp<"argument.virtual_interface", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins I64:$value);
+  let results = (outs RTArgumentType:$result);
+  let assemblyFormat = "$value attr-dict";
+}
+
+def RTArgumentProcessOp
+    : RTOp<"argument.process", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins I64:$value);
+  let results = (outs RTArgumentType:$result);
+  let assemblyFormat = "$value attr-dict";
+}
+
+def RTArgumentArrayOp : RTOp<"argument.array", [MemoryEffects<[MemAlloc]>]> {
+  let arguments = (ins Variadic<RTArgumentType>:$arguments);
+  let results = (outs RTArgumentArrayType:$result);
+  let assemblyFormat = "`(` $arguments `)` attr-dict";
+  let hasVerifier = 1;
+}
+
+def RTFormatEnvironmentOp : RTOp<"format.environment", [
+  MemoryEffects<[MemAlloc]>
+]> {
+  let arguments = (ins DefaultValuedAttr<StrAttr, "\"\"">:$scope,
+                       DefaultValuedAttr<StrAttr, "\"\"">:$library_cell,
+                       DefaultValuedAttr<I32Attr, "0">:$time_width,
+                       DefaultValuedAttr<I32Attr, "0">:$time_precision,
+                       DefaultValuedAttr<StrAttr, "\"\"">:$time_suffix,
+                       DefaultValuedAttr<I64Attr, "1">:$time_multiplier);
+  let results = (outs RTFormatEnvironmentType:$result);
+  let assemblyFormat = "attr-dict";
+  let hasVerifier = 1;
+}
+
+def RTFileDescriptorFromBitsOp : RTOp<"file_descriptor.from_bits", [Pure]> {
+  let arguments = (ins I32:$value);
+  let results = (outs RTFileDescriptorType:$result);
+  let assemblyFormat = "$value attr-dict";
+}
+
+def RTFileDescriptorToBitsOp : RTOp<"file_descriptor.to_bits", [Pure]> {
+  let arguments = (ins RTFileDescriptorType:$value);
+  let results = (outs I32:$result);
+  let assemblyFormat = "$value attr-dict";
+}
+
+def RTStatusIsOp : RTOp<"status.is", [Pure]> {
+  let arguments = (ins RTStatusType:$status, RTStatusCodeAttr:$value);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$status `,` $value attr-dict";
+}
+
+def RTStatusFromBitsOp : RTOp<"status.from_bits", [Pure]> {
+  let arguments = (ins I32:$value);
+  let results = (outs RTStatusType:$result);
+  let assemblyFormat = "$value attr-dict";
+}
+
+def RTStatusToBitsOp : RTOp<"status.to_bits", [Pure]> {
+  let arguments = (ins RTStatusType:$value);
+  let results = (outs I32:$result);
+  let assemblyFormat = "$value attr-dict";
+}
+
+// Context, errors, and owned buffers.
+def RTContextCreateOp : RTOp<"context.create", [
+  MemoryEffects<[MemAlloc<RTRuntimeResource>]>
+]> {
+  let results = (outs RTStatusType:$status, RTContextType:$context);
+}
+
+def RTContextDestroyOp : RTOp<"context.destroy", [
+  MemoryEffects<[MemFree<RTRuntimeResource>, MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+}
+
+def RTStatusStringOp : RTOp<"status.string", [Pure]> {
+  let arguments = (ins RTStatusType:$status);
+  let results = (outs RTCStringType:$string);
+}
+
+def RTBufferReleaseOp : RTOp<"buffer.release", [
+  MemoryEffects<[MemFree<RTRuntimeResource>, MemFree]>
+]> {
+  let arguments = (ins RTBufferType:$buffer);
+  let hasVerifier = 1;
+}
+
+def RTLastErrorOp : RTOp<"last_error", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemAlloc<RTRuntimeResource>, MemAlloc]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs RTStatusType:$status, RTBufferType:$message);
+  let hasVerifier = 1;
+}
+
+def RTFinishOp : RTOp<"finish", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I32:$verbosity);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTProgramExitOp : RTOp<"program.exit", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTStopOp : RTOp<"stop", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I32:$verbosity);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTFatalOp : RTOp<"fatal", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I32:$verbosity);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTErrorOp : RTOp<"error", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs RTStatusType:$status);
+}
+
+// Delimit sim.publication.batch_begin/end. Transition publication reaches the
+// runtime through ordinary memory, so both are full barriers here.
+def RTPublicationBatchBeginOp : RTOp<"publication.batch_begin", [
+  MemoryEffects<[MemRead, MemWrite, MemRead<RTRuntimeResource>,
+                 MemWrite<RTRuntimeResource>, MemRead<RTIOResource>,
+                 MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTPublicationBatchEndOp : RTOp<"publication.batch_end", [
+  MemoryEffects<[MemRead, MemWrite, MemRead<RTRuntimeResource>,
+                 MemWrite<RTRuntimeResource>, MemRead<RTIOResource>,
+                 MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs RTStatusType:$status);
+}
+
+// Reclaim deferred managed-heap pressure at a designated collection point.
+def RTGCCollectOp : RTOp<"gc.collect", [
+  MemoryEffects<[MemRead, MemWrite, MemRead<RTRuntimeResource>,
+                 MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTProgramOwnedOp : RTOp<"program.owned", [
+  MemoryEffects<[MemRead<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs I1:$result);
+}
+
+def RTTerminationRequestedOp : RTOp<"termination.requested", [
+  MemoryEffects<[MemRead<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs I1:$result);
+}
+
+def RTSchedulerTimeOp : RTOp<"scheduler.time", [
+  MemoryEffects<[MemRead<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs I64:$result);
+}
+
+// Formatting and display.
+def RTFormatOp : RTOp<"format", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemAlloc<RTRuntimeResource>, MemRead, MemAlloc]>
+]> {
+  let arguments = (ins RTContextType:$context, RTByteSpanType:$format,
+                       RTArgumentArrayType:$arguments,
+                       RTFormatEnvironmentType:$environment);
+  let results = (outs RTStatusType:$status, RTBufferType:$buffer);
+  let hasVerifier = 1;
+}
+
+def RTStringOutputFormatOp : RTOp<"string_output_format", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemAlloc<RTRuntimeResource>, MemRead, MemAlloc]>
+]> {
+  let arguments = (ins RTContextType:$context,
+                       RTArgumentArrayType:$items,
+                       RTFormatEnvironmentType:$environment,
+                       RTRadixAttr:$default_radix);
+  let results = (outs RTStatusType:$status, AnyType:$string);
+}
+
+def RTDisplayOp : RTOp<"display", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemWrite<RTIOResource>, MemRead]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor,
+                       I1:$append_newline, RTArgumentArrayType:$items,
+                       RTFormatEnvironmentType:$environment,
+                       RTRadixAttr:$default_radix);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTTimeFormatOp : RTOp<"time.format", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I32:$units,
+                       I32:$fraction_digits, RTByteSpanType:$suffix,
+                       I32:$width);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTTimeScanScaleOp : RTOp<"time.scan_scale", [
+  MemoryEffects<[MemRead<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, F64:$input,
+                       I64:$time_multiplier, I32:$time_precision);
+  let results = (outs F64:$result);
+}
+
+// Waveform services. Collection itself is a scheduler-driven difference over
+// the canonical state planes; these calls only configure and gate it.
+def RTDumpOpenOp : RTOp<"dump.open", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>, MemWrite<RTIOResource>, MemRead]>
+]> {
+  let arguments = (ins RTContextType:$context, RTByteSpanType:$path);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTDumpTimescaleOp : RTOp<"dump.timescale", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I32:$exponent);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTDumpVarsOp : RTOp<"dump.vars", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>, MemWrite<RTIOResource>, MemRead]>
+]> {
+  let arguments = (ins RTContextType:$context, I64:$levels,
+                       RTByteSpanType:$scope);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTDumpAllOp : RTOp<"dump.all", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTDumpControlOp : RTOp<"dump.control", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>, MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I32:$enabled);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTDumpLimitOp : RTOp<"dump.limit", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, I64:$bytes);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTDumpFlushOp : RTOp<"dump.flush", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs RTStatusType:$status);
+}
+
+// File services.
+def RTFileOpenMCDOp : RTOp<"file.open_mcd", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>, MemWrite<RTIOResource>, MemRead]>
+]> {
+  let arguments = (ins RTContextType:$context, RTByteSpanType:$path);
+  let results = (outs RTStatusType:$status, RTFileDescriptorType:$descriptor);
+}
+
+def RTFileOpenOp : RTOp<"file.open", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>, MemWrite<RTIOResource>, MemRead]>
+]> {
+  let arguments = (ins RTContextType:$context, RTByteSpanType:$path,
+                       RTByteSpanType:$mode);
+  let results = (outs RTStatusType:$status, RTFileDescriptorType:$descriptor);
+}
+
+def RTFileCloseOp : RTOp<"file.close", [
+  MemoryEffects<[MemWrite<RTRuntimeResource>, MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTFileFlushOp : RTOp<"file.flush", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTFileWriteOp : RTOp<"file.write", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemWrite<RTIOResource>, MemRead]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor,
+                       RTByteSpanType:$data);
+  let results = (outs RTStatusType:$status, I64:$written);
+}
+
+def RTFileReadOp : RTOp<"file.read", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemRead<RTIOResource>, MemWrite<RTIOResource>, MemWrite]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor,
+                       RTMutableByteSpanType:$data);
+  let results = (outs RTStatusType:$status, I64:$read);
+}
+
+def RTFileReadMemTokenOp : RTOp<"file.readmem_token", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemRead<RTIOResource>, MemWrite<RTIOResource>, MemWrite]>
+]> {
+  let summary = "read one IEEE $readmem token from a file";
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor,
+                       I32:$radix, I64:$bitWidth,
+                       RTMutableByteSpanType:$value,
+                       RTMutableByteSpanType:$unknown);
+  let results = (outs RTStatusType:$status, I32:$kind, I64:$address);
+}
+
+def RTFileGetcOp : RTOp<"file.getc", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemRead<RTIOResource>, MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor);
+  let results = (outs RTStatusType:$status, I8:$byte);
+}
+
+def RTFileUngetcOp : RTOp<"file.ungetc", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor,
+                       I8:$byte);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTFileGetlineOp : RTOp<"file.getline", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemRead<RTIOResource>, MemWrite<RTIOResource>,
+                 MemAlloc<RTRuntimeResource>, MemAlloc]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor,
+                       I64:$max_bytes);
+  let results = (outs RTStatusType:$status, RTBufferType:$line);
+  let hasVerifier = 1;
+}
+
+def RTFileEofOp : RTOp<"file.eof", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemRead<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor);
+  let results = (outs RTStatusType:$status, I32:$is_eof);
+}
+
+def RTFileErrorOp : RTOp<"file.error", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemRead<RTIOResource>, MemAlloc<RTRuntimeResource>, MemAlloc]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor);
+  let results = (outs RTStatusType:$status, I32:$error_code,
+                      RTBufferType:$message);
+  let hasVerifier = 1;
+}
+
+def RTFileSeekOp : RTOp<"file.seek", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor,
+                       I64:$offset, I32:$origin);
+  let results = (outs RTStatusType:$status);
+}
+
+def RTFileTellOp : RTOp<"file.tell", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemRead<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor);
+  let results = (outs RTStatusType:$status, I64:$offset);
+}
+
+def RTFileRewindOp : RTOp<"file.rewind", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemWrite<RTIOResource>]>
+]> {
+  let arguments = (ins RTContextType:$context, RTFileDescriptorType:$descriptor);
+  let results = (outs RTStatusType:$status);
+}
+
+// Uniform fragment dispatch. Lifecycle and driver construction deliberately
+// remain outside bytecode-callable services.
+def RTFragmentExecuteOp : RTOp<"fragment.execute", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemRead<RTIOResource>, MemWrite<RTIOResource>, MemRead,
+                 MemWrite]>
+]> {
+  let arguments = (ins RTFragmentDescriptorType:$descriptor,
+                       RTContextType:$context, RTMutableByteSpanType:$frame,
+                       I32:$continuation);
+  let results = (outs RTStatusType:$status, RTFragmentActionType:$action);
+}
+
+def RTBytecodeExecuteBoundedOp : RTOp<"bytecode.execute_bounded", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemRead<RTIOResource>, MemWrite<RTIOResource>, MemRead,
+                 MemWrite]>
+]> {
+  let arguments = (ins RTFragmentDescriptorType:$descriptor,
+                       RTContextType:$context, RTMutableByteSpanType:$frame,
+                       I32:$continuation, I64:$instruction_limit);
+  let results = (outs RTStatusType:$status, RTFragmentActionType:$action);
+}
+
+// Runtime-owned suspendable process instances. Creation performs the sole
+// lifetime allocation; frame returns only the canonical prefix, while execute
+// selects an available native or bytecode tier without moving that prefix.
+def RTProcessInstanceCreateOp : RTOp<"process.instance.create", [
+  MemoryEffects<[MemRead, MemAlloc<RTRuntimeResource>, MemAlloc]>
+]> {
+  let arguments = (ins RTProcessDescriptorType:$descriptor);
+  let results = (outs RTStatusType:$status, RTProcessInstanceType:$instance);
+}
+
+def RTProcessInstanceFrameOp : RTOp<"process.instance.frame", [
+  MemoryEffects<[MemRead<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTProcessInstanceType:$instance);
+  let results = (outs RTStatusType:$status, RTMutableByteSpanType:$frame);
+}
+
+def RTProcessInstanceExecuteOp : RTOp<"process.instance.execute", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemRead<RTIOResource>, MemWrite<RTIOResource>, MemRead,
+                 MemWrite]>
+]> {
+  let arguments = (ins RTProcessInstanceType:$instance,
+                       RTContextType:$context, I32:$requested_tier);
+  let results = (outs RTStatusType:$status, RTFragmentActionType:$action);
+}
+
+def RTProcessInstanceDestroyOp : RTOp<"process.instance.destroy", [
+  MemoryEffects<[MemRead<RTRuntimeResource>, MemWrite<RTRuntimeResource>,
+                 MemFree<RTRuntimeResource>, MemFree]>
+]> {
+  let arguments = (ins RTProcessInstanceType:$instance);
+  let results = (outs RTStatusType:$status);
+}
+
+#endif // TALOS_DIALECT_RUNTIME_RUNTIMEOPS_TD

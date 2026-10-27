@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-managed-class-layout-analysis 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-managed-class-layout-analysis 2>&1 | FileCheck %s
 
 !tagged = !simulation.unpacked_union<fields = [
   #simulation.field<name = "object", type = !simulation.class_handle<@Referent>, ordinal = 0, packedOffset = 0>,

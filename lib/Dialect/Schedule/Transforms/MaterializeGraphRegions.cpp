@@ -1,11 +1,11 @@
 //===- MaterializeGraphRegions.cpp - Form coarse compute kernels ---------===//
 
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -17,16 +17,16 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMMATERIALIZEGRAPHREGIONSPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMMATERIALIZEGRAPHREGIONSPASS
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 
-class ObeliskSimMaterializeGraphRegionsPass final
-    : public impl::ObeliskSimMaterializeGraphRegionsPassBase<
-          ObeliskSimMaterializeGraphRegionsPass> {
+class TalosSimMaterializeGraphRegionsPass final
+    : public impl::TalosSimMaterializeGraphRegionsPassBase<
+          TalosSimMaterializeGraphRegionsPass> {
 public:
   using Base::Base;
   void runOnOperation() override;
@@ -153,10 +153,10 @@ uint64_t saturatingAdd(uint64_t lhs, uint64_t rhs) {
   return lhs + rhs;
 }
 
-void ObeliskSimMaterializeGraphRegionsPass::runOnOperation() {
+void TalosSimMaterializeGraphRegionsPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
-  ::obelisk::schedule::remove<schedule::metadata::computeKernels>(design);
-  ::obelisk::schedule::remove<schedule::metadata::threeTierSchedule>(design);
+  ::talos::schedule::remove<schedule::metadata::computeKernels>(design);
+  ::talos::schedule::remove<schedule::metadata::threeTierSchedule>(design);
   schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
   if (!graph) {
     design.emitOpError(
@@ -317,7 +317,7 @@ void ObeliskSimMaterializeGraphRegionsPass::runOnOperation() {
       fallbackFragments += kernel.fragments.size();
     }
   }
-  ::obelisk::schedule::set<schedule::metadata::computeKernels>(
+  ::talos::schedule::set<schedule::metadata::computeKernels>(
       design, ArrayAttr::get(design.getContext(), attributes));
 
   // The remaining metadata is the revision-coupled ownership ABI consumed by
@@ -519,9 +519,9 @@ void ObeliskSimMaterializeGraphRegionsPass::runOnOperation() {
       ArrayAttr::get(design.getContext(), ingress));
   if (!schedule)
     return signalPassFailure();
-  ::obelisk::schedule::set<schedule::metadata::threeTierSchedule>(design,
+  ::talos::schedule::set<schedule::metadata::threeTierSchedule>(design,
                                                                   schedule);
 }
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

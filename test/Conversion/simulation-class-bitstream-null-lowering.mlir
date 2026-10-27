@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
 module attributes {
@@ -8,7 +8,7 @@ module attributes {
 } {
   simulation.design @null_class_bitstream {
     simulation.scope.decl 0 hierarchy "top"
-    simulation.class.decl @__obelisk_class_s3_C id 1 {
+    simulation.class.decl @__talos_class_s3_C id 1 {
       is_abstract = true, is_final = false, is_interface = false
     }
     simulation.code_unit.decl 1 in 0 initial hierarchy "top.cast"
@@ -16,12 +16,12 @@ module attributes {
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
       %null = simulation.class.null :
-          !simulation.class_handle<@__obelisk_class_s3_C>
+          !simulation.class_handle<@__talos_class_s3_C>
       %result, %matched, %watch =
           simulation.recursive.export_bitstream %null {
             plan = array<i64: 9702691408, 1, 64, 0,
-                5, 0, 3235077357463657086, 0, 64, 0>
-          } : (!simulation.class_handle<@__obelisk_class_s3_C>) ->
+                5, 0, -7123445604761477980, 0, 64, 0>
+          } : (!simulation.class_handle<@__talos_class_s3_C>) ->
               (i8, i1, !simulation.managed_watch)
       simulation.return
     }
@@ -29,5 +29,5 @@ module attributes {
 }
 
 // CHECK-NOT: runtime.class_bitstream_blob
-// CHECK-NOT: obelisk_rt_v1_class_bitstream
-// CHECK-NOT: obelisk_rt_v2_recursive_export_bitstream
+// CHECK-NOT: talos_rt_v1_class_bitstream
+// CHECK-NOT: talos_rt_v2_recursive_export_bitstream

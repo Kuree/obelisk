@@ -1,12 +1,12 @@
 //===- ExtractPeriodicClocks.cpp - Normalize uniform delay processes
 //-------===//
 
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -17,14 +17,14 @@
 
 using namespace mlir;
 
-namespace obelisk {
-#define GEN_PASS_DEF_OBELISKSIMEXTRACTPERIODICCLOCKSPASS
-#include "obelisk/Conversion/Passes.h.inc"
+namespace talos {
+#define GEN_PASS_DEF_TALOSSIMEXTRACTPERIODICCLOCKSPASS
+#include "talos/Conversion/Passes.h.inc"
 
 namespace {
-class ObeliskSimExtractPeriodicClocksPass final
-    : public impl::ObeliskSimExtractPeriodicClocksPassBase<
-          ObeliskSimExtractPeriodicClocksPass> {
+class TalosSimExtractPeriodicClocksPass final
+    : public impl::TalosSimExtractPeriodicClocksPassBase<
+          TalosSimExtractPeriodicClocksPass> {
 public:
   using Base::Base;
   void runOnOperation() override;
@@ -109,7 +109,7 @@ bool hasUniformCadence(sim::SimFuncOp function,
   return visited == predecessors.size();
 }
 
-void ObeliskSimExtractPeriodicClocksPass::runOnOperation() {
+void TalosSimExtractPeriodicClocksPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   if (vpi != "off" || design.getComputeGraphAttr())
     return;
@@ -183,7 +183,7 @@ void ObeliskSimExtractPeriodicClocksPass::runOnOperation() {
     while (scopes.contains(nextCodeUnit))
       ++nextCodeUnit;
     uint64_t codeUnit = nextCodeUnit++;
-    std::string name = "__obelisk_periodic_tick_" + std::to_string(codeUnit);
+    std::string name = "__talos_periodic_tick_" + std::to_string(codeUnit);
     SmallVector<NamedAttribute> attrs{builder.getNamedAttr(
         "code_unit_id", builder.getI64IntegerAttr(codeUnit))};
     DictionaryAttr contextAttrs = builder.getDictionaryAttr(
@@ -258,15 +258,15 @@ void ObeliskSimExtractPeriodicClocksPass::runOnOperation() {
       auto wait = sim::SimSuspendEdgeOp::create(
           builder, delay.getLoc(), sim::EdgeKind::Both, watched, ValueRange{},
           delay.getSiteAttr(), sim::EventRegionAttr{}, delay.getContinuation());
-      ::obelisk::schedule::set<schedule::metadata::proceduralEventWait>(
+      ::talos::schedule::set<schedule::metadata::proceduralEventWait>(
           wait, builder.getUnitAttr());
       delay.erase();
     }
-    ::obelisk::schedule::set<schedule::metadata::periodicControl>(
+    ::talos::schedule::set<schedule::metadata::periodicControl>(
         function, builder.getUnitAttr());
     // The effect summary predates the new private subscription.
     function.removeEffectSummaryAttr();
   }
 }
 } // namespace
-} // namespace obelisk
+} // namespace talos

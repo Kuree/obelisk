@@ -4,12 +4,12 @@
 #include "SimulationEvalNBAQueue.h"
 #include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -23,20 +23,20 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 constexpr StringLiteral evalFastNBARootsName =
-    "__obelisk_eval_fast_nba_roots_v1";
+    "__talos_eval_fast_nba_roots_v1";
 constexpr StringLiteral promotionPendingMaskName =
-    "__obelisk_eval_promotion_pending_mask_v1";
+    "__talos_eval_promotion_pending_mask_v1";
 constexpr StringLiteral periodicTerminationName =
-    "__obelisk_periodic_termination_v1";
-constexpr StringLiteral nbaDirtyRootsName = "__obelisk_aot_nba_dirty_roots_v1";
-constexpr StringLiteral nbaCommitName = "__obelisk_aot_static_nba_commit_v1";
-constexpr StringLiteral nbaKnownName = "__obelisk_eval_nba_known_v1";
+    "__talos_periodic_termination_v1";
+constexpr StringLiteral nbaDirtyRootsName = "__talos_aot_nba_dirty_roots_v1";
+constexpr StringLiteral nbaCommitName = "__talos_aot_static_nba_commit_v1";
+constexpr StringLiteral nbaKnownName = "__talos_eval_nba_known_v1";
 constexpr StringLiteral evalFourStateNBAHandoffName =
-    "__obelisk_eval_four_state_nba_handoff_v1";
+    "__talos_eval_four_state_nba_handoff_v1";
 
 } // namespace
 
@@ -46,7 +46,7 @@ materializeNativeEvalDispatch(ModuleOp module,
   StringRef functionName = evalDispatchName;
   ArrayRef<std::string> executors = plan.fourStateExecutors;
   ArrayRef<NativeEvalClockKernel> clockKernels = plan.clockKernels;
-  ArrayRef<obelisk_rt_native_merged_fragment> mergedFragments = plan.fragments;
+  ArrayRef<talos_rt_native_merged_fragment> mergedFragments = plan.fragments;
   ArrayRef<std::string> mergedTwoStateExecutors = plan.twoStateExecutors;
   ArrayRef<APInt> ownerSubsumptionMasks = plan.ownerSubsumptionMasks;
   uint32_t nbaTaintWordCount = plan.nbaTaintWordCount;
@@ -101,7 +101,7 @@ materializeNativeEvalDispatch(ModuleOp module,
     // a known forced value still requires override-aware fine execution.
     for (unsigned owner = 0; owner != mergedFragments.size(); ++owner) {
       std::string name =
-          "__obelisk_eval_write_guard_" + std::to_string(owner) + "_v1";
+          "__talos_eval_write_guard_" + std::to_string(owner) + "_v1";
       auto guard = LLVM::LLVMFuncOp::create(
           builder, location, name,
           LLVM::LLVMFunctionType::get(builder.getI1Type(), {pointer}, false));
@@ -114,7 +114,7 @@ materializeNativeEvalDispatch(ModuleOp module,
       Value fast = LLVM::LoadOp::create(
           builder, location, i32,
           LLVM::AddressOfOp::create(builder, location, pointer,
-                                    "__obelisk_static_specialization_fast_v1"),
+                                    "__talos_static_specialization_fast_v1"),
           4);
       Value isClean =
           arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
@@ -131,13 +131,13 @@ materializeNativeEvalDispatch(ModuleOp module,
         Value root =
             LLVM::CallOp::create(
                 builder, location, TypeRange{i32},
-                "obelisk_rt_v1_static_specialization_guard",
+                "talos_rt_v1_static_specialization_guard",
                 ValueRange{entry->getArgument(0),
                            llvmConstant(builder, location, i32, UINT32_MAX),
                            llvmConstant(builder, location, i32, state),
                            llvmConstant(builder, location, i32,
-                                        OBELISK_RT_STATIC_ROOT_READ |
-                                            OBELISK_RT_STATIC_ROOT_WRITE)})
+                                        TALOS_RT_STATIC_ROOT_READ |
+                                            TALOS_RT_STATIC_ROOT_WRITE)})
                 .getResult();
         allowed = arith::AndIOp::create(
             builder, location, allowed,
@@ -153,7 +153,7 @@ materializeNativeEvalDispatch(ModuleOp module,
   auto fastCoordinator = LLVM::LLVMFuncOp::create(
       builder, location, functionName,
       LLVM::LLVMFunctionType::get(i32, coordinatorArguments, false));
-  ::obelisk::schedule::set<schedule::metadata::evalCallClosureRoot>(
+  ::talos::schedule::set<schedule::metadata::evalCallClosureRoot>(
       fastCoordinator, builder.getUnitAttr());
   Block *fastEntry = fastCoordinator.addEntryBlock(builder);
   Block *dispatch = new Block;
@@ -213,7 +213,7 @@ materializeNativeEvalDispatch(ModuleOp module,
         builder, location, i32, evalNBAQueueField(builder, location, 3), 4);
     Value ok = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, status,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     Block *proceed = new Block;
     fastCoordinator.getBody().push_back(proceed);
     cf::CondBranchOp::create(builder, location, ok, proceed, ValueRange{},
@@ -227,7 +227,7 @@ materializeNativeEvalDispatch(ModuleOp module,
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
             SymbolRefAttr::get(
-                context, "obelisk_rt_v1_scheduler_priority_signal_pending"),
+                context, "talos_rt_v1_scheduler_priority_signal_pending"),
             ValueRange{fastEntry->getArgument(1)})
             .getResult();
     Value mustHandoff = arith::CmpIOp::create(
@@ -236,7 +236,7 @@ materializeNativeEvalDispatch(ModuleOp module,
     cf::CondBranchOp::create(
         builder, location, mustHandoff, complete,
         ValueRange{
-            llvmConstant(builder, location, i32, OBELISK_RT_AOT_CHECKPOINT)},
+            llvmConstant(builder, location, i32, TALOS_RT_AOT_CHECKPOINT)},
         scanReady, ValueRange{});
   } else {
     cf::BranchOp::create(builder, location, scanReady);
@@ -305,7 +305,7 @@ materializeNativeEvalDispatch(ModuleOp module,
   // closure is quiescent. With a runtime calendar, runtime-owned Active and
   // Inactive work must also drain first, which the NBA cut below performs.
   bool runtimeCalendar =
-      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+      ::talos::schedule::has<::talos::schedule::Field::EvalRuntimeCalendar>(
           module);
   bool hasDeferred = plan.firstDeferredBit < mergedFragments.size();
   APInt deferredOwnerMask(ownerCount, 0);
@@ -316,11 +316,11 @@ materializeNativeEvalDispatch(ModuleOp module,
   // reports no barrier the same way, so read the termination latch itself.
   auto terminationRequested = [&]() -> Value {
     getOrDeclareLLVMFunction(module,
-                             "obelisk_rt_v1_scheduler_termination_requested",
+                             "talos_rt_v1_scheduler_termination_requested",
                              i32, {pointer});
     Value latch =
         LLVM::CallOp::create(builder, location, TypeRange{i32},
-                             "obelisk_rt_v1_scheduler_termination_requested",
+                             "talos_rt_v1_scheduler_termination_requested",
                              ValueRange{fastEntry->getArgument(1)})
             .getResult();
     return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
@@ -433,7 +433,7 @@ materializeNativeEvalDispatch(ModuleOp module,
     builder.setInsertionPointToStart(segmentStopped);
     LLVM::ReturnOp::create(
         builder, location,
-        llvmConstant(builder, location, i32, OBELISK_RT_TIER_UNAVAILABLE));
+        llvmConstant(builder, location, i32, TALOS_RT_TIER_UNAVAILABLE));
     segment.targets = {&segment.function.getBody(),
                        entry->getArgument(0),
                        entry->getArgument(2),
@@ -585,13 +585,13 @@ materializeNativeEvalDispatch(ModuleOp module,
         Value status =
             LLVM::CallOp::create(
                 builder, location, TypeRange{i32},
-                "obelisk_rt_v1_scheduler_execute_aot_actor",
+                "talos_rt_v1_scheduler_execute_aot_actor",
                 ValueRange{targets.context, llvmConstant(builder, location, i32,
                                                          record.actor_slot)})
                 .getResult();
         Value ok = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::eq, status,
-            llvmConstant(builder, location, i32, OBELISK_RT_OK));
+            llvmConstant(builder, location, i32, TALOS_RT_OK));
         cf::CondBranchOp::create(builder, location, ok, targets.dispatch,
                                  ValueRange{}, targets.failed,
                                  ValueRange{status});
@@ -625,10 +625,10 @@ materializeNativeEvalDispatch(ModuleOp module,
         mergedTwoStateExecutors[recordIndex]);
     bool convergenceOwner =
         (executor &&
-         ::obelisk::schedule::has<schedule::metadata::evalTier2Convergence>(
+         ::talos::schedule::has<schedule::metadata::evalTier2Convergence>(
              executor)) ||
         (twoStateExecutor &&
-         ::obelisk::schedule::has<schedule::metadata::evalTier2Convergence>(
+         ::talos::schedule::has<schedule::metadata::evalTier2Convergence>(
              twoStateExecutor));
     // A convergence owner consumes its old dirty bit before executing. Any
     // transition published by the activation then remains queued and drives
@@ -684,8 +684,8 @@ materializeNativeEvalDispatch(ModuleOp module,
               SymbolRefAttr::get(context, mergedTwoStateExecutors[recordIndex]),
               ValueRange{targets.context})
               .getResult();
-      ::obelisk::schedule::set<
-          ::obelisk::schedule::Field::EvalProvenTwoStateCall>(
+      ::talos::schedule::set<
+          ::talos::schedule::Field::EvalProvenTwoStateCall>(
           twoStateStatus.getDefiningOp(), builder.getUnitAttr());
       cf::BranchOp::create(builder, location, executeJoin,
                            ValueRange{twoStateStatus});
@@ -713,13 +713,13 @@ materializeNativeEvalDispatch(ModuleOp module,
     }
     Value executeOK = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, executeStatus,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     bool mayTerminate =
         (executor &&
-         ::obelisk::schedule::has<schedule::metadata::evalMayTerminate>(
+         ::talos::schedule::has<schedule::metadata::evalMayTerminate>(
              executor)) ||
         (twoStateExecutor &&
-         ::obelisk::schedule::has<schedule::metadata::evalMayTerminate>(
+         ::talos::schedule::has<schedule::metadata::evalMayTerminate>(
              twoStateExecutor));
     // A convergence owner may republish itself indefinitely. Poll the
     // branch-only termination word after each member activation, before the
@@ -729,10 +729,10 @@ materializeNativeEvalDispatch(ModuleOp module,
     mayTerminate |= convergenceOwner;
     bool infallible =
         executor &&
-        ::obelisk::schedule::has<schedule::metadata::evalInfallible>(
+        ::talos::schedule::has<schedule::metadata::evalInfallible>(
             executor) &&
         (!twoStateExecutor ||
-         ::obelisk::schedule::has<schedule::metadata::evalInfallible>(
+         ::talos::schedule::has<schedule::metadata::evalInfallible>(
              twoStateExecutor));
     if (infallible && !mayTerminate) {
       cf::BranchOp::create(builder, location, targets.dispatch);
@@ -826,7 +826,7 @@ materializeNativeEvalDispatch(ModuleOp module,
               4);
           Value ok = arith::CmpIOp::create(
               builder, location, arith::CmpIPredicate::eq, status,
-              llvmConstant(builder, location, i32, OBELISK_RT_OK));
+              llvmConstant(builder, location, i32, TALOS_RT_OK));
           inSegment = arith::AndIOp::create(builder, location, inSegment, ok);
         }
         cf::CondBranchOp::create(builder, location, inSegment, load,
@@ -852,7 +852,7 @@ materializeNativeEvalDispatch(ModuleOp module,
         builder.setInsertionPointToStart(done);
       }
       LLVM::ReturnOp::create(builder, location,
-                             llvmConstant(builder, location, i32, OBELISK_RT_OK));
+                             llvmConstant(builder, location, i32, TALOS_RT_OK));
       builder.setInsertionPointToEnd(&segment.function.getBody().front());
       auto emitOwnerSwitch = [&](const Segment &ownerSegment, Value selected,
                                  Block *otherwise) {
@@ -891,7 +891,7 @@ materializeNativeEvalDispatch(ModuleOp module,
                          .getResult();
       Value ok = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::eq, status,
-          llvmConstant(builder, location, i32, OBELISK_RT_OK));
+          llvmConstant(builder, location, i32, TALOS_RT_OK));
       cf::CondBranchOp::create(builder, location, ok, dispatch, ValueRange{},
                                failed, ValueRange{status});
       segmentCases.push_back(APInt(64, index));
@@ -918,13 +918,13 @@ materializeNativeEvalDispatch(ModuleOp module,
     builder.setInsertionPointToStart(stopped);
     LLVM::ReturnOp::create(
         builder, location,
-        llvmConstant(builder, location, i32, OBELISK_RT_TIER_UNAVAILABLE));
+        llvmConstant(builder, location, i32, TALOS_RT_TIER_UNAVAILABLE));
     builder.setInsertionPointToStart(failed);
     LLVM::ReturnOp::create(builder, location, failed->getArgument(0));
   };
 
   builder.setInsertionPointToStart(commit);
-  if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+  if (::talos::schedule::has<::talos::schedule::Field::EvalRuntimeCalendar>(
           module)) {
     // Keep the eval continuation active across NBA. The common loop drains
     // runtime Active/Inactive work at the cut, then completes the remaining
@@ -933,15 +933,15 @@ materializeNativeEvalDispatch(ModuleOp module,
     // 4.5 permits new Active evaluation only after the whole NBA event batch.
     // The captured prefix retains 4.6(b) assignment order and 4.9.4/10.4.2
     // enqueue-time RHS/target values; runtime cuts never reevaluate them.
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_prepare_eval_nba",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_prepare_eval_nba",
                              i32, {pointer, pointer});
     getOrDeclareLLVMFunction(module,
-                             "obelisk_rt_v1_scheduler_complete_eval_nba", i32,
+                             "talos_rt_v1_scheduler_complete_eval_nba", i32,
                              {pointer, i32, i32});
     Value region = entryAlloca(builder, location, i32, 1, 4);
     Value prepareStatus =
         LLVM::CallOp::create(builder, location, TypeRange{i32},
-                             "obelisk_rt_v1_scheduler_prepare_eval_nba",
+                             "talos_rt_v1_scheduler_prepare_eval_nba",
                              ValueRange{fastEntry->getArgument(1), region})
             .getResult();
     Block *prepared = new Block, *commitPrefix = new Block;
@@ -949,7 +949,7 @@ materializeNativeEvalDispatch(ModuleOp module,
     fastCoordinator.getBody().push_back(commitPrefix);
     Value prepareOK = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, prepareStatus,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     cf::CondBranchOp::create(builder, location, prepareOK, prepared,
                              ValueRange{}, failed, ValueRange{prepareStatus});
     builder.setInsertionPointToStart(prepared);
@@ -1006,36 +1006,36 @@ materializeNativeEvalDispatch(ModuleOp module,
     Value barrier = LLVM::LoadOp::create(builder, location, i32, region, 4);
     Value isNBA = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, barrier,
-        llvmConstant(builder, location, i32, OBELISK_RT_REGION_NBA));
+        llvmConstant(builder, location, i32, TALOS_RT_REGION_NBA));
     cf::CondBranchOp::create(
         builder, location, isNBA, commitPrefix, ValueRange{}, complete,
-        ValueRange{llvmConstant(builder, location, i32, OBELISK_RT_OK)});
+        ValueRange{llvmConstant(builder, location, i32, TALOS_RT_OK)});
     builder.setInsertionPointToStart(commitPrefix);
     LLVM::StoreOp::create(builder, location,
                           llvmConstant(builder, location, i32, 0), changed, 4);
     Value prefixStatus =
         LLVM::CallOp::create(builder, location, TypeRange{i32},
-                             "__obelisk_aot_runtime_nba_commit_v1",
+                             "__talos_aot_runtime_nba_commit_v1",
                              ValueRange{fastEntry->getArgument(0),
                                         fastEntry->getArgument(1), barrier,
                                         changed})
             .getResult();
     Value prefixOK = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, prefixStatus,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     cf::CondBranchOp::create(builder, location, prefixOK, afterCommit,
                              ValueRange{}, failed, ValueRange{prefixStatus});
     builder.setInsertionPointToStart(afterCommit);
     Value status =
         LLVM::CallOp::create(builder, location, TypeRange{i32},
-                             "obelisk_rt_v1_scheduler_complete_eval_nba",
+                             "talos_rt_v1_scheduler_complete_eval_nba",
                              ValueRange{fastEntry->getArgument(1), barrier,
                                         LLVM::LoadOp::create(builder, location,
                                                              i32, changed, 4)})
             .getResult();
     Value ok = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, status,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     cf::CondBranchOp::create(builder, location, ok, dispatch, ValueRange{},
                              failed, ValueRange{status});
     emitReturns();
@@ -1076,7 +1076,7 @@ materializeNativeEvalDispatch(ModuleOp module,
                                       llvmConstant(builder, location, i64, 0));
   cf::CondBranchOp::create(
       builder, location, noNBA, complete,
-      ValueRange{llvmConstant(builder, location, i32, OBELISK_RT_OK)},
+      ValueRange{llvmConstant(builder, location, i32, TALOS_RT_OK)},
       performCommit, ValueRange{});
 
   builder.setInsertionPointToStart(performCommit);
@@ -1227,8 +1227,8 @@ materializeNativeEvalDispatch(ModuleOp module,
         SymbolRefAttr::get(context, nbaCommitName),
         ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
                    llvmConstant(builder, location, i32, 2), changed});
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::EvalUseFastTwoStateNba>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::EvalUseFastTwoStateNba>(
         fastTwoStateCall, builder.getUnitAttr());
     cf::BranchOp::create(builder, location, commitJoin,
                          ValueRange{fastTwoStateCall.getResult()});
@@ -1239,8 +1239,8 @@ materializeNativeEvalDispatch(ModuleOp module,
         SymbolRefAttr::get(context, nbaCommitName),
         ValueRange{fastEntry->getArgument(0), fastEntry->getArgument(1),
                    llvmConstant(builder, location, i32, 2), changed});
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::EvalUseCanonicalTwoStateNba>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::EvalUseCanonicalTwoStateNba>(
         canonicalTwoStateCall, builder.getUnitAttr());
     cf::BranchOp::create(builder, location, commitJoin,
                          ValueRange{canonicalTwoStateCall.getResult()});
@@ -1259,7 +1259,7 @@ materializeNativeEvalDispatch(ModuleOp module,
   }
   Value commitOK = arith::CmpIOp::create(
       builder, location, arith::CmpIPredicate::eq, commitStatus,
-      llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      llvmConstant(builder, location, i32, TALOS_RT_OK));
   cf::CondBranchOp::create(builder, location, commitOK, afterCommit,
                            ValueRange{}, failed, ValueRange{commitStatus});
 
@@ -1274,4 +1274,4 @@ materializeNativeEvalDispatch(ModuleOp module,
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

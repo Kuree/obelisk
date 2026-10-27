@@ -5,7 +5,7 @@
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 std::optional<LogicalResult>
 Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
@@ -23,17 +23,17 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
     if (constant == kInvalidRegister)
       return failure();
     emit({Constant, 0, constant, 0, 0, 0, 0, zero});
-    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getResult()), input,
+    emit({Compare, TALOS_RT_DB_CMP_EQ, reg(plan, op.getResult()), input,
           constant});
     return success();
   }
   if (auto op = dyn_cast<sim::SimSemaphoreEqualOp>(operation)) {
-    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
+    emit({Compare, TALOS_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
           reg(plan, op.getLhs()), reg(plan, op.getRhs())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimMailboxEqualOp>(operation)) {
-    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
+    emit({Compare, TALOS_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
           reg(plan, op.getLhs()), reg(plan, op.getRhs())});
     return success();
   }
@@ -131,10 +131,10 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
       return op.emitOpError("argument reference has no bytecode layout");
     uint32_t flags = (storage->fourState ? 1u : 0u) |
                      ((isa<sim::StringType>(op.getResult().getType())
-                           ? OBELISK_RT_ARGUMENT_VALUE_STRING
+                           ? TALOS_RT_ARGUMENT_VALUE_STRING
                        : sim::isManagedHandleType(op.getResult().getType())
-                           ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                           : OBELISK_RT_ARGUMENT_VALUE_BITS)
+                           ? TALOS_RT_ARGUMENT_VALUE_CLASS
+                           : TALOS_RT_ARGUMENT_VALUE_BITS)
                       << 1);
     return emitIntrinsicRegisters(plan, kIntrinsicArgumentRefLoad,
                                   {reg(plan, op.getReference()),
@@ -151,10 +151,10 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
       return op.emitOpError("argument reference has no bytecode layout");
     uint32_t flags = (storage->fourState ? 1u : 0u) |
                      ((isa<sim::StringType>(op.getValue().getType())
-                           ? OBELISK_RT_ARGUMENT_VALUE_STRING
+                           ? TALOS_RT_ARGUMENT_VALUE_STRING
                        : sim::isManagedHandleType(op.getValue().getType())
-                           ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                           : OBELISK_RT_ARGUMENT_VALUE_BITS)
+                           ? TALOS_RT_ARGUMENT_VALUE_CLASS
+                           : TALOS_RT_ARGUMENT_VALUE_BITS)
                       << 1);
     return emitIntrinsicRegisters(
         plan, kIntrinsicArgumentRefStore,
@@ -167,10 +167,10 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
     std::optional<uint64_t> runtimeKind;
     switch (op.getKind()) {
     case sim::ManagedWatchKind::Field:
-      runtimeKind = OBELISK_RT_MANAGED_WATCH_FIELD;
+      runtimeKind = TALOS_RT_MANAGED_WATCH_FIELD;
       break;
     case sim::ManagedWatchKind::ContainerSize:
-      runtimeKind = OBELISK_RT_MANAGED_WATCH_CONTAINER_SIZE;
+      runtimeKind = TALOS_RT_MANAGED_WATCH_CONTAINER_SIZE;
       break;
     }
     if (!runtimeKind) {
@@ -249,4 +249,4 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
   return std::nullopt;
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

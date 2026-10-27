@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=input-dependencies=true inputs=true' -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=reaching-values=true publications=true slice-order=true slice-root=4' -o /dev/null 2>&1 | FileCheck %s --check-prefix=SLICE
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=input-dependencies=true publications=true slice-order=true slice-root=4' -o /dev/null 2>&1 | FileCheck %s --check-prefix=SLICE
+// RUN: talos-opt %s '--test-talos-activation-regions=input-dependencies=true inputs=true' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s '--test-talos-activation-regions=reaching-values=true publications=true slice-order=true slice-root=4' -o /dev/null 2>&1 | FileCheck %s --check-prefix=SLICE
+// RUN: talos-opt %s '--test-talos-activation-regions=input-dependencies=true publications=true slice-order=true slice-root=4' -o /dev/null 2>&1 | FileCheck %s --check-prefix=SLICE
 // A selected store weakly updates private scratch and may publish canonical
 // state. Its value, selector, and the old values of both possible destinations
 // remain dependencies. A later definite store makes canonical writes complete.

@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk -emit-slang %s -o /dev/null
+// RUN: %talos -emit-slang %s -o /dev/null
 
 // IEEE 1800-2023 5.9: a string literal cast to an unpacked byte array follows
 // the assignment rules, so a size mismatch is left justified. Slang v11

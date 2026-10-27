@@ -1,9 +1,9 @@
-// RUN: obelisk -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
-// RUN: obelisk -O3 --native-scheduler=aot --top=clock_control_checks \
+// RUN: talos -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
+// RUN: talos -O3 --native-scheduler=aot --top=clock_control_checks \
 // RUN:   -emit-llvm %s -o - | FileCheck %s --check-prefix=AOT
-// RUN: obelisk -O3 --native-scheduler=aot %s -o %t.o3.aot
+// RUN: talos -O3 --native-scheduler=aot %s -o %t.o3.aot
 // RUN: %t.o3.aot 2>&1 | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode 2>&1 | FileCheck %s
 
 `timescale 1ns / 1ps
@@ -203,9 +203,9 @@ endmodule
 // SIM: edges [1, 2]
 // SIM: simulation.assert.clock_occurrence.consume
 // SIM-NOT: timing_check_table
-// AOT: @__obelisk_aot_schedule_plan_v1
-// AOT: call i32 @obelisk_rt_v1_scheduler_install_aot
-// AOT: call i32 @obelisk_rt_v1_scheduler_run_aot
+// AOT: @__talos_aot_schedule_plan_v1
+// AOT: call i32 @talos_rt_v1_scheduler_install_aot
+// AOT: call i32 @talos_rt_v1_scheduler_run_aot
 // CHECK-DAG: skew-unarmed 0
 // CHECK-DAG: skew-endpoint 0
 // CHECK-DAG: skew-restart 0

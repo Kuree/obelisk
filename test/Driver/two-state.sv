@@ -1,10 +1,10 @@
-// RUN: obelisk --two-state -O0 --native-scheduler=generic %s -o %t.o0
+// RUN: talos --two-state -O0 --native-scheduler=generic %s -o %t.o0
 // RUN: %t.o0 +trace=%t.o0.vcd | FileCheck %s
-// RUN: obelisk --two-state -O3 %s -o %t.o3
+// RUN: talos --two-state -O3 %s -o %t.o3
 // RUN: %t.o3 +trace=%t.o3.vcd | FileCheck %s && FileCheck %s --check-prefix=VCD < %t.o3.vcd
-// RUN: obelisk --two-state --no-two-state-specialization -O3 %s -o %t.no-inference
+// RUN: talos --two-state --no-two-state-specialization -O3 %s -o %t.no-inference
 // RUN: %t.no-inference | FileCheck %s
-// RUN: obelisk --two-state --execution-tier=bytecode -O3 %s -o %t.bytecode
+// RUN: talos --two-state --execution-tier=bytecode -O3 %s -o %t.bytecode
 // RUN: %t.bytecode +trace=%t.bytecode.vcd | FileCheck %s
 
 // Import changes the domain before runtime operators are lowered, including

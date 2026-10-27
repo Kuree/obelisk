@@ -1,11 +1,11 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: not %t --coverage-output=%t.obcov --coverage-test=cross-exclusions 2> %t.err | FileCheck %s --check-prefix=QUERY
 // RUN: FileCheck %s --check-prefix=ERROR --implicit-check-not='illegal bin' < %t.err
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
 // RUN: not %t --coverage-output=%t.zeta.obcov --coverage-test=zeta > /dev/null 2> /dev/null
 // RUN: not %t --coverage-output=%t.alpha.obcov --coverage-test=alpha > /dev/null 2> /dev/null
-// RUN: obelisk-cov report --format=text %t.zeta.obcov %t.alpha.obcov | FileCheck %s --check-prefix=ORDER
+// RUN: talos-cov report --format=text %t.zeta.obcov %t.alpha.obcov | FileCheck %s --check-prefix=ORDER
 
 // IEEE 1800-2023 19.6.2-19.6.3 and 19.11.2: ignored and illegal products leave
 // the denominator (ordinary plus the two automatic remainders), and only the

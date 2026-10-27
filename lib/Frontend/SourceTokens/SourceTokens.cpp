@@ -1,6 +1,6 @@
 //===- SourceTokens.cpp - Raw SystemVerilog token listing -----------------===//
 
-#include "obelisk/Frontend/SourceTokens.h"
+#include "talos/Frontend/SourceTokens.h"
 
 #include "slang/diagnostics/Diagnostics.h"
 #include "slang/parsing/Lexer.h"
@@ -11,7 +11,7 @@
 #include <limits>
 #include <string_view>
 
-namespace obelisk::frontend {
+namespace talos::frontend {
 
 void lexSystemVerilogTokens(
     llvm::StringRef text, LanguageVersion version,
@@ -65,4 +65,4 @@ void writeSystemVerilogTokenListing(llvm::StringRef text,
   });
 }
 
-} // namespace obelisk::frontend
+} // namespace talos::frontend

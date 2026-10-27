@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-activation-regions='functions=a,b publications=true reaching-values=true' -o %t.analyzed 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s --test-talos-activation-regions='functions=a,b publications=true reaching-values=true' -o %t.analyzed 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
 // Static mux configuration can prove acyclicity. A runtime configuration
 // retains both possible cones; it cannot be assumed to break real feedback.

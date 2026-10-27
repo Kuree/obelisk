@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -377,19 +377,19 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @drive
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_store_plane
-// CHECK: llvm.mlir.addressof @__obelisk_state_value
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_load_plane
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_store_plane
+// CHECK: llvm.mlir.addressof @__talos_state_value
 // CHECK: llvm.load
 // CHECK: llvm.store
-// CHECK: llvm.mlir.addressof @__obelisk_state_unknown
+// CHECK: llvm.mlir.addressof @__talos_state_unknown
 // CHECK: llvm.store
 // CHECK: llvm.cond_br
 // CHECK-DAG: %[[ROOT:.*]] = llvm.mlir.constant(1 : i32) : i32
 // CHECK-DAG: %[[OFFSET:.*]] = llvm.mlir.constant(0 : i64) : i64
 // CHECK-DAG: %[[WIDTH:.*]] = llvm.mlir.constant(2 : i64) : i64
-// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_scheduler_static_transition({{.*}}, %[[ROOT]], %[[OFFSET]], %[[WIDTH]], {{.*}})
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// CHECK-COUNT-1: llvm.call @talos_rt_v1_scheduler_static_transition({{.*}}, %[[ROOT]], %[[OFFSET]], %[[WIDTH]], {{.*}})
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_signal_transition
 // CHECK-NOT: simulation.driver.drive
 
 // CHECK-LABEL: llvm.func @drive_changed
@@ -399,12 +399,12 @@ module attributes {
 
 // CHECK-LABEL: llvm.func @drive_wide
 // CHECK: llvm.store %{{.*}}, %{{.*}} : i65536, !llvm.ptr
-// CHECK-COUNT-1: llvm.call @obelisk_rt_v1_scheduler_signal_transition
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// CHECK-COUNT-1: llvm.call @talos_rt_v1_scheduler_signal_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_signal_transition
 // CHECK-NOT: simulation.driver.drive
 
 // CHECK-LABEL: llvm.func @drive_nba
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_clocking_driver_nba
+// CHECK: llvm.call @talos_rt_v1_scheduler_clocking_driver_nba
 // CHECK-NOT: simulation.nba.enqueue
 
 // A highz1 driver cannot use the single-driver memcpy shortcut. Native
@@ -413,23 +413,23 @@ module attributes {
 // leaves 1 and its 0 or x makes x, so the net's value plane is that driver's
 // value plane and its unknown plane is the complement.
 // CHECK-LABEL: llvm.func @drive_strength
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: %[[UNKNOWN:.*]] = llvm.xor %[[VALUE:.*]], %{{.*}} : i1
 // CHECK: llvm.zext %[[VALUE]] : i1 to i8
 // CHECK: llvm.zext %[[UNKNOWN]] : i1 to i8
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK-NOT: simulation.driver.drive
 
 // CHECK-LABEL: llvm.func @drive_inertial
 // CHECK: llvm.icmp
 // CHECK: llvm.select
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_driver
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK: llvm.call @talos_rt_v1_scheduler_inertial_driver
+// CHECK: llvm.call @talos_rt_v1_scheduler_fail
 // CHECK-NOT: simulation.driver.drive_inertial
 
 // CHECK-LABEL: llvm.func @drive_inertial_path
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_path_driver
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK: llvm.call @talos_rt_v1_scheduler_inertial_path_driver
+// CHECK: llvm.call @talos_rt_v1_scheduler_fail
 // CHECK-NOT: simulation.driver.drive_inertial_path
 
 // CHECK-LABEL: llvm.func @case_difference
@@ -442,28 +442,28 @@ module attributes {
 // atomic scheduler ABI call. Its separate logical transition planes select
 // the LRM rise/fall/turn-off/x delay.
 // CHECK-LABEL: llvm.func @drive_inertial_strength_pair
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_driver_strength_pair
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK: llvm.call @talos_rt_v1_scheduler_inertial_driver_strength_pair
+// CHECK: llvm.call @talos_rt_v1_scheduler_fail
 // CHECK-NOT: simulation.driver.drive_inertial_strength_pair
 
 // CHECK-LABEL: llvm.func @drive_inertial_path_strength_pair
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_path_strength_pair
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK: llvm.call @talos_rt_v1_scheduler_inertial_path_strength_pair
+// CHECK: llvm.call @talos_rt_v1_scheduler_fail
 // CHECK-NOT: simulation.driver.drive_inertial_path_strength_pair
 
 // The pulse-free operation above retains the compact ABI. Only a path with
 // pulse metadata pays for the extended scheduler call and packed 12-class mask.
 // CHECK-LABEL: llvm.func @drive_inertial_path_strength_pair_pulse
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK: llvm.call @talos_rt_v1_scheduler_inertial_path_strength_pair_pulse
+// CHECK: llvm.call @talos_rt_v1_scheduler_fail
 // CHECK-NOT: simulation.driver.drive_inertial_path_strength_pair
 
 // The driver contribution is stored immediately, then resolution schedules
 // the delayed visible-net update through the runtime.
 // CHECK-LABEL: llvm.func @drive_delayed_net
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_plane
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK-COUNT-2: llvm.call @talos_rt_v1_native_state_store_plane
+// CHECK: llvm.call @talos_rt_v1_scheduler_resolve_drivers
+// CHECK: llvm.call @talos_rt_v1_scheduler_fail
 // CHECK-NOT: simulation.driver.drive_delayed_net
 
 // Native wired resolution applies the effective kind through the shared
@@ -471,17 +471,17 @@ module attributes {
 // equal-strength contribution is 0 (Table 6-3), so the published net is a
 // constant with no logic over the other driver's planes.
 // CHECK-LABEL: llvm.func @drive_wand
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK-NOT: llvm.and
 // CHECK-NOT: llvm.select
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK-NOT: simulation.driver.drive
 
 // IEEE 1800-2017 6.6.5 gives tri0 an implicit pull0 contribution: a strong
 // 0 or 1 overrides it, z leaves 0 and x stays x. The value plane is v & ~u
 // and the unknown plane u & ~v.
 // CHECK-LABEL: llvm.func @drive_tri0
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK: %[[TRUE:.*]] = llvm.mlir.constant(true) : i1
 // CHECK-NEXT: %[[NOTU:.*]] = llvm.xor %arg2, %[[TRUE]] : i1
 // CHECK-NEXT: %[[VALUE:.*]] = llvm.and %[[NOTU]], %arg1 : i1
@@ -489,8 +489,8 @@ module attributes {
 // CHECK-NEXT: %[[UNKNOWN:.*]] = llvm.and %arg2, %[[NOTV]] : i1
 // CHECK: %[[NEWV:.*]] = llvm.zext %[[VALUE]] : i1 to i64
 // CHECK-NEXT: %[[NEWU:.*]] = llvm.zext %[[UNKNOWN]] : i1 to i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition({{.*}}, %[[NEWV]], %[[NEWU]])
-// CHECK-NOT: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition({{.*}}, %[[NEWV]], %[[NEWU]])
+// CHECK-NOT: llvm.call @talos_rt_v1_strength_resolve_kind
 // CHECK-NOT: simulation.driver.drive
 
 // IEEE 1800-2017 6.6.4: native trireg resolution uses ordinary wire
@@ -498,7 +498,7 @@ module attributes {
 // drivers are z.
 // CHECK-LABEL: llvm.func @drive_trireg
 // CHECK: %[[TRIREG:.*]] = llvm.mlir.constant(9 : i32) : i32
-// CHECK: llvm.call @obelisk_rt_v1_strength_resolve_kind({{.*}}, {{.*}}, %[[TRIREG]])
+// CHECK: llvm.call @talos_rt_v1_strength_resolve_kind({{.*}}, {{.*}}, %[[TRIREG]])
 // CHECK: llvm.select
 // CHECK: llvm.select
 // CHECK-NOT: simulation.driver.drive
@@ -506,17 +506,17 @@ module attributes {
 // IEEE 1800-2017 28.16.2 delayed trireg publication uses the same runtime
 // scheduler in native execution as in bytecode execution.
 // CHECK-LABEL: llvm.func @drive_delayed_trireg
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_plane
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK-COUNT-2: llvm.call @talos_rt_v1_native_state_store_plane
+// CHECK: llvm.call @talos_rt_v1_scheduler_resolve_drivers
+// CHECK: llvm.call @talos_rt_v1_scheduler_fail
 // CHECK-NOT: simulation.driver.drive_delayed_net
 
 // Raw delayed real contributions use vector-delay, deferred-resolution,
 // raw-publication, and f64 flags: 1 | 2 | 4 | 16 = 23.
 // CHECK-LABEL: llvm.func @drive_inertial_real
 // CHECK: %[[REAL_FLAGS:.*]] = llvm.mlir.constant(23 : i32) : i32
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_inertial_driver
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK: llvm.call @talos_rt_v1_scheduler_inertial_driver
+// CHECK: llvm.call @talos_rt_v1_scheduler_fail
 // CHECK-NOT: simulation.driver.drive_inertial
 
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010236 inputs=8 outputs=0 flags=0

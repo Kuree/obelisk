@@ -1,15 +1,15 @@
-// RUN: obelisk-opt %s --obelisk-sim-extract-periodic-clocks | FileCheck %s --check-prefix=EXTRACT
-// RUN: obelisk-opt %s --obelisk-sim-extract-periodic-clocks -o %t.once
-// RUN: obelisk-opt %t.once --obelisk-sim-extract-periodic-clocks -o %t.twice
+// RUN: talos-opt %s --talos-sim-extract-periodic-clocks | FileCheck %s --check-prefix=EXTRACT
+// RUN: talos-opt %s --talos-sim-extract-periodic-clocks -o %t.once
+// RUN: talos-opt %t.once --talos-sim-extract-periodic-clocks -o %t.twice
 // RUN: diff -u %t.once %t.twice
-// RUN: obelisk-opt %s --obelisk-sim-extract-periodic-clocks='vpi=read' | FileCheck %s --check-prefix=VPI
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-extract-periodic-clocks,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=PLAN
+// RUN: talos-opt %s --talos-sim-extract-periodic-clocks='vpi=read' | FileCheck %s --check-prefix=VPI
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-extract-periodic-clocks,simulation.func(talos-sim-thread-suspension),talos-sim-materialize-clocked-control,talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=PLAN
 
 // RSD's two-phase NBA clock, including cold initialization and Active-region
 // counter updates. Extract timing without changing the public waveform or
 // moving the counters after the public clock's NBA-triggered consumers.
 // A second copy uses a period of 5, so checkpoints coincide at time 40.
-// EXTRACT: simulation.spawn @__obelisk_periodic_tick_
+// EXTRACT: simulation.spawn @__talos_periodic_tick_
 // EXTRACT-LABEL: simulation.func private @clock
 // EXTRACT-SAME: schedule.periodic_control
 // EXTRACT: simulation.nba.enqueue
@@ -20,22 +20,22 @@
 // EXTRACT: simulation.ref.store
 // EXTRACT: simulation.ref.store
 // EXTRACT: simulation.storage.decl 9 in 0 : i1 design {observability = 0 : i32}
-// EXTRACT-LABEL: simulation.func private @__obelisk_periodic_tick_
+// EXTRACT-LABEL: simulation.func private @__talos_periodic_tick_
 // EXTRACT: simulation.time.constant 8
 // EXTRACT: simulation.suspend.delay
 // EXTRACT: simulation.ref.load
 // EXTRACT: arith.xori
 // EXTRACT: simulation.ref.store
 // The period-5 copy gets its own tick.
-// EXTRACT-LABEL: simulation.func private @__obelisk_periodic_tick_
+// EXTRACT-LABEL: simulation.func private @__talos_periodic_tick_
 // EXTRACT: simulation.time.constant 5
 // EXTRACT: simulation.suspend.delay
 // VPI-NOT: schedule.periodic_control
-// VPI-NOT: __obelisk_periodic_tick_
+// VPI-NOT: __talos_periodic_tick_
 // Both clocks enter the runtime's periodic plan.
-// PLAN: llvm.mlir.global internal constant @__obelisk_periodic_clock_plan_v1() {{.*}} : !llvm.array<2 x struct<
-// PLAN: llvm.mlir.addressof @__obelisk_periodic_clock_plan_v1
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// PLAN: llvm.mlir.global internal constant @__talos_periodic_clock_plan_v1() {{.*}} : !llvm.array<2 x struct<
+// PLAN: llvm.mlir.addressof @__talos_periodic_clock_plan_v1
+// PLAN: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

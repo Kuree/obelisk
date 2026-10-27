@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.mlir
+// RUN: talos-opt %s --talos-sim-materialize-dpi-exports --convert-talos-sim-processes-to-llvm-coroutines -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk-translate --mlir-to-llvmir %t.mlir | opt -passes=verify -disable-output
-// RUN: obelisk-opt %s --obelisk-sim-materialize-dpi-exports --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-translate --mlir-to-llvmir %t.mlir | opt -passes=verify -disable-output
+// RUN: talos-opt %s --talos-sim-materialize-dpi-exports --encode-talos-sim-to-bytecode='vpi=off require-bytecode=true' --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // The C signature remains svLogicVecVal (two 32-bit fields per word), while
 // the internal signature has one i65 value and no unknown payload. Helpers
@@ -10,8 +10,8 @@
 // CHECK-SAME: %{{.*}}: !llvm.ptr, %{{.*}}: !llvm.ptr)
 // CHECK: %[[NULL:.*]] = llvm.mlir.zero : !llvm.ptr
 // CHECK: %[[LOGIC:.*]] = llvm.mlir.constant(1 : i32) : i32
-// CHECK: llvm.call @obelisk_rt_v1_dpi_export_unpack_vector({{.*}}%[[NULL]], %{{.*}}, %[[LOGIC]])
-// CHECK: llvm.call @obelisk_rt_v1_dpi_export_pack_vector
+// CHECK: llvm.call @talos_rt_v1_dpi_export_unpack_vector({{.*}}%[[NULL]], %{{.*}}, %[[LOGIC]])
+// CHECK: llvm.call @talos_rt_v1_dpi_export_pack_vector
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

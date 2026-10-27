@@ -1,14 +1,14 @@
 //===- SimulationProcessFrameAnalysis.cpp - Process frame facts --------===//
 
-#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Analysis/SimulationProcessFrameAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 
-#include "obelisk/Analysis/SimulationStorageAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Analysis/SimulationStorageAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/IR/BuiltinTypes.h"
 
@@ -25,13 +25,13 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 namespace {
 
 constexpr uint64_t kNoOffset = std::numeric_limits<uint64_t>::max();
-constexpr uint64_t kWaitHeaderSize = sizeof(obelisk_rt_wait_record_v1);
-constexpr uint64_t kWaitEntrySize = sizeof(obelisk_rt_wait_entry_v1);
-constexpr uint64_t kWaitAlignment = alignof(obelisk_rt_wait_record_v1);
+constexpr uint64_t kWaitHeaderSize = sizeof(talos_rt_wait_record_v1);
+constexpr uint64_t kWaitEntrySize = sizeof(talos_rt_wait_entry_v1);
+constexpr uint64_t kWaitAlignment = alignof(talos_rt_wait_record_v1);
 constexpr uint32_t kFrameChecksumReserved = 0;
 
 bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
@@ -42,7 +42,7 @@ bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result) {
 }
 
 uint64_t appendHash(uint64_t hash, uint64_t value, unsigned bytes) {
-  return obelisk_stable_hash_append_uint_le(hash, value, bytes);
+  return talos_stable_hash_append_uint_le(hash, value, bytes);
 }
 
 FailureOr<uint64_t> getComputedWaitSize(sim::SimSuspendObserveOp operation) {
@@ -83,13 +83,13 @@ FailureOr<uint64_t> getComputedWaitSize(sim::SimSuspendObserveOp operation) {
     size += count * stride;
     return true;
   };
-  uint64_t size = sizeof(obelisk_rt_computed_wait_record_v1);
+  uint64_t size = sizeof(talos_rt_computed_wait_record_v1);
   if (!addProduct(size, observerCount,
-                  sizeof(obelisk_rt_computed_observer_v1)) ||
-      !addProduct(size, captureCount, sizeof(obelisk_rt_computed_capture_v1)) ||
+                  sizeof(talos_rt_computed_observer_v1)) ||
+      !addProduct(size, captureCount, sizeof(talos_rt_computed_capture_v1)) ||
       !addProduct(size, dependencyCount,
-                  sizeof(obelisk_rt_computed_dependency_v1)) ||
-      !addProduct(size, primaryCount, sizeof(obelisk_rt_computed_clause_v1)) ||
+                  sizeof(talos_rt_computed_dependency_v1)) ||
+      !addProduct(size, primaryCount, sizeof(talos_rt_computed_clause_v1)) ||
       !addProduct(size, previousLimbs, sizeof(uint64_t) * 2))
     return failure();
   return size;
@@ -108,9 +108,9 @@ FailureOr<uint64_t> getClockWaitSize(sim::SimSuspendClockSetOp operation) {
       continue;
     uint64_t captures = binding.getCaptures().size();
     if (captures > (std::numeric_limits<uint64_t>::max() - size) /
-                       sizeof(obelisk_rt_computed_capture_v1))
+                       sizeof(talos_rt_computed_capture_v1))
       return failure();
-    size += captures * sizeof(obelisk_rt_computed_capture_v1);
+    size += captures * sizeof(talos_rt_computed_capture_v1);
   }
   return size;
 }
@@ -430,8 +430,8 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
   if (!alignUp(cursor, result->frameAlignment, result->frameSize))
     return function.emitError("canonical process frame size overflow");
 
-  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
-  hash = appendHash(hash, OBELISK_RT_VERSION, 4);
+  uint64_t hash = TALOS_STABLE_HASH_OFFSET_BASIS;
+  hash = appendHash(hash, TALOS_RT_VERSION, 4);
   hash = appendHash(hash, kFrameChecksumReserved, 4);
   hash = appendHash(hash, result->frameSize, 8);
   hash = appendHash(hash, result->frameAlignment, 8);
@@ -507,4 +507,4 @@ SimulationProcessFrameAnalysis::getSuspension(Operation *operation) const {
   return nullptr;
 }
 
-} // namespace obelisk
+} // namespace talos

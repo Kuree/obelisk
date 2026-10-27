@@ -1,16 +1,16 @@
 //===- DesignBytecodeImage.h - Validated bytecode image model ---*- C++ -*-===//
 
-#ifndef OBELISK_RUNTIME_LIB_DESIGNBYTECODEIMAGE_H
-#define OBELISK_RUNTIME_LIB_DESIGNBYTECODEIMAGE_H
+#ifndef TALOS_RUNTIME_LIB_DESIGNBYTECODEIMAGE_H
+#define TALOS_RUNTIME_LIB_DESIGNBYTECODEIMAGE_H
 
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include <cstdint>
 #include <cstring>
 #include <utility>
 
-namespace obelisk::designbytecode {
+namespace talos::designbytecode {
 
 constexpr uint32_t kInvalidRegister = UINT32_MAX;
 constexpr uint32_t kNetStateDescriptor = UINT32_MAX - 1;
@@ -21,9 +21,9 @@ constexpr int64_t kInvalidHandleStart = INT64_MIN;
 
 inline bool decodeAutomaticHandle(uint64_t handle, uint32_t &id,
                                   int64_t &offset) {
-  obelisk_rt_stable_handle_v1 decoded;
-  if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
-      decoded.kind != OBELISK_RT_STABLE_HANDLE_AUTOMATIC)
+  talos_rt_stable_handle_v1 decoded;
+  if (!talos_rt_stable_handle_decode(handle, &decoded) ||
+      decoded.kind != TALOS_RT_STABLE_HANDLE_AUTOMATIC)
     return false;
   id = decoded.id;
   offset = decoded.offset;
@@ -31,9 +31,9 @@ inline bool decodeAutomaticHandle(uint64_t handle, uint32_t &id,
 }
 
 inline bool decodeStaticHandle(uint64_t handle, uint32_t &id, int64_t &offset) {
-  obelisk_rt_stable_handle_v1 decoded;
-  if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
-      decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC)
+  talos_rt_stable_handle_v1 decoded;
+  if (!talos_rt_stable_handle_decode(handle, &decoded) ||
+      decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC)
     return false;
   id = decoded.id;
   offset = decoded.offset;
@@ -41,24 +41,24 @@ inline bool decodeStaticHandle(uint64_t handle, uint32_t &id, int64_t &offset) {
 }
 
 inline bool decodeGlobalHandle(uint64_t handle, int64_t &offset) {
-  obelisk_rt_stable_handle_v1 decoded;
-  if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
-      decoded.kind != OBELISK_RT_STABLE_HANDLE_GLOBAL)
+  talos_rt_stable_handle_v1 decoded;
+  if (!talos_rt_stable_handle_decode(handle, &decoded) ||
+      decoded.kind != TALOS_RT_STABLE_HANDLE_GLOBAL)
     return false;
   offset = decoded.offset;
   return true;
 }
 
 inline uint64_t encodeGlobalHandle(int64_t offset) {
-  return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_GLOBAL, 0,
+  return talos_rt_stable_handle_encode(TALOS_RT_STABLE_HANDLE_GLOBAL, 0,
                                          offset);
 }
 inline uint64_t encodeAutomaticHandle(uint32_t id, int64_t offset) {
-  return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_AUTOMATIC, id,
+  return talos_rt_stable_handle_encode(TALOS_RT_STABLE_HANDLE_AUTOMATIC, id,
                                          offset);
 }
 inline uint64_t encodeStaticHandle(uint32_t id, int64_t offset) {
-  return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, id,
+  return talos_rt_stable_handle_encode(TALOS_RT_STABLE_HANDLE_STATIC, id,
                                          offset);
 }
 
@@ -66,12 +66,12 @@ inline bool isDynamicEventStableHandle(uint64_t stable) {
   // Payload zero is the compiler-reserved Preponed snapshot event. It is an
   // event identity for canonical bytecode captures even though it remains
   // deliberately invalid for ordinary state-handle decoding.
-  return obelisk_rt_stable_handle_is_dynamic_event(stable);
+  return talos_rt_stable_handle_is_dynamic_event(stable);
 }
 
 inline bool isDynamicEventHandle(uint32_t kind, uint64_t stable) {
   uint32_t descriptorKind = kind & ~(kLocalHandleKind | kAutomaticHandleKind);
-  return descriptorKind == OBELISK_RT_DESCRIPTOR_EVENT &&
+  return descriptorKind == TALOS_RT_DESCRIPTOR_EVENT &&
          isDynamicEventStableHandle(stable);
 }
 
@@ -86,7 +86,7 @@ inline bool encodeCanonicalHandle(const uint8_t *address, uint64_t &stable) {
   // Event null uses an all-ones descriptor coordinate rather than the
   // out-of-range state-view sentinel. Preserve it as the canonical all-ones
   // stable handle when an event crosses a frame or state-storage boundary.
-  if (descriptorKind == OBELISK_RT_DESCRIPTOR_EVENT && start == -1) {
+  if (descriptorKind == TALOS_RT_DESCRIPTOR_EVENT && start == -1) {
     stable = UINT64_MAX;
     return true;
   }
@@ -126,7 +126,7 @@ inline bool decodeCanonicalEventHandle(uint64_t stable, uint8_t *address) {
       return false;
   }
   uint64_t words[4] = {
-      OBELISK_RT_DESCRIPTOR_EVENT, static_cast<uint64_t>(start),
+      TALOS_RT_DESCRIPTOR_EVENT, static_cast<uint64_t>(start),
       static_cast<uint64_t>(start),
       static_cast<uint64_t>(start == -1 || start == INT64_MAX ? start
                                                               : start + 1)};
@@ -247,7 +247,7 @@ inline uint64_t read64(const uint8_t *data) {
 
 constexpr uint64_t kLayoutSize = 40;
 constexpr uint64_t kInstructionSize =
-    OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE;
+    TALOS_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE;
 
 inline Layout layoutAt(const Image &image, const Function &function,
                        uint32_t index) {
@@ -264,7 +264,7 @@ inline Instruction instructionAt(const Image &image, uint64_t index) {
           read32(data + 20), read64(data + 24)};
 }
 
-bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry, Image &image,
+bool parseImage(const talos_rt_design_bytecode_entry_v1 &entry, Image &image,
                 bool inventoryOnly = false);
 bool validateImage(const Image &image);
 Function functionAt(const Image &image, uint32_t index);
@@ -281,10 +281,10 @@ bool validMap(const Image &image, const Function &source,
               const Function &destination, uint64_t first, uint64_t count);
 bool validIntrinsic(const Image &image, const Function &function,
                     uint32_t siteIndex);
-bool loadValidatedImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
-                        obelisk_rt_context *context, Image &image,
+bool loadValidatedImage(const talos_rt_design_bytecode_entry_v1 &entry,
+                        talos_rt_context *context, Image &image,
                         bool inventoryOnly = false);
 
-} // namespace obelisk::designbytecode
+} // namespace talos::designbytecode
 
-#endif // OBELISK_RUNTIME_LIB_DESIGNBYTECODEIMAGE_H
+#endif // TALOS_RUNTIME_LIB_DESIGNBYTECODEIMAGE_H

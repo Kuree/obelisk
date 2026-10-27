@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --test-talos-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
 // IEEE 1800-2017 6.6.7: a generated user-net resolver reads the raw atomic
@@ -32,10 +32,10 @@ module attributes {
 }
 
 // NATIVE-LABEL: llvm.func @resolve
-// NATIVE: llvm.mlir.addressof @__obelisk_state_value
+// NATIVE: llvm.mlir.addressof @__talos_state_value
 // NATIVE: llvm.load
 // NATIVE: llvm.store
-// NATIVE: llvm.call @obelisk_rt_v1_scheduler_real_transition
+// NATIVE: llvm.call @talos_rt_v1_scheduler_real_transition
 // NATIVE-NOT: simulation.driver.read
 // NATIVE-NOT: simulation.net.write
 

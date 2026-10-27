@@ -1,8 +1,8 @@
 //===- SimulationScheduleAnalysis.cpp - Shared schedule ranks ------------===//
 
-#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Analysis/SimulationScheduleAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
@@ -14,7 +14,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
 bool isObserverCaptureBridge(Block &block) {
@@ -22,8 +22,8 @@ bool isObserverCaptureBridge(Block &block) {
     return false;
   auto branch = dyn_cast<cf::BranchOp>(block.getTerminator());
   return branch &&
-         ::obelisk::schedule::has<
-             ::obelisk::schedule::Field::ObserverCaptureBridge>(branch);
+         ::talos::schedule::has<
+             ::talos::schedule::Field::ObserverCaptureBridge>(branch);
 }
 
 bool isScheduledRegion(schedule::ComputeRegionKind kind) {
@@ -352,4 +352,4 @@ SimulationScheduleAnalysis::getBlockRank(Block *block) const {
   return found->second;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

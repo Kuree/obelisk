@@ -1,0 +1,117 @@
+// RUN: %if compiled-sampler %{ talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s --check-prefix=CHECK --check-prefix=PLAN %}
+// RUN: %if !compiled-sampler %{ talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s --check-prefix=CHECK --check-prefix=FALLBACK %}
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines -o /dev/null
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' \
+// RUN:   '--encode-talos-sim-to-bytecode=vpi=off' -o /dev/null
+
+module attributes {
+  llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
+  talos.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+      talos.sv.type.class_type @s3.C attributes {bitstream_width = 32 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", node_id = 3 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.C>, this_variable_path = "C::this", this_variable_symbol = @s1.$root::@s2::@s3.C::@s7.this} {
+        talos.sv.symbol.class_property @s4.s attributes {hierarchical_name = "C::s", lifetime = 1 : i32, name = "s", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+        }
+        talos.sv.symbol.class_property @s5.cycle attributes {hierarchical_name = "C::cycle", lifetime = 1 : i32, name = "cycle", node_id = 5 : i64, rand_mode = 2 : i32, semantic_type = !talos.ranged_packed_array<1 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+        }
+        talos.sv.symbol.class_property @s6.x attributes {hierarchical_name = "C::x", name = "x", node_id = 6 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+        }
+        talos.sv.symbol.variable @s7.this attributes {hierarchical_name = "C::this", is_compiler_generated, is_const, name = "this", node_id = 7 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.C>} {
+        }
+      }
+      talos.sv.type.class_type @s24.D attributes {base_class = !talos.class_handle<@s1.$root::@s2::@s3.C>, bitstream_width = 32 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "D", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "D", node_id = 24 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s24.D>, this_variable_path = "D::this", this_variable_symbol = @s1.$root::@s2::@s24.D::@s25.this} {
+        talos.sv.symbol.variable @s25.this attributes {hierarchical_name = "D::this", is_compiler_generated, is_const, name = "this", node_id = 25 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s24.D>} {
+        }
+      }
+    }
+    talos.sv.symbol.instance @s8.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 8 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      talos.sv.symbol.instance_body @s9.top attributes {hierarchical_name = "top", name = "top", node_id = 9 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        talos.sv.symbol.variable @s10.object attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 10 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.C>} {
+          talos.sv.expression.new_class attributes {is_signed = false, is_super_class = false, node_id = 11 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.C>} {
+          }
+        }
+        talos.sv.symbol.procedural_block @s11 attributes {hierarchical_name = "top", node_id = 12 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.expression_statement attributes {node_id = 13 : i64} {
+            talos.sv.expression.call attributes {argument_count = 4 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0, 0>, has_inline_constraints = true, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = true, is_super_class = false, is_system_call = true, node_id = 14 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s8.top::@s9.top} {
+              talos.sv.constraint.list attributes {item_count = 1 : i64, node_id = 15 : i64} {
+                talos.sv.constraint.expression attributes {is_soft = false, node_id = 16 : i64} {
+                  talos.sv.expression.binary_op attributes {is_signed = false, node_id = 17 : i64, operator_kind = 14 : i32, semantic_type = !talos.integral<1, false, false, 0 : 0, bit>} {
+                    talos.sv.expression.named_value attributes {is_signed = true, node_id = 18 : i64, referenced_path = "C::s", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.s, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                    talos.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 19 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                    }
+                  }
+                }
+              }
+              talos.sv.expression.named_value attributes {node_id = 20 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s8.top::@s9.top::@s10.object, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.C>} {
+              }
+              talos.sv.expression.named_value attributes {is_signed = true, node_id = 21 : i64, referenced_path = "C::s", referenced_symbol = @s1.$root::@s2::@s3.C::@s4.s, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+              }
+              talos.sv.expression.named_value attributes {node_id = 22 : i64, referenced_path = "C::cycle", referenced_symbol = @s1.$root::@s2::@s3.C::@s5.cycle, semantic_type = !talos.ranged_packed_array<1 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+              }
+              talos.sv.expression.named_value attributes {is_signed = true, node_id = 23 : i64, referenced_path = "C::x", referenced_symbol = @s1.$root::@s2::@s3.C::@s6.x, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Static selections use class-wide design storage. A static randc property
+// also receives one class-wide key and position, so every object shares its
+// cycle. All four words are committed only on the successful solve edge.
+
+// CHECK: simulation.storage.decl 0 in 0 : i32 design hierarchy "C::s" debug "s"
+// CHECK: simulation.storage.decl 1 in 0 : !simulation.packed_array<1 : 0 x i1> design hierarchy "C::cycle" debug "cycle"
+// CHECK: simulation.storage.decl 3 in 0 : i64 design hierarchy "C::s.$rand_mode" debug "__talos_rand_mode"
+// CHECK: simulation.storage.decl 4 in 0 : i64 design hierarchy "C::cycle.$rand_mode" debug "__talos_rand_mode"
+// CHECK: simulation.storage.decl 5 in 0 : i64 design hierarchy "C::cycle.$randc_key" debug "__talos_static_randc_key"
+// CHECK: simulation.storage.decl 6 in 0 : i64 design hierarchy "C::cycle.$randc_position" debug "__talos_static_randc_position"
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK-SAME: %[[S_REF:arg[0-9]+]]: !simulation.ref<i32>
+// CHECK-SAME: %[[CYCLE_REF:arg[0-9]+]]: !simulation.ref<!simulation.packed_array<1 : 0 x i1>>
+// CHECK-SAME: %[[OBJECT_REF:arg[0-9]+]]: !simulation.ref<!simulation.class_handle<@__talos_class_s3_C>>
+// CHECK-SAME: %[[KEY_REF:arg[0-9]+]]: !simulation.ref<i64>
+// CHECK-SAME: %[[POSITION_REF:arg[0-9]+]]: !simulation.ref<i64>
+// CHECK-SAME: %[[DOMAIN_REF:arg[0-9]+]]: !simulation.ref<!simulation.string>
+// CHECK: %[[OBJECT:.*]] = simulation.ref.load %[[OBJECT_REF]] {{.*}} -> !simulation.class_handle<@__talos_class_s3_C>
+// CHECK: %[[IS_D:.*]] = simulation.class.is_instance %[[OBJECT]] is @__talos_class_s24_D
+// CHECK: cf.cond_br %[[IS_D]]
+// CHECK: %[[DERIVED:.*]] = simulation.class.cast %[[OBJECT]] {{.*}} to !simulation.class_handle<@__talos_class_s24_D>
+// CHECK: %[[D_X_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__talos_class_s3_C_field_2]
+// CHECK-NOT: simulation.class.field_ref {{.*}}[@__talos_class_s3_C_field_0]
+// CHECK-NOT: simulation.class.field_ref {{.*}}[@__talos_class_s3_C_field_1]
+// CHECK: simulation.ref.load %[[S_REF]] : !simulation.ref<i32>
+// CHECK: simulation.ref.load %[[KEY_REF]] : !simulation.ref<i64>
+// CHECK: simulation.ref.load %[[POSITION_REF]] : !simulation.ref<i64>
+// CHECK: %[[IS_C:.*]] = simulation.class.is_instance %[[OBJECT]] is @__talos_class_s3_C
+// CHECK: cf.cond_br %[[IS_C]]
+// The inline signed predicate is encoded in the shared compiled relation.
+// CHECK: simulation.random.solve_wide
+// CHECK: cf.cond_br %{{[^, ]+}}, ^[[D_SUCCESS:bb[0-9]+]]
+// CHECK: ^[[D_SUCCESS]]
+// CHECK: simulation.ref.store {{.*}} to %[[S_REF]] : i32, !simulation.ref<i32>
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[CYCLE_REF]] : !simulation.packed_array<1 : 0 x i1>, !simulation.ref<!simulation.packed_array<1 : 0 x i1>>
+// PLAN-NEXT: simulation.ref.store {{.*}} to %[[DOMAIN_REF]] : !simulation.string, !simulation.ref<!simulation.string>
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[KEY_REF]] : i64, !simulation.ref<i64>
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[POSITION_REF]] : i64, !simulation.ref<i64>
+// CHECK-NEXT: simulation.managed.store {{.*}} to %[[D_X_REF]]
+// CHECK: %[[C_X_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__talos_class_s3_C_field_2]
+// CHECK: simulation.ref.load %[[S_REF]] : !simulation.ref<i32>
+// CHECK: simulation.ref.load %[[KEY_REF]] : !simulation.ref<i64>
+// CHECK: simulation.ref.load %[[POSITION_REF]] : !simulation.ref<i64>
+// CHECK: simulation.random.solve_wide
+// CHECK: cf.cond_br %{{[^, ]+}}, ^[[C_SUCCESS:bb[0-9]+]]
+// CHECK: ^[[C_SUCCESS]]
+// CHECK: simulation.ref.store {{.*}} to %[[S_REF]] : i32, !simulation.ref<i32>
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[CYCLE_REF]] : !simulation.packed_array<1 : 0 x i1>, !simulation.ref<!simulation.packed_array<1 : 0 x i1>>
+// PLAN-NEXT: simulation.ref.store {{.*}} to %[[DOMAIN_REF]] : !simulation.string, !simulation.ref<!simulation.string>
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[KEY_REF]] : i64, !simulation.ref<i64>
+// CHECK-NEXT: simulation.ref.store {{.*}} to %[[POSITION_REF]] : i64, !simulation.ref<i64>
+// CHECK-NEXT: simulation.managed.store {{.*}} to %[[C_X_REF]]

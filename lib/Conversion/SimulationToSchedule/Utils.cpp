@@ -1,17 +1,17 @@
 //===- Utils.cpp - Shared simulation transformation helpers ------------===//
 
-#include "obelisk/Conversion/SimulationToSchedule/Utils.h"
+#include "talos/Conversion/SimulationToSchedule/Utils.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
 
-namespace obelisk::simlowering {
+namespace talos::simlowering {
 
 bool isSuspensionTerminator(Operation *op) {
   return getFragmentActionKind(op) != schedule::ComputeActionKind::Continue &&
@@ -188,8 +188,8 @@ unsigned removeEffectFreeProcesses(sim::SimDesignOp design) {
   }
   if (auto module = design->getParentOfType<ModuleOp>();
       module && native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk effect-free processes: removed=" << dead.size()
+    llvm::errs() << "talos effect-free processes: removed=" << dead.size()
                  << " pinned=" << pinned << '\n';
   return dead.size();
 }
-} // namespace obelisk::simlowering
+} // namespace talos::simlowering

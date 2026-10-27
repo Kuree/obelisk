@@ -4,11 +4,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODELAYOUT_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODELAYOUT_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODELAYOUT_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODELAYOUT_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Support/LLVM.h"
 
@@ -20,22 +20,22 @@
 #include <cstdint>
 #include <optional>
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 enum RegisterKind : uint8_t {
-  Invalid = OBELISK_RT_DBREG_INVALID,
-  Bits = OBELISK_RT_DBREG_BITS,
-  Logic = OBELISK_RT_DBREG_LOGIC,
-  Handle = OBELISK_RT_DBREG_HANDLE,
-  Status = OBELISK_RT_DBREG_STATUS,
-  Resource = OBELISK_RT_DBREG_RESOURCE,
-  Bytes = OBELISK_RT_DBREG_BYTES,
-  Managed = OBELISK_RT_DBREG_MANAGED,
-  ManagedRef = OBELISK_RT_DBREG_MANAGED_REF,
-  ArgumentRef = OBELISK_RT_DBREG_ARGUMENT_REF,
-  String = OBELISK_RT_DBREG_STRING,
-  Real32 = OBELISK_RT_DBREG_REAL32,
-  Real64 = OBELISK_RT_DBREG_REAL64,
+  Invalid = TALOS_RT_DBREG_INVALID,
+  Bits = TALOS_RT_DBREG_BITS,
+  Logic = TALOS_RT_DBREG_LOGIC,
+  Handle = TALOS_RT_DBREG_HANDLE,
+  Status = TALOS_RT_DBREG_STATUS,
+  Resource = TALOS_RT_DBREG_RESOURCE,
+  Bytes = TALOS_RT_DBREG_BYTES,
+  Managed = TALOS_RT_DBREG_MANAGED,
+  ManagedRef = TALOS_RT_DBREG_MANAGED_REF,
+  ArgumentRef = TALOS_RT_DBREG_ARGUMENT_REF,
+  String = TALOS_RT_DBREG_STRING,
+  Real32 = TALOS_RT_DBREG_REAL32,
+  Real64 = TALOS_RT_DBREG_REAL64,
 };
 
 struct Layout {
@@ -113,6 +113,6 @@ mlir::FailureOr<ManagedValueStorage>
 getManagedValueStorage(mlir::Type type, const llvm::DataLayout &dataLayout);
 mlir::FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design);
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODELAYOUT_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODELAYOUT_H

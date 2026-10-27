@@ -1,12 +1,12 @@
 //===- ClockInferenceAnalysis.cpp - Physical clock data flow --------------===//
 
-#include "obelisk/Analysis/ClockInferenceAnalysis.h"
-#include "obelisk/Analysis/ClassDispatchAnalysis.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/ClockInferenceAnalysis.h"
+#include "talos/Analysis/ClassDispatchAnalysis.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -21,7 +21,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 
 bool ClockFact::operator==(const ClockFact &other) const {
   return kind == other.kind && source == other.source &&
@@ -552,7 +552,7 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
     for (const auto &seed : seeds)
       for (const auto &writer : writers[seed.bit.first])
         if (overlaps(seed.bit, writer) && writer.owner != seed.writer)
-          llvm::errs() << "obelisk clock writer conflict: state="
+          llvm::errs() << "talos clock writer conflict: state="
                        << seed.bit.first << " owner="
                        << cast<sim::SimFuncOp>(writer.owner).getSymName()
                        << '\n';
@@ -661,4 +661,4 @@ ClockFact ClockInferenceAnalysis::lookup(ClockBit bit) const {
                               : found->second;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

@@ -1,0 +1,47 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
+  talos.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      talos.sv.symbol.instance_body @s4.top attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64} {
+        talos.sv.symbol.variable @s5.clk attributes {hierarchical_name = "top.clk", lifetime = 1 : i32, name = "clk", node_id = 5 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s6.a attributes {hierarchical_name = "top.a", lifetime = 1 : i32, name = "a", node_id = 6 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.procedural_block @s7 attributes {hierarchical_name = "top", node_id = 7 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.timed attributes {node_id = 8 : i64} {
+            talos.sv.timing.signal_event attributes {edge_kind = 2 : i32, has_iff = false, node_id = 9 : i64} {
+              talos.sv.expression.named_value attributes {node_id = 10 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+              }
+            }
+            talos.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_contextual_clock = true, has_default_disable = false, has_fail_action = false, has_pass_action = false, is_procedural = true, node_id = 11 : i64, starts_on_current_clock = true} {
+              talos.sv.timing.signal_event attributes {edge_kind = 2 : i32, has_iff = false, node_id = 12 : i64} {
+                talos.sv.expression.named_value attributes {node_id = 13 : i64, referenced_path = "top.clk", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+              talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 14 : i64, repetition_is_unbounded = false} {
+                talos.sv.expression.named_value attributes {node_id = 15 : i64, referenced_path = "top.a", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// CHECK-LABEL: simulation.func private @unit_0.fork.11.0.48
+// CHECK: simulation.ref.load
+// CHECK: arith.cmpi eq
+// CHECK: simulation.assert.sampled_read
+// CHECK-NOT: simulation.suspend.edge
+// CHECK: simulation.spawn @unit_0.fork.11.0.48.fork.11.0.2
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: simulation.ref.alloc
+// CHECK: simulation.ref.store
+// CHECK: simulation.spawn @unit_0.fork.11.0.48

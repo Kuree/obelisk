@@ -1,14 +1,14 @@
-#include "obelisk/Analysis/SimulationEffectAnalysis.h"
+#include "talos/Analysis/SimulationEffectAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "obelisk/Analysis/HandleDataflowAnalysis.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/HandleDataflowAnalysis.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 bool isPlainValueType(Type type) {
   if (isa<IntegerType, sim::LogicType>(type))
     return true;
@@ -192,4 +192,4 @@ bool SimulationEffectAnalysis::isReadOnly(sim::SimFuncOp function) const {
 bool SimulationEffectAnalysis::isHarmless(sim::SimFuncOp function) const {
   return get(function) == 0;
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

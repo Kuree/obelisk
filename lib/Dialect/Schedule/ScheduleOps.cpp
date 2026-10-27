@@ -1,4 +1,4 @@
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Matchers.h"
@@ -7,14 +7,14 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/TypeSwitch.h"
 using namespace mlir;
 #define GET_OP_CLASSES
-#include "obelisk/Dialect/Schedule/ScheduleOps.cpp.inc"
-namespace obelisk::schedule {
+#include "talos/Dialect/Schedule/ScheduleOps.cpp.inc"
+namespace talos::schedule {
 static LogicalResult verifyNativeUnpackedWord(Operation *op, Type input,
                                               Type result) {
   auto array = dyn_cast<sim::UnpackedArrayType>(input);
@@ -837,9 +837,9 @@ LogicalResult NativeSpawnOp::verifySymbolUses(SymbolTableCollection &symbols) {
   return success();
 }
 LogicalResult NativeSpawnOp::verify() { return success(); }
-} // namespace obelisk::schedule
+} // namespace talos::schedule
 
-namespace obelisk::schedule {
+namespace talos::schedule {
 SuccessorOperands NativeProcessControlOp::getSuccessorOperands(unsigned index) {
   assert(index == 0);
   return SuccessorOperands(getContinuationOperandsMutable());
@@ -974,9 +974,9 @@ LogicalResult NativeClassVirtualTaskCallOp::verifySymbolUses(
     return emitOpError("method must name a compatible virtual task slot");
   return success();
 }
-} // namespace obelisk::schedule
+} // namespace talos::schedule
 
-namespace obelisk::schedule {
+namespace talos::schedule {
 LogicalResult
 NativeExecuteOp::verifySymbolUses(SymbolTableCollection &symbols) {
   auto callee = symbols.lookupNearestSymbolFrom<FunctionOpInterface>(
@@ -1003,9 +1003,9 @@ NativeExecuteOp::verifySymbolUses(SymbolTableCollection &symbols) {
         "operands and results must match the planned native body ABI");
   return success();
 }
-} // namespace obelisk::schedule
+} // namespace talos::schedule
 
-namespace obelisk::schedule {
+namespace talos::schedule {
 LogicalResult NativeMethodOp::verify() {
   if (!isa<FunctionType>(getFunctionType()))
     return emitOpError("requires a semantic function signature");
@@ -1050,9 +1050,9 @@ LogicalResult NativeObserverOp::verify() {
     return emitOpError("capture count exceeds the operand inventory");
   return success();
 }
-} // namespace obelisk::schedule
+} // namespace talos::schedule
 
-namespace obelisk::schedule {
+namespace talos::schedule {
 uint32_t getNativeWaitEntryCount(Operation *operation) {
   return TypeSwitch<Operation *, uint32_t>(operation)
       .Case<NativeSuspendChangeOp, NativeSuspendLevelOp, NativeSuspendEdgeOp,
@@ -1074,9 +1074,9 @@ uint32_t getNativeWaitEntryCount(Operation *operation) {
       .Default([](Operation *) { return 0; });
 }
 
-} // namespace obelisk::schedule
+} // namespace talos::schedule
 
-namespace obelisk::schedule {
+namespace talos::schedule {
 LogicalResult NativeScratchOp::verify() {
   if (getSizeAttr().getValue().isNegative())
     return emitOpError("scratch byte count must be nonnegative");
@@ -1100,4 +1100,4 @@ LogicalResult NativeGCCollectOp::verify() {
   return success();
 }
 
-} // namespace obelisk::schedule
+} // namespace talos::schedule

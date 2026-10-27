@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-activation-regions='thread-control=true' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-activation-regions='thread-control=true' -o /dev/null 2>&1 | FileCheck %s
 
 // Without a loop-carried increment, thread-control cannot prove termination.
 // CHECK: regions @break_dispatch valid=0 reason=termination

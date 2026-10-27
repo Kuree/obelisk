@@ -5,15 +5,15 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Runtime/RuntimeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/Transforms/NativeTransforms.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
 
 using namespace mlir;
-namespace obelisk::detail {
+namespace talos::detail {
 LogicalResult NativePipelineAnalysis::specializeCaptures() {
   if (bytecodeOnly)
     return success();
@@ -71,7 +71,7 @@ LogicalResult NativePipelineAnalysis::specializeEval() {
       !aotEligibility.isFullyEligible()) {
     sim::SimFuncOp unsupported;
     metadataDesign.walk([&](sim::SimFuncOp function) {
-      if (::obelisk::schedule::has<
+      if (::talos::schedule::has<
               schedule::metadata::evalUnsupportedCheckpointOwner>(function))
         unsupported = function;
       return unsupported ? WalkResult::interrupt() : WalkResult::advance();
@@ -97,14 +97,14 @@ LogicalResult NativePipelineAnalysis::specializeEval() {
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_SPECIALIZENATIVECAPTURESPASS
 #define GEN_PASS_DEF_MARKCLEANNATIVENBAPASS
 #define GEN_PASS_DEF_SPECIALIZENATIVEEVALPASS
 #define GEN_PASS_DEF_ANNOTATECOMPACTNATIVENBAPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 namespace {
 class SpecializeNativeCapturesPass final
     : public impl::SpecializeNativeCapturesPassBase<
@@ -184,4 +184,4 @@ class AnnotateCompactNativeNBAPass final
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

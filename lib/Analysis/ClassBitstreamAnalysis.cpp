@@ -1,8 +1,8 @@
 //===- ClassBitstreamAnalysis.cpp - Object bit-stream schemas -----------===//
 
-#include "obelisk/Analysis/ClassBitstreamAnalysis.h"
+#include "talos/Analysis/ClassBitstreamAnalysis.h"
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -14,7 +14,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
 /// Validate the non-class portion of a 6.24.3 bit-stream type and collect the
@@ -334,4 +334,4 @@ ClassBitstreamAnalysis::getCastClosure(sim::ClassHandleType source,
   return answer;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

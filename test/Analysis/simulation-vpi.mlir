@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --test-obelisk-simulation-vpi-analysis 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o /dev/null \
+// RUN:   --test-talos-simulation-vpi-analysis 2>&1 | FileCheck %s
 
 // CHECK:      vpi @missing graph=false mode=off observability=invisible read=false write=false static-dependencies=false
 // CHECK-NEXT: vpi @off graph=true mode=off observability=invisible read=false write=false static-dependencies=true

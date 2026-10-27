@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph),test-obelisk-dpi-effects)' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph),test-talos-dpi-effects)' -o /dev/null 2>&1 | FileCheck %s
 
 // IEEE 1800-2023 35.5.1.3: an import that is not context reads and writes no
 // SystemVerilog data other than its arguments. A context import may call any

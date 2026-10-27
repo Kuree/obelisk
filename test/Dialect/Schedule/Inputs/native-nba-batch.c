@@ -15,12 +15,12 @@ uint32_t valid, constant_valid;
 static uint64_t stages, commits, notifications;
 static unsigned allowed = 1, pending;
 void specialized(void *, uint32_t, uint32_t *);
-uint32_t obelisk_rt_v1_static_nba_batch_guard(void *context, const void *p,
+uint32_t talos_rt_v1_static_nba_batch_guard(void *context, const void *p,
                                               uint32_t region) {
   assert(p == &plan);
   return allowed;
 }
-void obelisk_rt_v1_static_nba_batch_knownness(void *context, uint64_t low,
+void talos_rt_v1_static_nba_batch_knownness(void *context, uint64_t low,
                                               uint64_t width,
                                               uint64_t old_unknown,
                                               uint64_t new_unknown) {
@@ -28,7 +28,7 @@ void obelisk_rt_v1_static_nba_batch_knownness(void *context, uint64_t low,
   assert(old_unknown != new_unknown);
   notifications++;
 }
-void obelisk_rt_v1_static_nba_batch_finish(void *context, uint64_t s,
+void talos_rt_v1_static_nba_batch_finish(void *context, uint64_t s,
                                            uint64_t c, uint32_t p) {
   stages += s;
   commits += c;

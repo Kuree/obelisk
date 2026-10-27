@@ -1,12 +1,12 @@
-// RUN: obelisk-opt --convert-obelisk-runtime-to-llvm --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --convert-talos-runtime-to-llvm --split-input-file --verify-diagnostics %s
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"
 } {
-  llvm.func @obelisk_rt_v1_file_close(i64) -> i64
+  llvm.func @talos_rt_v1_file_close(i64) -> i64
   func.func @incompatible(%ctx: !runtime.context,
       %fd: !runtime.fd) {
-    // expected-error @+2 {{runtime symbol @obelisk_rt_v1_file_close is predeclared with an incompatible type}}
+    // expected-error @+2 {{runtime symbol @talos_rt_v1_file_close is predeclared with an incompatible type}}
     // expected-error @+1 {{failed to legalize operation 'runtime.file.close'}}
     %status = runtime.file.close %ctx, %fd :
         (!runtime.context, !runtime.fd) -> !runtime.status
@@ -37,7 +37,7 @@ module attributes {llvm.data_layout = "E-p:64:64"} {
 
 // -----
 
-// expected-error @+1 {{LLVM data layout is incompatible with the Obelisk runtime ABI for i64}}
+// expected-error @+1 {{LLVM data layout is incompatible with the Talos runtime ABI for i64}}
 module attributes {llvm.data_layout = "e-p:64:64-i64:32"} {
   func.func private @target(!runtime.context)
 }
@@ -47,10 +47,10 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:32"} {
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"
 } {
-  llvm.func fastcc @obelisk_rt_v1_file_close(!llvm.ptr, i32) -> i32
+  llvm.func fastcc @talos_rt_v1_file_close(!llvm.ptr, i32) -> i32
   func.func @wrong_calling_convention(%ctx: !runtime.context,
       %fd: !runtime.fd) {
-    // expected-error @+2 {{runtime symbol @obelisk_rt_v1_file_close must be an external public declaration using the C calling convention}}
+    // expected-error @+2 {{runtime symbol @talos_rt_v1_file_close must be an external public declaration using the C calling convention}}
     // expected-error @+1 {{failed to legalize operation 'runtime.file.close'}}
     %status = runtime.file.close %ctx, %fd :
         (!runtime.context, !runtime.fd) -> !runtime.status
@@ -63,13 +63,13 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"
 } {
-  llvm.func @obelisk_rt_v1_file_close(%ctx: !llvm.ptr, %fd: i32) -> i32 {
+  llvm.func @talos_rt_v1_file_close(%ctx: !llvm.ptr, %fd: i32) -> i32 {
     %zero = llvm.mlir.constant(0 : i32) : i32
     llvm.return %zero : i32
   }
   func.func @runtime_symbol_definition(%ctx: !runtime.context,
       %fd: !runtime.fd) {
-    // expected-error @+2 {{runtime symbol @obelisk_rt_v1_file_close must be an external public declaration using the C calling convention}}
+    // expected-error @+2 {{runtime symbol @talos_rt_v1_file_close must be an external public declaration using the C calling convention}}
     // expected-error @+1 {{failed to legalize operation 'runtime.file.close'}}
     %status = runtime.file.close %ctx, %fd :
         (!runtime.context, !runtime.fd) -> !runtime.status
@@ -82,11 +82,11 @@ module attributes {
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"
 } {
-  llvm.func @obelisk_rt_v1_file_close(!llvm.ptr, i32) -> i32
+  llvm.func @talos_rt_v1_file_close(!llvm.ptr, i32) -> i32
       attributes {sym_visibility = "private"}
   func.func @private_runtime_symbol(%ctx: !runtime.context,
       %fd: !runtime.fd) {
-    // expected-error @+2 {{runtime symbol @obelisk_rt_v1_file_close must be an external public declaration using the C calling convention}}
+    // expected-error @+2 {{runtime symbol @talos_rt_v1_file_close must be an external public declaration using the C calling convention}}
     // expected-error @+1 {{failed to legalize operation 'runtime.file.close'}}
     %status = runtime.file.close %ctx, %fd :
         (!runtime.context, !runtime.fd) -> !runtime.status

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(canonicalize,sroa,canonicalize)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(canonicalize,sroa,canonicalize)))' | FileCheck %s
 
 !pair = !simulation.unpacked_struct<[
   #simulation.field<name = "a", type = i8, ordinal = 0, packedOffset = 0>,

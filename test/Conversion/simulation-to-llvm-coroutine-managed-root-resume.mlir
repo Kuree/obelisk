@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
@@ -48,16 +48,16 @@ module attributes {
 // The normal entry path and the resume shim converge on the same semantic
 // continuation. Only the shim may reacquire the activation's managed roots;
 // otherwise initial execution pushes the same range record twice.
-// CHECK-LABEL: llvm.func @root.__obelisk_coro_ramp(
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
+// CHECK-LABEL: llvm.func @root.__talos_coro_ramp(
+// CHECK: llvm.call @talos_rt_v1_gc_managed_root_range_push
 // CHECK: llvm.br ^[[CONT:bb[0-9]+]]
 // CHECK: ^[[CONT]]({{.*}}):
-// CHECK-NOT: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
-// CHECK: llvm.call @obelisk_rt_v1_gc_safepoint
+// CHECK-NOT: llvm.call @talos_rt_v1_gc_managed_root_range_push
+// CHECK: llvm.call @talos_rt_v1_gc_safepoint
 
 // Registering a named-block boundary does not yield on its body edge. Roots
 // must remain active until a real suspension or process return.
-// CHECK-LABEL: llvm.func @boundary.__obelisk_coro_ramp(
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
-// CHECK-NOT: llvm.call @obelisk_rt_v1_gc_managed_root_range_pop
-// CHECK: llvm.call @obelisk_rt_v1_control_boundary
+// CHECK-LABEL: llvm.func @boundary.__talos_coro_ramp(
+// CHECK: llvm.call @talos_rt_v1_gc_managed_root_range_push
+// CHECK-NOT: llvm.call @talos_rt_v1_gc_managed_root_range_pop
+// CHECK: llvm.call @talos_rt_v1_control_boundary

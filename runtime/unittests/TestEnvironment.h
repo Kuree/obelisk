@@ -1,6 +1,6 @@
 // Portable environment mutation for runtime tests.
-#ifndef OBELISK_UNITTESTS_TESTENVIRONMENT_H
-#define OBELISK_UNITTESTS_TESTENVIRONMENT_H
+#ifndef TALOS_UNITTESTS_TESTENVIRONMENT_H
+#define TALOS_UNITTESTS_TESTENVIRONMENT_H
 
 #include <cstdlib>
 

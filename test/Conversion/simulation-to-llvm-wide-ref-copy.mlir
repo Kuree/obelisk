@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -27,10 +27,10 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @copy
-// CHECK-COUNT-4: llvm.call @obelisk_rt_v1_native_state_load_plane
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_plane
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_load_plane
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// CHECK-COUNT-4: llvm.call @talos_rt_v1_native_state_load_plane
+// CHECK-COUNT-2: llvm.call @talos_rt_v1_native_state_store_plane
+// CHECK-COUNT-2: llvm.call @talos_rt_v1_native_state_load_plane
+// CHECK: llvm.call @talos_rt_v1_scheduler_signal_transition
 // CHECK-NOT: i65
 // CHECK-NOT: simulation.ref.
 // CHECK: llvm.return

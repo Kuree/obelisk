@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(symbol-dce,obelisk-sim-sccp,simulation.func(canonicalize,cse)))' | FileCheck %s --check-prefix=BEFORE-DCE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(symbol-dce,obelisk-sim-sccp,simulation.func(canonicalize,cse),symbol-dce,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s --check-prefix=FINAL --implicit-check-not=@dead_after_sccp
-// RUN: not obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(symbol-dce,obelisk-sim-sccp,simulation.func(canonicalize,cse),obelisk-sim-build-compute-graph,symbol-dce,obelisk-sim-verify-compute-graph))' 2>&1 | FileCheck %s --check-prefix=STALE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(symbol-dce,talos-sim-sccp,simulation.func(canonicalize,cse)))' | FileCheck %s --check-prefix=BEFORE-DCE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(symbol-dce,talos-sim-sccp,simulation.func(canonicalize,cse),symbol-dce,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s --check-prefix=FINAL --implicit-check-not=@dead_after_sccp
+// RUN: not talos-opt %s --pass-pipeline='builtin.module(simulation.design(symbol-dce,talos-sim-sccp,simulation.func(canonicalize,cse),talos-sim-build-compute-graph,symbol-dce,talos-sim-verify-compute-graph))' 2>&1 | FileCheck %s --check-prefix=STALE
 
 module {
   simulation.design @pipeline {
@@ -8,7 +8,7 @@ module {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !simulation.logic<1> design
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32} {
       %storage = simulation.context.storage %ctx[0] : !simulation.ref<!simulation.logic<1>>
@@ -37,7 +37,7 @@ module {
 }
 
 // FINAL: compute_graph = #schedule.graph
-// FINAL: simulation.func @__obelisk_root
+// FINAL: simulation.func @__talos_root
 
 // A post-graph SymbolDCE removes the graph-only process symbol and leaves its
 // fragment reference stale, which the graph verifier must reject.

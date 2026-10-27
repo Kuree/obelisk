@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-instrument-vpi-frames))' -o %t
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-instrument-vpi-frames))' -o %t
 // RUN: FileCheck %s < %t
-// RUN: env OBELISK_TEST_INPUT=%t %obj_root/test/obelisk-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.CompiledResolutionProbes
-// RUN: obelisk-opt %t --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
+// RUN: env TALOS_TEST_INPUT=%t %obj_root/test/talos-design-database-dump-test --gtest_filter=GeneratedDesignDatabase.CompiledResolutionProbes
+// RUN: talos-opt %t --convert-talos-sim-processes-to-llvm-coroutines -o /dev/null
 
 // The generated helper has no source activation. Exact net markers prepare
 // only the resolver's source frame, including parentless calls.

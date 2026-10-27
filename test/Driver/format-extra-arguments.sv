@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos -emit-slang %s -o /dev/null 2>&1 | FileCheck %s
 
 // IEEE 1800-2017 21.2.1: arguments remaining after the conversions in a
 // format string are formatted as ordinary output-list items.  Slang usefully

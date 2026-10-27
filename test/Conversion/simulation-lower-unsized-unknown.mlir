@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // Declared-unsized X/Z numeric literals fill their most-significant unknown
 // bit through a wider expression context. An explicitly sized literal with the
 // same normalized payload remains zero-extended.
 
-!logic32 = !obelisk.integral<32, false, true, 31 : 0, logic>
-!logic68 = !obelisk.integral<68, false, true, 67 : 0, logic>
+!logic32 = !talos.integral<32, false, true, 31 : 0, logic>
+!logic68 = !talos.integral<68, false, true, 67 : 0, logic>
 
 module {
   simulation.design @unsized_unknown {
@@ -25,40 +25,40 @@ module {
     simulation.func @process(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 1 : i64} {
-      obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
-        obelisk.sv.expression.conversion attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 1 : i64} {
+        talos.sv.expression.conversion attributes {
             node_id = 2 : i64, semantic_type = !logic68} {
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               constant_value = "32'bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
               is_declared_unsized = true, node_id = 3 : i64,
               semantic_type = !logic32} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 4 : i64} {
-        obelisk.sv.expression.conversion attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 4 : i64} {
+        talos.sv.expression.conversion attributes {
             node_id = 5 : i64, semantic_type = !logic68} {
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               constant_value = "32'bzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
               is_declared_unsized = true, node_id = 6 : i64,
               semantic_type = !logic32} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 7 : i64} {
-        obelisk.sv.expression.conversion attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 7 : i64} {
+        talos.sv.expression.conversion attributes {
             node_id = 8 : i64, semantic_type = !logic68} {
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               constant_value = "32'bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
               node_id = 9 : i64,
               semantic_type = !logic32} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 10 : i64} {
-        obelisk.sv.expression.conversion attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 10 : i64} {
+        talos.sv.expression.conversion attributes {
             node_id = 11 : i64, semantic_type = !logic68} {
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               constant_value = "32'b10000000000000000000000000000000",
               is_declared_unsized = true, node_id = 12 : i64,
               semantic_type = !logic32} {

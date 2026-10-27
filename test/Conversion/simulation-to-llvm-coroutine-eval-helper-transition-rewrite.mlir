@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   > %t
 // RUN: FileCheck %s < %t
 // RUN: FileCheck %s --check-prefix=NO-PURE-CLONE < %t
 // RUN: FileCheck %s --check-prefix=NO-UNSAFE-TWO-STATE < %t
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.disable_two_state_specialization}"' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=FOUR --implicit-check-not='__obelisk_two_state' --implicit-check-not='schedule.eval.local_promotion_ranges' --implicit-check-not='schedule.eval.discardable_store'
+// RUN: talos-opt %s '--test-talos-set-module-attributes=attrs="{native.disable_two_state_specialization}"' --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=FOUR --implicit-check-not='__talos_two_state' --implicit-check-not='schedule.eval.local_promotion_ranges' --implicit-check-not='schedule.eval.discardable_store'
 
 // This preplanned body has no NBA operation, so its shared helper transition
 // is independent of the inert static-NBA metadata. The one conversion pass
@@ -40,7 +40,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.ref.store %2 to %arg1 : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
       cf.br ^bb1
     }
-    simulation.func @update(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.unpacked_array<0 : 31 x !simulation.logic<32>>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %arg3: !simulation.ref<!simulation.logic<64>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {code_unit_id = 3 : i64, domain = 0 : i32, effect_summary = [#schedule.effect<effect = read, resource = storage, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 64, dynamic = false, deferred = false, trigger = none>, #schedule.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>, #schedule.effect<effect = nba, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1024, dynamic = true, deferred = false, trigger = none>], entry_kind = 3 : i32, fragment_abi = #schedule.fragment_abi<version = 1, fragments = [4, 5, 6]>, home_region = 2 : i32, schedule.eval.body = @update.__obelisk_eval_body_0} {
+    simulation.func @update(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.unpacked_array<0 : 31 x !simulation.logic<32>>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %arg3: !simulation.ref<!simulation.logic<64>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {code_unit_id = 3 : i64, domain = 0 : i32, effect_summary = [#schedule.effect<effect = read, resource = storage, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 64, dynamic = false, deferred = false, trigger = none>, #schedule.effect<effect = watch, resource = storage, target = descriptor, descriptor = 0, formal = 0, low = 0, width = 1, dynamic = false, deferred = false, trigger = change>, #schedule.effect<effect = nba, resource = storage, target = descriptor, descriptor = 1, formal = 0, low = 0, width = 1024, dynamic = true, deferred = false, trigger = none>], entry_kind = 3 : i32, fragment_abi = #schedule.fragment_abi<version = 1, fragments = [4, 5, 6]>, home_region = 2 : i32, schedule.eval.body = @update.__talos_eval_body_0} {
       cf.br ^bb1
     ^bb1:  // 2 preds: ^bb0, ^bb2
       simulation.suspend.change %arg1 to ^bb2 {site = #schedule.continuation<id = 6>} : !simulation.ref<!simulation.logic<1>>
@@ -53,8 +53,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       %2 = simulation.logic.constant -1515870811 : i32, 0 : i32 : !simulation.logic<32>
       cf.br ^bb1
     }
-    simulation.code_unit.decl 4 in 0 function hierarchy "update.__obelisk_eval_body_0" debug "generated native eval body" {internal}
-    simulation.func private @update.__obelisk_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.unpacked_array<0 : 31 x !simulation.logic<32>>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %arg3: !simulation.ref<!simulation.logic<64>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {code_unit_id = 4 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 6 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 3 : i64, continuation = 6 : i32>]} {
+    simulation.code_unit.decl 4 in 0 function hierarchy "update.__talos_eval_body_0" debug "generated native eval body" {internal}
+    simulation.func private @update.__talos_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.unpacked_array<0 : 31 x !simulation.logic<32>>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %arg3: !simulation.ref<!simulation.logic<64>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {code_unit_id = 4 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 6 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 3 : i64, continuation = 6 : i32>]} {
       cf.br ^bb1
     ^bb1:  // pred: ^bb0
       simulation.call @touch_clock(%arg0) : (!simulation.context) -> ()
@@ -115,73 +115,73 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-LABEL: module attributes
 // CHECK-SAME: schedule.eval.generated
 // CHECK-NOT: schedule.eval.discardable_store
-// CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
-// CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
+// CHECK-NOT: llvm.mlir.global internal @__talos_eval_nba_valid_
+// CHECK-LABEL: llvm.func @update.__talos_eval_body_0(
 // The known net write contributes [1152, 1153) to the promotion scan. Without
 // analyzing SimNetWriteOp this range was missing, allowing stale X/Z state to
 // enter the two-state helper after an external disturbance.
 // CHECK-SAME: schedule.eval.local_promotion_ranges = array<i64: 0, 1, 1088, 64, 1152, 1, 1160, 1>
-// CHECK: llvm.call @touch_clock.__obelisk_eval_private_0
-// CHECK: llvm.call @touch_net.__obelisk_eval_private_0
-// CHECK: llvm.call @touch_driver.__obelisk_eval_private_0
+// CHECK: llvm.call @touch_clock.__talos_eval_private_0
+// CHECK: llvm.call @touch_net.__talos_eval_private_0
+// CHECK: llvm.call @touch_driver.__talos_eval_private_0
 // CHECK-LABEL: llvm.func @touch_clock(
 // CHECK: llvm.call @pure_leaf
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK-LABEL: llvm.func @touch_net(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK-LABEL: llvm.func @touch_driver(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK-LABEL: llvm.func @pure_leaf(
-// CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0.__obelisk_two_state_0(
-// CHECK: llvm.call @touch_clock.__obelisk_two_state_0
-// CHECK-LABEL: llvm.func @touch_clock.__obelisk_two_state_0(
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// CHECK-LABEL: llvm.func @update.__talos_eval_body_0.__talos_two_state_0(
+// CHECK: llvm.call @touch_clock.__talos_two_state_0
+// CHECK-LABEL: llvm.func @touch_clock.__talos_two_state_0(
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // CHECK-NOT: llvm.getelementptr
 // CHECK-NOT: llvm.store
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @touch_clock.__obelisk_eval_private_0(
+// CHECK-LABEL: llvm.func @touch_clock.__talos_eval_private_0(
 // CHECK: llvm.call @pure_leaf
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK-NOT: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK-NOT: llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // CHECK-NOT: llvm.getelementptr
 // CHECK-NOT: llvm.store
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @touch_net.__obelisk_eval_private_0(
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-LABEL: llvm.func @touch_net.__talos_eval_private_0(
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @touch_driver.__obelisk_eval_private_0(
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// CHECK-LABEL: llvm.func @touch_driver.__talos_eval_private_0(
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1
 
-// NO-PURE-CLONE-NOT: @pure_leaf.__obelisk_eval_private
+// NO-PURE-CLONE-NOT: @pure_leaf.__talos_eval_private
 
 // An X-valued net write is not known-state preserving and must never get a
 // two-state route, even though its helper is otherwise runtime-free.
-// NO-UNSAFE-TWO-STATE-NOT: @unknown_net_eval.__obelisk_two_state
+// NO-UNSAFE-TWO-STATE-NOT: @unknown_net_eval.__talos_two_state
 
 // Forced four-state eval still isolates its publication helpers from shared
 // canonical definitions. It creates no promotion ranges or two-state variants.
-// FOUR-LABEL: llvm.func @update.__obelisk_eval_body_0(
-// FOUR: llvm.call @touch_clock.__obelisk_eval_private_0
-// FOUR: llvm.call @touch_net.__obelisk_eval_private_0
-// FOUR: llvm.call @touch_driver.__obelisk_eval_private_0
+// FOUR-LABEL: llvm.func @update.__talos_eval_body_0(
+// FOUR: llvm.call @touch_clock.__talos_eval_private_0
+// FOUR: llvm.call @touch_net.__talos_eval_private_0
+// FOUR: llvm.call @touch_driver.__talos_eval_private_0
 // FOUR-LABEL: llvm.func @touch_clock(
-// FOUR: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// FOUR: llvm.call @talos_rt_v1_scheduler_static_transition
 // FOUR-LABEL: llvm.func @touch_net(
-// FOUR: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// FOUR: llvm.call @talos_rt_v1_scheduler_static_transition
 // FOUR-LABEL: llvm.func @touch_driver(
-// FOUR: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// FOUR-LABEL: llvm.func @touch_clock.__obelisk_eval_private_0(
+// FOUR: llvm.call @talos_rt_v1_scheduler_static_transition
+// FOUR-LABEL: llvm.func @touch_clock.__talos_eval_private_0(
 // FOUR: llvm.call @pure_leaf
-// FOUR-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// FOUR-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 // FOUR-NOT: llvm.store
 // FOUR: llvm.return
-// FOUR-LABEL: llvm.func @touch_net.__obelisk_eval_private_0(
-// FOUR-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// FOUR-LABEL: llvm.func @touch_net.__talos_eval_private_0(
+// FOUR-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 // FOUR: llvm.return
-// FOUR-LABEL: llvm.func @touch_driver.__obelisk_eval_private_0(
-// FOUR-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// FOUR-LABEL: llvm.func @touch_driver.__talos_eval_private_0(
+// FOUR-NOT: llvm.call @talos_rt_v1_scheduler_static_transition
 // FOUR: llvm.return
-// FOUR-LABEL: llvm.func @__obelisk_eval_dispatch_v1
+// FOUR-LABEL: llvm.func @__talos_eval_dispatch_v1

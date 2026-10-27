@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -split-input-file -verify-diagnostics
+// RUN: talos-opt %s -split-input-file -verify-diagnostics
 module {
   llvm.func @duplicate(%ctx: !llvm.ptr, %region: i32, %changed: !llvm.ptr) {
     // expected-error @+1 {{requires distinct roots in increasing order}}

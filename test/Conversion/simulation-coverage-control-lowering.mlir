@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-i32:32-i16:16-i8:8-n8:16:32:64-S128",
@@ -28,12 +28,12 @@ module attributes {
   }
 }
 
-// NATIVE: llvm.call @obelisk_rt_v1_coverage_control_definition
-// NATIVE: llvm.call @obelisk_rt_v1_coverage_control_instance
-// NATIVE: llvm.call @obelisk_rt_v1_coverage_query_definition
-// NATIVE: llvm.call @obelisk_rt_v1_coverage_query_instance
-// NATIVE: llvm.call @obelisk_rt_v1_coverage_database_save
-// NATIVE: llvm.call @obelisk_rt_v1_coverage_database_merge
+// NATIVE: llvm.call @talos_rt_v1_coverage_control_definition
+// NATIVE: llvm.call @talos_rt_v1_coverage_control_instance
+// NATIVE: llvm.call @talos_rt_v1_coverage_query_definition
+// NATIVE: llvm.call @talos_rt_v1_coverage_query_instance
+// NATIVE: llvm.call @talos_rt_v1_coverage_database_save
+// NATIVE: llvm.call @talos_rt_v1_coverage_database_merge
 // BYTECODE-DAG: intrinsic {{.*}}id=0x0001046c inputs=4 outputs=1 flags=0
 // BYTECODE-DAG: intrinsic {{.*}}id=0x0001046d inputs=4 outputs=1 flags=0
 // BYTECODE-DAG: intrinsic {{.*}}id=0x0001046e inputs=4 outputs=1 flags=0

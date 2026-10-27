@@ -1,8 +1,8 @@
 // XFAIL: *
 // Upstream Slang v11.0 has no decryption or protected-source redaction API.
 // Keep this source case visible without downstream Slang patches.
-// RUN: %obelisk -emit-obelisk %s | obelisk-opt --verify-each | FileCheck %s --check-prefix=IR
-// RUN: %obelisk -O0 %s -o %t
+// RUN: %talos -emit-talos %s | talos-opt --verify-each | FileCheck %s --check-prefix=IR
+// RUN: %talos -O0 %s -o %t
 // RUN: %t | FileCheck %s --check-prefix=OUTPUT
 
 // IEEE 1800-2017 34.2 requires at least eight levels of nesting, and 34.3.2
@@ -55,6 +55,6 @@ endmodule
 
 `pragma protect end_protected
 
-// IR: obelisk.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "protected_nested"
+// IR: talos.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "protected_nested"
 // IR-NOT: qngn_oybpx
 // OUTPUT: PROTECT_NESTED_OK

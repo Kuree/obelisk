@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --test-obelisk-print-bytecode=state=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off require-bytecode=true' --test-talos-print-bytecode=state=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 // Runtime behavior is checked in ../Runtime/simulation-controlled-pass-runtime.test.
 
 // Hand-authored simulation IR exercises the runtime representation directly:
 // full four-state controls, exact nonresistive/resistive strength propagation,
 // bidirectional flow, and one reversed packed pass-switch run.
-// LLVM-COUNT-3: llvm.call @obelisk_rt_v1_pass_switch_control
+// LLVM-COUNT-3: llvm.call @talos_rt_v1_pass_switch_control
 // BYTECODE-COUNT-3: intrinsic {{[0-9]+}}: id=0x0001023d
 
 module attributes {
@@ -48,7 +48,7 @@ module attributes {
     simulation.code_unit.decl 9980000 in 0 root_initializer hierarchy "top.root"
     simulation.code_unit.decl 9980001 in 0 initial hierarchy "top.check"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9980000 : i64} {
       %d0 = simulation.context.driver %ctx[0] : !simulation.driver<!simulation.logic<1>>

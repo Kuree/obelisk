@@ -1,17 +1,17 @@
 //===- SimulationEvalNBAQueue.h - Generated ordered NBA storage -*- C++ -*-===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_EVAL_NBA_QUEUE_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_EVAL_NBA_QUEUE_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_EVAL_NBA_QUEUE_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_EVAL_NBA_QUEUE_H
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include <cassert>
 #include <cstdint>
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 inline constexpr llvm::StringLiteral evalNBAQueueName =
-    "__obelisk_eval_ordered_nba_queue_v1";
+    "__talos_eval_ordered_nba_queue_v1";
 
 // Use the target's struct layout, not host pointer offsets. These fields match
 // runtime::EvalNBAQueue; its records contain four consecutive i64 fields.
@@ -44,6 +44,6 @@ inline mlir::Value evalNBAQueueSize(mlir::OpBuilder &builder,
                                     evalNBAQueueField(builder, loc, 1), 4);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
 #endif

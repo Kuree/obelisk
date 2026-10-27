@@ -3,7 +3,7 @@
 #include "DesignBytecodeImage.h"
 #include "DesignBytecodeLogic.h"
 #include "RuntimeInternal.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Runtime/StableHash.h"
 
 #include <algorithm>
 #include <cassert>
@@ -19,11 +19,11 @@
 #include <unordered_set>
 #include <vector>
 
-namespace obelisk::designbytecode {
+namespace talos::designbytecode {
 
-using BytecodeHeader = obelisk_rt_design_bytecode_header_v1;
+using BytecodeHeader = talos_rt_design_bytecode_header_v1;
 
-constexpr char kMagic[] = OBELISK_RT_DESIGN_BYTECODE_MAGIC;
+constexpr char kMagic[] = TALOS_RT_DESIGN_BYTECODE_MAGIC;
 static_assert(sizeof(kMagic) == sizeof(BytecodeHeader::magic));
 constexpr uint64_t kFunctionSize = 96;
 constexpr uint64_t kOperandSize = 8;
@@ -33,7 +33,7 @@ constexpr uint64_t kConnectivitySize = 32;
 
 static bool validationDiagnosticsEnabled() {
   static const bool enabled =
-      std::getenv("OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS") != nullptr;
+      std::getenv("TALOS_RT_BYTECODE_VALIDATION_DIAGNOSTICS") != nullptr;
   return enabled;
 }
 
@@ -45,17 +45,17 @@ static bool rejectImage(unsigned line, const char *reason,
     return false;
   if (functionIndex == UINT64_MAX) {
     std::fprintf(stderr,
-                 "obelisk-bytecode-validation: rejected image: %s "
+                 "talos-bytecode-validation: rejected image: %s "
                  "(DesignBytecodeImage.cpp:%u)\n",
                  reason, line);
   } else if (pc == UINT64_MAX) {
     std::fprintf(stderr,
-                 "obelisk-bytecode-validation: rejected image: %s; "
+                 "talos-bytecode-validation: rejected image: %s; "
                  "function=%llu (DesignBytecodeImage.cpp:%u)\n",
                  reason, static_cast<unsigned long long>(functionIndex), line);
   } else {
     std::fprintf(stderr,
-                 "obelisk-bytecode-validation: rejected image: %s; "
+                 "talos-bytecode-validation: rejected image: %s; "
                  "function=%llu pc=%llu opcode=%u "
                  "(DesignBytecodeImage.cpp:%u)\n",
                  reason, static_cast<unsigned long long>(functionIndex),
@@ -72,37 +72,37 @@ bool validRange(uint64_t offset, uint64_t count, uint64_t stride,
 }
 
 uint64_t imageChecksum(const uint8_t *data, uint64_t size) {
-  uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
+  uint64_t hash = TALOS_STABLE_HASH_OFFSET_BASIS;
   for (uint64_t index = 0; index != size; ++index) {
     uint8_t byte = index >= 32 && index < 40 ? 0 : data[index];
-    hash = obelisk_stable_hash_append_byte(hash, byte);
+    hash = talos_stable_hash_append_byte(hash, byte);
   }
   return hash;
 }
 
 uint32_t functionHomeRegion(const Function &function) {
   return static_cast<uint32_t>(
-      (function.flags & OBELISK_RT_DESIGN_FUNCTION_HOME_MASK) >>
-      OBELISK_RT_DESIGN_FUNCTION_HOME_SHIFT);
+      (function.flags & TALOS_RT_DESIGN_FUNCTION_HOME_MASK) >>
+      TALOS_RT_DESIGN_FUNCTION_HOME_SHIFT);
 }
 
 bool validProcessFunctionFlags(const Function &function) {
-  if ((function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0)
+  if ((function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) == 0)
     return function.flags == 0;
   uint32_t homeRegion = functionHomeRegion(function);
-  return obelisk_rt_is_process_home_region(homeRegion) &&
-         ((function.flags & OBELISK_RT_DESIGN_FUNCTION_FINAL) == 0 ||
-          homeRegion == OBELISK_RT_REGION_ACTIVE);
+  return talos_rt_is_process_home_region(homeRegion) &&
+         ((function.flags & TALOS_RT_DESIGN_FUNCTION_FINAL) == 0 ||
+          homeRegion == TALOS_RT_REGION_ACTIVE);
 }
 
-bool decodeImageHeader(const obelisk_rt_design_bytecode_entry_v1 &entry,
+bool decodeImageHeader(const talos_rt_design_bytecode_entry_v1 &entry,
                        Image &image, bool inventoryOnly) {
   const auto *execution = entry.execution;
   if (!execution || entry.reserved != 0 ||
-      execution->version != OBELISK_RT_VERSION ||
-      (execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0 ||
+      execution->version != TALOS_RT_VERSION ||
+      (execution->flags & TALOS_RT_EXECUTION_HAS_BYTECODE) == 0 ||
       !execution->bytecode ||
-      execution->bytecode_size < OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE)
+      execution->bytecode_size < TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE)
     return rejectImage(__LINE__, "invalid execution bytecode descriptor");
   const uint8_t *data = execution->bytecode;
   image = {data,
@@ -131,12 +131,12 @@ bool decodeImageHeader(const obelisk_rt_design_bytecode_entry_v1 &entry,
   if (image.functionCount > UINT32_MAX ||
       (!inventoryOnly && entry.function >= image.functionCount) ||
       (image.functionCount == 0 &&
-       (execution->flags & OBELISK_RT_EXECUTION_REQUIRE_BYTECODE)))
+       (execution->flags & TALOS_RT_EXECUTION_REQUIRE_BYTECODE)))
     return rejectImage(__LINE__, "bytecode function index is out of range");
   return true;
 }
 
-bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry, Image &image,
+bool parseImage(const talos_rt_design_bytecode_entry_v1 &entry, Image &image,
                 bool inventoryOnly) {
   if (!decodeImageHeader(entry, image, inventoryOnly))
     return false;
@@ -144,10 +144,10 @@ bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry, Image &image,
   const uint8_t *data = execution->bytecode;
   if (std::memcmp(data + offsetof(BytecodeHeader, magic), kMagic,
                   sizeof(kMagic)) != 0 ||
-      read32(data + offsetof(BytecodeHeader, version)) != OBELISK_RT_VERSION ||
+      read32(data + offsetof(BytecodeHeader, version)) != TALOS_RT_VERSION ||
       read32(data + offsetof(BytecodeHeader, reserved)) != 0 ||
       read32(data + offsetof(BytecodeHeader, header_size)) !=
-          OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE ||
+          TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE ||
       read64(data + offsetof(BytecodeHeader, image_size)) !=
           execution->bytecode_size ||
       read64(data + offsetof(BytecodeHeader, checksum)) == 0 ||
@@ -178,7 +178,7 @@ bool parseImage(const obelisk_rt_design_bytecode_entry_v1 &entry, Image &image,
                   kConnectivitySize, image.size))
     return rejectImage(
         __LINE__, "invalid bytecode header flags, ranges, or reserved data");
-  uint64_t cursor = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  uint64_t cursor = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   auto canonicalTable = [&](uint64_t offset, uint64_t count, uint64_t stride) {
     if (cursor > UINT64_MAX - 7)
       return false;
@@ -256,26 +256,26 @@ std::pair<uint32_t, uint32_t> operandAt(const Image &image, uint64_t index) {
 uint64_t layoutSize(uint8_t kind, uint32_t width) {
   uint64_t limbs = limbCount(width);
   switch (kind) {
-  case OBELISK_RT_DBREG_BITS:
+  case TALOS_RT_DBREG_BITS:
     return limbs * 8;
-  case OBELISK_RT_DBREG_LOGIC:
+  case TALOS_RT_DBREG_LOGIC:
     return limbs * 16;
-  case OBELISK_RT_DBREG_HANDLE:
+  case TALOS_RT_DBREG_HANDLE:
     return 32;
-  case OBELISK_RT_DBREG_STATUS:
-  case OBELISK_RT_DBREG_RESOURCE:
+  case TALOS_RT_DBREG_STATUS:
+  case TALOS_RT_DBREG_RESOURCE:
     return 8;
-  case OBELISK_RT_DBREG_BYTES:
+  case TALOS_RT_DBREG_BYTES:
     return 16;
-  case OBELISK_RT_DBREG_MANAGED:
-  case OBELISK_RT_DBREG_STRING:
-  case OBELISK_RT_DBREG_REAL64:
+  case TALOS_RT_DBREG_MANAGED:
+  case TALOS_RT_DBREG_STRING:
+  case TALOS_RT_DBREG_REAL64:
     return 8;
-  case OBELISK_RT_DBREG_REAL32:
+  case TALOS_RT_DBREG_REAL32:
     return 4;
-  case OBELISK_RT_DBREG_MANAGED_REF:
+  case TALOS_RT_DBREG_MANAGED_REF:
     return 16;
-  case OBELISK_RT_DBREG_ARGUMENT_REF:
+  case TALOS_RT_DBREG_ARGUMENT_REF:
     return 24;
   default:
     return 0;
@@ -292,23 +292,23 @@ bool bitcastCompatible(const Layout &left, const Layout &right) {
   // A builtin base view preserves the class object's managed word. Only
   // the forward class-to-builtin conversion is implicit; the interpreter
   // checks the allocated class's builtin ancestry before changing its view.
-  if (left.kind == OBELISK_RT_DBREG_MANAGED &&
-      right.kind == OBELISK_RT_DBREG_MANAGED)
-    return right.flags == OBELISK_RT_DBREG_CLASS_HANDLE &&
-           (left.flags == OBELISK_RT_DBREG_MAILBOX ||
-            left.flags == OBELISK_RT_DBREG_SEMAPHORE) &&
+  if (left.kind == TALOS_RT_DBREG_MANAGED &&
+      right.kind == TALOS_RT_DBREG_MANAGED)
+    return right.flags == TALOS_RT_DBREG_CLASS_HANDLE &&
+           (left.flags == TALOS_RT_DBREG_MAILBOX ||
+            left.flags == TALOS_RT_DBREG_SEMAPHORE) &&
            left.width == 64 && right.width == 64 && left.size == 8 &&
            right.size == 8 && left.auxiliary == 0 && right.auxiliary == 0;
   auto floatingWidth = [](const Layout &layout) -> uint32_t {
-    if (layout.kind == OBELISK_RT_DBREG_REAL32)
+    if (layout.kind == TALOS_RT_DBREG_REAL32)
       return 32;
-    if (layout.kind == OBELISK_RT_DBREG_REAL64)
+    if (layout.kind == TALOS_RT_DBREG_REAL64)
       return 64;
     return 0;
   };
-  if (left.kind == OBELISK_RT_DBREG_BITS)
+  if (left.kind == TALOS_RT_DBREG_BITS)
     return left.width == floatingWidth(right);
-  if (right.kind == OBELISK_RT_DBREG_BITS)
+  if (right.kind == TALOS_RT_DBREG_BITS)
     return right.width == floatingWidth(left);
   return false;
 }
@@ -347,29 +347,29 @@ bool validIntrinsic(const Image &image, const Function &function,
   if (signature.inputCount != site.inputCount ||
       signature.outputCount != site.outputCount)
     return false;
-  if (signature.id != OBELISK_RT_INTRINSIC_V1_SPAWN &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_IMPORT &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_BOUNDARY &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_STATIC_ONCE &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_DUMP_CONTROL &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_REAL_COMPARE &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_STRING_TO_PACKED &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_NOCHANGE_UPDATE &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED &&
-      signature.id != OBELISK_RT_INTRINSIC_V1_MOS_DRIVE_DELAYED &&
+  if (signature.id != TALOS_RT_INTRINSIC_V1_SPAWN &&
+      signature.id != TALOS_RT_INTRINSIC_V1_EVENT_TRIGGER &&
+      signature.id != TALOS_RT_INTRINSIC_V1_IMPORT &&
+      signature.id != TALOS_RT_INTRINSIC_V1_CONTROL_ENTER &&
+      signature.id != TALOS_RT_INTRINSIC_V1_CONTROL_BOUNDARY &&
+      signature.id != TALOS_RT_INTRINSIC_V1_CONTROL_DISABLE &&
+      signature.id != TALOS_RT_INTRINSIC_V1_STATIC_ONCE &&
+      signature.id != TALOS_RT_INTRINSIC_V1_ASSERTION_CONTROL &&
+      signature.id != TALOS_RT_INTRINSIC_V1_MONITOR_CONTROL &&
+      signature.id != TALOS_RT_INTRINSIC_V1_DUMP_CONTROL &&
+      signature.id != TALOS_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL &&
+      signature.id != TALOS_RT_INTRINSIC_V1_REAL_FROM_INTEGER &&
+      signature.id != TALOS_RT_INTRINSIC_V1_REAL_TO_INTEGER &&
+      signature.id != TALOS_RT_INTRINSIC_V1_REAL_COMPARE &&
+      signature.id != TALOS_RT_INTRINSIC_V1_STRING_TO_PACKED &&
+      signature.id != TALOS_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM &&
+      signature.id != TALOS_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME &&
+      signature.id != TALOS_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK &&
+      signature.id != TALOS_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT &&
+      signature.id != TALOS_RT_INTRINSIC_V1_NOCHANGE_UPDATE &&
+      signature.id != TALOS_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL &&
+      signature.id != TALOS_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED &&
+      signature.id != TALOS_RT_INTRINSIC_V1_MOS_DRIVE_DELAYED &&
       signature.flags != 0)
     return false;
   auto input = [&](uint32_t index) -> std::optional<Layout> {
@@ -390,49 +390,49 @@ bool validIntrinsic(const Image &image, const Function &function,
     return layoutAt(image, function, reg);
   };
   auto numeric = [](const std::optional<Layout> &layout) {
-    return layout && (layout->kind == OBELISK_RT_DBREG_BITS ||
-                      layout->kind == OBELISK_RT_DBREG_LOGIC);
+    return layout && (layout->kind == TALOS_RT_DBREG_BITS ||
+                      layout->kind == TALOS_RT_DBREG_LOGIC);
   };
   auto floating = [](const std::optional<Layout> &layout) {
-    return layout && (layout->kind == OBELISK_RT_DBREG_REAL32 ||
-                      layout->kind == OBELISK_RT_DBREG_REAL64);
+    return layout && (layout->kind == TALOS_RT_DBREG_REAL32 ||
+                      layout->kind == TALOS_RT_DBREG_REAL64);
   };
   auto bits = [&](const std::optional<Layout> &layout, uint32_t width) {
     return numeric(layout) && layout->width == width;
   };
   auto twoStateBits = [](const std::optional<Layout> &layout,
                          std::optional<uint32_t> width = std::nullopt) {
-    return layout && layout->kind == OBELISK_RT_DBREG_BITS &&
+    return layout && layout->kind == TALOS_RT_DBREG_BITS &&
            (!width || layout->width == *width);
   };
   auto vpiIdentity = [](const std::optional<Layout> &layout) {
-    return layout && layout->kind == OBELISK_RT_DBREG_BITS &&
+    return layout && layout->kind == TALOS_RT_DBREG_BITS &&
            layout->flags == 0 && layout->width == 64 && layout->size == 8;
   };
   auto bytes = [](const std::optional<Layout> &layout) {
-    return layout && layout->kind == OBELISK_RT_DBREG_BYTES;
+    return layout && layout->kind == TALOS_RT_DBREG_BYTES;
   };
   auto handle = [](const std::optional<Layout> &layout) {
-    return layout && layout->kind == OBELISK_RT_DBREG_HANDLE;
+    return layout && layout->kind == TALOS_RT_DBREG_HANDLE;
   };
   auto event = [&](const std::optional<Layout> &layout) {
     return handle(layout) && layout->width == 256 && layout->size == 32 &&
-           layout->flags == OBELISK_RT_DBREG_EVENT;
+           layout->flags == TALOS_RT_DBREG_EVENT;
   };
   auto status = [](const std::optional<Layout> &layout) {
-    return layout && layout->kind == OBELISK_RT_DBREG_STATUS;
+    return layout && layout->kind == TALOS_RT_DBREG_STATUS;
   };
   auto managed = [](const std::optional<Layout> &layout) {
-    return layout && layout->kind == OBELISK_RT_DBREG_MANAGED;
+    return layout && layout->kind == TALOS_RT_DBREG_MANAGED;
   };
   auto string = [](const std::optional<Layout> &layout) {
-    return layout && layout->kind == OBELISK_RT_DBREG_STRING;
+    return layout && layout->kind == TALOS_RT_DBREG_STRING;
   };
   auto managedRef = [](const std::optional<Layout> &layout) {
-    return layout && layout->kind == OBELISK_RT_DBREG_MANAGED_REF;
+    return layout && layout->kind == TALOS_RT_DBREG_MANAGED_REF;
   };
   auto argumentRef = [](const std::optional<Layout> &layout) {
-    return layout && layout->kind == OBELISK_RT_DBREG_ARGUMENT_REF;
+    return layout && layout->kind == TALOS_RT_DBREG_ARGUMENT_REF;
   };
   auto managedValue = [&](const std::optional<Layout> &layout) {
     return numeric(layout) || floating(layout) || managed(layout) ||
@@ -446,15 +446,15 @@ bool validIntrinsic(const Image &image, const Function &function,
     return bits(layout, 64);
   };
   switch (signature.id) {
-  case OBELISK_RT_INTRINSIC_V1_SPAWN: {
+  case TALOS_RT_INTRINSIC_V1_SPAWN: {
     uint32_t calleeIndex =
-        signature.flags & OBELISK_RT_INTRINSIC_SPAWN_FUNCTION_MASK;
+        signature.flags & TALOS_RT_INTRINSIC_SPAWN_FUNCTION_MASK;
     if (calleeIndex >= image.functionCount || site.outputCount != 1 ||
         (!twoStateBits(output(0), 64) && !handle(output(0))))
       return false;
     Function callee = functionAt(image, calleeIndex);
-    bool program = (signature.flags & OBELISK_RT_INTRINSIC_SPAWN_PROGRAM) != 0;
-    if ((callee.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+    bool program = (signature.flags & TALOS_RT_INTRINSIC_SPAWN_PROGRAM) != 0;
+    if ((callee.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
         site.inputCount != callee.argumentCount + (program ? 1u : 0u))
       return false;
     for (uint32_t index = 0; index != callee.argumentCount; ++index)
@@ -465,32 +465,32 @@ bool validIntrinsic(const Image &image, const Function &function,
       return false;
     return true;
   }
-  case OBELISK_RT_INTRINSIC_V1_NBA:
+  case TALOS_RT_INTRINSIC_V1_NBA:
     return signature.flags == 0 &&
            (site.inputCount == 2 || site.inputCount == 3) &&
            site.outputCount == 0 &&
            (numeric(input(0)) || floating(input(0)) || string(input(0)) ||
             managed(input(0))) &&
            handle(input(1)) && (site.inputCount == 2 || bits(input(2), 64));
-  case OBELISK_RT_INTRINSIC_V1_CLOCKING_NBA:
+  case TALOS_RT_INTRINSIC_V1_CLOCKING_NBA:
     return signature.flags == 0 &&
            (site.inputCount == 3 || site.inputCount == 4) &&
            site.outputCount == 0 && (numeric(input(0)) || floating(input(0))) &&
            handle(input(1)) && (site.inputCount == 3 || bits(input(2), 64)) &&
            bits(input(site.inputCount - 1), 64);
-  case OBELISK_RT_INTRINSIC_V1_STATIC_NBA:
+  case TALOS_RT_INTRINSIC_V1_STATIC_NBA:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 &&
            (numeric(input(0)) || floating(input(0)) || string(input(0)) ||
             managed(input(0))) &&
            handle(input(1)) && bits(input(2), 64);
-  case OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER:
+  case TALOS_RT_INTRINSIC_V1_INERTIAL_DRIVER:
     return signature.flags == 0 && site.inputCount == 8 &&
            site.outputCount == 0 && (numeric(input(0)) || floating(input(0))) &&
            handle(input(1)) && bits(input(2), 64) && bits(input(3), 64) &&
            bits(input(4), 64) && bits(input(5), 64) && bits(input(6), 64) &&
            bits(input(7), 64);
-  case OBELISK_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR: {
+  case TALOS_RT_INTRINSIC_V1_INERTIAL_DRIVER_STRENGTH_PAIR: {
     auto low = input(0);
     auto high = input(2);
     auto transition = input(4);
@@ -501,7 +501,7 @@ bool validIntrinsic(const Image &image, const Function &function,
            bits(input(5), 64) && bits(input(6), 64) && bits(input(7), 64) &&
            bits(input(8), 64) && bits(input(9), 64);
   }
-  case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STRENGTH_PAIR: {
+  case TALOS_RT_INTRINSIC_V1_INERTIAL_PATH_STRENGTH_PAIR: {
     auto low = input(0);
     auto high = input(2);
     auto transition = input(4);
@@ -513,7 +513,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       return false;
     for (unsigned index = 5; index != 9; ++index) {
       auto mask = input(index);
-      if (!mask || mask->kind != OBELISK_RT_DBREG_BITS ||
+      if (!mask || mask->kind != TALOS_RT_DBREG_BITS ||
           mask->width != low->width)
         return false;
     }
@@ -525,19 +525,19 @@ bool validIntrinsic(const Image &image, const Function &function,
       return true;
     auto pulseTransitions = input(19);
     return low->width <= UINT32_MAX / 12 && pulseTransitions &&
-           pulseTransitions->kind == OBELISK_RT_DBREG_BITS &&
+           pulseTransitions->kind == TALOS_RT_DBREG_BITS &&
            pulseTransitions->width == low->width * 12;
   }
-  case OBELISK_RT_INTRINSIC_V1_LOGIC_CASE_DIFFERENCE_MASK: {
+  case TALOS_RT_INTRINSIC_V1_LOGIC_CASE_DIFFERENCE_MASK: {
     auto lhs = input(0);
     auto rhs = input(1);
     auto result = output(0);
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && numeric(lhs) && numeric(rhs) &&
            compatible(*lhs, *rhs) && result &&
-           result->kind == OBELISK_RT_DBREG_BITS && result->width == lhs->width;
+           result->kind == TALOS_RT_DBREG_BITS && result->width == lhs->width;
   }
-  case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_DRIVER: {
+  case TALOS_RT_INTRINSIC_V1_INERTIAL_PATH_DRIVER: {
     auto value = input(0);
     if (signature.flags != 0 ||
         (site.inputCount != 14 && site.inputCount != 17) ||
@@ -545,7 +545,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       return false;
     for (unsigned index = 2; index != 6; ++index) {
       auto mask = input(index);
-      if (!mask || mask->kind != OBELISK_RT_DBREG_BITS ||
+      if (!mask || mask->kind != TALOS_RT_DBREG_BITS ||
           mask->width != value->width)
         return false;
     }
@@ -556,10 +556,10 @@ bool validIntrinsic(const Image &image, const Function &function,
     if (site.inputCount == 14)
       return true;
     auto transitions = input(16);
-    return transitions && transitions->kind == OBELISK_RT_DBREG_BITS &&
+    return transitions && transitions->kind == TALOS_RT_DBREG_BITS &&
            transitions->width == value->width * 12;
   }
-  case OBELISK_RT_INTRINSIC_V1_INERTIAL_PATH_STORAGE: {
+  case TALOS_RT_INTRINSIC_V1_INERTIAL_PATH_STORAGE: {
     auto value = input(0);
     if (signature.flags != 0 ||
         (site.inputCount != 15 && site.inputCount != 19) ||
@@ -567,7 +567,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       return false;
     for (unsigned index = 2; index != 7; ++index) {
       auto mask = input(index);
-      if (!mask || mask->kind != OBELISK_RT_DBREG_BITS ||
+      if (!mask || mask->kind != TALOS_RT_DBREG_BITS ||
           mask->width != value->width)
         return false;
     }
@@ -578,41 +578,41 @@ bool validIntrinsic(const Image &image, const Function &function,
     if (site.inputCount == 15)
       return true;
     auto transitions = input(18);
-    return transitions && transitions->kind == OBELISK_RT_DBREG_BITS &&
+    return transitions && transitions->kind == TALOS_RT_DBREG_BITS &&
            transitions->width == value->width * 12;
   }
-  case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER:
+  case TALOS_RT_INTRINSIC_V1_EVENT_TRIGGER:
     return signature.flags <= 1 &&
            (site.inputCount == 1 || site.inputCount == 2) &&
            site.outputCount == 0 && handle(input(0)) &&
            (site.inputCount == 1 ||
             (signature.flags == 1 && bits(input(1), 64)));
-  case OBELISK_RT_INTRINSIC_V1_EVENT_REPLACE_AFTER:
+  case TALOS_RT_INTRINSIC_V1_EVENT_REPLACE_AFTER:
     return signature.flags == 0 &&
            (site.inputCount == 1 || site.inputCount == 2) &&
            site.outputCount == 0 && handle(input(0)) &&
            (site.inputCount == 1 || bits(input(1), 64));
-  case OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGERED:
+  case TALOS_RT_INTRINSIC_V1_EVENT_TRIGGERED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && handle(input(0)) && bits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_WAIT_ORDER_FAILED:
+  case TALOS_RT_INTRINSIC_V1_WAIT_ORDER_FAILED:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME:
+  case TALOS_RT_INTRINSIC_V1_CLOCK_OCCURRENCE_CONSUME:
     return signature.flags != 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK:
+  case TALOS_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK:
     return signature.flags <= 2 && site.inputCount == 2 &&
            site.outputCount == 0 && handle(input(0)) && bits(input(1), 64);
-  case OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT:
+  case TALOS_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT:
     return signature.flags <= 2 && site.inputCount == 2 &&
            site.outputCount == 1 && handle(input(0)) && bits(input(1), 64) &&
            bits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_NOCHANGE_UPDATE:
+  case TALOS_RT_INTRINSIC_V1_NOCHANGE_UPDATE:
     return signature.flags != 0 && site.inputCount == 3 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(input(1), 64) &&
            bits(input(2), 64) && bits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_NET_COUNT_DRIVERS:
+  case TALOS_RT_INTRINSIC_V1_NET_COUNT_DRIVERS:
     if (signature.flags != 0 || site.inputCount != 1 || site.outputCount != 5 ||
         !handle(input(0)))
       return false;
@@ -620,15 +620,15 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(output(index), 32))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL:
+  case TALOS_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL:
     return site.inputCount == 1 && site.outputCount == 0 && bits(input(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED:
+  case TALOS_RT_INTRINSIC_V1_PASS_SWITCH_CONTROL_DELAYED:
     return site.inputCount == 4 && site.outputCount == 0 && bits(input(0), 1) &&
            bits(input(1), 64) && bits(input(2), 64) && bits(input(3), 64);
-  case OBELISK_RT_INTRINSIC_V1_MOS_DRIVE_DELAYED:
+  case TALOS_RT_INTRINSIC_V1_MOS_DRIVE_DELAYED:
     return site.inputCount == 4 && site.outputCount == 0 && bits(input(0), 1) &&
            bits(input(1), 64) && bits(input(2), 64) && bits(input(3), 64);
-  case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
+  case TALOS_RT_INTRINSIC_V1_STATE_ALLOC:
     if (signature.flags != 0 || site.inputCount == 0 || site.outputCount != 1 ||
         (!numeric(input(0)) && !floating(input(0)) && !managed(input(0)) &&
          !string(input(0)) && !event(input(0))) ||
@@ -640,7 +640,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC_TYPED:
+  case TALOS_RT_INTRINSIC_V1_STATE_ALLOC_TYPED:
     if (signature.flags != 0 || site.inputCount < 4 ||
         ((site.inputCount - 1) % 3) != 0 || site.outputCount != 1 ||
         (!numeric(input(0)) && !floating(input(0)) && !string(input(0))) ||
@@ -650,24 +650,24 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_DISABLE_CHILDREN:
+  case TALOS_RT_INTRINSIC_V1_DISABLE_CHILDREN:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 0;
-  case OBELISK_RT_INTRINSIC_V1_CONTROL_ENTER:
+  case TALOS_RT_INTRINSIC_V1_CONTROL_ENTER:
     return signature.flags != 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_CONTROL_BOUNDARY:
+  case TALOS_RT_INTRINSIC_V1_CONTROL_BOUNDARY:
     return signature.flags != 0 && site.inputCount == 1 &&
            site.outputCount == 0 && bits(input(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_CONTROL_LEAVE:
+  case TALOS_RT_INTRINSIC_V1_CONTROL_LEAVE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && bits(input(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE:
+  case TALOS_RT_INTRINSIC_V1_CONTROL_DISABLE:
     return (signature.flags & ~(UINT32_C(1) << 31)) != 0 &&
            site.inputCount <= 1 && site.outputCount == 0 &&
            (site.inputCount == 0 || bits(input(0), 64)) &&
            ((signature.flags >> 31) == 0 || site.inputCount == 0);
-  case OBELISK_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED:
+  case TALOS_RT_INTRINSIC_V1_CONTROL_DISABLE_SELECTED:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
@@ -675,225 +675,225 @@ bool validIntrinsic(const Image &image, const Function &function,
            input(1)->flags == 0 && input(2)->flags == 0 &&
            output(0)->flags == 0 && input(0)->size == 8 &&
            input(1)->size == 8 && input(2)->size == 8 && output(0)->size == 8;
-  case OBELISK_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING:
+  case TALOS_RT_INTRINSIC_V1_CONTROL_ESCAPE_PENDING:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_STATIC_ONCE:
+  case TALOS_RT_INTRINSIC_V1_STATIC_ONCE:
     return signature.flags != 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_DEFERRED_ONCE:
+  case TALOS_RT_INTRINSIC_V1_DEFERRED_ONCE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_SAMPLED_READ:
+  case TALOS_RT_INTRINSIC_V1_SAMPLED_READ:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && handle(input(0)) &&
            (numeric(output(0)) || floating(output(0)));
-  case OBELISK_RT_INTRINSIC_V1_SAMPLED_HISTORY:
+  case TALOS_RT_INTRINSIC_V1_SAMPLED_HISTORY:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(input(1), 64) &&
            bits(input(2), 1) && numeric(input(3)) && numeric(output(0)) &&
            input(3)->kind == output(0)->kind &&
            input(3)->width == output(0)->width;
-  case OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_UPDATE:
+  case TALOS_RT_INTRINSIC_V1_CLOCKED_SAMPLE_UPDATE:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 0 && bits(input(0), 64) && bits(input(1), 64) &&
            bits(input(2), 1) && numeric(input(3));
-  case OBELISK_RT_INTRINSIC_V1_CLOCKED_SAMPLE_READ:
+  case TALOS_RT_INTRINSIC_V1_CLOCKED_SAMPLE_READ:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(input(1), 64) &&
            bits(input(2), 64) && numeric(output(0));
-  case OBELISK_RT_INTRINSIC_V1_DEFERRED_ENQUEUE:
+  case TALOS_RT_INTRINSIC_V1_DEFERRED_ENQUEUE:
     return signature.flags == 0 &&
            (site.inputCount == 1 || site.inputCount == 2) &&
            site.outputCount == 1 && bits(input(0), 64) &&
            (site.inputCount == 1 || bits(input(1), 64)) && bits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_DEFERRED_MATURE:
+  case TALOS_RT_INTRINSIC_V1_DEFERRED_MATURE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_ASSERTION_CONTROL:
+  case TALOS_RT_INTRINSIC_V1_ASSERTION_CONTROL:
     return signature.flags >= 1 && signature.flags <= 11 &&
            site.inputCount == 1 && site.outputCount == 0 && bits(input(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_ASSERTION_ENABLED:
+  case TALOS_RT_INTRINSIC_V1_ASSERTION_ENABLED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_ASSERTION_ACTION_STATE:
+  case TALOS_RT_INTRINSIC_V1_ASSERTION_ACTION_STATE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_ASSERTION_KILL_EPOCH:
+  case TALOS_RT_INTRINSIC_V1_ASSERTION_KILL_EPOCH:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_DUMP_OPEN:
+  case TALOS_RT_INTRINSIC_V1_DUMP_OPEN:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && bytes(input(0));
-  case OBELISK_RT_INTRINSIC_V1_DUMP_OPEN_STRING:
+  case TALOS_RT_INTRINSIC_V1_DUMP_OPEN_STRING:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && string(input(0));
-  case OBELISK_RT_INTRINSIC_V1_DUMP_TIMESCALE:
+  case TALOS_RT_INTRINSIC_V1_DUMP_TIMESCALE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && numeric(input(0));
-  case OBELISK_RT_INTRINSIC_V1_DUMP_VARS:
+  case TALOS_RT_INTRINSIC_V1_DUMP_VARS:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && numeric(input(0)) && bytes(input(1));
-  case OBELISK_RT_INTRINSIC_V1_DUMP_LIMIT:
+  case TALOS_RT_INTRINSIC_V1_DUMP_LIMIT:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && numeric(input(0));
-  case OBELISK_RT_INTRINSIC_V1_DUMP_ALL:
-  case OBELISK_RT_INTRINSIC_V1_DUMP_FLUSH:
+  case TALOS_RT_INTRINSIC_V1_DUMP_ALL:
+  case TALOS_RT_INTRINSIC_V1_DUMP_FLUSH:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 0;
-  case OBELISK_RT_INTRINSIC_V1_DUMP_CONTROL:
+  case TALOS_RT_INTRINSIC_V1_DUMP_CONTROL:
     return signature.flags <= 1 && site.inputCount == 0 &&
            site.outputCount == 0;
-  case OBELISK_RT_INTRINSIC_V1_DUMP_PORTS:
+  case TALOS_RT_INTRINSIC_V1_DUMP_PORTS:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && string(input(0)) && string(input(1)) &&
            twoStateBits(input(2), 32);
-  case OBELISK_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL:
+  case TALOS_RT_INTRINSIC_V1_DUMP_PORTS_CONTROL:
     return signature.flags <= 4 && site.inputCount == 2 &&
            site.outputCount == 0 && string(input(0)) &&
            twoStateBits(input(1), 64);
-  case OBELISK_RT_INTRINSIC_V1_MONITOR_REGISTER:
+  case TALOS_RT_INTRINSIC_V1_MONITOR_REGISTER:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 &&
            (twoStateBits(input(0), 64) || handle(input(0)));
-  case OBELISK_RT_INTRINSIC_V1_PROCESS_CURRENT:
+  case TALOS_RT_INTRINSIC_V1_PROCESS_CURRENT:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && twoStateBits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_PROCESS_STATUS:
+  case TALOS_RT_INTRINSIC_V1_PROCESS_STATUS:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_PROCESS_RANDOM_GET:
+  case TALOS_RT_INTRINSIC_V1_PROCESS_RANDOM_GET:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 2 && twoStateBits(input(0), 64) &&
            twoStateBits(output(0), 64) && twoStateBits(output(1), 64);
-  case OBELISK_RT_INTRINSIC_V1_PROCESS_RANDOM_SET:
+  case TALOS_RT_INTRINSIC_V1_PROCESS_RANDOM_SET:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64);
-  case OBELISK_RT_INTRINSIC_V1_MONITOR_CONTROL:
+  case TALOS_RT_INTRINSIC_V1_MONITOR_CONTROL:
     return signature.flags <= 1 && site.inputCount == 0 &&
            site.outputCount == 0;
-  case OBELISK_RT_INTRINSIC_V1_MONITOR_CURRENT:
+  case TALOS_RT_INTRINSIC_V1_MONITOR_CURRENT:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_IMPORT:
+  case TALOS_RT_INTRINSIC_V1_IMPORT:
     if (signature.flags == 0)
       return false;
     for (uint32_t index = 0; index != site.inputCount; ++index)
-      if (!input(index) || (input(index)->kind != OBELISK_RT_DBREG_BITS &&
-                            input(index)->kind != OBELISK_RT_DBREG_LOGIC &&
-                            input(index)->kind != OBELISK_RT_DBREG_HANDLE &&
-                            input(index)->kind != OBELISK_RT_DBREG_STATUS))
+      if (!input(index) || (input(index)->kind != TALOS_RT_DBREG_BITS &&
+                            input(index)->kind != TALOS_RT_DBREG_LOGIC &&
+                            input(index)->kind != TALOS_RT_DBREG_HANDLE &&
+                            input(index)->kind != TALOS_RT_DBREG_STATUS))
         return false;
     for (uint32_t index = 0; index != site.outputCount; ++index)
-      if (!output(index) || (output(index)->kind != OBELISK_RT_DBREG_BITS &&
-                             output(index)->kind != OBELISK_RT_DBREG_LOGIC &&
-                             output(index)->kind != OBELISK_RT_DBREG_HANDLE &&
-                             output(index)->kind != OBELISK_RT_DBREG_STATUS))
+      if (!output(index) || (output(index)->kind != TALOS_RT_DBREG_BITS &&
+                             output(index)->kind != TALOS_RT_DBREG_LOGIC &&
+                             output(index)->kind != TALOS_RT_DBREG_HANDLE &&
+                             output(index)->kind != TALOS_RT_DBREG_STATUS))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_DPI_IMPORT:
+  case TALOS_RT_INTRINSIC_V1_DPI_IMPORT:
     if (signature.flags != 0 || site.inputCount == 0 || site.outputCount == 0 ||
         !bytes(input(0)) || !status(output(site.outputCount - 1)))
       return false;
     for (uint32_t index = 1; index != site.inputCount; ++index)
-      if (!input(index) || (input(index)->kind != OBELISK_RT_DBREG_BITS &&
-                            input(index)->kind != OBELISK_RT_DBREG_LOGIC &&
-                            input(index)->kind != OBELISK_RT_DBREG_STRING &&
-                            input(index)->kind != OBELISK_RT_DBREG_REAL32 &&
-                            input(index)->kind != OBELISK_RT_DBREG_REAL64 &&
-                            input(index)->kind != OBELISK_RT_DBREG_MANAGED))
+      if (!input(index) || (input(index)->kind != TALOS_RT_DBREG_BITS &&
+                            input(index)->kind != TALOS_RT_DBREG_LOGIC &&
+                            input(index)->kind != TALOS_RT_DBREG_STRING &&
+                            input(index)->kind != TALOS_RT_DBREG_REAL32 &&
+                            input(index)->kind != TALOS_RT_DBREG_REAL64 &&
+                            input(index)->kind != TALOS_RT_DBREG_MANAGED))
         return false;
     for (uint32_t index = 0; index + 1 != site.outputCount; ++index)
-      if (!output(index) || (output(index)->kind != OBELISK_RT_DBREG_BITS &&
-                             output(index)->kind != OBELISK_RT_DBREG_LOGIC &&
-                             output(index)->kind != OBELISK_RT_DBREG_STRING &&
-                             output(index)->kind != OBELISK_RT_DBREG_REAL32 &&
-                             output(index)->kind != OBELISK_RT_DBREG_REAL64 &&
-                             output(index)->kind != OBELISK_RT_DBREG_MANAGED))
+      if (!output(index) || (output(index)->kind != TALOS_RT_DBREG_BITS &&
+                             output(index)->kind != TALOS_RT_DBREG_LOGIC &&
+                             output(index)->kind != TALOS_RT_DBREG_STRING &&
+                             output(index)->kind != TALOS_RT_DBREG_REAL32 &&
+                             output(index)->kind != TALOS_RT_DBREG_REAL64 &&
+                             output(index)->kind != TALOS_RT_DBREG_MANAGED))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC:
+  case TALOS_RT_INTRINSIC_V1_CLASS_ALLOC:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_CLASS_COPY:
+  case TALOS_RT_INTRINSIC_V1_CLASS_COPY:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(input(1), 64) && managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_CLASS_IS_INSTANCE:
+  case TALOS_RT_INTRINSIC_V1_CLASS_IS_INSTANCE:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(input(1), 64) && twoStateBits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_CLASS_ID:
+  case TALOS_RT_INTRINSIC_V1_CLASS_ID:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_CLASS_CAST:
+  case TALOS_RT_INTRINSIC_V1_CLASS_CAST:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(input(1), 64) && managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_CLASS_FIELD_REF:
+  case TALOS_RT_INTRINSIC_V1_CLASS_FIELD_REF:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(input(1), 64) && managedRef(output(0));
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_WATCH:
+  case TALOS_RT_INTRINSIC_V1_MANAGED_WATCH:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 &&
            (managedRef(input(0)) || managed(input(0))) &&
            twoStateBits(input(1), 64) && twoStateBits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_LOAD:
+  case TALOS_RT_INTRINSIC_V1_MANAGED_LOAD:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managedRef(input(0)) &&
            twoStateBits(input(1), 64) && managedValue(output(0));
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_STORE:
+  case TALOS_RT_INTRINSIC_V1_MANAGED_STORE:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && managedRef(input(0)) &&
            managedValue(input(1)) && twoStateBits(input(2), 64);
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_OVERRIDE:
+  case TALOS_RT_INTRINSIC_V1_MANAGED_OVERRIDE:
     return signature.flags == 0 && site.inputCount == 5 &&
            site.outputCount == 0 && managedRef(input(0)) &&
            managedValue(input(1)) && twoStateBits(input(2), 64) &&
            twoStateBits(input(3), 64) && twoStateBits(input(4), 64);
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_RELEASE_OVERRIDE:
+  case TALOS_RT_INTRINSIC_V1_MANAGED_RELEASE_OVERRIDE:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && managedRef(input(0)) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64);
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_NBA:
+  case TALOS_RT_INTRINSIC_V1_MANAGED_NBA:
     return signature.flags == 0 &&
            (site.inputCount == 3 || site.inputCount == 4) &&
            site.outputCount == 0 &&
            (managedRef(input(0)) || managed(input(0))) &&
            managedValue(input(1)) && twoStateBits(input(2), 64) &&
            (site.inputCount == 3 || twoStateBits(input(3), 64));
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_NBA_MASKED:
+  case TALOS_RT_INTRINSIC_V1_MANAGED_NBA_MASKED:
     // Destination, positioned value, plane size, positioned mask, delay.
     return signature.flags == 0 && site.inputCount == 5 &&
            site.outputCount == 0 &&
            (managedRef(input(0)) || managed(input(0))) && numeric(input(1)) &&
            twoStateBits(input(2), 64) && numeric(input(3)) &&
            input(3)->width == input(1)->width && twoStateBits(input(4), 64);
-  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_REF:
+  case TALOS_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_REF:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && handle(input(0)) && argumentRef(output(0));
-  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_MANAGED:
+  case TALOS_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_MANAGED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managedRef(input(0)) &&
            argumentRef(output(0));
-  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX:
+  case TALOS_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX:
     return signature.flags == 0 &&
            (site.inputCount == 2 || site.inputCount == 3) &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(input(1), 64) &&
            (site.inputCount == 2 || argumentRef(input(2))) &&
            managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_STRING_CHARACTER:
+  case TALOS_RT_INTRINSIC_V1_REFERENCE_PATH_STRING_CHARACTER:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && string(input(0)) &&
            twoStateBits(input(1), 64) && argumentRef(input(2)) &&
            managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_OPTION_REFERENCE:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_OPTION_REFERENCE:
     if (signature.flags != 0 || site.inputCount != 6 || site.outputCount != 1 ||
         !managed(output(0)))
       return false;
@@ -901,7 +901,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_OPTION_REFERENCE:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_TYPE_OPTION_REFERENCE:
     if (signature.flags != 0 || site.inputCount != 7 || site.outputCount != 1 ||
         !argumentRef(input(0)) || !managed(output(0)))
       return false;
@@ -909,7 +909,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_AGGREGATE_ELEMENT:
+  case TALOS_RT_INTRINSIC_V1_REFERENCE_PATH_AGGREGATE_ELEMENT:
     if (signature.flags != 0 || site.inputCount != 15 ||
         site.outputCount != 1 || !argumentRef(input(0)) ||
         !twoStateBits(input(1), 64) || !managed(output(0)))
@@ -917,24 +917,24 @@ bool validIntrinsic(const Image &image, const Function &function,
     for (uint32_t index = 2; index != 14; ++index)
       if (!twoStateBits(input(index), 64))
         return false;
-    return input(14) && input(14)->kind == OBELISK_RT_DBREG_BYTES;
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_SIZE:
+    return input(14) && input(14)->kind == TALOS_RT_DBREG_BYTES;
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_SIZE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE_LIKE:
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_CREATE_LIKE:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && managed(input(0)) && managed(input(1)) &&
            twoStateBits(input(2), 64) && managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_READ:
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_READ:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(input(1), 64) && managedValue(output(0));
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_WRITE:
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_WRITE:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && managed(input(0)) &&
            twoStateBits(input(1), 64) && managedValue(input(2));
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE:
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_CREATE:
     if (signature.flags != 0 ||
         (site.inputCount != 10 && site.inputCount != 11) ||
         site.outputCount != 1 || !managed(output(0)))
@@ -946,10 +946,10 @@ bool validIntrinsic(const Image &image, const Function &function,
       return false;
     return twoStateBits(input(site.inputCount - 2), 64) &&
            twoStateBits(input(site.inputCount - 1), 64);
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_CLONE:
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_CLONE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) && managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_IMPORT_FIXED:
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_IMPORT_FIXED:
     if (signature.flags != 0 || site.inputCount != 7 || site.outputCount != 0 ||
         !managed(input(0)) || !managedValue(input(1)))
       return false;
@@ -957,7 +957,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_FIXED:
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_EXPORT_FIXED:
     if (signature.flags != 0 || site.inputCount != 6 || site.outputCount != 1 ||
         !managed(input(0)) || !managedValue(output(0)))
       return false;
@@ -965,7 +965,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:
     if (signature.flags == 1 || signature.flags == 2)
       return site.inputCount == 2 && site.outputCount == 3 &&
              (numeric(input(0)) || managed(input(0)) || string(input(0))) &&
@@ -983,27 +983,27 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM:
-  case OBELISK_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM:
+  case TALOS_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM:
+  case TALOS_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && numeric(input(0)) && bytes(input(1)) &&
            numeric(output(0));
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_SWAP:
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_SWAP:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && managed(input(0)) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64);
-  case OBELISK_RT_INTRINSIC_V1_CONTAINER_DELETE:
+  case TALOS_RT_INTRINSIC_V1_CONTAINER_DELETE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && managed(input(0));
-  case OBELISK_RT_INTRINSIC_V1_QUEUE_DELETE:
+  case TALOS_RT_INTRINSIC_V1_QUEUE_DELETE:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && managed(input(0)) &&
            twoStateBits(input(1), 64);
-  case OBELISK_RT_INTRINSIC_V1_QUEUE_INSERT:
+  case TALOS_RT_INTRINSIC_V1_QUEUE_INSERT:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && managed(input(0)) &&
            twoStateBits(input(1), 64) && managedValue(input(2));
-  case OBELISK_RT_INTRINSIC_V1_MAILBOX_CREATE:
+  case TALOS_RT_INTRINSIC_V1_MAILBOX_CREATE:
     if (signature.flags != 0 || site.inputCount != 8 || site.outputCount != 1 ||
         !managed(output(0)))
       return false;
@@ -1011,88 +1011,88 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return bytes(input(6)) && twoStateBits(input(7), 64);
-  case OBELISK_RT_INTRINSIC_V1_MAILBOX_NUM:
+  case TALOS_RT_INTRINSIC_V1_MAILBOX_NUM:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_BIND:
+  case TALOS_RT_INTRINSIC_V1_VPI_FRAME_BIND:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            input(0)->flags == 0 && input(0)->size == 8 && handle(input(1)) &&
            input(1)->flags == 0 && input(1)->width == 256 &&
            input(1)->size == 32;
-  case OBELISK_RT_INTRINSIC_V1_BOX_BIND_TYPE:
+  case TALOS_RT_INTRINSIC_V1_BOX_BIND_TYPE:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && managed(input(0)) &&
            twoStateBits(input(1), 64);
-  case OBELISK_RT_INTRINSIC_V1_BOX_IS_TYPE:
+  case TALOS_RT_INTRINSIC_V1_BOX_IS_TYPE:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(input(1), 64) && twoStateBits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PUT:
+  case TALOS_RT_INTRINSIC_V1_MAILBOX_TRY_PUT:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
            managedValue(input(1)) && twoStateBits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_PEEK:
-  case OBELISK_RT_INTRINSIC_V1_MAILBOX_TRY_GET:
+  case TALOS_RT_INTRINSIC_V1_MAILBOX_TRY_PEEK:
+  case TALOS_RT_INTRINSIC_V1_MAILBOX_TRY_GET:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 2 && managed(input(0)) &&
            twoStateBits(output(0), 1) && managedValue(output(1));
-  case OBELISK_RT_INTRINSIC_V1_SEMAPHORE_CREATE:
+  case TALOS_RT_INTRINSIC_V1_SEMAPHORE_CREATE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 32) &&
            managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_SEMAPHORE_PUT:
+  case TALOS_RT_INTRINSIC_V1_SEMAPHORE_PUT:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && managed(input(0)) &&
            twoStateBits(input(1), 32);
-  case OBELISK_RT_INTRINSIC_V1_SEMAPHORE_TRY_GET:
+  case TALOS_RT_INTRINSIC_V1_SEMAPHORE_TRY_GET:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(input(1), 32) && twoStateBits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_EVENT_CREATE:
+  case TALOS_RT_INTRINSIC_V1_EVENT_CREATE:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && handle(output(0));
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_BOUNDED:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_BOUNDED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_DISTRIBUTION:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 2 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 32) && twoStateBits(input(2), 32) &&
            twoStateBits(input(3), 32) && twoStateBits(output(0), 32) &&
            twoStateBits(output(1), 32);
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 2 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
            twoStateBits(output(0), 64) && twoStateBits(output(1), 64);
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_NEXT:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && twoStateBits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_ENTER:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_ENTER:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_LEAVE:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_LEAVE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && twoStateBits(input(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_LEGACY:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_LEGACY:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && twoStateBits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_SEED:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_SEED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && twoStateBits(input(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_GET_STATE:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_GET_STATE:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 2 && twoStateBits(output(0), 64) &&
            twoStateBits(output(1), 64);
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_SET_STATE:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_SET_STATE:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64);
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_SOLVE:
     if (signature.flags != 0 || site.inputCount < 5 || site.outputCount != 2 ||
         !bytes(input(0)) || !twoStateBits(output(0), 64) ||
         !twoStateBits(output(1), 1))
@@ -1101,7 +1101,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE:
     if (signature.flags != 0 || site.inputCount < 7 || site.outputCount != 3 ||
         !bytes(input(0)) || !twoStateBits(output(0), 64) ||
         !twoStateBits(output(1), 1) || !twoStateBits(output(2), 64))
@@ -1110,7 +1110,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index), 64))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_WIDE_STATE:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_SOLVE_WIDE_STATE:
     if (signature.flags != 0 || site.inputCount < 7 || site.outputCount != 3 ||
         !bytes(input(0)) || !twoStateBits(input(1)) ||
         !twoStateBits(input(2), input(1)->width) ||
@@ -1124,7 +1124,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index)))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_SAMPLE:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_CYCLE_SAMPLE:
     if (signature.flags != 0 || site.inputCount < 11 || site.outputCount != 6 ||
         !bytes(input(0)) || !twoStateBits(input(1)) ||
         !twoStateBits(input(2), input(1)->width) || !string(input(8)) ||
@@ -1142,57 +1142,57 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index)))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_POINT_HIT:
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_POINT_HIT:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 1);
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_TO_RANK:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_REAL_TO_RANK:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 2 && floating(input(0)) &&
-           twoStateBits(output(0), input(0)->kind == OBELISK_RT_DBREG_REAL32
-                                       ? OBELISK_RT_REAL32_RANK_BITS
-                                       : OBELISK_RT_REAL64_RANK_BITS) &&
+           twoStateBits(output(0), input(0)->kind == TALOS_RT_DBREG_REAL32
+                                       ? TALOS_RT_REAL32_RANK_BITS
+                                       : TALOS_RT_REAL64_RANK_BITS) &&
            twoStateBits(output(1), 1);
-  case OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_FROM_RANK:
+  case TALOS_RT_INTRINSIC_V1_RANDOM_REAL_FROM_RANK:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && floating(output(0)) &&
-           twoStateBits(input(0), output(0)->kind == OBELISK_RT_DBREG_REAL32
-                                      ? OBELISK_RT_REAL32_RANK_BITS
-                                      : OBELISK_RT_REAL64_RANK_BITS);
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_CONTROL_DEFINITION:
+           twoStateBits(input(0), output(0)->kind == TALOS_RT_DBREG_REAL32
+                                      ? TALOS_RT_REAL32_RANK_BITS
+                                      : TALOS_RT_REAL64_RANK_BITS);
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_CONTROL_DEFINITION:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 1 && twoStateBits(input(0), 32) &&
            twoStateBits(input(1), 32) && twoStateBits(input(2), 32) &&
            string(input(3)) && twoStateBits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_CONTROL_INSTANCE:
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_CONTROL_INSTANCE:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 1 && twoStateBits(input(0), 32) &&
            twoStateBits(input(1), 32) && twoStateBits(input(2), 32) &&
            twoStateBits(input(3), 64) && twoStateBits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_QUERY_DEFINITION:
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_QUERY_DEFINITION:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 1 && twoStateBits(input(0), 32) &&
            twoStateBits(input(1), 32) && string(input(2)) &&
            twoStateBits(input(3), 64) && twoStateBits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_QUERY_INSTANCE:
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_QUERY_INSTANCE:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 1 && twoStateBits(input(0), 32) &&
            twoStateBits(input(1), 32) && twoStateBits(input(2), 64) &&
            twoStateBits(input(3), 64) && twoStateBits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_DATABASE_SAVE:
-  case OBELISK_RT_INTRINSIC_V1_COVERAGE_DATABASE_MERGE:
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_DATABASE_SAVE:
+  case TALOS_RT_INTRINSIC_V1_COVERAGE_DATABASE_MERGE:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && twoStateBits(input(0), 32) &&
            string(input(1)) && twoStateBits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_GET:
+  case TALOS_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_GET:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && output(0) &&
-           output(0)->kind == OBELISK_RT_DBREG_REAL64;
-  case OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_SET_DB_NAME:
-  case OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_LOAD_DB:
+           output(0)->kind == TALOS_RT_DBREG_REAL64;
+  case TALOS_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_SET_DB_NAME:
+  case TALOS_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_LOAD_DB:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && string(input(0));
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_PREPARE:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_PREPARE:
     if (signature.flags != 0 || site.inputCount < 2 || site.outputCount != 1 ||
         !twoStateBits(output(0), 64) || !twoStateBits(input(0), 64) ||
         !twoStateBits(input(1), 64))
@@ -1203,19 +1203,19 @@ bool validIntrinsic(const Image &image, const Function &function,
           !event(input(index)))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CANDIDATES:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_CANDIDATES:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && managed(input(2)) &&
            twoStateBits(input(3), 64);
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIND_WITH:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_BIND_WITH:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && managed(input(2));
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_RELEASE_PREPARATION:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_RELEASE_PREPARATION:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && twoStateBits(input(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_CREATE:
     if (signature.flags != 0 || site.inputCount < 3 || site.outputCount != 1 ||
         !twoStateBits(output(0), 64) || !twoStateBits(input(0), 64) ||
         !twoStateBits(input(1), 64) || !twoStateBits(input(2), 64))
@@ -1226,7 +1226,7 @@ bool validIntrinsic(const Image &image, const Function &function,
           !string(input(index)) && !managed(input(index)) && !event(input(index)))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CLOCK_EVENT_REGISTER:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_CLOCK_EVENT_REGISTER:
     if (signature.flags != 0 || site.inputCount < 5 || site.outputCount != 0)
       return false;
     for (uint32_t index = 0; index != 5; ++index)
@@ -1238,7 +1238,7 @@ bool validIntrinsic(const Image &image, const Function &function,
           !argumentRef(input(index)))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_REGISTER:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_REGISTER:
     if (signature.flags != 0 || site.inputCount < 5 || site.outputCount != 0 ||
         !twoStateBits(input(0), 64) ||
         (!managed(input(1)) && !twoStateBits(input(1), 64)))
@@ -1252,54 +1252,54 @@ bool validIntrinsic(const Image &image, const Function &function,
           !argumentRef(input(index)))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_FIRE:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_BLOCK_EVENT_FIRE:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) &&
            (managed(input(2)) || twoStateBits(input(2), 64));
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SET_ENABLED:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64);
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_NAME:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SET_NAME:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            string(input(1));
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_INTEGER_OPTION:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SET_INTEGER_OPTION:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
            twoStateBits(input(3), 64);
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_INTEGER_OPTION:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_GET_INTEGER_OPTION:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
            twoStateBits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_STRING_OPTION:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_GET_STRING_OPTION:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
            string(output(0));
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_STRING_OPTION:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SET_STRING_OPTION:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
            string(input(3));
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_INTEGER_OPTION:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_INTEGER_OPTION:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
            twoStateBits(input(3), 64);
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_STRING_OPTION:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_STRING_OPTION:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
            string(input(3));
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SAMPLE_ENABLED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_FORMAL_READ:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_FORMAL_READ:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) &&
@@ -1308,7 +1308,7 @@ bool validIntrinsic(const Image &image, const Function &function,
             (managed(output(0)) && output(0)->width == 64 &&
              output(0)->size == 8) ||
             floating(output(0)));
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_SAMPLE:
     if (signature.flags != 0 || site.inputCount < 2 || site.outputCount != 0 ||
         !twoStateBits(input(0), 64) || !twoStateBits(input(1), 64))
       return false;
@@ -1317,19 +1317,19 @@ bool validIntrinsic(const Image &image, const Function &function,
           !string(input(index)) && !managed(input(index)) && !event(input(index)))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 3 && twoStateBits(input(0), 64) && output(0) &&
            twoStateBits(input(1), 64) &&
-           output(0)->kind == OBELISK_RT_DBREG_REAL64 &&
+           output(0)->kind == TALOS_RT_DBREG_REAL64 &&
            twoStateBits(output(1), 32) && twoStateBits(output(2), 32);
-  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY:
+  case TALOS_RT_INTRINSIC_V1_COVERGROUP_TYPE_QUERY:
     if (signature.flags != 0 || site.inputCount != 2 || site.outputCount != 3 ||
-        !output(0) || output(0)->kind != OBELISK_RT_DBREG_REAL64 ||
+        !output(0) || output(0)->kind != TALOS_RT_DBREG_REAL64 ||
         !twoStateBits(output(1), 32) || !twoStateBits(output(2), 32))
       return false;
     return twoStateBits(input(0), 64) && twoStateBits(input(1), 64);
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE:
+  case TALOS_RT_INTRINSIC_V1_ASSOC_CREATE:
     // An element-keyed array also carries its key's element descriptor, trace
     // and equality plan.
     if (signature.flags != 0 ||
@@ -1348,138 +1348,138 @@ bool validIntrinsic(const Image &image, const Function &function,
     }
     return bytes(input(6)) && twoStateBits(input(7), 64) &&
            twoStateBits(input(8), 64);
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_READ:
+  case TALOS_RT_INTRINSIC_V1_ASSOC_READ:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) && assocKey(input(1)) &&
            managedValue(output(0));
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_WRITE:
+  case TALOS_RT_INTRINSIC_V1_ASSOC_WRITE:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 0 && managed(input(0)) && assocKey(input(1)) &&
            managedValue(input(2));
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_EXISTS:
+  case TALOS_RT_INTRINSIC_V1_ASSOC_EXISTS:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) && assocKey(input(1)) &&
            twoStateBits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_DELETE:
+  case TALOS_RT_INTRINSIC_V1_ASSOC_DELETE:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && managed(input(0)) && assocKey(input(1));
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_DEFAULT:
+  case TALOS_RT_INTRINSIC_V1_ASSOC_DEFAULT:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && managed(input(0)) && managedValue(input(1));
-  case OBELISK_RT_INTRINSIC_V1_ASSOC_TRAVERSE:
+  case TALOS_RT_INTRINSIC_V1_ASSOC_TRAVERSE:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 2 && managed(input(0)) && assocKey(input(1)) &&
            twoStateBits(input(2), 64) && twoStateBits(input(3), 64) &&
            input(1) && output(0) && compatible(*input(1), *output(0)) &&
            twoStateBits(output(1), 1);
-  case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_ASSOC:
+  case TALOS_RT_INTRINSIC_V1_REFERENCE_PATH_ASSOC:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && managed(input(0)) && assocKey(input(1)) &&
            argumentRef(input(2)) && managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH:
+  case TALOS_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_PATH:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) && argumentRef(output(0));
-  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_LOAD:
+  case TALOS_RT_INTRINSIC_V1_ARGUMENT_REF_LOAD:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 1 && argumentRef(input(0)) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
            twoStateBits(input(3), 64) && managedValue(output(0));
-  case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_STORE:
+  case TALOS_RT_INTRINSIC_V1_ARGUMENT_REF_STORE:
     return signature.flags == 0 && site.inputCount == 5 &&
            site.outputCount == 0 && argumentRef(input(0)) &&
            managedValue(input(1)) && twoStateBits(input(2), 64) &&
            twoStateBits(input(3), 64) && twoStateBits(input(4), 64);
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT:
+  case TALOS_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && numeric(input(0)) &&
            twoStateBits(input(1), 64) && managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_MANAGED_CANDIDATE_ROOT:
+  case TALOS_RT_INTRINSIC_V1_MANAGED_CANDIDATE_ROOT:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && numeric(input(0)) &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
            managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_WEAK_CREATE:
+  case TALOS_RT_INTRINSIC_V1_WEAK_CREATE:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && managed(input(0)) &&
            twoStateBits(input(1), 64) && managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_WEAK_GET:
+  case TALOS_RT_INTRINSIC_V1_WEAK_GET:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && managed(input(0)) && managed(output(0));
-  case OBELISK_RT_INTRINSIC_V1_WEAK_CLEAR:
+  case TALOS_RT_INTRINSIC_V1_WEAK_CLEAR:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && managed(input(0));
-  case OBELISK_RT_INTRINSIC_V1_GC_SAFEPOINT:
+  case TALOS_RT_INTRINSIC_V1_GC_SAFEPOINT:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 0;
-  case OBELISK_RT_INTRINSIC_V1_STRING_LITERAL:
+  case TALOS_RT_INTRINSIC_V1_STRING_LITERAL:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && bytes(input(0)) && string(output(0));
-  case OBELISK_RT_INTRINSIC_V1_STRING_FROM_PACKED:
+  case TALOS_RT_INTRINSIC_V1_STRING_FROM_PACKED:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && numeric(input(0)) && string(output(0));
-  case OBELISK_RT_INTRINSIC_V1_STRING_TO_PACKED:
+  case TALOS_RT_INTRINSIC_V1_STRING_TO_PACKED:
     return site.inputCount == 1 && string(input(0)) && numeric(output(0)) &&
            ((signature.flags == 0 && site.outputCount == 1) ||
             (signature.flags == 1 && site.outputCount == 2 &&
              twoStateBits(output(1), 1) && output(0)->width != 0 &&
              (output(0)->width % 8) == 0));
-  case OBELISK_RT_INTRINSIC_V1_STRING_CONCAT:
+  case TALOS_RT_INTRINSIC_V1_STRING_CONCAT:
     if (signature.flags != 0 || site.outputCount != 1 || !string(output(0)))
       return false;
     for (uint32_t index = 0; index != site.inputCount; ++index)
       if (!string(input(index)))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_STRING_REPEAT:
+  case TALOS_RT_INTRINSIC_V1_STRING_REPEAT:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && string(input(0)) && bits(input(1), 64) &&
            string(output(0));
-  case OBELISK_RT_INTRINSIC_V1_STRING_LENGTH:
+  case TALOS_RT_INTRINSIC_V1_STRING_LENGTH:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && string(input(0)) && bits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_STRING_GETC:
+  case TALOS_RT_INTRINSIC_V1_STRING_GETC:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && string(input(0)) && bits(input(1), 64) &&
            bits(output(0), 8);
-  case OBELISK_RT_INTRINSIC_V1_STRING_PUTC:
+  case TALOS_RT_INTRINSIC_V1_STRING_PUTC:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && string(input(0)) && bits(input(1), 64) &&
            bits(input(2), 8) && string(output(0));
-  case OBELISK_RT_INTRINSIC_V1_STRING_SUBSTR:
+  case TALOS_RT_INTRINSIC_V1_STRING_SUBSTR:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && string(input(0)) && bits(input(1), 64) &&
            bits(input(2), 64) && string(output(0));
-  case OBELISK_RT_INTRINSIC_V1_STRING_COMPARE:
+  case TALOS_RT_INTRINSIC_V1_STRING_COMPARE:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && string(input(0)) && string(input(1)) &&
            bits(input(2), 64) && bits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_STRING_CASE_CONVERT:
+  case TALOS_RT_INTRINSIC_V1_STRING_CASE_CONVERT:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && string(input(0)) && bits(input(1), 64) &&
            string(output(0));
-  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_INTEGER:
+  case TALOS_RT_INTRINSIC_V1_STRING_PARSE_INTEGER:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && string(input(0)) && bits(input(1), 64) &&
            bits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_LOGIC:
+  case TALOS_RT_INTRINSIC_V1_STRING_PARSE_LOGIC:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && string(input(0)) && bits(input(1), 64) &&
-           output(0) && output(0)->kind == OBELISK_RT_DBREG_LOGIC &&
+           output(0) && output(0)->kind == TALOS_RT_DBREG_LOGIC &&
            output(0)->width == 64;
-  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL:
-  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL_CONSTANT:
+  case TALOS_RT_INTRINSIC_V1_STRING_PARSE_REAL:
+  case TALOS_RT_INTRINSIC_V1_STRING_PARSE_REAL_CONSTANT:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && string(input(0)) && output(0) &&
-           output(0)->kind == OBELISK_RT_DBREG_REAL64;
-  case OBELISK_RT_INTRINSIC_V1_STRING_FORMAT_INTEGER:
+           output(0)->kind == TALOS_RT_DBREG_REAL64;
+  case TALOS_RT_INTRINSIC_V1_STRING_FORMAT_INTEGER:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(input(1), 64) &&
            bits(input(2), 64) && string(output(0));
-  case OBELISK_RT_INTRINSIC_V1_STRING_FORMAT_REAL:
+  case TALOS_RT_INTRINSIC_V1_STRING_FORMAT_REAL:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && input(0) &&
-           input(0)->kind == OBELISK_RT_DBREG_REAL64 && string(output(0));
-  case OBELISK_RT_INTRINSIC_V1_FORMAT:
+           input(0)->kind == TALOS_RT_DBREG_REAL64 && string(output(0));
+  case TALOS_RT_INTRINSIC_V1_FORMAT:
     if (site.inputCount < 1 || site.outputCount != 1 || !bytes(input(0)) ||
         !string(output(0)))
       return false;
@@ -1489,7 +1489,7 @@ bool validIntrinsic(const Image &image, const Function &function,
           !managed(input(index)) && !handle(input(index)))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_DISPLAY:
+  case TALOS_RT_INTRINSIC_V1_DISPLAY:
     if (site.inputCount < 2 || site.outputCount != 0 || !bytes(input(0)) ||
         !bits(input(1), 32))
       return false;
@@ -1499,48 +1499,48 @@ bool validIntrinsic(const Image &image, const Function &function,
           !managed(input(index)) && !handle(input(index)))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_FINISH:
-  case OBELISK_RT_INTRINSIC_V1_STOP:
-  case OBELISK_RT_INTRINSIC_V1_FATAL:
+  case TALOS_RT_INTRINSIC_V1_FINISH:
+  case TALOS_RT_INTRINSIC_V1_STOP:
+  case TALOS_RT_INTRINSIC_V1_FATAL:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && bits(input(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_ERROR:
-  case OBELISK_RT_INTRINSIC_V1_PROGRAM_EXIT:
+  case TALOS_RT_INTRINSIC_V1_ERROR:
+  case TALOS_RT_INTRINSIC_V1_PROGRAM_EXIT:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 0;
-  case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
-  case OBELISK_RT_INTRINSIC_V1_PROGRAM_OWNED:
+  case TALOS_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
+  case TALOS_RT_INTRINSIC_V1_PROGRAM_OWNED:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_TIME_NOW:
+  case TALOS_RT_INTRINSIC_V1_TIME_NOW:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && twoStateBits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_TIME_TO_REAL:
+  case TALOS_RT_INTRINSIC_V1_TIME_TO_REAL:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && output(0) &&
-           output(0)->kind == OBELISK_RT_DBREG_REAL64;
-  case OBELISK_RT_INTRINSIC_V1_TIME_FROM_REAL:
+           output(0)->kind == TALOS_RT_DBREG_REAL64;
+  case TALOS_RT_INTRINSIC_V1_TIME_FROM_REAL:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && input(0) &&
-           input(0)->kind == OBELISK_RT_DBREG_REAL64 &&
+           input(0)->kind == TALOS_RT_DBREG_REAL64 &&
            twoStateBits(input(1), 64) && twoStateBits(input(2), 64) &&
            twoStateBits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_REAL_FROM_INTEGER:
+  case TALOS_RT_INTRINSIC_V1_REAL_FROM_INTEGER:
     return signature.flags <= 1 && site.inputCount == 1 &&
            site.outputCount == 1 && twoStateBits(input(0)) &&
            floating(output(0));
-  case OBELISK_RT_INTRINSIC_V1_REAL_TO_INTEGER:
+  case TALOS_RT_INTRINSIC_V1_REAL_TO_INTEGER:
     return signature.flags <= 1 && site.inputCount == 1 &&
            site.outputCount == 1 && input(0) &&
-           input(0)->kind == OBELISK_RT_DBREG_REAL64 && twoStateBits(output(0));
-  case OBELISK_RT_INTRINSIC_V1_REAL_COMPARE:
+           input(0)->kind == TALOS_RT_DBREG_REAL64 && twoStateBits(output(0));
+  case TALOS_RT_INTRINSIC_V1_REAL_COMPARE:
     return signature.flags <= 5 && site.inputCount == 2 &&
            site.outputCount == 1 && input(0) && input(1) &&
-           input(0)->kind == OBELISK_RT_DBREG_REAL64 &&
-           input(1)->kind == OBELISK_RT_DBREG_REAL64 &&
+           input(0)->kind == TALOS_RT_DBREG_REAL64 &&
+           input(1)->kind == TALOS_RT_DBREG_REAL64 &&
            twoStateBits(output(0), 1);
-  case OBELISK_RT_INTRINSIC_V1_COUNT_BITS:
+  case TALOS_RT_INTRINSIC_V1_COUNT_BITS:
     if (signature.flags != 0 || site.inputCount < 2 || site.outputCount != 1 ||
         !numeric(input(0)) || !twoStateBits(output(0), 32))
       return false;
@@ -1548,185 +1548,185 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!bits(input(index), 1))
         return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_CLOG2:
+  case TALOS_RT_INTRINSIC_V1_CLOG2:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && numeric(input(0)) &&
            twoStateBits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_MCD:
+  case TALOS_RT_INTRINSIC_V1_FILE_OPEN_MCD:
     return site.inputCount == 1 && site.outputCount == 1 && bytes(input(0)) &&
            bits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_OPEN:
+  case TALOS_RT_INTRINSIC_V1_FILE_OPEN:
     return site.inputCount == 2 && site.outputCount == 1 && bytes(input(0)) &&
            bytes(input(1)) && bits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING_MCD:
+  case TALOS_RT_INTRINSIC_V1_FILE_OPEN_STRING_MCD:
     return site.inputCount == 1 && site.outputCount == 1 && string(input(0)) &&
            bits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_OPEN_STRING:
+  case TALOS_RT_INTRINSIC_V1_FILE_OPEN_STRING:
     return site.inputCount == 2 && site.outputCount == 1 && string(input(0)) &&
            string(input(1)) && bits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_TIME_FORMAT:
+  case TALOS_RT_INTRINSIC_V1_TIME_FORMAT:
     return site.inputCount == 4 && site.outputCount == 0 &&
            bits(input(0), 32) && bits(input(1), 32) && bytes(input(2)) &&
            bits(input(3), 32);
-  case OBELISK_RT_INTRINSIC_V1_TIME_SCAN_SCALE:
+  case TALOS_RT_INTRINSIC_V1_TIME_SCAN_SCALE:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && floating(input(0)) && bits(input(1), 64) &&
            bits(input(2), 64) && floating(output(0));
-  case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_FIELD:
+  case TALOS_RT_INTRINSIC_V1_STRING_SCAN_FIELD:
     return signature.flags == 0 && site.inputCount == 5 &&
            site.outputCount == 3 && string(input(0)) && bits(input(1), 32) &&
            bytes(input(2)) && bits(input(3), 64) && bits(input(4), 64) &&
            string(output(0)) && bits(output(1), 32) && bits(output(2), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_FIELD:
+  case TALOS_RT_INTRINSIC_V1_FILE_SCAN_FIELD:
     return signature.flags == 0 && site.inputCount == 5 &&
            site.outputCount == 3 && bits(input(0), 32) && bits(input(1), 32) &&
            bytes(input(2)) && bits(input(3), 64) && bits(input(4), 64) &&
            string(output(0)) && bits(output(1), 32) && bits(output(2), 32);
-  case OBELISK_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE:
+  case TALOS_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE:
     return signature.flags == 0 && site.inputCount == 5 &&
            site.outputCount == 1 && string(input(0)) && bits(input(1), 32) &&
            bits(input(2), 64) && bits(input(3), 64) && bits(input(4), 64) &&
            bits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC:
+  case TALOS_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC:
     return signature.flags == 0 && site.inputCount == 9 &&
            site.outputCount == 5 && string(input(0)) && bits(input(1), 32) &&
            string(input(2)) && bits(input(3), 32) && bits(input(4), 32) &&
            bits(input(5), 64) && bits(input(6), 64) && bits(input(7), 64) &&
            bits(input(8), 64) && string(output(0)) && bits(output(1), 32) &&
            bits(output(2), 32) && bits(output(3), 32) && bits(output(4), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC:
+  case TALOS_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC:
     return signature.flags == 0 && site.inputCount == 8 &&
            site.outputCount == 5 && bits(input(0), 32) && string(input(1)) &&
            bits(input(2), 32) && bits(input(3), 32) && bits(input(4), 64) &&
            bits(input(5), 64) && bits(input(6), 64) && bits(input(7), 64) &&
            string(output(0)) && bits(output(1), 32) && bits(output(2), 32) &&
            bits(output(3), 32) && bits(output(4), 32);
-  case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_RAW:
+  case TALOS_RT_INTRINSIC_V1_STRING_SCAN_RAW:
     if (signature.flags != 0 || site.inputCount != 7 || !string(input(0)) ||
         !bits(input(1), 32) || !bytes(input(2)) || !bits(input(3), 64) ||
         !bits(input(4), 64) || !bits(input(5), 64) || !bits(input(6), 64))
       return false;
     return (site.outputCount == 3 && output(0) &&
-            output(0)->kind == OBELISK_RT_DBREG_LOGIC &&
+            output(0)->kind == TALOS_RT_DBREG_LOGIC &&
             output(0)->width != 0 && bits(output(1), 32) &&
             bits(output(2), 32)) ||
            (site.outputCount == 2 && bits(output(0), 32) &&
             bits(output(1), 32));
-  case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_RAW:
+  case TALOS_RT_INTRINSIC_V1_FILE_SCAN_RAW:
     if (signature.flags != 0 || site.inputCount != 7 || !bits(input(0), 32) ||
         !bits(input(1), 32) || !bytes(input(2)) || !bits(input(3), 64) ||
         !bits(input(4), 64) || !bits(input(5), 64) || !bits(input(6), 64))
       return false;
     return (site.outputCount == 3 && output(0) &&
-            output(0)->kind == OBELISK_RT_DBREG_LOGIC &&
+            output(0)->kind == TALOS_RT_DBREG_LOGIC &&
             output(0)->width != 0 && bits(output(1), 32) &&
             bits(output(2), 32)) ||
            (site.outputCount == 2 && bits(output(0), 32) &&
             bits(output(1), 32));
-  case OBELISK_RT_INTRINSIC_V1_FILE_READMEM_TOKEN:
+  case TALOS_RT_INTRINSIC_V1_FILE_READMEM_TOKEN:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 3 && bits(input(0), 32) && bits(input(1), 64) &&
-           output(0) && output(0)->kind == OBELISK_RT_DBREG_LOGIC &&
+           output(0) && output(0)->kind == TALOS_RT_DBREG_LOGIC &&
            output(0)->width != 0 && bits(output(1), 32) && bits(output(2), 64);
-  case OBELISK_RT_INTRINSIC_V1_STOCHASTIC_QUEUE:
+  case TALOS_RT_INTRINSIC_V1_STOCHASTIC_QUEUE:
     return signature.flags == 0 && site.inputCount == 5 &&
            site.outputCount == 3 && bits(input(0), 64) && bits(input(1), 32) &&
            bits(input(2), 32) && bits(input(3), 32) && bits(input(4), 64) &&
-           output(0) && output(0)->kind == OBELISK_RT_DBREG_LOGIC &&
+           output(0) && output(0)->kind == TALOS_RT_DBREG_LOGIC &&
            output(0)->width == 64 && output(1) &&
-           output(1)->kind == OBELISK_RT_DBREG_LOGIC &&
+           output(1)->kind == TALOS_RT_DBREG_LOGIC &&
            output(1)->width == 64 && bits(output(2), 32);
-  case OBELISK_RT_INTRINSIC_V1_PLUSARG_TEST:
+  case TALOS_RT_INTRINSIC_V1_PLUSARG_TEST:
     return site.inputCount == 1 && site.outputCount == 1 && string(input(0)) &&
            bits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_PLUSARG_VALUE:
+  case TALOS_RT_INTRINSIC_V1_PLUSARG_VALUE:
     return site.inputCount == 1 && site.outputCount == 2 && string(input(0)) &&
            string(output(0)) && bits(output(1), 32);
-  case OBELISK_RT_INTRINSIC_V1_PLUSARG_SCAN:
+  case TALOS_RT_INTRINSIC_V1_PLUSARG_SCAN:
     return site.inputCount == 1 && site.outputCount == 3 && string(input(0)) &&
            string(output(0)) && bits(output(1), 32) && bits(output(2), 32);
-  case OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_LOGIC:
+  case TALOS_RT_INTRINSIC_V1_PLUSARG_PARSE_LOGIC:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && string(input(0)) && bits(input(1), 64) &&
-           output(0) && output(0)->kind == OBELISK_RT_DBREG_LOGIC &&
+           output(0) && output(0)->kind == TALOS_RT_DBREG_LOGIC &&
            output(0)->width != 0;
-  case OBELISK_RT_INTRINSIC_V1_PLUSARG_PARSE_REAL:
+  case TALOS_RT_INTRINSIC_V1_PLUSARG_PARSE_REAL:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && string(input(0)) && output(0) &&
-           output(0)->kind == OBELISK_RT_DBREG_REAL64;
-  case OBELISK_RT_INTRINSIC_V1_SYSTEM:
+           output(0)->kind == TALOS_RT_DBREG_REAL64;
+  case TALOS_RT_INTRINSIC_V1_SYSTEM:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && string(input(0)) && bits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_GETLINE_STRING:
-  case OBELISK_RT_INTRINSIC_V1_FILE_ERROR_STRING:
+  case TALOS_RT_INTRINSIC_V1_FILE_GETLINE_STRING:
+  case TALOS_RT_INTRINSIC_V1_FILE_ERROR_STRING:
     return site.inputCount == 1 && site.outputCount == 2 &&
            bits(input(0), 32) && string(output(0)) && bits(output(1), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_CLOSE:
-  case OBELISK_RT_INTRINSIC_V1_FILE_FLUSH:
+  case TALOS_RT_INTRINSIC_V1_FILE_CLOSE:
+  case TALOS_RT_INTRINSIC_V1_FILE_FLUSH:
     return site.inputCount == 1 && site.outputCount == 0 && bits(input(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_GETC:
-  case OBELISK_RT_INTRINSIC_V1_FILE_EOF:
-  case OBELISK_RT_INTRINSIC_V1_FILE_REWIND:
+  case TALOS_RT_INTRINSIC_V1_FILE_GETC:
+  case TALOS_RT_INTRINSIC_V1_FILE_EOF:
+  case TALOS_RT_INTRINSIC_V1_FILE_REWIND:
     return site.inputCount == 1 && site.outputCount == 1 &&
            bits(input(0), 32) && bits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_UNGETC:
+  case TALOS_RT_INTRINSIC_V1_FILE_UNGETC:
     return site.inputCount == 2 && site.outputCount == 1 &&
            bits(input(0), 32) && bits(input(1), 32) && bits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_GETLINE:
-  case OBELISK_RT_INTRINSIC_V1_FILE_READ_PACKED:
+  case TALOS_RT_INTRINSIC_V1_FILE_GETLINE:
+  case TALOS_RT_INTRINSIC_V1_FILE_READ_PACKED:
     return site.inputCount == 1 && site.outputCount == 2 &&
            bits(input(0), 32) && numeric(output(0)) && bits(output(1), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_SEEK:
+  case TALOS_RT_INTRINSIC_V1_FILE_SEEK:
     return site.inputCount == 3 && site.outputCount == 1 &&
            bits(input(0), 32) && bits(input(1), 64) && bits(input(2), 32) &&
            bits(output(0), 32);
-  case OBELISK_RT_INTRINSIC_V1_FILE_TELL:
+  case TALOS_RT_INTRINSIC_V1_FILE_TELL:
     return site.inputCount == 1 && site.outputCount == 1 &&
            bits(input(0), 32) && bits(output(0), 64);
-  case OBELISK_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE:
-  case OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE:
+  case TALOS_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE:
+  case TALOS_RT_INTRINSIC_V1_VPI_CALL_PREPARE:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && vpiIdentity(input(0)) &&
            vpiIdentity(output(0));
-  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED:
+  case TALOS_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 1 && vpiIdentity(input(0)) &&
            vpiIdentity(input(1)) && vpiIdentity(output(0));
-  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER:
+  case TALOS_RT_INTRINSIC_V1_VPI_FRAME_ENTER:
     return signature.flags == 0 && site.inputCount == 3 &&
            site.outputCount == 1 && vpiIdentity(input(0)) &&
            vpiIdentity(input(1)) && vpiIdentity(input(2)) &&
            vpiIdentity(output(0));
-  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT:
-  case OBELISK_RT_INTRINSIC_V1_VPI_FRAME_LEAVE:
-  case OBELISK_RT_INTRINSIC_V1_VPI_CALL_FINISH:
+  case TALOS_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT:
+  case TALOS_RT_INTRINSIC_V1_VPI_FRAME_LEAVE:
+  case TALOS_RT_INTRINSIC_V1_VPI_CALL_FINISH:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && vpiIdentity(input(0));
-  case OBELISK_RT_INTRINSIC_V1_VPI_ROOT:
+  case TALOS_RT_INTRINSIC_V1_VPI_ROOT:
     return site.inputCount == 0 && site.outputCount == 2 && cursor(output(0)) &&
            status(output(1));
-  case OBELISK_RT_INTRINSIC_V1_VPI_CHILD:
-  case OBELISK_RT_INTRINSIC_V1_VPI_SIBLING:
+  case TALOS_RT_INTRINSIC_V1_VPI_CHILD:
+  case TALOS_RT_INTRINSIC_V1_VPI_SIBLING:
     return site.inputCount == 1 && site.outputCount == 2 && cursor(input(0)) &&
            cursor(output(0)) && status(output(1));
-  case OBELISK_RT_INTRINSIC_V1_VPI_CHILD_AT:
-  case OBELISK_RT_INTRINSIC_V1_VPI_TYPE_CHILD:
+  case TALOS_RT_INTRINSIC_V1_VPI_CHILD_AT:
+  case TALOS_RT_INTRINSIC_V1_VPI_TYPE_CHILD:
     return site.inputCount == 2 && site.outputCount == 2 && cursor(input(0)) &&
            bits(input(1), 64) && cursor(output(0)) && status(output(1));
-  case OBELISK_RT_INTRINSIC_V1_VPI_LOOKUP:
+  case TALOS_RT_INTRINSIC_V1_VPI_LOOKUP:
     return site.inputCount == 1 && site.outputCount == 2 && bytes(input(0)) &&
            cursor(output(0)) && status(output(1));
-  case OBELISK_RT_INTRINSIC_V1_VPI_INFO:
+  case TALOS_RT_INTRINSIC_V1_VPI_INFO:
     if (site.inputCount != 1 || site.outputCount != 8 || !cursor(input(0)) ||
         !bits(output(0), 32) || !bits(output(1), 32) || !bits(output(2), 64) ||
         !cursor(output(3)) || !bits(output(4), 64) || !bits(output(5), 64) ||
         !bits(output(6), 64) || !status(output(7)))
       return false;
     return true;
-  case OBELISK_RT_INTRINSIC_V1_VPI_NAME:
+  case TALOS_RT_INTRINSIC_V1_VPI_NAME:
     return site.inputCount == 1 && site.outputCount == 3 && cursor(input(0)) &&
            bits(output(0), 64) && bits(output(1), 64) && status(output(2));
-  case OBELISK_RT_INTRINSIC_V1_VPI_TYPE_INFO:
+  case TALOS_RT_INTRINSIC_V1_VPI_TYPE_INFO:
     if (site.inputCount != 1 || site.outputCount != 12 || !cursor(input(0)) ||
         !bits(output(0), 32) || !bits(output(1), 32))
       return false;
@@ -1734,10 +1734,10 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!bits(output(index), 64))
         return false;
     return status(output(11));
-  case OBELISK_RT_INTRINSIC_V1_VPI_READ:
+  case TALOS_RT_INTRINSIC_V1_VPI_READ:
     return site.inputCount == 1 && site.outputCount == 2 && cursor(input(0)) &&
            numeric(output(0)) && status(output(1));
-  case OBELISK_RT_INTRINSIC_V1_VPI_WRITE:
+  case TALOS_RT_INTRINSIC_V1_VPI_WRITE:
     return site.inputCount == 2 && site.outputCount == 1 && cursor(input(0)) &&
            numeric(input(1)) && status(output(0));
   default:
@@ -1784,7 +1784,7 @@ bool validateInitialization(const Image &image, const Function &function,
     return true;
   };
   State seed(stateWords);
-  bool process = (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0;
+  bool process = (function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) != 0;
   if (!process)
     for (uint32_t argument = 0; argument != function.argumentCount; ++argument)
       if (!setInitialized(seed, argument))
@@ -1822,81 +1822,81 @@ bool validateInitialization(const Image &image, const Function &function,
     };
     bool fallthrough = true;
     switch (instruction.opcode) {
-    case OBELISK_RT_DB_CONSTANT:
-    case OBELISK_RT_DB_MOVE:
-    case OBELISK_RT_DB_BITCAST:
-    case OBELISK_RT_DB_NOT:
-    case OBELISK_RT_DB_AND:
-    case OBELISK_RT_DB_OR:
-    case OBELISK_RT_DB_XOR:
-    case OBELISK_RT_DB_ADD:
-    case OBELISK_RT_DB_SUB:
-    case OBELISK_RT_DB_MUL:
-    case OBELISK_RT_DB_POWER:
-    case OBELISK_RT_DB_REPLICATE:
-    case OBELISK_RT_DB_POPCOUNT:
-    case OBELISK_RT_DB_UDIV:
-    case OBELISK_RT_DB_SDIV:
-    case OBELISK_RT_DB_UREM:
-    case OBELISK_RT_DB_SREM:
-    case OBELISK_RT_DB_SHL:
-    case OBELISK_RT_DB_LSHR:
-    case OBELISK_RT_DB_ASHR:
-    case OBELISK_RT_DB_COMPARE:
-    case OBELISK_RT_DB_SELECT:
-    case OBELISK_RT_DB_REDUCE:
-    case OBELISK_RT_DB_CONCAT:
-    case OBELISK_RT_DB_EXTRACT:
-    case OBELISK_RT_DB_INSERT:
-    case OBELISK_RT_DB_LOAD_FRAME:
-    case OBELISK_RT_DB_MAKE_HANDLE:
-    case OBELISK_RT_DB_MAKE_LOCAL_HANDLE:
-    case OBELISK_RT_DB_HANDLE_OFFSET:
-    case OBELISK_RT_DB_HANDLE_ID:
-    case OBELISK_RT_DB_LOAD_STATE:
-    case OBELISK_RT_DB_FADD:
-    case OBELISK_RT_DB_FSUB:
-    case OBELISK_RT_DB_FMUL:
-    case OBELISK_RT_DB_FDIV:
-    case OBELISK_RT_DB_FNEG:
-    case OBELISK_RT_DB_FCOMPARE:
-    case OBELISK_RT_DB_FEXT:
-    case OBELISK_RT_DB_FTRUNC:
-    case OBELISK_RT_DB_FPOW:
+    case TALOS_RT_DB_CONSTANT:
+    case TALOS_RT_DB_MOVE:
+    case TALOS_RT_DB_BITCAST:
+    case TALOS_RT_DB_NOT:
+    case TALOS_RT_DB_AND:
+    case TALOS_RT_DB_OR:
+    case TALOS_RT_DB_XOR:
+    case TALOS_RT_DB_ADD:
+    case TALOS_RT_DB_SUB:
+    case TALOS_RT_DB_MUL:
+    case TALOS_RT_DB_POWER:
+    case TALOS_RT_DB_REPLICATE:
+    case TALOS_RT_DB_POPCOUNT:
+    case TALOS_RT_DB_UDIV:
+    case TALOS_RT_DB_SDIV:
+    case TALOS_RT_DB_UREM:
+    case TALOS_RT_DB_SREM:
+    case TALOS_RT_DB_SHL:
+    case TALOS_RT_DB_LSHR:
+    case TALOS_RT_DB_ASHR:
+    case TALOS_RT_DB_COMPARE:
+    case TALOS_RT_DB_SELECT:
+    case TALOS_RT_DB_REDUCE:
+    case TALOS_RT_DB_CONCAT:
+    case TALOS_RT_DB_EXTRACT:
+    case TALOS_RT_DB_INSERT:
+    case TALOS_RT_DB_LOAD_FRAME:
+    case TALOS_RT_DB_MAKE_HANDLE:
+    case TALOS_RT_DB_MAKE_LOCAL_HANDLE:
+    case TALOS_RT_DB_HANDLE_OFFSET:
+    case TALOS_RT_DB_HANDLE_ID:
+    case TALOS_RT_DB_LOAD_STATE:
+    case TALOS_RT_DB_FADD:
+    case TALOS_RT_DB_FSUB:
+    case TALOS_RT_DB_FMUL:
+    case TALOS_RT_DB_FDIV:
+    case TALOS_RT_DB_FNEG:
+    case TALOS_RT_DB_FCOMPARE:
+    case TALOS_RT_DB_FEXT:
+    case TALOS_RT_DB_FTRUNC:
+    case TALOS_RT_DB_FPOW:
       if (!defineDestination())
         return false;
       break;
-    case OBELISK_RT_DB_STORE_STATE:
-      if ((instruction.flags & OBELISK_RT_DB_STORE_STATE_CHANGED) != 0 &&
+    case TALOS_RT_DB_STORE_STATE:
+      if ((instruction.flags & TALOS_RT_DB_STORE_STATE_CHANGED) != 0 &&
           !defineDestination())
         return false;
       break;
-    case OBELISK_RT_DB_JUMP:
+    case TALOS_RT_DB_JUMP:
       if (!defineMap(state, instruction.source0, instruction.source1) ||
           !merge(instruction.immediate, state))
         return false;
       fallthrough = false;
       break;
-    case OBELISK_RT_DB_BRANCH: {
+    case TALOS_RT_DB_BRANCH: {
       State taken = state;
       if (!defineMap(taken, instruction.source0, instruction.source1) ||
           !merge(instruction.immediate, taken))
         return false;
       break;
     }
-    case OBELISK_RT_DB_CALL:
+    case TALOS_RT_DB_CALL:
       if (!defineMap(state, instruction.auxiliary, instruction.immediate))
         return false;
       break;
-    case OBELISK_RT_DB_VIRTUAL_CALL:
-    case OBELISK_RT_DB_INTERFACE_CALL:
+    case TALOS_RT_DB_VIRTUAL_CALL:
+    case TALOS_RT_DB_INTERFACE_CALL:
       if (!defineMap(state, instruction.auxiliary, instruction.flags))
         return false;
       break;
-    case OBELISK_RT_DB_CLEAR_FRAME_ROOT:
-    case OBELISK_RT_DB_FRAME_ROOT:
+    case TALOS_RT_DB_CLEAR_FRAME_ROOT:
+    case TALOS_RT_DB_FRAME_ROOT:
       break;
-    case OBELISK_RT_DB_INTRINSIC: {
+    case TALOS_RT_DB_INTRINSIC: {
       IntrinsicSite site =
           siteAt(image, static_cast<uint32_t>(instruction.immediate));
       for (uint32_t index = 0; index != site.outputCount; ++index) {
@@ -1907,16 +1907,16 @@ bool validateInitialization(const Image &image, const Function &function,
       }
       break;
     }
-    case OBELISK_RT_DB_RETURN:
-    case OBELISK_RT_DB_CONTINUE:
-    case OBELISK_RT_DB_SUSPEND:
-    case OBELISK_RT_DB_TERMINATE:
-    case OBELISK_RT_DB_TASK_CALL:
-    case OBELISK_RT_DB_VIRTUAL_TASK_CALL:
-    case OBELISK_RT_DB_INTERFACE_TASK_CALL:
+    case TALOS_RT_DB_RETURN:
+    case TALOS_RT_DB_CONTINUE:
+    case TALOS_RT_DB_SUSPEND:
+    case TALOS_RT_DB_TERMINATE:
+    case TALOS_RT_DB_TASK_CALL:
+    case TALOS_RT_DB_VIRTUAL_TASK_CALL:
+    case TALOS_RT_DB_INTERFACE_TASK_CALL:
       fallthrough = false;
       break;
-    case OBELISK_RT_DB_PROCESS_CONTROL:
+    case TALOS_RT_DB_PROCESS_CONTROL:
       if (!process) {
         bool found = false;
         for (uint64_t index = 0; index != function.continuationCount; ++index) {
@@ -1974,98 +1974,98 @@ bool validateInitialization(const Image &image, const Function &function,
     };
     bool valid = true;
     switch (instruction.opcode) {
-    case OBELISK_RT_DB_MOVE:
-    case OBELISK_RT_DB_BITCAST:
-    case OBELISK_RT_DB_NOT:
-    case OBELISK_RT_DB_POPCOUNT:
-    case OBELISK_RT_DB_REDUCE:
-    case OBELISK_RT_DB_STORE_FRAME:
-    case OBELISK_RT_DB_MAKE_LOCAL_HANDLE:
-    case OBELISK_RT_DB_HANDLE_ID:
-    case OBELISK_RT_DB_LOAD_STATE:
-    case OBELISK_RT_DB_FAIL:
-    case OBELISK_RT_DB_RELEASE_STATE:
-    case OBELISK_RT_DB_FNEG:
-    case OBELISK_RT_DB_FEXT:
-    case OBELISK_RT_DB_FTRUNC:
+    case TALOS_RT_DB_MOVE:
+    case TALOS_RT_DB_BITCAST:
+    case TALOS_RT_DB_NOT:
+    case TALOS_RT_DB_POPCOUNT:
+    case TALOS_RT_DB_REDUCE:
+    case TALOS_RT_DB_STORE_FRAME:
+    case TALOS_RT_DB_MAKE_LOCAL_HANDLE:
+    case TALOS_RT_DB_HANDLE_ID:
+    case TALOS_RT_DB_LOAD_STATE:
+    case TALOS_RT_DB_FAIL:
+    case TALOS_RT_DB_RELEASE_STATE:
+    case TALOS_RT_DB_FNEG:
+    case TALOS_RT_DB_FEXT:
+    case TALOS_RT_DB_FTRUNC:
       valid = sources({instruction.source0});
       break;
-    case OBELISK_RT_DB_AND:
-    case OBELISK_RT_DB_OR:
-    case OBELISK_RT_DB_XOR:
-    case OBELISK_RT_DB_ADD:
-    case OBELISK_RT_DB_SUB:
-    case OBELISK_RT_DB_MUL:
-    case OBELISK_RT_DB_POWER:
-    case OBELISK_RT_DB_REPLICATE:
-    case OBELISK_RT_DB_UDIV:
-    case OBELISK_RT_DB_SDIV:
-    case OBELISK_RT_DB_UREM:
-    case OBELISK_RT_DB_SREM:
-    case OBELISK_RT_DB_SHL:
-    case OBELISK_RT_DB_LSHR:
-    case OBELISK_RT_DB_ASHR:
-    case OBELISK_RT_DB_COMPARE:
-    case OBELISK_RT_DB_CONCAT:
-    case OBELISK_RT_DB_STORE_STATE:
-    case OBELISK_RT_DB_OVERRIDE_STATE:
-    case OBELISK_RT_DB_FADD:
-    case OBELISK_RT_DB_FSUB:
-    case OBELISK_RT_DB_FMUL:
-    case OBELISK_RT_DB_FDIV:
-    case OBELISK_RT_DB_FCOMPARE:
-    case OBELISK_RT_DB_FPOW:
+    case TALOS_RT_DB_AND:
+    case TALOS_RT_DB_OR:
+    case TALOS_RT_DB_XOR:
+    case TALOS_RT_DB_ADD:
+    case TALOS_RT_DB_SUB:
+    case TALOS_RT_DB_MUL:
+    case TALOS_RT_DB_POWER:
+    case TALOS_RT_DB_REPLICATE:
+    case TALOS_RT_DB_UDIV:
+    case TALOS_RT_DB_SDIV:
+    case TALOS_RT_DB_UREM:
+    case TALOS_RT_DB_SREM:
+    case TALOS_RT_DB_SHL:
+    case TALOS_RT_DB_LSHR:
+    case TALOS_RT_DB_ASHR:
+    case TALOS_RT_DB_COMPARE:
+    case TALOS_RT_DB_CONCAT:
+    case TALOS_RT_DB_STORE_STATE:
+    case TALOS_RT_DB_OVERRIDE_STATE:
+    case TALOS_RT_DB_FADD:
+    case TALOS_RT_DB_FSUB:
+    case TALOS_RT_DB_FMUL:
+    case TALOS_RT_DB_FDIV:
+    case TALOS_RT_DB_FCOMPARE:
+    case TALOS_RT_DB_FPOW:
       valid = sources({instruction.source0, instruction.source1});
       break;
-    case OBELISK_RT_DB_INSERT:
+    case TALOS_RT_DB_INSERT:
       valid = sources({instruction.source0, instruction.source1}) &&
-              ((instruction.flags & OBELISK_RT_DB_INSERT_DYNAMIC) == 0 ||
+              ((instruction.flags & TALOS_RT_DB_INSERT_DYNAMIC) == 0 ||
                sources({instruction.source2}));
       break;
-    case OBELISK_RT_DB_SELECT:
+    case TALOS_RT_DB_SELECT:
       valid = sources(
           {instruction.source0, instruction.source1, instruction.source2});
       break;
-    case OBELISK_RT_DB_EXTRACT:
-    case OBELISK_RT_DB_HANDLE_OFFSET:
+    case TALOS_RT_DB_EXTRACT:
+    case TALOS_RT_DB_HANDLE_OFFSET:
       valid = sources({instruction.source0}) &&
               (instruction.source1 == kInvalidRegister ||
                sources({instruction.source1}));
       break;
-    case OBELISK_RT_DB_JUMP:
+    case TALOS_RT_DB_JUMP:
       valid = mapSourcesInitialized(state, instruction.source0,
                                     instruction.source1);
       break;
-    case OBELISK_RT_DB_BRANCH:
+    case TALOS_RT_DB_BRANCH:
       valid = requireInitialized(state, instruction.destination) &&
               mapSourcesInitialized(state, instruction.source0,
                                     instruction.source1);
       break;
-    case OBELISK_RT_DB_CALL:
-    case OBELISK_RT_DB_TASK_CALL:
+    case TALOS_RT_DB_CALL:
+    case TALOS_RT_DB_TASK_CALL:
       valid = mapSourcesInitialized(state, instruction.source1,
                                     instruction.source2);
       break;
-    case OBELISK_RT_DB_VIRTUAL_CALL:
-    case OBELISK_RT_DB_VIRTUAL_TASK_CALL:
-    case OBELISK_RT_DB_INTERFACE_CALL:
-    case OBELISK_RT_DB_INTERFACE_TASK_CALL:
+    case TALOS_RT_DB_VIRTUAL_CALL:
+    case TALOS_RT_DB_VIRTUAL_TASK_CALL:
+    case TALOS_RT_DB_INTERFACE_CALL:
+    case TALOS_RT_DB_INTERFACE_TASK_CALL:
       valid = requireInitialized(state, instruction.source0) &&
               mapSourcesInitialized(state, instruction.source1,
                                     instruction.source2);
       break;
-    case OBELISK_RT_DB_RETURN:
+    case TALOS_RT_DB_RETURN:
       valid = mapSourcesInitialized(state, instruction.source0,
                                     instruction.source1);
       break;
-    case OBELISK_RT_DB_SUSPEND:
+    case TALOS_RT_DB_SUSPEND:
       valid = instruction.source0 == kInvalidRegister ||
               requireInitialized(state, instruction.source0);
       break;
-    case OBELISK_RT_DB_PROCESS_CONTROL:
+    case TALOS_RT_DB_PROCESS_CONTROL:
       valid = requireInitialized(state, instruction.source0);
       break;
-    case OBELISK_RT_DB_INTRINSIC: {
+    case TALOS_RT_DB_INTRINSIC: {
       IntrinsicSite site =
           siteAt(image, static_cast<uint32_t>(instruction.immediate));
       for (uint32_t index = 0; index != site.inputCount; ++index)
@@ -2079,7 +2079,7 @@ bool validateInitialization(const Image &image, const Function &function,
     if (!valid) {
       if (validationDiagnosticsEnabled())
         std::fprintf(stderr,
-                     "obelisk-bytecode-validation: rejected image: "
+                     "talos-bytecode-validation: rejected image: "
                      "instruction reads uninitialized register %u; "
                      "function=%u pc=%llu opcode=%u "
                      "(DesignBytecodeImage.cpp:%u)\n",
@@ -2104,7 +2104,7 @@ bool validateImage(const Image &image) {
   for (uint32_t functionIndex = 0; functionIndex != image.functionCount;
        ++functionIndex) {
     Function function = functionAt(image, functionIndex);
-    bool process = (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0;
+    bool process = (function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) != 0;
     if (!validProcessFunctionFlags(function) ||
         (process && function.resultCount != 0) ||
         function.firstLayout > image.layoutCount ||
@@ -2118,13 +2118,13 @@ bool validateImage(const Image &image) {
   for (uint32_t functionIndex = 0; functionIndex != image.functionCount;
        ++functionIndex) {
     Function function = functionAt(image, functionIndex);
-    bool process = (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0;
+    bool process = (function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) != 0;
     if (!validProcessFunctionFlags(function) ||
         (process && function.resultCount != 0))
       return reject(__LINE__, "invalid process function flags or result count",
                     functionIndex);
     uint64_t canonicalSize =
-        (function.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
+        (function.flags & TALOS_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
     if (!process)
       continue;
     for (uint32_t argument = 0; argument != function.argumentCount;
@@ -2139,7 +2139,7 @@ bool validateImage(const Image &image) {
       Layout layout = layoutAt(image, function, argument);
       if (capture.valueOffset == UINT64_MAX) {
         if (capture.unknownOffset != UINT64_MAX || capture.planeSize != 0 ||
-            layout.kind != OBELISK_RT_DBREG_HANDLE)
+            layout.kind != TALOS_RT_DBREG_HANDLE)
           return reject(__LINE__, "invalid uncaptured handle record",
                         functionIndex);
         continue;
@@ -2149,7 +2149,7 @@ bool validateImage(const Image &image) {
         return reject(__LINE__,
                       "process argument capture exceeds the canonical frame",
                       functionIndex);
-      if (layout.kind == OBELISK_RT_DBREG_LOGIC) {
+      if (layout.kind == TALOS_RT_DBREG_LOGIC) {
         // Bytecode registers round each logic plane up to whole 64-bit limbs,
         // while the canonical process frame uses the target ABI allocation
         // size (for example, one byte per plane for logic<1>). Accept that
@@ -2163,7 +2163,7 @@ bool validateImage(const Image &image) {
             capture.planeSize > canonicalSize - capture.unknownOffset)
           return reject(__LINE__, "invalid four-state capture plane layout",
                         functionIndex);
-      } else if (layout.kind == OBELISK_RT_DBREG_MANAGED_REF) {
+      } else if (layout.kind == TALOS_RT_DBREG_MANAGED_REF) {
         if (capture.planeSize * 2 != layout.size ||
             capture.unknownOffset != capture.valueOffset + capture.planeSize ||
             capture.unknownOffset > canonicalSize ||
@@ -2171,7 +2171,7 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid managed-reference capture layout",
                         functionIndex);
       } else if (capture.unknownOffset != UINT64_MAX ||
-                 ((layout.kind == OBELISK_RT_DBREG_HANDLE)
+                 ((layout.kind == TALOS_RT_DBREG_HANDLE)
                       ? capture.planeSize != 8
                       : capture.planeSize > layout.size)) {
         return reject(__LINE__, "invalid process argument capture layout",
@@ -2650,28 +2650,28 @@ bool validateImage(const Image &image) {
           (function.firstLayout + registerIndex) * kLayoutSize;
       uint64_t expected = layoutSize(layout.kind, layout.width);
       constexpr uint8_t opaqueMask =
-          OBELISK_RT_DBREG_CHANDLE | OBELISK_RT_DBREG_COVERGROUP |
-          OBELISK_RT_DBREG_PROCESS | OBELISK_RT_DBREG_VIRTUAL_INTERFACE;
+          TALOS_RT_DBREG_CHANDLE | TALOS_RT_DBREG_COVERGROUP |
+          TALOS_RT_DBREG_PROCESS | TALOS_RT_DBREG_VIRTUAL_INTERFACE;
       uint8_t opaqueFlags = layout.flags & opaqueMask;
       uint8_t allowedFlags =
-          layout.kind == OBELISK_RT_DBREG_MANAGED && layout.width == 64
-              ? OBELISK_RT_DBREG_CLASS_HANDLE | OBELISK_RT_DBREG_SEMAPHORE |
-                    OBELISK_RT_DBREG_MAILBOX
-          : layout.kind == OBELISK_RT_DBREG_BITS
-              ? OBELISK_RT_DBREG_SIGNED | (layout.width == 64 ? opaqueMask : 0)
-          : layout.kind == OBELISK_RT_DBREG_HANDLE && layout.width == 256
-              ? OBELISK_RT_DBREG_EVENT
-          : layout.kind == OBELISK_RT_DBREG_LOGIC ? OBELISK_RT_DBREG_SIGNED
+          layout.kind == TALOS_RT_DBREG_MANAGED && layout.width == 64
+              ? TALOS_RT_DBREG_CLASS_HANDLE | TALOS_RT_DBREG_SEMAPHORE |
+                    TALOS_RT_DBREG_MAILBOX
+          : layout.kind == TALOS_RT_DBREG_BITS
+              ? TALOS_RT_DBREG_SIGNED | (layout.width == 64 ? opaqueMask : 0)
+          : layout.kind == TALOS_RT_DBREG_HANDLE && layout.width == 256
+              ? TALOS_RT_DBREG_EVENT
+          : layout.kind == TALOS_RT_DBREG_LOGIC ? TALOS_RT_DBREG_SIGNED
                                                   : 0;
       if (layout.width == 0 || expected == 0 || layout.size != expected ||
-          (layout.kind == OBELISK_RT_DBREG_REAL32 && layout.width != 32) ||
-          (layout.kind == OBELISK_RT_DBREG_REAL64 && layout.width != 64) ||
-          (layout.kind == OBELISK_RT_DBREG_STRING && layout.width != 64) ||
+          (layout.kind == TALOS_RT_DBREG_REAL32 && layout.width != 32) ||
+          (layout.kind == TALOS_RT_DBREG_REAL64 && layout.width != 64) ||
+          (layout.kind == TALOS_RT_DBREG_STRING && layout.width != 64) ||
           read16(layoutRecord + 2) != 0 || read64(layoutRecord + 32) != 0 ||
           (layout.flags & ~allowedFlags) != 0 ||
-          (layout.kind == OBELISK_RT_DBREG_MANAGED && layout.flags &&
+          (layout.kind == TALOS_RT_DBREG_MANAGED && layout.flags &&
            (layout.flags & (layout.flags - 1))) ||
-          (opaqueFlags && (layout.flags & OBELISK_RT_DBREG_SIGNED)) ||
+          (opaqueFlags && (layout.flags & TALOS_RT_DBREG_SIGNED)) ||
           (opaqueFlags && (opaqueFlags & (opaqueFlags - 1))) ||
           layout.offset % 8 != 0 || layout.offset < previousEnd ||
           layout.offset > function.scratchSize ||
@@ -2693,7 +2693,7 @@ bool validateImage(const Image &image) {
                       functionIndex);
       previousContinuation = entry.id;
     }
-    if ((function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 &&
+    if ((function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) == 0 &&
         continuationAt(image, function.firstContinuation).instruction !=
             function.firstInstruction)
       return reject(__LINE__,
@@ -2716,14 +2716,14 @@ bool validateImage(const Image &image) {
         if (!reg(index))
           return false;
         uint8_t kind = layoutAt(image, function, index).kind;
-        return kind == OBELISK_RT_DBREG_BITS || kind == OBELISK_RT_DBREG_LOGIC;
+        return kind == TALOS_RT_DBREG_BITS || kind == TALOS_RT_DBREG_LOGIC;
       };
       auto floating = [&](uint32_t index) {
         if (!reg(index))
           return false;
         uint8_t kind = layoutAt(image, function, index).kind;
-        return kind == OBELISK_RT_DBREG_REAL32 ||
-               kind == OBELISK_RT_DBREG_REAL64;
+        return kind == TALOS_RT_DBREG_REAL32 ||
+               kind == TALOS_RT_DBREG_REAL64;
       };
       auto binary = [&] {
         return reg(instruction.destination) && reg(instruction.source0) &&
@@ -2734,14 +2734,14 @@ bool validateImage(const Image &image) {
                           layoutAt(image, function, instruction.source1));
       };
       switch (instruction.opcode) {
-      case OBELISK_RT_DB_NOP:
+      case TALOS_RT_DB_NOP:
         if (instruction.flags || instruction.destination ||
             instruction.source0 || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_CONSTANT: {
+      case TALOS_RT_DB_CONSTANT: {
         if (!reg(instruction.destination) || instruction.flags ||
             instruction.source0 || instruction.source1 || instruction.source2 ||
             instruction.auxiliary)
@@ -2754,7 +2754,7 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         break;
       }
-      case OBELISK_RT_DB_MOVE:
+      case TALOS_RT_DB_MOVE:
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.destination) || !reg(instruction.source0) ||
@@ -2763,7 +2763,7 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_BITCAST:
+      case TALOS_RT_DB_BITCAST:
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.destination) || !reg(instruction.source0) ||
@@ -2773,7 +2773,7 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_NOT:
+      case TALOS_RT_DB_NOT:
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.destination) || !reg(instruction.source0) ||
@@ -2782,7 +2782,7 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_POPCOUNT: {
+      case TALOS_RT_DB_POPCOUNT: {
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.destination) || !reg(instruction.source0))
@@ -2790,14 +2790,14 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         Layout destination = layoutAt(image, function, instruction.destination);
         Layout source = layoutAt(image, function, instruction.source0);
-        if (destination.kind != OBELISK_RT_DBREG_BITS ||
-            source.kind != OBELISK_RT_DBREG_BITS ||
+        if (destination.kind != TALOS_RT_DBREG_BITS ||
+            source.kind != TALOS_RT_DBREG_BITS ||
             destination.width != source.width)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
       }
-      case OBELISK_RT_DB_POWER:
+      case TALOS_RT_DB_POWER:
         if (instruction.flags || instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !numeric(instruction.destination) ||
             !numeric(instruction.source0) || !numeric(instruction.source1) ||
@@ -2806,7 +2806,7 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_REPLICATE: {
+      case TALOS_RT_DB_REPLICATE: {
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate == 0 ||
             !numeric(instruction.destination) || !numeric(instruction.source0))
@@ -2821,37 +2821,37 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         break;
       }
-      case OBELISK_RT_DB_REDUCE:
+      case TALOS_RT_DB_REDUCE:
         if (instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !numeric(instruction.destination) ||
             !numeric(instruction.source0) ||
-            instruction.flags > OBELISK_RT_DB_REDUCE_LOGICAL_VALUE ||
+            instruction.flags > TALOS_RT_DB_REDUCE_LOGICAL_VALUE ||
             layoutAt(image, function, instruction.destination).width != 1)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_EXTRACT:
+      case TALOS_RT_DB_EXTRACT:
         if (instruction.source2 || instruction.auxiliary ||
             (instruction.source1 != kInvalidRegister &&
              !numeric(instruction.source1)))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
-        if (instruction.flags == OBELISK_RT_DB_AGGREGATE_MANAGED) {
+        if (instruction.flags == TALOS_RT_DB_AGGREGATE_MANAGED) {
           if (!reg(instruction.destination) || !reg(instruction.source0))
             return reject(__LINE__, "invalid instruction encoding or operands",
                           functionIndex, pc, instruction.opcode);
           Layout destination =
               layoutAt(image, function, instruction.destination);
           Layout source = layoutAt(image, function, instruction.source0);
-          bool extractHandle = (destination.kind == OBELISK_RT_DBREG_MANAGED ||
-                                destination.kind == OBELISK_RT_DBREG_STRING) &&
+          bool extractHandle = (destination.kind == TALOS_RT_DBREG_MANAGED ||
+                                destination.kind == TALOS_RT_DBREG_STRING) &&
                                destination.width == 64 &&
                                numeric(instruction.source0);
           bool insertHandle =
               numeric(instruction.destination) &&
-              (source.kind == OBELISK_RT_DBREG_MANAGED ||
-               source.kind == OBELISK_RT_DBREG_STRING) &&
+              (source.kind == TALOS_RT_DBREG_MANAGED ||
+               source.kind == TALOS_RT_DBREG_STRING) &&
               source.width == 64 && instruction.source1 == kInvalidRegister &&
               instruction.immediate == 0 && destination.width >= 64;
           if (extractHandle && instruction.source1 == kInvalidRegister &&
@@ -2863,40 +2863,40 @@ bool validateImage(const Image &image) {
           if (!extractHandle && !insertHandle)
             return reject(__LINE__, "invalid instruction encoding or operands",
                           functionIndex, pc, instruction.opcode);
-        } else if (instruction.flags > OBELISK_RT_DB_EXTRACT_SIGN_EXTEND ||
+        } else if (instruction.flags > TALOS_RT_DB_EXTRACT_SIGN_EXTEND ||
                    !numeric(instruction.destination) ||
                    !numeric(instruction.source0)) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         }
         break;
-      case OBELISK_RT_DB_AND:
-      case OBELISK_RT_DB_OR:
-      case OBELISK_RT_DB_XOR:
-      case OBELISK_RT_DB_ADD:
-      case OBELISK_RT_DB_SUB:
-      case OBELISK_RT_DB_MUL:
-      case OBELISK_RT_DB_UDIV:
-      case OBELISK_RT_DB_SDIV:
-      case OBELISK_RT_DB_UREM:
-      case OBELISK_RT_DB_SREM:
+      case TALOS_RT_DB_AND:
+      case TALOS_RT_DB_OR:
+      case TALOS_RT_DB_XOR:
+      case TALOS_RT_DB_ADD:
+      case TALOS_RT_DB_SUB:
+      case TALOS_RT_DB_MUL:
+      case TALOS_RT_DB_UDIV:
+      case TALOS_RT_DB_SDIV:
+      case TALOS_RT_DB_UREM:
+      case TALOS_RT_DB_SREM:
         if (instruction.flags || instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !binary())
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_FADD:
-      case OBELISK_RT_DB_FSUB:
-      case OBELISK_RT_DB_FMUL:
-      case OBELISK_RT_DB_FDIV:
-      case OBELISK_RT_DB_FPOW:
+      case TALOS_RT_DB_FADD:
+      case TALOS_RT_DB_FSUB:
+      case TALOS_RT_DB_FMUL:
+      case TALOS_RT_DB_FDIV:
+      case TALOS_RT_DB_FPOW:
         if (instruction.flags || instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !binary() ||
             !floating(instruction.destination))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_FNEG:
+      case TALOS_RT_DB_FNEG:
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.destination) || !reg(instruction.source0) ||
@@ -2906,13 +2906,13 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_FCOMPARE: {
-        if (instruction.flags > OBELISK_RT_DB_FCMP_GE || instruction.source2 ||
+      case TALOS_RT_DB_FCOMPARE: {
+        if (instruction.flags > TALOS_RT_DB_FCMP_GE || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.destination) ||
             !numeric(instruction.destination) ||
             layoutAt(image, function, instruction.destination).kind !=
-                OBELISK_RT_DBREG_BITS ||
+                TALOS_RT_DBREG_BITS ||
             layoutAt(image, function, instruction.destination).width != 1 ||
             !floating(instruction.source0) || !floating(instruction.source1) ||
             !compatible(layoutAt(image, function, instruction.source0),
@@ -2921,31 +2921,31 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         break;
       }
-      case OBELISK_RT_DB_FEXT:
+      case TALOS_RT_DB_FEXT:
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.destination) || !reg(instruction.source0) ||
             layoutAt(image, function, instruction.destination).kind !=
-                OBELISK_RT_DBREG_REAL64 ||
+                TALOS_RT_DBREG_REAL64 ||
             layoutAt(image, function, instruction.source0).kind !=
-                OBELISK_RT_DBREG_REAL32)
+                TALOS_RT_DBREG_REAL32)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_FTRUNC:
+      case TALOS_RT_DB_FTRUNC:
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.destination) || !reg(instruction.source0) ||
             layoutAt(image, function, instruction.destination).kind !=
-                OBELISK_RT_DBREG_REAL32 ||
+                TALOS_RT_DBREG_REAL32 ||
             layoutAt(image, function, instruction.source0).kind !=
-                OBELISK_RT_DBREG_REAL64)
+                TALOS_RT_DBREG_REAL64)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_SHL:
-      case OBELISK_RT_DB_LSHR:
-      case OBELISK_RT_DB_ASHR:
+      case TALOS_RT_DB_SHL:
+      case TALOS_RT_DB_LSHR:
+      case TALOS_RT_DB_ASHR:
         if (instruction.flags || instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.destination) ||
             !reg(instruction.source0) || !numeric(instruction.source1) ||
@@ -2954,44 +2954,44 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_COMPARE: {
-        bool deterministic = instruction.flags == OBELISK_RT_DB_CMP_CASE_EQ ||
-                             instruction.flags == OBELISK_RT_DB_CMP_CASE_NE ||
-                             instruction.flags == OBELISK_RT_DB_CMP_CASEZ_EQ ||
-                             instruction.flags == OBELISK_RT_DB_CMP_CASEXZ_EQ;
+      case TALOS_RT_DB_COMPARE: {
+        bool deterministic = instruction.flags == TALOS_RT_DB_CMP_CASE_EQ ||
+                             instruction.flags == TALOS_RT_DB_CMP_CASE_NE ||
+                             instruction.flags == TALOS_RT_DB_CMP_CASEZ_EQ ||
+                             instruction.flags == TALOS_RT_DB_CMP_CASEXZ_EQ;
         if (instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.destination) ||
             !reg(instruction.source0) || !reg(instruction.source1) ||
-            instruction.flags > OBELISK_RT_DB_CMP_CASEXZ_EQ ||
+            instruction.flags > TALOS_RT_DB_CMP_CASEXZ_EQ ||
             !compatible(layoutAt(image, function, instruction.source0),
                         layoutAt(image, function, instruction.source1)) ||
             !numeric(instruction.destination) ||
             layoutAt(image, function, instruction.destination).width != 1 ||
             (deterministic &&
              layoutAt(image, function, instruction.destination).kind !=
-                 OBELISK_RT_DBREG_BITS))
+                 TALOS_RT_DBREG_BITS))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
       }
-      case OBELISK_RT_DB_SELECT:
-        if (instruction.flags > OBELISK_RT_DB_SELECT_FOUR_STATE ||
+      case TALOS_RT_DB_SELECT:
+        if (instruction.flags > TALOS_RT_DB_SELECT_FOUR_STATE ||
             instruction.auxiliary || instruction.immediate || !binary() ||
             !numeric(instruction.source2) ||
             layoutAt(image, function, instruction.source2).width != 1 ||
-            (instruction.flags == OBELISK_RT_DB_SELECT_FOUR_STATE &&
+            (instruction.flags == TALOS_RT_DB_SELECT_FOUR_STATE &&
              (layoutAt(image, function, instruction.destination).kind !=
-                  OBELISK_RT_DBREG_LOGIC ||
+                  TALOS_RT_DBREG_LOGIC ||
               layoutAt(image, function, instruction.source0).kind !=
-                  OBELISK_RT_DBREG_LOGIC ||
+                  TALOS_RT_DBREG_LOGIC ||
               layoutAt(image, function, instruction.source1).kind !=
-                  OBELISK_RT_DBREG_LOGIC ||
+                  TALOS_RT_DBREG_LOGIC ||
               layoutAt(image, function, instruction.source2).kind !=
-                  OBELISK_RT_DBREG_LOGIC)))
+                  TALOS_RT_DBREG_LOGIC)))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_CONCAT: {
+      case TALOS_RT_DB_CONCAT: {
         if (instruction.flags || instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.destination) ||
             !reg(instruction.source0) || !reg(instruction.source1))
@@ -3006,7 +3006,7 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         break;
       }
-      case OBELISK_RT_DB_INSERT: {
+      case TALOS_RT_DB_INSERT: {
         if (instruction.auxiliary || !numeric(instruction.destination) ||
             !numeric(instruction.source0) ||
             !compatible(layoutAt(image, function, instruction.destination),
@@ -3015,11 +3015,11 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         Layout destination = layoutAt(image, function, instruction.destination);
         Layout inserted = layoutAt(image, function, instruction.source1);
-        bool dynamic = (instruction.flags & OBELISK_RT_DB_INSERT_DYNAMIC) != 0;
+        bool dynamic = (instruction.flags & TALOS_RT_DB_INSERT_DYNAMIC) != 0;
         bool managedWord =
-            (instruction.flags & OBELISK_RT_DB_AGGREGATE_MANAGED) != 0;
-        if (instruction.flags & ~uint16_t(OBELISK_RT_DB_INSERT_DYNAMIC |
-                                          OBELISK_RT_DB_AGGREGATE_MANAGED))
+            (instruction.flags & TALOS_RT_DB_AGGREGATE_MANAGED) != 0;
+        if (instruction.flags & ~uint16_t(TALOS_RT_DB_INSERT_DYNAMIC |
+                                          TALOS_RT_DB_AGGREGATE_MANAGED))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         if (dynamic &&
@@ -3031,8 +3031,8 @@ bool validateImage(const Image &image) {
           // 64 bits wide and 64-bit aligned; a dynamic offset is a multiple of
           // the element span, which the compiler keeps aligned, so only the
           // static form can check the position here.
-          if ((inserted.kind != OBELISK_RT_DBREG_MANAGED &&
-               inserted.kind != OBELISK_RT_DBREG_STRING) ||
+          if ((inserted.kind != TALOS_RT_DBREG_MANAGED &&
+               inserted.kind != TALOS_RT_DBREG_STRING) ||
               inserted.width != 64 ||
               (!dynamic && (instruction.immediate & 63) != 0))
             return reject(__LINE__, "invalid instruction encoding or operands",
@@ -3048,25 +3048,25 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         break;
       }
-      case OBELISK_RT_DB_LOAD_FRAME:
-      case OBELISK_RT_DB_STORE_FRAME: {
+      case TALOS_RT_DB_LOAD_FRAME:
+      case TALOS_RT_DB_STORE_FRAME: {
         if (instruction.source2 ||
-            (instruction.opcode == OBELISK_RT_DB_LOAD_FRAME
+            (instruction.opcode == TALOS_RT_DB_LOAD_FRAME
                  ? instruction.source0 != 0
                  : instruction.destination != 0))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
-        uint32_t valueRegister = instruction.opcode == OBELISK_RT_DB_LOAD_FRAME
+        uint32_t valueRegister = instruction.opcode == TALOS_RT_DB_LOAD_FRAME
                                      ? instruction.destination
                                      : instruction.source0;
         if (!reg(valueRegister))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         Layout value = layoutAt(image, function, valueRegister);
-        if (value.kind == OBELISK_RT_DBREG_HANDLE) {
-          if (instruction.flags < OBELISK_RT_DESCRIPTOR_STORAGE ||
-              instruction.flags > OBELISK_RT_DESCRIPTOR_PROCESS ||
-              (instruction.flags <= OBELISK_RT_DESCRIPTOR_DRIVER
+        if (value.kind == TALOS_RT_DBREG_HANDLE) {
+          if (instruction.flags < TALOS_RT_DESCRIPTOR_STORAGE ||
+              instruction.flags > TALOS_RT_DESCRIPTOR_PROCESS ||
+              (instruction.flags <= TALOS_RT_DESCRIPTOR_DRIVER
                    ? instruction.auxiliary == 0
                    : instruction.auxiliary != 0))
             return reject(__LINE__, "invalid instruction encoding or operands",
@@ -3075,7 +3075,7 @@ bool validateImage(const Image &image) {
                    instruction.auxiliary > value.size) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
-        } else if (value.kind == OBELISK_RT_DBREG_LOGIC &&
+        } else if (value.kind == TALOS_RT_DBREG_LOGIC &&
                    (instruction.auxiliary % 2 != 0 ||
                     (instruction.source1 != 0 &&
                      instruction.source1 < instruction.auxiliary / 2))) {
@@ -3085,171 +3085,171 @@ bool validateImage(const Image &image) {
           return reject(__LINE__,
                         "four-state frame transfer is not a plane pair",
                         functionIndex, pc, instruction.opcode);
-        } else if (value.kind != OBELISK_RT_DBREG_LOGIC &&
+        } else if (value.kind != TALOS_RT_DBREG_LOGIC &&
                    instruction.source1 != 0) {
           return reject(__LINE__, "secondary frame offset on two-state value",
                         functionIndex, pc, instruction.opcode);
         }
         break;
       }
-      case OBELISK_RT_DB_CLEAR_FRAME_ROOT:
-      case OBELISK_RT_DB_FRAME_ROOT: {
+      case TALOS_RT_DB_CLEAR_FRAME_ROOT:
+      case TALOS_RT_DB_FRAME_ROOT: {
         uint64_t canonicalSize =
-            (function.flags & OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
+            (function.flags & TALOS_RT_DESIGN_FUNCTION_FRAME_SIZE_MASK) >> 1;
         bool candidate = instruction.flags == 1;
         if (instruction.flags > 1 ||
             (candidate ? instruction.destination == 0 ||
                              (instruction.destination &
-                              ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0
+                              ~TALOS_RT_MANAGED_ROOT_KIND_ALL) != 0
                        : instruction.destination != 0) ||
             instruction.source0 || instruction.source1 || instruction.source2 ||
             instruction.auxiliary ||
-            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+            (function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             instruction.immediate > canonicalSize ||
-            sizeof(obelisk_rt_managed_word_v1) >
+            sizeof(talos_rt_managed_word_v1) >
                 canonicalSize - instruction.immediate)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
       }
-      case OBELISK_RT_DB_MAKE_HANDLE:
+      case TALOS_RT_DB_MAKE_HANDLE:
         if (instruction.flags || !reg(instruction.destination) ||
             layoutAt(image, function, instruction.destination).kind !=
-                OBELISK_RT_DBREG_HANDLE ||
-            instruction.source0 < OBELISK_RT_DESCRIPTOR_STORAGE ||
-            instruction.source0 > OBELISK_RT_DESCRIPTOR_EVENT ||
+                TALOS_RT_DBREG_HANDLE ||
+            instruction.source0 < TALOS_RT_DESCRIPTOR_STORAGE ||
+            instruction.source0 > TALOS_RT_DESCRIPTOR_EVENT ||
             instruction.source2 || instruction.auxiliary)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_MAKE_LOCAL_HANDLE:
+      case TALOS_RT_DB_MAKE_LOCAL_HANDLE:
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.destination) ||
             layoutAt(image, function, instruction.destination).kind !=
-                OBELISK_RT_DBREG_HANDLE ||
+                TALOS_RT_DBREG_HANDLE ||
             (!numeric(instruction.source0) && !floating(instruction.source0)) ||
             instruction.source0 > UINT16_MAX)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_HANDLE_OFFSET:
+      case TALOS_RT_DB_HANDLE_OFFSET:
         if (instruction.flags || instruction.source2 ||
             !reg(instruction.destination) || !reg(instruction.source0) ||
             layoutAt(image, function, instruction.destination).kind !=
-                OBELISK_RT_DBREG_HANDLE ||
+                TALOS_RT_DBREG_HANDLE ||
             layoutAt(image, function, instruction.source0).kind !=
-                OBELISK_RT_DBREG_HANDLE ||
+                TALOS_RT_DBREG_HANDLE ||
             instruction.auxiliary == 0 ||
             (instruction.source1 != kInvalidRegister &&
              !numeric(instruction.source1)))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_HANDLE_ID:
+      case TALOS_RT_DB_HANDLE_ID:
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !numeric(instruction.destination) ||
             layoutAt(image, function, instruction.destination).width != 64 ||
             !reg(instruction.source0) ||
             layoutAt(image, function, instruction.source0).kind !=
-                OBELISK_RT_DBREG_HANDLE)
+                TALOS_RT_DBREG_HANDLE)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_LOAD_STATE:
+      case TALOS_RT_DB_LOAD_STATE:
         if (instruction.flags || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             (!numeric(instruction.destination) &&
              !floating(instruction.destination) &&
              (!reg(instruction.destination) ||
               (layoutAt(image, function, instruction.destination).kind !=
-                   OBELISK_RT_DBREG_MANAGED &&
+                   TALOS_RT_DBREG_MANAGED &&
                layoutAt(image, function, instruction.destination).kind !=
-                   OBELISK_RT_DBREG_STRING &&
+                   TALOS_RT_DBREG_STRING &&
                layoutAt(image, function, instruction.destination).kind !=
-                   OBELISK_RT_DBREG_HANDLE))) ||
+                   TALOS_RT_DBREG_HANDLE))) ||
             !reg(instruction.source0) ||
             layoutAt(image, function, instruction.source0).kind !=
-                OBELISK_RT_DBREG_HANDLE)
+                TALOS_RT_DBREG_HANDLE)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_STORE_STATE:
+      case TALOS_RT_DB_STORE_STATE:
         if ((instruction.flags &
-             ~(OBELISK_RT_DB_STORE_STATE_CHANGED |
-               OBELISK_RT_DB_STORE_STATE_CONTINUOUS |
-               OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION)) != 0 ||
-            ((instruction.flags & OBELISK_RT_DB_STORE_STATE_CHANGED) != 0
+             ~(TALOS_RT_DB_STORE_STATE_CHANGED |
+               TALOS_RT_DB_STORE_STATE_CONTINUOUS |
+               TALOS_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION)) != 0 ||
+            ((instruction.flags & TALOS_RT_DB_STORE_STATE_CHANGED) != 0
                  ? (!reg(instruction.destination) ||
                     layoutAt(image, function, instruction.destination).width !=
                         1)
                  : instruction.destination != 0) ||
-            ((instruction.flags & OBELISK_RT_DB_STORE_STATE_CONTINUOUS) != 0 &&
+            ((instruction.flags & TALOS_RT_DB_STORE_STATE_CONTINUOUS) != 0 &&
              !numeric(instruction.source1) && !floating(instruction.source1) &&
              (!reg(instruction.source1) ||
               layoutAt(image, function, instruction.source1).kind !=
-                  OBELISK_RT_DBREG_STRING)) ||
+                  TALOS_RT_DBREG_STRING)) ||
             instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.source0) ||
             (!numeric(instruction.source1) && !floating(instruction.source1) &&
              (!reg(instruction.source1) ||
               (layoutAt(image, function, instruction.source1).kind !=
-                   OBELISK_RT_DBREG_MANAGED &&
+                   TALOS_RT_DBREG_MANAGED &&
                layoutAt(image, function, instruction.source1).kind !=
-                   OBELISK_RT_DBREG_STRING &&
+                   TALOS_RT_DBREG_STRING &&
                layoutAt(image, function, instruction.source1).kind !=
-                   OBELISK_RT_DBREG_HANDLE))) ||
+                   TALOS_RT_DBREG_HANDLE))) ||
             (reg(instruction.source1) &&
              layoutAt(image, function, instruction.source1).kind ==
-                 OBELISK_RT_DBREG_HANDLE &&
+                 TALOS_RT_DBREG_HANDLE &&
              instruction.flags != 0) ||
             layoutAt(image, function, instruction.source0).kind !=
-                OBELISK_RT_DBREG_HANDLE)
+                TALOS_RT_DBREG_HANDLE)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_OVERRIDE_STATE:
-        if ((instruction.flags & ~OBELISK_RT_DB_OVERRIDE_FLAG_MASK) != 0 ||
-            ((instruction.flags & OBELISK_RT_DB_OVERRIDE_CLAIM) != 0 &&
-             (instruction.flags & OBELISK_RT_DB_OVERRIDE_DYNAMIC) == 0) ||
+      case TALOS_RT_DB_OVERRIDE_STATE:
+        if ((instruction.flags & ~TALOS_RT_DB_OVERRIDE_FLAG_MASK) != 0 ||
+            ((instruction.flags & TALOS_RT_DB_OVERRIDE_CLAIM) != 0 &&
+             (instruction.flags & TALOS_RT_DB_OVERRIDE_DYNAMIC) == 0) ||
             instruction.destination || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.source0) ||
             (!numeric(instruction.source1) && !floating(instruction.source1) &&
              layoutAt(image, function, instruction.source1).kind !=
-                 OBELISK_RT_DBREG_MANAGED &&
+                 TALOS_RT_DBREG_MANAGED &&
              layoutAt(image, function, instruction.source1).kind !=
-                 OBELISK_RT_DBREG_STRING) ||
-            ((instruction.flags & OBELISK_RT_DB_OVERRIDE_DYNAMIC) != 0
+                 TALOS_RT_DBREG_STRING) ||
+            ((instruction.flags & TALOS_RT_DB_OVERRIDE_DYNAMIC) != 0
                  ? (!reg(instruction.source2) ||
                     layoutAt(image, function, instruction.source2).kind !=
-                        OBELISK_RT_DBREG_BITS ||
+                        TALOS_RT_DBREG_BITS ||
                     layoutAt(image, function, instruction.source2).width != 64)
                  : instruction.source2 != 0) ||
             layoutAt(image, function, instruction.source0).kind !=
-                OBELISK_RT_DBREG_HANDLE)
+                TALOS_RT_DBREG_HANDLE)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_RELEASE_STATE:
-        if (instruction.flags > OBELISK_RT_DB_OVERRIDE_ASSIGN ||
+      case TALOS_RT_DB_RELEASE_STATE:
+        if (instruction.flags > TALOS_RT_DB_OVERRIDE_ASSIGN ||
             instruction.destination || instruction.source1 ||
             instruction.source2 || instruction.auxiliary ||
             instruction.immediate || !reg(instruction.source0) ||
             layoutAt(image, function, instruction.source0).kind !=
-                OBELISK_RT_DBREG_HANDLE)
+                TALOS_RT_DBREG_HANDLE)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_JUMP:
-      case OBELISK_RT_DB_BRANCH:
+      case TALOS_RT_DB_JUMP:
+      case TALOS_RT_DB_BRANCH:
         if (instruction.flags || instruction.source2 || instruction.auxiliary ||
-            (instruction.opcode == OBELISK_RT_DB_JUMP
+            (instruction.opcode == TALOS_RT_DB_JUMP
                  ? instruction.destination != 0
                  : false) ||
             instruction.immediate < function.firstInstruction ||
             instruction.immediate >= codeEnd ||
-            (instruction.opcode == OBELISK_RT_DB_BRANCH &&
+            (instruction.opcode == TALOS_RT_DB_BRANCH &&
              (!numeric(instruction.destination) ||
               layoutAt(image, function, instruction.destination).width != 1)) ||
             !validMap(image, function, function, instruction.source0,
@@ -3257,13 +3257,13 @@ bool validateImage(const Image &image) {
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_CALL: {
+      case TALOS_RT_DB_CALL: {
         if (instruction.flags || instruction.destination ||
             instruction.source0 >= image.functionCount)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         Function callee = functionAt(image, instruction.source0);
-        if ((callee.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
+        if ((callee.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
             instruction.source2 != callee.argumentCount ||
             instruction.immediate != callee.resultCount ||
             !validMap(image, function, callee, instruction.source1,
@@ -3283,16 +3283,16 @@ bool validateImage(const Image &image) {
                           functionIndex, pc, instruction.opcode);
         break;
       }
-      case OBELISK_RT_DB_TASK_CALL: {
+      case TALOS_RT_DB_TASK_CALL: {
         if (instruction.flags || instruction.destination ||
             instruction.source0 >= image.functionCount ||
             instruction.auxiliary ||
-            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+            (function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             !hasContinuation(instruction.immediate))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         Function callee = functionAt(image, instruction.source0);
-        if ((callee.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+        if ((callee.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             callee.resultCount != 0 ||
             instruction.source2 != callee.argumentCount ||
             !validMap(image, function, callee, instruction.source1,
@@ -3305,15 +3305,15 @@ bool validateImage(const Image &image) {
                           functionIndex, pc, instruction.opcode);
         break;
       }
-      case OBELISK_RT_DB_VIRTUAL_CALL:
-      case OBELISK_RT_DB_INTERFACE_CALL: {
+      case TALOS_RT_DB_VIRTUAL_CALL:
+      case TALOS_RT_DB_INTERFACE_CALL: {
         bool interfaceDispatch =
-            instruction.opcode == OBELISK_RT_DB_INTERFACE_CALL;
+            instruction.opcode == TALOS_RT_DB_INTERFACE_CALL;
         if (instruction.flags > function.layoutCount ||
             instruction.immediate == 0 || instruction.source2 < 2 ||
             !reg(instruction.source0) ||
             layoutAt(image, function, instruction.source0).kind !=
-                OBELISK_RT_DBREG_MANAGED ||
+                TALOS_RT_DBREG_MANAGED ||
             instruction.source1 > image.operandCount ||
             instruction.source2 > image.operandCount - instruction.source1 ||
             instruction.auxiliary > image.operandCount ||
@@ -3340,17 +3340,17 @@ bool validateImage(const Image &image) {
         }
         break;
       }
-      case OBELISK_RT_DB_VIRTUAL_TASK_CALL:
-      case OBELISK_RT_DB_INTERFACE_TASK_CALL: {
+      case TALOS_RT_DB_VIRTUAL_TASK_CALL:
+      case TALOS_RT_DB_INTERFACE_TASK_CALL: {
         bool interfaceDispatch =
-            instruction.opcode == OBELISK_RT_DB_INTERFACE_TASK_CALL;
+            instruction.opcode == TALOS_RT_DB_INTERFACE_TASK_CALL;
         if (instruction.flags || instruction.immediate == 0 ||
             instruction.source2 < 2 ||
-            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+            (function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             !hasContinuation(instruction.auxiliary) ||
             !reg(instruction.source0) ||
             layoutAt(image, function, instruction.source0).kind !=
-                OBELISK_RT_DBREG_MANAGED ||
+                TALOS_RT_DBREG_MANAGED ||
             instruction.source1 > image.operandCount ||
             instruction.source2 > image.operandCount - instruction.source1 ||
             (interfaceDispatch &&
@@ -3368,11 +3368,11 @@ bool validateImage(const Image &image) {
         }
         break;
       }
-      case OBELISK_RT_DB_RETURN:
+      case TALOS_RT_DB_RETURN:
         if (instruction.flags || instruction.destination ||
             instruction.source2 || instruction.auxiliary ||
             instruction.immediate ||
-            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
+            (function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
             instruction.source1 != function.resultCount ||
             !validMap(image, function, function, instruction.source0,
                       instruction.source1))
@@ -3384,63 +3384,63 @@ bool validateImage(const Image &image) {
             return reject(__LINE__, "invalid instruction encoding or operands",
                           functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_CONTINUE:
+      case TALOS_RT_DB_CONTINUE:
         if (instruction.flags || instruction.destination ||
             instruction.source0 || instruction.source1 || instruction.source2 ||
             instruction.auxiliary ||
-            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+            (function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             !hasContinuation(instruction.immediate))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_PROCESS_CONTROL:
-        if (instruction.flags > OBELISK_RT_PROCESS_CONTROL_RESUME ||
+      case TALOS_RT_DB_PROCESS_CONTROL:
+        if (instruction.flags > TALOS_RT_PROCESS_CONTROL_RESUME ||
             instruction.destination || instruction.source1 ||
             instruction.source2 || instruction.auxiliary ||
-            ((function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 &&
-             instruction.flags == OBELISK_RT_PROCESS_CONTROL_SUSPEND) ||
+            ((function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) == 0 &&
+             instruction.flags == TALOS_RT_PROCESS_CONTROL_SUSPEND) ||
             !hasContinuation(instruction.immediate) ||
             !reg(instruction.source0) ||
             layoutAt(image, function, instruction.source0).kind !=
-                OBELISK_RT_DBREG_BITS ||
+                TALOS_RT_DBREG_BITS ||
             layoutAt(image, function, instruction.source0).width != 64)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_SUSPEND: {
-        if (instruction.flags < OBELISK_RT_SUSPEND_DELAY ||
-            instruction.flags > OBELISK_RT_SUSPEND_EVENT_ORDER ||
+      case TALOS_RT_DB_SUSPEND: {
+        if (instruction.flags < TALOS_RT_SUSPEND_DELAY ||
+            instruction.flags > TALOS_RT_SUSPEND_EVENT_ORDER ||
             instruction.destination || instruction.source1 ||
             instruction.source2 ||
             (instruction.auxiliary & ~kResumeActionFlags) != 0 ||
-            !obelisk_rt_valid_resume_action_flags(instruction.auxiliary) ||
+            !talos_rt_valid_resume_action_flags(instruction.auxiliary) ||
             !numeric(instruction.source0) ||
             layoutAt(image, function, instruction.source0).width != 64 ||
-            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+            (function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
             !hasContinuation(instruction.immediate))
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
       }
-      case OBELISK_RT_DB_TERMINATE:
+      case TALOS_RT_DB_TERMINATE:
         if (instruction.flags || instruction.destination ||
             instruction.source0 || instruction.source1 || instruction.source2 ||
             instruction.auxiliary ||
-            (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0)
+            (function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) == 0)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_FAIL:
+      case TALOS_RT_DB_FAIL:
         if (instruction.flags || instruction.destination ||
             instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate ||
             !reg(instruction.source0) ||
             layoutAt(image, function, instruction.source0).kind !=
-                OBELISK_RT_DBREG_STATUS)
+                TALOS_RT_DBREG_STATUS)
           return reject(__LINE__, "invalid instruction encoding or operands",
                         functionIndex, pc, instruction.opcode);
         break;
-      case OBELISK_RT_DB_INTRINSIC:
+      case TALOS_RT_DB_INTRINSIC:
         if (instruction.flags || instruction.destination ||
             instruction.source0 || instruction.source1 || instruction.source2 ||
             instruction.auxiliary || instruction.immediate > UINT32_MAX ||
@@ -3465,8 +3465,8 @@ bool validateImage(const Image &image) {
   return true;
 }
 
-bool loadValidatedImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
-                        obelisk_rt_context *context, Image &image,
+bool loadValidatedImage(const talos_rt_design_bytecode_entry_v1 &entry,
+                        talos_rt_context *context, Image &image,
                         bool inventoryOnly) {
   if (entry.reserved != 0)
     return rejectImage(__LINE__, "bytecode entry reserved field is nonzero");
@@ -3488,83 +3488,83 @@ bool loadValidatedImage(const obelisk_rt_design_bytecode_entry_v1 &entry,
   return parseImage(entry, image, inventoryOnly) && validateImage(image);
 }
 
-} // namespace obelisk::designbytecode
+} // namespace talos::designbytecode
 
-using namespace obelisk::designbytecode;
+using namespace talos::designbytecode;
 
 static bool matchesActivationBytecodeInventory(
-    const obelisk_rt_execution_descriptor_v1 &execution, const Image &image) {
+    const talos_rt_execution_descriptor_v1 &execution, const Image &image) {
   for (uint64_t index = 0; index != execution.activation_count; ++index) {
-    const obelisk_rt_activation_descriptor_v1 &activation =
+    const talos_rt_activation_descriptor_v1 &activation =
         execution.activations[index];
-    if ((activation.flags & OBELISK_RT_ACTIVATION_HAS_BYTECODE) == 0)
+    if ((activation.flags & TALOS_RT_ACTIVATION_HAS_BYTECODE) == 0)
       continue;
     if (activation.bytecode_function >= image.functionCount)
       return rejectImage(__LINE__,
                          "activation bytecode function is out of range");
     Function function = functionAt(image, activation.bytecode_function);
     if (function.id != activation.code_unit_id ||
-        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
+        (function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) == 0 ||
         function.resultCount != 0)
       return rejectImage(
           __LINE__, "activation descriptor does not match bytecode function");
   }
   for (uint64_t index = 0; index != execution.observer_count; ++index) {
-    const obelisk_rt_observer_descriptor_v1 &observer =
+    const talos_rt_observer_descriptor_v1 &observer =
         execution.observers[index];
-    if (observer.bytecode_function == OBELISK_RT_OBSERVER_NO_BYTECODE)
+    if (observer.bytecode_function == TALOS_RT_OBSERVER_NO_BYTECODE)
       continue;
     if (observer.bytecode_function >= image.functionCount)
       return rejectImage(__LINE__,
                          "observer bytecode function is out of range");
     Function function = functionAt(image, observer.bytecode_function);
     if (function.id != observer.code_unit_id ||
-        (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
+        (function.flags & TALOS_RT_DESIGN_FUNCTION_PROCESS) != 0 ||
         function.resultCount != 1 ||
         function.argumentCount != observer.capture_count + 1)
       return rejectImage(
           __LINE__, "observer descriptor does not match bytecode function");
     Layout result = layoutAt(image, function, function.argumentCount);
-    bool fourState = (observer.flags & OBELISK_RT_OBSERVER_FOUR_STATE) != 0;
-    uint32_t expectedKind = (observer.flags & OBELISK_RT_OBSERVER_REAL32) != 0
-                                ? OBELISK_RT_DBREG_REAL32
-                            : (observer.flags & OBELISK_RT_OBSERVER_REAL64) != 0
-                                ? OBELISK_RT_DBREG_REAL64
-                            : fourState ? OBELISK_RT_DBREG_LOGIC
-                                        : OBELISK_RT_DBREG_BITS;
-    if (layoutAt(image, function, 0).kind != OBELISK_RT_DBREG_HANDLE ||
+    bool fourState = (observer.flags & TALOS_RT_OBSERVER_FOUR_STATE) != 0;
+    uint32_t expectedKind = (observer.flags & TALOS_RT_OBSERVER_REAL32) != 0
+                                ? TALOS_RT_DBREG_REAL32
+                            : (observer.flags & TALOS_RT_OBSERVER_REAL64) != 0
+                                ? TALOS_RT_DBREG_REAL64
+                            : fourState ? TALOS_RT_DBREG_LOGIC
+                                        : TALOS_RT_DBREG_BITS;
+    if (layoutAt(image, function, 0).kind != TALOS_RT_DBREG_HANDLE ||
         layoutAt(image, function, 0).size != 32 ||
         result.width != observer.result_width || result.kind != expectedKind)
       return rejectImage(__LINE__,
                          "observer layout does not match bytecode function");
     for (uint32_t capture = 0; capture != observer.capture_count; ++capture) {
       Layout captureLayout = layoutAt(image, function, capture + 1);
-      const obelisk_rt_observer_capture_abi_v1 &abi =
+      const talos_rt_observer_capture_abi_v1 &abi =
           observer.capture_abi[capture];
-      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF) {
-        if (captureLayout.kind != OBELISK_RT_DBREG_ARGUMENT_REF ||
+      if (abi.kind == TALOS_RT_OBSERVER_CAPTURE_ARGUMENT_REF) {
+        if (captureLayout.kind != TALOS_RT_DBREG_ARGUMENT_REF ||
             captureLayout.size != 24)
           return rejectImage(
               __LINE__,
               "argument-ref observer capture layout is not a 24-byte alias");
         continue;
       }
-      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_MANAGED) {
-        if (captureLayout.kind != OBELISK_RT_DBREG_MANAGED ||
+      if (abi.kind == TALOS_RT_OBSERVER_CAPTURE_MANAGED) {
+        if (captureLayout.kind != TALOS_RT_DBREG_MANAGED ||
             captureLayout.size != 8)
           return rejectImage(__LINE__,
                              "managed observer capture layout is not a handle");
         continue;
       }
-      if (abi.kind == OBELISK_RT_OBSERVER_CAPTURE_COVERGROUP) {
-        if (captureLayout.kind != OBELISK_RT_DBREG_BITS ||
+      if (abi.kind == TALOS_RT_OBSERVER_CAPTURE_COVERGROUP) {
+        if (captureLayout.kind != TALOS_RT_DBREG_BITS ||
             captureLayout.width != 64 || captureLayout.size != 8)
           return rejectImage(
               __LINE__,
               "covergroup observer capture layout is not an i64 value");
         continue;
       }
-      if (captureLayout.kind != OBELISK_RT_DBREG_HANDLE ||
+      if (captureLayout.kind != TALOS_RT_DBREG_HANDLE ||
           captureLayout.size != 32)
         return rejectImage(__LINE__,
                            "observer capture layout is not a 32-byte handle");
@@ -3573,46 +3573,46 @@ static bool matchesActivationBytecodeInventory(
   return true;
 }
 
-obelisk_rt_status obelisk_rt_initialize_design_bytecode_image(
-    const obelisk_rt_execution_descriptor_v1 &execution,
+talos_rt_status talos_rt_initialize_design_bytecode_image(
+    const talos_rt_execution_descriptor_v1 &execution,
     Image &outImage) noexcept {
-  if ((execution.flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
-    obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+  if ((execution.flags & TALOS_RT_EXECUTION_HAS_BYTECODE) == 0)
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
+    talos_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
     Image image;
     if (!parseImage(entry, image, /*inventoryOnly=*/true) ||
         !validateImage(image) ||
         !matchesActivationBytecodeInventory(execution, image))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     outImage = image;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL {
     rejectImage(__LINE__, "exception while validating bytecode image");
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   }
 }
 
-obelisk_rt_status obelisk_rt_validate_design_bytecode(
-    const obelisk_rt_design_bytecode_entry_v1 &entry,
-    obelisk_rt_context *context, uint64_t *outScratchSize,
+talos_rt_status talos_rt_validate_design_bytecode(
+    const talos_rt_design_bytecode_entry_v1 &entry,
+    talos_rt_context *context, uint64_t *outScratchSize,
     uint64_t *outScratchAlignment) noexcept {
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     Image image;
     if (!loadValidatedImage(entry, context, image))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     Function function = functionAt(image, entry.function);
     if (outScratchSize)
       *outScratchSize = function.scratchSize;
     if (outScratchAlignment)
       *outScratchAlignment = function.scratchAlignment;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL {
     rejectImage(__LINE__, "exception while loading bytecode image");
-    return OBELISK_RT_INVALID_BYTECODE;
+    return TALOS_RT_INVALID_BYTECODE;
   }
 }

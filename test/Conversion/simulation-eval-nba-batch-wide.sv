@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt --test-obelisk-native-backend='scheduler=eval timing=true' -o %t.mlir 2> %t.trace
+// RUN: talos -emit-slang %s | talos-opt --test-talos-native-backend='scheduler=eval timing=true' -o %t.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 // RUN: FileCheck %s < %t.mlir
 
@@ -9,16 +9,16 @@
 // batch: the 256-bit `lanes`, the 129-bit four-state `wide` and the `memory`
 // element take the wide and captured-slot forms. Four-state commits report
 // their old and new unknown planes through batch_knownness.
-// TRACE: obelisk native NBA batch: candidates=4 roots=4 private-cone=4 unread=0 wide=3 slots=3
-// CHECK-LABEL: llvm.func @__obelisk_aot_static_nba_commit_v1(
-// CHECK-NOT: llvm.call @obelisk_rt_v1_static_nba_commit_ordered(
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_batch_guard(
-// CHECK-NOT: llvm.call @obelisk_rt_v1_static_nba_commit_ordered(
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_batch_finish(
-// CHECK-NOT: llvm.call @obelisk_rt_v1_static_nba_commit_ordered(
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_batch_knownness(
-// CHECK-NOT: llvm.call @obelisk_rt_v1_static_nba_commit_ordered(
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_commit_roots(
+// TRACE: talos native NBA batch: candidates=4 roots=4 private-cone=4 unread=0 wide=3 slots=3
+// CHECK-LABEL: llvm.func @__talos_aot_static_nba_commit_v1(
+// CHECK-NOT: llvm.call @talos_rt_v1_static_nba_commit_ordered(
+// CHECK: llvm.call @talos_rt_v1_static_nba_batch_guard(
+// CHECK-NOT: llvm.call @talos_rt_v1_static_nba_commit_ordered(
+// CHECK: llvm.call @talos_rt_v1_static_nba_batch_finish(
+// CHECK-NOT: llvm.call @talos_rt_v1_static_nba_commit_ordered(
+// CHECK: llvm.call @talos_rt_v1_static_nba_batch_knownness(
+// CHECK-NOT: llvm.call @talos_rt_v1_static_nba_commit_ordered(
+// CHECK: llvm.call @talos_rt_v1_static_nba_commit_roots(
 
 module native_nba_batch_wide;
   bit clk = 0;

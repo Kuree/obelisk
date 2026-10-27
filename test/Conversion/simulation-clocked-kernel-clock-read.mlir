@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' -o %t.mlir 2> %t.log
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-clocked-kernels))' -o %t.mlir 2> %t.log
 // RUN: FileCheck %s --check-prefix=REPORT < %t.log
 // RUN: FileCheck %s < %t.mlir
 
@@ -9,14 +9,14 @@
 // The kernel therefore admits the checker and reads the source `clk` in its
 // place (4.9.1). A member reading another copy of the clock could see a stale
 // value and a member writing the clock changes its own trigger: both stay out.
-// REPORT: obelisk clocked kernel: __obelisk_clocked_0_258_0 members=2 eligible=1 retained=0 snapshots=0 deferred=0 delayed=0 clock_reads=1
-// REPORT: obelisk clocked kernel rejection: member accesses its clock = 2
+// REPORT: talos clocked kernel: __talos_clocked_0_258_0 members=2 eligible=1 retained=0 snapshots=0 deferred=0 delayed=0 clock_reads=1
+// REPORT: talos clocked kernel rejection: member accesses its clock = 2
 // CHECK-LABEL: simulation.design @clock_read
 // CHECK-NOT: simulation.func private @flop
 // CHECK-NOT: simulation.func private @checker
 // CHECK: simulation.func private @peer_reader
 // CHECK: simulation.func private @clock_writer
-// CHECK-LABEL: simulation.func private @__obelisk_clocked_0_258_0(
+// CHECK-LABEL: simulation.func private @__talos_clocked_0_258_0(
 // CHECK-SAME: %[[CTX:.*]]: !simulation.context {{.*}}, %[[CLK_I:.*]]: !simulation.ref<i1>
 // CHECK: simulation.suspend.edge negedge %[[CLK_I]]
 // The display reads the clock source, not the copy the member waits on.

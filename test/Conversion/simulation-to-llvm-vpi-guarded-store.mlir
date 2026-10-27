@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=off},obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=OFF
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=off},talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=OFF
 
 // A clean procedural store must include its publication in the fast path.
 // Checking only direct plane stores misses capability-only generic fanout.
@@ -48,19 +48,19 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @write_q(
-// CHECK: llvm.mlir.addressof @__obelisk_state_specialization_fast_v1
+// CHECK: llvm.mlir.addressof @__talos_state_specialization_fast_v1
 // CHECK: llvm.cond_br
-// CHECK-NOT: llvm.call @obelisk_rt_v1_static_specialization_guard
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_{{.*}}_plane
-// CHECK: llvm.mlir.addressof @__obelisk_state_value
+// CHECK-NOT: llvm.call @talos_rt_v1_static_specialization_guard
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_{{.*}}_plane
+// CHECK: llvm.mlir.addressof @__talos_state_value
 // CHECK: llvm.store
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_{{.*}}_plane
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition
-// CHECK: llvm.call @obelisk_rt_v1_static_specialization_guard
-// CHECK: llvm.call @obelisk_rt_v1_native_state_store_plane
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_signal_transition
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_{{.*}}_plane
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition
+// CHECK: llvm.call @talos_rt_v1_static_specialization_guard
+// CHECK: llvm.call @talos_rt_v1_native_state_store_plane
+// CHECK: llvm.call @talos_rt_v1_scheduler_signal_transition
 // OFF-LABEL: llvm.func @write_q(
-// OFF-NOT: llvm.mlir.addressof @__obelisk_state_specialization_fast_v1
-// OFF-NOT: llvm.call @obelisk_rt_v1_native_state_{{.*}}_plane
-// OFF: llvm.call @obelisk_rt_v1_scheduler_static_transition
+// OFF-NOT: llvm.mlir.addressof @__talos_state_specialization_fast_v1
+// OFF-NOT: llvm.call @talos_rt_v1_native_state_{{.*}}_plane
+// OFF: llvm.call @talos_rt_v1_scheduler_static_transition
 // OFF: llvm.return

@@ -1,14 +1,14 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
-// CHECK-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_path_known{{[0-9_]*}}(
+// CHECK-LABEL: llvm.func @work.__talos_eval_body_0.__talos_path_known{{[0-9_]*}}(
 // CHECK-NOT: llvm.store
 // CHECK-NOT: llvm.call
 // CHECK: {{^  }}}
-// CHECK-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path{{[0-9_]*}}(
+// CHECK-LABEL: llvm.func @work.__talos_eval_body_0.__talos_checkpoint_path{{[0-9_]*}}(
 // CHECK-NOT: llvm.store
 // CHECK-NOT: llvm.call
 // CHECK: {{^  }}}
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// CHECK: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

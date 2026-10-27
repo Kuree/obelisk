@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
 // Verify typed state-plane initialization directly at the lowering boundary.
@@ -22,8 +22,8 @@ module attributes {
 
 // IEEE 1800-2023 6.7.1, 6.8: initialization is represented by sorted bit
 // ranges. The two-state byte and the padding between four-bit roots stay zero.
-// CHECK: llvm.mlir.global internal constant @__obelisk_state_initializers_v1(dense<[8, 8, 0, 1, 16, 4, 1, 1, 24, 4, 1, 1, 32, 4, 1, 1]> : tensor<16xi64>)
-// CHECK: llvm.mlir.global internal @__obelisk_state_unknown()
+// CHECK: llvm.mlir.global internal constant @__talos_state_initializers_v1(dense<[8, 8, 0, 1, 16, 4, 1, 1, 24, 4, 1, 1, 32, 4, 1, 1]> : tensor<16xi64>)
+// CHECK: llvm.mlir.global internal @__talos_state_unknown()
 // CHECK: llvm.mlir.zero : !llvm.array<13 x i8>
-// CHECK: llvm.mlir.global internal @__obelisk_state_value()
+// CHECK: llvm.mlir.global internal @__talos_state_value()
 // CHECK: llvm.mlir.zero : !llvm.array<13 x i8>

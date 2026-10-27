@@ -2,23 +2,23 @@
 // purpose is to keep UVM-shaped frontend constructs in the driver test suite
 // without importing the external UVM source tree.
 //
-// RUN: obelisk -emit-slang --single-unit -I%S/Inputs/mock_uvm \
+// RUN: talos -emit-slang --single-unit -I%S/Inputs/mock_uvm \
 // RUN:   %S/Inputs/mock_uvm/uvm_pkg.sv %s \
 // RUN:   | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-obelisk --single-unit -I%S/Inputs/mock_uvm \
-// RUN:   %S/Inputs/mock_uvm/uvm_pkg.sv %s | obelisk-opt \
-// RUN:   | FileCheck %s --check-prefix=OBELISK
+// RUN: talos -emit-talos --single-unit -I%S/Inputs/mock_uvm \
+// RUN:   %S/Inputs/mock_uvm/uvm_pkg.sv %s | talos-opt \
+// RUN:   | FileCheck %s --check-prefix=TALOS
 //
 // Each semantic scope is IsolatedFromAbove, so MLIR verifies the module with
 // its thread pool. Multithreaded verification (the default) must accept the
 // UVM-shaped hierarchy and produce exactly the same IR as a single-threaded
 // run; a difference or failure would mean a scope leaks state across its
 // isolation boundary.
-// RUN: obelisk -emit-obelisk --single-unit -I%S/Inputs/mock_uvm \
+// RUN: talos -emit-talos --single-unit -I%S/Inputs/mock_uvm \
 // RUN:   %S/Inputs/mock_uvm/uvm_pkg.sv %s \
-// RUN:   | obelisk-opt --mlir-disable-threading > %t.single
-// RUN: obelisk -emit-obelisk --single-unit -I%S/Inputs/mock_uvm \
-// RUN:   %S/Inputs/mock_uvm/uvm_pkg.sv %s | obelisk-opt > %t.threaded
+// RUN:   | talos-opt --mlir-disable-threading > %t.single
+// RUN: talos -emit-talos --single-unit -I%S/Inputs/mock_uvm \
+// RUN:   %S/Inputs/mock_uvm/uvm_pkg.sv %s | talos-opt > %t.threaded
 // RUN: diff %t.single %t.threaded
 
 `include "uvm_macros.svh"
@@ -60,11 +60,11 @@ endmodule
 // SLANG: slang.timing.delay
 // SLANG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_smoke"
 
-// OBELISK: obelisk.sv.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_object"
-// OBELISK: obelisk.sv.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_phase"
-// OBELISK: obelisk.sv.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "smoke_test"
-// OBELISK: obelisk.sv.symbol.subroutine @{{[^ ]+}} attributes {{.*}}hierarchical_name = "smoke_test::run_phase"
-// OBELISK: obelisk.sv.timing.delay
-// OBELISK: obelisk.sv.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_smoke"
-// OBELISK: !obelisk.class_handle<@{{.*}}smoke_test>
-// OBELISK-NOT: slang.
+// TALOS: talos.sv.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_object"
+// TALOS: talos.sv.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_pkg::uvm_phase"
+// TALOS: talos.sv.type.class_type @{{[^ ]+}} attributes {{.*}}hierarchical_name = "smoke_test"
+// TALOS: talos.sv.symbol.subroutine @{{[^ ]+}} attributes {{.*}}hierarchical_name = "smoke_test::run_phase"
+// TALOS: talos.sv.timing.delay
+// TALOS: talos.sv.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "uvm_smoke"
+// TALOS: !talos.class_handle<@{{.*}}smoke_test>
+// TALOS-NOT: slang.

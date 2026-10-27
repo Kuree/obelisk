@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep))' -o %t.planned.mlir
-// RUN: obelisk-opt %t.planned.mlir --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep))' -o %t.planned.mlir
+// RUN: talos-opt %t.planned.mlir --convert-talos-sim-processes-to-llvm-coroutines -o %t.llvm.mlir
 // RUN: FileCheck %s < %t.llvm.mlir
 
 // Clock instrumentation must survive both explicit and compressed edges.
@@ -8,23 +8,23 @@
 // RUN: FileCheck %s --check-prefix=CLOCK < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=BODY < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=BOOTSTRAP < %t.llvm.mlir
-// BOOTSTRAP-LABEL: llvm.mlir.global internal constant @__obelisk_periodic_clock_plan_v1
-// BOOTSTRAP: llvm.mlir.addressof @__obelisk_periodic_clock_coverage_0
+// BOOTSTRAP-LABEL: llvm.mlir.global internal constant @__talos_periodic_clock_plan_v1
+// BOOTSTRAP: llvm.mlir.addressof @__talos_periodic_clock_coverage_0
 // BOOTSTRAP: llvm.insertvalue {{.*}}[6]
 // BOOTSTRAP: llvm.mlir.constant(2 : i64)
 // BOOTSTRAP: llvm.insertvalue {{.*}}[7]
-// BOOTSTRAP-LABEL: llvm.mlir.global internal constant @__obelisk_periodic_clock_coverage_0
+// BOOTSTRAP-LABEL: llvm.mlir.global internal constant @__talos_periodic_clock_coverage_0
 // BOOTSTRAP: llvm.mlir.constant(0 : i64)
 // BOOTSTRAP: llvm.mlir.constant(1 : i64)
-// BODY-LABEL: llvm.func @consume.__obelisk_eval_body_0(
-// BODY: llvm.call @obelisk_rt_v1_coverage_point_hit
+// BODY-LABEL: llvm.func @consume.__talos_eval_body_0(
+// BODY: llvm.call @talos_rt_v1_coverage_point_hit
 // BODY: llvm.cond_br
-// BODY-LABEL: llvm.func @consume.__obelisk_eval_body_0.__obelisk_two_state_0(
-// BODY: llvm.call @obelisk_rt_v1_coverage_point_hit
+// BODY-LABEL: llvm.func @consume.__talos_eval_body_0.__talos_two_state_0(
+// BODY: llvm.call @talos_rt_v1_coverage_point_hit
 // BODY: llvm.cond_br
-// CLOCK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CLOCK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
-// CLOCK-COUNT-4: llvm.call @obelisk_rt_v1_coverage_point_hit
+// CLOCK-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// CLOCK: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
+// CLOCK-COUNT-4: llvm.call @talos_rt_v1_coverage_point_hit
 
 // The coroutine conversion must rewrite both checkpoint predicates as part
 // of the generated closure, including dead dynamic-handle computations.
@@ -148,13 +148,13 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @consume.__obelisk_eval_body_0.__obelisk_path_known
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @consume.__talos_eval_body_0.__talos_path_known
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @consume.__obelisk_eval_body_0.__obelisk_checkpoint_path
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @consume.__talos_eval_body_0.__talos_checkpoint_path
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
-// CHECK: llvm.func @__obelisk_eval_four_state_fallback_v1_
-// CHECK: llvm.call @__obelisk_eval_checkpoint_body_v1_
-// CHECK: llvm.call @__obelisk_eval_dispatch_v1
-// CHECK: llvm.call @obelisk_rt_v1_native_state_sync
+// CHECK: llvm.func @__talos_eval_four_state_fallback_v1_
+// CHECK: llvm.call @__talos_eval_checkpoint_body_v1_
+// CHECK: llvm.call @__talos_eval_dispatch_v1
+// CHECK: llvm.call @talos_rt_v1_native_state_sync

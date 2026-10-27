@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o %t.sim.mlir
-// RUN: obelisk-opt %t.sim.mlir --encode-obelisk-sim-to-bytecode --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.native.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' -o %t.sim.mlir
+// RUN: talos-opt %t.sim.mlir --encode-talos-sim-to-bytecode --convert-talos-sim-processes-to-llvm-coroutines -o %t.native.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.native.mlir
 
 // The selector and array are sampled before the Active writes. The snapshot

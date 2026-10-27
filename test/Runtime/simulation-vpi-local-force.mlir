@@ -1,9 +1,9 @@
 // REQUIRES: native-elf
 // The harness interposes runtime calls with the ELF linker's --wrap option.
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=full},convert-talos-sim-processes-to-llvm-coroutines)' | talos-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang -I%S/../Conversion/../../runtime/include -I%resource_dir/include -c %S/Inputs/vpi-local-force.c -o %t.helper.o
-// RUN: %target_cxx %t.o %t.helper.o -Wl,--wrap=obelisk_rt_v1_scheduler_run -Wl,--wrap=obelisk_rt_v1_scheduler_run_aot %runtime_link_flags -o %t.exe
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diag
+// RUN: %target_cxx %t.o %t.helper.o -Wl,--wrap=talos_rt_v1_scheduler_run -Wl,--wrap=talos_rt_v1_scheduler_run_aot %runtime_link_flags -o %t.exe
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diag
 // RUN: FileCheck %s < %t.out
 // RUN: FileCheck %s --check-prefix=TIERS < %t.diag
 
@@ -14,7 +14,7 @@
 // counter retains Tier 1, so execution does not grow by 1,000 fine actors.
 // TIERS: aot_node_executions=13
 // TIERS-SAME: aot_fallbacks=0
-// TIERS: obelisk-aot-actor slot=4 executions=1
+// TIERS: talos-aot-actor slot=4 executions=1
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

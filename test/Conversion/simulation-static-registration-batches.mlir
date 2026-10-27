@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.mlir
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' --convert-talos-sim-processes-to-llvm-coroutines -o %t.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-static-registration-batches.test.
@@ -7,27 +7,27 @@
 // the old 256-bound batch boundary with a managed root on each side: each
 // bound row ends its roots at a cumulative index into the root table, and the
 // roots are byte offsets with kind masks.
-// PLAN-DAG: llvm.mlir.global internal constant @__obelisk_static_state_roots_v1({{\[\[}}256, 2 : i32, 0 : i32], [264, 2 : i32, 0 : i32]])
-// PLAN-DAG: llvm.mlir.global internal constant @__obelisk_static_state_bounds_v1({{\[\[}}1 : i32, 0 : i32, 0, 8], [2 : i32, 0 : i32, 8, 8],{{.*}}, [255 : i32, 0 : i32, 2032, 8], [256 : i32, 1 : i32, 2048, 64], [257 : i32, 2 : i32, 2112, 64], [258 : i32, 2 : i32, 2176, 8]]) {{.*}} : !llvm.array<258 x struct<(i32, i32, i64, i64)>>
+// PLAN-DAG: llvm.mlir.global internal constant @__talos_static_state_roots_v1({{\[\[}}256, 2 : i32, 0 : i32], [264, 2 : i32, 0 : i32]])
+// PLAN-DAG: llvm.mlir.global internal constant @__talos_static_state_bounds_v1({{\[\[}}1 : i32, 0 : i32, 0, 8], [2 : i32, 0 : i32, 8, 8],{{.*}}, [255 : i32, 0 : i32, 2032, 8], [256 : i32, 1 : i32, 2048, 64], [257 : i32, 2 : i32, 2112, 64], [258 : i32, 2 : i32, 2176, 8]]) {{.*}} : !llvm.array<258 x struct<(i32, i32, i64, i64)>>
 // PLAN-LABEL: llvm.func @main(
-// PLAN: llvm.call @__obelisk_register_static_state(
-// PLAN: llvm.call @obelisk_rt_v1_native_state_sync(
-// PLAN-LABEL: llvm.func internal @__obelisk_register_static_state(
+// PLAN: llvm.call @__talos_register_static_state(
+// PLAN: llvm.call @talos_rt_v1_native_state_sync(
+// PLAN-LABEL: llvm.func internal @__talos_register_static_state(
 // PLAN-SAME: no_inline
 // PLAN: ^bb1(%[[BOUND:.*]]: i64, %[[FIRST:.*]]: i64):
 // PLAN: llvm.icmp "ult" %[[BOUND]]
 // PLAN: llvm.getelementptr %{{.*}}[%[[BOUND]], 0] : (!llvm.ptr, i64) -> !llvm.ptr, !llvm.struct<(i32, i32, i64, i64)>
-// PLAN: llvm.call @obelisk_rt_v1_native_state_register_static(
-// PLAN-NEXT: llvm.call @obelisk_rt_v1_scheduler_fail(
+// PLAN: llvm.call @talos_rt_v1_native_state_register_static(
+// PLAN-NEXT: llvm.call @talos_rt_v1_scheduler_fail(
 // PLAN: llvm.getelementptr %{{.*}}[%[[BOUND]], 1] : (!llvm.ptr, i64) -> !llvm.ptr, !llvm.struct<(i32, i32, i64, i64)>
 // PLAN: llvm.br ^bb3(%[[FIRST]],
 // PLAN: ^bb3(%[[ROOT:.*]]: i64, %{{.*}}: i64, %[[END:.*]]: i64):
 // PLAN: llvm.icmp "ult" %[[ROOT]], %[[END]]
 // PLAN: llvm.getelementptr %{{.*}}[%[[ROOT]], 0] : (!llvm.ptr, i64) -> !llvm.ptr, !llvm.struct<(i64, i32, i32)>
-// PLAN: llvm.call @obelisk_rt_v1_gc_candidate_static_root_register(
-// PLAN-NEXT: llvm.call @obelisk_rt_v1_scheduler_fail(
-// PLAN: llvm.call @obelisk_rt_v1_gc_design_candidate_root_register(
-// PLAN-NEXT: llvm.call @obelisk_rt_v1_scheduler_fail(
+// PLAN: llvm.call @talos_rt_v1_gc_candidate_static_root_register(
+// PLAN-NEXT: llvm.call @talos_rt_v1_scheduler_fail(
+// PLAN: llvm.call @talos_rt_v1_gc_design_candidate_root_register(
+// PLAN-NEXT: llvm.call @talos_rt_v1_scheduler_fail(
 // PLAN: llvm.return
 
 !byte = !simulation.logic<8>

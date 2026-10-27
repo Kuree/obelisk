@@ -1,7 +1,7 @@
 # RUN: %coverage-fixture %t.max.obcov 24 aggregate-max 1 aggregate-overflow
 # RUN: %coverage-fixture %t.one.obcov 25 aggregate-one 1 aggregate-overflow
-# RUN: obelisk-cov report --format=json %t.max.obcov %t.one.obcov | FileCheck %s --check-prefix=JSON
-# RUN: obelisk-cov report --format=html -o %t.html %t.max.obcov %t.one.obcov
+# RUN: talos-cov report --format=json %t.max.obcov %t.one.obcov | FileCheck %s --check-prefix=JSON
+# RUN: talos-cov report --format=html -o %t.html %t.max.obcov %t.one.obcov
 # RUN: FileCheck %s --check-prefix=HTML < %t.html
 # RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html '18446744073709551615 (saturated)' %}
 

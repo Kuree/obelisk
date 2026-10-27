@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-sim -O0 --vpi=off %s | FileCheck %s
+// RUN: talos -emit-sim -O0 --vpi=off %s | FileCheck %s
 
 // A 4097-bit scalar leaf remains one raw-format operation; the lowering is
 // O(leaves), not O(bits) or O(32-bit words). The following ordinary %p must

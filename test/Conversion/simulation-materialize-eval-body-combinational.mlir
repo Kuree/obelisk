@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CONTROL
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CONTROL
 
 // IEEE 1800-2023 9.2.2.2/9.2.2.3: keep the implicit sensitivity and the
 // activation's ordered, conditional stores. A combinational/latch process
@@ -35,7 +35,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
       simulation.return
     }
     // CHECK-LABEL: simulation.func @comb(
-    // CHECK-SAME: schedule.eval.body = @[[COMB:comb.__obelisk_eval_body_1]]
+    // CHECK-SAME: schedule.eval.body = @[[COMB:comb.__talos_eval_body_1]]
     // CHECK: simulation.suspend.any %{{.*}}, %{{.*}} edges [0, 0]
     simulation.func @comb(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
@@ -62,7 +62,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
       simulation.suspend.any %data, %enable edges [0, 0] to ^body : !simulation.ref<i8>, !simulation.ref<i1>
     }
     // CHECK-LABEL: simulation.func @latch(
-    // CHECK-SAME: schedule.eval.body = @[[LATCH:latch.__obelisk_eval_body_[0-9]+]]
+    // CHECK-SAME: schedule.eval.body = @[[LATCH:latch.__talos_eval_body_[0-9]+]]
     simulation.func @latch(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %data: !simulation.ref<i8> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64},
@@ -96,12 +96,12 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
     // An existing symbol occupies the first generated name. The shared symbol
     // index must preserve it and assign the clone a distinct name.
-    simulation.func private @comb.__obelisk_eval_body_0(
+    simulation.func private @comb.__talos_eval_body_0(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 4 : i64} {
       simulation.return
     }
-    // CHECK: simulation.func private @comb.__obelisk_eval_body_0(
+    // CHECK: simulation.func private @comb.__talos_eval_body_0(
     // CHECK-NEXT: simulation.return
     // CHECK: simulation.func private @[[COMB]](
     // CHECK: simulation.ref.store
@@ -125,9 +125,9 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     // CONTROL-LABEL: simulation.func @comb(
     // CONTROL: simulation.control.enter 10
     // CONTROL: simulation.control.leave
-    // CONTROL-LABEL: simulation.func private @comb.__obelisk_eval_body_1(
+    // CONTROL-LABEL: simulation.func private @comb.__talos_eval_body_1(
     // CONTROL-NOT: simulation.control.
-    // CONTROL-LABEL: simulation.func private @latch.__obelisk_eval_body_0(
+    // CONTROL-LABEL: simulation.func private @latch.__talos_eval_body_0(
     // CONTROL: simulation.control.enter 11
     // CONTROL: simulation.control.leave
   }

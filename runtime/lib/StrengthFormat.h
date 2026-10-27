@@ -1,7 +1,7 @@
 //===- StrengthFormat.h - Canonical scalar strength fields ------*- C++ -*-===//
 
-#ifndef OBELISK_RUNTIME_LIB_STRENGTHFORMAT_H
-#define OBELISK_RUNTIME_LIB_STRENGTHFORMAT_H
+#ifndef TALOS_RUNTIME_LIB_STRENGTHFORMAT_H
+#define TALOS_RUNTIME_LIB_STRENGTHFORMAT_H
 
 #include <algorithm>
 #include <array>
@@ -9,7 +9,7 @@
 #include <string>
 #include <string_view>
 
-inline std::string obelisk_rt_strength_name(unsigned magnitude) {
+inline std::string talos_rt_strength_name(unsigned magnitude) {
   static constexpr std::string_view names[] = {"",   "Sm", "Me", "We",
                                                "La", "Pu", "St", "Su"};
   return magnitude < std::size(names) ? std::string(names[magnitude]) : "";
@@ -17,7 +17,7 @@ inline std::string obelisk_rt_strength_name(unsigned magnitude) {
 
 // Canonical IEEE 1800-2017 21.2.1.5 rendering shared by output formatting and
 // the exhaustive scanner round-trip test.
-inline std::string obelisk_rt_format_strength_range(uint16_t strengths) {
+inline std::string talos_rt_format_strength_range(uint16_t strengths) {
   strengths &= (uint16_t{1} << 15) - 1;
   if (strengths == 0)
     return {};
@@ -31,15 +31,15 @@ inline std::string obelisk_rt_format_strength_range(uint16_t strengths) {
     return "HiZ";
   if (low == high) {
     unsigned magnitude = static_cast<unsigned>(low < 0 ? -low : low);
-    return obelisk_rt_strength_name(magnitude) + (low < 0 ? "0" : "1");
+    return talos_rt_strength_name(magnitude) + (low < 0 ? "0" : "1");
   }
   if (low < 0 && high == 0)
-    return obelisk_rt_strength_name(static_cast<unsigned>(-low)) + "L";
+    return talos_rt_strength_name(static_cast<unsigned>(-low)) + "L";
   if (low == 0 && high > 0)
-    return obelisk_rt_strength_name(static_cast<unsigned>(high)) + "H";
+    return talos_rt_strength_name(static_cast<unsigned>(high)) + "H";
   if (low < 0 && high > 0) {
     if (-low == high)
-      return obelisk_rt_strength_name(static_cast<unsigned>(high)) + "X";
+      return talos_rt_strength_name(static_cast<unsigned>(high)) + "X";
     return std::to_string(-low) + std::to_string(high) + "X";
   }
   if (high < 0)
@@ -49,7 +49,7 @@ inline std::string obelisk_rt_format_strength_range(uint16_t strengths) {
 
 // Parse exactly one canonical three-character strength field and return its
 // four-state logic component. The caller owns any cursor or stream rollback.
-inline bool obelisk_rt_parse_strength_field(const char *data, uint64_t size,
+inline bool talos_rt_parse_strength_field(const char *data, uint64_t size,
                                             char &logic) noexcept {
   if (!data || size != 3)
     return false;
@@ -94,4 +94,4 @@ inline bool obelisk_rt_parse_strength_field(const char *data, uint64_t size,
   return true;
 }
 
-#endif // OBELISK_RUNTIME_LIB_STRENGTHFORMAT_H
+#endif // TALOS_RUNTIME_LIB_STRENGTHFORMAT_H

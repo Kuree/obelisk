@@ -2,14 +2,14 @@
 
 #include "../../../Conversion/SimulationToLLVMCoroutine/SimulationNBALowering.h"
 #include "../../../Conversion/SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Conversion/SimulationRuntime.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Conversion/SimulationRuntime.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -24,21 +24,21 @@
 using namespace mlir;
 
 #include "../../../Conversion/SimulationToSchedule/NativeNBAUtils.h"
-namespace obelisk::detail {
+namespace talos::detail {
 LogicalResult markCleanStaticNBAsInGuardedBodies(
     ModuleOp module, bool enabled,
     const DenseMap<uint64_t, uint32_t> &staticNBASiteRoots,
-    ArrayRef<obelisk_rt_static_nba_root> staticNBARoots,
+    ArrayRef<talos_rt_static_nba_root> staticNBARoots,
     const NativeStateLayout &stateLayout) {
   SmallVector<sim::SimFuncOp> functions;
   module.walk([&](sim::SimFuncOp function) {
-    if (::obelisk::schedule::has<
+    if (::talos::schedule::has<
             schedule::metadata::nativeGuardedSpecializationBody>(function))
       functions.push_back(function);
   });
 
   for (sim::SimFuncOp function : functions) {
-    ::obelisk::schedule::remove<
+    ::talos::schedule::remove<
         schedule::metadata::nativeGuardedSpecializationBody>(function);
     if (!enabled)
       continue;
@@ -111,11 +111,11 @@ LogicalResult markCleanStaticNBAsInGuardedBodies(
         operation.walk([&](Operation *nested) {
           if (nbaActivationIsNonInvalidating &&
               isa<sim::SimNBAEnqueueOp>(nested))
-            ::obelisk::schedule::set<assumeCleanSpecializationAttr>(
+            ::talos::schedule::set<assumeCleanSpecializationAttr>(
                 nested, UnitAttr::get(function.getContext()));
         });
   }
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

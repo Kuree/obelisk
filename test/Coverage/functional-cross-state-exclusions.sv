@@ -1,11 +1,11 @@
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\", llvm.target_triple = \"x86_64-unknown-linux-gnu\"}"' \
-// RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2>&1 | FileCheck %s --check-prefix=SCHEMA
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -emit-talos %s | talos-opt '--lower-talos-to-sim=opt-level=0' \
+// RUN:   '--test-talos-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\", llvm.target_triple = \"x86_64-unknown-linux-gnu\"}"' \
+// RUN:   --test-talos-print-coverage-schema -o /dev/null 2>&1 | FileCheck %s --check-prefix=SCHEMA
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov > %t.out 2> %t.err
 // RUN: FileCheck %s --check-prefix=OUT < %t.out
 // RUN: FileCheck %s --check-prefix=WARN < %t.err
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
 
 // IEEE 1800-2023 19.5.5-19.5.6 removes state exclusions before 19.6.1 selects
 // associated values. Disabled iff guards do not restore those values. Negation,

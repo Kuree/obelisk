@@ -12,17 +12,17 @@
 
 namespace {
 
-using obelisk::runtime_detail::AssocSlot;
-using obelisk::runtime_detail::assocSlotStride;
-using obelisk::runtime_detail::assocValueOffset;
-using obelisk::runtime_detail::BufferHeader;
-using obelisk::runtime_detail::ContainerHeader;
-using obelisk::runtime_detail::ensureAssocOrdered;
-using obelisk::runtime_detail::ensureAssocOrderedWithoutSafepoint;
+using talos::runtime_detail::AssocSlot;
+using talos::runtime_detail::assocSlotStride;
+using talos::runtime_detail::assocValueOffset;
+using talos::runtime_detail::BufferHeader;
+using talos::runtime_detail::ContainerHeader;
+using talos::runtime_detail::ensureAssocOrdered;
+using talos::runtime_detail::ensureAssocOrderedWithoutSafepoint;
 
-constexpr obelisk_rt_status assocOrderRequired = -1;
+constexpr talos_rt_status assocOrderRequired = -1;
 
-OBELISK_RT_FEATURE_HELPER void
+TALOS_RT_FEATURE_HELPER void
 copyBits(uint8_t *destination, uint64_t destinationOffset,
          const uint8_t *source, const uint8_t *sourceUnknown,
          uint64_t sourceOffset, uint64_t width, bool outputFourState,
@@ -59,7 +59,7 @@ copyBits(uint8_t *destination, uint64_t destinationOffset,
   }
 }
 
-OBELISK_RT_FEATURE_HELPER bool checkedRange(const void *pointer, uint64_t size,
+TALOS_RT_FEATURE_HELPER bool checkedRange(const void *pointer, uint64_t size,
                                             uintptr_t &begin, uintptr_t &end) {
   if (!pointer || size > UINTPTR_MAX)
     return false;
@@ -70,13 +70,13 @@ OBELISK_RT_FEATURE_HELPER bool checkedRange(const void *pointer, uint64_t size,
   return true;
 }
 
-OBELISK_RT_FEATURE_HELPER bool overlaps(uintptr_t leftBegin, uintptr_t leftEnd,
+TALOS_RT_FEATURE_HELPER bool overlaps(uintptr_t leftBegin, uintptr_t leftEnd,
                                         uintptr_t rightBegin,
                                         uintptr_t rightEnd) {
   return leftBegin < rightEnd && rightBegin < leftEnd;
 }
 
-#ifndef OBELISK_RT_RECURSIVE_BITSTREAM_ONLY
+#ifndef TALOS_RT_RECURSIVE_BITSTREAM_ONLY
 
 struct ExportRequest {
   void *value;
@@ -95,7 +95,7 @@ struct BufferRequest {
   ExportRequest *request;
 };
 
-OBELISK_RT_FEATURE_HELPER obelisk_rt_status packBuffer(void *opaque,
+TALOS_RT_FEATURE_HELPER talos_rt_status packBuffer(void *opaque,
                                                        uint8_t *buffer,
                                                        uint64_t extent) {
   auto *environment = static_cast<BufferRequest *>(opaque);
@@ -103,16 +103,16 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status packBuffer(void *opaque,
   ExportRequest &request = *environment->request;
   if (extent < sizeof(BufferHeader) ||
       reinterpret_cast<BufferHeader *>(buffer)->reserved != 0)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   if (request.elementFourState && request.elementPlaneSize > UINT64_MAX / 2)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint64_t stride =
       request.elementPlaneSize * (request.elementFourState ? 2 : 1);
   if (stride == 0 || header.capacity > (extent - sizeof(BufferHeader)) / stride)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint8_t *data = buffer + sizeof(BufferHeader);
   for (uint64_t ordinal = 0; ordinal != request.count; ++ordinal) {
-    uint64_t physical = header.kind == OBELISK_RT_CONTAINER_QUEUE
+    uint64_t physical = header.kind == TALOS_RT_CONTAINER_QUEUE
                             ? (header.head + ordinal) & (header.capacity - 1)
                             : ordinal;
     const uint8_t *source = data + physical * stride;
@@ -123,7 +123,7 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status packBuffer(void *opaque,
              sourceUnknown, 0, request.elementWidth, request.fourState != 0,
              static_cast<uint8_t *>(request.unknown));
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 struct AssocBufferRequest {
@@ -132,7 +132,7 @@ struct AssocBufferRequest {
   const uint64_t *indices;
 };
 
-OBELISK_RT_FEATURE_HELPER obelisk_rt_status packAssocBuffer(void *opaque,
+TALOS_RT_FEATURE_HELPER talos_rt_status packAssocBuffer(void *opaque,
                                                             uint8_t *buffer,
                                                             uint64_t extent) {
   auto *environment = static_cast<AssocBufferRequest *>(opaque);
@@ -141,20 +141,20 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status packAssocBuffer(void *opaque,
   if (extent < sizeof(BufferHeader) ||
       reinterpret_cast<BufferHeader *>(buffer)->reserved != 0 ||
       (request.elementFourState && request.elementPlaneSize > UINT64_MAX / 2))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   uint64_t stride = assocSlotStride(header.element);
   uint64_t valueOffset = assocValueOffset(header.element);
   if (stride == 0 || header.capacity > (extent - sizeof(BufferHeader)) / stride)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   const uint8_t *data = buffer + sizeof(BufferHeader);
   for (uint64_t ordinal = 0; ordinal != request.count; ++ordinal) {
     uint64_t physical = environment->indices[ordinal];
     if (physical >= header.capacity)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     const uint8_t *slotBytes = data + physical * stride;
     auto *slot = reinterpret_cast<const AssocSlot *>(slotBytes);
     if (slot->hash == 0)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     const uint8_t *source = slotBytes + valueOffset;
     const uint8_t *sourceUnknown =
         request.elementFourState ? source + request.elementPlaneSize : nullptr;
@@ -163,7 +163,7 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status packAssocBuffer(void *opaque,
              sourceUnknown, 0, request.elementWidth, request.fourState != 0,
              static_cast<uint8_t *>(request.unknown));
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 struct AssocOrderRequest {
@@ -171,7 +171,7 @@ struct AssocOrderRequest {
   ExportRequest *request;
 };
 
-OBELISK_RT_FEATURE_HELPER obelisk_rt_status packAssocOrder(void *opaque,
+TALOS_RT_FEATURE_HELPER talos_rt_status packAssocOrder(void *opaque,
                                                            uint8_t *buffer,
                                                            uint64_t extent) {
   auto *environment = static_cast<AssocOrderRequest *>(opaque);
@@ -179,34 +179,34 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status packAssocOrder(void *opaque,
       reinterpret_cast<BufferHeader *>(buffer)->reserved != 0 ||
       environment->request->count >
           (extent - sizeof(BufferHeader)) / sizeof(uint64_t))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   auto *indices =
       reinterpret_cast<const uint64_t *>(buffer + sizeof(BufferHeader));
   AssocBufferRequest request{environment->header, environment->request,
                              indices};
-  return obelisk_rt_managed_object_access(environment->header->buffer,
-                                          OBELISK_RT_MANAGED_BUFFER,
+  return talos_rt_managed_object_access(environment->header->buffer,
+                                          TALOS_RT_MANAGED_BUFFER,
                                           packAssocBuffer, &request);
 }
 
-OBELISK_RT_FEATURE_HELPER obelisk_rt_status packContainer(void *opaque,
+TALOS_RT_FEATURE_HELPER talos_rt_status packContainer(void *opaque,
                                                           uint8_t *object,
                                                           uint64_t extent) {
   if (extent != sizeof(ContainerHeader))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   auto *header = reinterpret_cast<ContainerHeader *>(object);
   auto *request = static_cast<ExportRequest *>(opaque);
-  bool sequential = header->kind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ||
-                    header->kind == OBELISK_RT_CONTAINER_QUEUE;
-  bool associative = header->kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
+  bool sequential = header->kind == TALOS_RT_CONTAINER_DYNAMIC_ARRAY ||
+                    header->kind == TALOS_RT_CONTAINER_QUEUE;
+  bool associative = header->kind == TALOS_RT_CONTAINER_ASSOCIATIVE_ARRAY;
   bool fourState = header->element && (header->element->flags &
-                                       OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+                                       TALOS_RT_ELEMENT_FOUR_STATE) != 0;
   if ((!sequential && !associative) || !header->element ||
-      (header->element->kind != OBELISK_RT_ELEMENT_BITS &&
-       header->element->kind != OBELISK_RT_ELEMENT_LOGIC) ||
-      (header->element->kind == OBELISK_RT_ELEMENT_LOGIC) != fourState ||
+      (header->element->kind != TALOS_RT_ELEMENT_BITS &&
+       header->element->kind != TALOS_RT_ELEMENT_LOGIC) ||
+      (header->element->kind == TALOS_RT_ELEMENT_LOGIC) != fourState ||
       (header->element->flags &
-       ~(OBELISK_RT_ELEMENT_FOUR_STATE | OBELISK_RT_ELEMENT_SIGNED)) != 0 ||
+       ~(TALOS_RT_ELEMENT_FOUR_STATE | TALOS_RT_ELEMENT_SIGNED)) != 0 ||
       header->element->bit_width != request->elementWidth ||
       header->element->value_size != request->elementPlaneSize ||
       fourState != (request->elementFourState != 0) ||
@@ -214,30 +214,30 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status packContainer(void *opaque,
                   : header->size != request->count) ||
       header->size > header->capacity ||
       !header->buffer ||
-      (header->kind == OBELISK_RT_CONTAINER_QUEUE &&
+      (header->kind == TALOS_RT_CONTAINER_QUEUE &&
        (header->capacity == 0 ||
         (header->capacity & (header->capacity - 1)) != 0 ||
         header->head >= header->capacity)) ||
       (associative && (header->capacity == 0 ||
                        (header->capacity & (header->capacity - 1)) != 0)))
-    return OBELISK_RT_ARGUMENT_MISMATCH;
+    return TALOS_RT_ARGUMENT_MISMATCH;
   if (associative) {
     if (!header->ordered)
       return assocOrderRequired;
     AssocOrderRequest orderRequest{header, request};
-    return obelisk_rt_managed_object_access(header->ordered,
-                                            OBELISK_RT_MANAGED_BUFFER,
+    return talos_rt_managed_object_access(header->ordered,
+                                            TALOS_RT_MANAGED_BUFFER,
                                             packAssocOrder, &orderRequest);
   }
   BufferRequest bufferRequest{header, request};
-  return obelisk_rt_managed_object_access(
-      header->buffer, OBELISK_RT_MANAGED_BUFFER, packBuffer, &bufferRequest);
+  return talos_rt_managed_object_access(
+      header->buffer, TALOS_RT_MANAGED_BUFFER, packBuffer, &bufferRequest);
 }
 
 } // namespace
 
-extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status
-obelisk_rt_v1_container_export_bitstream(obelisk_rt_object_v1 *container,
+extern "C" TALOS_RT_FEATURE_TEXT talos_rt_status
+talos_rt_v1_container_export_bitstream(talos_rt_object_v1 *container,
                                          void *outValue, void *outUnknown,
                                          uint64_t planeSize, uint64_t bitWidth,
                                          uint32_t fourState,
@@ -250,32 +250,32 @@ obelisk_rt_v1_container_export_bitstream(obelisk_rt_object_v1 *container,
       bitWidth % elementWidth != 0 || count != bitWidth / elementWidth ||
       elementPlaneSize == 0 || elementFourState > 1 || planeSize > SIZE_MAX ||
       elementPlaneSize > SIZE_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::memset(outValue, 0, static_cast<size_t>(planeSize));
   if (fourState)
     std::memset(outUnknown, 0, static_cast<size_t>(planeSize));
   ExportRequest request{outValue, outUnknown,       planeSize,
                         bitWidth, fourState,        elementWidth,
                         count,    elementPlaneSize, elementFourState};
-  obelisk_rt_status status = obelisk_rt_managed_object_access(
-      container, OBELISK_RT_MANAGED_CONTAINER, packContainer, &request);
+  talos_rt_status status = talos_rt_managed_object_access(
+      container, TALOS_RT_MANAGED_CONTAINER, packContainer, &request);
   if (status != assocOrderRequired)
     return status;
-  obelisk_rt_context *context = obelisk_rt_managed_object_context(container);
-  obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+  talos_rt_context *context = talos_rt_managed_object_context(container);
+  talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
   if (!lane)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   status = ensureAssocOrderedWithoutSafepoint(lane, container);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
-  status = obelisk_rt_managed_object_access(
-      container, OBELISK_RT_MANAGED_CONTAINER, packContainer, &request);
-  return status == assocOrderRequired ? OBELISK_RT_INVALID_HANDLE : status;
+  status = talos_rt_managed_object_access(
+      container, TALOS_RT_MANAGED_CONTAINER, packContainer, &request);
+  return status == assocOrderRequired ? TALOS_RT_INVALID_HANDLE : status;
 }
 
 #endif
 
-#ifdef OBELISK_RT_RECURSIVE_BITSTREAM_ONLY
+#ifdef TALOS_RT_RECURSIVE_BITSTREAM_ONLY
 
 } // namespace
 
@@ -291,7 +291,7 @@ struct RecursiveRecord {
   uint64_t outputWidth;
 };
 
-OBELISK_RT_RECURSIVE_BITSTREAM_HELPER uint64_t
+TALOS_RT_RECURSIVE_BITSTREAM_HELPER uint64_t
 readRecursive64(const uint8_t *bytes) {
   uint64_t value = 0;
   for (unsigned index = 0; index != 8; ++index)
@@ -299,7 +299,7 @@ readRecursive64(const uint8_t *bytes) {
   return value;
 }
 
-OBELISK_RT_RECURSIVE_BITSTREAM_HELPER RecursiveRecord
+TALOS_RT_RECURSIVE_BITSTREAM_HELPER RecursiveRecord
 readRecursiveRecord(const uint8_t *records, uint64_t index) {
   const uint8_t *record = records + index * 48;
   uint64_t operation = readRecursive64(record);
@@ -319,7 +319,7 @@ struct RecursiveValidationFrame {
 
 enum class RecursiveValidation { Invalid, Valid, NeedsDepth };
 
-OBELISK_RT_RECURSIVE_BITSTREAM_HELPER RecursiveValidation validateRecursiveBody(
+TALOS_RT_RECURSIVE_BITSTREAM_HELPER RecursiveValidation validateRecursiveBody(
     const uint8_t *records, uint64_t recordCount, uint64_t sourceSpan,
     RecursiveValidationFrame *stack, uint64_t capacity) {
   uint32_t depth = 0;
@@ -337,7 +337,7 @@ OBELISK_RT_RECURSIVE_BITSTREAM_HELPER RecursiveValidation validateRecursiveBody(
     RecursiveRecord record = readRecursiveRecord(records, frame.index++);
     if (record.sourceOffset < frame.sourceEnd)
       return RecursiveValidation::Invalid;
-    if (record.opcode == OBELISK_RT_RECURSIVE_BITSTREAM_COPY) {
+    if (record.opcode == TALOS_RT_RECURSIVE_BITSTREAM_COPY) {
       if (record.bodyRecords != 0 || record.extent == 0 || record.stride != 0 ||
           record.sourceSpan != 0 || record.outputWidth != record.extent ||
           record.sourceOffset > frame.sourceSpan ||
@@ -346,22 +346,22 @@ OBELISK_RT_RECURSIVE_BITSTREAM_HELPER RecursiveValidation validateRecursiveBody(
       frame.sourceEnd = record.sourceOffset + record.extent;
       continue;
     }
-    if (record.opcode == OBELISK_RT_RECURSIVE_BITSTREAM_STRING) {
+    if (record.opcode == TALOS_RT_RECURSIVE_BITSTREAM_STRING) {
       if (record.bodyRecords != 0 || record.extent != 0 || record.stride != 0 ||
-          record.sourceSpan != sizeof(obelisk_rt_managed_word_v1) * 8 ||
+          record.sourceSpan != sizeof(talos_rt_managed_word_v1) * 8 ||
           record.outputWidth != 0 || (record.sourceOffset & 7) != 0 ||
           record.sourceOffset > frame.sourceSpan ||
-          sizeof(obelisk_rt_managed_word_v1) * 8 >
+          sizeof(talos_rt_managed_word_v1) * 8 >
               frame.sourceSpan - record.sourceOffset)
         return RecursiveValidation::Invalid;
       frame.sourceEnd =
-          record.sourceOffset + sizeof(obelisk_rt_managed_word_v1) * 8;
+          record.sourceOffset + sizeof(talos_rt_managed_word_v1) * 8;
       continue;
     }
-    if (record.opcode == OBELISK_RT_RECURSIVE_BITSTREAM_OBJECT)
+    if (record.opcode == TALOS_RT_RECURSIVE_BITSTREAM_OBJECT)
       return RecursiveValidation::Invalid;
-    if (record.opcode != OBELISK_RT_RECURSIVE_BITSTREAM_REPEAT &&
-        record.opcode != OBELISK_RT_RECURSIVE_BITSTREAM_CONTAINER)
+    if (record.opcode != TALOS_RT_RECURSIVE_BITSTREAM_REPEAT &&
+        record.opcode != TALOS_RT_RECURSIVE_BITSTREAM_CONTAINER)
       return RecursiveValidation::Invalid;
     if (record.bodyRecords == 0 ||
         record.bodyRecords > frame.end - frame.index ||
@@ -369,7 +369,7 @@ OBELISK_RT_RECURSIVE_BITSTREAM_HELPER RecursiveValidation validateRecursiveBody(
       return RecursiveValidation::Invalid;
     uint64_t bodyBegin = frame.index;
     uint64_t bodyEnd = bodyBegin + record.bodyRecords;
-    if (record.opcode == OBELISK_RT_RECURSIVE_BITSTREAM_REPEAT) {
+    if (record.opcode == TALOS_RT_RECURSIVE_BITSTREAM_REPEAT) {
       if (record.extent == 0 || record.stride < record.sourceSpan ||
           record.sourceOffset > frame.sourceSpan ||
           record.extent - 1 >
@@ -381,16 +381,16 @@ OBELISK_RT_RECURSIVE_BITSTREAM_HELPER RecursiveValidation validateRecursiveBody(
         return RecursiveValidation::Invalid;
       frame.sourceEnd = last + record.sourceSpan;
     } else {
-      if ((record.extent != OBELISK_RT_CONTAINER_DYNAMIC_ARRAY &&
-           record.extent != OBELISK_RT_CONTAINER_QUEUE &&
-           record.extent != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY) ||
+      if ((record.extent != TALOS_RT_CONTAINER_DYNAMIC_ARRAY &&
+           record.extent != TALOS_RT_CONTAINER_QUEUE &&
+           record.extent != TALOS_RT_CONTAINER_ASSOCIATIVE_ARRAY) ||
           record.stride != 0 || (record.sourceOffset & 7) != 0 ||
           record.sourceOffset > frame.sourceSpan ||
-          sizeof(obelisk_rt_managed_word_v1) * 8 >
+          sizeof(talos_rt_managed_word_v1) * 8 >
               frame.sourceSpan - record.sourceOffset)
         return RecursiveValidation::Invalid;
       frame.sourceEnd =
-          record.sourceOffset + sizeof(obelisk_rt_managed_word_v1) * 8;
+          record.sourceOffset + sizeof(talos_rt_managed_word_v1) * 8;
     }
     if (depth + 1 >= capacity)
       return RecursiveValidation::NeedsDepth;
@@ -409,57 +409,57 @@ struct RecursiveView {
 
 struct RecursiveObjectSet {
   static constexpr size_t inlineCapacity = 8;
-  std::array<obelisk_rt_object_v1 *, inlineCapacity> inlineObjects{};
+  std::array<talos_rt_object_v1 *, inlineCapacity> inlineObjects{};
   size_t inlineSize = 0;
-  std::vector<obelisk_rt_object_v1 *> overflow;
-  std::unordered_set<obelisk_rt_object_v1 *> overflowMembership;
+  std::vector<talos_rt_object_v1 *> overflow;
+  std::unordered_set<talos_rt_object_v1 *> overflowMembership;
 
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER ~RecursiveObjectSet() = default;
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER ~RecursiveObjectSet() = default;
 
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER obelisk_rt_status
-  insert(obelisk_rt_object_v1 *object) {
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER talos_rt_status
+  insert(talos_rt_object_v1 *object) {
     for (size_t index = 0; index != inlineSize; ++index)
       if (inlineObjects[index] == object)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
     if (overflowMembership.find(object) != overflowMembership.end())
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     if (inlineSize != inlineCapacity) {
       inlineObjects[inlineSize++] = object;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       auto [_, fresh] = overflowMembership.insert(object);
       if (!fresh)
-        return OBELISK_RT_OK;
-      OBELISK_RT_TRY { overflow.push_back(object); }
-      OBELISK_RT_CATCH_ALL {
+        return TALOS_RT_OK;
+      TALOS_RT_TRY { overflow.push_back(object); }
+      TALOS_RT_CATCH_ALL {
         overflowMembership.erase(object);
-        OBELISK_RT_RETHROW;
+        TALOS_RT_RETHROW;
       }
     }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      return OBELISK_RT_OUT_OF_MEMORY;
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      return TALOS_RT_OUT_OF_MEMORY;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
   size_t size() const { return inlineSize + overflow.size(); }
   bool empty() const { return size() == 0; }
 
   template <typename Function>
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER obelisk_rt_status
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER talos_rt_status
   visit(Function &&function) const {
     for (size_t index = 0; index != inlineSize; ++index) {
-      obelisk_rt_status status = function(inlineObjects[index]);
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status = function(inlineObjects[index]);
+      if (status != TALOS_RT_OK)
         return status;
     }
-    for (obelisk_rt_object_v1 *object : overflow) {
-      obelisk_rt_status status = function(object);
-      if (status != OBELISK_RT_OK)
+    for (talos_rt_object_v1 *object : overflow) {
+      talos_rt_status status = function(object);
+      if (status != TALOS_RT_OK)
         return status;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 };
 
@@ -475,15 +475,15 @@ struct RecursiveExport {
   bool collectWatchContainers = false;
   bool writeOutput = false;
   bool needsOrdering = false;
-  obelisk_rt_context *context = nullptr;
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_context *context = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   RecursiveObjectSet associative{};
   RecursiveObjectSet watchContainers{};
 };
 
-OBELISK_RT_RECURSIVE_BITSTREAM_HELPER bool
+TALOS_RT_RECURSIVE_BITSTREAM_HELPER bool
 readManagedWord(const RecursiveView &view, uint64_t bitOffset,
-                obelisk_rt_managed_word_v1 &word) {
+                talos_rt_managed_word_v1 &word) {
   if (bitOffset > view.span || view.base > UINT64_MAX - bitOffset)
     return false;
   uint64_t absolute = view.base + bitOffset;
@@ -492,7 +492,7 @@ readManagedWord(const RecursiveView &view, uint64_t bitOffset,
       sizeof(word) > view.planeSize - absolute / 8)
     return false;
   if (view.unknown) {
-    obelisk_rt_managed_word_v1 unknown = 0;
+    talos_rt_managed_word_v1 unknown = 0;
     std::memcpy(&unknown, view.unknown + absolute / 8, sizeof(unknown));
     if (unknown != 0)
       return false;
@@ -501,27 +501,27 @@ readManagedWord(const RecursiveView &view, uint64_t bitOffset,
   return true;
 }
 
-OBELISK_RT_RECURSIVE_BITSTREAM_HELPER std::optional<uint64_t>
-elementSpan(const obelisk_rt_element_type_v1 *element) {
-  if (obelisk_rt_v1_element_type_validate(element) != OBELISK_RT_OK)
+TALOS_RT_RECURSIVE_BITSTREAM_HELPER std::optional<uint64_t>
+elementSpan(const talos_rt_element_type_v1 *element) {
+  if (talos_rt_v1_element_type_validate(element) != TALOS_RT_OK)
     return std::nullopt;
-  bool fourState = (element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+  bool fourState = (element->flags & TALOS_RT_ELEMENT_FOUR_STATE) != 0;
   switch (element->kind) {
-  case OBELISK_RT_ELEMENT_BITS:
+  case TALOS_RT_ELEMENT_BITS:
     if (fourState)
       return std::nullopt;
     return element->bit_width;
-  case OBELISK_RT_ELEMENT_LOGIC:
+  case TALOS_RT_ELEMENT_LOGIC:
     if (!fourState)
       return std::nullopt;
     return element->bit_width;
-  case OBELISK_RT_ELEMENT_AGGREGATE:
+  case TALOS_RT_ELEMENT_AGGREGATE:
     return element->value_size <= UINT64_MAX / 8
                ? std::optional<uint64_t>(element->value_size * 8)
                : std::nullopt;
-  case OBELISK_RT_ELEMENT_STRING:
-  case OBELISK_RT_ELEMENT_CONTAINER_HANDLE:
-    return sizeof(obelisk_rt_managed_word_v1) * 8;
+  case TALOS_RT_ELEMENT_STRING:
+  case TALOS_RT_ELEMENT_CONTAINER_HANDLE:
+    return sizeof(talos_rt_managed_word_v1) * 8;
   default:
     return std::nullopt;
   }
@@ -533,7 +533,7 @@ struct RecursiveContainerLease {
   ManagedObjectLease header;
   ManagedObjectLease order;
   ManagedObjectLease buffer;
-  obelisk_rt_object_v1 *object = nullptr;
+  talos_rt_object_v1 *object = nullptr;
   RecursiveRecord record{};
   uint8_t *data = nullptr;
   const uint64_t *indices = nullptr;
@@ -549,100 +549,100 @@ struct RecursiveContainerLease {
   RecursiveContainerLease() = default;
   RecursiveContainerLease(const RecursiveContainerLease &) = delete;
   RecursiveContainerLease &operator=(const RecursiveContainerLease &) = delete;
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER
   RecursiveContainerLease(RecursiveContainerLease &&) noexcept = default;
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER RecursiveContainerLease &
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER RecursiveContainerLease &
   operator=(RecursiveContainerLease &&) noexcept = default;
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER ~RecursiveContainerLease() = default;
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER ~RecursiveContainerLease() = default;
 };
 
-OBELISK_RT_RECURSIVE_BITSTREAM_HELPER obelisk_rt_status
+TALOS_RT_RECURSIVE_BITSTREAM_HELPER talos_rt_status
 acquireRecursiveContainer(RecursiveExport &request,
-                          obelisk_rt_object_v1 *container,
+                          talos_rt_object_v1 *container,
                           const RecursiveRecord &record,
                           RecursiveContainerLease &lease) {
   lease.record = record;
   if (!container)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   lease.object = container;
   if (!request.context || !request.lane)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   if (request.collectWatchContainers)
-    if (obelisk_rt_status status = request.watchContainers.insert(container);
-        status != OBELISK_RT_OK)
+    if (talos_rt_status status = request.watchContainers.insert(container);
+        status != TALOS_RT_OK)
       return status;
   if (request.collectAssociative &&
-      record.extent == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
-    if (obelisk_rt_status status = request.associative.insert(container);
-        status != OBELISK_RT_OK)
+      record.extent == TALOS_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    if (talos_rt_status status = request.associative.insert(container);
+        status != TALOS_RT_OK)
       return status;
 
-  obelisk_rt_status status = obelisk_rt_managed_object_acquire(
-      request.lane, container, OBELISK_RT_MANAGED_CONTAINER, &lease.header);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status = talos_rt_managed_object_acquire(
+      request.lane, container, TALOS_RT_MANAGED_CONTAINER, &lease.header);
+  if (status != TALOS_RT_OK)
     return status;
   if (lease.header.extent != sizeof(ContainerHeader))
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   auto *header = reinterpret_cast<ContainerHeader *>(lease.header.object);
   std::optional<uint64_t> span = elementSpan(header->element);
-  bool sequential = header->kind == OBELISK_RT_CONTAINER_DYNAMIC_ARRAY ||
-                    header->kind == OBELISK_RT_CONTAINER_QUEUE;
-  bool associative = header->kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
+  bool sequential = header->kind == TALOS_RT_CONTAINER_DYNAMIC_ARRAY ||
+                    header->kind == TALOS_RT_CONTAINER_QUEUE;
+  bool associative = header->kind == TALOS_RT_CONTAINER_ASSOCIATIVE_ARRAY;
   if ((!sequential && !associative) || header->kind != record.extent || !span ||
       *span != record.sourceSpan || header->element->value_size == 0 ||
       header->size > header->capacity ||
       (header->size != 0 && !header->buffer) ||
-      (header->kind == OBELISK_RT_CONTAINER_QUEUE && header->capacity != 0 &&
+      (header->kind == TALOS_RT_CONTAINER_QUEUE && header->capacity != 0 &&
        ((header->capacity & (header->capacity - 1)) != 0 ||
         header->head >= header->capacity)) ||
       (associative && header->capacity != 0 &&
        (header->capacity & (header->capacity - 1)) != 0))
-    return OBELISK_RT_ARGUMENT_MISMATCH;
+    return TALOS_RT_ARGUMENT_MISMATCH;
   lease.count = header->size;
   lease.capacity = header->capacity;
   lease.head = header->head;
   lease.planeSize = header->element->value_size;
   lease.fourState =
-      (header->element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+      (header->element->flags & TALOS_RT_ELEMENT_FOUR_STATE) != 0;
   lease.physicalAssociative =
       associative && request.collectAssociative && !header->ordered;
   if (lease.physicalAssociative)
     request.needsOrdering = true;
   if (header->size == 0)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
 
   if (associative && !lease.physicalAssociative) {
     if (!header->ordered)
-      return OBELISK_RT_INVALID_HANDLE;
-    status = obelisk_rt_managed_object_acquire(
-        request.lane, header->ordered, OBELISK_RT_MANAGED_BUFFER, &lease.order);
-    if (status != OBELISK_RT_OK)
+      return TALOS_RT_INVALID_HANDLE;
+    status = talos_rt_managed_object_acquire(
+        request.lane, header->ordered, TALOS_RT_MANAGED_BUFFER, &lease.order);
+    if (status != TALOS_RT_OK)
       return status;
     if (lease.order.extent < sizeof(BufferHeader) ||
         reinterpret_cast<BufferHeader *>(lease.order.object)->reserved != 0 ||
         header->size >
             (lease.order.extent - sizeof(BufferHeader)) / sizeof(uint64_t))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     lease.indices = reinterpret_cast<const uint64_t *>(lease.order.object +
                                                        sizeof(BufferHeader));
   }
-  status = obelisk_rt_managed_object_acquire(
-      request.lane, header->buffer, OBELISK_RT_MANAGED_BUFFER, &lease.buffer);
-  if (status != OBELISK_RT_OK)
+  status = talos_rt_managed_object_acquire(
+      request.lane, header->buffer, TALOS_RT_MANAGED_BUFFER, &lease.buffer);
+  if (status != TALOS_RT_OK)
     return status;
   if (lease.buffer.extent < sizeof(BufferHeader) ||
       reinterpret_cast<BufferHeader *>(lease.buffer.object)->reserved != 0)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   lease.stride = associative
                      ? assocSlotStride(header->element)
-                     : obelisk::runtime_detail::elementStride(header->element);
+                     : talos::runtime_detail::elementStride(header->element);
   lease.valueOffset = associative ? assocValueOffset(header->element) : 0;
   if (lease.stride == 0 ||
       header->capacity >
           (lease.buffer.extent - sizeof(BufferHeader)) / lease.stride)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   lease.data = lease.buffer.object + sizeof(BufferHeader);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 struct RecursiveWalkFrame {
@@ -658,41 +658,41 @@ struct RecursiveWalkFrame {
   RecursiveWalkFrame() = default;
   RecursiveWalkFrame(const RecursiveWalkFrame &) = delete;
   RecursiveWalkFrame &operator=(const RecursiveWalkFrame &) = delete;
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER
   RecursiveWalkFrame(RecursiveWalkFrame &&) noexcept = default;
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER RecursiveWalkFrame &
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER RecursiveWalkFrame &
   operator=(RecursiveWalkFrame &&) noexcept = default;
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER ~RecursiveWalkFrame() = default;
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER ~RecursiveWalkFrame() = default;
 };
 
 struct RecursiveFrameStack {
   static constexpr size_t inlineCapacity = 16;
   struct ActiveContainers {
     struct Entry {
-      obelisk_rt_object_v1 *object = nullptr;
+      talos_rt_object_v1 *object = nullptr;
       bool tombstone = false;
     };
-    std::array<obelisk_rt_object_v1 *, inlineCapacity> inlineObjects{};
+    std::array<talos_rt_object_v1 *, inlineCapacity> inlineObjects{};
     size_t inlineSize = 0;
     size_t overflowSize = 0;
     std::vector<Entry> overflow;
 
-    OBELISK_RT_RECURSIVE_BITSTREAM_HELPER static size_t
-    hash(obelisk_rt_object_v1 *object) {
+    TALOS_RT_RECURSIVE_BITSTREAM_HELPER static size_t
+    hash(talos_rt_object_v1 *object) {
       uintptr_t bits = reinterpret_cast<uintptr_t>(object) >> 3;
       bits ^= bits >> 17;
       bits *= static_cast<uintptr_t>(UINT64_C(0x9e3779b97f4a7c15));
       return static_cast<size_t>(bits ^ (bits >> 29));
     }
 
-    OBELISK_RT_RECURSIVE_BITSTREAM_HELPER obelisk_rt_status grow() {
+    TALOS_RT_RECURSIVE_BITSTREAM_HELPER talos_rt_status grow() {
       size_t newSize = overflow.empty() ? 32 : overflow.size() * 2;
       if (newSize < overflow.size())
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       std::vector<Entry> replacement;
-      OBELISK_RT_TRY { replacement.resize(newSize); }
-      OBELISK_RT_CATCH(const std::bad_alloc &) {
-        return OBELISK_RT_OUT_OF_MEMORY;
+      TALOS_RT_TRY { replacement.resize(newSize); }
+      TALOS_RT_CATCH(const std::bad_alloc &) {
+        return TALOS_RT_OUT_OF_MEMORY;
       }
       for (const Entry &entry : overflow) {
         if (!entry.object)
@@ -703,23 +703,23 @@ struct RecursiveFrameStack {
         replacement[index].object = entry.object;
       }
       overflow.swap(replacement);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
 
-    OBELISK_RT_RECURSIVE_BITSTREAM_HELPER obelisk_rt_status
-    insert(obelisk_rt_object_v1 *object) {
+    TALOS_RT_RECURSIVE_BITSTREAM_HELPER talos_rt_status
+    insert(talos_rt_object_v1 *object) {
       if (!object)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       for (size_t index = 0; index != inlineSize; ++index)
         if (inlineObjects[index] == object)
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
       if (inlineSize != inlineCapacity && overflow.empty()) {
         inlineObjects[inlineSize++] = object;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       if (overflow.empty() || (overflowSize + 1) * 2 > overflow.size()) {
-        obelisk_rt_status status = grow();
-        if (status != OBELISK_RT_OK)
+        talos_rt_status status = grow();
+        if (status != TALOS_RT_OK)
           return status;
       }
       size_t index = hash(object) & (overflow.size() - 1);
@@ -727,7 +727,7 @@ struct RecursiveFrameStack {
       for (size_t probes = 0; probes != overflow.size(); ++probes) {
         Entry &entry = overflow[index];
         if (entry.object == object)
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
         if (!entry.object) {
           if (available == overflow.size())
             available = index;
@@ -737,15 +737,15 @@ struct RecursiveFrameStack {
         index = (index + 1) & (overflow.size() - 1);
       }
       if (available == overflow.size())
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       overflow[available].object = object;
       overflow[available].tombstone = false;
       ++overflowSize;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
 
-    OBELISK_RT_RECURSIVE_BITSTREAM_HELPER void
-    erase(obelisk_rt_object_v1 *object) {
+    TALOS_RT_RECURSIVE_BITSTREAM_HELPER void
+    erase(talos_rt_object_v1 *object) {
       if (!object)
         return;
       if (!overflow.empty()) {
@@ -777,30 +777,30 @@ struct RecursiveFrameStack {
   size_t inlineSize = 0;
   std::vector<RecursiveWalkFrame> overflow;
 
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER obelisk_rt_status
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER talos_rt_status
   push(RecursiveWalkFrame frame) {
-    obelisk_rt_object_v1 *container =
+    talos_rt_object_v1 *container =
         frame.kind == RecursiveWalkFrame::Container ? frame.container.object
                                                     : nullptr;
-    obelisk_rt_status status = activeContainers.insert(container);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = activeContainers.insert(container);
+    if (status != TALOS_RT_OK)
       return status;
     if (inlineSize != inlineCapacity && overflow.empty()) {
       inlineFrames[inlineSize++] = std::move(frame);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
-    OBELISK_RT_TRY { overflow.push_back(std::move(frame)); }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
+    TALOS_RT_TRY { overflow.push_back(std::move(frame)); }
+    TALOS_RT_CATCH(const std::bad_alloc &) {
       activeContainers.erase(container);
-      return OBELISK_RT_OUT_OF_MEMORY;
+      return TALOS_RT_OUT_OF_MEMORY;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER RecursiveWalkFrame &top() {
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER RecursiveWalkFrame &top() {
     return overflow.empty() ? inlineFrames[inlineSize - 1] : overflow.back();
   }
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER void pop() {
-    obelisk_rt_object_v1 *container =
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER void pop() {
+    talos_rt_object_v1 *container =
         top().kind == RecursiveWalkFrame::Container ? top().container.object
                                                     : nullptr;
     if (!overflow.empty()) {
@@ -812,27 +812,27 @@ struct RecursiveFrameStack {
     }
     activeContainers.erase(container);
   }
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER bool empty() const {
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER bool empty() const {
     return inlineSize == 0 && overflow.empty();
   }
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER ~RecursiveFrameStack() {
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER ~RecursiveFrameStack() {
     while (!empty())
       pop();
   }
 };
 
-OBELISK_RT_RECURSIVE_BITSTREAM_HELPER obelisk_rt_status
+TALOS_RT_RECURSIVE_BITSTREAM_HELPER talos_rt_status
 walkRecursiveBody(RecursiveExport &request, uint64_t begin, uint64_t end,
                   const RecursiveView &root, RecursiveFrameStack &stack) {
   if (!stack.empty())
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   RecursiveWalkFrame initial;
   initial.kind = RecursiveWalkFrame::Body;
   initial.index = begin;
   initial.end = end;
   initial.view = root;
-  obelisk_rt_status status = stack.push(std::move(initial));
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status = stack.push(std::move(initial));
+  if (status != TALOS_RT_OK)
     return status;
   while (!stack.empty()) {
     RecursiveWalkFrame &frame = stack.top();
@@ -852,7 +852,7 @@ walkRecursiveBody(RecursiveExport &request, uint64_t begin, uint64_t end,
       body.end = frame.end;
       body.view = child;
       status = stack.push(std::move(body));
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       continue;
     }
@@ -870,22 +870,22 @@ walkRecursiveBody(RecursiveExport &request, uint64_t begin, uint64_t end,
       if (frame.ordinal == (container.physicalAssociative ? container.capacity
                                                           : container.count)) {
         if (frame.visited != container.count)
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
         stack.pop();
         continue;
       }
       uint64_t ordinal = frame.ordinal++;
-      if (container.record.extent == OBELISK_RT_CONTAINER_QUEUE)
+      if (container.record.extent == TALOS_RT_CONTAINER_QUEUE)
         physical = (container.head + ordinal) & (container.capacity - 1);
       else if (container.record.extent ==
-                   OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY &&
+                   TALOS_RT_CONTAINER_ASSOCIATIVE_ARRAY &&
                !container.physicalAssociative) {
         physical = container.indices[ordinal];
         if (physical >= container.capacity ||
             reinterpret_cast<const AssocSlot *>(container.data +
                                                 physical * container.stride)
                     ->hash == 0)
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
       } else {
         physical = ordinal;
       }
@@ -902,7 +902,7 @@ walkRecursiveBody(RecursiveExport &request, uint64_t begin, uint64_t end,
       body.end = frame.end;
       body.view = child;
       status = stack.push(std::move(body));
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       continue;
     }
@@ -912,10 +912,10 @@ walkRecursiveBody(RecursiveExport &request, uint64_t begin, uint64_t end,
     }
     RecursiveRecord record =
         readRecursiveRecord(request.records, frame.index++);
-    if (record.opcode == OBELISK_RT_RECURSIVE_BITSTREAM_COPY) {
+    if (record.opcode == TALOS_RT_RECURSIVE_BITSTREAM_COPY) {
       if (record.extent > request.cursor) {
         request.overflow = true;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       request.cursor -= record.extent;
       if (request.writeOutput)
@@ -924,33 +924,33 @@ walkRecursiveBody(RecursiveExport &request, uint64_t begin, uint64_t end,
                  record.extent, request.fourState, request.unknown);
       continue;
     }
-    if (record.opcode == OBELISK_RT_RECURSIVE_BITSTREAM_STRING) {
-      obelisk_rt_managed_word_v1 string = 0;
+    if (record.opcode == TALOS_RT_RECURSIVE_BITSTREAM_STRING) {
+      talos_rt_managed_word_v1 string = 0;
       if (!readManagedWord(frame.view, record.sourceOffset, string))
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       char scratch[8]{};
       const char *bytes = nullptr;
       uint64_t size = 0;
-      obelisk_rt_object_v1 *stringObject =
-          obelisk_rt_object_from_managed_word(string);
+      talos_rt_object_v1 *stringObject =
+          talos_rt_object_from_managed_word(string);
       if (string != 0 && stringObject) {
         ManagedObjectLease stringLease;
-        status = obelisk_rt_managed_object_acquire(request.lane, stringObject,
-                                                   OBELISK_RT_MANAGED_STRING,
+        status = talos_rt_managed_object_acquire(request.lane, stringObject,
+                                                   TALOS_RT_MANAGED_STRING,
                                                    &stringLease);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       } else {
-        status = obelisk_rt_validate_string(request.context, string);
-        if (status != OBELISK_RT_OK)
+        status = talos_rt_validate_string(request.context, string);
+        if (status != TALOS_RT_OK)
           return status;
       }
-      status = obelisk_rt_v1_string_view(string, scratch, &bytes, &size);
-      if (status != OBELISK_RT_OK)
+      status = talos_rt_v1_string_view(string, scratch, &bytes, &size);
+      if (status != TALOS_RT_OK)
         return status;
       if (size > request.cursor / 8) {
         request.overflow = true;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       if (!request.writeOutput) {
         request.cursor -= size * 8;
@@ -967,7 +967,7 @@ walkRecursiveBody(RecursiveExport &request, uint64_t begin, uint64_t end,
     uint64_t bodyBegin = frame.index;
     uint64_t bodyEnd = bodyBegin + record.bodyRecords;
     frame.index = bodyEnd;
-    if (record.opcode == OBELISK_RT_RECURSIVE_BITSTREAM_REPEAT) {
+    if (record.opcode == TALOS_RT_RECURSIVE_BITSTREAM_REPEAT) {
       RecursiveWalkFrame repeat;
       repeat.kind = RecursiveWalkFrame::Repeat;
       repeat.index = bodyBegin;
@@ -975,44 +975,44 @@ walkRecursiveBody(RecursiveExport &request, uint64_t begin, uint64_t end,
       repeat.view = frame.view;
       repeat.record = record;
       status = stack.push(std::move(repeat));
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       continue;
     }
-    if (record.opcode != OBELISK_RT_RECURSIVE_BITSTREAM_CONTAINER)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_managed_word_v1 word = 0;
+    if (record.opcode != TALOS_RT_RECURSIVE_BITSTREAM_CONTAINER)
+      return TALOS_RT_INVALID_ARGUMENT;
+    talos_rt_managed_word_v1 word = 0;
     if (!readManagedWord(frame.view, record.sourceOffset, word))
-      return OBELISK_RT_INVALID_HANDLE;
-    obelisk_rt_object_v1 *container = obelisk_rt_object_from_managed_word(word);
-    if (word != obelisk_rt_managed_word_from_object(container))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
+    talos_rt_object_v1 *container = talos_rt_object_from_managed_word(word);
+    if (word != talos_rt_managed_word_from_object(container))
+      return TALOS_RT_INVALID_HANDLE;
     RecursiveWalkFrame elements;
     elements.kind = RecursiveWalkFrame::Container;
     elements.index = bodyBegin;
     elements.end = bodyEnd;
     elements.container.object = container;
     status = stack.push(std::move(elements));
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     status = acquireRecursiveContainer(request, container, record,
                                        stack.top().container);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       stack.pop();
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 struct RecursiveWatchGroupStateImpl final : RecursiveWatchGroupState {
   std::unordered_map<uint64_t, std::vector<uint64_t>> byToken;
   uint64_t next = 1;
 
-  OBELISK_RT_RECURSIVE_BITSTREAM_HELPER ~RecursiveWatchGroupStateImpl() =
+  TALOS_RT_RECURSIVE_BITSTREAM_HELPER ~RecursiveWatchGroupStateImpl() =
       default;
 
-  static OBELISK_RT_RECURSIVE_BITSTREAM_HELPER void
+  static TALOS_RT_RECURSIVE_BITSTREAM_HELPER void
   destroyState(RecursiveWatchGroupState *state) noexcept {
     delete static_cast<RecursiveWatchGroupStateImpl *>(state);
   }
@@ -1020,27 +1020,27 @@ struct RecursiveWatchGroupStateImpl final : RecursiveWatchGroupState {
   RecursiveWatchGroupStateImpl() { destroy = destroyState; }
 };
 
-OBELISK_RT_RECURSIVE_BITSTREAM_HELPER obelisk_rt_status
-createRecursiveWatchGroup(obelisk_rt_context *context,
+TALOS_RT_RECURSIVE_BITSTREAM_HELPER talos_rt_status
+createRecursiveWatchGroup(talos_rt_context *context,
                           const RecursiveObjectSet &containers,
                           uint64_t &outToken) {
   outToken = 0;
   if (containers.empty())
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   std::vector<uint64_t> members;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     members.reserve(containers.size());
-    obelisk_rt_status status = containers.visit(
-        [&](obelisk_rt_object_v1 *container)
-            OBELISK_RT_RECURSIVE_BITSTREAM_HELPER {
-              uint64_t token = obelisk_rt_v1_managed_watch(
-                  container, OBELISK_RT_MANAGED_WATCH_CONTAINER_SIZE, 0);
+    talos_rt_status status = containers.visit(
+        [&](talos_rt_object_v1 *container)
+            TALOS_RT_RECURSIVE_BITSTREAM_HELPER {
+              uint64_t token = talos_rt_v1_managed_watch(
+                  container, TALOS_RT_MANAGED_WATCH_CONTAINER_SIZE, 0);
               if (token == 0)
-                return OBELISK_RT_INVALID_HANDLE;
+                return TALOS_RT_INVALID_HANDLE;
               members.push_back(token);
-              return OBELISK_RT_OK;
+              return TALOS_RT_OK;
             });
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     auto *state = static_cast<RecursiveWatchGroupStateImpl *>(
@@ -1050,19 +1050,19 @@ createRecursiveWatchGroup(obelisk_rt_context *context,
       context->recursiveWatchGroups = state;
     }
     if (state->next == 0 || state->next >= kRecursiveWatchGroupBit)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     uint64_t token = kRecursiveWatchGroupBit | state->next++;
     auto [_, fresh] = state->byToken.emplace(token, std::move(members));
     if (!fresh)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     outToken = token;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
 }
 
-OBELISK_RT_RECURSIVE_BITSTREAM_HELPER void
-discardRecursiveWatchGroup(obelisk_rt_context *context, uint64_t token) {
+TALOS_RT_RECURSIVE_BITSTREAM_HELPER void
+discardRecursiveWatchGroup(talos_rt_context *context, uint64_t token) {
   if (!context || token == 0)
     return;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -1074,8 +1074,8 @@ discardRecursiveWatchGroup(obelisk_rt_context *context, uint64_t token) {
 
 } // namespace
 
-OBELISK_RT_RECURSIVE_BITSTREAM_TEXT bool
-obelisk_rt_expand_recursive_watch_group(obelisk_rt_context *context,
+TALOS_RT_RECURSIVE_BITSTREAM_TEXT bool
+talos_rt_expand_recursive_watch_group(talos_rt_context *context,
                                         uint64_t token,
                                         RecursiveWatchGroupVisit visit,
                                         void *environment) {
@@ -1097,21 +1097,21 @@ obelisk_rt_expand_recursive_watch_group(obelisk_rt_context *context,
   return true;
 }
 
-extern "C" OBELISK_RT_RECURSIVE_BITSTREAM_TEXT void
-obelisk_rt_v1_recursive_bitstream_link_anchor() {}
+extern "C" TALOS_RT_RECURSIVE_BITSTREAM_TEXT void
+talos_rt_v1_recursive_bitstream_link_anchor() {}
 
-extern "C" OBELISK_RT_RECURSIVE_BITSTREAM_TEXT obelisk_rt_status
-obelisk_rt_v1_recursive_export_bitstream(
-    obelisk_rt_context *context, const void *inputValue,
+extern "C" TALOS_RT_RECURSIVE_BITSTREAM_TEXT talos_rt_status
+talos_rt_v1_recursive_export_bitstream(
+    talos_rt_context *context, const void *inputValue,
     const void *inputUnknown, uint64_t inputPlaneSize, uint64_t inputBitWidth,
     uint32_t inputFourState, void *outValue, void *outUnknown,
     uint64_t outputPlaneSize, uint64_t outputBitWidth, uint32_t outputFourState,
     const void *plan, uint64_t planSize, uint32_t observe, uint32_t *outMatched,
     uint64_t *outWatch) {
   constexpr uint64_t headerSize =
-      OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_HEADER_WORDS * 8;
+      TALOS_RT_RECURSIVE_BITSTREAM_PLAN_HEADER_WORDS * 8;
   constexpr uint64_t recordSize =
-      OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_RECORD_WORDS * 8;
+      TALOS_RT_RECURSIVE_BITSTREAM_PLAN_RECORD_WORDS * 8;
   if (!context || !inputValue || !outValue || !plan || !outMatched ||
       !outWatch || inputFourState > 1 || outputFourState > 1 || observe > 1 ||
       (inputFourState && !inputUnknown) || (outputFourState && !outUnknown) ||
@@ -1120,7 +1120,7 @@ obelisk_rt_v1_recursive_export_bitstream(
       inputPlaneSize < inputBitWidth / 8 + ((inputBitWidth & 7) != 0) ||
       outputPlaneSize < outputBitWidth / 8 + ((outputBitWidth & 7) != 0) ||
       planSize < headerSize)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uintptr_t inputValueBegin, inputValueEnd, inputUnknownBegin = 0,
                                             inputUnknownEnd = 0;
   uintptr_t outputValueBegin, outputValueEnd, outputUnknownBegin = 0,
@@ -1139,10 +1139,10 @@ obelisk_rt_v1_recursive_export_bitstream(
       !checkedRange(outMatched, sizeof(*outMatched), matchedBegin,
                     matchedEnd) ||
       !checkedRange(outWatch, sizeof(*outWatch), watchBegin, watchEnd))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   auto outputOverlapsInput =
       [&](uintptr_t begin, uintptr_t end)
-          OBELISK_RT_RECURSIVE_BITSTREAM_HELPER {
+          TALOS_RT_RECURSIVE_BITSTREAM_HELPER {
             return overlaps(begin, end, inputValueBegin, inputValueEnd) ||
                    (inputFourState &&
                     overlaps(begin, end, inputUnknownBegin, inputUnknownEnd)) ||
@@ -1161,7 +1161,7 @@ obelisk_rt_v1_recursive_export_bitstream(
         overlaps(outputUnknownBegin, outputUnknownEnd, matchedBegin,
                  matchedEnd) ||
         overlaps(outputUnknownBegin, outputUnknownEnd, watchBegin, watchEnd))))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outMatched = 0;
   *outWatch = 0;
   const auto *bytes = static_cast<const uint8_t *>(plan);
@@ -1170,15 +1170,15 @@ obelisk_rt_v1_recursive_export_bitstream(
   uint64_t rootSpan = readRecursive64(bytes + 16);
   uint64_t reserved = readRecursive64(bytes + 24);
   if (static_cast<uint32_t>(identity) !=
-          OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC ||
+          TALOS_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC ||
       static_cast<uint32_t>(identity >> 32) !=
-          OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_VERSION ||
+          TALOS_RT_RECURSIVE_BITSTREAM_PLAN_VERSION ||
       recordCount == 0 ||
-      recordCount > OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAX_RECORDS ||
+      recordCount > TALOS_RT_RECURSIVE_BITSTREAM_PLAN_MAX_RECORDS ||
       recordCount > (UINT64_MAX - headerSize) / recordSize ||
       planSize != headerSize + recordCount * recordSize || reserved != 0 ||
       rootSpan != inputBitWidth)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const uint8_t *records = bytes + headerSize;
   constexpr size_t inlineValidationDepth = 16;
   std::array<RecursiveValidationFrame, inlineValidationDepth>
@@ -1191,22 +1191,22 @@ obelisk_rt_v1_recursive_export_bitstream(
   if (validation == RecursiveValidation::NeedsDepth) {
     if (recordCount == UINT64_MAX ||
         recordCount + 1 > SIZE_MAX / sizeof(RecursiveValidationFrame))
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     deepValidationFrames.reset(new (std::nothrow)
                                    RecursiveValidationFrame[recordCount + 1]);
     if (!deepValidationFrames)
-      return OBELISK_RT_OUT_OF_MEMORY;
+      return TALOS_RT_OUT_OF_MEMORY;
     validationFrames = deepValidationFrames.get();
     validation = validateRecursiveBody(records, recordCount, rootSpan,
                                        validationFrames, recordCount + 1);
   }
   if (validation != RecursiveValidation::Valid)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   deepValidationFrames.reset();
   ContextTransaction transaction(context);
-  obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+  talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
   if (!lane)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   RecursiveExport request{records,
                           recordCount,
                           static_cast<uint8_t *>(outValue),
@@ -1222,31 +1222,31 @@ obelisk_rt_v1_recursive_export_bitstream(
   request.collectAssociative = true;
   request.collectWatchContainers = observe != 0;
   RecursiveFrameStack walkStack;
-  obelisk_rt_status status =
+  talos_rt_status status =
       walkRecursiveBody(request, 0, recordCount, root, walkStack);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   if (request.overflow || request.cursor != 0)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   auto validateAndPack =
       [&](bool prevalidated)
-          OBELISK_RT_RECURSIVE_BITSTREAM_HELPER -> obelisk_rt_status {
+          TALOS_RT_RECURSIVE_BITSTREAM_HELPER -> talos_rt_status {
     request.collectAssociative = false;
     request.collectWatchContainers = false;
     request.writeOutput = false;
     request.cursor = outputBitWidth;
     request.overflow = false;
-    obelisk_rt_status result = OBELISK_RT_OK;
+    talos_rt_status result = TALOS_RT_OK;
     if (!prevalidated) {
       result = walkRecursiveBody(request, 0, recordCount, root, walkStack);
-      if (result != OBELISK_RT_OK || request.overflow || request.cursor != 0)
+      if (result != TALOS_RT_OK || request.overflow || request.cursor != 0)
         return result;
     }
     uint64_t preparedWatch = 0;
     if (observe) {
       result = createRecursiveWatchGroup(context, request.watchContainers,
                                          preparedWatch);
-      if (result != OBELISK_RT_OK)
+      if (result != TALOS_RT_OK)
         return result;
     }
     std::memset(outValue, 0, static_cast<size_t>(outputPlaneSize));
@@ -1256,7 +1256,7 @@ obelisk_rt_v1_recursive_export_bitstream(
     request.cursor = outputBitWidth;
     request.overflow = false;
     result = walkRecursiveBody(request, 0, recordCount, root, walkStack);
-    if (result == OBELISK_RT_OK && !request.overflow && request.cursor == 0) {
+    if (result == TALOS_RT_OK && !request.overflow && request.cursor == 0) {
       *outMatched = 1;
       *outWatch = preparedWatch;
     } else {
@@ -1267,10 +1267,10 @@ obelisk_rt_v1_recursive_export_bitstream(
 
   if (request.needsOrdering) {
     status = request.associative.visit(
-        [&](obelisk_rt_object_v1 *array) OBELISK_RT_RECURSIVE_BITSTREAM_HELPER {
+        [&](talos_rt_object_v1 *array) TALOS_RT_RECURSIVE_BITSTREAM_HELPER {
           return ensureAssocOrderedWithoutSafepoint(lane, array);
         });
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
   }
   status = validateAndPack(!request.needsOrdering);
@@ -1280,15 +1280,15 @@ obelisk_rt_v1_recursive_export_bitstream(
 #if defined(__APPLE__)
 // ContainerBitstreamBytecode.cpp reaches this service by a private name on
 // Mach-O; its weak fallback must not capture native calls to the public one.
-OBELISK_RT_RECURSIVE_BITSTREAM_TEXT obelisk_rt_status
-obelisk_rt_recursive_export_bitstream_service(
-    obelisk_rt_context *context, const void *inputValue,
+TALOS_RT_RECURSIVE_BITSTREAM_TEXT talos_rt_status
+talos_rt_recursive_export_bitstream_service(
+    talos_rt_context *context, const void *inputValue,
     const void *inputUnknown, uint64_t inputPlaneSize, uint64_t inputBitWidth,
     uint32_t inputFourState, void *outValue, void *outUnknown,
     uint64_t outputPlaneSize, uint64_t outputBitWidth, uint32_t outputFourState,
     const void *plan, uint64_t planSize, uint32_t observe, uint32_t *outMatched,
     uint64_t *outWatch) {
-  return obelisk_rt_v1_recursive_export_bitstream(
+  return talos_rt_v1_recursive_export_bitstream(
       context, inputValue, inputUnknown, inputPlaneSize, inputBitWidth,
       inputFourState, outValue, outUnknown, outputPlaneSize, outputBitWidth,
       outputFourState, plan, planSize, observe, outMatched, outWatch);
@@ -1297,11 +1297,11 @@ obelisk_rt_recursive_export_bitstream_service(
 
 #endif
 
-#ifndef OBELISK_RT_RECURSIVE_BITSTREAM_ONLY
+#ifndef TALOS_RT_RECURSIVE_BITSTREAM_ONLY
 
 namespace {
 
-OBELISK_RT_FEATURE_HELPER uint64_t readPlan64(const uint8_t *bytes) {
+TALOS_RT_FEATURE_HELPER uint64_t readPlan64(const uint8_t *bytes) {
   uint64_t value = 0;
   for (unsigned index = 0; index != 8; ++index)
     value |= static_cast<uint64_t>(bytes[index]) << (index * 8);
@@ -1318,7 +1318,7 @@ struct PlanRecord {
   uint64_t outputWidth;
 };
 
-OBELISK_RT_FEATURE_HELPER PlanRecord readRecord(const uint8_t *records,
+TALOS_RT_FEATURE_HELPER PlanRecord readRecord(const uint8_t *records,
                                                 uint64_t index) {
   const uint8_t *record = records + index * 48;
   uint64_t operation = readPlan64(record);
@@ -1351,7 +1351,7 @@ struct PlanFrame {
 
 enum class PlanValidation { Invalid, Valid, NeedsDepth };
 
-OBELISK_RT_FEATURE_HELPER PlanValidation validatePlan(
+TALOS_RT_FEATURE_HELPER PlanValidation validatePlan(
     const uint8_t *records, uint64_t recordCount, uint64_t sourceSpan,
     uint64_t outputWidth, bool importing, PlanFrame *stack, uint64_t capacity) {
   uint64_t depth = 0;
@@ -1374,9 +1374,9 @@ OBELISK_RT_FEATURE_HELPER PlanValidation validatePlan(
       return PlanValidation::Invalid;
     uint64_t index = frame.index++;
     PlanRecord record = readRecord(records, index);
-    if (record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY ||
+    if (record.opcode == TALOS_RT_AGGREGATE_BITSTREAM_COPY ||
         (importing &&
-         record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY_LOGIC)) {
+         record.opcode == TALOS_RT_AGGREGATE_BITSTREAM_COPY_LOGIC)) {
       if (record.bodyRecords != 0 || record.extent == 0 || record.stride != 0 ||
           record.sourceSpan != 0 || record.outputWidth != record.extent ||
           record.sourceOffset < validation.sourceCursor ||
@@ -1388,7 +1388,7 @@ OBELISK_RT_FEATURE_HELPER PlanValidation validatePlan(
       validation.sourceCursor = record.sourceOffset + record.extent;
       continue;
     }
-    if (record.opcode != OBELISK_RT_AGGREGATE_BITSTREAM_REPEAT ||
+    if (record.opcode != TALOS_RT_AGGREGATE_BITSTREAM_REPEAT ||
         record.bodyRecords == 0 || record.extent == 0 ||
         record.sourceSpan == 0 || record.outputWidth == 0 ||
         record.bodyRecords > frame.end - frame.index ||
@@ -1412,7 +1412,7 @@ OBELISK_RT_FEATURE_HELPER PlanValidation validatePlan(
         record.sourceOffset + lastOffset + record.sourceSpan;
     uint64_t bodyStart = frame.index;
     frame.index = bodyEnd;
-    if (depth == OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH)
+    if (depth == TALOS_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH)
       return PlanValidation::Invalid;
     if (depth + 1 >= capacity)
       return PlanValidation::NeedsDepth;
@@ -1424,7 +1424,7 @@ OBELISK_RT_FEATURE_HELPER PlanValidation validatePlan(
   }
 }
 
-OBELISK_RT_FEATURE_HELPER void
+TALOS_RT_FEATURE_HELPER void
 executePlan(const uint8_t *records, uint64_t recordCount,
             const uint8_t *inputValue, const uint8_t *inputUnknown,
             uint8_t *outputValue, uint8_t *outputUnknown, uint64_t outputWidth,
@@ -1450,7 +1450,7 @@ executePlan(const uint8_t *records, uint64_t recordCount,
       continue;
     }
     PlanRecord record = readRecord(records, frame.index++);
-    if (record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY) {
+    if (record.opcode == TALOS_RT_AGGREGATE_BITSTREAM_COPY) {
       cursor -= record.extent;
       copyBits(outputValue, cursor, inputValue, inputUnknown,
                execution.sourceBase + record.sourceOffset, record.extent,
@@ -1467,7 +1467,7 @@ executePlan(const uint8_t *records, uint64_t recordCount,
   }
 }
 
-OBELISK_RT_FEATURE_HELPER void
+TALOS_RT_FEATURE_HELPER void
 executeImportPlan(const uint8_t *records, uint64_t recordCount,
                   const uint8_t *inputValue, const uint8_t *inputUnknown,
                   uint8_t *outputValue, uint8_t *outputUnknown,
@@ -1493,13 +1493,13 @@ executeImportPlan(const uint8_t *records, uint64_t recordCount,
       continue;
     }
     PlanRecord record = readRecord(records, frame.index++);
-    if (record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY ||
-        record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY_LOGIC) {
+    if (record.opcode == TALOS_RT_AGGREGATE_BITSTREAM_COPY ||
+        record.opcode == TALOS_RT_AGGREGATE_BITSTREAM_COPY_LOGIC) {
       cursor -= record.extent;
       copyBits(outputValue, execution.sourceBase + record.sourceOffset,
                inputValue, inputUnknown, cursor, record.extent,
                outputFourState &&
-                   record.opcode == OBELISK_RT_AGGREGATE_BITSTREAM_COPY_LOGIC,
+                   record.opcode == TALOS_RT_AGGREGATE_BITSTREAM_COPY_LOGIC,
                outputUnknown);
       continue;
     }
@@ -1515,16 +1515,16 @@ executeImportPlan(const uint8_t *records, uint64_t recordCount,
 
 } // namespace
 
-extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status
-obelisk_rt_v1_aggregate_export_bitstream(
+extern "C" TALOS_RT_FEATURE_TEXT talos_rt_status
+talos_rt_v1_aggregate_export_bitstream(
     const void *inputValue, const void *inputUnknown, uint64_t inputPlaneSize,
     uint64_t inputBitWidth, uint32_t inputFourState, void *outValue,
     void *outUnknown, uint64_t outputPlaneSize, uint64_t outputBitWidth,
     uint32_t outputFourState, const void *plan, uint64_t planSize) {
   constexpr uint64_t headerSize =
-      OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_HEADER_WORDS * 8;
+      TALOS_RT_AGGREGATE_BITSTREAM_PLAN_HEADER_WORDS * 8;
   constexpr uint64_t recordSize =
-      OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS * 8;
+      TALOS_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS * 8;
   if (!inputValue || !outValue || !plan || inputFourState > 1 ||
       outputFourState > 1 || (inputFourState && !inputUnknown) ||
       (outputFourState && !outUnknown) || inputBitWidth == 0 ||
@@ -1533,7 +1533,7 @@ obelisk_rt_v1_aggregate_export_bitstream(
       inputPlaneSize < inputBitWidth / 8 + ((inputBitWidth & 7) != 0) ||
       outputPlaneSize < outputBitWidth / 8 + ((outputBitWidth & 7) != 0) ||
       planSize < headerSize)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uintptr_t inputValueBegin, inputValueEnd, inputUnknownBegin = 0,
                                             inputUnknownEnd = 0;
   uintptr_t outputValueBegin, outputValueEnd, outputUnknownBegin = 0,
@@ -1549,7 +1549,7 @@ obelisk_rt_v1_aggregate_export_bitstream(
        !checkedRange(outUnknown, outputPlaneSize, outputUnknownBegin,
                      outputUnknownEnd)) ||
       !checkedRange(plan, planSize, planBegin, planEnd))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   auto outputOverlapsInput = [&](uintptr_t begin, uintptr_t end) {
     return overlaps(begin, end, inputValueBegin, inputValueEnd) ||
            (inputFourState &&
@@ -1561,22 +1561,22 @@ obelisk_rt_v1_aggregate_export_bitstream(
        (outputOverlapsInput(outputUnknownBegin, outputUnknownEnd) ||
         overlaps(outputValueBegin, outputValueEnd, outputUnknownBegin,
                  outputUnknownEnd))))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const auto *bytes = static_cast<const uint8_t *>(plan);
   uint64_t identity = readPlan64(bytes);
   uint64_t recordCount = readPlan64(bytes + 8);
   uint64_t sourceSpan = readPlan64(bytes + 16);
   uint64_t streamWidth = readPlan64(bytes + 24);
   if (static_cast<uint32_t>(identity) !=
-          OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAGIC ||
+          TALOS_RT_AGGREGATE_BITSTREAM_PLAN_MAGIC ||
       static_cast<uint32_t>(identity >> 32) !=
-          OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_VERSION ||
+          TALOS_RT_AGGREGATE_BITSTREAM_PLAN_VERSION ||
       recordCount == 0 ||
-      recordCount > OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_RECORDS ||
+      recordCount > TALOS_RT_AGGREGATE_BITSTREAM_PLAN_MAX_RECORDS ||
       recordCount > (UINT64_MAX - headerSize) / recordSize ||
       planSize != headerSize + recordCount * recordSize ||
       sourceSpan != inputBitWidth || streamWidth != outputBitWidth)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const uint8_t *records = bytes + headerSize;
   constexpr size_t inlineDepth = 16;
   std::array<PlanFrame, inlineDepth> inlineFrames;
@@ -1587,16 +1587,16 @@ obelisk_rt_v1_aggregate_export_bitstream(
       validatePlan(records, recordCount, sourceSpan, streamWidth, false, frames,
                    frameCapacity);
   if (validation == PlanValidation::NeedsDepth) {
-    frameCapacity = OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH + 1;
+    frameCapacity = TALOS_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH + 1;
     deepFrames.reset(new (std::nothrow) PlanFrame[frameCapacity]);
     if (!deepFrames)
-      return OBELISK_RT_OUT_OF_MEMORY;
+      return TALOS_RT_OUT_OF_MEMORY;
     frames = deepFrames.get();
     validation = validatePlan(records, recordCount, sourceSpan, streamWidth,
                               false, frames, frameCapacity);
   }
   if (validation != PlanValidation::Valid)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::memset(outValue, 0, static_cast<size_t>(outputPlaneSize));
   if (outputFourState)
     std::memset(outUnknown, 0, static_cast<size_t>(outputPlaneSize));
@@ -1606,19 +1606,19 @@ obelisk_rt_v1_aggregate_export_bitstream(
               static_cast<uint8_t *>(outValue),
               outputFourState ? static_cast<uint8_t *>(outUnknown) : nullptr,
               outputBitWidth, outputFourState != 0, frames);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status
-obelisk_rt_v1_aggregate_import_bitstream(
+extern "C" TALOS_RT_FEATURE_TEXT talos_rt_status
+talos_rt_v1_aggregate_import_bitstream(
     const void *inputValue, const void *inputUnknown, uint64_t inputPlaneSize,
     uint64_t inputBitWidth, uint32_t inputFourState, void *outValue,
     void *outUnknown, uint64_t outputPlaneSize, uint64_t outputBitWidth,
     uint32_t outputFourState, const void *plan, uint64_t planSize) {
   constexpr uint64_t headerSize =
-      OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_HEADER_WORDS * 8;
+      TALOS_RT_AGGREGATE_BITSTREAM_PLAN_HEADER_WORDS * 8;
   constexpr uint64_t recordSize =
-      OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS * 8;
+      TALOS_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS * 8;
   if (!inputValue || !outValue || !plan || inputFourState > 1 ||
       outputFourState > 1 || (inputFourState && !inputUnknown) ||
       (outputFourState && !outUnknown) || inputBitWidth == 0 ||
@@ -1627,7 +1627,7 @@ obelisk_rt_v1_aggregate_import_bitstream(
       inputPlaneSize < inputBitWidth / 8 + ((inputBitWidth & 7) != 0) ||
       outputPlaneSize < outputBitWidth / 8 + ((outputBitWidth & 7) != 0) ||
       planSize < headerSize)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uintptr_t inputValueBegin, inputValueEnd, inputUnknownBegin = 0,
                                             inputUnknownEnd = 0;
   uintptr_t outputValueBegin, outputValueEnd, outputUnknownBegin = 0,
@@ -1643,7 +1643,7 @@ obelisk_rt_v1_aggregate_import_bitstream(
        !checkedRange(outUnknown, outputPlaneSize, outputUnknownBegin,
                      outputUnknownEnd)) ||
       !checkedRange(plan, planSize, planBegin, planEnd))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   auto outputOverlapsInput = [&](uintptr_t begin, uintptr_t end) {
     return overlaps(begin, end, inputValueBegin, inputValueEnd) ||
            (inputFourState &&
@@ -1655,22 +1655,22 @@ obelisk_rt_v1_aggregate_import_bitstream(
        (outputOverlapsInput(outputUnknownBegin, outputUnknownEnd) ||
         overlaps(outputValueBegin, outputValueEnd, outputUnknownBegin,
                  outputUnknownEnd))))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const auto *bytes = static_cast<const uint8_t *>(plan);
   uint64_t identity = readPlan64(bytes);
   uint64_t recordCount = readPlan64(bytes + 8);
   uint64_t targetSpan = readPlan64(bytes + 16);
   uint64_t streamWidth = readPlan64(bytes + 24);
   if (static_cast<uint32_t>(identity) !=
-          OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAGIC ||
+          TALOS_RT_AGGREGATE_BITSTREAM_PLAN_MAGIC ||
       static_cast<uint32_t>(identity >> 32) !=
-          OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_VERSION ||
+          TALOS_RT_AGGREGATE_BITSTREAM_PLAN_VERSION ||
       recordCount == 0 ||
-      recordCount > OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_RECORDS ||
+      recordCount > TALOS_RT_AGGREGATE_BITSTREAM_PLAN_MAX_RECORDS ||
       recordCount > (UINT64_MAX - headerSize) / recordSize ||
       planSize != headerSize + recordCount * recordSize ||
       targetSpan != outputBitWidth || streamWidth != inputBitWidth)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const uint8_t *records = bytes + headerSize;
   constexpr size_t inlineDepth = 16;
   std::array<PlanFrame, inlineDepth> inlineFrames;
@@ -1681,16 +1681,16 @@ obelisk_rt_v1_aggregate_import_bitstream(
       validatePlan(records, recordCount, targetSpan, streamWidth, true, frames,
                    frameCapacity);
   if (validation == PlanValidation::NeedsDepth) {
-    frameCapacity = OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH + 1;
+    frameCapacity = TALOS_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH + 1;
     deepFrames.reset(new (std::nothrow) PlanFrame[frameCapacity]);
     if (!deepFrames)
-      return OBELISK_RT_OUT_OF_MEMORY;
+      return TALOS_RT_OUT_OF_MEMORY;
     frames = deepFrames.get();
     validation = validatePlan(records, recordCount, targetSpan, streamWidth,
                               true, frames, frameCapacity);
   }
   if (validation != PlanValidation::Valid)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::memset(outValue, 0, static_cast<size_t>(outputPlaneSize));
   if (outputFourState)
     std::memset(outUnknown, 0, static_cast<size_t>(outputPlaneSize));
@@ -1700,7 +1700,7 @@ obelisk_rt_v1_aggregate_import_bitstream(
       static_cast<uint8_t *>(outValue),
       outputFourState ? static_cast<uint8_t *>(outUnknown) : nullptr,
       inputBitWidth, outputFourState != 0, frames);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 #endif

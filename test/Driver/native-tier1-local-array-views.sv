@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.native
+// RUN: talos -O3 --native-scheduler=eval %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --native-scheduler=eval --mlir-timing -emit-llvm %s -o %t.ll 2> %t.log
+// RUN: talos -O3 --native-scheduler=eval --mlir-timing -emit-llvm %s -o %t.ll 2> %t.log
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.log
 // RUN: FileCheck %s --check-prefix=NO-CHECKPOINT < %t.ll
 
@@ -40,7 +40,7 @@ module native_tier1_local_array_views;
 endmodule
 
 // ADMISSION: eval executor inventory: {{.*}}runtime_checkpoints=0
-// NO-CHECKPOINT-NOT: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
+// NO-CHECKPOINT-NOT: call i32 @talos_rt_v1_scheduler_execute_aot_actor
 // CHECK: 34xz5678
 // CHECK-NEXT: 123478xz
 // CHECK-NEXT: 12345678

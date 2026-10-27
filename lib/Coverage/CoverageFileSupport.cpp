@@ -4,7 +4,7 @@
 
 #include "llvm/Support/FileSystem.h"
 
-namespace obelisk::coverage::detail {
+namespace talos::coverage::detail {
 
 bool atomicReplaceFile(const std::string &temporary, const std::string &output,
                        std::string &error) {
@@ -15,4 +15,4 @@ bool atomicReplaceFile(const std::string &temporary, const std::string &output,
   return false;
 }
 
-} // namespace obelisk::coverage::detail
+} // namespace talos::coverage::detail

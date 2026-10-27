@@ -1,8 +1,8 @@
 //===- ActivationPhaseAnalysis.cpp - Time-slot phases of activations ------===//
 
-#include "obelisk/Analysis/ActivationPhaseAnalysis.h"
-#include "obelisk/Analysis/ActivationMemoryAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Analysis/ActivationPhaseAnalysis.h"
+#include "talos/Analysis/ActivationMemoryAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Matchers.h"
@@ -13,7 +13,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 using Phases = ActivationPhaseAnalysis::Phases;
 using BlockInfo = ActivationPhaseAnalysis::BlockInfo;
@@ -807,4 +807,4 @@ std::optional<SmallVector<uint64_t>> ActivationPhaseAnalysis::getEffectRoots(
   return shared->effectRoots(function, effect);
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

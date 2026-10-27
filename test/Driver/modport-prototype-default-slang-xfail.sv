@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk -emit-slang %s -o - | FileCheck %s
+// RUN: %talos -emit-slang %s -o - | FileCheck %s
 
 // IEEE 1800-2023 25.7: when a prototype and the subroutine declaration both
 // give an argument a default, a call through the prototype uses the

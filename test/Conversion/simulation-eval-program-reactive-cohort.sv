@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt --test-obelisk-native-backend='scheduler=eval timing=true' -o %t.mlir 2> %t.trace
+// RUN: talos -emit-slang %s | talos-opt --test-talos-native-backend='scheduler=eval timing=true' -o %t.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 // RUN: FileCheck %s < %t.mlir
 
@@ -11,13 +11,13 @@
 // unit_16 to unit_19 are the program's four initial processes.
 // TRACE: ordered NBA boundary: function=unit_16 site=2 root=2
 // TRACE-NEXT: ordered NBA boundary: function=unit_17 site=3 root=3
-// TRACE: obelisk eval boundary: owner=0 island=0 body=unit_14 successors=
-// TRACE-NEXT: obelisk eval dependency: owner=1 island=1 body=unit_10.__obelisk_eval_body_0
-// TRACE-NEXT: obelisk eval dependency: owner=2 island=1 body=unit_4.__obelisk_eval_body_0
-// TRACE-NEXT: obelisk eval dependency: owner=3 island=1 body=unit_6.__obelisk_eval_body_0
-// TRACE-NEXT: obelisk eval dependency: owner=4 island=1 body=unit_8.__obelisk_eval_body_0
-// TRACE-NOT: obelisk eval {{boundary|dependency}}
-// CHECK: llvm.func @__obelisk_eval_dispatch_v1(
+// TRACE: talos eval boundary: owner=0 island=0 body=unit_14 successors=
+// TRACE-NEXT: talos eval dependency: owner=1 island=1 body=unit_10.__talos_eval_body_0
+// TRACE-NEXT: talos eval dependency: owner=2 island=1 body=unit_4.__talos_eval_body_0
+// TRACE-NEXT: talos eval dependency: owner=3 island=1 body=unit_6.__talos_eval_body_0
+// TRACE-NEXT: talos eval dependency: owner=4 island=1 body=unit_8.__talos_eval_body_0
+// TRACE-NOT: talos eval {{boundary|dependency}}
+// CHECK: llvm.func @__talos_eval_dispatch_v1(
 
 module tier1_reactive_top;
   logic clk = 0;

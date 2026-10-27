@@ -1,5 +1,5 @@
 //===- AccessFootprintAnalysis.cpp - Reference footprints --------===//
-#include "obelisk/Analysis/AccessFootprintAnalysis.h"
+#include "talos/Analysis/AccessFootprintAnalysis.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -10,7 +10,7 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "mlir/Interfaces/Utils/InferIntRangeCommon.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
 
@@ -18,7 +18,7 @@
 #include <memory>
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
 // Each environment denotes all executions satisfying its constant bindings.
@@ -674,4 +674,4 @@ AccessFootprintAnalysis::lookup(Operation *access, Value reference) const {
   auto found = footprints.find({access, reference});
   return found == footprints.end() ? nullptr : &found->second;
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

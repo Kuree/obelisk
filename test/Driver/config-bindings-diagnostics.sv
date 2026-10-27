@@ -1,6 +1,6 @@
 // Configuration diagnostics are produced before a report can describe an
 // invalid effective hierarchy.
-// RUN: not obelisk -emit-bindings -Werror=dup-config-rule --top=broken %s 2>&1 \
+// RUN: not talos -emit-bindings -Werror=dup-config-rule --top=broken %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=ERROR
 
 module leaf;

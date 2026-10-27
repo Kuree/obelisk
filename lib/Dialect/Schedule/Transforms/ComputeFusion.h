@@ -1,15 +1,15 @@
 //===- ComputeFusion.h - Static process-body fusion helpers -----*- C++ -*-===//
 
-#ifndef OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEFUSION_H
-#define OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEFUSION_H
+#ifndef TALOS_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEFUSION_H
+#define TALOS_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEFUSION_H
 
-#include "obelisk/Analysis/ActivationRegionAnalysis.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/ActivationRegionAnalysis.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/DenseSet.h"
 #include <memory>
 
-namespace obelisk {
+namespace talos {
 
 /// A finite combinational activation with complete, exclusive outputs. Live-in
 /// reads are watched; structured activations may also read their own definite
@@ -136,7 +136,7 @@ bool isPrimitiveComputeBodyFusionEligible(
 /// Storage descriptors classified by who can observe their intermediate
 /// nonblocking updates in one NBA region. IEEE 1800-2017 4.6(b) requires NBAs
 /// to be performed in execution order, and 9.4.2 detects an event on each
-/// update. Obelisk performs every scheduled NBA of a region before the
+/// update. Talos performs every scheduled NBA of a region before the
 /// evaluations they trigger, an order 4.5 permits (the Active region is
 /// processed in any order) and 10.4.2 requires for the blocking assignments
 /// they create. Under that order a root nothing watches (except a process
@@ -169,6 +169,6 @@ mlir::SmallVector<uint32_t>
 getComputeFusionReadyTargets(schedule::ComputeGraphAttr graph,
                              schedule::ComputeEffectAttr sensitivity);
 
-} // namespace obelisk
+} // namespace talos
 
-#endif // OBELISK_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEFUSION_H
+#endif // TALOS_LIB_DIALECT_SIMULATION_TRANSFORMS_COMPUTEFUSION_H

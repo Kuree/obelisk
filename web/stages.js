@@ -1,6 +1,6 @@
 // The compiler's actual pipeline, used as the inspector's tab strip.
 //
-// Order follows DESIGN.md: source → slang → obelisk → sim → schedule → LLVM →
+// Order follows DESIGN.md: source → slang → talos → sim → schedule → LLVM →
 // run. Running is the terminus, so it is both the last tab and the default
 // one -- the page's job is to run your design; the IR stages are there when
 // you want to look inside. The waveform and coverage views belong after Run
@@ -24,12 +24,12 @@ export const STAGES = [
     blurb: 'Elaborated semantic AST, one op per slang dispatch kind.',
   },
   {
-    id: 'obelisk',
-    label: 'Obelisk IR',
-    flag: '-emit-obelisk',
+    id: 'talos',
+    label: 'Talos IR',
+    flag: '-emit-talos',
     kind: 'text',
     language: 'mlir',
-    blurb: 'Typed obelisk.sv dialect after conversion from slang.',
+    blurb: 'Typed talos.sv dialect after conversion from slang.',
   },
   {
     id: 'sim',

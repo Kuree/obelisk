@@ -1,16 +1,16 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-set-module-attributes{attrs="{schedule.eval.runtime_calendar}"},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=SHARED
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-set-module-attributes{attrs="{schedule.eval.runtime_calendar}"},simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=SHARED
 
 // IEEE 1800-2023 4.9.4, 10.4.2: an NBA captures its RHS and selected target.
 // Its destination's previous contents are not an activation input. The bounded
 // selector can name either array element, but only element zero is written in
 // this execution. Element one's permanent X must not prevent two-state entry.
 // The commit separately clears old X/Z in the selected element (6.3.1, 7.4.5).
-// CHECK-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_two_state_0(
+// CHECK-LABEL: llvm.func @work.__talos_eval_body_0.__talos_two_state_0(
 // CHECK-SAME: schedule.eval.local_promotion_ranges = array<i64: 16, 8>
 // Shared runtime-calendar handoffs retain their conservative closure.
-// SHARED-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_two_state_0(
+// SHARED-LABEL: llvm.func @work.__talos_eval_body_0.__talos_two_state_0(
 // SHARED-SAME: schedule.eval.local_promotion_ranges = array<i64: 16, 8, 32, 16>
 
 !byte = !simulation.logic<8>

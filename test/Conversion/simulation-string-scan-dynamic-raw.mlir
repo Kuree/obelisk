@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --test-talos-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
 !pair = !simulation.unpacked_struct<[
@@ -44,8 +44,8 @@ module attributes {
   }
 }
 
-// NATIVE: llvm.call @obelisk_rt_v1_string_scan_dynamic
-// NATIVE-COUNT-2: llvm.call @obelisk_rt_v1_string_scan_raw
+// NATIVE: llvm.call @talos_rt_v1_string_scan_dynamic
+// NATIVE-COUNT-2: llvm.call @talos_rt_v1_string_scan_raw
 // BYTECODE: intrinsic 0: id=0x00010246 inputs=9 outputs=5 flags=0
 // BYTECODE: intrinsic 1: id=0x00010243 inputs=7 outputs=3 flags=0
 // BYTECODE-COUNT-2: id=0x00010243 inputs={{\[}}

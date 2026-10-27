@@ -1,11 +1,11 @@
-// RUN: obelisk -O3 %s -o %t.native
+// RUN: talos -O3 %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
-// RUN: obelisk -emit-llvm %s -o %t.hybrid.ll
+// RUN: talos -emit-llvm %s -o %t.hybrid.ll
 // RUN: FileCheck %s --check-prefix=HYBRID < %t.hybrid.ll
-// RUN: not obelisk --native-scheduler=aot %s -o %t.aot 2>&1 \
+// RUN: not talos --native-scheduler=aot %s -o %t.aot 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=AOT-ERROR
 
 `timescale 1ns/1ps
@@ -28,6 +28,6 @@ endmodule
 // CHECK-NEXT: delay32
 // CHECK-NEXT: delay64
 // AOT-ERROR: design is ineligible for native AOT scheduling: dynamic deadline
-// HYBRID-NOT: @unit_0.__obelisk_bytecode_continuations
-// HYBRID-DAG: call i64 @obelisk_rt_v1_process_spawn
-// HYBRID-DAG: call i32 @obelisk_rt_v1_scheduler_run
+// HYBRID-NOT: @unit_0.__talos_bytecode_continuations
+// HYBRID-DAG: call i64 @talos_rt_v1_process_spawn
+// HYBRID-DAG: call i32 @talos_rt_v1_scheduler_run

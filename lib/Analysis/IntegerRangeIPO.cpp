@@ -1,17 +1,17 @@
-#include "obelisk/Analysis/IntegerRangeIPO.h"
+#include "talos/Analysis/IntegerRangeIPO.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
-#include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/ScopedIntegerRangeAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/IR/ConstantRange.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 std::optional<ConstantIntRanges>
 decodeIntegerRange(Attribute attr, std::optional<unsigned> expectedWidth) {
   auto range = dyn_cast_or_null<sim::IntegerRangeAttr>(attr);
@@ -443,4 +443,4 @@ void prepareIntegerRangeIPO(Operation *scope) {
       break;
   }
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

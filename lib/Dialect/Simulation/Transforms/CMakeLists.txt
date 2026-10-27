@@ -1,4 +1,4 @@
-add_mlir_dialect_library(ObeliskSimulationTransforms
+add_mlir_dialect_library(TalosSimulationTransforms
   AliasPortConnections.cpp
   AnnotateSteadyUnknown.cpp
   CompileRandomPlans.cpp
@@ -15,15 +15,15 @@ add_mlir_dialect_library(ObeliskSimulationTransforms
   UnrollBoundedLoops.cpp
 
   DEPENDS
-  ObeliskSimulationPassIncGen
+  TalosSimulationPassIncGen
 
   LINK_LIBS PUBLIC
-  ObeliskSimulationToSchedule
-  ObeliskScheduleTransforms
-  ObeliskIR
-  ObeliskSimulationAnalysis
-  ObeliskSimulationIR
-  ObeliskSolver
+  TalosSimulationToSchedule
+  TalosScheduleTransforms
+  TalosIR
+  TalosSimulationAnalysis
+  TalosSimulationIR
+  TalosSolver
   MLIRAnalysis
   MLIRArithDialect
   MLIRControlFlowDialect
@@ -32,9 +32,9 @@ add_mlir_dialect_library(ObeliskSimulationTransforms
   MLIRTransforms
 )
 
-target_include_directories(ObeliskSimulationTransforms PRIVATE
+target_include_directories(TalosSimulationTransforms PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )
-target_include_directories(obj.ObeliskSimulationTransforms PRIVATE
+target_include_directories(obj.TalosSimulationTransforms PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )

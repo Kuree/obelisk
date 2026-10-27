@@ -1,11 +1,11 @@
 //===- SimulationNativePartitionPlanning.cpp - Stable native partitions --===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/SymbolTable.h"
@@ -23,10 +23,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMPLANNATIVEPARTITIONSPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMPLANNATIVEPARTITIONSPASS
+#include "talos/Conversion/Passes.h.inc"
 
 namespace {
 
@@ -94,7 +94,7 @@ static LogicalResult planNativePartitions(sim::SimDesignOp design) {
   Builder builder(context);
 
   SmallVector<sim::SimFuncOp> functions;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       design, [&](sim::SimFuncOp function) {
         native::remove<native::Partition>(function);
         if (!function.isExternal())
@@ -308,9 +308,9 @@ static LogicalResult planNativePartitions(sim::SimDesignOp design) {
   return success();
 }
 
-class ObeliskSimPlanNativePartitionsPass
-    : public impl::ObeliskSimPlanNativePartitionsPassBase<
-          ObeliskSimPlanNativePartitionsPass> {
+class TalosSimPlanNativePartitionsPass
+    : public impl::TalosSimPlanNativePartitionsPassBase<
+          TalosSimPlanNativePartitionsPass> {
 public:
   void runOnOperation() override {
     if (failed(planNativePartitions(getOperation())))
@@ -652,4 +652,4 @@ publishNativePartitionManifest(ModuleOp module,
 }
 
 } // namespace detail
-} // namespace obelisk
+} // namespace talos

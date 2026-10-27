@@ -19,28 +19,28 @@ builtins = pathlib.Path(sys.argv[4])
 # eight-byte alignment in the execution extension and export tail.
 abi_source = (source / "runtime/lib/ABI.cpp").read_text()
 for assertion in (
-    "ABI_SIZE_ALIGN(obelisk_rt_export_descriptor_v1, 64, 8);",
-    "ABI_OFFSET(obelisk_rt_export_descriptor_v1, bytecode_function, 40);",
-    "ABI_OFFSET(obelisk_rt_export_descriptor_v1, native_entry, 48);",
-    "ABI_OFFSET(obelisk_rt_export_descriptor_v1, reserved_tail, ABI_PTR(56, 56));",
-    "ABI_SIZE_ALIGN(obelisk_rt_execution_extension_v1, 72, 8);",
-    "ABI_OFFSET(obelisk_rt_execution_extension_v1, sampled_range_count, 16);",
-    "ABI_OFFSET(obelisk_rt_execution_extension_v1, exports, 24);",
-    "ABI_OFFSET(obelisk_rt_execution_extension_v1, export_count, 32);",
-    "ABI_OFFSET(obelisk_rt_execution_extension_v1, class_bitstream, 40);",
-    "ABI_OFFSET(obelisk_rt_execution_extension_v1, class_bitstream_size, 48);",
-    "ABI_OFFSET(obelisk_rt_execution_extension_v1, coverage_schema, 56);",
-    "ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_header_v1, 128, 8);",
-    "ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_site_v1, 40, 8);",
-    "ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_group_v1, 40, 8);",
-    "ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_schema_v1, 48, 8);",
-    "ABI_SIZE_ALIGN(obelisk_rt_class_bitstream_field_v1, 48, 8);",
-    "ABI_SIZE_ALIGN(obelisk_rt_functional_value_v1, ABI_PTR(64, 56), 8);",
-    "ABI_OFFSET(obelisk_rt_functional_value_v1, unknown, ABI_PTR(32, 28));",
-    "ABI_OFFSET(obelisk_rt_functional_value_v1, owner, ABI_PTR(40, 32));",
-    "ABI_OFFSET(obelisk_rt_functional_value_v1, payload, ABI_PTR(48, 40));",
-    "ABI_OFFSET(obelisk_rt_functional_value_v1, kind, ABI_PTR(56, 48));",
-    "ABI_OFFSET(obelisk_rt_functional_value_v1, argument_ref_kind,",
+    "ABI_SIZE_ALIGN(talos_rt_export_descriptor_v1, 64, 8);",
+    "ABI_OFFSET(talos_rt_export_descriptor_v1, bytecode_function, 40);",
+    "ABI_OFFSET(talos_rt_export_descriptor_v1, native_entry, 48);",
+    "ABI_OFFSET(talos_rt_export_descriptor_v1, reserved_tail, ABI_PTR(56, 56));",
+    "ABI_SIZE_ALIGN(talos_rt_execution_extension_v1, 72, 8);",
+    "ABI_OFFSET(talos_rt_execution_extension_v1, sampled_range_count, 16);",
+    "ABI_OFFSET(talos_rt_execution_extension_v1, exports, 24);",
+    "ABI_OFFSET(talos_rt_execution_extension_v1, export_count, 32);",
+    "ABI_OFFSET(talos_rt_execution_extension_v1, class_bitstream, 40);",
+    "ABI_OFFSET(talos_rt_execution_extension_v1, class_bitstream_size, 48);",
+    "ABI_OFFSET(talos_rt_execution_extension_v1, coverage_schema, 56);",
+    "ABI_SIZE_ALIGN(talos_rt_class_bitstream_header_v1, 128, 8);",
+    "ABI_SIZE_ALIGN(talos_rt_class_bitstream_site_v1, 40, 8);",
+    "ABI_SIZE_ALIGN(talos_rt_class_bitstream_group_v1, 40, 8);",
+    "ABI_SIZE_ALIGN(talos_rt_class_bitstream_schema_v1, 48, 8);",
+    "ABI_SIZE_ALIGN(talos_rt_class_bitstream_field_v1, 48, 8);",
+    "ABI_SIZE_ALIGN(talos_rt_functional_value_v1, ABI_PTR(64, 56), 8);",
+    "ABI_OFFSET(talos_rt_functional_value_v1, unknown, ABI_PTR(32, 28));",
+    "ABI_OFFSET(talos_rt_functional_value_v1, owner, ABI_PTR(40, 32));",
+    "ABI_OFFSET(talos_rt_functional_value_v1, payload, ABI_PTR(48, 40));",
+    "ABI_OFFSET(talos_rt_functional_value_v1, kind, ABI_PTR(56, 48));",
+    "ABI_OFFSET(talos_rt_functional_value_v1, argument_ref_kind,",
     "ABI_PTR(60, 52));",
 ):
     if assertion not in abi_source:
@@ -92,8 +92,8 @@ def cmake_list(path, variable):
 
 
 runtime_cmake = source / "runtime/CMakeLists.txt"
-host_common = cmake_list(runtime_cmake, "_obelisk_runtime_common_sources")
-host_cold = cmake_list(runtime_cmake, "_obelisk_runtime_cold_tail_sources")
+host_common = cmake_list(runtime_cmake, "_talos_runtime_common_sources")
+host_cold = cmake_list(runtime_cmake, "_talos_runtime_cold_tail_sources")
 expected_members = [pathlib.Path(item).name + ".o"
                     for item in host_common + host_cold]
 if members[:len(expected_members)] != expected_members:
@@ -126,10 +126,10 @@ def require_feature_symbol(layout, symbol):
     expression = (
         r"Symbol \{(?:(?!Symbol \{).)*Name: [^\n]*"
         + re.escape(symbol)
-        + r"[^\n]*\n(?:(?!Symbol \{).)*Section: \.obelisk\.feature\.text"
+        + r"[^\n]*\n(?:(?!Symbol \{).)*Section: \.talos\.feature\.text"
     )
     if not re.search(expression, layout, re.DOTALL):
-        raise SystemExit(f"{symbol} is not in .obelisk.feature.text")
+        raise SystemExit(f"{symbol} is not in .talos.feature.text")
 
 
 def require_feature_or_inlined(layout, symbol):
@@ -142,7 +142,7 @@ def require_recursive_feature_symbol(layout, symbol):
         r"Symbol \{(?:(?!Symbol \{).)*Name: [^\n]*"
         + re.escape(symbol)
         + r"[^\n]*\n(?:(?!Symbol \{).)*Section: "
-        r"\.obelisk\.feature\.recursive_bitstream\.text"
+        r"\.talos\.feature\.recursive_bitstream\.text"
     )
     if not re.search(expression, layout, re.DOTALL):
         raise SystemExit(
@@ -157,15 +157,15 @@ def require_recursive_feature_or_inlined(layout, symbol):
 
 scan_layout = member_layout("ScanFormat.cpp.o")
 for symbol in (
-    "obelisk_rt_dynamic_scan_plan",
-    "obelisk_rt_v1_scan_dynamic_validate",
+    "talos_rt_dynamic_scan_plan",
+    "talos_rt_v1_scan_dynamic_validate",
 ):
     require_feature_symbol(scan_layout, symbol)
 require_feature_or_inlined(scan_layout, "parsePlan")
 
 bytecode_layout = member_layout("DynamicScanBytecode.cpp.o")
 require_feature_symbol(bytecode_layout, "invokeDynamicScanIntrinsic")
-require_feature_symbol(bytecode_layout, "obelisk_rt_v1_dynamic_scan_link_anchor")
+require_feature_symbol(bytecode_layout, "talos_rt_v1_dynamic_scan_link_anchor")
 for symbol in (
     "readScalar",
     "writeScalar",
@@ -176,13 +176,13 @@ for symbol in (
 
 bitstream_layout = member_layout("ContainerBitstream.cpp.o")
 require_feature_symbol(
-    bitstream_layout, "obelisk_rt_v1_container_export_bitstream"
+    bitstream_layout, "talos_rt_v1_container_export_bitstream"
 )
 require_feature_symbol(
-    bitstream_layout, "obelisk_rt_v1_aggregate_export_bitstream"
+    bitstream_layout, "talos_rt_v1_aggregate_export_bitstream"
 )
 require_feature_symbol(
-    bitstream_layout, "obelisk_rt_v1_aggregate_import_bitstream"
+    bitstream_layout, "talos_rt_v1_aggregate_import_bitstream"
 )
 for symbol in (
     "copyBits",
@@ -201,13 +201,13 @@ for symbol in (
 
 recursive_bitstream_layout = member_layout("RecursiveBitstream.cpp.o")
 require_recursive_feature_symbol(
-    recursive_bitstream_layout, "obelisk_rt_v1_recursive_export_bitstream"
+    recursive_bitstream_layout, "talos_rt_v1_recursive_export_bitstream"
 )
 require_recursive_feature_symbol(
-    recursive_bitstream_layout, "obelisk_rt_v1_recursive_bitstream_link_anchor"
+    recursive_bitstream_layout, "talos_rt_v1_recursive_bitstream_link_anchor"
 )
 require_recursive_feature_symbol(
-    recursive_bitstream_layout, "obelisk_rt_expand_recursive_watch_group"
+    recursive_bitstream_layout, "talos_rt_expand_recursive_watch_group"
 )
 for symbol in (
     "readRecursive64",
@@ -220,9 +220,9 @@ for symbol in (
 
 managed_heap_layout = member_layout("ManagedHeap.cpp.o")
 for symbol in (
-    "obelisk_rt_managed_allocate_without_safepoint",
-    "obelisk_rt_managed_object_acquire",
-    "obelisk_rt_managed_object_release",
+    "talos_rt_managed_allocate_without_safepoint",
+    "talos_rt_managed_object_acquire",
+    "talos_rt_managed_object_release",
 ):
     require_feature_symbol(managed_heap_layout, symbol)
 require_feature_or_inlined(
@@ -235,14 +235,14 @@ require_feature_or_inlined(containers_layout, "allocateBufferWithoutSafepoint")
 bitstream_bytecode_layout = member_layout("ContainerBitstreamBytecode.cpp.o")
 for symbol in (
     "invokeContainerBitstreamIntrinsic",
-    "obelisk_rt_v1_container_bitstream_link_anchor",
+    "talos_rt_v1_container_bitstream_link_anchor",
 ):
     require_feature_symbol(bitstream_bytecode_layout, symbol)
 for symbol in ("readScalar", "readManaged", "readBytes"):
     require_feature_or_inlined(bitstream_bytecode_layout, symbol)
 weak_recursive_bitstream = re.search(
     r"Symbol \{(?:(?!Symbol \{).)*Name: [^\n]*"
-    r"obelisk_rt_v1_recursive_export_bitstream[^\n]*\n"
+    r"talos_rt_v1_recursive_export_bitstream[^\n]*\n"
     r"(?:(?!Symbol \{).)*Binding: Weak\s*"
     r"(?:(?!Symbol \{).)*Section: Undefined",
     bitstream_bytecode_layout,
@@ -263,12 +263,12 @@ if not weak_class_bitstream:
 
 class_bitstream_layout = member_layout("ClassBitstream.cpp.o")
 for symbol in (
-    "obelisk_rt_v1_class_bitstream_link_anchor",
-    "obelisk_rt_v1_class_bitstream_finalize",
-    "obelisk_rt_v2_recursive_export_bitstream",
-    "obelisk_rt_class_bitstream_export_bytecode",
-    "obelisk_rt_expand_class_watch_group",
-    "obelisk_rt_managed_watch_range",
+    "talos_rt_v1_class_bitstream_link_anchor",
+    "talos_rt_v1_class_bitstream_finalize",
+    "talos_rt_v2_recursive_export_bitstream",
+    "talos_rt_class_bitstream_export_bytecode",
+    "talos_rt_expand_class_watch_group",
+    "talos_rt_managed_watch_range",
 ):
     require_feature_symbol(class_bitstream_layout, symbol)
 for symbol in (
@@ -284,23 +284,23 @@ for symbol in (
 
 class_bitstream_bytecode_layout = member_layout("ClassBitstreamBytecode.cpp.o")
 for symbol in (
-    "obelisk_rt_v1_class_bitstream_bytecode_link_anchor",
+    "talos_rt_v1_class_bitstream_bytecode_link_anchor",
     "invokeClassBitstreamIntrinsic",
 ):
     require_feature_symbol(class_bitstream_bytecode_layout, symbol)
 
 dpi_export_layout = member_layout("DPIExport.cpp.o")
 for symbol in (
-    "obelisk_rt_validate_dpi_exports",
-    "obelisk_rt_v1_export_call",
-    "obelisk_rt_v1_export_string",
-    "obelisk_rt_v1_dpi_export_unpack_vector",
-    "obelisk_rt_v1_dpi_export_pack_vector",
+    "talos_rt_validate_dpi_exports",
+    "talos_rt_v1_export_call",
+    "talos_rt_v1_export_string",
+    "talos_rt_v1_dpi_export_unpack_vector",
+    "talos_rt_v1_dpi_export_pack_vector",
 ):
     require_feature_symbol(dpi_export_layout, symbol)
 weak_export_bytecode_handler = re.search(
     r"Symbol \{(?:(?!Symbol \{).)*Name: [^\n]*"
-    r"obelisk_rt_execute_dpi_export_bytecode[^\n]*\n"
+    r"talos_rt_execute_dpi_export_bytecode[^\n]*\n"
     r"(?:(?!Symbol \{).)*Binding: Weak\s*"
     r"(?:(?!Symbol \{).)*Section: Undefined",
     dpi_export_layout,
@@ -312,15 +312,15 @@ if not weak_export_bytecode_handler:
 dpi_export_bytecode_layout = member_layout("DPIExportBytecode.cpp.o")
 require_feature_symbol(
     dpi_export_bytecode_layout,
-    "obelisk_rt_v1_dpi_export_bytecode_link_anchor",
+    "talos_rt_v1_dpi_export_bytecode_link_anchor",
 )
 require_feature_symbol(
-    dpi_export_bytecode_layout, "obelisk_rt_execute_dpi_export_bytecode"
+    dpi_export_bytecode_layout, "talos_rt_execute_dpi_export_bytecode"
 )
 
 for member, symbol in (
-    ("Containers.cpp.o", "obelisk_rt_v1_string_scan_dynamic"),
-    ("FileIO.cpp.o", "obelisk_rt_v1_file_scan_dynamic"),
+    ("Containers.cpp.o", "talos_rt_v1_string_scan_dynamic"),
+    ("FileIO.cpp.o", "talos_rt_v1_file_scan_dynamic"),
 ):
     require_feature_symbol(member_layout(member), symbol)
 
@@ -328,10 +328,10 @@ for member, symbol in (
 # archive members even for a no-scan design. Teardown is now type-erased, and
 # the dispatcher handler must be undefined weak so archive search ignores it.
 runtime_layout = member_layout("Runtime.cpp.o")
-if "obelisk_rt_dynamic_scan_destroy" in runtime_layout:
+if "talos_rt_dynamic_scan_destroy" in runtime_layout:
     raise SystemExit("common runtime teardown strongly references scan format")
 weak_export_validator = re.search(
-    r"Symbol \{(?:(?!Symbol \{).)*Name: [^\n]*obelisk_rt_validate_dpi_exports"
+    r"Symbol \{(?:(?!Symbol \{).)*Name: [^\n]*talos_rt_validate_dpi_exports"
     r"[^\n]*\n(?:(?!Symbol \{).)*Binding: Weak\s*"
     r"(?:(?!Symbol \{).)*Section: Undefined",
     runtime_layout,
@@ -362,8 +362,8 @@ if "invokeClassBitstreamIntrinsic" in dispatcher_layout:
 
 for path in (source / "cmake/TargetNativeSupport.cmake",
              source / "cmake/TargetWasmSupport.cmake"):
-    common = cmake_list(path, "_obelisk_target_runtime_common_sources")
-    cold = cmake_list(path, "_obelisk_target_runtime_cold_tail_sources")
+    common = cmake_list(path, "_talos_target_runtime_common_sources")
+    cold = cmake_list(path, "_talos_target_runtime_cold_tail_sources")
     if cold[:9] != [
         "ScanFormat",
         "DynamicScanBytecode",
@@ -380,8 +380,8 @@ for path in (source / "cmake/TargetNativeSupport.cmake",
         raise SystemExit(f"common and cold-tail sources overlap in {path}")
     text = path.read_text()
     if not re.search(
-        r"foreach\(source IN LISTS _obelisk_target_runtime_common_sources\s+"
-        r"_obelisk_target_runtime_cold_tail_sources(?:\s+"
+        r"foreach\(source IN LISTS _talos_target_runtime_common_sources\s+"
+        r"_talos_target_runtime_cold_tail_sources(?:\s+"
         r"_[A-Za-z0-9_]+)*\)", text
     ):
         raise SystemExit(f"{path} does not append the declared cold-tail group")
@@ -392,7 +392,7 @@ for path in (source / "cmake/TargetNativeSupport.cmake",
 internal = (source / "runtime/lib/RuntimeInternal.h").read_text()
 if not re.search(
     r"#elif defined\(__clang__\) \|\| defined\(__GNUC__\).*?"
-    r"OBELISK_RT_FEATURE_TEXT __attribute__\(\(noinline, cold\)\)",
+    r"TALOS_RT_FEATURE_TEXT __attribute__\(\(noinline, cold\)\)",
     internal,
     re.DOTALL,
 ):
@@ -407,18 +407,18 @@ if dispatcher.count("invokeDynamicScanIntrinsic") != 2:
 if dispatcher.count("invokeContainerBitstreamIntrinsic") != 2:
     raise SystemExit("container bit-stream service leaked into the dispatcher")
 tail = re.search(
-    r"case OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC:\s*"
-    r"case OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC:\s*"
-    r"case OBELISK_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE:\s*"
+    r"case TALOS_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC:\s*"
+    r"case TALOS_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC:\s*"
+    r"case TALOS_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE:\s*"
     r"if \(!invokeDynamicScanIntrinsic\)\s*"
-    r"return OBELISK_RT_INVALID_BYTECODE;\s*"
+    r"return TALOS_RT_INVALID_BYTECODE;\s*"
     r"return invokeDynamicScanIntrinsic\(image, frame, context, site,\s*"
     r"signature\.id\);\s*"
-    r"case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:\s*"
-    r"case OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM:\s*"
-    r"case OBELISK_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM:\s*"
+    r"case TALOS_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:\s*"
+    r"case TALOS_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM:\s*"
+    r"case TALOS_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM:\s*"
     r"if \(!invokeContainerBitstreamIntrinsic\)\s*"
-    r"return OBELISK_RT_INVALID_BYTECODE;\s*"
+    r"return TALOS_RT_INVALID_BYTECODE;\s*"
     r"return invokeContainerBitstreamIntrinsic\(image, frame, context, site,\s*"
     r"siteIndex, signature\.id\);\s*default:",
     dispatcher,
@@ -428,7 +428,7 @@ if not tail:
 
 image_validator = (source / "runtime/lib/DesignBytecodeImage.cpp").read_text()
 recursive_image_contract = re.search(
-    r"case OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:\s*"
+    r"case TALOS_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM:\s*"
     r"if \(signature\.flags == 1 \|\| signature\.flags == 2\)\s*"
     r"return site\.inputCount == 2 && site\.outputCount == 3 &&\s*"
     r"\(numeric\(input\(0\)\) \|\| managed\(input\(0\)\) \|\|\s*"

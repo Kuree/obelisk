@@ -6,10 +6,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "SimulationVerifiers.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/VPIObjectModel.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -39,7 +39,7 @@
 
 using namespace mlir;
 
-namespace obelisk::sim {
+namespace talos::sim {
 
 LogicalResult
 StorageLayoutAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
@@ -1233,4 +1233,4 @@ std::optional<unsigned> getPackedWidth(Type type) {
   return std::nullopt;
 }
 
-} // namespace obelisk::sim
+} // namespace talos::sim

@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-obelisk %s 2>&1 | FileCheck %s
+// RUN: not talos -emit-talos %s 2>&1 | FileCheck %s
 
 module unsupported_ref_child(ref logic value);
 endmodule

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' -o %t.mlir 2> %t.log
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-clocked-kernels))' -o %t.mlir 2> %t.log
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=REPORT < %t.log
 
@@ -57,20 +57,20 @@ module attributes {native.debug_timing} {
       cf.br ^low
     }
     // CHECK-LABEL: simulation.design @two_clocks
-    // CHECK-DAG: simulation.spawn @__obelisk_clocked_0_1_0(
-    // CHECK-DAG: simulation.spawn @__obelisk_clocked_1_1_0(
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-DAG: simulation.spawn @__talos_clocked_0_1_0(
+    // CHECK-DAG: simulation.spawn @__talos_clocked_1_1_0(
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK: %[[NEXT:.*]] = simulation.logic.binary add
     // CHECK-NEXT: simulation.nba.enqueue %[[NEXT]]
     // CHECK-NEXT: simulation.ref.store %[[NEXT]]
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_1_1_0
+    // CHECK-LABEL: simulation.func private @__talos_clocked_1_1_0
     // CHECK: %[[A:.*]] = simulation.ref.load
     // CHECK-NEXT: simulation.ref.store %[[A]]
     // CHECK-NOT: simulation.nba.enqueue
     // CHECK: cf.br
-    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=1 retained=0
-    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_1_1_0 members=1 eligible=1 retained=0
-    // REPORT: obelisk clocked kernel rejection: root accessed by event activation = 1
+    // REPORT-LABEL: talos clocked kernel: __talos_clocked_0_1_0 members=1 eligible=1 retained=0
+    // REPORT-LABEL: talos clocked kernel: __talos_clocked_1_1_0 members=1 eligible=1 retained=0
+    // REPORT: talos clocked kernel rejection: root accessed by event activation = 1
     simulation.func private @count(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk0: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %a: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}, %c: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 4 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
@@ -180,17 +180,17 @@ module attributes {native.debug_timing} {
       simulation.suspend.change %port to ^body : !bitref
     }
     // CHECK-LABEL: simulation.design @alias_reader
-    // CHECK: simulation.spawn @__obelisk_clocked_0_1_0
+    // CHECK: simulation.spawn @__talos_clocked_0_1_0
     // CHECK: simulation.spawn @late
     // CHECK-NOT: simulation.func private @count
     // CHECK: simulation.func private @late
     // CHECK: simulation.nba.enqueue
-    // CHECK: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK: simulation.func private @__talos_clocked_0_1_0
     // CHECK-NOT: simulation.nba.enqueue
     // CHECK: simulation.ref.store
-    // REPORT: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=1
-    // REPORT-DAG: obelisk clocked kernel rejection: member accesses its clock = 1
-    // REPORT-DAG: obelisk clocked kernel rejection: member accesses its clock: read of another alias = 1
+    // REPORT: talos clocked kernel: __talos_clocked_0_1_0 members=1 eligible=1
+    // REPORT-DAG: talos clocked kernel rejection: member accesses its clock = 1
+    // REPORT-DAG: talos clocked kernel rejection: member accesses its clock: read of another alias = 1
     simulation.func private @count(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %a: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 4 : i64} {
       cf.br ^wait
     ^wait:
@@ -274,13 +274,13 @@ module attributes {native.debug_timing} {
       cf.br ^low
     }
     // CHECK-LABEL: simulation.design @mixed_writers
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK: %[[ZERO:.*]] = simulation.logic.constant false, false
     // CHECK: simulation.nba.enqueue %[[ZERO]] to %[[Q:arg[0-9]+]]
     // CHECK-NEXT: simulation.ref.store %[[ZERO]] to %[[R:arg[0-9]+]]
     // CHECK: simulation.ref.store %{{.*}} to %[[Q]]
-    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=2 eligible=1 retained=0
-    // REPORT: obelisk clocked kernel rejection: root writers = 1
+    // REPORT-LABEL: talos clocked kernel: __talos_clocked_0_1_0 members=2 eligible=1 retained=0
+    // REPORT: talos clocked kernel rejection: root writers = 1
     simulation.func private @clear(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %r: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
       %zero = simulation.logic.constant false, false : !bit
       cf.br ^wait
@@ -367,7 +367,7 @@ module attributes {native.debug_timing} {
       cf.br ^low
     }
     // CHECK-LABEL: simulation.design @dynamic_element
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK: simulation.suspend.edge posedge %{{.*}} to ^[[START:bb[0-9]+]]
     // CHECK: ^[[START]]:
     // CHECK-NEXT: %[[OLD:.*]] = simulation.ref.load %[[MEM:arg[0-9]+]] : !simulation.ref<!simulation.unpacked_array
@@ -378,7 +378,7 @@ module attributes {native.debug_timing} {
     // CHECK-NEXT: simulation.ref.load %[[VIEW]]
     // CHECK-NOT: simulation.nba.enqueue
     // CHECK: cf.br
-    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=2 retained=0 snapshots=1
+    // REPORT-LABEL: talos clocked kernel: __talos_clocked_0_1_0 members=1 eligible=2 retained=0 snapshots=1
     simulation.func private @write(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %mem: !memref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %index: !simulation.ref<i64> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}, %out: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 3 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
       %value = simulation.logic.constant 7 : i8, 0 : i8 : !byte
       %first = arith.constant 0 : i64
@@ -462,7 +462,7 @@ module attributes {native.debug_timing} {
       simulation.return %qv : !bit
     }
     // CHECK-LABEL: simulation.design @opaque_late_read
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK: %[[NEXT:.*]] = simulation.logic.unary logical_not
     // CHECK-NEXT: simulation.ref.store %[[NEXT]] to %[[VALUE:[0-9]+]]
     // CHECK-NEXT: %[[SET:.*]] = arith.constant true
@@ -474,7 +474,7 @@ module attributes {native.debug_timing} {
     // CHECK: %[[UPDATE:.*]] = simulation.ref.load %[[VALUE]]
     // CHECK-NEXT: simulation.ref.store %[[UPDATE]] to %arg2
     // CHECK-NOT: simulation.nba.enqueue
-    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=2 retained=0 snapshots=0 deferred=0 delayed=1
+    // REPORT-LABEL: talos clocked kernel: __talos_clocked_0_1_0 members=1 eligible=2 retained=0 snapshots=0 deferred=0 delayed=1
     simulation.func private @toggle(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %r: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
@@ -554,9 +554,9 @@ module attributes {native.debug_timing} {
       cf.br ^low
     }
     // CHECK-LABEL: simulation.design @slot_writers
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK: simulation.ref.store %{{.*}} to %{{.*}} : !simulation.logic<8>
-    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=1 retained=0
+    // REPORT-LABEL: talos clocked kernel: __talos_clocked_0_1_0 members=1 eligible=1 retained=0
     simulation.func private @count(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 4 : i64} {
       %one = simulation.logic.constant 1 : i8, 0 : i8 : !byte
       cf.br ^wait
@@ -632,13 +632,13 @@ module attributes {native.debug_timing} {
       cf.br ^low
     }
     // CHECK-LABEL: simulation.design @settle_twice
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK: simulation.nba.enqueue %{{.*}} to %[[Q:arg[0-9]+]]
     // CHECK-NEXT: simulation.ref.store %{{.*}} to %[[R:arg[0-9]+]]
     // CHECK-NEXT: simulation.ref.store %{{.*}} to %[[T:arg[0-9]+]]
-    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=2 retained=0 snapshots=0 deferred=0 delayed=0
+    // REPORT-LABEL: talos clocked kernel: __talos_clocked_0_1_0 members=1 eligible=2 retained=0 snapshots=0 deferred=0 delayed=0
     // REPORT-NOT: root second wave
-    // REPORT: obelisk clocked kernel rejection: root accessed by event activation = 1
+    // REPORT: talos clocked kernel rejection: root accessed by event activation = 1
     simulation.func private @stages(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %r: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}, %t: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 3 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
@@ -745,11 +745,11 @@ module attributes {native.debug_timing} {
       cf.br ^low
     }
     // CHECK-LABEL: simulation.design @disjoint_waves
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK: simulation.nba.enqueue %{{.*}} to %[[Q:arg[0-9]+]]
     // CHECK-NEXT: simulation.ref.store %{{.*}} to %[[R:arg[0-9]+]]
-    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=1 retained=0
-    // REPORT: obelisk clocked kernel rejection: root accessed by event activation = 1
+    // REPORT-LABEL: talos clocked kernel: __talos_clocked_0_1_0 members=1 eligible=1 retained=0
+    // REPORT: talos clocked kernel rejection: root accessed by event activation = 1
     simulation.func private @stages(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %r: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}, %din: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 6 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
@@ -859,10 +859,10 @@ module attributes {native.debug_timing} {
       cf.br ^low
     }
     // CHECK-LABEL: simulation.design @delayed_writer
-    // CHECK-NOT: __obelisk_clocked
+    // CHECK-NOT: __talos_clocked
     // CHECK: simulation.func private @count
-    // REPORT-NOT: obelisk clocked kernel:
-    // REPORT: obelisk clocked kernel rejection: root writers = 1
+    // REPORT-NOT: talos clocked kernel:
+    // REPORT: talos clocked kernel rejection: root writers = 1
     simulation.func private @count(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
       %one = simulation.logic.constant 1 : i8, 0 : i8 : !byte
       cf.br ^wait
@@ -939,11 +939,11 @@ module attributes {native.debug_timing} {
       cf.br ^low
     }
     // CHECK-LABEL: simulation.design @finish_in_phase
-    // CHECK-NOT: __obelisk_clocked
+    // CHECK-NOT: __talos_clocked
     // CHECK: simulation.func private @count
     // CHECK: simulation.nba.enqueue
-    // REPORT-NOT: obelisk clocked kernel:
-    // REPORT: obelisk clocked kernel rejection: root accessed by event activation = 1
+    // REPORT-NOT: talos clocked kernel:
+    // REPORT: talos clocked kernel rejection: root accessed by event activation = 1
     simulation.func private @count(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
       %one = simulation.logic.constant 1 : i8, 0 : i8 : !byte
       cf.br ^wait

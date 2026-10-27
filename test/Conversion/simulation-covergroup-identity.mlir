@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s --check-prefix=ROUNDTRIP
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s | talos-opt | FileCheck %s --check-prefix=ROUNDTRIP
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | obelisk-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
+// RUN:   | talos-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --test-talos-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {

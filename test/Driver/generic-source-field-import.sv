@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s -o /dev/null
-// RUN: obelisk -emit-obelisk %s -o /dev/null
+// RUN: talos -emit-slang %s -o /dev/null
+// RUN: talos -emit-talos %s -o /dev/null
 
 // Importing unused generic source inventory must not bind dependent fields,
 // initializer expressions, or typedef targets merely to preserve declarations.

@@ -7,23 +7,23 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
-#include "obelisk/Analysis/BoundedLoopAnalysis.h"
-#include "obelisk/Analysis/DPIEffectAnalysis.h"
-#include "obelisk/Analysis/LocalStorageAnalysis.h"
-#include "obelisk/Analysis/NBAInfluenceAnalysis.h"
-#include "obelisk/Analysis/SSAValueAnalysis.h"
-#include "obelisk/Analysis/SourceMemoryAnalysis.h"
-#include "obelisk/Analysis/StorageWriteAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Analysis/BoundedLoopAnalysis.h"
+#include "talos/Analysis/DPIEffectAnalysis.h"
+#include "talos/Analysis/LocalStorageAnalysis.h"
+#include "talos/Analysis/NBAInfluenceAnalysis.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
+#include "talos/Analysis/SourceMemoryAnalysis.h"
+#include "talos/Analysis/StorageWriteAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
-#include "obelisk/Analysis/NativeAOTAnalysis.h"
-#include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/NativeAOTAnalysis.h"
+#include "talos/Analysis/SimulationVPIAnalysis.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -44,12 +44,12 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMMATERIALIZECOMPUTEFUSIONPASS
+#define GEN_PASS_DEF_TALOSSIMMATERIALIZECOMPUTEFUSIONPASS
 #define GEN_PASS_DEF_LOCALIZEPRIVATEEVALSTORAGEPASS
 #define GEN_PASS_DEF_PROMOTEEVALSTORAGEPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 
@@ -187,14 +187,14 @@ struct FusionInputIndex {
         keepalives[keepalive.getFunctionAttr().getAttr()].push_back(keepalive);
       if (auto function = dyn_cast<sim::SimFuncOp>(operation)) {
         if (auto body =
-                ::obelisk::schedule::get<::obelisk::schedule::Field::EvalBody>(
+                ::talos::schedule::get<::talos::schedule::Field::EvalBody>(
                     function))
           sourceCodeUnits.try_emplace(body.getAttr(),
                                       function.getCodeUnitIdAttr());
-        if (::obelisk::schedule::has<
-                ::obelisk::schedule::Field::OutlinedPrimitiveMember>(function))
-          if (auto fingerprint = ::obelisk::schedule::get<
-                  ::obelisk::schedule::Field::OutlinedPrimitiveFingerprint>(
+        if (::talos::schedule::has<
+                ::talos::schedule::Field::OutlinedPrimitiveMember>(function))
+          if (auto fingerprint = ::talos::schedule::get<
+                  ::talos::schedule::Field::OutlinedPrimitiveFingerprint>(
                   function))
             primitiveHelpers.try_emplace(
                 std::make_pair(fingerprint, function.getFunctionType()),
@@ -225,14 +225,14 @@ struct FusionInputIndex {
 };
 
 constexpr auto evalOriginNBASiteAttr =
-    ::obelisk::schedule::Field::EvalOriginNbaSite;
+    ::talos::schedule::Field::EvalOriginNbaSite;
 static void preserveEvalNBASiteOrigins(sim::SimFuncOp body) {
   body.walk([&](sim::SimNBAEnqueueOp enqueue) {
-    if (::obelisk::schedule::has<evalOriginNBASiteAttr>(enqueue))
+    if (::talos::schedule::has<evalOriginNBASiteAttr>(enqueue))
       return;
     schedule::NBASiteAttr site = enqueue.getSiteAttr();
     if (site)
-      ::obelisk::schedule::set<evalOriginNBASiteAttr>(
+      ::talos::schedule::set<evalOriginNBASiteAttr>(
           enqueue, IntegerAttr::get(IntegerType::get(body.getContext(), 64),
                                     site.getId()));
   });
@@ -241,12 +241,12 @@ static void preserveEvalNBASiteOrigins(sim::SimFuncOp body) {
 bool useEvalBodyFusion(sim::SimDesignOp design) {
   ModuleOp module = design->getParentOfType<ModuleOp>();
   auto scheduler =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::NativeScheduler>(
+      ::talos::schedule::get<::talos::schedule::Field::NativeScheduler>(
           module);
   if (!scheduler)
     return false;
-  bool autoRequested = ::obelisk::schedule::has<
-      ::obelisk::schedule::Field::NativeSchedulerAutoRequested>(module);
+  bool autoRequested = ::talos::schedule::has<
+      ::talos::schedule::Field::NativeSchedulerAutoRequested>(module);
   if (scheduler.getValue() == schedule::NativeSchedulerMode::Eval &&
       !autoRequested)
     return true;
@@ -278,22 +278,22 @@ bool isPrimitiveContinuousFusion(SymbolTable &symbols,
             ? symbols.lookup<sim::SimFuncOp>(fragment.getFunction().getValue())
             : sim::SimFuncOp{};
     if (!function || function.getEntryKind() != sim::EntryKind::Continuous ||
-        !::obelisk::schedule::has<::obelisk::schedule::Field::PrimitiveName>(
+        !::talos::schedule::has<::talos::schedule::Field::PrimitiveName>(
             function))
       return false;
   }
   return true;
 }
 
-class ObeliskSimMaterializeComputeFusionPass final
-    : public impl::ObeliskSimMaterializeComputeFusionPassBase<
-          ObeliskSimMaterializeComputeFusionPass> {
+class TalosSimMaterializeComputeFusionPass final
+    : public impl::TalosSimMaterializeComputeFusionPassBase<
+          TalosSimMaterializeComputeFusionPass> {
 public:
-  using Base = impl::ObeliskSimMaterializeComputeFusionPassBase<
-      ObeliskSimMaterializeComputeFusionPass>;
+  using Base = impl::TalosSimMaterializeComputeFusionPassBase<
+      TalosSimMaterializeComputeFusionPass>;
   using Base::Base;
-  ObeliskSimMaterializeComputeFusionPass(
-      const ObeliskSimMaterializeComputeFusionPass &other)
+  TalosSimMaterializeComputeFusionPass(
+      const TalosSimMaterializeComputeFusionPass &other)
       : Base(other), kernelSimplification(other.kernelSimplification) {}
 
   void runOnOperation() override;
@@ -429,10 +429,10 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
                               const DenseSet<uint64_t> &controlTargets,
                               bool foreignControl) {
   if (function.isExternal() ||
-      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalBody>(
+      ::talos::schedule::has<::talos::schedule::Field::EvalBody>(
           function) ||
-      ::obelisk::schedule::has<
-          ::obelisk::schedule::Field::EvalBorrowedCaptures>(function))
+      ::talos::schedule::has<
+          ::talos::schedule::Field::EvalBorrowedCaptures>(function))
     return success();
   bool portMethod = function.getEntryKind() == sim::EntryKind::PortInput ||
                     function.getEntryKind() == sim::EntryKind::PortOutput;
@@ -441,7 +441,7 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
       function.getEntryKind() == sim::EntryKind::AlwaysComb ||
       function.getEntryKind() == sim::EntryKind::AlwaysLatch;
   bool generatedRegionBody =
-      ::obelisk::schedule::has<schedule::metadata::nativeRegionBody>(function);
+      ::talos::schedule::has<schedule::metadata::nativeRegionBody>(function);
   if (!isSupportedEntryKind(function.getEntryKind()) &&
       function.getEntryKind() != sim::EntryKind::Continuous && !portMethod &&
       !eventDrivenInitial && !generatedRegionBody && !combinationalProcedure)
@@ -471,7 +471,7 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
   }
   Block &sourceEntry = function.getBody().front();
   SmallString<48> evalBase;
-  (function.getSymName() + ".__obelisk_eval_body").toVector(evalBase);
+  (function.getSymName() + ".__talos_eval_body").toVector(evalBase);
   unsigned evalCounter = 0;
   SmallString<48> evalName = SymbolTable::generateSymbolName<48>(
       evalBase,
@@ -504,18 +504,18 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
     codeUnits.erase(evalDeclaration.getId());
     evalDeclaration.erase();
   };
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalBorrowedCaptures>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalBorrowedCaptures>(
       evalBody, builder.getUnitAttr());
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRawCaptures>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalRawCaptures>(
       evalBody, builder.getUnitAttr());
-  if (auto owners = ::obelisk::schedule::get<
-          ::obelisk::schedule::Field::EvalSourceOwners>(function))
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSourceOwners>(
+  if (auto owners = ::talos::schedule::get<
+          ::talos::schedule::Field::EvalSourceOwners>(function))
+    ::talos::schedule::set<::talos::schedule::Field::EvalSourceOwners>(
         evalBody, owners);
   if (auto group =
-          ::obelisk::schedule::get<::obelisk::schedule::Field::EvalFusionGroup>(
+          ::talos::schedule::get<::talos::schedule::Field::EvalFusionGroup>(
               function))
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalFusionGroup>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalFusionGroup>(
         evalBody, group);
   schedule::ContinuationSiteAttr activationSite;
   if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(wait->getTerminator()))
@@ -532,13 +532,13 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
     abandon();
     return success();
   }
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalContinuation>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalContinuation>(
       evalBody, builder.getI32IntegerAttr(activationSite.getId()));
   // Carry a typed source identity from the first eval-body clone onward.
   // Later body/module-instance fusion can then combine continuations without
   // preserving graph-generation-specific fragment ordinals.
   if (IntegerAttr codeUnit = function.getCodeUnitIdAttr())
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSourceOwners>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalSourceOwners>(
         evalBody, builder.getArrayAttr({schedule::SourceOwnerAttr::get(
                       builder.getContext(), codeUnit,
                       builder.getI32IntegerAttr(activationSite.getId()))}));
@@ -744,7 +744,7 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
     schedule::set<schedule::Field::EvalReconstructsContinuation>(
         evalBody, builder.getUnitAttr());
   preserveEvalNBASiteOrigins(evalBody);
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalBody>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalBody>(
       function, FlatSymbolRefAttr::get(evalBody.getSymNameAttr()));
   return success();
 }
@@ -1771,7 +1771,7 @@ public:
     remainingSlots += after;
     if (native::has<native::DebugTiming>(
             getOperation()->getParentOfType<ModuleOp>()))
-      llvm::errs() << "obelisk eval storage promotion: slots-before=" << before
+      llvm::errs() << "talos eval storage promotion: slots-before=" << before
                    << " slots-after=" << after << '\n';
     if (before)
       getOperation().removeComputeGraphAttr();
@@ -1985,7 +1985,7 @@ promotePrivateStaticTemporaries(sim::SimFuncOp function,
             definition && definition->use_empty())
           definition->erase();
     } else if (markDormantTier1)
-      ::obelisk::schedule::set<schedule::metadata::evalDiscardableStore>(
+      ::talos::schedule::set<schedule::metadata::evalDiscardableStore>(
           store, UnitAttr::get(function.getContext()));
     ++promoted;
   }
@@ -2001,14 +2001,14 @@ void finalizeDormantTier1Stores(sim::SimDesignOp design) {
   SmallVector<sim::SimFuncOp> evalBodies;
   for (sim::SimFuncOp function :
        design.getBody().front().getOps<sim::SimFuncOp>())
-    if (::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalBorrowedCaptures>(function))
+    if (::talos::schedule::has<
+            ::talos::schedule::Field::EvalBorrowedCaptures>(function))
       evalBodies.push_back(function);
 
   for (sim::SimFuncOp evalBody : evalBodies) {
     SmallVector<sim::SimRefStoreOp> stores;
     evalBody.walk([&](sim::SimRefStoreOp store) {
-      if (::obelisk::schedule::has<schedule::metadata::evalDiscardableStore>(
+      if (::talos::schedule::has<schedule::metadata::evalDiscardableStore>(
               store))
         stores.push_back(store);
     });
@@ -2042,12 +2042,12 @@ void finalizeDormantTier1Stores(sim::SimDesignOp design) {
     // later. Keep their proof marker until that specialization consumes it;
     // every actor/coroutine canonical body is complete here and must not leak
     // the transient marker into emitted Simulation IR.
-    if (!::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalBorrowedCaptures>(function) &&
+    if (!::talos::schedule::has<
+            ::talos::schedule::Field::EvalBorrowedCaptures>(function) &&
         function.getEntryKind() == sim::EntryKind::Function)
       continue;
     function.walk([&](sim::SimRefStoreOp store) {
-      ::obelisk::schedule::remove<schedule::metadata::evalDiscardableStore>(
+      ::talos::schedule::remove<schedule::metadata::evalDiscardableStore>(
           store);
     });
   }
@@ -2296,7 +2296,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     auto spawns = spawnsByCallee.find(fragment.getFunction().getAttr());
     bool primitive =
         function &&
-        ::obelisk::schedule::has<::obelisk::schedule::Field::PrimitiveName>(
+        ::talos::schedule::has<::talos::schedule::Field::PrimitiveName>(
             function);
     auto combinationalBody =
         combinational.analyze(function, provenance, fusion.getInterleaved());
@@ -2435,7 +2435,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
 
   OpBuilder builder = OpBuilder::atBlockEnd(&design.getBody().front());
   SmallString<40> name;
-  ("__obelisk_region_kernel_" + Twine(fusion.getId())).toVector(name);
+  ("__talos_region_kernel_" + Twine(fusion.getId())).toVector(name);
   unsigned symbolCounter = 0;
   name = SymbolTable::generateSymbolName<40>(
       name,
@@ -2454,12 +2454,12 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
       first.getEntryKind(), attributes, argumentAttrs);
   symbols.insert(kernel);
   SymbolTable::setSymbolVisibility(kernel, SymbolTable::Visibility::Private);
-  ::obelisk::schedule::set<schedule::metadata::nativeRegionBody>(
+  ::talos::schedule::set<schedule::metadata::nativeRegionBody>(
       kernel, builder.getUnitAttr());
-  ::obelisk::schedule::set<
+  ::talos::schedule::set<
       schedule::metadata::evalReconstructsContinuationArgs>(
       kernel, builder.getUnitAttr());
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalFusionGroup>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalFusionGroup>(
       kernel, builder.getI32IntegerAttr(fusion.getId()));
   SmallVector<Attribute> sourceOwners;
   sourceOwners.reserve(candidates.size());
@@ -2488,7 +2488,7 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     else
       originalOwners.insert(sourceOwners.back());
   }
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSourceOwners>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalSourceOwners>(
       kernel, builder.getArrayAttr(originalOwners.getArrayRef()));
   auto preserveSourceOwner = [&](Operation *cloned, unsigned candidate) {
     cloned->walk([&](Operation *operation) {
@@ -2973,10 +2973,10 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
           auto replacement = sim::SimDriverDriveChangedOp::create(
               builder, drive.getLoc(), mapping->lookup(drive.getDriver()),
               mapping->lookup(drive.getValue()));
-          if (auto defer = ::obelisk::schedule::get<
-                  ::obelisk::schedule::Field::DeferNetResolution>(drive))
-            ::obelisk::schedule::set<
-                ::obelisk::schedule::Field::DeferNetResolution>(replacement,
+          if (auto defer = ::talos::schedule::get<
+                  ::talos::schedule::Field::DeferNetResolution>(drive))
+            ::talos::schedule::set<
+                ::talos::schedule::Field::DeferNetResolution>(replacement,
                                                                 defer);
           changed = arith::OrIOp::create(builder, drive.getLoc(), changed,
                                          replacement.getChanged());
@@ -3106,8 +3106,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
   SmallVector<unsigned> deferredDriveOperations;
   for (auto [operationIndex, operation] : llvm::enumerate(templateOperations))
     if (auto drive = dyn_cast<sim::SimDriverDriveOp>(operation)) {
-      if (::obelisk::schedule::has<
-              ::obelisk::schedule::Field::DeferNetResolution>(drive))
+      if (::talos::schedule::has<
+              ::talos::schedule::Field::DeferNetResolution>(drive))
         return bail();
       if (resolveDrivers.insert(drive.getDriver()))
         resolveDriveOperations.push_back(operationIndex);
@@ -3321,11 +3321,11 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     memberHelper = helper;
     symbols.insert(helper);
     SymbolTable::setSymbolVisibility(helper, SymbolTable::Visibility::Private);
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::OutlinedPrimitiveMember>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::OutlinedPrimitiveMember>(
         helper, helperBuilder.getUnitAttr());
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::OutlinedPrimitiveFingerprint>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::OutlinedPrimitiveFingerprint>(
         helper, fingerprintAttr);
     helper->setAttr(
         "passthrough",
@@ -3360,8 +3360,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         auto replacement = sim::SimDriverDriveChangedOp::create(
             helperBuilder, drive.getLoc(), driver, value);
         replacement->setAttrs(drive->getAttrs());
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::DeferNetResolution>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::DeferNetResolution>(
             replacement, helperBuilder.getUnitAttr());
         continue;
       }
@@ -3377,8 +3377,8 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         Value value = helperMapping.lookup(drive.getValue());
         recordRawChange(drive.getLoc(), driver, value);
         Operation *cloned = helperBuilder.clone(*operation, helperMapping);
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::DeferNetResolution>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::DeferNetResolution>(
             cloned, helperBuilder.getUnitAttr());
         continue;
       }
@@ -3566,9 +3566,9 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
         resolver->setAttrs(drive->getAttrs());
         if (std::optional<ExactDriverSlice> exact =
                 resolveExactDriverSlice(driver)) {
-          ::obelisk::schedule::set<::obelisk::schedule::Field::ExactDriverId>(
+          ::talos::schedule::set<::talos::schedule::Field::ExactDriverId>(
               resolver, builder.getI64IntegerAttr(exact->id));
-          ::obelisk::schedule::set<::obelisk::schedule::Field::ExactDriverLow>(
+          ::talos::schedule::set<::talos::schedule::Field::ExactDriverLow>(
               resolver, builder.getI64IntegerAttr(exact->lowBit));
         }
         publishedChanged = arith::OrIOp::create(
@@ -3875,7 +3875,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   sim::SimFuncOp first = candidates.front().function;
   unsigned symbolCounter = 0;
   SmallString<32> symbolBase;
-  ("__obelisk_fused_" + Twine(fusion.getId())).toVector(symbolBase);
+  ("__talos_fused_" + Twine(fusion.getId())).toVector(symbolBase);
   SmallString<32> name = SymbolTable::generateSymbolName<32>(
       symbolBase,
       [&](StringRef candidate) { return symbols.lookup(candidate) != nullptr; },
@@ -3890,12 +3890,12 @@ FailureOr<sim::SimFuncOp> materializeFusion(
       first.getEntryKind(), fusedAttributes, argumentAttrs);
   symbols.insert(fused);
   SymbolTable::setSymbolVisibility(fused, SymbolTable::Visibility::Private);
-  ::obelisk::schedule::set<schedule::metadata::nativeRegionBody>(
+  ::talos::schedule::set<schedule::metadata::nativeRegionBody>(
       fused, builder.getUnitAttr());
-  ::obelisk::schedule::set<
+  ::talos::schedule::set<
       schedule::metadata::evalReconstructsContinuationArgs>(
       fused, builder.getUnitAttr());
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalFusionGroup>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalFusionGroup>(
       fused, builder.getI32IntegerAttr(fusion.getId()));
   // Preserve typed source identities across graph rebuilding. Native eval
   // lowering resolves these actor continuations into the new graph's fragment
@@ -3923,13 +3923,13 @@ FailureOr<sim::SimFuncOp> materializeFusion(
         builder.getContext(), codeUnit,
         builder.getI32IntegerAttr(site.getId())));
   }
-  ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSourceOwners>(
+  ::talos::schedule::set<::talos::schedule::Field::EvalSourceOwners>(
       fused, builder.getArrayAttr(sourceOwners));
   // This closed-world fused activation cannot call foreign code or suspend
   // while its body is running. Mark it so native lowering can prove which NBA
   // sites are safe in the clean body selected by AOT actor dispatch.
   if (analysis::SimulationVPIAnalysis::compute(design).allowsWrite())
-    ::obelisk::schedule::set<
+    ::talos::schedule::set<
         schedule::metadata::nativeGuardedSpecializationBody>(
         fused, builder.getUnitAttr());
 
@@ -3972,9 +3972,9 @@ FailureOr<sim::SimFuncOp> materializeFusion(
 
   auto applySourceOwner = [](Operation *root, Attribute sourceOwner) {
     root->walk([&](Operation *operation) {
-      if (!::obelisk::schedule::has<schedule::metadata::evalSourceOwner>(
+      if (!::talos::schedule::has<schedule::metadata::evalSourceOwner>(
               operation))
-        ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(
+        ::talos::schedule::set<schedule::metadata::evalSourceOwner>(
             operation, cast<schedule::SourceOwnerAttr>(sourceOwner));
     });
   };
@@ -4126,7 +4126,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
 
   if (evalBodyFusion) {
     SmallString<40> evalBase;
-    (fused.getSymName() + ".__obelisk_eval_body").toVector(evalBase);
+    (fused.getSymName() + ".__talos_eval_body").toVector(evalBase);
     unsigned evalCounter = 0;
     SmallString<40> evalName = SymbolTable::generateSymbolName<40>(
         evalBase,
@@ -4149,20 +4149,20 @@ FailureOr<sim::SimFuncOp> materializeFusion(
         FunctionType::get(design.getContext(), inputTypes, TypeRange{}),
         sim::EntryKind::Function, evalAttributes, argumentAttrs);
     symbols.insert(evalBody);
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalBorrowedCaptures>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalBorrowedCaptures>(
         evalBody, builder.getUnitAttr());
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRawCaptures>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalRawCaptures>(
         evalBody, builder.getUnitAttr());
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::EvalInstanceCoordinator>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::EvalInstanceCoordinator>(
         evalBody, builder.getUnitAttr());
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalFusionGroup>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalFusionGroup>(
         evalBody,
-        ::obelisk::schedule::get<::obelisk::schedule::Field::EvalFusionGroup>(
+        ::talos::schedule::get<::talos::schedule::Field::EvalFusionGroup>(
             fused));
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSourceOwners>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalSourceOwners>(
         evalBody,
-        ::obelisk::schedule::get<::obelisk::schedule::Field::EvalSourceOwners>(
+        ::talos::schedule::get<::talos::schedule::Field::EvalSourceOwners>(
             fused));
     schedule::ContinuationSiteAttr activationSite;
     if (auto suspend = dyn_cast<sim::SimSuspendChangeOp>(wait->getTerminator()))
@@ -4183,7 +4183,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     // The source suspension may be erased by later fusion and CFG cleanup.
     // Carry its stable identity on the generated body so native scheduling
     // never has to retain or dereference transformation-owned operations.
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalContinuation>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalContinuation>(
         evalBody, builder.getI32IntegerAttr(activationSite.getId()));
     SymbolTable::setSymbolVisibility(evalBody,
                                      SymbolTable::Visibility::Private);
@@ -4303,7 +4303,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
     } else {
       analysis::propagateActivationValueRoots(evalBody);
       preserveEvalNBASiteOrigins(evalBody);
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalBody>(
+      ::talos::schedule::set<::talos::schedule::Field::EvalBody>(
           fused, FlatSymbolRefAttr::get(evalBody.getSymNameAttr()));
       accessIndex->refresh(evalBody);
     }
@@ -4313,7 +4313,7 @@ FailureOr<sim::SimFuncOp> materializeFusion(
   return fused;
 }
 
-void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
+void TalosSimMaterializeComputeFusionPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   // One mutable index serves every cohort and standalone activation. Keep
   // creations and rejected clones in sync so lookup is independent of the
@@ -4340,7 +4340,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   bool forgedDiscardableStore = false;
   design.walk([&](sim::SimRefStoreOp store) {
     forgedDiscardableStore |=
-        ::obelisk::schedule::has<schedule::metadata::evalDiscardableStore>(
+        ::talos::schedule::has<schedule::metadata::evalDiscardableStore>(
             store);
   });
   if (forgedDiscardableStore) {
@@ -4349,14 +4349,14 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     return;
   }
   ArrayAttr fusions =
-      ::obelisk::schedule::get<schedule::metadata::staticBodyFusion>(design);
+      ::talos::schedule::get<schedule::metadata::staticBodyFusion>(design);
   schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
   bool evalScheduler = useEvalBodyFusion(design);
   bool cloneEvaluators = evalScheduler && materializeEvalBodies;
   // Inventory NBA transient observers while every process still has its
   // source shape. Fusion merges bodies and their waits, which would hide an
   // idempotent observer inside a larger activation.
-  if (!::obelisk::schedule::has<schedule::metadata::nbaTransientObservable>(
+  if (!::talos::schedule::has<schedule::metadata::nbaTransientObservable>(
           design))
     if (std::optional<NBATransientObservers> observers =
             computeNBATransientObservers(design)) {
@@ -4365,9 +4365,9 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
         llvm::sort(values);
         return DenseI64ArrayAttr::get(design.getContext(), values);
       };
-      ::obelisk::schedule::set<schedule::metadata::nbaTransientObservable>(
+      ::talos::schedule::set<schedule::metadata::nbaTransientObservable>(
           design, sorted(observers->observable));
-      ::obelisk::schedule::set<schedule::metadata::nbaChangeWatched>(
+      ::talos::schedule::set<schedule::metadata::nbaChangeWatched>(
           design, sorted(observers->changeWatched));
       if (observers->immediateWriters)
         schedule::set<schedule::Field::NbaImmediateWriters>(
@@ -4452,8 +4452,8 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>())
       if (!function.isExternal() &&
-          !::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalBorrowedCaptures>(function))
+          !::talos::schedule::has<
+              ::talos::schedule::Field::EvalBorrowedCaptures>(function))
         functions.push_back(function);
     PrivateStaticAccessIndex accessIndex(design);
     for (sim::SimFuncOp function : functions)
@@ -4611,7 +4611,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
              std::make_pair(fusionRejections.lookup(lhs), lhs);
     });
     for (StringRef reason : ordered)
-      llvm::errs() << "obelisk fusion rejection: count="
+      llvm::errs() << "talos fusion rejection: count="
                    << fusionRejections.lookup(reason) << " reason=" << reason
                    << '\n';
   }
@@ -4644,7 +4644,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   ifConvertedNBAs += convertedNBAs;
   sharedStableConditions += sharedConditions;
   promotedPrivateStores += promotedStores + preparedPrivateStores;
-  ::obelisk::schedule::remove<schedule::metadata::staticBodyFusion>(design);
+  ::talos::schedule::remove<schedule::metadata::staticBodyFusion>(design);
   if (!changed)
     return;
   // Body fusion changes call ownership, blocks, and continuation ordinals.
@@ -4670,4 +4670,4 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
 }
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

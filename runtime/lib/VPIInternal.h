@@ -6,12 +6,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef OBELISK_RUNTIME_VPI_INTERNAL_H
-#define OBELISK_RUNTIME_VPI_INTERNAL_H
+#ifndef TALOS_RUNTIME_VPI_INTERNAL_H
+#define TALOS_RUNTIME_VPI_INTERNAL_H
 
 // The runtime defines the canonical entry points.  On Windows the public
 // header otherwise declares them dllimport, which conflicts with those
-// definitions; the definitions themselves carry OBELISK_VPI_EXPORT.
+// definitions; the definitions themselves carry TALOS_VPI_EXPORT.
 #if defined(_WIN32)
 #define PLI_DLLISPEC
 #define PLI_DLLESPEC
@@ -21,13 +21,13 @@
 // <sys/types.h>, which on Darwin lacks the unsigned ones.
 #include <cstdint>
 
-#include "obelisk/vpi_user_compat.h"
+#include "talos/vpi_user_compat.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 
-#include "obelisk/Reflection/VPIObjectModel.h"
+#include "talos/Reflection/VPIObjectModel.h"
 
-namespace obelisk::runtime {
+namespace talos::runtime {
 
 /// Whether a result handle inherits the IEEE 37.29 detail-2 value restriction.
 /// The restriction crosses only variable/event edges. It must not leak through
@@ -66,6 +66,6 @@ inline bool hasRefObjectTypespecActual(uint32_t actualType) {
              static_cast<uint32_t>(reflection::VPIObjectKind::PartSelect);
 }
 
-} // namespace obelisk::runtime
+} // namespace talos::runtime
 
 #endif

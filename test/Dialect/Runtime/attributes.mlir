@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
+// RUN: talos-opt %s | talos-opt | FileCheck %s
 
 // CHECK: module attributes {
 // CHECK-SAME: runtime.execution_flags = #runtime.execution_flags<has_bytecode|require_bytecode|dpi_exports>

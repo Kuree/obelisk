@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // Two independent clocks drive a bidirectional CDC pipeline. Check the
 // generated calendar and shared two-state prefix at the MLIR boundary.
@@ -132,12 +132,12 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.mlir.global internal constant @__obelisk_periodic_clock_plan_v1
+// CHECK-LABEL: llvm.mlir.global internal constant @__talos_periodic_clock_plan_v1
 // CHECK-SAME: !llvm.array<2 x
-// CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// CHECK-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// CHECK: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
 // Allocation defers to designated collection points from here on.
-// CHECK: llvm.call @obelisk_rt_v1_gc_designate(
+// CHECK: llvm.call @talos_rt_v1_gc_designate(
 // The first clock's equality test bypasses its physical update entirely.
 // CHECK: %[[DUE0:.*]] = llvm.icmp "eq" {{.*}} : i64
 // The run body also carries its pending ready masks as block arguments.
@@ -150,7 +150,7 @@ module attributes {
 // clock and slot ends have none.
 // CHECK: llvm.cond_br %{{.*}}, ^[[COLLECT:bb[0-9]+]], ^[[COLLECTED:bb[0-9]+]](%{{.*}} : i32)
 // CHECK: ^[[COLLECT]]:
-// CHECK-NEXT: %[[GC:.*]] = llvm.call @obelisk_rt_v1_gc_collect_pending(
+// CHECK-NEXT: %[[GC:.*]] = llvm.call @talos_rt_v1_gc_collect_pending(
 // CHECK-NEXT: llvm.br ^[[COLLECTED]](%[[GC]] : i32)
 // CHECK: llvm.br ^[[NEXT0]]({{.*}} : i1, i64, i64, i64)
 // The second clock preserves the first clock's ready mask when not due.
@@ -166,7 +166,7 @@ module attributes {
 // Silent slots bypass the entire dispatcher, after both clock updates.
 // CHECK-NEXT: llvm.cond_br %[[INGRESS]], ^{{bb[0-9]+}}, ^{{bb[0-9]+}}
 // Only selected owners contribute to the shared promotion check.
-// CHECK: %[[PENDING_ADDR:.*]] = llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
+// CHECK: %[[PENDING_ADDR:.*]] = llvm.mlir.addressof @__talos_eval_promotion_pending_mask_v1
 // CHECK: %[[OWNERS:.*]] = llvm.mlir.constant(3 : i64)
 // CHECK-NEXT: %[[SELECTED:.*]] = llvm.and %[[READY]], %[[OWNERS]] : i64
 // CHECK-NEXT: %[[PENDING:.*]] = llvm.load %[[PENDING_ADDR]] {{.*}} : !llvm.ptr -> i64
@@ -178,10 +178,10 @@ module attributes {
 // CHECK: llvm.cond_br {{.*}}, ^[[EXECUTE:bb[0-9]+]], ^{{bb[0-9]+}}
 // CHECK: ^[[EXECUTE]]:
 // CHECK: llvm.store
-// CHECK-NEXT: llvm.call @body0.__obelisk_two_state_0(
-// CHECK-NOT: llvm.call @__obelisk_eval_kernel_promotion_ready
-// CHECK: llvm.call @body1.__obelisk_two_state_0(
-// CHECK: llvm.call @__obelisk_eval_kernel_promotion_ready_v1(
+// CHECK-NEXT: llvm.call @body0.__talos_two_state_0(
+// CHECK-NOT: llvm.call @__talos_eval_kernel_promotion_ready
+// CHECK: llvm.call @body1.__talos_two_state_0(
+// CHECK: llvm.call @__talos_eval_kernel_promotion_ready_v1(
 
 // The mixed variant replaces one domain's sample with X. That owner cannot
 // use the shared proof; check the remaining consumer after its predecessor.

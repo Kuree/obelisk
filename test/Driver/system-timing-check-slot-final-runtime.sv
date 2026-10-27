@@ -1,6 +1,6 @@
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode 2>&1 | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=aot %s -o %t.o3.aot
+// RUN: talos -O3 --native-scheduler=aot %s -o %t.o3.aot
 // RUN: %t.o3.aot 2>&1 | FileCheck %s
 
 `timescale 1ns / 1ps

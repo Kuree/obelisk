@@ -1,10 +1,10 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov --coverage-test=automatic-cross | FileCheck %s --check-prefix=QUERY
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON --implicit-check-not='"missing":true'
-// RUN: obelisk-cov report --format=html %t.obcov | FileCheck %s --check-prefix=JSON --implicit-check-not='"missing":true'
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON --implicit-check-not='"missing":true'
+// RUN: talos-cov report --format=html %t.obcov | FileCheck %s --check-prefix=JSON --implicit-check-not='"missing":true'
 // RUN: %t --coverage-load=%t.obcov --coverage-output=%t.loaded.obcov --coverage-test=automatic-cross-loaded | FileCheck %s --check-prefix=LOADED
-// RUN: obelisk-cov report --format=json %t.loaded.obcov | FileCheck %s --check-prefix=LOADED-JSON
+// RUN: talos-cov report --format=json %t.loaded.obcov | FileCheck %s --check-prefix=LOADED-JSON
 
 module top;
   bit a;

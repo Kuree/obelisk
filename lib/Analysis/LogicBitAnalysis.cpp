@@ -1,13 +1,13 @@
-#include "obelisk/Analysis/LogicBitAnalysis.h"
+#include "talos/Analysis/LogicBitAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk {
+namespace talos {
 bool LogicBitFacts::operator==(const LogicBitFacts &other) const {
   return initialized == other.initialized && zero == other.zero &&
          one == other.one && known == other.known;
@@ -246,4 +246,4 @@ std::optional<LogicBitFacts> LogicBitAnalysis::get(Value value) const {
   auto found = facts.find(value);
   return found == facts.end() ? std::optional<LogicBitFacts>{} : found->second;
 }
-} // namespace obelisk
+} // namespace talos

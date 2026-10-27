@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk -emit-slang %s -o - | FileCheck %s
+// RUN: %talos -emit-slang %s -o - | FileCheck %s
 
 // IEEE 1800-2023 23.10.1: with multiple defparams for a single parameter, the
 // parameter takes the value of the last one in the source text. Slang v11

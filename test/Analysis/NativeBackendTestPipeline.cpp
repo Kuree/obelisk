@@ -1,7 +1,7 @@
 //===- NativeBackendTestPipeline.cpp - Slang input to native LLVM ---------===//
 //
 // Tests of native scheduling and code generation take SystemVerilog input
-// through `obelisk -emit-slang` and continue here, so their checked-in input
+// through `talos -emit-slang` and continue here, so their checked-in input
 // stays the small source design rather than its lowered simulation IR. The
 // pipeline sets the module attributes the native driver sets around lowering
 // (scheduler, target layout, optimization level, closed executable) and runs
@@ -63,11 +63,11 @@ void buildNativeBackendTestPipeline(
           .Case("eval", 3)
           .Default(std::nullopt);
   if (!mode)
-    llvm::report_fatal_error("test-obelisk-native-backend: unknown scheduler '" +
+    llvm::report_fatal_error("test-talos-native-backend: unknown scheduler '" +
                              Twine(options.scheduler) + "'");
   StringRef stopAfter = options.stopAfter;
   if (!stopAfter.empty() && stopAfter != "lowering" && stopAfter != "graph")
-    llvm::report_fatal_error("test-obelisk-native-backend: unknown stop-after '" +
+    llvm::report_fatal_error("test-talos-native-backend: unknown stop-after '" +
                              Twine(stopAfter) + "'");
   std::string backendAttributes =
       llvm::formatv("schedule.native_scheduler = {0} : i32, "
@@ -85,7 +85,7 @@ void buildNativeBackendTestPipeline(
   // build at that level, which represents Auto as Eval plus auto_requested
   // until the backend resolves it.
   std::string loweringAttributes = "schedule.native_scheduler = 1 : i32";
-  std::string lowering = "lower-obelisk-to-sim{opt-level=0 vpi=off "
+  std::string lowering = "lower-talos-to-sim{opt-level=0 vpi=off "
                          "static-specialization=off clocked-kernels=off "
                          "early-symbol-dce=true}";
   if (options.simOptLevel >= 0) {
@@ -95,59 +95,59 @@ void buildNativeBackendTestPipeline(
                    : llvm::formatv("schedule.native_scheduler = {0} : i32",
                                    *mode)
                          .str();
-    lowering = "lower-obelisk-to-sim{opt-level=" +
+    lowering = "lower-talos-to-sim{opt-level=" +
                std::to_string(options.simOptLevel) +
                " vpi=off static-specialization=" +
                std::string(*mode == 3 ? "on" : "auto") +
                " clocked-kernels=deferred early-symbol-dce=true}";
   }
   std::string pipeline =
-      "convert-slang-to-obelisk,"
-      "test-obelisk-set-module-attributes{attrs=\"{" +
+      "convert-slang-to-talos,"
+      "test-talos-set-module-attributes{attrs=\"{" +
       loweringAttributes +
       ", llvm.data_layout = \\\"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\\\", "
       "llvm.target_triple = \\\"x86_64-unknown-linux-gnu\\\"}\"}," +
       lowering +
-      ",test-obelisk-set-module-attributes{attrs=\"{" + backendAttributes +
+      ",test-talos-set-module-attributes{attrs=\"{" + backendAttributes +
       "}\"}";
   if (stopAfter == "graph") {
     pipeline += ",simulation.design(simulation.func("
-                "obelisk-sim-thread-process-cfg),"
-                "obelisk-sim-build-compute-graph,"
-                "obelisk-sim-verify-compute-graph)";
+                "talos-sim-thread-process-cfg),"
+                "talos-sim-build-compute-graph,"
+                "talos-sim-verify-compute-graph)";
   } else if (stopAfter.empty() && *mode == 1) {
-    pipeline += ",obelisk-sim-insert-gc-polls,"
-                "convert-obelisk-sim-processes-to-llvm-coroutines";
+    pipeline += ",talos-sim-insert-gc-polls,"
+                "convert-talos-sim-processes-to-llvm-coroutines";
   } else if (stopAfter.empty()) {
     // Mirrors the driver for a hybrid (non-generic) build: one SSA shape for
     // both tiers, bytecode for fragments that need it, and native-only
     // region rewrites.
     pipeline +=
-        ",obelisk-sim-insert-gc-polls,"
-        "simulation.design(simulation.func(obelisk-sim-thread-process-cfg),"
-        "obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,"
-        "obelisk-sim-materialize-compute-fusion{materialize-eval-bodies=true},"
-        "obelisk-sim-build-compute-graph,"
-        "obelisk-sim-materialize-graph-regions,"
-        "obelisk-sim-specialize-static-state-nba,"
-        "obelisk-sim-plan-static-superstep),"
-        "encode-obelisk-sim-to-bytecode{vpi=off prune-native=true},"
-        "simulation.design(obelisk-sim-optimize-native-regions),"
-        "convert-obelisk-sim-processes-to-llvm-coroutines";
+        ",talos-sim-insert-gc-polls,"
+        "simulation.design(simulation.func(talos-sim-thread-process-cfg),"
+        "talos-sim-build-compute-graph,talos-sim-verify-compute-graph,"
+        "talos-sim-materialize-compute-fusion{materialize-eval-bodies=true},"
+        "talos-sim-build-compute-graph,"
+        "talos-sim-materialize-graph-regions,"
+        "talos-sim-specialize-static-state-nba,"
+        "talos-sim-plan-static-superstep),"
+        "encode-talos-sim-to-bytecode{vpi=off prune-native=true},"
+        "simulation.design(talos-sim-optimize-native-regions),"
+        "convert-talos-sim-processes-to-llvm-coroutines";
   }
   std::string error;
   llvm::raw_string_ostream errorStream(error);
   if (failed(parsePassPipeline(pipeline, manager, errorStream)))
-    llvm::report_fatal_error("test-obelisk-native-backend: " + Twine(error));
+    llvm::report_fatal_error("test-talos-native-backend: " + Twine(error));
 }
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 void registerNativeBackendTestPipeline() {
   PassPipelineRegistration<NativeBackendTestPipelineOptions>(
-      "test-obelisk-native-backend",
+      "test-talos-native-backend",
       "Lower Slang dialect input to native LLVM as an executable build does",
       buildNativeBackendTestPipeline);
 }
-} // namespace obelisk
+} // namespace talos

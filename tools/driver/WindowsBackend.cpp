@@ -41,9 +41,9 @@ using namespace mlir;
 
 LLD_HAS_DRIVER(coff)
 
-namespace obelisk::driver {
+namespace talos::driver {
 namespace {
-constexpr StringLiteral kTargetTriple = OBELISK_NATIVE_TARGET_TRIPLE;
+constexpr StringLiteral kTargetTriple = TALOS_NATIVE_TARGET_TRIPLE;
 
 class WindowsLinkDiagnostics final : public clang::DiagnosticConsumer {
 public:
@@ -54,7 +54,7 @@ public:
       return;
     SmallString<256> message;
     diagnostic.FormatDiagnostic(message);
-    errs() << "obelisk: "
+    errs() << "talos: "
            << (level >= clang::DiagnosticsEngine::Error ? "error: "
                                                         : "warning: ")
            << message << '\n';
@@ -111,7 +111,7 @@ Error makeDLLImportLibrary(const SharedLibraryInput &input, StringRef path,
   // Keep every direct DLL input loaded, including VPI-only modules. Distinct
   // aliases let multiple modules export their own vlog_startup_routines table.
   object::COFFShortExport anchor;
-  anchor.Name = (Twine("__obelisk_dll_") + Twine(index)).str();
+  anchor.Name = (Twine("__talos_dll_") + Twine(index)).str();
   anchor.ExportAs = exports.front().Name;
   anchor.Data = true;
   keepAlive = "__imp_" + anchor.Name;
@@ -175,13 +175,13 @@ LogicalResult publishExecutable(StringRef executable, StringRef outputPath,
     dll.staged = std::make_unique<FileRemover>(*staged);
     if (std::error_code error =
             sys::fs::copy_file(input.canonicalPath, *staged)) {
-      errs() << "obelisk: error: could not stage DLL '" << input.canonicalPath
+      errs() << "talos: error: could not stage DLL '" << input.canonicalPath
              << "' beside the executable: " << error.message() << '\n';
       return failure();
     }
     if (sys::fs::exists(destination)) {
       if (sys::fs::is_directory(destination)) {
-        errs() << "obelisk: error: DLL destination is a directory: '"
+        errs() << "talos: error: DLL destination is a directory: '"
                << destination << "'\n";
         return failure();
       }
@@ -198,12 +198,12 @@ LogicalResult publishExecutable(StringRef executable, StringRef outputPath,
         if (failed(atomicallyReplace(dll.backupPath, dll.destination))) {
           // Retain the original if another process prevents its restoration.
           dll.backup->releaseFile();
-          errs() << "obelisk: error: original DLL retained at '"
+          errs() << "talos: error: original DLL retained at '"
                  << dll.backupPath << "'\n";
         }
       } else if (dll.published) {
         if (std::error_code error = sys::fs::remove(dll.destination))
-          errs() << "obelisk: error: could not remove staged DLL '"
+          errs() << "talos: error: could not remove staged DLL '"
                  << dll.destination << "': " << error.message() << '\n';
       }
     }
@@ -236,9 +236,9 @@ LogicalResult linkCOFFExecutable(ArrayRef<std::string> modulePaths,
   bool fullLTO = options.optLevel != 0 && !options.noLTO && !thinLTO;
   SmallString<256> runtime(supportRoot);
   sys::path::append(runtime,
-                    fullLTO ? "libobelisk_rt_lto.a" : "libobelisk_rt.a");
+                    fullLTO ? "libtalos_rt_lto.a" : "libtalos_rt.a");
   if (!sys::fs::exists(runtime)) {
-    errs() << "obelisk: error: native support is missing '" << runtime << "'\n";
+    errs() << "talos: error: native support is missing '" << runtime << "'\n";
     return failure();
   }
 
@@ -284,7 +284,7 @@ LogicalResult linkCOFFExecutable(ArrayRef<std::string> modulePaths,
     if (StringRef(dll.basename)
             .equals_insensitive(sys::path::filename(outputPath))) {
       errs()
-          << "obelisk: error: DLL input name conflicts with executable name: '"
+          << "talos: error: DLL input name conflicts with executable name: '"
           << dll.basename << "'\n";
       return failure();
     }
@@ -292,7 +292,7 @@ LogicalResult linkCOFFExecutable(ArrayRef<std::string> modulePaths,
     if (Error error = makeDLLImportLibrary(
             dll, *importPath, input.sharedLibraryIndex,
             sys::path::filename(outputPath), dllArguments, keepAlive)) {
-      errs() << "obelisk: error: could not link DLL '" << dll.canonicalPath
+      errs() << "talos: error: could not link DLL '" << dll.canonicalPath
              << "': " << toString(std::move(error)) << '\n';
       return failure();
     }
@@ -335,7 +335,7 @@ LogicalResult linkCOFFExecutable(ArrayRef<std::string> modulePaths,
     break;
   }
   if (!foundLinkJob) {
-    errs() << "obelisk: error: Clang did not produce a Windows linker job\n";
+    errs() << "talos: error: Clang did not produce a Windows linker job\n";
     return failure();
   }
   if (thinLTO) {
@@ -343,7 +343,7 @@ LogicalResult linkCOFFExecutable(ArrayRef<std::string> modulePaths,
                             ? (outputPath + ".thinlto-cache").str()
                             : options.thinLTOCacheDir;
     if (std::error_code error = sys::fs::create_directories(cache)) {
-      errs() << "obelisk: error: could not create ThinLTO cache: "
+      errs() << "talos: error: could not create ThinLTO cache: "
              << error.message() << '\n';
       return failure();
     }
@@ -405,4 +405,4 @@ public:
 std::unique_ptr<TargetBackend> createNativeBackend() {
   return std::make_unique<WindowsBackend>();
 }
-} // namespace obelisk::driver
+} // namespace talos::driver

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --test-obelisk-steady-unknown -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --split-input-file --test-talos-steady-unknown -o /dev/null 2>&1 | FileCheck %s
 
 // A four-state root starts as X (IEEE 1800-2023 6.8). Bits no write stores
 // a possibly known value into stay X once the design runs: the high byte

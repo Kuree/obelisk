@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
-!logic2 = !obelisk.integral<2, false, true, 1 : 0, logic>
-!logic4 = !obelisk.integral<4, false, true, 3 : 0, logic>
+!logic2 = !talos.integral<2, false, true, 1 : 0, logic>
+!logic4 = !talos.integral<4, false, true, 3 : 0, logic>
 
 module {
   simulation.design @split_specify_lowering {
@@ -47,19 +47,19 @@ module {
                       #simulation.argument_binding<path = "top.source", argument = 3, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.snapshot0", argument = 4, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.snapshot1", argument = 5, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {
+      talos.sv.expression.assignment attributes {
           assignment_kind = 0 : i32, node_id = 1 : i64,
           semantic_type = !logic4} {
-        obelisk.sv.expression.concatenation attributes {
+        talos.sv.expression.concatenation attributes {
             node_id = 10 : i64, semantic_type = !logic4} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 3 : i64, referenced_path = "top.high",
               referenced_symbol = @high, semantic_type = !logic2} {}
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 2 : i64, referenced_path = "top.low",
               referenced_symbol = @low, semantic_type = !logic2} {}
         }
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 4 : i64, referenced_path = "top.source",
             referenced_symbol = @source, semantic_type = !logic4} {}
       }

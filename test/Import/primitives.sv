@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s 2>/dev/null | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-obelisk %s 2>/dev/null | FileCheck %s --check-prefix=OBELISK
+// RUN: talos -emit-slang %s 2>/dev/null | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-talos %s 2>/dev/null | FileCheck %s --check-prefix=TALOS
 
 `timescale 1ns / 1ps
 module primitive_import(input wire a, b, control,
@@ -13,11 +13,11 @@ endmodule
 
 // SLANG-DAG: slang.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}primitive_name = "and"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
 // SLANG-DAG: slang.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}primitive_name = "bufif0"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
-// OBELISK-DAG: obelisk.sv.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}primitive_name = "and"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
-// OBELISK-DAG: obelisk.sv.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}primitive_name = "bufif0"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
+// TALOS-DAG: talos.sv.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}primitive_name = "and"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
+// TALOS-DAG: talos.sv.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}primitive_name = "bufif0"{{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
 // SLANG-DAG: slang.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}delay_fs = array<i64: 5000000>{{.*}}primitive_name = "bufif0"
 // SLANG-DAG: slang.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}drive_strength0 = 2 : i32{{.*}}drive_strength1 = 1 : i32{{.*}}primitive_name = "bufif0"
-// OBELISK-DAG: obelisk.sv.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}delay_fs = array<i64: 5000000>{{.*}}primitive_name = "bufif0"
-// OBELISK-DAG: obelisk.sv.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}drive_strength0 = 2 : i32{{.*}}drive_strength1 = 1 : i32{{.*}}primitive_name = "bufif0"
+// TALOS-DAG: talos.sv.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}delay_fs = array<i64: 5000000>{{.*}}primitive_name = "bufif0"
+// TALOS-DAG: talos.sv.symbol.primitive_instance @{{[^ ]+}} attributes {{.*}}drive_strength0 = 2 : i32{{.*}}drive_strength1 = 1 : i32{{.*}}primitive_name = "bufif0"
 // SLANG-DAG: slang.symbol.instance_body @{{[^ ]+}} attributes {{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
-// OBELISK-DAG: obelisk.sv.symbol.instance_body @{{[^ ]+}} attributes {{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64
+// TALOS-DAG: talos.sv.symbol.instance_body @{{[^ ]+}} attributes {{.*}}time_precision_fs = 1000 : i64{{.*}}time_unit_fs = 1000000 : i64

@@ -1,0 +1,137 @@
+//===- PrepareTopology.h - Static design topology analysis ------*- C++ -*-===//
+//
+// Private topology planning interfaces for semantic preparation.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef TALOS_LIB_CONVERSION_TALOSTOSIMULATION_PREPARETOPOLOGY_H
+#define TALOS_LIB_CONVERSION_TALOSTOSIMULATION_PREPARETOPOLOGY_H
+
+#include "talos/Dialect/Talos/TalosOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+
+#include "PrepareDeclarations.h"
+
+#include "mlir/IR/Operation.h"
+#include "mlir/Support/LLVM.h"
+
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
+
+namespace talos::simlowering {
+
+struct DescriptorInfo {
+  enum class Kind { Storage, Net, Driver, Event } kind;
+  uint64_t id;
+  uint64_t scopeId;
+  mlir::Type type;
+  sim::NetResolutionKind netKind = sim::NetResolutionKind::Wire;
+  sim::VPITypeSemanticsAttr vpiType{};
+  mlir::Type rootType{};
+  uint64_t viewOffset = 0;
+  uint64_t packedViewOffset = 0;
+  mlir::SmallVector<int64_t> viewIndices{};
+  mlir::Type aggregateViewType{};
+  bool delayedNet = false;
+};
+
+struct StaticStorageView {
+  std::string path;
+  mlir::Type rootType;
+  mlir::Type viewType;
+  /// Exact source-semantic type of the selected view. Unlike `viewType`, this
+  /// is never normalized and therefore retains integral flavor, typedef and
+  /// virtual-interface identity for immutable VPI inventory.
+  mlir::Type semanticType;
+  mlir::ArrayAttr typedefLayers;
+  uint64_t offset = 0;
+  uint64_t packedOffset = 0;
+  mlir::SmallVector<int64_t> indices;
+  mlir::Type aggregateType;
+  bool identity = true;
+};
+
+struct PreparedPortAliases {
+  llvm::StringMap<std::string> aliases;
+  llvm::StringMap<StaticStorageView> refViews;
+  llvm::StringMap<std::string> interfaceAliases;
+  llvm::StringMap<StaticStorageView> interfaceViews;
+  llvm::StringSet<> eventCellPaths;
+  mlir::SmallVector<ir::SVPortConnectionOp> connections;
+  /// Aliases whose members are not all whole nets of one type. They join
+  /// bit by bit through static net connections.
+  mlir::SmallVector<ir::SVNetAliasSymbolOp> partialNetAliases;
+};
+
+/// The sole operation in the first block of a semantic inventory region.
+mlir::Operation *getSingleRegionRoot(mlir::Region &region);
+
+/// Resolve an input/output port actual to its assignment lvalue.
+mlir::Operation *getPortActualLValue(ir::SVPortConnectionOp connection);
+
+/// IEEE 1800-2023 25.5.4: replace each use of a modport expression port that
+/// is not a single storage view by the expression itself, selected through
+/// the use's virtual-interface receiver when it has one.
+mlir::LogicalResult expandModportExpressions(mlir::ModuleOp module);
+
+/// Analyze ref/interface aliases without materializing target descriptors.
+mlir::FailureOr<PreparedPortAliases>
+analyzePortAliases(ir::SVRootSymbolOp semanticRoot);
+
+/// Whether a semantic symbol uses activation-local automatic storage.
+bool isAutomaticLocalSymbol(mlir::Operation *operation);
+
+/// Whether a formal belongs to a subroutine with static default lifetime.
+bool isStaticFormal(mlir::Operation *operation);
+
+/// Whether an operation is nested inside an executable semantic code unit.
+bool isNestedInCodeUnit(mlir::Operation *operation);
+
+/// Frozen type declarations whose exact statement owner is assigned after
+/// procedural statement inventory. These are source plans, not runtime types.
+struct PreparedProceduralTypes {
+  struct Typespec {
+    mlir::Operation *source;
+    mlir::Operation *block;
+    mlir::FlatSymbolRefAttr symbol;
+    uint64_t id;
+    uint64_t scope;
+    std::string hierarchy;
+    std::string name;
+    sim::VPITypeSemanticsAttr type;
+    sim::VPITypespecOrigin origin;
+    mlir::IntegerAttr sourceIdentity;
+  };
+  struct EnumConstant {
+    mlir::Operation *source;
+    uint64_t id;
+    uint64_t ordinal;
+    mlir::FlatSymbolRefAttr typespec;
+    std::string name;
+    std::string value;
+    sim::FrozenConstantAttr immutableValue;
+  };
+  mlir::SmallVector<Typespec> typespecs;
+  mlir::SmallVector<EnumConstant> constants;
+};
+
+mlir::LogicalResult
+materializeProceduralTypes(mlir::ModuleOp module, sim::SimDesignOp design,
+                           const PreparedProceduralTypes &types,
+                           mlir::OpBuilder &builder);
+
+/// Materialize design storage/net/event descriptors and resolve all aliases.
+mlir::FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
+    mlir::ModuleOp module, sim::SimDesignOp design,
+    ir::SVRootSymbolOp semanticRoot, const PreparedPortAliases &portAliases,
+    const PreparedScopeDeclarations &scopes,
+    const PreparedClassDeclarations &classes, uint64_t designPrecisionFs,
+    bool preserveVPIMethodBindings, bool preserveVPIBoxBindings,
+    PreparedProceduralTypes &proceduralTypes,
+    llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr>
+        &primitiveTerminals,
+    mlir::OpBuilder &builder);
+
+} // namespace talos::simlowering
+
+#endif // TALOS_LIB_CONVERSION_TALOSTOSIMULATION_PREPARETOPOLOGY_H

@@ -1,0 +1,50 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=3' '--encode-talos-sim-to-bytecode=vpi=off' -o /dev/null
+
+// The first source-clock term is age zero. One aggregate coordinator samples
+// it from the finalized source cohort, then retains one token count for the
+// nearest strictly subsequent destination-clock ##1 handoff.
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
+  talos.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {}
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {}
+    talos.sv.symbol.instance @s3.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      talos.sv.symbol.instance_body @s4.top attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64} {
+        talos.sv.symbol.variable @s5.clk0 attributes {hierarchical_name = "top.clk0", lifetime = 1 : i32, name = "clk0", node_id = 5 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {}
+        talos.sv.symbol.variable @s6.clk1 attributes {hierarchical_name = "top.clk1", lifetime = 1 : i32, name = "clk1", node_id = 6 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {}
+        talos.sv.symbol.variable @s7.out0 attributes {hierarchical_name = "top.out0", lifetime = 1 : i32, name = "out0", node_id = 7 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {}
+        talos.sv.symbol.variable @s8.out1 attributes {hierarchical_name = "top.out1", lifetime = 1 : i32, name = "out1", node_id = 8 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {}
+        talos.sv.symbol.procedural_block @s9 attributes {hierarchical_name = "top", node_id = 9 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = false, node_id = 10 : i64} {
+            talos.sv.assertion.clocking attributes {node_id = 11 : i64} {
+              talos.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 12 : i64} {
+                talos.sv.expression.named_value attributes {node_id = 13 : i64, referenced_path = "top.clk0", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.clk0, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {}
+              }
+              talos.sv.assertion.sequence_concat attributes {delays = [{is_unbounded = false, max = 0 : i64, min = 0 : i64}, {is_unbounded = false, max = 1 : i64, min = 1 : i64}], node_id = 14 : i64} {
+                talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 15 : i64, repetition_is_unbounded = false} {
+                  talos.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "top.out0", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s7.out0, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {}
+                }
+                talos.sv.assertion.clocking attributes {node_id = 17 : i64} {
+                  talos.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 18 : i64} {
+                    talos.sv.expression.named_value attributes {node_id = 19 : i64, referenced_path = "top.clk1", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.clk1, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {}
+                  }
+                  talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 20 : i64, repetition_is_unbounded = false} {
+                    talos.sv.expression.named_value attributes {node_id = 21 : i64, referenced_path = "top.out1", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s8.out1, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.multiclock_sequence_coordinator
+// CHECK: simulation.suspend.clock_set %arg1, %arg2{{.*}}conditions 0 edges [1, 1] indices [-1, -1] site
+// CHECK: simulation.assert.clock_occurrence.consume
+// CHECK: simulation.assert.sampled_read %arg0 from %arg3
+// CHECK: simulation.assert.sampled_read %arg0 from %arg4
+// CHECK-NOT: simulation.multiclock_sequence_attempt_actor

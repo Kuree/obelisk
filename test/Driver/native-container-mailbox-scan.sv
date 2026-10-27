@@ -1,6 +1,6 @@
-// RUN: obelisk -O0 %s -o %t.o0.native
+// RUN: talos -O0 %s -o %t.o0.native
 // RUN: %t.o0.native | FileCheck %s
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
+// RUN: talos -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: %t.o0.bytecode | FileCheck %s
 
 class mailbox_payload;

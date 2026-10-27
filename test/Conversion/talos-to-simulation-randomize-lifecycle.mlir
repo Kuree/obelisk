@@ -1,0 +1,186 @@
+// RUN: %split-file %s %t
+// RUN: talos-opt %t/lifecycle.mlir '--lower-talos-to-sim=opt-level=0' -o %t/output.mlir
+// RUN: FileCheck %s --input-file=%t/output.mlir
+// RUN: FileCheck %s --check-prefix=BASE --input-file=%t/output.mlir
+// RUN: FileCheck %s --check-prefix=DERIVED --input-file=%t/output.mlir
+
+// IEEE 1800-2017 18.6.2 and 18.11.1 require randomize(null) to invoke
+// pre_randomize(), check the current values, and invoke post_randomize() only
+// when that check succeeds. It remains a checker: no RNG or property stores.
+// CHECK-DAG: simulation.class.field @__talos_class_s3_Base_field_0 {{.*}}simulation.random_mode_index = 0 : i64
+// CHECK-DAG: simulation.class.field @__talos_class_s11_Derived_field_0 {{.*}}simulation.random_mode_index = 1 : i64
+// CHECK-DAG: simulation.func private @[[BASE_PRE:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Base::pre_randomize"
+// CHECK-DAG: simulation.func private @[[BASE_POST:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Base::post_randomize"
+// CHECK-DAG: simulation.func private @[[DERIVED_PRE:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Derived::pre_randomize"
+// Repeated ordinary calls share their class plans. The checker calls remain
+// inline in the caller and therefore contain lifecycle and field operations
+// but no solver or persistent object mutation.
+// CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-DAG: simulation.class.is_instance {{.*}} is @__talos_class_s11_Derived
+// CHECK-DAG: simulation.class.is_instance {{.*}} is @__talos_class_s3_Base
+// CHECK-DAG: simulation.class.direct_call @[[DERIVED_PLAN:__talos_randomize_plan_[A-Za-z0-9_.$]+]]
+// CHECK-DAG: simulation.class.direct_call @[[BASE_PLAN:__talos_randomize_plan_[A-Za-z0-9_.$]+]]
+// CHECK-DAG: simulation.class.direct_call @[[DERIVED_PRE]]
+// CHECK-DAG: simulation.class.direct_call @[[BASE_PRE]]
+// CHECK-DAG: simulation.class.direct_call @[[BASE_POST]]
+// CHECK-DAG: simulation.class.field_ref {{.*}}[@__talos_class_s3_Base_field_0]
+// CHECK-DAG: simulation.class.field_ref {{.*}}[@__talos_class_s11_Derived_field_0]
+// CHECK-DAG: simulation.class.field_ref {{.*}}[@__talos_class_s3_Base_field___talos_constraint_mode]
+// CHECK-NOT: simulation.random.solve
+// CHECK-NOT: simulation.managed.store
+// A context-backed read performed only by Base::pre_randomize remains in the
+// always_comb sensitivity even though it is no longer an ABI capture.
+// CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: %{{arg[0-9]+}}: !simulation.context{{.*}}%[[HOOK_LIMIT:arg[0-9]+]]: !simulation.ref<i1> {{.*}}simulation.descriptor_id = 0
+// CHECK-SAME: %[[HOOK_OBJECT:arg[0-9]+]]: !simulation.ref<!simulation.class_handle<@__talos_class_s3_Base>>
+// CHECK-SAME: entry_kind = 4 : i32
+// CHECK: simulation.suspend.any %[[HOOK_OBJECT]], %[[HOOK_LIMIT]]
+// Helper emission order is unspecified. Check lifecycle order independently
+// inside each class plan rather than requiring derived-before-base emission.
+// BASE-DAG: simulation.func private @[[PRE:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Base::pre_randomize"
+// BASE-DAG: simulation.func private @[[POST:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Base::post_randomize"
+// BASE-LABEL: simulation.func private @__talos_randomize_plan___talos_class_s3_Base_
+// BASE: simulation.class.direct_call @[[PRE]]
+// BASE: simulation.random.solve
+// BASE: simulation.class.direct_call @[[POST]]
+// DERIVED-DAG: simulation.func private @[[PRE:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Derived::pre_randomize"
+// DERIVED-DAG: simulation.func private @[[POST:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Base::post_randomize"
+// DERIVED-LABEL: simulation.func private @__talos_randomize_plan___talos_class_s11_Derived_
+// DERIVED: simulation.class.direct_call @[[PRE]]
+// DERIVED: simulation.random.solve
+// DERIVED: simulation.class.direct_call @[[POST]]
+
+//--- lifecycle.mlir
+
+module {
+  talos.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+      talos.sv.type.class_type @s30.I attributes {bitstream_width = 0 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "I", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = true, is_uninstantiated = false, name = "I", node_id = 100 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s30.I>, this_variable_path = "I::this", this_variable_symbol = @s1.$root::@s2::@s30.I::@s31.this} {
+        talos.sv.symbol.variable @s31.this attributes {hierarchical_name = "I::this", is_compiler_generated, is_const, name = "this", node_id = 101 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s30.I>} {
+        }
+      }
+      talos.sv.type.class_type @s3.Base attributes {bitstream_width = 1 : i64, declared_interfaces = [!talos.class_handle<@s1.$root::@s2::@s30.I>], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "Base", implemented_interfaces = [!talos.class_handle<@s1.$root::@s2::@s30.I>], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "Base", node_id = 3 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Base>, this_variable_path = "Base::this", this_variable_symbol = @s1.$root::@s2::@s3.Base::@s10.this} {
+        talos.sv.symbol.class_property @s4.x attributes {hierarchical_name = "Base::x", name = "x", node_id = 4 : i64, rand_mode = 1 : i32, semantic_type = !talos.integral<1, false, false, 0 : 0, bit>} {
+        }
+        talos.sv.symbol.constraint_block @s25.bounded attributes {hierarchical_name = "Base::bounded", name = "bounded", node_id = 34 : i64, this_variable_path = "Base::bounded.this", this_variable_symbol = @s1.$root::@s2::@s3.Base::@s25.bounded::@s26.this} {
+          talos.sv.constraint.list attributes {item_count = 1 : i64, node_id = 35 : i64} {
+            talos.sv.constraint.expression attributes {is_soft = false, node_id = 36 : i64} {
+              talos.sv.expression.binary_op attributes {node_id = 37 : i64, operator_kind = 16 : i32, semantic_type = !talos.integral<1, false, false, 0 : 0, bit>} {
+                talos.sv.expression.named_value attributes {node_id = 38 : i64, referenced_path = "Base::x", referenced_symbol = @s1.$root::@s2::@s3.Base::@s4.x, semantic_type = !talos.integral<1, false, false, 0 : 0, bit>} {
+                }
+                talos.sv.expression.named_value attributes {node_id = 39 : i64, referenced_path = "top.limit", referenced_symbol = @s1.$root::@s19.top::@s20.top::@s23.limit, semantic_type = !talos.integral<1, false, false, 0 : 0, bit>} {
+                }
+              }
+            }
+          }
+          talos.sv.symbol.variable @s26.this attributes {hierarchical_name = "Base::bounded.this", is_compiler_generated, is_const, name = "this", node_id = 40 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Base>} {
+          }
+        }
+        talos.sv.symbol.subroutine @s5.pre_randomize attributes {hierarchical_name = "Base::pre_randomize", is_pre_post_randomize, name = "pre_randomize", node_id = 5 : i64, semantic_type = !talos.subroutine<() -> !talos.void, false>, subroutine_kind = 0 : i32, this_variable_path = "Base::pre_randomize.this", this_variable_symbol = @s1.$root::@s2::@s3.Base::@s5.pre_randomize::@s6.this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.list attributes {node_id = 6 : i64} {
+            talos.sv.statement.expression_statement attributes {node_id = 28 : i64} {
+              talos.sv.expression.named_value attributes {node_id = 29 : i64, referenced_path = "top.limit", referenced_symbol = @s1.$root::@s19.top::@s20.top::@s23.limit, semantic_type = !talos.integral<1, false, false, 0 : 0, bit>} {
+              }
+            }
+          }
+          talos.sv.symbol.variable @s6.this attributes {hierarchical_name = "Base::pre_randomize.this", is_compiler_generated, is_const, name = "this", node_id = 7 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Base>} {
+          }
+        }
+        talos.sv.symbol.subroutine @s7.post_randomize attributes {hierarchical_name = "Base::post_randomize", is_pre_post_randomize, name = "post_randomize", node_id = 8 : i64, semantic_type = !talos.subroutine<() -> !talos.void, false>, subroutine_kind = 0 : i32, this_variable_path = "Base::post_randomize.this", this_variable_symbol = @s1.$root::@s2::@s3.Base::@s7.post_randomize::@s8.this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.list attributes {node_id = 9 : i64} {
+          }
+          talos.sv.symbol.variable @s8.this attributes {hierarchical_name = "Base::post_randomize.this", is_compiler_generated, is_const, name = "this", node_id = 10 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Base>} {
+          }
+        }
+        talos.sv.symbol.variable @s10.this attributes {hierarchical_name = "Base::this", is_compiler_generated, is_const, name = "this", node_id = 11 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Base>} {
+        }
+      }
+      talos.sv.type.class_type @s11.Derived attributes {base_class = !talos.class_handle<@s1.$root::@s2::@s3.Base>, bitstream_width = 2 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "Derived", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "Derived", node_id = 12 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s11.Derived>, this_variable_path = "Derived::this", this_variable_symbol = @s1.$root::@s2::@s11.Derived::@s18.this} {
+        talos.sv.symbol.class_property @s12.y attributes {hierarchical_name = "Derived::y", name = "y", node_id = 13 : i64, rand_mode = 2 : i32, semantic_type = !talos.integral<1, false, false, 0 : 0, bit>} {
+        }
+        talos.sv.symbol.subroutine @s13.pre_randomize attributes {hierarchical_name = "Derived::pre_randomize", is_pre_post_randomize, name = "pre_randomize", node_id = 14 : i64, semantic_type = !talos.subroutine<() -> !talos.void, false>, subroutine_kind = 0 : i32, this_variable_path = "Derived::pre_randomize.this", this_variable_symbol = @s1.$root::@s2::@s11.Derived::@s13.pre_randomize::@s14.this, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.list attributes {node_id = 15 : i64} {
+          }
+          talos.sv.symbol.variable @s14.this attributes {hierarchical_name = "Derived::pre_randomize.this", is_compiler_generated, is_const, name = "this", node_id = 16 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s11.Derived>} {
+          }
+        }
+        talos.sv.symbol.variable @s18.this attributes {hierarchical_name = "Derived::this", is_compiler_generated, is_const, name = "this", node_id = 20 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s11.Derived>} {
+        }
+      }
+    }
+    talos.sv.symbol.instance @s19.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 21 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      talos.sv.symbol.instance_body @s20.top attributes {hierarchical_name = "top", name = "top", node_id = 22 : i64} {
+        talos.sv.symbol.variable @s23.limit attributes {hierarchical_name = "top.limit", lifetime = 1 : i32, name = "limit", node_id = 30 : i64, semantic_type = !talos.integral<1, false, false, 0 : 0, bit>} {
+        }
+        talos.sv.symbol.variable @s21.object attributes {hierarchical_name = "top.object", lifetime = 1 : i32, name = "object", node_id = 23 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Base>} {
+        }
+        talos.sv.symbol.variable @s32.interface_object attributes {hierarchical_name = "top.interface_object", lifetime = 1 : i32, name = "interface_object", node_id = 102 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s30.I>} {
+        }
+        talos.sv.symbol.variable @s24.result attributes {hierarchical_name = "top.result", lifetime = 1 : i32, name = "result", node_id = 31 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+        }
+        talos.sv.symbol.variable @s33.checker_result attributes {hierarchical_name = "top.checker_result", lifetime = 1 : i32, name = "checker_result", node_id = 103 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+        }
+        talos.sv.symbol.variable @s34.interface_result attributes {hierarchical_name = "top.interface_result", lifetime = 1 : i32, name = "interface_result", node_id = 104 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+        }
+        talos.sv.symbol.procedural_block @s22 attributes {hierarchical_name = "top", node_id = 24 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.expression_statement attributes {node_id = 25 : i64} {
+            talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 32 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+              talos.sv.expression.named_value attributes {node_id = 33 : i64, referenced_path = "top.result", referenced_symbol = @s1.$root::@s19.top::@s20.top::@s24.result, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+              }
+              talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 26 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s19.top::@s20.top} {
+                talos.sv.expression.named_value attributes {node_id = 27 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s19.top::@s20.top::@s21.object, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Base>} {
+                }
+              }
+            }
+          }
+          talos.sv.statement.expression_statement attributes {node_id = 105 : i64} {
+            talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 106 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+              talos.sv.expression.named_value attributes {node_id = 107 : i64, referenced_path = "top.checker_result", referenced_symbol = @s1.$root::@s19.top::@s20.top::@s33.checker_result, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+              }
+              talos.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = true, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 108 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s19.top::@s20.top} {
+                talos.sv.constraint.list attributes {item_count = 1 : i64, node_id = 120 : i64} {
+                  talos.sv.constraint.expression attributes {is_soft = false, node_id = 121 : i64} {
+                    talos.sv.expression.binary_op attributes {node_id = 122 : i64, operator_kind = 9 : i32, semantic_type = !talos.integral<1, false, false, 0 : 0, bit>} {
+                      talos.sv.expression.named_value attributes {node_id = 123 : i64, referenced_path = "Base::x", referenced_symbol = @s1.$root::@s2::@s3.Base::@s4.x, semantic_type = !talos.integral<1, false, false, 0 : 0, bit>} {
+                      }
+                      talos.sv.expression.named_value attributes {node_id = 124 : i64, referenced_path = "top.limit", referenced_symbol = @s1.$root::@s19.top::@s20.top::@s23.limit, semantic_type = !talos.integral<1, false, false, 0 : 0, bit>} {
+                      }
+                    }
+                  }
+                }
+                talos.sv.expression.named_value attributes {node_id = 109 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s19.top::@s20.top::@s21.object, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Base>} {
+                }
+                talos.sv.expression.null_literal attributes {node_id = 110 : i64, semantic_type = !talos.null} {
+                }
+              }
+            }
+          }
+          talos.sv.statement.expression_statement attributes {node_id = 111 : i64} {
+            talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 112 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+              talos.sv.expression.named_value attributes {node_id = 113 : i64, referenced_path = "top.interface_result", referenced_symbol = @s1.$root::@s19.top::@s20.top::@s34.interface_result, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+              }
+              talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 114 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s19.top::@s20.top} {
+                talos.sv.expression.named_value attributes {node_id = 115 : i64, referenced_path = "top.interface_object", referenced_symbol = @s1.$root::@s19.top::@s20.top::@s32.interface_object, semantic_type = !talos.class_handle<@s1.$root::@s2::@s30.I>} {
+                }
+              }
+            }
+          }
+        }
+        // Keep a second randomize-containing always_comb unit in this MLIR
+        // test. Besides exercising serialization of the intentionally
+        // single-threaded compiler-side Z3 build, it verifies lifecycle-hook
+        // reads participate independently in implicit sensitivity.
+        talos.sv.symbol.procedural_block @s35 attributes {hierarchical_name = "top", node_id = 116 : i64, procedure_kind = 3 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.expression_statement attributes {node_id = 117 : i64} {
+            talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "randomize", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_super_class = false, is_system_call = true, node_id = 118 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>, subroutine_kind = 0 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s19.top::@s20.top} {
+              talos.sv.expression.named_value attributes {node_id = 119 : i64, referenced_path = "top.object", referenced_symbol = @s1.$root::@s19.top::@s20.top::@s21.object, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Base>} {
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

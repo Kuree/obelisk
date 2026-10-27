@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.parallel
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines -o %t.parallel
 // RUN: FileCheck %s < %t.parallel
-// RUN: obelisk-opt %s --mlir-disable-threading --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.serial
+// RUN: talos-opt %s --mlir-disable-threading --convert-talos-sim-processes-to-llvm-coroutines -o %t.serial
 // RUN: diff %t.parallel %t.serial
 // Exercise the final native legalization boundary directly. All vector
 // memory accesses keep the original byte alignment and footprint.

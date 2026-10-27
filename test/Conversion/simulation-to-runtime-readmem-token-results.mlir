@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --convert-obelisk-sim-to-runtime %s | FileCheck %s
+// RUN: talos-opt --convert-talos-sim-to-runtime %s | FileCheck %s
 
 // The token data is a four-state value, so it lowers to a value plane and an
 // unknown plane while the kind and the address stay single values. Consume all

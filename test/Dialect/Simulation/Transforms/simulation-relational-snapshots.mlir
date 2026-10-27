@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=off}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-simplify-bodies{vpi=off}))' | FileCheck %s
 // Equal array snapshots share reads, while storage and publications remain
 // separate. A dynamic write invalidates the relation. Invalid/X indices use
 // the same declared-range default in the SSA extract as in the source load.

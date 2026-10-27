@@ -3,10 +3,10 @@
 #include "SimulationNBALowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Conversion/SimulationRuntime.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Conversion/SimulationRuntime.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -20,7 +20,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 LogicalResult
 materializeGeneratedNBAAccumulators(ModuleOp module,
                                     const NativeStaticNBAPlan &plan) {
@@ -33,14 +33,14 @@ materializeGeneratedNBAAccumulators(ModuleOp module,
   OpBuilder builder(module.getContext());
   Location location = module.getLoc();
   Type storageType = LLVM::LLVMArrayType::get(
-      builder.getI8Type(), sizeof(obelisk_rt_generated_nba_accumulator_256));
+      builder.getI8Type(), sizeof(talos_rt_generated_nba_accumulator_256));
   // Packed NBA staging references these arrays before coordinator emission.
   // Their sizes are already fixed by the native NBA plan.
   uint64_t words = (plan.roots.size() + 63) / 64;
   for (auto [name, count] :
-       {std::pair<StringRef, uint64_t>{"__obelisk_aot_nba_dirty_roots_v1",
+       {std::pair<StringRef, uint64_t>{"__talos_aot_nba_dirty_roots_v1",
                                        words},
-        {"__obelisk_aot_nba_dirty_summary_v1", (words + 63) / 64}}) {
+        {"__talos_aot_nba_dirty_summary_v1", (words + 63) / 64}}) {
     if (!count)
       continue;
     builder.setInsertionPointToStart(module.getBody());
@@ -95,4 +95,4 @@ void materializeEvalStepFourStateGlobals(ModuleOp module, uint64_t taintWords) {
                          LLVM::ZeroOp::create(builder, location, taintType));
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

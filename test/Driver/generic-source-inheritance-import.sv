@@ -1,5 +1,5 @@
-// RUN: obelisk --std=1800-2023 -emit-slang %s -o /dev/null
-// RUN: obelisk --std=1800-2023 -emit-obelisk %s -o /dev/null
+// RUN: talos --std=1800-2023 -emit-slang %s -o /dev/null
+// RUN: talos --std=1800-2023 -emit-talos %s -o /dev/null
 
 class base #(type T = int, int P = 3);
   function new(int n = P); endfunction

@@ -1,27 +1,27 @@
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 #include "vpi_user.h"
 #include <stdlib.h>
 
-static obelisk_rt_context *active;
+static talos_rt_context *active;
 static unsigned checkpoints;
-extern obelisk_rt_status
-__real_obelisk_rt_v1_scheduler_run(obelisk_rt_context *context);
+extern talos_rt_status
+__real_talos_rt_v1_scheduler_run(talos_rt_context *context);
 
 // Supply the driver lifecycle around the MLIR main. Writes arrive at timed
 // generic-output safe points, after the preceding cone has settled.
-obelisk_rt_status
-__wrap_obelisk_rt_v1_scheduler_run(obelisk_rt_context *context) {
+talos_rt_status
+__wrap_talos_rt_v1_scheduler_run(talos_rt_context *context) {
   active = context;
   checkpoints = 0;
-  obelisk_rt_status status = obelisk_rt_v1_vpi_startup(context, 0, 0);
-  if (status == OBELISK_RT_OK)
-    status = obelisk_rt_v1_vpi_end_compile(context);
-  if (status == OBELISK_RT_OK)
-    status = obelisk_rt_v1_vpi_start_simulation(context);
-  if (status == OBELISK_RT_OK)
-    status = __real_obelisk_rt_v1_scheduler_run(context);
-  obelisk_rt_v1_vpi_end_simulation(context);
-  obelisk_rt_v1_vpi_shutdown(context);
+  talos_rt_status status = talos_rt_v1_vpi_startup(context, 0, 0);
+  if (status == TALOS_RT_OK)
+    status = talos_rt_v1_vpi_end_compile(context);
+  if (status == TALOS_RT_OK)
+    status = talos_rt_v1_vpi_start_simulation(context);
+  if (status == TALOS_RT_OK)
+    status = __real_talos_rt_v1_scheduler_run(context);
+  talos_rt_v1_vpi_end_simulation(context);
+  talos_rt_v1_vpi_shutdown(context);
   active = 0;
   return status;
 }
@@ -57,19 +57,19 @@ static int writeValue(unsigned step) {
   return status;
 }
 
-extern obelisk_rt_status
-__real_obelisk_rt_v1_display(obelisk_rt_context *, uint32_t, uint32_t,
-                             obelisk_rt_radix, const obelisk_rt_arg_v1 *,
-                             uint64_t, const obelisk_rt_format_env_v1 *);
+extern talos_rt_status
+__real_talos_rt_v1_display(talos_rt_context *, uint32_t, uint32_t,
+                             talos_rt_radix, const talos_rt_arg_v1 *,
+                             uint64_t, const talos_rt_format_env_v1 *);
 
-obelisk_rt_status
-__wrap_obelisk_rt_v1_display(obelisk_rt_context *context, uint32_t descriptor,
-                             uint32_t newline, obelisk_rt_radix radix,
-                             const obelisk_rt_arg_v1 *items, uint64_t count,
-                             const obelisk_rt_format_env_v1 *environment) {
-  obelisk_rt_status status = __real_obelisk_rt_v1_display(
+talos_rt_status
+__wrap_talos_rt_v1_display(talos_rt_context *context, uint32_t descriptor,
+                             uint32_t newline, talos_rt_radix radix,
+                             const talos_rt_arg_v1 *items, uint64_t count,
+                             const talos_rt_format_env_v1 *environment) {
+  talos_rt_status status = __real_talos_rt_v1_display(
       context, descriptor, newline, radix, items, count, environment);
-  if (status == OBELISK_RT_OK && writeValue(checkpoints++) != 0)
-    return OBELISK_RT_INVALID_DESIGN;
+  if (status == TALOS_RT_OK && writeValue(checkpoints++) != 0)
+    return TALOS_RT_INVALID_DESIGN;
   return status;
 }

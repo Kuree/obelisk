@@ -1,10 +1,10 @@
 // File lists, library search paths and files, and compilation units.
-// RUN: cd %S && obelisk -emit-slang --filelist driver_flags.f -I%S | FileCheck %s --check-prefix=FILELIST-ALIAS
-// RUN: obelisk -emit-slang -y %S/Inputs/library/search -Y .svlib %S/Inputs/library/search/top.sv | FileCheck %s --check-prefix=LIBRARY-SEARCH
-// RUN: obelisk -emit-slang -l %S/Inputs/library/explicit_library.sv %S/Inputs/library/explicit_top.sv | FileCheck %s --check-prefix=LIBRARY-FILE
-// RUN: not obelisk -emit-slang %S/Inputs/single_unit_define.sv %S/Inputs/single_unit_use.sv 2>&1 | FileCheck %s --check-prefix=SEPARATE-UNITS
-// RUN: obelisk -emit-slang --single-unit %S/Inputs/single_unit_define.sv %S/Inputs/single_unit_use.sv | FileCheck %s --check-prefix=SINGLE-UNIT
-// RUN: obelisk -emit-slang --single-unit --libraries-inherit-macros -l %S/Inputs/library/inherit_library.sv %S/Inputs/library/inherit_primary.sv | FileCheck %s --check-prefix=INHERIT-MACROS
+// RUN: cd %S && talos -emit-slang --filelist driver_flags.f -I%S | FileCheck %s --check-prefix=FILELIST-ALIAS
+// RUN: talos -emit-slang -y %S/Inputs/library/search -Y .svlib %S/Inputs/library/search/top.sv | FileCheck %s --check-prefix=LIBRARY-SEARCH
+// RUN: talos -emit-slang -l %S/Inputs/library/explicit_library.sv %S/Inputs/library/explicit_top.sv | FileCheck %s --check-prefix=LIBRARY-FILE
+// RUN: not talos -emit-slang %S/Inputs/single_unit_define.sv %S/Inputs/single_unit_use.sv 2>&1 | FileCheck %s --check-prefix=SEPARATE-UNITS
+// RUN: talos -emit-slang --single-unit %S/Inputs/single_unit_define.sv %S/Inputs/single_unit_use.sv | FileCheck %s --check-prefix=SINGLE-UNIT
+// RUN: talos -emit-slang --single-unit --libraries-inherit-macros -l %S/Inputs/library/inherit_library.sv %S/Inputs/library/inherit_primary.sv | FileCheck %s --check-prefix=INHERIT-MACROS
 
 // FILELIST-ALIAS: hierarchical_name = "driver_helper"
 // LIBRARY-SEARCH: name = "searched_library"

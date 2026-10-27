@@ -2,10 +2,10 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -16,16 +16,16 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 // Reserved names for the final-simulation-time channel. The accessors are
 // exported so a standalone host can read the value after main returns; the
 // storage itself stays internal.
-static constexpr llvm::StringLiteral kFinalTimeName = "__obelisk_final_time";
+static constexpr llvm::StringLiteral kFinalTimeName = "__talos_final_time";
 static constexpr llvm::StringLiteral kFinalTimeAccessorName =
-    "obelisk_final_time";
+    "talos_final_time";
 static constexpr llvm::StringLiteral kTimePrecisionAccessorName =
-    "obelisk_time_precision_fs";
+    "talos_time_precision_fs";
 
 LogicalResult makeSchedulerMain(ModuleOp module,
                                 const NativeStateLayout &stateLayout,
@@ -35,7 +35,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     return success();
   sim::SimFuncOp root;
   bool multipleRoots = false;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         if (function.getEntryKind() != sim::EntryKind::RootInitializer)
           return;
@@ -55,7 +55,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       precisionFs = attr.getInt();
   });
   std::string rootSpawnName = root.getSymName().str();
-  rootSpawnName += ".__obelisk_spawn";
+  rootSpawnName += ".__talos_spawn";
   MLIRContext *context = module.getContext();
   OpBuilder builder(context);
   builder.setInsertionPointToEnd(module.getBody());
@@ -79,7 +79,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   LLVM::StoreOp::create(builder, location,
                         LLVM::ZeroOp::create(builder, location, pointer),
                         outContext, 8);
-  constexpr StringLiteral executionName = "__obelisk_execution_descriptor_v1";
+  constexpr StringLiteral executionName = "__talos_execution_descriptor_v1";
   bool hasExecution = module.lookupSymbol(executionName) != nullptr;
   bool hasCoverage = runtime::has<runtime::CoverageSchemaBlob>(module);
   // A functional schema is also required for covergroup methods used directly
@@ -95,11 +95,11 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         continue;
       coveragePersistenceMask |=
           llvm::StringSwitch<uint32_t>(metric.getValue())
-              .Case("line", OBELISK_RT_COVERAGE_PERSIST_LINE)
-              .Case("toggle", OBELISK_RT_COVERAGE_PERSIST_TOGGLE)
-              .Case("functional", OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL)
-              .Case("assertion", OBELISK_RT_COVERAGE_PERSIST_ASSERTION)
-              .Case("fsm", OBELISK_RT_COVERAGE_PERSIST_FSM)
+              .Case("line", TALOS_RT_COVERAGE_PERSIST_LINE)
+              .Case("toggle", TALOS_RT_COVERAGE_PERSIST_TOGGLE)
+              .Case("functional", TALOS_RT_COVERAGE_PERSIST_FUNCTIONAL)
+              .Case("assertion", TALOS_RT_COVERAGE_PERSIST_ASSERTION)
+              .Case("fsm", TALOS_RT_COVERAGE_PERSIST_FSM)
               .Default(0);
     }
   }
@@ -141,7 +141,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         LLVM::AddressOfOp::create(builder, location, pointer, executionName);
     auto create = LLVM::CallOp::create(
         builder, location, TypeRange{i32},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_context_create_for_design"),
+        SymbolRefAttr::get(context, "talos_rt_v1_context_create_for_design"),
         ValueRange{execution, outContext});
     Value succeeded = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, create.getResult(),
@@ -151,7 +151,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   } else {
     auto create = LLVM::CallOp::create(
         builder, location, TypeRange{i32},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_context_create"),
+        SymbolRefAttr::get(context, "talos_rt_v1_context_create"),
         outContext);
     Value succeeded = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, create.getResult(),
@@ -167,7 +167,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   Value runtimeContext =
       LLVM::LoadOp::create(builder, location, pointer, outContext, 8);
   auto initializers =
-      module.lookupSymbol<LLVM::GlobalOp>("__obelisk_state_initializers_v1");
+      module.lookupSymbol<LLVM::GlobalOp>("__talos_state_initializers_v1");
   if (!initializers)
     return module.emitError("native state initializers are missing");
   uint64_t fillCount =
@@ -175,12 +175,12 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       4;
   auto initialized = LLVM::CallOp::create(
       builder, location, TypeRange{i32},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_initialize"),
+      SymbolRefAttr::get(context, "talos_rt_v1_native_state_initialize"),
       ValueRange{runtimeContext,
                  LLVM::AddressOfOp::create(builder, location, pointer,
-                                           "__obelisk_state_value"),
+                                           "__talos_state_value"),
                  LLVM::AddressOfOp::create(builder, location, pointer,
-                                           "__obelisk_state_unknown"),
+                                           "__talos_state_unknown"),
                  llvmConstant(builder, location, i64, stateLayout.bitCount),
                  LLVM::AddressOfOp::create(builder, location, pointer,
                                            initializers.getSymName()),
@@ -197,26 +197,26 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   builder.setInsertionPointToStart(initializeFailed);
   LLVM::CallOp::create(
       builder, location, TypeRange{},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_context_destroy"),
+      SymbolRefAttr::get(context, "talos_rt_v1_context_destroy"),
       runtimeContext);
   LLVM::ReturnOp::create(builder, location, initialized.getResult());
   builder.setInsertionPointToStart(initializedReady);
   if (sharedNativeState) {
     Value value = LLVM::AddressOfOp::create(builder, location, pointer,
-                                            "__obelisk_state_value");
+                                            "__talos_state_value");
     Value unknown = LLVM::AddressOfOp::create(builder, location, pointer,
-                                              "__obelisk_state_unknown");
+                                              "__talos_state_unknown");
     Value status = LLVM::CallOp::create(
                        builder, location, TypeRange{i32},
                        SymbolRefAttr::get(
-                           context, "obelisk_rt_v1_native_state_bind_shared"),
+                           context, "talos_rt_v1_native_state_bind_shared"),
                        ValueRange{runtimeContext, value, unknown,
                                   llvmConstant(builder, location, i64,
                                                stateLayout.bitCount)})
                        .getResult();
     LLVM::CallOp::create(
         builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status});
   }
   runtime::Features features = runtime::getFeatures(module);
@@ -238,57 +238,57 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   if (requiresDynamicScanFeature)
     LLVM::CallOp::create(
         builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_dynamic_scan_link_anchor"),
+        SymbolRefAttr::get(context, "talos_rt_v1_dynamic_scan_link_anchor"),
         ValueRange{});
   if (requiresContainerBitstreamFeature)
     LLVM::CallOp::create(
         builder, location, TypeRange{},
         SymbolRefAttr::get(context,
-                           "obelisk_rt_v1_container_bitstream_link_anchor"),
+                           "talos_rt_v1_container_bitstream_link_anchor"),
         ValueRange{});
   if (requiresRecursiveBitstreamFeature)
     LLVM::CallOp::create(
         builder, location, TypeRange{},
         SymbolRefAttr::get(context,
-                           "obelisk_rt_v1_recursive_bitstream_link_anchor"),
+                           "talos_rt_v1_recursive_bitstream_link_anchor"),
         ValueRange{});
   if (requiresClassBitstreamFeature)
     LLVM::CallOp::create(
         builder, location, TypeRange{},
         SymbolRefAttr::get(context,
-                           "obelisk_rt_v1_class_bitstream_link_anchor"),
+                           "talos_rt_v1_class_bitstream_link_anchor"),
         ValueRange{});
   if (requiresClassBitstreamBytecodeFeature)
     LLVM::CallOp::create(
         builder, location, TypeRange{},
         SymbolRefAttr::get(
-            context, "obelisk_rt_v1_class_bitstream_bytecode_link_anchor"),
+            context, "talos_rt_v1_class_bitstream_bytecode_link_anchor"),
         ValueRange{});
   if (requiresDPIExportBytecodeFeature)
     LLVM::CallOp::create(
         builder, location, TypeRange{},
         SymbolRefAttr::get(context,
-                           "obelisk_rt_v1_dpi_export_bytecode_link_anchor"),
+                           "talos_rt_v1_dpi_export_bytecode_link_anchor"),
         ValueRange{});
   if (requiresDPIImportBytecodeFeature)
     LLVM::CallOp::create(
         builder, location, TypeRange{},
         SymbolRefAttr::get(context,
-                           "obelisk_rt_v1_dpi_import_bytecode_link_anchor"),
+                           "talos_rt_v1_dpi_import_bytecode_link_anchor"),
         ValueRange{});
   Value configureStatus =
       LLVM::CallOp::create(
           builder, location, TypeRange{i32},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_context_configure_argv"),
+          SymbolRefAttr::get(context, "talos_rt_v1_context_configure_argv"),
           ValueRange{runtimeContext, entry->getArgument(0),
                      entry->getArgument(1)})
           .getResult();
   LLVM::CallOp::create(
       builder, location, TypeRange{},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+      SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
       ValueRange{runtimeContext, configureStatus});
   Value currentAddress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
+                                                   "__talos_current_context");
   LLVM::StoreOp::create(builder, location, runtimeContext, currentAddress, 8);
   SmallVector<sim::SimClassDeclOp> managedClasses;
   module.walk([&](sim::SimClassDeclOp declaration) {
@@ -304,12 +304,12 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     Value status =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_class_register"),
+            SymbolRefAttr::get(context, "talos_rt_v1_class_register"),
             ValueRange{runtimeContext, descriptor})
             .getResult();
     LLVM::CallOp::create(
         builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status});
   }
   // Element defaults must precede the first container of their type, which
@@ -318,7 +318,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     for (auto entry : defaults.getAsRange<native::ElementDefaultAttr>()) {
       ArrayRef<int8_t> image = entry.getImage().asArrayRef();
       std::string name =
-          "__obelisk_element_default_" + std::to_string(entry.getTypeId());
+          "__talos_element_default_" + std::to_string(entry.getTypeId());
       if (!module.lookupSymbol(name)) {
         OpBuilder::InsertionGuard guard(builder);
         builder.setInsertionPointToEnd(module.getBody());
@@ -334,7 +334,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
               SymbolRefAttr::get(context,
-                                 "obelisk_rt_v1_element_type_define_default"),
+                                 "talos_rt_v1_element_type_define_default"),
               ValueRange{
                   runtimeContext,
                   LLVM::ConstantOp::create(
@@ -349,23 +349,23 @@ LogicalResult makeSchedulerMain(ModuleOp module,
               .getResult();
       LLVM::CallOp::create(
           builder, location, TypeRange{},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+          SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
           ValueRange{runtimeContext, status});
     }
   if (requiresClassBitstreamFeature) {
     Value status = LLVM::CallOp::create(
                        builder, location, TypeRange{i32},
                        SymbolRefAttr::get(
-                           context, "obelisk_rt_v1_class_bitstream_finalize"),
+                           context, "talos_rt_v1_class_bitstream_finalize"),
                        ValueRange{runtimeContext})
                        .getResult();
     LLVM::CallOp::create(
         builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status});
   }
   SmallVector<LLVM::LLVMFuncOp> dpiThunks;
-  ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
+  ::talos::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
       module, [&](LLVM::LLVMFuncOp function) {
         if (dpi::has<dpi::ImportId>(function))
           dpiThunks.push_back(function);
@@ -386,7 +386,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
             SymbolRefAttr::get(
-                context, "obelisk_rt_v1_context_register_import_signature"),
+                context, "talos_rt_v1_context_register_import_signature"),
             ValueRange{runtimeContext,
                        llvmConstant(builder, location, i32,
                                     importID.getValue().getZExtValue()),
@@ -396,7 +396,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
             .getResult();
     LLVM::CallOp::create(
         builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status});
   }
   auto emitBoundRegistration = [&](OpBuilder &builder, Value runtimeContext,
@@ -405,21 +405,21 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     auto status = LLVM::CallOp::create(
         builder, location, TypeRange{i32},
         SymbolRefAttr::get(context,
-                           "obelisk_rt_v1_native_state_register_static"),
+                           "talos_rt_v1_native_state_register_static"),
         ValueRange{runtimeContext,
                    llvmConstant(builder, location, i32, bound.handleID),
                    llvmConstant(builder, location, i64, bound.offset),
                    llvmConstant(builder, location, i64, bound.width)});
     LLVM::CallOp::create(
         builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status.getResult()});
     for (const sim::ManagedHandleSlot &root : bound.managedRootSlots) {
       uint64_t rootOffset = root.bitOffset;
       if ((bound.offset + rootOffset) & 7)
         return module.emitError("managed static root is not byte aligned");
       Value state = LLVM::AddressOfOp::create(builder, location, pointer,
-                                              "__obelisk_state_value");
+                                              "__talos_state_value");
       Value slot =
           byteGEP(builder, location, state, (bound.offset + rootOffset) / 8);
       SmallVector<Value> rootArguments{
@@ -429,12 +429,12 @@ LogicalResult makeSchedulerMain(ModuleOp module,
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
               SymbolRefAttr::get(
-                  context, "obelisk_rt_v1_gc_candidate_static_root_register"),
+                  context, "talos_rt_v1_gc_candidate_static_root_register"),
               rootArguments)
               .getResult();
       LLVM::CallOp::create(
           builder, location, TypeRange{},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+          SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
           ValueRange{runtimeContext, rootStatus});
       if (hasDesignBytecode && !sharedNativeState) {
         SmallVector<Value> designRootArguments{
@@ -445,12 +445,12 @@ LogicalResult makeSchedulerMain(ModuleOp module,
             LLVM::CallOp::create(
                 builder, location, TypeRange{i32},
                 SymbolRefAttr::get(
-                    context, "obelisk_rt_v1_gc_design_candidate_root_register"),
+                    context, "talos_rt_v1_gc_design_candidate_root_register"),
                 designRootArguments)
                 .getResult();
         LLVM::CallOp::create(
             builder, location, TypeRange{},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+            SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
             ValueRange{runtimeContext, designRootStatus});
       }
     }
@@ -487,8 +487,8 @@ LogicalResult makeSchedulerMain(ModuleOp module,
           integerStructAttr(boundType, {bound.handleID, rootRows.size(),
                                         bound.offset, bound.width}));
     }
-    constexpr StringLiteral boundsName = "__obelisk_static_state_bounds_v1";
-    constexpr StringLiteral rootsName = "__obelisk_static_state_roots_v1";
+    constexpr StringLiteral boundsName = "__talos_static_state_bounds_v1";
+    constexpr StringLiteral rootsName = "__talos_static_state_roots_v1";
     makeConstantGlobal(module, location,
                        LLVM::LLVMArrayType::get(boundType, boundRows.size()),
                        boundsName, LLVM::Linkage::Internal, 8,
@@ -502,7 +502,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       OpBuilder::InsertionGuard guard(builder);
       builder.setInsertionPointToEnd(module.getBody());
       helper = LLVM::LLVMFuncOp::create(
-          builder, location, "__obelisk_register_static_state",
+          builder, location, "__talos_register_static_state",
           LLVM::LLVMFunctionType::get(voidType, {pointer}, false),
           LLVM::Linkage::Internal);
       helper.setNoInline(true);
@@ -521,7 +521,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       auto fail = [&](Value status) {
         LLVM::CallOp::create(
             builder, location, TypeRange{},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+            SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
             ValueRange{helperContext, status});
       };
       auto field = [&](StringRef table, Type rowType, Value row, int32_t index,
@@ -550,7 +550,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
               SymbolRefAttr::get(context,
-                                 "obelisk_rt_v1_native_state_register_static"),
+                                 "talos_rt_v1_native_state_register_static"),
               ValueRange{helperContext,
                          field(boundsName, boundType, bound, 0, i32),
                          field(boundsName, boundType, bound, 2, i64),
@@ -577,12 +577,12 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       Value slot = LLVM::GEPOp::create(
           builder, location, pointer, builder.getI8Type(),
           LLVM::AddressOfOp::create(builder, location, pointer,
-                                    "__obelisk_state_value"),
+                                    "__talos_state_value"),
           ArrayRef<LLVM::GEPArg>{byte});
       fail(LLVM::CallOp::create(
                builder, location, TypeRange{i32},
                SymbolRefAttr::get(
-                   context, "obelisk_rt_v1_gc_candidate_static_root_register"),
+                   context, "talos_rt_v1_gc_candidate_static_root_register"),
                ValueRange{helperContext, slot, kind})
                .getResult());
       if (hasDesignBytecode && !sharedNativeState) {
@@ -592,7 +592,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
             LLVM::CallOp::create(
                 builder, location, TypeRange{i32},
                 SymbolRefAttr::get(
-                    context, "obelisk_rt_v1_gc_design_candidate_root_register"),
+                    context, "talos_rt_v1_gc_design_candidate_root_register"),
                 ValueRange{helperContext, bit, kind})
                 .getResult());
       }
@@ -610,35 +610,35 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   }
   if (requiresNativeStateSync) {
     Value stateValue = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                 "__obelisk_state_value");
+                                                 "__talos_state_value");
     Value stateUnknown = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_state_unknown");
+                                                   "__talos_state_unknown");
     Value status =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_native_state_sync"),
+            SymbolRefAttr::get(context, "talos_rt_v1_native_state_sync"),
             ValueRange{
                 runtimeContext, stateValue, stateUnknown,
                 llvmConstant(builder, location, i64, stateLayout.bitCount)})
             .getResult();
     LLVM::CallOp::create(
         builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status});
   }
   if (stateLayout.directContinuous) {
     SmallVector<Value> arguments{runtimeContext};
     for (StringRef name :
-         {"__obelisk_continuous_value", "__obelisk_continuous_unknown",
-          "__obelisk_continuous_mask"})
+         {"__talos_continuous_value", "__talos_continuous_unknown",
+          "__talos_continuous_mask"})
       arguments.push_back(
           LLVM::AddressOfOp::create(builder, location, pointer, name));
     Value status = LLVM::CallOp::create(
                        builder, location, TypeRange{i32},
-                       "obelisk_rt_v1_native_state_bind_continuous", arguments)
+                       "talos_rt_v1_native_state_bind_continuous", arguments)
                        .getResult();
     LLVM::CallOp::create(builder, location, TypeRange{},
-                         "obelisk_rt_v1_scheduler_fail",
+                         "talos_rt_v1_scheduler_fail",
                          ValueRange{runtimeContext, status});
   }
   if (!stateLayout.unknownSummaryRoots.empty()) {
@@ -648,9 +648,9 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     Value status =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
-            "obelisk_rt_v1_native_state_bind_unknown_summary",
+            "talos_rt_v1_native_state_bind_unknown_summary",
             ValueRange{
-                runtimeContext, address("__obelisk_state_unknown"),
+                runtimeContext, address("__talos_state_unknown"),
                 llvmConstant(builder, location, i64, stateLayout.bitCount),
                 address(unknownSummaryName), address(unknownSummaryRootsName),
                 llvmConstant(builder, location, i64,
@@ -660,19 +660,19 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                              stateLayout.getUnknownSummaryPatternCount())})
             .getResult();
     LLVM::CallOp::create(builder, location, TypeRange{},
-                         "obelisk_rt_v1_scheduler_fail",
+                         "talos_rt_v1_scheduler_fail",
                          ValueRange{runtimeContext, status});
   }
   if (bindStateSpecialization) {
     Value fast = LLVM::AddressOfOp::create(
-        builder, location, pointer, "__obelisk_state_specialization_fast_v1");
+        builder, location, pointer, "__talos_state_specialization_fast_v1");
     Value status =
         LLVM::CallOp::create(builder, location, TypeRange{i32},
-                             "obelisk_rt_v1_native_state_bind_specialization",
+                             "talos_rt_v1_native_state_bind_specialization",
                              ValueRange{runtimeContext, fast})
             .getResult();
     LLVM::CallOp::create(builder, location, TypeRange{},
-                         "obelisk_rt_v1_scheduler_fail",
+                         "talos_rt_v1_scheduler_fail",
                          ValueRange{runtimeContext, status});
   }
   if (hasCoverage) {
@@ -699,7 +699,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         for (Attribute value : values) {
           auto binding = cast<cov::FsmBindingAttr>(value);
           uint64_t stateHandle =
-              obelisk_rt_stable_handle_offset(handle->second, binding.getLow());
+              talos_rt_stable_handle_offset(handle->second, binding.getLow());
           if (stateHandle == UINT64_MAX)
             return operation->emitError(
                 "FSM coverage binding cannot be represented by a stable state "
@@ -725,7 +725,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
           return operation->emitError(
               "toggle coverage binding exceeds the prepared inventory");
         uint64_t stateHandle =
-            obelisk_rt_stable_handle_offset(handle->second, binding.getLow());
+            talos_rt_stable_handle_offset(handle->second, binding.getLow());
         if (stateHandle == UINT64_MAX)
           return operation->emitError(
               "toggle coverage binding cannot be represented by a stable "
@@ -769,10 +769,10 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                          data.size());
       };
       LLVM::GlobalOp valueGlobal = makeByteArrayGlobal(
-          module, location, "__obelisk_coverage_initial_value_v1",
+          module, location, "__talos_coverage_initial_value_v1",
           asString(valueBytes));
       LLVM::GlobalOp unknownGlobal = makeByteArrayGlobal(
-          module, location, "__obelisk_coverage_initial_unknown_v1",
+          module, location, "__talos_coverage_initial_unknown_v1",
           asString(unknownBytes));
       initialValue = LLVM::AddressOfOp::create(builder, location, pointer,
                                                valueGlobal.getSymName());
@@ -782,7 +782,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     Value status =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_coverage_finalize"),
+            SymbolRefAttr::get(context, "talos_rt_v1_coverage_finalize"),
             ValueRange{runtimeContext,
                        llvmConstant(builder, location, i64, linePointCount),
                        llvmConstant(builder, location, i64, toggleBitCount),
@@ -792,13 +792,13 @@ LogicalResult makeSchedulerMain(ModuleOp module,
             .getResult();
     LLVM::CallOp::create(
         builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status});
     for (const ToggleBinding &binding : toggleBindings) {
       Value bindStatus =
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
-              SymbolRefAttr::get(context, "obelisk_rt_v1_coverage_toggle_bind"),
+              SymbolRefAttr::get(context, "talos_rt_v1_coverage_toggle_bind"),
               ValueRange{
                   runtimeContext,
                   llvmConstant(builder, location, i64, binding.firstBit),
@@ -807,14 +807,14 @@ LogicalResult makeSchedulerMain(ModuleOp module,
               .getResult();
       LLVM::CallOp::create(
           builder, location, TypeRange{},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+          SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
           ValueRange{runtimeContext, bindStatus});
     }
     for (const FsmBinding &binding : fsmBindings) {
       Value bindStatus =
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
-              SymbolRefAttr::get(context, "obelisk_rt_v1_coverage_fsm_bind"),
+              SymbolRefAttr::get(context, "talos_rt_v1_coverage_fsm_bind"),
               ValueRange{
                   runtimeContext,
                   llvmConstant(builder, location, i64, binding.machine),
@@ -824,32 +824,32 @@ LogicalResult makeSchedulerMain(ModuleOp module,
               .getResult();
       LLVM::CallOp::create(
           builder, location, TypeRange{},
-          SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+          SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
           ValueRange{runtimeContext, bindStatus});
     }
     Value sealStatus =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_coverage_toggle_seal"),
+            SymbolRefAttr::get(context, "talos_rt_v1_coverage_toggle_seal"),
             ValueRange{runtimeContext})
             .getResult();
     LLVM::CallOp::create(
         builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, sealStatus});
   }
   if (useAOT) {
     Value plan = LLVM::AddressOfOp::create(builder, location, pointer,
-                                           "__obelisk_aot_schedule_plan_v1");
+                                           "__talos_aot_schedule_plan_v1");
     Value installStatus =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_install_aot"),
+            SymbolRefAttr::get(context, "talos_rt_v1_scheduler_install_aot"),
             ValueRange{runtimeContext, plan})
             .getResult();
     LLVM::CallOp::create(
         builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+        SymbolRefAttr::get(context, "talos_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, installStatus});
   }
   LLVM::CallOp::create(builder, location, TypeRange{i64},
@@ -857,15 +857,15 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                        runtimeContext);
   auto run = LLVM::CallOp::create(
       builder, location, TypeRange{i32},
-      SymbolRefAttr::get(context, useAOT ? "obelisk_rt_v1_scheduler_run_aot"
-                                         : "obelisk_rt_v1_scheduler_run"),
+      SymbolRefAttr::get(context, useAOT ? "talos_rt_v1_scheduler_run_aot"
+                                         : "talos_rt_v1_scheduler_run"),
       runtimeContext);
   // Capture the design's own notion of elapsed time while the context that
   // holds it still exists. A host has no other channel: once main returns, the
   // context is gone and the module exposes nothing but its exports.
   auto finalTime = LLVM::CallOp::create(
       builder, location, TypeRange{i64},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_time"),
+      SymbolRefAttr::get(context, "talos_rt_v1_scheduler_time"),
       runtimeContext);
   LLVM::StoreOp::create(
       builder, location, finalTime.getResult(),
@@ -875,7 +875,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   // status and each failure is described by the operation that produced it.
   LLVM::CallOp::create(
       builder, location, TypeRange{},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_report_status"),
+      SymbolRefAttr::get(context, "talos_rt_v1_scheduler_report_status"),
       ValueRange{runtimeContext, run.getResult()});
   Value finalStatus = run.getResult();
   Value coverageStatus;
@@ -883,22 +883,22 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     coverageStatus =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_coverage_snapshot"),
+            SymbolRefAttr::get(context, "talos_rt_v1_coverage_snapshot"),
             ValueRange{runtimeContext, run.getResult(), finalTime.getResult()})
             .getResult();
     Value runSucceeded = LLVM::ICmpOp::create(
         builder, location, LLVM::ICmpPredicate::eq, run.getResult(),
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     finalStatus = LLVM::SelectOp::create(builder, location, runSucceeded,
                                          coverageStatus, run.getResult());
     LLVM::CallOp::create(
         builder, location, TypeRange{},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_report_status"),
+        SymbolRefAttr::get(context, "talos_rt_v1_scheduler_report_status"),
         ValueRange{runtimeContext, coverageStatus});
   }
   LLVM::CallOp::create(
       builder, location, TypeRange{},
-      SymbolRefAttr::get(context, "obelisk_rt_v1_context_destroy"),
+      SymbolRefAttr::get(context, "talos_rt_v1_context_destroy"),
       runtimeContext);
   LLVM::ReturnOp::create(builder, location, finalStatus);
 
@@ -926,107 +926,107 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     return LLVM::ConstantOp::create(builder, location, i64,
                                     builder.getI64IntegerAttr(precisionFs));
   });
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_time", i64,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_time", i64,
                            {pointer});
 
   if (hasExecution)
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_context_create_for_design",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_context_create_for_design",
                              i32, {pointer, pointer});
   else
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_context_create", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_context_create", i32,
                              {pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_initialize", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_native_state_initialize", i32,
                            {pointer, pointer, pointer, i64, pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_context_destroy", voidType,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_context_destroy", voidType,
                            {pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_context_configure_argv", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_context_configure_argv", i32,
                            {pointer, i32, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_register_static",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_native_state_register_static",
                            i32, {pointer, i32, i64, i64});
   if (requiresNativeStateSync)
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_sync", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_native_state_sync", i32,
                              {pointer, pointer, pointer, i64});
   if (sharedNativeState)
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_bind_shared",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_native_state_bind_shared",
                              i32, {pointer, pointer, pointer, i64});
   if (bindStateSpecialization)
     getOrDeclareLLVMFunction(module,
-                             "obelisk_rt_v1_native_state_bind_specialization",
+                             "talos_rt_v1_native_state_bind_specialization",
                              i32, {pointer, pointer});
   if (stateLayout.directContinuous)
     getOrDeclareLLVMFunction(module,
-                             "obelisk_rt_v1_native_state_bind_continuous", i32,
+                             "talos_rt_v1_native_state_bind_continuous", i32,
                              {pointer, pointer, pointer, pointer});
   if (!stateLayout.unknownSummaryRoots.empty())
     getOrDeclareLLVMFunction(
-        module, "obelisk_rt_v1_native_state_bind_unknown_summary", i32,
+        module, "talos_rt_v1_native_state_bind_unknown_summary", i32,
         {pointer, pointer, i64, pointer, pointer, i64, pointer, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_static_root_register", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_gc_static_root_register", i32,
                            {pointer, pointer});
   getOrDeclareLLVMFunction(module,
-                           "obelisk_rt_v1_gc_candidate_static_root_register",
+                           "talos_rt_v1_gc_candidate_static_root_register",
                            i32, {pointer, pointer, i32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_design_root_register", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_gc_design_root_register", i32,
                            {pointer, i64});
   getOrDeclareLLVMFunction(module,
-                           "obelisk_rt_v1_gc_design_candidate_root_register",
+                           "talos_rt_v1_gc_design_candidate_root_register",
                            i32, {pointer, i64, i32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_class_register", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_class_register", i32,
                            {pointer, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_element_type_define_default",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_element_type_define_default",
                            i32, {pointer, i64, pointer, i64});
   getOrDeclareLLVMFunction(module,
-                           "obelisk_rt_v1_context_register_import_signature",
+                           "talos_rt_v1_context_register_import_signature",
                            i32, {pointer, i32, i64, pointer, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_fail", voidType,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_fail", voidType,
                            {pointer, i32});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_run", i32,
                            {pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_report_status",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_report_status",
                            voidType, {pointer, i32});
   if (hasCoverage) {
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_finalize", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_coverage_finalize", i32,
                              {pointer, i64, i64, pointer, pointer, i32});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_toggle_bind", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_coverage_toggle_bind", i32,
                              {pointer, i64, i64, i64});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_fsm_bind", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_coverage_fsm_bind", i32,
                              {pointer, i64, i64, i64, i64});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_toggle_seal", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_coverage_toggle_seal", i32,
                              {pointer});
   }
   if (shouldDumpCoverage)
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_snapshot", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_coverage_snapshot", i32,
                              {pointer, i32, i64});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_install_aot", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_install_aot", i32,
                            {pointer, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_run_aot", i32,
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_scheduler_run_aot", i32,
                            {pointer});
   if (requiresDynamicScanFeature)
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dynamic_scan_link_anchor",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_dynamic_scan_link_anchor",
                              voidType, {});
   if (requiresContainerBitstreamFeature)
     getOrDeclareLLVMFunction(
-        module, "obelisk_rt_v1_container_bitstream_link_anchor", voidType, {});
+        module, "talos_rt_v1_container_bitstream_link_anchor", voidType, {});
   if (requiresRecursiveBitstreamFeature)
     getOrDeclareLLVMFunction(
-        module, "obelisk_rt_v1_recursive_bitstream_link_anchor", voidType, {});
+        module, "talos_rt_v1_recursive_bitstream_link_anchor", voidType, {});
   if (requiresClassBitstreamFeature)
     getOrDeclareLLVMFunction(
-        module, "obelisk_rt_v1_class_bitstream_link_anchor", voidType, {});
+        module, "talos_rt_v1_class_bitstream_link_anchor", voidType, {});
   if (requiresClassBitstreamFeature)
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_class_bitstream_finalize",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_class_bitstream_finalize",
                              i32, {pointer});
   if (requiresClassBitstreamBytecodeFeature)
     getOrDeclareLLVMFunction(
-        module, "obelisk_rt_v1_class_bitstream_bytecode_link_anchor", voidType,
+        module, "talos_rt_v1_class_bitstream_bytecode_link_anchor", voidType,
         {});
   if (requiresDPIExportBytecodeFeature)
     getOrDeclareLLVMFunction(
-        module, "obelisk_rt_v1_dpi_export_bytecode_link_anchor", voidType, {});
+        module, "talos_rt_v1_dpi_export_bytecode_link_anchor", voidType, {});
   if (requiresDPIImportBytecodeFeature)
     getOrDeclareLLVMFunction(
-        module, "obelisk_rt_v1_dpi_import_bytecode_link_anchor", voidType, {});
+        module, "talos_rt_v1_dpi_import_bytecode_link_anchor", voidType, {});
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

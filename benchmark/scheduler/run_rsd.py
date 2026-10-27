@@ -62,10 +62,10 @@ def main():
                    f"+MAX_TEST_CYCLES={0 if workload == 'reset' else 10000}",
                    "+SHOW_SERIAL_OUT=1", "+ENABLE_PC_GOAL=1"]
         env = os.environ.copy()
-        env.pop("OBELISK_RT_SIGNAL_DIAGNOSTICS", None)
+        env.pop("TALOS_RT_SIGNAL_DIAGNOSTICS", None)
         if not warmup:
             if args.mode == "diagnostics":
-                env["OBELISK_RT_SIGNAL_DIAGNOSTICS"] = "1"
+                env["TALOS_RT_SIGNAL_DIAGNOSTICS"] = "1"
             elif args.mode == "stat":
                 command = ["perf", "stat", "-x", ";", "-o", str(work / "perf.stat"),
                            "-e", "task-clock,cycles:u,instructions:u,branches:u,branch-misses:u",
@@ -94,7 +94,7 @@ def main():
         if args.mode == "time":
             result["simulation_output_sha256"] = hashlib.sha256(completed.stdout).hexdigest()
         if args.mode == "diagnostics":
-            diag = re.search(r"obelisk-signal-diagnostics (.*)", log)
+            diag = re.search(r"talos-signal-diagnostics (.*)", log)
             result["diagnostics"] = dict(re.findall(r"(\w+)=(\d+)", diag[1])) if diag else {}
         (work / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         assert completed.returncode == 0, work

@@ -1,6 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: not %t --coverage-output=%t.obcov --coverage-test=default-array 2>&1 | FileCheck %s --check-prefix=ERROR --implicit-check-not=ERROR:
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --implicit-check-not='bin others[2]' --implicit-check-not='bin others[3]' --implicit-check-not='bin others[4]' --implicit-check-not='bin others[6]' --implicit-check-not='bin others[7]' --implicit-check-not='bin empty_default['
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --implicit-check-not='bin others[2]' --implicit-check-not='bin others[3]' --implicit-check-not='bin others[4]' --implicit-check-not='bin others[6]' --implicit-check-not='bin others[7]' --implicit-check-not='bin empty_default['
 
 module top;
   bit [3:0] sampled;

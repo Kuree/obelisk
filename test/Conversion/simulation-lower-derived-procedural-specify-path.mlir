@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // Minimal MLIR-level coverage for a derived procedural event-primary monitor.
 // IEEE 1800-2017 9.4.2 reevaluates clock&enable on either dependency, while
 // 30.4.3 qualifies the path from the independently classified clock edge.
 
-!logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
+!logic1 = !talos.integral<1, false, true, 0 : 0, logic>
 
 module {
   simulation.design @derived_procedural_path {
@@ -53,13 +53,13 @@ module {
             #simulation.argument_binding<path = "top.pending", argument = 4, kind = direct, copyOut = false>,
             #simulation.argument_binding<path = "top.epoch", argument = 5, kind = direct, copyOut = false>]}
         {
-      obelisk.sv.expression.binary_op attributes {
+      talos.sv.expression.binary_op attributes {
           node_id = 1 : i64, operator_kind = 5 : i32,
           semantic_type = !logic1} {
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 2 : i64, referenced_path = "top.clock",
             referenced_symbol = @clock, semantic_type = !logic1} {}
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 3 : i64, referenced_path = "top.enable",
             referenced_symbol = @enable, semantic_type = !logic1} {}
       }

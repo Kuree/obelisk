@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // IEEE 1800-2017 9.2.2: an always procedure repeats continuously. Distinguish
 // its outer event control from nested procedural controls so an event enabled
 // by one iteration can enqueue the next iteration.
 
-!logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
+!logic1 = !talos.integral<1, false, true, 0 : 0, logic>
 
 module {
   simulation.design @explicit_event_self_trigger {
@@ -38,36 +38,36 @@ module {
           simulation.delay_scale = 1 : i64,
           code_unit_id = 9903001 : i64
         } {
-      obelisk.sv.statement.timed attributes {node_id = 1 : i64} {
-        obelisk.sv.timing.event_list attributes {
+      talos.sv.statement.timed attributes {node_id = 1 : i64} {
+        talos.sv.timing.event_list attributes {
             event_count = 2 : i64, node_id = 2 : i64} {
-          obelisk.sv.timing.signal_event attributes {
+          talos.sv.timing.signal_event attributes {
               edge_kind = 0 : i32, has_iff = false, node_id = 3 : i64} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 is_signed = false, node_id = 4 : i64,
                 referenced_path = "top.a", referenced_symbol = @a,
                 semantic_type = !logic1} {
             }
           }
-          obelisk.sv.timing.signal_event attributes {
+          talos.sv.timing.signal_event attributes {
               edge_kind = 0 : i32, has_iff = false, node_id = 5 : i64} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 is_signed = false, node_id = 6 : i64,
                 referenced_path = "top.c", referenced_symbol = @c,
                 semantic_type = !logic1} {
             }
           }
         }
-        obelisk.sv.statement.expression_statement attributes {node_id = 7 : i64} {
-          obelisk.sv.expression.assignment attributes {
+        talos.sv.statement.expression_statement attributes {node_id = 7 : i64} {
+          talos.sv.expression.assignment attributes {
               assignment_kind = 0 : i32, is_signed = false,
               node_id = 8 : i64, semantic_type = !logic1} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 is_signed = false, node_id = 9 : i64,
                 referenced_path = "top.a", referenced_symbol = @a,
                 semantic_type = !logic1} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 constant_value = "1'b0", is_signed = false,
                 node_id = 10 : i64, semantic_type = !logic1} {
             }

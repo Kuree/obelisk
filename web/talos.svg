@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="title desc">
+  <title id="title">Talos</title>
+  <desc id="desc">A crested Greek helmet with narrow eye slits and a pointed nose guard.</desc>
+  <g fill="#bd93f9">
+    <path d="M12 18C16 8 23 3 32 3s16 5 20 15l-5 2C43 13 39 8 32 8S21 13 17 20Z"/>
+    <path fill-rule="evenodd" d="M15 30c0-11 7-18 17-18s17 7 17 18v13L40 59h-4V39l-4 6-4-6v20h-4l-9-16Zm6-1v4l8 2v-4Zm14 2v4l8-2v-4Z"/>
+  </g>
+</svg>

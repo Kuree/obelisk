@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --test-obelisk-class-dispatch-analysis -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --split-input-file --test-talos-class-dispatch-analysis -o /dev/null 2>&1 | FileCheck %s
 
 // IEEE 8.13, 8.14 and 8.20: an 8-deep chain shares C0's three method entries.
 // The 16-node budget fails if any class copies its inherited table, the

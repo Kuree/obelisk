@@ -1,8 +1,8 @@
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.native
+// RUN: talos -O3 --native-scheduler=auto %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.native.out
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.diag
-// RUN: FileCheck %s --check-prefix=LLVM --implicit-check-not='call i32 @obelisk_rt_v1_scheduler_execute_aot_actor' --implicit-check-not='call i32 @obelisk_rt_v1_scheduler_packed_slice_nba' < %t.ll
+// RUN: talos -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.diag
+// RUN: FileCheck %s --check-prefix=LLVM --implicit-check-not='call i32 @talos_rt_v1_scheduler_execute_aot_actor' --implicit-check-not='call i32 @talos_rt_v1_scheduler_packed_slice_nba' < %t.ll
 // RUN: FileCheck %s --check-prefix=PROOF < %t.diag
 
 // A bounded dynamic part-select in this repeated loop fits its parent.
@@ -39,10 +39,10 @@ module native_tier1_partial_wide_nba_dynamic_boundary;
   end
 endmodule
 
-// LLVM: @__obelisk_eval_ordered_nba_queue_v1 = internal global
-// LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
+// LLVM: @__talos_eval_ordered_nba_queue_v1 = internal global
+// LLVM: define {{.*}}i32 @__talos_eval_dispatch_v1
 // PROOF-NOT: ordered NBA boundary:
-// PROOF: obelisk fusion planning:
+// PROOF: talos fusion planning:
 // PROOF-NOT: ordered NBA boundary:
 // PROOF-NOT: partial eval disabled
 // OUTPUT: ordered low=0 lanes=4f50 high=4 edges=4 loop_edges=4

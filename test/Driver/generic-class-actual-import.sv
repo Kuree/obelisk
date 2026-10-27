@@ -1,5 +1,5 @@
-// RUN: obelisk --std=1800-2023 -emit-slang %s -o %t.slang.mlir
-// RUN: obelisk --std=1800-2023 -emit-obelisk %s -o %t.obelisk.mlir
+// RUN: talos --std=1800-2023 -emit-slang %s -o %t.slang.mlir
+// RUN: talos --std=1800-2023 -emit-talos %s -o %t.talos.mlir
 
 // Acceptance only: retaining original inheritance syntax must not bind an
 // unused dependent class or evaluate its actuals.

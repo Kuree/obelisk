@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // Variants of simulation-local-ranked-task.mlir that must keep both processes
 // out of a ranked region kernel. Each is the reduced combinational chain
@@ -7,10 +7,10 @@
 // IEEE 1800-2023 9.2.2.3: always_latch processes hold state, so they are not
 // combinational region members.
 // CHECK-LABEL: simulation.design @latch
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 // CHECK: simulation.func @first(
 // CHECK: simulation.func @second(
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 
 !word = !simulation.logic<8>
 !ref = !simulation.ref<!word>
@@ -56,10 +56,10 @@ module attributes {schedule.native_scheduler = 1 : i32} {
 
 // Processes that store their output twice per activation stay separate.
 // CHECK-LABEL: simulation.design @repeated
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 // CHECK: simulation.func @first(
 // CHECK: simulation.func @second(
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 
 !word = !simulation.logic<8>
 !ref = !simulation.ref<!word>
@@ -107,10 +107,10 @@ module attributes {schedule.native_scheduler = 1 : i32} {
 
 // A process that reads its own output feeds back into itself.
 // CHECK-LABEL: simulation.design @retained
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 // CHECK: simulation.func @first(
 // CHECK: simulation.func @second(
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 
 !word = !simulation.logic<8>
 !ref = !simulation.ref<!word>
@@ -156,10 +156,10 @@ module attributes {schedule.native_scheduler = 1 : i32} {
 
 // A process that reads the chain's final output closes a feedback loop.
 // CHECK-LABEL: simulation.design @feedback
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 // CHECK: simulation.func @first(
 // CHECK: simulation.func @second(
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 
 !word = !simulation.logic<8>
 !ref = !simulation.ref<!word>
@@ -205,10 +205,10 @@ module attributes {schedule.native_scheduler = 1 : i32} {
 
 // A task writing the chain's intermediate net is an unranked writer.
 // CHECK-LABEL: simulation.design @task_writer
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 // CHECK: simulation.func @first(
 // CHECK: simulation.func @second(
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 
 !word = !simulation.logic<8>
 !ref = !simulation.ref<!word>

@@ -1,7 +1,7 @@
 #include "AnalysisTestPasses.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
-#include "obelisk/Analysis/CombinationalDependencyAnalysis.h"
+#include "talos/Analysis/CombinationalDependencyAnalysis.h"
 
 using namespace mlir;
 namespace {
@@ -11,14 +11,14 @@ class CombinationalDependencyTestPass
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CombinationalDependencyTestPass)
   StringRef getArgument() const final {
-    return "test-obelisk-combinational-dependencies";
+    return "test-talos-combinational-dependencies";
   }
   StringRef getDescription() const final {
     return "print whole-program statement and storage dependencies";
   }
   void runOnOperation() final {
-    using Analysis = obelisk::analysis::CombinationalDependencyAnalysis;
-    getOperation().walk([&](obelisk::sim::SimDesignOp design) {
+    using Analysis = talos::analysis::CombinationalDependencyAnalysis;
+    getOperation().walk([&](talos::sim::SimDesignOp design) {
       Analysis analysis(design);
       auto printAccesses = [&](ArrayRef<Analysis::Access> accesses) {
         for (const auto &access : accesses) {
@@ -39,7 +39,7 @@ public:
       };
       llvm::errs() << "dependencies @" << design.getSymName()
                    << " unknown=" << analysis.hasUnknownEffects() << '\n';
-      for (auto function : design.getBody().getOps<obelisk::sim::SimFuncOp>()) {
+      for (auto function : design.getBody().getOps<talos::sim::SimFuncOp>()) {
         llvm::errs() << "summary @" << function.getSymName();
         if (const auto *summary = analysis.lookup(function)) {
           llvm::errs() << " opaque=" << summary->opaque;
@@ -77,6 +77,6 @@ public:
   }
 };
 } // namespace
-void obelisk::registerCombinationalDependencyAnalysisTestPass() {
+void talos::registerCombinationalDependencyAnalysisTestPass() {
   PassRegistration<CombinationalDependencyTestPass>();
 }

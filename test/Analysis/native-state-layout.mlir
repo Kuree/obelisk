@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-native-state-layout-analysis 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-native-state-layout-analysis 2>&1 | FileCheck %s
 
 !candidate = !simulation.unpacked_union<fields = [
   #simulation.field<name = "object", type = !simulation.class_handle<@Node>, ordinal = 0, packedOffset = 0>,

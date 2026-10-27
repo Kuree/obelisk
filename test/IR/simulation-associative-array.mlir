@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s | talos-opt | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -232,13 +232,13 @@ module attributes {
 // CHECK: simulation.assoc.delete
 // CHECK: simulation.func @process_assoc
 // CHECK: key_kind = #simulation.assoc_key_kind<process>
-// NATIVE-DAG: llvm.call @obelisk_rt_v1_assoc_create_typed
-// NATIVE-DAG: llvm.call @obelisk_rt_v1_assoc_write_checked
-// NATIVE-DAG: llvm.call @obelisk_rt_v1_assoc_read_checked
-// NATIVE-DAG: llvm.call @obelisk_rt_v1_assoc_exists
-// NATIVE-DAG: llvm.call @obelisk_rt_v1_assoc_set_default_checked
-// NATIVE-DAG: llvm.call @obelisk_rt_v1_assoc_next
-// NATIVE-DAG: llvm.call @obelisk_rt_v1_reference_path_assoc_create
-// NATIVE-DAG: llvm.call @obelisk_rt_v1_assoc_delete
+// NATIVE-DAG: llvm.call @talos_rt_v1_assoc_create_typed
+// NATIVE-DAG: llvm.call @talos_rt_v1_assoc_write_checked
+// NATIVE-DAG: llvm.call @talos_rt_v1_assoc_read_checked
+// NATIVE-DAG: llvm.call @talos_rt_v1_assoc_exists
+// NATIVE-DAG: llvm.call @talos_rt_v1_assoc_set_default_checked
+// NATIVE-DAG: llvm.call @talos_rt_v1_assoc_next
+// NATIVE-DAG: llvm.call @talos_rt_v1_reference_path_assoc_create
+// NATIVE-DAG: llvm.call @talos_rt_v1_assoc_delete
 // NATIVE-NOT: unrealized_conversion_cast
 // BYTECODE: runtime.bytecode_image

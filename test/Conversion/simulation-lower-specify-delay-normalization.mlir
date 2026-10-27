@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
-!logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
-!logic3 = !obelisk.integral<3, false, true, 2 : 0, logic>
+!logic1 = !talos.integral<1, false, true, 0 : 0, logic>
+!logic3 = !talos.integral<3, false, true, 2 : 0, logic>
 
 module {
   simulation.design @specify_delay_normalization {
@@ -62,21 +62,21 @@ module {
                       #simulation.argument_binding<path = "top.snapshot0", argument = 5, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.snapshot1", argument = 6, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.snapshot2", argument = 7, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {
+      talos.sv.expression.assignment attributes {
           assignment_kind = 0 : i32, node_id = 1 : i64, semantic_type = !logic3} {
-        obelisk.sv.expression.concatenation attributes {node_id = 10 : i64,
+        talos.sv.expression.concatenation attributes {node_id = 10 : i64,
                                                          semantic_type = !logic3} {
-          obelisk.sv.expression.named_value attributes {node_id = 4 : i64,
+          talos.sv.expression.named_value attributes {node_id = 4 : i64,
               referenced_path = "top.three", referenced_symbol = @three,
               semantic_type = !logic1} {}
-          obelisk.sv.expression.named_value attributes {node_id = 3 : i64,
+          talos.sv.expression.named_value attributes {node_id = 3 : i64,
               referenced_path = "top.two", referenced_symbol = @two,
               semantic_type = !logic1} {}
-          obelisk.sv.expression.named_value attributes {node_id = 2 : i64,
+          talos.sv.expression.named_value attributes {node_id = 2 : i64,
               referenced_path = "top.one", referenced_symbol = @one,
               semantic_type = !logic1} {}
         }
-        obelisk.sv.expression.named_value attributes {node_id = 5 : i64,
+        talos.sv.expression.named_value attributes {node_id = 5 : i64,
             referenced_path = "top.source", referenced_symbol = @source,
             semantic_type = !logic3} {}
       }

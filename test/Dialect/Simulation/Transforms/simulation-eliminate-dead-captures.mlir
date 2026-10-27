@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-captures{missed-remarks=true},simulation.func(canonicalize,cse)))' > %t.threaded 2> %t.remarks
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-captures{missed-remarks=true},simulation.func(canonicalize,cse)))' > %t.serial 2> %t.serial-remarks
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-captures{missed-remarks=true},simulation.func(canonicalize,cse)))' > %t.threaded 2> %t.remarks
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-captures{missed-remarks=true},simulation.func(canonicalize,cse)))' > %t.serial 2> %t.serial-remarks
 // RUN: diff -u %t.serial %t.threaded
 // RUN: diff -u %t.serial-remarks %t.remarks
 // RUN: FileCheck %s --check-prefix=CHECK < %t.threaded
 // RUN: FileCheck %s --check-prefix=REMARK < %t.remarks
-// RUN: obelisk-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-captures))' | FileCheck %s --check-prefix=LOC
+// RUN: talos-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-captures))' | FileCheck %s --check-prefix=LOC
 
 module {
   simulation.design @captures {

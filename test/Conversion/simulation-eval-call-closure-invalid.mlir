@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   --split-input-file --verify-diagnostics
 
 module attributes {
@@ -6,12 +6,12 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.eval.generated
 } {
-  llvm.func @obelisk_rt_forbidden()
-  llvm.func @__obelisk_eval_fast_coordinator_bad() attributes {
+  llvm.func @talos_rt_forbidden()
+  llvm.func @__talos_eval_fast_coordinator_bad() attributes {
       schedule.eval.call_closure_root
   } {
-    // expected-error @+1 {{generated eval hot closure calls runtime symbol obelisk_rt_forbidden}}
-    llvm.call @obelisk_rt_forbidden() : () -> ()
+    // expected-error @+1 {{generated eval hot closure calls runtime symbol talos_rt_forbidden}}
+    llvm.call @talos_rt_forbidden() : () -> ()
     llvm.return
   }
 }
@@ -25,10 +25,10 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.eval.generated
 } {
-  llvm.func @obelisk_rt_v1_strength_resolve_kind(i16, i16, i32) -> i16
-  llvm.func @__obelisk_eval_gate_kernel(%lhs: i16, %rhs: i16, %kind: i32)
+  llvm.func @talos_rt_v1_strength_resolve_kind(i16, i16, i32) -> i16
+  llvm.func @__talos_eval_gate_kernel(%lhs: i16, %rhs: i16, %kind: i32)
       attributes {schedule.eval.call_closure_root} {
-    %resolved = llvm.call @obelisk_rt_v1_strength_resolve_kind(
+    %resolved = llvm.call @talos_rt_v1_strength_resolve_kind(
         %lhs, %rhs, %kind) : (i16, i16, i32) -> i16
     llvm.return
   }
@@ -44,17 +44,17 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.eval.generated
 } {
-  llvm.func @obelisk_rt_v1_scheduler_termination_requested(!llvm.ptr) -> i32
-  llvm.func @obelisk_rt_v1_scheduler_time(!llvm.ptr) -> i64
-  llvm.func @__obelisk_eval_helper_poll(%ctx: !llvm.ptr) -> i32
+  llvm.func @talos_rt_v1_scheduler_termination_requested(!llvm.ptr) -> i32
+  llvm.func @talos_rt_v1_scheduler_time(!llvm.ptr) -> i64
+  llvm.func @__talos_eval_helper_poll(%ctx: !llvm.ptr) -> i32
       attributes {schedule.eval.call_closure_root} {
-    %requested = llvm.call @obelisk_rt_v1_scheduler_termination_requested(%ctx)
+    %requested = llvm.call @talos_rt_v1_scheduler_termination_requested(%ctx)
         : (!llvm.ptr) -> i32
     llvm.return %requested : i32
   }
-  llvm.func @__obelisk_eval_helper_time(%ctx: !llvm.ptr) -> i64
+  llvm.func @__talos_eval_helper_time(%ctx: !llvm.ptr) -> i64
       attributes {schedule.eval.call_closure_root} {
-    %now = llvm.call @obelisk_rt_v1_scheduler_time(%ctx) : (!llvm.ptr) -> i64
+    %now = llvm.call @talos_rt_v1_scheduler_time(%ctx) : (!llvm.ptr) -> i64
     llvm.return %now : i64
   }
 }
@@ -66,11 +66,11 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.eval.generated
 } {
-  llvm.func @obelisk_rt_v1_scheduler_finish(!llvm.ptr, i32) -> i32
-  llvm.func @__obelisk_eval_helper_finish(%ctx: !llvm.ptr, %verbosity: i32)
+  llvm.func @talos_rt_v1_scheduler_finish(!llvm.ptr, i32) -> i32
+  llvm.func @__talos_eval_helper_finish(%ctx: !llvm.ptr, %verbosity: i32)
       attributes {schedule.eval.call_closure_root} {
-    // expected-error @+1 {{generated eval hot closure calls runtime symbol obelisk_rt_v1_scheduler_finish}}
-    %status = llvm.call @obelisk_rt_v1_scheduler_finish(%ctx, %verbosity)
+    // expected-error @+1 {{generated eval hot closure calls runtime symbol talos_rt_v1_scheduler_finish}}
+    %status = llvm.call @talos_rt_v1_scheduler_finish(%ctx, %verbosity)
         : (!llvm.ptr, i32) -> i32
     llvm.return
   }
@@ -85,8 +85,8 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.eval.generated
 } {
-  llvm.func @obelisk_rt_v1_scheduler_run(!llvm.ptr) -> i32
-  llvm.func @__obelisk_eval_fast_coordinator_checkpoint_mutation(%ctx: !llvm.ptr) attributes {
+  llvm.func @talos_rt_v1_scheduler_run(!llvm.ptr) -> i32
+  llvm.func @__talos_eval_fast_coordinator_checkpoint_mutation(%ctx: !llvm.ptr) attributes {
       schedule.eval.call_closure_root
   } {
     llvm.call @checkpoint_mutation(%ctx) : (!llvm.ptr) -> ()
@@ -96,8 +96,8 @@ module attributes {
       schedule.eval.checkpoint_safe,
       schedule.eval.may_terminate
   } {
-    // expected-error @+1 {{generated eval hot closure calls runtime symbol obelisk_rt_v1_scheduler_run}}
-    %status = llvm.call @obelisk_rt_v1_scheduler_run(%ctx) : (!llvm.ptr) -> i32
+    // expected-error @+1 {{generated eval hot closure calls runtime symbol talos_rt_v1_scheduler_run}}
+    %status = llvm.call @talos_rt_v1_scheduler_run(%ctx) : (!llvm.ptr) -> i32
     llvm.return
   }
 }
@@ -109,12 +109,12 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.eval.generated
 } {
-  llvm.func @obelisk_rt_forbidden()
-  llvm.func @__obelisk_eval_fast_coordinator_indirect_runtime(%fn: !llvm.ptr) attributes {
+  llvm.func @talos_rt_forbidden()
+  llvm.func @__talos_eval_fast_coordinator_indirect_runtime(%fn: !llvm.ptr) attributes {
       schedule.eval.call_closure_root
   } {
-    // expected-error @+1 {{generated eval indirect route targets runtime symbol obelisk_rt_forbidden}}
-    llvm.call %fn() {schedule.eval.allowed_callees = [@obelisk_rt_forbidden]} :
+    // expected-error @+1 {{generated eval indirect route targets runtime symbol talos_rt_forbidden}}
+    llvm.call %fn() {schedule.eval.allowed_callees = [@talos_rt_forbidden]} :
         !llvm.ptr, () -> ()
     llvm.return
   }
@@ -129,7 +129,7 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.eval.generated
 } {
-  llvm.func @__obelisk_eval_fast_coordinator_indirect_model(%fn: !llvm.ptr) attributes {
+  llvm.func @__talos_eval_fast_coordinator_indirect_model(%fn: !llvm.ptr) attributes {
       schedule.eval.call_closure_root
   } {
     llvm.call %fn() {schedule.eval.allowed_callees = [@model_body]} :
@@ -154,8 +154,8 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.eval.generated
 } {
-  llvm.func @obelisk_rt_v1_display()
-  llvm.func @__obelisk_eval_fast_coordinator_checkpoint() attributes {
+  llvm.func @talos_rt_v1_display()
+  llvm.func @__talos_eval_fast_coordinator_checkpoint() attributes {
       schedule.eval.call_closure_root
   } {
     llvm.call @checkpoint_owner() : () -> ()
@@ -169,8 +169,8 @@ module attributes {
     llvm.return
   }
   llvm.func @checkpoint_body() {
-    // expected-error @+1 {{generated eval hot closure calls runtime symbol obelisk_rt_v1_display}}
-    llvm.call @obelisk_rt_v1_display() : () -> ()
+    // expected-error @+1 {{generated eval hot closure calls runtime symbol talos_rt_v1_display}}
+    llvm.call @talos_rt_v1_display() : () -> ()
     llvm.return
   }
 }
@@ -182,16 +182,16 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.eval.generated
 } {
-  llvm.func @obelisk_rt_hidden()
-  llvm.func @__obelisk_eval_hybrid_coordinator_bad() attributes {
+  llvm.func @talos_rt_hidden()
+  llvm.func @__talos_eval_hybrid_coordinator_bad() attributes {
       schedule.eval.call_closure_root
   } {
     llvm.call @checkpoint_owner() : () -> ()
     llvm.return
   }
   llvm.func @checkpoint_owner() attributes {schedule.eval.may_terminate} {
-    // expected-error @+1 {{generated eval hot closure calls runtime symbol obelisk_rt_hidden}}
-    llvm.call @obelisk_rt_hidden() : () -> ()
+    // expected-error @+1 {{generated eval hot closure calls runtime symbol talos_rt_hidden}}
+    llvm.call @talos_rt_hidden() : () -> ()
     llvm.return
   }
 }
@@ -203,7 +203,7 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.eval.generated
 } {
-  llvm.func @__obelisk_eval_fast_coordinator_indirect(%fn: !llvm.ptr) attributes {
+  llvm.func @__talos_eval_fast_coordinator_indirect(%fn: !llvm.ptr) attributes {
       schedule.eval.call_closure_root
   } {
     // expected-error @+1 {{generated eval indirect call has no closed target set}}
@@ -219,7 +219,7 @@ module attributes {
   llvm.target_triple = "x86_64-unknown-linux-gnu",
   schedule.eval.generated
 } {
-  llvm.func @__obelisk_eval_fast_coordinator_malformed(%fn: !llvm.ptr) attributes {
+  llvm.func @__talos_eval_fast_coordinator_malformed(%fn: !llvm.ptr) attributes {
       schedule.eval.call_closure_root
   } {
     // expected-error @+1 {{generated eval indirect call has malformed allowed-callee metadata}}
@@ -237,7 +237,7 @@ module attributes {
   schedule.eval.generated
 } {
   llvm.func @external_model_body()
-  llvm.func @__obelisk_eval_periodic_two_state_coordinator_external() attributes {
+  llvm.func @__talos_eval_periodic_two_state_coordinator_external() attributes {
       schedule.eval.call_closure_root
   } {
     // expected-error @+1 {{generated eval hot closure calls external symbol external_model_body}}

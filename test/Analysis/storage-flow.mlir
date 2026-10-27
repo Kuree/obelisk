@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-storage-flow -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --mlir-disable-threading --test-obelisk-storage-flow -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-storage-flow -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --mlir-disable-threading --test-talos-storage-flow -o /dev/null 2>&1 | FileCheck %s
 // LRM 6.8, 6.21, 9.4, 10.4.2: must definitions, activation boundaries and
 // one execution over the entire process lifetime are distinct certificates.
 module {

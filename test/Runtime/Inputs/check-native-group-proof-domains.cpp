@@ -2,9 +2,9 @@
 #include <cstdio>
 
 extern "C" {
-bool __obelisk_eval_group_promotion_ready_v1(uint64_t);
-void __obelisk_eval_promotion_invalidate_range_v1(uint64_t, uint64_t);
-void __obelisk_eval_promotion_recheck_range_v1(uint64_t, uint64_t);
+bool __talos_eval_group_promotion_ready_v1(uint64_t);
+void __talos_eval_promotion_invalidate_range_v1(uint64_t, uint64_t);
+void __talos_eval_promotion_recheck_range_v1(uint64_t, uint64_t);
 uint64_t *group_test_unknown();
 uint8_t *group_test_latches();
 uint8_t *group_test_member_latches();
@@ -24,15 +24,15 @@ int main() {
   auto *latches = group_test_latches();
   auto *members = group_test_member_latches();
   auto *pending = group_test_pending();
-  auto query = __obelisk_eval_group_promotion_ready_v1;
+  auto query = __talos_eval_group_promotion_ready_v1;
   auto write = [&](unsigned bit, bool x) {
     uint64_t mask = uint64_t{1} << (bit % 64);
     if (x) {
       unknown[bit / 64] |= mask;
-      __obelisk_eval_promotion_invalidate_range_v1(bit, 1);
+      __talos_eval_promotion_invalidate_range_v1(bit, 1);
     } else {
       unknown[bit / 64] &= ~mask;
-      __obelisk_eval_promotion_recheck_range_v1(bit, 1);
+      __talos_eval_promotion_recheck_range_v1(bit, 1);
     }
   };
   CHECK(unknown[0] == 2 && unknown[1] == 128);

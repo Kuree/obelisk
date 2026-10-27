@@ -1,5 +1,5 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s \
-// RUN:   --encode-obelisk-sim-to-bytecode='vpi=read'
+// RUN: talos-opt --split-input-file --verify-diagnostics %s \
+// RUN:   --encode-talos-sim-to-bytecode='vpi=read'
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

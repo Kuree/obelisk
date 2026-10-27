@@ -3,9 +3,9 @@
 // importScripts; the smoke test uses the same global entry point under Node.
 
 (() => {
-  const TARGET = '/lib/obelisk/targets/wasm32-unknown-emscripten';
+  const TARGET = '/lib/talos/targets/wasm32-unknown-emscripten';
   const ASSETS = [
-    ['libobelisk_rt.a', `${TARGET}/libobelisk_rt.a`],
+    ['libtalos_rt.a', `${TARGET}/libtalos_rt.a`],
     ['libstubs.a', '/sysroot/lib/wasm32-emscripten/libstubs.a'],
     ['libnoexit.a', '/sysroot/lib/wasm32-emscripten/libnoexit.a'],
     ['libc.a', '/sysroot/lib/wasm32-emscripten/libc.a'],
@@ -30,7 +30,7 @@
     return new Uint8Array(await response.arrayBuffer());
   }
 
-  globalThis.installObeliskToolchain = async function installObeliskToolchain(
+  globalThis.installTalosToolchain = async function installTalosToolchain(
     mod, { load = defaultLoad } = {},
   ) {
     for (const [name, path] of ASSETS) {

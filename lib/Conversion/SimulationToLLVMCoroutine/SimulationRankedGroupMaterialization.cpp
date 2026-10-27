@@ -3,13 +3,13 @@
 
 #include "SimulationAOTPlanning.h"
 #include "SimulationEvalReadySet.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Runtime/RuntimeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Matchers.h"
@@ -18,7 +18,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 FailureOr<NativeRankedGroupPlan>
 planNativeRankedGroups(ModuleOp module, const NativeEvalCoordinatorPlan &plan,
@@ -28,7 +28,7 @@ planNativeRankedGroups(ModuleOp module, const NativeEvalCoordinatorPlan &plan,
   if (plan.clockKernels.empty() || plan.rankedNodes.empty() || plan.writableVPI)
     return result;
   llvm::StringMap<sim::SimFuncOp> functions;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         functions.try_emplace(function.getSymName(), function);
       });
@@ -38,7 +38,7 @@ planNativeRankedGroups(ModuleOp module, const NativeEvalCoordinatorPlan &plan,
   auto bodyCost = [&](StringRef name) -> uint64_t {
     auto function = functions.lookup(name);
     if (!function ||
-        !::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+        !::talos::schedule::has<::talos::schedule::Field::EvalRawCaptures>(
             function) ||
         !function.getFunctionType().getResults().empty())
       return 0;
@@ -47,14 +47,14 @@ planNativeRankedGroups(ModuleOp module, const NativeEvalCoordinatorPlan &plan,
     function.walk([&](Operation *op) {
       ++cost;
       safe &=
-          !isa_and_nonnull<runtime::ObeliskRuntimeDialect>(op->getDialect()) &&
+          !isa_and_nonnull<runtime::TalosRuntimeDialect>(op->getDialect()) &&
           !isa<sim::SimCallOp, sim::SimStatusCheckOp, LLVM::CallOp,
                func::CallOp>(op);
     });
     return safe ? cost : 0;
   };
   auto limit =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::MaxInlineOps>(
+      ::talos::schedule::get<::talos::schedule::Field::MaxInlineOps>(
           module);
   uint64_t budget = limit ? limit.getUInt() : 5000;
   if (!budget)
@@ -191,7 +191,7 @@ planNativeRankedGroups(ModuleOp module, const NativeEvalCoordinatorPlan &plan,
       for (size_t i = 1; i < entries.size(); i += 2)
         bits += entries[i];
     }
-    llvm::errs() << "obelisk group proof domains: domains="
+    llvm::errs() << "talos group proof domains: domains="
                  << result.domains.size() << " ranges=" << rangeCount
                  << " bits=" << bits << '\n';
   }
@@ -206,7 +206,7 @@ materializeNativeRankedGroups(ModuleOp module,
   if (plan.clockKernels.empty() || plan.rankedNodes.empty() || plan.writableVPI)
     return executors;
   llvm::StringMap<sim::SimFuncOp> functions;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         functions.try_emplace(function.getSymName(), function);
       });
@@ -242,13 +242,13 @@ materializeNativeRankedGroups(ModuleOp module,
         builder, loc, name,
         LLVM::LLVMFunctionType::get(
             LLVM::LLVMVoidType::get(module.getContext()), {pointer}, false));
-    ::obelisk::schedule::set<schedule::metadata::evalCallClosureRoot>(
+    ::talos::schedule::set<schedule::metadata::evalCallClosureRoot>(
         segment, builder.getUnitAttr());
     SmallVector<Attribute> helpers;
     for (const Chunk &chunk : chunks)
       helpers.push_back(
           FlatSymbolRefAttr::get(module.getContext(), chunk.name));
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSegmentHelpers>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalSegmentHelpers>(
         segment, builder.getArrayAttr(helpers));
     Block *entry = segment.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);
@@ -290,7 +290,7 @@ materializeNativeRankedGroups(ModuleOp module,
     }
     builder.setInsertionPointToEnd(module.getBody());
     std::string name =
-        "__obelisk_eval_ranked_group_" + std::to_string(groupID++);
+        "__talos_eval_ranked_group_" + std::to_string(groupID++);
     auto group = LLVM::LLVMFuncOp::create(
         builder, loc, name,
         LLVM::LLVMFunctionType::get(
@@ -312,23 +312,23 @@ materializeNativeRankedGroups(ModuleOp module,
       chunk.words.back().second |= uint64_t{1} << (owner % 64);
     }
     chunks.push_back(std::move(chunk));
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRankedMembers>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalRankedMembers>(
         group, builder.getDenseI32ArrayAttr(identities));
     if (proof)
       schedule::set<schedule::Field::EvalGroupProofDomain>(group, proof);
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalReadyWordCount>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalReadyWordCount>(
         group, builder.getI64IntegerAttr(readyLayout.counts[0]));
-    ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupIngress>(
+    ::talos::schedule::set<::talos::schedule::Field::EvalGroupIngress>(
         group,
         FlatSymbolRefAttr::get(module.getContext(), evalModelIngressName));
-    ::obelisk::schedule::set<schedule::metadata::evalCallClosureRoot>(
+    ::talos::schedule::set<schedule::metadata::evalCallClosureRoot>(
         group, builder.getUnitAttr());
     Block *entry = group.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);
     Value ready =
         LLVM::AddressOfOp::create(builder, loc, pointer, evalModelIngressName);
     Value promotion = LLVM::AddressOfOp::create(
-        builder, loc, pointer, "__obelisk_eval_promotion_pending_mask_v1");
+        builder, loc, pointer, "__talos_eval_promotion_pending_mask_v1");
     auto rawCall = [&](StringRef body, uint32_t owner) {
       SmallVector<Value> arguments;
       for (Type type : functions.lookup(body).getFunctionType().getInputs())
@@ -341,14 +341,14 @@ materializeNativeRankedGroups(ModuleOp module,
                       .getResult());
       auto call =
           func::CallOp::create(builder, loc, body, TypeRange{}, arguments);
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalDirectCall>(
+      ::talos::schedule::set<::talos::schedule::Field::EvalDirectCall>(
           call, builder.getUnitAttr());
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupMember>(
+      ::talos::schedule::set<::talos::schedule::Field::EvalGroupMember>(
           call, builder.getI32IntegerAttr(owner));
       // The group has selected this value-domain branch explicitly. Route
       // lowering must not introduce a mutable function pointer here.
-      ::obelisk::schedule::set<
-          ::obelisk::schedule::Field::EvalGroupDomainSelected>(
+      ::talos::schedule::set<
+          ::talos::schedule::Field::EvalGroupDomainSelected>(
           call, builder.getUnitAttr());
     };
     for (const auto *node : members) {
@@ -356,7 +356,7 @@ materializeNativeRankedGroups(ModuleOp module,
       Value bit = llvmConstant(builder, loc, i64, uint64_t{1} << (owner % 64));
       Value ingress = schedule::NativeReadyReadOp::create(
           builder, loc, i64, ready, readyLayout.capacity, owner / 64);
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalActivationEntry>(
+      ::talos::schedule::set<::talos::schedule::Field::EvalActivationEntry>(
           ingress.getDefiningOp(), builder.getI32IntegerAttr(owner));
       Value dirty = arith::AndIOp::create(builder, loc, ingress, bit);
       Value pending =
@@ -408,7 +408,7 @@ materializeNativeRankedGroups(ModuleOp module,
                             llvmConstant(builder, loc, builder.getI8Type(), 1),
                             LLVM::AddressOfOp::create(
                                 builder, loc, pointer,
-                                "__obelisk_eval_step_four_state_fallback_v1"),
+                                "__talos_eval_step_four_state_fallback_v1"),
                             1);
       for (unsigned word = 0; word < plan.nbaTaintWordCount; ++word) {
         uint64_t mask = plan.nbaTaintMasks[owner][word];
@@ -416,7 +416,7 @@ materializeNativeRankedGroups(ModuleOp module,
           continue;
         Value base = LLVM::AddressOfOp::create(
             builder, loc, pointer,
-            "__obelisk_eval_step_four_state_nba_roots_v1");
+            "__talos_eval_step_four_state_nba_roots_v1");
         updateOwnerWord(builder, loc, base, word,
                         llvmConstant(builder, loc, i64, mask));
       }
@@ -437,21 +437,21 @@ materializeNativeRankedGroups(ModuleOp module,
           builder, loc, name + ".dataflow",
           LLVM::LLVMFunctionType::get(
               LLVM::LLVMVoidType::get(module.getContext()), {pointer}, false));
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRankedMembers>(
+      ::talos::schedule::set<::talos::schedule::Field::EvalRankedMembers>(
           candidate, builder.getDenseI32ArrayAttr(identities));
       if (proof)
         schedule::set<schedule::Field::EvalGroupProofDomain>(candidate, proof);
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupIngress>(
-          candidate, ::obelisk::schedule::get<
-                         ::obelisk::schedule::Field::EvalGroupIngress>(group));
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalReadyWordCount>(
+      ::talos::schedule::set<::talos::schedule::Field::EvalGroupIngress>(
+          candidate, ::talos::schedule::get<
+                         ::talos::schedule::Field::EvalGroupIngress>(group));
+      ::talos::schedule::set<::talos::schedule::Field::EvalReadyWordCount>(
           candidate,
-          ::obelisk::schedule::get<
-              ::obelisk::schedule::Field::EvalReadyWordCount>(group));
-      ::obelisk::schedule::set<
-          ::obelisk::schedule::Field::EvalDataflowCandidate>(
+          ::talos::schedule::get<
+              ::talos::schedule::Field::EvalReadyWordCount>(group));
+      ::talos::schedule::set<
+          ::talos::schedule::Field::EvalDataflowCandidate>(
           candidate, FlatSymbolRefAttr::get(module.getContext(), name));
-      ::obelisk::schedule::set<schedule::metadata::evalCallClosureRoot>(
+      ::talos::schedule::set<schedule::metadata::evalCallClosureRoot>(
           candidate, builder.getUnitAttr());
       entry = candidate.addEntryBlock(builder);
       builder.setInsertionPointToStart(entry);
@@ -464,8 +464,8 @@ materializeNativeRankedGroups(ModuleOp module,
             llvmConstant(builder, loc, i64, uint64_t{1} << (owner % 64));
         Value ingress = schedule::NativeReadyReadOp::create(
             builder, loc, i64, ready, readyLayout.capacity, owner / 64);
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalActivationEntry>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::EvalActivationEntry>(
             ingress.getDefiningOp(), builder.getI32IntegerAttr(owner));
         Value dirty = arith::AndIOp::create(builder, loc, ingress, bit);
         Value active =
@@ -502,8 +502,8 @@ materializeNativeRankedGroups(ModuleOp module,
       }
       LLVM::ReturnOp::create(builder, loc, ValueRange{});
       if (!unconditional.empty())
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalUnconditionalMembers>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::EvalUnconditionalMembers>(
             candidate, builder.getDenseI32ArrayAttr(unconditional));
     }
     members.clear();
@@ -517,14 +517,14 @@ materializeNativeRankedGroups(ModuleOp module,
   }
   if (native::has<native::DebugTiming>(module)) {
     llvm::errs()
-        << "obelisk ranked groups: candidates="
+        << "talos ranked groups: candidates="
         << llvm::count_if(plan.rankedNodes,
                           [](const auto &node) { return !node.boundary; })
         << " groups=" << groupID << " segments=" << segmentCount << " members="
         << llvm::count_if(executors,
                           [](const auto &name) { return !name.empty(); })
         << " clocked_members=" << clockedMembers << '\n';
-    llvm::errs() << "obelisk repeatable ranked members: "
+    llvm::errs() << "talos repeatable ranked members: "
                  << llvm::count_if(plan.rankedNodes,
                                    [&](const auto &node) {
                                      return node.repeatable &&
@@ -535,7 +535,7 @@ materializeNativeRankedGroups(ModuleOp module,
     // Include owners without direct fragments as well. Their compute-node
     // IDs retain the source graph's global scheduling rank.
     for (auto [index, record] : llvm::enumerate(plan.fragments))
-      llvm::errs() << "obelisk eval owner: bit=" << record.bit
+      llvm::errs() << "talos eval owner: bit=" << record.bit
                    << " actor=" << record.actor_slot
                    << " continuation=" << record.continuation
                    << " compute_node=" << record.compute_node << " group="
@@ -544,14 +544,14 @@ materializeNativeRankedGroups(ModuleOp module,
                    << (record.bit >= plan.firstDeferredBit ? " deferred" : "")
                    << '\n';
     for (const auto &node : plan.rankedNodes) {
-      llvm::errs() << (node.boundary ? "obelisk eval boundary: owner="
-                                     : "obelisk eval dependency: owner=")
+      llvm::errs() << (node.boundary ? "talos eval boundary: owner="
+                                     : "talos eval dependency: owner=")
                    << node.owner << " island=" << node.island
                    << " body=" << node.body << " successors=";
       llvm::interleaveComma(node.successors, llvm::errs());
       llvm::errs() << '\n';
     }
-    llvm::errs() << "obelisk eval repeatable owners:";
+    llvm::errs() << "talos eval repeatable owners:";
     for (const auto &node : plan.rankedNodes)
       if (node.repeatable)
         llvm::errs() << ' ' << node.owner;
@@ -561,10 +561,10 @@ materializeNativeRankedGroups(ModuleOp module,
 }
 
 unsigned elideUnconditionalMemberPublications(LLVM::LLVMFuncOp function) {
-  auto members = ::obelisk::schedule::get<
-      ::obelisk::schedule::Field::EvalUnconditionalMembers>(function);
+  auto members = ::talos::schedule::get<
+      ::talos::schedule::Field::EvalUnconditionalMembers>(function);
   auto ingress =
-      ::obelisk::schedule::get<::obelisk::schedule::Field::EvalGroupIngress>(
+      ::talos::schedule::get<::talos::schedule::Field::EvalGroupIngress>(
           function);
   if (!members || members.empty() || !ingress)
     return 0;
@@ -622,4 +622,4 @@ unsigned elideUnconditionalMemberPublications(LLVM::LLVMFuncOp function) {
   return redundant.size();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

@@ -1,4 +1,4 @@
-add_mlir_library(ObeliskSimulationToSchedule
+add_mlir_library(TalosSimulationToSchedule
   PARTIAL_SOURCES_INTENDED
   BuildComputeGraph.cpp
   ComputeGraph.cpp
@@ -7,11 +7,11 @@ add_mlir_library(ObeliskSimulationToSchedule
   SimulationToSchedule.cpp
   Utils.cpp
   DEPENDS
-  ObeliskConversionPassIncGen
+  TalosConversionPassIncGen
   LINK_LIBS PUBLIC
-  ObeliskSimulationAnalysis
-  ObeliskSimulationIR
-  ObeliskScheduleIR
+  TalosSimulationAnalysis
+  TalosSimulationIR
+  TalosScheduleIR
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRPass
@@ -20,22 +20,22 @@ add_mlir_library(ObeliskSimulationToSchedule
 
 # Refinement after native storage/actor identities are known. This owns plan
 # derivation; LLVM globals, runtime calls and ABI emission stay in the backend.
-add_mlir_library(ObeliskSimulationToScheduleNative
+add_mlir_library(TalosSimulationToScheduleNative
   PARTIAL_SOURCES_INTENDED
   NativeSchedulePasses.cpp
   NativeEvalPlanning.cpp
   NativePlanning.cpp
   NativeNBAPlanning.cpp
   DEPENDS
-  ObeliskConversionPassIncGen
+  TalosConversionPassIncGen
   LINK_LIBS PUBLIC
-  ObeliskScheduleTransforms
-  ObeliskSimulationIR
-  ObeliskSimulationAnalysis
+  TalosScheduleTransforms
+  TalosSimulationIR
+  TalosSimulationAnalysis
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRLLVMDialect
   MLIRTransforms
 )
-target_include_directories(ObeliskSimulationToScheduleNative PRIVATE
+target_include_directories(TalosSimulationToScheduleNative PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include")

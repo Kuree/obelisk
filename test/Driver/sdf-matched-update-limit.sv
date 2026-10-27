@@ -1,5 +1,5 @@
 // RUN: %split-file %s %t
-// RUN: cd %t && not %test-obelisk --test-max-sdf-matched-updates=4 -emit-slang design.sv -o %t/design.mlir 2> %t/err
+// RUN: cd %t && not %test-talos --test-max-sdf-matched-updates=4 -emit-slang design.sv -o %t/design.mlir 2> %t/err
 // RUN: FileCheck %s < %t/err
 // RUN: test ! -e %t/design.mlir
 

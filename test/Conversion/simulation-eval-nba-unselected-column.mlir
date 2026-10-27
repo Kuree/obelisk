@@ -1,16 +1,16 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // All selected scalar roots have the same width and storage class. The wide
 // root is excluded from the scalar loop and leaves a zero row in its columns;
 // folding requires the entire column to agree, including that unselected row.
 // The pointer column must retain each scalar accumulator and the null wide row.
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_eval_nba_commit_accumulators_v1() {{.*}} : !llvm.array<10 x ptr>
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_eval_nba_commit_fixed_masks_v1(dense<[255, 255, 255, 255, 255, 255, 255, 255, 255, 0]>
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_eval_nba_commit_regions_v1(dense<[2, 2, 2, 2, 2, 2, 2, 2, 2, 0]>
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_eval_nba_commit_classes_v1(dense<[8, 8, 8, 8, 8, 8, 8, 8, 8, 0]>
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_eval_nba_commit_widths_v1(dense<[255, 255, 255, 255, 255, 255, 255, 255, 255, 0]>
-// CHECK-LABEL: llvm.func @__obelisk_aot_static_nba_commit_v1(
-// CHECK: %[[WIDTHS:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_commit_widths_v1
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_eval_nba_commit_accumulators_v1() {{.*}} : !llvm.array<10 x ptr>
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_eval_nba_commit_fixed_masks_v1(dense<[255, 255, 255, 255, 255, 255, 255, 255, 255, 0]>
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_eval_nba_commit_regions_v1(dense<[2, 2, 2, 2, 2, 2, 2, 2, 2, 0]>
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_eval_nba_commit_classes_v1(dense<[8, 8, 8, 8, 8, 8, 8, 8, 8, 0]>
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_eval_nba_commit_widths_v1(dense<[255, 255, 255, 255, 255, 255, 255, 255, 255, 0]>
+// CHECK-LABEL: llvm.func @__talos_aot_static_nba_commit_v1(
+// CHECK: %[[WIDTHS:.*]] = llvm.mlir.addressof @__talos_eval_nba_commit_widths_v1
 // CHECK-NEXT: %[[SLOT:.*]] = llvm.getelementptr %[[WIDTHS]][%{{.*}}]
 // CHECK-NEXT: llvm.load %[[SLOT]]
 

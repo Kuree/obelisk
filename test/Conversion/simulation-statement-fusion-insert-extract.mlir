@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
 // Selecting the field just inserted is independent of the base value. The
 // integer spelling must simplify in the disposable activation, so the dead
 // base load cannot create a false scheduling cycle with the consumer.
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn
-// CHECK: simulation.func private @__obelisk_region_kernel_0_0
+// CHECK: simulation.func private @__talos_region_kernel_0_0
 module {
   simulation.design @extraction_fusion_bits {
     simulation.scope.decl 0

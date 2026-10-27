@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s
 
 // Every clock kernel publishes into the one model-wide eval ingress. The
@@ -8,23 +8,23 @@
 // made the generated scheduler grow with owners x kernels, i.e.
 // quadratically in the number of module instances.
 
-// CHECK: llvm.mlir.global internal @__obelisk_aot_model_ingress_v1()
-// CHECK-COUNT-4: llvm.mlir.global internal @__obelisk_aot_model_active_v1_{{[0-3]}}()
-// CHECK-NOT: llvm.mlir.global internal @__obelisk_aot_model_active_v1_
-// CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK: llvm.call @writer{{[0-9]}}.__obelisk_eval_body_0.__obelisk_two_state_0(
+// CHECK: llvm.mlir.global internal @__talos_aot_model_ingress_v1()
+// CHECK-COUNT-4: llvm.mlir.global internal @__talos_aot_model_active_v1_{{[0-3]}}()
+// CHECK-NOT: llvm.mlir.global internal @__talos_aot_model_active_v1_
+// CHECK-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// CHECK: llvm.call @writer{{[0-9]}}.__talos_eval_body_0.__talos_two_state_0(
 // CHECK-NEXT: llvm.mlir.constant(0 : i32)
-// CHECK-NEXT: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// CHECK-NEXT: llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // CHECK-NOT: llvm.mlir.addressof
 // CHECK: llvm.br
-// CHECK: llvm.call @writer{{[0-9]}}.__obelisk_eval_body_0.__obelisk_two_state_0(
+// CHECK: llvm.call @writer{{[0-9]}}.__talos_eval_body_0.__talos_two_state_0(
 // CHECK-NEXT: llvm.mlir.constant(0 : i32)
-// CHECK-NEXT: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// CHECK-NEXT: llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // CHECK-NOT: llvm.mlir.addressof
 // CHECK: llvm.br
-// CHECK: llvm.call @writer{{[0-9]}}.__obelisk_eval_body_0.__obelisk_two_state_0(
+// CHECK: llvm.call @writer{{[0-9]}}.__talos_eval_body_0.__talos_two_state_0(
 // CHECK-NEXT: llvm.mlir.constant(0 : i32)
-// CHECK-NEXT: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// CHECK-NEXT: llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // CHECK-NOT: llvm.mlir.addressof
 // CHECK: llvm.br
 

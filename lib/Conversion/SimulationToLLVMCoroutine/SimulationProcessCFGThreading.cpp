@@ -1,10 +1,10 @@
 //===- SimulationProcessCFGThreading.cpp - Thread process CFG state -------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Analysis/SSAValueAnalysis.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
 
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
@@ -82,10 +82,10 @@ struct GraphTraits<ActivationGraph *> : GraphTraits<ActivationNode *> {
 };
 } // namespace llvm
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMTHREADPROCESSCFGPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMTHREADPROCESSCFGPASS
+#include "talos/Conversion/Passes.h.inc"
 
 namespace detail {
 
@@ -843,9 +843,9 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
 
 namespace {
 
-class ObeliskSimThreadProcessCFGPass
-    : public impl::ObeliskSimThreadProcessCFGPassBase<
-          ObeliskSimThreadProcessCFGPass> {
+class TalosSimThreadProcessCFGPass
+    : public impl::TalosSimThreadProcessCFGPassBase<
+          TalosSimThreadProcessCFGPass> {
 public:
   void runOnOperation() override {
     if (failed(detail::threadProcessStateThroughCFG(getOperation())))
@@ -854,4 +854,4 @@ public:
 };
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

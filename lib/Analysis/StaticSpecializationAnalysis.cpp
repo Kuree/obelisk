@@ -1,23 +1,23 @@
 //===- StaticSpecializationAnalysis.cpp - Validate static plans ----------===//
 
-#include "obelisk/Analysis/StaticSpecializationAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Analysis/StaticSpecializationAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 
 #include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 
 FailureOr<StaticSpecializationAnalysis>
 StaticSpecializationAnalysis::compute(sim::SimDesignOp design) {
   StaticSpecializationAnalysis result;
   result.plan =
-      ::obelisk::schedule::get<schedule::metadata::staticSpecialization>(
+      ::talos::schedule::get<schedule::metadata::staticSpecialization>(
           design);
   if (!result.plan)
     return result;
@@ -127,4 +127,4 @@ StaticSpecializationAnalysis::compute(sim::SimDesignOp design) {
   return result;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

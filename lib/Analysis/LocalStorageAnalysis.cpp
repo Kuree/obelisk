@@ -1,19 +1,19 @@
 //===- LocalStorageAnalysis.cpp - Private local storage -------------------===//
 
-#include "obelisk/Analysis/LocalStorageAnalysis.h"
+#include "talos/Analysis/LocalStorageAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
-#include "obelisk/Analysis/SSAValueAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/SetVector.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 
 namespace {
 /// The suspensions an invocation-scoped family must not be live across, each
@@ -437,4 +437,4 @@ bool LocalStorageAnalysis::areResetBeforeReads(
               })
               .wasInterrupted();
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

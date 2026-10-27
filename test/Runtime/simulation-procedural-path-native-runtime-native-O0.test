@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %S/Inputs/simulation-procedural-path-native-runtime.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.native.mlir
-// RUN: obelisk-translate --mlir-to-llvmir %t.native.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %S/Inputs/simulation-procedural-path-native-runtime.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph),convert-talos-sim-processes-to-llvm-coroutines)' -o %t.native.mlir
+// RUN: talos-translate --mlir-to-llvmir %t.native.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %S/Inputs/simulation-procedural-path-native-runtime.mlir

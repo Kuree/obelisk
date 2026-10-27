@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-obelisk %s -o - | FileCheck %s
+// RUN: talos -emit-talos %s -o - | FileCheck %s
 
 `timescale 1ns/1ns
 
@@ -29,7 +29,7 @@ endmodule
 // Conditions are retained as ordinary semantic expression subtrees. ifnone
 // has no synthetic predicate and is distinguished by frozen path metadata.
 // CHECK: timing_condition
-// CHECK: obelisk.sv.expression.binary
+// CHECK: talos.sv.expression.binary
 // CHECK: referenced_path = "specify_conditional_path.dut.select_slow"
 // CHECK: referenced_path = "specify_conditional_path.dut.select_fast"
 // CHECK: timing_condition

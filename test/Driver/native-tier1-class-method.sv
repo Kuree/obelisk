@@ -1,8 +1,8 @@
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.timing
+// RUN: talos -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.diag
+// RUN: talos -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.diag
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.eval.out
 // RUN: FileCheck %s --check-prefix=DIAG < %t.diag
 
@@ -35,9 +35,9 @@ module native_tier1_class_method;
 endmodule
 
 // ADMISSION: native eligibility: eligible=1 fully_eligible=1 cost_effective=1
-// LLVM: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
-// LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
+// LLVM: call i32 @talos_rt_v1_scheduler_execute_aot_actor
+// LLVM: define {{.*}}i32 @__talos_eval_dispatch_v1
 // OUTPUT: 3 35
-// DIAG: obelisk-signal-diagnostics
+// DIAG: talos-signal-diagnostics
 // DIAG-SAME: aot_fallbacks=0
 // DIAG-SAME: eval_dispatches={{[1-9][0-9]*}}

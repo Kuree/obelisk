@@ -1,9 +1,9 @@
 // RUN: %split-file %s %t
-// RUN: obelisk-opt %t/chunks.mlir --pass-pipeline='builtin.module(test-obelisk-edit-attributes{replace-from=!simulation.logic<1> replace-to=i1},simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=2},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=TWO-STATE
-// RUN: obelisk-opt %t/chunks.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=2},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CHUNK
-// RUN: not obelisk-opt %t/chunks.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=65}))' 2>&1 | FileCheck %s --check-prefix=LIMIT
-// RUN: obelisk-opt %t/different-scopes.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=64},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SCOPE
-// RUN: obelisk-opt %t/cyclic.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=64},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CYCLE
+// RUN: talos-opt %t/chunks.mlir --pass-pipeline='builtin.module(test-talos-edit-attributes{replace-from=!simulation.logic<1> replace-to=i1},simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=2},talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=TWO-STATE
+// RUN: talos-opt %t/chunks.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=2},talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CHUNK
+// RUN: not talos-opt %t/chunks.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=65}))' 2>&1 | FileCheck %s --check-prefix=LIMIT
+// RUN: talos-opt %t/different-scopes.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=64},talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SCOPE
+// RUN: talos-opt %t/cyclic.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=64},talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=CYCLE
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-primitive-cohorts.test.
 
@@ -86,17 +86,17 @@ module {
 }
 
 // CHUNK-LABEL: simulation.design @chunks
-// CHUNK-COUNT-2: simulation.spawn @__obelisk_region_kernel_
+// CHUNK-COUNT-2: simulation.spawn @__talos_region_kernel_
 // CHUNK: simulation.spawn @p4
 // CHUNK: simulation.func private @p4
-// CHUNK-COUNT-2: simulation.func private @__obelisk_region_kernel_
+// CHUNK-COUNT-2: simulation.func private @__talos_region_kernel_
 // CHUNK-NOT: simulation.func private @p0
 // CHUNK-NOT: simulation.func private @p1
 // CHUNK-NOT: simulation.func private @p2
 // CHUNK-NOT: simulation.func private @p3
 // CHUNK-NOT: .__member
 // LIMIT: error: 'simulation.design' op straight-line fusion member limit must be between 2 and 64
-// TWO-STATE-COUNT-2: simulation.spawn @__obelisk_region_kernel_
+// TWO-STATE-COUNT-2: simulation.spawn @__talos_region_kernel_
 // TWO-STATE: arith.cmpi eq, {{.*}} : i1
 // TWO-STATE-NOT: simulation.logic.compare
 
@@ -141,7 +141,7 @@ module {
 
 // SCOPE: simulation.spawn @parent
 // SCOPE: simulation.spawn @child
-// SCOPE-NOT: __obelisk_region_kernel_
+// SCOPE-NOT: __talos_region_kernel_
 
 //--- cyclic.mlir
 // A real sensitivity cycle must keep the original convergence-scheduled
@@ -160,7 +160,7 @@ module attributes {
     simulation.net.decl 1 in 0 : !simulation.logic<1> design
     simulation.driver.decl 0 in 0 drives 0 : !simulation.logic<1> design
     simulation.driver.decl 1 in 0 drives 1 : !simulation.logic<1> design
-    simulation.func @__obelisk_root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 3 : i64} {
+    simulation.func @__talos_root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 3 : i64} {
       %n0 = simulation.context.net %ctx[0] : !simulation.net<!simulation.logic<1>>
       %n1 = simulation.context.net %ctx[1] : !simulation.net<!simulation.logic<1>>
       %d0 = simulation.context.driver %ctx[0] : !simulation.driver<!simulation.logic<1>>
@@ -192,4 +192,4 @@ module attributes {
 // CYCLE: simulation.spawn @second
 // CYCLE: simulation.func private @first
 // CYCLE: simulation.func private @second
-// CYCLE-NOT: __obelisk_region_kernel_
+// CYCLE-NOT: __talos_region_kernel_

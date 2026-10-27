@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(test-obelisk-native-aot-analysis)' \
+// RUN: talos-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(test-talos-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=ACTORS
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=BRIDGED
 
 // The planned design of simulation-to-llvm-coroutine-static-fanout-omitted-
@@ -16,8 +16,8 @@
 // ACTORS-NEXT: actor 2 @clock
 // ACTORS-NEXT: bytecode @coordinator bb1
 // BRIDGED-LABEL: module attributes
-// BRIDGED: llvm.mlir.global internal constant @__obelisk_aot_static_fanout_v1
-// BRIDGED: llvm.func @obelisk_rt_v1_scheduler_signal_transition
+// BRIDGED: llvm.mlir.global internal constant @__talos_aot_static_fanout_v1
+// BRIDGED: llvm.func @talos_rt_v1_scheduler_signal_transition
 
 #graph = #schedule.graph<
   version = 1, vpi = off, workers = 1,

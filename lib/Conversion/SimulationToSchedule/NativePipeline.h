@@ -1,18 +1,18 @@
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOSCHEDULE_NATIVEPIPELINE_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOSCHEDULE_NATIVEPIPELINE_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOSCHEDULE_NATIVEPIPELINE_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOSCHEDULE_NATIVEPIPELINE_H
 #include "../SimulationToLLVMCoroutine/SimulationAOTPlanning.h"
 #include "../SimulationToLLVMCoroutine/SimulationProcessActivationLowering.h"
 #include "../SimulationToLLVMCoroutine/SimulationProcessWrapperLowering.h"
 #include "../SimulationToLLVMCoroutine/SimulationTableProcess.h"
 #include "../SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Analysis/SimulationCopyProcessAnalysis.h"
-#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
-#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
+#include "talos/Analysis/SimulationCopyProcessAnalysis.h"
+#include "talos/Analysis/SimulationProcessFrameAnalysis.h"
+#include "talos/Analysis/SimulationScheduleAnalysis.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/IR/DataLayout.h"
 #include <chrono>
 
-namespace obelisk::detail {
+namespace talos::detail {
 struct NativeFunctionFrameResult {
   bool published = false;
   std::unique_ptr<SimulationProcessFrameAnalysis> frame;
@@ -123,7 +123,7 @@ struct NativePipelineAnalysis {
   llvm::SmallVector<NativePeriodicClock> periodicClocks;
   llvm::SmallVector<NativePeriodicAlias> periodicAliases;
   NativeThreeTierPlan threeTierPlan;
-  llvm::SmallVector<obelisk_rt_static_actor_root> staticActorRoots;
+  llvm::SmallVector<talos_rt_static_actor_root> staticActorRoots;
   llvm::SmallVector<uint32_t> writableVPIUnscopedActors;
   mlir::FailureOr<analysis::SimulationScheduleAnalysis> scheduleRanks =
       mlir::failure();
@@ -139,10 +139,10 @@ struct NativePipelineAnalysis {
   NativeActivationInputs activationInputs;
   llvm::SmallVector<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>>
       rankedAOTNodes;
-  llvm::SmallVector<obelisk_rt_native_schedule_node> executableNodes;
+  llvm::SmallVector<talos_rt_native_schedule_node> executableNodes;
   llvm::MapVector<mlir::Operation *, NativeSchedulePlan> processSchedules;
   bool rootSlotZero = false;
   mlir::FailureOr<ResolvedNativeEvalPlan> resolvedEval = mlir::failure();
 };
-} // namespace obelisk::detail
+} // namespace talos::detail
 #endif

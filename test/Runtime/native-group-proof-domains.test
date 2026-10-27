@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %S/../Conversion/native-group-proof-domains.mlir --materialize-native-group-promotion-readiness --materialize-native-promotion-range-index | %llvm_dist/bin/mlir-opt --convert-arith-to-llvm --convert-cf-to-llvm | obelisk-translate --mlir-to-llvmir -o %t.ll
+// RUN: talos-opt %S/../Conversion/native-group-proof-domains.mlir --materialize-native-group-promotion-readiness --materialize-native-promotion-range-index | %llvm_dist/bin/mlir-opt --convert-arith-to-llvm --convert-cf-to-llvm | talos-translate --mlir-to-llvmir -o %t.ll
 // RUN: %target_cxx -O0 %t.ll %S/Inputs/check-native-group-proof-domains.cpp %runtime_link_flags -o %t.o0
 // RUN: %t.o0
 // RUN: %target_cxx -O3 %t.ll %S/Inputs/check-native-group-proof-domains.cpp %runtime_link_flags -o %t.o3

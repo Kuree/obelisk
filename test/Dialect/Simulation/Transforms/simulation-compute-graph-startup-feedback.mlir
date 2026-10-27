@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-simulation-schedule-analysis)' > %t.graph 2> %t.ranks
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-simulation-schedule-analysis)' > %t.graph 2> %t.ranks
 // RUN: FileCheck %s --check-prefix=GRAPH < %t.graph
 // RUN: FileCheck %s --check-prefix=RANK < %t.ranks
 

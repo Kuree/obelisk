@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --obelisk-sim-insert-gc-polls | FileCheck %s
-// RUN: obelisk-opt %s --obelisk-sim-insert-gc-polls \
-// RUN:   --obelisk-sim-insert-gc-polls | FileCheck %s
+// RUN: talos-opt %s --talos-sim-insert-gc-polls | FileCheck %s
+// RUN: talos-opt %s --talos-sim-insert-gc-polls \
+// RUN:   --talos-sim-insert-gc-polls | FileCheck %s
 
 // Under polled collection allocation never collects, so garbage is bounded
 // only if every way to allocate repeatedly without returning to the scheduler

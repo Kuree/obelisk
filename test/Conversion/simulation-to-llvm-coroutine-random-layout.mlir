@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
@@ -48,15 +48,15 @@ module attributes {
 // bytes 18 and 19, randc state is at bytes 24 and 32, and the root rand_mode
 // word is at byte 40. These are compiler-emitted ABI records, not executable
 // lowering heuristics.
-// CHECK-LABEL: llvm.mlir.global internal constant @Node.__obelisk_class_descriptor
-// CHECK: llvm.mlir.addressof @Node.__obelisk_random_layout
-// CHECK-LABEL: llvm.mlir.global internal constant @Node.__obelisk_random_layout
+// CHECK-LABEL: llvm.mlir.global internal constant @Node.__talos_class_descriptor
+// CHECK: llvm.mlir.addressof @Node.__talos_random_layout
+// CHECK-LABEL: llvm.mlir.global internal constant @Node.__talos_random_layout
 // CHECK: llvm.mlir.constant(1 : i32)
-// CHECK: llvm.mlir.addressof @Node.__obelisk_random_edges
+// CHECK: llvm.mlir.addressof @Node.__talos_random_edges
 // CHECK: llvm.mlir.constant(1 : i64)
-// CHECK: llvm.mlir.addressof @Node.__obelisk_random_variables
+// CHECK: llvm.mlir.addressof @Node.__talos_random_variables
 // CHECK: llvm.mlir.constant(2 : i64)
-// CHECK-LABEL: llvm.mlir.global internal constant @Node.__obelisk_random_variables
+// CHECK-LABEL: llvm.mlir.global internal constant @Node.__talos_random_variables
 // First record: signed ordinary rand i16, with UINT64_MAX randc sentinels.
 // CHECK: llvm.mlir.constant(16 : i64)
 // CHECK: llvm.mlir.constant(40 : i64)
@@ -72,7 +72,7 @@ module attributes {
 // CHECK: llvm.mlir.constant(32 : i64)
 // CHECK: llvm.mlir.constant(8 : i32)
 // CHECK: llvm.mlir.constant(5 : i32)
-// CHECK-LABEL: llvm.mlir.global internal constant @Node.__obelisk_random_edges
+// CHECK-LABEL: llvm.mlir.global internal constant @Node.__talos_random_edges
 // CHECK: llvm.mlir.constant(8 : i64)
 // CHECK: llvm.mlir.constant(40 : i64)
 // CHECK: llvm.mlir.constant(4 : i64)

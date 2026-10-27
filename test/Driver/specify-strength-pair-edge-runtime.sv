@@ -1,10 +1,10 @@
-// RUN: obelisk -O0 %s -o %t.native-o0
+// RUN: talos -O0 %s -o %t.native-o0
 // RUN: %t.native-o0 | FileCheck %s
-// RUN: obelisk -O3 %s -o %t.native-o3
+// RUN: talos -O3 %s -o %t.native-o3
 // RUN: %t.native-o3 | FileCheck %s
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
+// RUN: talos -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
 // RUN: %t.bytecode-o0 | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode-o3
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode-o3
 // RUN: %t.bytecode-o3 | FileCheck %s
 
 `timescale 1ns / 1ns

@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=PROBE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=WRITE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=read},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=PROBE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=WRITE
 
 // A reset path does not read either old register. Its early entry proof is
 // activation-local; the persistent selector still covers both registers and
@@ -74,17 +74,17 @@ module attributes {
   }
 }
 
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_selected_variant_v1_0
-// CHECK-DAG: llvm.func @lane.__obelisk_eval_body_0.__obelisk_path_known
-// CHECK-LABEL: llvm.func {{.*}}@__obelisk_eval_path_dispatch_v1_0(
-// CHECK: llvm.mlir.addressof @__obelisk_eval_selected_variant_v1_0
+// CHECK-DAG: llvm.mlir.global internal @__talos_eval_selected_variant_v1_0
+// CHECK-DAG: llvm.func @lane.__talos_eval_body_0.__talos_path_known
+// CHECK-LABEL: llvm.func {{.*}}@__talos_eval_path_dispatch_v1_0(
+// CHECK: llvm.mlir.addressof @__talos_eval_selected_variant_v1_0
 // CHECK: llvm.load
 // CHECK: llvm.cond_br
-// CHECK: llvm.call @lane.__obelisk_eval_body_0.__obelisk_two_state
-// CHECK: llvm.call @lane.__obelisk_eval_body_0(
-// CHECK: llvm.call @lane.__obelisk_eval_body_0.__obelisk_path_known
-// PROBE: llvm.func @lane.__obelisk_eval_body_0.__obelisk_path_known
+// CHECK: llvm.call @lane.__talos_eval_body_0.__talos_two_state
+// CHECK: llvm.call @lane.__talos_eval_body_0(
+// CHECK: llvm.call @lane.__talos_eval_body_0.__talos_path_known
+// PROBE: llvm.func @lane.__talos_eval_body_0.__talos_path_known
 // Writable VPI can force this small fixture onto the ordered NBA fallback.
-// WRITE-NOT: llvm.func @lane.__obelisk_eval_body_0.__obelisk_two_state
-// WRITE: llvm.func @lane.__obelisk_eval_body_0(
-// WRITE-NOT: llvm.func @lane.__obelisk_eval_body_0.__obelisk_two_state
+// WRITE-NOT: llvm.func @lane.__talos_eval_body_0.__talos_two_state
+// WRITE: llvm.func @lane.__talos_eval_body_0(
+// WRITE-NOT: llvm.func @lane.__talos_eval_body_0.__talos_two_state

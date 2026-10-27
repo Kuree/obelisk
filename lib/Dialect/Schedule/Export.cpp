@@ -1,7 +1,7 @@
-#include "obelisk/Dialect/Schedule/Export.h"
+#include "talos/Dialect/Schedule/Export.h"
 using namespace mlir;
 using namespace llvm;
-namespace obelisk::schedule {
+namespace talos::schedule {
 namespace {
 json::Array numbers(DenseI64ArrayAttr values) {
   json::Array result;
@@ -113,4 +113,4 @@ json::Object exportGraph(
                       {"edges", std::move(edges)},
                       {"regions", std::move(regions)}};
 }
-} // namespace obelisk::schedule
+} // namespace talos::schedule

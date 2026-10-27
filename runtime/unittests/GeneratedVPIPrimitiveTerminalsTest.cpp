@@ -5,9 +5,9 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -19,22 +19,22 @@
 
 namespace {
 TEST(GeneratedDesignDatabase, PrimitiveTerminals) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   RecordProperty("design_database_bytes", encoded->designDatabase.size());
-  obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_VERSION;
+  talos_rt_execution_descriptor_v1 execution{};
+  execution.version = TALOS_RT_VERSION;
   execution.flags = encoded->executionFlags;
   execution.bytecode = encoded->bytecode.data();
   execution.bytecode_size = encoded->bytecode.size();
@@ -43,15 +43,15 @@ TEST(GeneratedDesignDatabase, PrimitiveTerminals) {
   execution.state_bit_count = encoded->stateBitCount;
   for (unsigned byte = 0; byte != 8; ++byte)
     execution.checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *raw = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &raw),
-            OBELISK_RT_OK);
-  std::unique_ptr<obelisk_rt_context, decltype(&obelisk_rt_v1_context_destroy)>
-      runtime(raw, obelisk_rt_v1_context_destroy);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(raw, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(raw), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(raw), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *raw = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &raw),
+            TALOS_RT_OK);
+  std::unique_ptr<talos_rt_context, decltype(&talos_rt_v1_context_destroy)>
+      runtime(raw, talos_rt_v1_context_destroy);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(raw, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(raw), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(raw), TALOS_RT_OK);
   std::vector<vpiHandle> handles;
   auto keep = [&](vpiHandle handle) {
     if (handle)
@@ -149,7 +149,7 @@ TEST(GeneratedDesignDatabase, PrimitiveTerminals) {
   EXPECT_EQ(children(a, vpiLocalLoad).size(), 5u);
   EXPECT_FALSE(contains(children(a, vpiLocalLoad), remoteInput));
 
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   const auto &image = encoded->designDatabase;
   HeaderView header(image.data());
   SemanticDirectoryView directory(image.data() + header.getReserved());
@@ -168,17 +168,17 @@ TEST(GeneratedDesignDatabase, PrimitiveTerminals) {
   // delta uses generated table sizes, not a fragile whole-image size limit.
   auto withoutModule = mlir::OwningOpRef<mlir::ModuleOp>(module->clone());
   auto withoutDesign =
-      *withoutModule->getOps<obelisk::sim::SimDesignOp>().begin();
+      *withoutModule->getOps<talos::sim::SimDesignOp>().begin();
   llvm::SmallVector<mlir::Operation *> erase;
   llvm::SmallVector<llvm::StringRef> terminalSymbols;
-  for (auto anchor : withoutDesign.getOps<obelisk::sim::SimVPIObjectAnchorOp>())
+  for (auto anchor : withoutDesign.getOps<talos::sim::SimVPIObjectAnchorOp>())
     if (anchor.getVpiKind() == vpiPrimTerm) {
       terminalSymbols.push_back(anchor.getSymName());
       erase.push_back(anchor);
     }
   for (auto relation :
-       withoutDesign.getOps<obelisk::sim::SimVPIRelationDeclOp>()) {
-    auto terminalReference = [&](obelisk::sim::VPIObjectRefAttr ref) {
+       withoutDesign.getOps<talos::sim::SimVPIRelationDeclOp>()) {
+    auto terminalReference = [&](talos::sim::VPIObjectRefAttr ref) {
       return ref.getSymbol() &&
              llvm::is_contained(terminalSymbols, ref.getSymbol().getValue());
     };
@@ -187,12 +187,12 @@ TEST(GeneratedDesignDatabase, PrimitiveTerminals) {
       erase.push_back(relation);
   }
   for (auto binding :
-       withoutDesign.getOps<obelisk::sim::SimVPITerminalDriverBindingOp>())
+       withoutDesign.getOps<talos::sim::SimVPITerminalDriverBindingOp>())
     if (llvm::is_contained(terminalSymbols, binding.getTerminal()))
       erase.push_back(binding);
   for (auto *operation : erase)
     operation->erase();
-  auto without = obelisk::encodeSimulationDesign(withoutDesign, options);
+  auto without = talos::encodeSimulationDesign(withoutDesign, options);
   ASSERT_TRUE(mlir::succeeded(without));
   HeaderView withoutHeader(without->designDatabase.data());
   SemanticDirectoryView withoutDirectory(without->designDatabase.data() +
@@ -222,25 +222,25 @@ TEST(GeneratedDesignDatabase, PrimitiveTerminals) {
   EXPECT_LT(actualGrowth, fullRecordGrowth);
   RecordProperty("saved_terminal_bytes", fullRecordGrowth - actualGrowth);
   auto cursorFor = [&](const char *name) {
-    obelisk_rt_design_cursor_v1 cursor{};
-    EXPECT_EQ(obelisk_rt_v1_design_lookup(
+    talos_rt_design_cursor_v1 cursor{};
+    EXPECT_EQ(talos_rt_v1_design_lookup(
                   &execution, reinterpret_cast<const uint8_t *>(name),
                   std::char_traits<char>::length(name), &cursor),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     return cursor;
   };
   auto primitive = cursorFor("top.g");
   VPIRelationRange range{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_relation_range(raw, primitive, vpiPrimTerm,
+  ASSERT_EQ(talos_rt_cached_vpi_relation_range(raw, primitive, vpiPrimTerm,
                                                  true, &range),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_EQ(range.count, 3u);
-  obelisk_rt_design_cursor_v1 terminal{};
+  talos_rt_design_cursor_v1 terminal{};
   uint32_t kind = 0;
   bool statement = false;
-  ASSERT_EQ(obelisk_rt_cached_vpi_relation_target(raw, range.first, &terminal,
+  ASSERT_EQ(talos_rt_cached_vpi_relation_target(raw, range.first, &terminal,
                                                   &kind, &statement),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint32_t packed = 0, primitivePacked = 0, otherPrimitive = 0;
   ASSERT_TRUE(tryPackTableIndex(TableKind::Object,
                                 (primitive.offset - header.getObjectOffset()) /
@@ -304,8 +304,8 @@ TEST(GeneratedDesignDatabase, PrimitiveTerminals) {
     HeaderWriter(bytes.data()).setChecksum(hash);
     auto invalid = execution;
     invalid.design_database = bytes.data();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&invalid),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&invalid),
+              TALOS_RT_INVALID_DESIGN);
   };
   rejects([&](auto &bytes) {
     FixedPropertyWriter(bytes.data() + directionRow).setPayload(vpiMixedIO);

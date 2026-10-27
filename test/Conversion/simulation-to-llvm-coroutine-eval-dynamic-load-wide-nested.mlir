@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --split-input-file \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep))' \
+// RUN: talos-opt %s --split-input-file \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep))' \
 // RUN:   -o %t.planned.mlir
-// RUN: obelisk-opt %t.planned.mlir --split-input-file \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %t.planned.mlir --split-input-file \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 
 // Variants of simulation-to-llvm-coroutine-eval-dynamic-load. The generated
@@ -112,9 +112,9 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @consume.__obelisk_eval_body_0(
+// CHECK-LABEL: llvm.func @consume.__talos_eval_body_0(
 // CHECK: llvm.load {{.*}} : !llvm.ptr -> i136
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_load_plane
 // CHECK: llvm.return
 
 // -----
@@ -218,13 +218,13 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @consume.__obelisk_eval_body_0(
+// CHECK-LABEL: llvm.func @consume.__talos_eval_body_0(
 // CHECK: llvm.icmp "sge"
 // CHECK: llvm.icmp "sle"
 // CHECK: llvm.and
 // A complete element can select from the native word owning this 64-bit root.
 // CHECK: llvm.load {{.*}} : !llvm.ptr -> i64
 // CHECK: llvm.lshr
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
-// CHECK-NOT: llvm.call @obelisk_rt_v1_native_handle_offset
+// CHECK-NOT: llvm.call @talos_rt_v1_native_state_load_plane
+// CHECK-NOT: llvm.call @talos_rt_v1_native_handle_offset
 // CHECK: llvm.return

@@ -1,4 +1,4 @@
-// RUN: obelisk -O0 -emit-sim %s -o - | FileCheck %s --implicit-check-not='simulation.hierarchical_name = "worker::dead"' --implicit-check-not='simulation.hierarchical_name = "worker::dead_virtual"'
+// RUN: talos -O0 -emit-sim %s -o - | FileCheck %s --implicit-check-not='simulation.hierarchical_name = "worker::dead"' --implicit-check-not='simulation.hierarchical_name = "worker::dead_virtual"'
 
 class worker;
   function int live();

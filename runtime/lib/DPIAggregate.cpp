@@ -184,7 +184,7 @@ namespace {
 thread_local std::vector<std::vector<std::string>> aggregateExportStrings;
 } // namespace
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_pack(
+extern "C" talos_rt_status talos_rt_v1_dpi_aggregate_pack(
     const void *value, const void *unknown, uint64_t planeSize,
     uint64_t totalBitWidth, uint32_t fourState, void *outData, uint64_t cSize,
     uint64_t outCapacity, const int64_t *plan, uint64_t planWords) {
@@ -193,16 +193,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_pack(
       (fourState && !unknown) || planeSize < (totalBitWidth + 7) / 8 ||
       planeSize > SIZE_MAX || cSize == 0 || cSize > outCapacity ||
       outCapacity > SIZE_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   auto *output = static_cast<uint8_t *>(outData);
   const auto *values = static_cast<const uint8_t *>(value);
   const auto *unknowns = static_cast<const uint8_t *>(unknown);
   std::memset(output, 0, static_cast<size_t>(outCapacity));
   uint64_t stringIndex = 0;
-  obelisk_rt_status status = OBELISK_RT_OK;
+  talos_rt_status status = TALOS_RT_OK;
   auto packLeaf = [&](uint64_t bit, uint64_t byte, uint32_t category,
                       uint32_t width, uint32_t leafFourState) {
-    if (status != OBELISK_RT_OK ||
+    if (status != TALOS_RT_OK ||
         !validLeaf(bit, byte, category, width, leafFourState, totalBitWidth,
                    cSize))
       return false;
@@ -222,8 +222,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_pack(
           reinterpret_cast<char *>(output + cSize + stringIndex * 8);
       const char *bytes = nullptr;
       uint64_t size = 0;
-      status = obelisk_rt_v1_string_view(word, scratch, &bytes, &size);
-      if (status != OBELISK_RT_OK)
+      status = talos_rt_v1_string_view(word, scratch, &bytes, &size);
+      if (status != TALOS_RT_OK)
         return false;
       std::memcpy(destination, &bytes, sizeof(bytes));
       ++stringIndex;
@@ -259,19 +259,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_pack(
     return true;
   };
   if (!walkPlan(plan, planWords / recordWords, 0, 0, packLeaf))
-    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+    return status == TALOS_RT_OK ? TALOS_RT_INVALID_ARGUMENT : status;
   return status;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_unpack(
-    obelisk_rt_context *context, const void *data, uint64_t cSize,
+extern "C" talos_rt_status talos_rt_v1_dpi_aggregate_unpack(
+    talos_rt_context *context, const void *data, uint64_t cSize,
     const int64_t *plan, uint64_t planWords, void *outValue, void *outUnknown,
     uint64_t planeSize, uint64_t totalBitWidth, uint32_t fourState) {
   if (!data || !plan || !outValue || planWords == 0 ||
       planWords % recordWords != 0 || fourState > 1 ||
       (fourState && !outUnknown) || planeSize < (totalBitWidth + 7) / 8 ||
       planeSize > SIZE_MAX || cSize == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   auto *values = static_cast<uint8_t *>(outValue);
   auto *unknowns = static_cast<uint8_t *>(outUnknown);
   const auto *source = static_cast<const uint8_t *>(data);
@@ -293,26 +293,26 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_unpack(
     return true;
   };
   if (!walkPlan(plan, planWords / recordWords, 0, 0, countStrings) ||
-      stringCount > SIZE_MAX / sizeof(obelisk_rt_managed_word_v1))
-    return OBELISK_RT_INVALID_ARGUMENT;
+      stringCount > SIZE_MAX / sizeof(talos_rt_managed_word_v1))
+    return TALOS_RT_INVALID_ARGUMENT;
 
-  std::vector<obelisk_rt_managed_word_v1> stringRoots(
+  std::vector<talos_rt_managed_word_v1> stringRoots(
       static_cast<size_t>(stringCount), 0);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  obelisk_rt_gc_managed_root_range_v1 roots{};
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_managed_root_range_v1 roots{};
   if (stringCount != 0) {
-    if (!context || !(lane = obelisk_rt_v1_gc_current_lane(context)))
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    obelisk_rt_status push = obelisk_rt_v1_gc_managed_root_range_push(
+    if (!context || !(lane = talos_rt_v1_gc_current_lane(context)))
+      return TALOS_RT_INVALID_LIFECYCLE;
+    talos_rt_status push = talos_rt_v1_gc_managed_root_range_push(
         lane, &roots, stringRoots.data(), stringCount);
-    if (push != OBELISK_RT_OK)
+    if (push != TALOS_RT_OK)
       return push;
   }
   uint64_t stringIndex = 0;
-  obelisk_rt_status status = OBELISK_RT_OK;
+  talos_rt_status status = TALOS_RT_OK;
   auto unpackLeaf = [&](uint64_t bit, uint64_t byte, uint32_t category,
                         uint32_t width, uint32_t leafFourState) {
-    if (status != OBELISK_RT_OK ||
+    if (status != TALOS_RT_OK ||
         !validLeaf(bit, byte, category, width, leafFourState, totalBitWidth,
                    cSize))
       return false;
@@ -328,9 +328,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_unpack(
     if (category == 8) {
       const char *bytes = nullptr;
       std::memcpy(&bytes, current, sizeof(bytes));
-      status = obelisk_rt_v1_dpi_string_copy(context, bytes,
+      status = talos_rt_v1_dpi_string_copy(context, bytes,
                                              &stringRoots[stringIndex]);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return false;
       copyPlaneBits(
           reinterpret_cast<const uint8_t *>(&stringRoots[stringIndex]), 0,
@@ -371,20 +371,20 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_unpack(
   };
   bool walked = walkPlan(plan, planWords / recordWords, 0, 0, unpackLeaf);
   if (stringCount != 0) {
-    obelisk_rt_status pop =
-        obelisk_rt_v1_gc_managed_root_range_pop(lane, &roots);
-    if (status == OBELISK_RT_OK && pop != OBELISK_RT_OK)
+    talos_rt_status pop =
+        talos_rt_v1_gc_managed_root_range_pop(lane, &roots);
+    if (status == TALOS_RT_OK && pop != TALOS_RT_OK)
       status = pop;
   }
-  if (!walked && status == OBELISK_RT_OK)
-    status = OBELISK_RT_INVALID_ARGUMENT;
+  if (!walked && status == TALOS_RT_OK)
+    status = TALOS_RT_INVALID_ARGUMENT;
   return status;
 }
 
 namespace {
 
 struct AggregateStringRoots {
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   ManagedRootProvider provider{};
   uint8_t *value = nullptr;
   uint64_t planeSize = 0;
@@ -403,16 +403,16 @@ void enumerateAggregateStringRoots(void *opaque, ManagedRootVisit visit,
       return true;
     if (width != 64 || bit % 64 != 0 || bit > roots->totalBitWidth ||
         64 > roots->totalBitWidth - bit || bit / 8 > roots->planeSize ||
-        sizeof(obelisk_rt_managed_word_v1) > roots->planeSize - bit / 8)
+        sizeof(talos_rt_managed_word_v1) > roots->planeSize - bit / 8)
       return false;
     auto *slot =
-        reinterpret_cast<obelisk_rt_managed_word_v1 *>(roots->value + bit / 8);
+        reinterpret_cast<talos_rt_managed_word_v1 *>(roots->value + bit / 8);
     // Inline strings are immediate values. Heap strings use an aligned object
     // pointer word and can be visited in place so a moving collector updates
     // the aggregate plane before dispatch or copy-out resumes.
     if (*slot != 0 && (*slot & 3) == 0)
       visit(visitorEnvironment,
-            reinterpret_cast<obelisk_rt_object_v1 **>(slot));
+            reinterpret_cast<talos_rt_object_v1 **>(slot));
     return true;
   };
   (void)walkPlan(roots->plan.data(), roots->plan.size() / recordWords, 0, 0,
@@ -421,60 +421,60 @@ void enumerateAggregateStringRoots(void *opaque, ManagedRootVisit visit,
 
 } // namespace
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_roots_push(
-    obelisk_rt_context *context, void *value, uint64_t planeSize,
+extern "C" talos_rt_status talos_rt_v1_dpi_aggregate_roots_push(
+    talos_rt_context *context, void *value, uint64_t planeSize,
     uint64_t totalBitWidth, const int64_t *plan, uint64_t planWords,
     void **outHandle) {
   if (!context || !value || !plan || planWords == 0 ||
       planWords % recordWords != 0 || planeSize < (totalBitWidth + 7) / 8 ||
       !outHandle)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outHandle = nullptr;
   auto validate = [&](uint64_t bit, uint64_t, uint32_t category, uint32_t width,
                       uint32_t) {
     return category != 8 ||
            (width == 64 && bit % 64 == 0 && bit <= totalBitWidth &&
             64 <= totalBitWidth - bit && bit / 8 <= planeSize &&
-            sizeof(obelisk_rt_managed_word_v1) <= planeSize - bit / 8);
+            sizeof(talos_rt_managed_word_v1) <= planeSize - bit / 8);
   };
   if (!walkPlan(plan, planWords / recordWords, 0, 0, validate))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_gc_lane_v1 *lane = talos_rt_v1_gc_current_lane(context);
   if (!lane)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   std::unique_ptr<AggregateStringRoots> roots;
-  OBELISK_RT_TRY { roots = std::make_unique<AggregateStringRoots>(); }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  TALOS_RT_TRY { roots = std::make_unique<AggregateStringRoots>(); }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
   roots->lane = lane;
   roots->value = static_cast<uint8_t *>(value);
   roots->planeSize = planeSize;
   roots->totalBitWidth = totalBitWidth;
-  OBELISK_RT_TRY { roots->plan.assign(plan, plan + planWords); }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  obelisk_rt_status status = obelisk_rt_managed_roots_push(
+  TALOS_RT_TRY { roots->plan.assign(plan, plan + planWords); }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  talos_rt_status status = talos_rt_managed_roots_push(
       lane, &roots->provider, enumerateAggregateStringRoots, roots.get());
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   *outHandle = roots.release();
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dpi_aggregate_roots_pop(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_dpi_aggregate_roots_pop(talos_rt_context *context,
                                       void *handle) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (!handle)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   auto *roots = static_cast<AggregateStringRoots *>(handle);
-  if (obelisk_rt_managed_lane_context(roots->lane) != context)
-    return OBELISK_RT_INVALID_HANDLE;
-  obelisk_rt_status status =
-      obelisk_rt_managed_roots_pop(roots->lane, &roots->provider);
-  if (status != OBELISK_RT_OK)
+  if (talos_rt_managed_lane_context(roots->lane) != context)
+    return TALOS_RT_INVALID_HANDLE;
+  talos_rt_status status =
+      talos_rt_managed_roots_pop(roots->lane, &roots->provider);
+  if (status != TALOS_RT_OK)
     return status;
   delete roots;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 namespace {
@@ -548,31 +548,31 @@ bool makeOpenArrayPlan(uint32_t elementBitWidth, uint64_t elementCount,
 
 } // namespace
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_aggregate_roots_push(
-    obelisk_rt_context *context, void *value, uint64_t planeSize,
+extern "C" talos_rt_status talos_rt_v1_dpi_open_array_aggregate_roots_push(
+    talos_rt_context *context, void *value, uint64_t planeSize,
     uint64_t totalBitWidth, uint32_t elementBitWidth, uint64_t elementCount,
     uint32_t reverseElements, const int64_t *unpackedRanges,
     uint32_t unpackedDimensions, uint64_t elementCSize,
     const int64_t *elementPlan, uint64_t elementPlanWords, void **outHandle) {
   if (!outHandle)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outHandle = nullptr;
   if (elementCount == 0)
-    return totalBitWidth == 0 ? OBELISK_RT_OK : OBELISK_RT_INVALID_ARGUMENT;
+    return totalBitWidth == 0 ? TALOS_RT_OK : TALOS_RT_INVALID_ARGUMENT;
   std::vector<int64_t> plan;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     if (!makeOpenArrayPlan(elementBitWidth, elementCount, reverseElements,
                            elementCSize, unpackedRanges, unpackedDimensions,
                            elementPlan, elementPlanWords, plan))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  return obelisk_rt_v1_dpi_aggregate_roots_push(context, value, planeSize,
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  return talos_rt_v1_dpi_aggregate_roots_push(context, value, planeSize,
                                                 totalBitWidth, plan.data(),
                                                 plan.size(), outHandle);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_aggregate_pack(
+extern "C" talos_rt_status talos_rt_v1_dpi_open_array_aggregate_pack(
     const void *value, const void *unknown, uint64_t planeSize,
     uint64_t totalBitWidth, uint32_t fourState, uint32_t elementBitWidth,
     uint64_t elementCount, uint32_t reverseElements,
@@ -582,61 +582,61 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_aggregate_pack(
     uint64_t elementPlanWords) {
   if (elementCount == 0)
     return totalBitWidth == 0 && dataSize == 0 && outCapacity == 0
-               ? OBELISK_RT_OK
-               : OBELISK_RT_INVALID_ARGUMENT;
+               ? TALOS_RT_OK
+               : TALOS_RT_INVALID_ARGUMENT;
   if (elementCount > UINT64_MAX / elementBitWidth ||
       elementCount * elementBitWidth != totalBitWidth ||
       elementCount > UINT64_MAX / elementCSize ||
       elementCount * elementCSize != dataSize ||
       (elementStringCount != 0 &&
        elementCount > UINT64_MAX / elementStringCount))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint64_t strings = elementStringCount * elementCount;
   if (strings > (UINT64_MAX - dataSize) / 8 ||
       dataSize + strings * 8 != outCapacity)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::vector<int64_t> plan;
   if (!makeOpenArrayPlan(elementBitWidth, elementCount, reverseElements,
                          elementCSize, unpackedRanges, unpackedDimensions,
                          elementPlan, elementPlanWords, plan))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  return obelisk_rt_v1_dpi_aggregate_pack(
+    return TALOS_RT_INVALID_ARGUMENT;
+  return talos_rt_v1_dpi_aggregate_pack(
       value, unknown, planeSize, totalBitWidth, fourState, outData, dataSize,
       outCapacity, plan.data(), plan.size());
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dpi_open_array_aggregate_unpack(
-    obelisk_rt_context *context, const void *data, uint64_t dataSize,
+extern "C" talos_rt_status talos_rt_v1_dpi_open_array_aggregate_unpack(
+    talos_rt_context *context, const void *data, uint64_t dataSize,
     uint64_t elementCSize, const int64_t *elementPlan,
     uint64_t elementPlanWords, uint64_t elementCount, uint32_t reverseElements,
     const int64_t *unpackedRanges, uint32_t unpackedDimensions, void *outValue,
     void *outUnknown, uint64_t planeSize, uint64_t totalBitWidth,
     uint32_t fourState, uint32_t elementBitWidth) {
   if (elementCount == 0)
-    return totalBitWidth == 0 && dataSize == 0 ? OBELISK_RT_OK
-                                               : OBELISK_RT_INVALID_ARGUMENT;
+    return totalBitWidth == 0 && dataSize == 0 ? TALOS_RT_OK
+                                               : TALOS_RT_INVALID_ARGUMENT;
   if (elementCount > UINT64_MAX / elementBitWidth ||
       elementCount * elementBitWidth != totalBitWidth ||
       elementCount > UINT64_MAX / elementCSize ||
       elementCount * elementCSize != dataSize)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::vector<int64_t> plan;
   if (!makeOpenArrayPlan(elementBitWidth, elementCount, reverseElements,
                          elementCSize, unpackedRanges, unpackedDimensions,
                          elementPlan, elementPlanWords, plan))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  return obelisk_rt_v1_dpi_aggregate_unpack(
+    return TALOS_RT_INVALID_ARGUMENT;
+  return talos_rt_v1_dpi_aggregate_unpack(
       context, data, dataSize, plan.data(), plan.size(), outValue, outUnknown,
       planeSize, totalBitWidth, fourState);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_export_pack(
+extern "C" talos_rt_status talos_rt_v1_dpi_aggregate_export_pack(
     const void *value, const void *unknown, uint64_t planeSize,
     uint64_t totalBitWidth, uint32_t fourState, void *outData, uint64_t cSize,
     const int64_t *plan, uint64_t planWords, uint32_t outputSlot) {
   if (!outData || !plan || planWords == 0 || planWords % recordWords != 0 ||
       cSize > SIZE_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint64_t stringCount = 0;
   auto count = [&](uint64_t, uint64_t, uint32_t category, uint32_t, uint32_t) {
     if (category == 8) {
@@ -649,13 +649,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_export_pack(
   if (!walkPlan(plan, planWords / recordWords, 0, 0, count) ||
       stringCount > (UINT64_MAX - cSize) / 8 ||
       cSize + stringCount * 8 > SIZE_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint64_t capacity = cSize + stringCount * 8;
   std::vector<uint8_t> temporary(static_cast<size_t>(capacity));
-  obelisk_rt_status status = obelisk_rt_v1_dpi_aggregate_pack(
+  talos_rt_status status = talos_rt_v1_dpi_aggregate_pack(
       value, unknown, planeSize, totalBitWidth, fourState, temporary.data(),
       cSize, capacity, plan, planWords);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   if (aggregateExportStrings.size() <= outputSlot)
     aggregateExportStrings.resize(static_cast<size_t>(outputSlot) + 1);
@@ -678,19 +678,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_export_pack(
     return true;
   };
   if (!walkPlan(plan, planWords / recordWords, 0, 0, retain))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::memcpy(outData, temporary.data(), static_cast<size_t>(cSize));
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_state_alloc(
-    obelisk_rt_context *context, uint64_t totalBitWidth, const uint8_t *value,
+extern "C" talos_rt_status talos_rt_v1_dpi_aggregate_state_alloc(
+    talos_rt_context *context, uint64_t totalBitWidth, const uint8_t *value,
     const uint8_t *unknown, const int64_t *plan, uint64_t planWords,
     uint64_t *outHandle) {
   if (!context || !value || !plan || !outHandle || totalBitWidth == 0 ||
       planWords == 0 || planWords % recordWords != 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  std::vector<obelisk_rt_managed_root_slot_v1> slots;
+    return TALOS_RT_INVALID_ARGUMENT;
+  std::vector<talos_rt_managed_root_slot_v1> slots;
   auto collect = [&](uint64_t bit, uint64_t, uint32_t category, uint32_t width,
                      uint32_t) {
     if (bit > totalBitWidth || width > totalBitWidth - bit)
@@ -699,11 +699,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_state_alloc(
       return true;
     if (width != 64 || (bit & 63) != 0)
       return false;
-    slots.push_back({bit, OBELISK_RT_MANAGED_ROOT_KIND_STRING, 0});
+    slots.push_back({bit, TALOS_RT_MANAGED_ROOT_KIND_STRING, 0});
     return true;
   };
   if (!walkPlan(plan, planWords / recordWords, 0, 0, collect) || slots.empty())
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (!std::is_sorted(slots.begin(), slots.end(),
                       [](const auto &lhs, const auto &rhs) {
                         return lhs.bit_offset < rhs.bit_offset;
@@ -715,8 +715,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dpi_aggregate_state_alloc(
                          [](const auto &lhs, const auto &rhs) {
                            return lhs.bit_offset == rhs.bit_offset;
                          }) != slots.end())
-    return OBELISK_RT_INVALID_ARGUMENT;
-  return obelisk_rt_v1_native_state_alloc_with_typed_roots(
+    return TALOS_RT_INVALID_ARGUMENT;
+  return talos_rt_v1_native_state_alloc_with_typed_roots(
       context, totalBitWidth, value, unknown, slots.data(), slots.size(),
       outHandle);
 }

@@ -2,9 +2,9 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Analysis/SimulationStorageAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/SimulationStorageAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -15,7 +15,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 struct ManagedOverrideValue {
@@ -74,14 +74,14 @@ public:
       Type i64 = rewriter.getI64Type();
       Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
       Value contextAddress = LLVM::AddressOfOp::create(
-          rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+          rewriter, op.getLoc(), pointer, "__talos_current_context");
       Value context = LLVM::LoadOp::create(rewriter, op.getLoc(), pointer,
                                            contextAddress, 8);
       Value status =
           LLVM::CallOp::create(
               rewriter, op.getLoc(), TypeRange{i32},
               SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v1_object_override"),
+                                 "talos_rt_v1_object_override"),
               ValueRange{
                   managedObjectPointer(rewriter, op.getLoc(),
                                        adaptor.getTarget()[0]),
@@ -98,7 +98,7 @@ public:
               .getResult();
       LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{},
                            SymbolRefAttr::get(rewriter.getContext(),
-                                              "obelisk_rt_v1_scheduler_fail"),
+                                              "talos_rt_v1_scheduler_fail"),
                            ValueRange{context, status});
       rewriter.eraseOp(op);
       return success();
@@ -127,21 +127,21 @@ public:
                             unknownStorage, 1);
     }
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value context =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     Value globalValue = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                  "__obelisk_state_value");
+                                                  "__talos_state_value");
     Value globalUnknown = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                    "__obelisk_state_unknown");
+                                                    "__talos_state_unknown");
     uint32_t descriptorKind = isa<sim::NetType>(op.getTarget().getType())
-                                  ? OBELISK_RT_DESCRIPTOR_NET
-                                  : OBELISK_RT_DESCRIPTOR_STORAGE;
+                                  ? TALOS_RT_DESCRIPTOR_NET
+                                  : TALOS_RT_DESCRIPTOR_STORAGE;
     Value status =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_native_override"),
+                               "talos_rt_v1_native_override"),
             ValueRange{
                 context, globalValue, globalUnknown,
                 llvmConstant(rewriter, location, i64, stateBitCount),
@@ -153,7 +153,7 @@ public:
             .getResult();
     LLVM::CallOp::create(rewriter, location, TypeRange{},
                          SymbolRefAttr::get(rewriter.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
+                                            "talos_rt_v1_scheduler_fail"),
                          ValueRange{context, status});
     rewriter.eraseOp(op);
     return success();
@@ -189,14 +189,14 @@ public:
       Type i64 = rewriter.getI64Type();
       Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
       Value contextAddress = LLVM::AddressOfOp::create(
-          rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+          rewriter, op.getLoc(), pointer, "__talos_current_context");
       Value context = LLVM::LoadOp::create(rewriter, op.getLoc(), pointer,
                                            contextAddress, 8);
       Value status =
           LLVM::CallOp::create(
               rewriter, op.getLoc(), TypeRange{i32},
               SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v1_object_override"),
+                                 "talos_rt_v1_object_override"),
               ValueRange{
                   managedObjectPointer(rewriter, op.getLoc(),
                                        adaptor.getTarget()[0]),
@@ -214,7 +214,7 @@ public:
               .getResult();
       LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{},
                            SymbolRefAttr::get(rewriter.getContext(),
-                                              "obelisk_rt_v1_scheduler_fail"),
+                                              "talos_rt_v1_scheduler_fail"),
                            ValueRange{context, status});
       rewriter.eraseOp(op);
       return success();
@@ -243,21 +243,21 @@ public:
                             unknownStorage, 1);
     }
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value context =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     Value globalValue = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                  "__obelisk_state_value");
+                                                  "__talos_state_value");
     Value globalUnknown = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                    "__obelisk_state_unknown");
+                                                    "__talos_state_unknown");
     uint32_t descriptorKind = isa<sim::NetType>(op.getTarget().getType())
-                                  ? OBELISK_RT_DESCRIPTOR_NET
-                                  : OBELISK_RT_DESCRIPTOR_STORAGE;
+                                  ? TALOS_RT_DESCRIPTOR_NET
+                                  : TALOS_RT_DESCRIPTOR_STORAGE;
     Value status =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_native_dynamic_override"),
+                               "talos_rt_v1_native_dynamic_override"),
             ValueRange{
                 context, globalValue, globalUnknown,
                 llvmConstant(rewriter, location, i64, stateBitCount),
@@ -271,7 +271,7 @@ public:
             .getResult();
     LLVM::CallOp::create(rewriter, location, TypeRange{},
                          SymbolRefAttr::get(rewriter.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
+                                            "talos_rt_v1_scheduler_fail"),
                          ValueRange{context, status});
     rewriter.eraseOp(op);
     return success();
@@ -309,14 +309,14 @@ public:
       Type i64 = rewriter.getI64Type();
       Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
       Value contextAddress = LLVM::AddressOfOp::create(
-          rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+          rewriter, op.getLoc(), pointer, "__talos_current_context");
       Value context = LLVM::LoadOp::create(rewriter, op.getLoc(), pointer,
                                            contextAddress, 8);
       Value status =
           LLVM::CallOp::create(
               rewriter, op.getLoc(), TypeRange{i32},
               SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v1_object_release_override"),
+                                 "talos_rt_v1_object_release_override"),
               ValueRange{
                   managedObjectPointer(rewriter, op.getLoc(),
                                        adaptor.getTarget()[0]),
@@ -329,7 +329,7 @@ public:
               .getResult();
       LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{},
                            SymbolRefAttr::get(rewriter.getContext(),
-                                              "obelisk_rt_v1_scheduler_fail"),
+                                              "talos_rt_v1_scheduler_fail"),
                            ValueRange{context, status});
       rewriter.eraseOp(op);
       return success();
@@ -349,21 +349,21 @@ public:
     IntegerType i64 = rewriter.getI64Type();
     Location location = op.getLoc();
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value context =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     Value globalValue = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                  "__obelisk_state_value");
+                                                  "__talos_state_value");
     Value globalUnknown = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                    "__obelisk_state_unknown");
+                                                    "__talos_state_unknown");
     uint32_t descriptorKind = isa<sim::NetType>(op.getTarget().getType())
-                                  ? OBELISK_RT_DESCRIPTOR_NET
-                                  : OBELISK_RT_DESCRIPTOR_STORAGE;
+                                  ? TALOS_RT_DESCRIPTOR_NET
+                                  : TALOS_RT_DESCRIPTOR_STORAGE;
     Value status =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_native_release_override"),
+                               "talos_rt_v1_native_release_override"),
             ValueRange{context, globalValue, globalUnknown,
                        llvmConstant(rewriter, location, i64, stateBitCount),
                        adaptor.getTarget().front(),
@@ -374,7 +374,7 @@ public:
             .getResult();
     LLVM::CallOp::create(rewriter, location, TypeRange{},
                          SymbolRefAttr::get(rewriter.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
+                                            "talos_rt_v1_scheduler_fail"),
                          ValueRange{context, status});
     rewriter.eraseOp(op);
     return success();
@@ -395,4 +395,4 @@ void populateOverrideToLLVMConversionPatterns(
                                           stateBitCount, dataLayout);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

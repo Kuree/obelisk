@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s | FileCheck %s
+// RUN: talos-opt %s | FileCheck %s
 
 module attributes {
   test.bool_property = #simulation.vpi_property<

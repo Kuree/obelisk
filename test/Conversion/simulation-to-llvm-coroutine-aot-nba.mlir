@@ -1,15 +1,15 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba),convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir
 // RUN: FileCheck %s --implicit-check-not=simulation.nba.enqueue < %t.mlir
 // RUN: FileCheck %s --check-prefix=PERIODIC < %t.mlir
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --check-prefix=DIRECT --implicit-check-not='llvm.call @obelisk_rt_v1_scheduler_static_transition'
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' \
+// RUN:   | FileCheck %s --check-prefix=DIRECT --implicit-check-not='llvm.call @talos_rt_v1_scheduler_static_transition'
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=DIRECT
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-set-module-attributes{attrs="{schedule.native_scheduler = 3 : i32}"},simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=TWO-STATE
-// RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-set-module-attributes{attrs="{schedule.native_scheduler = 3 : i32}"},simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=TWO-STATE
+// RUN: talos-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=PERIODIC-ANALYSIS
 
 // PERIODIC-ANALYSIS: native-aot eligible=true fully=true selected=true periodic=true
@@ -145,23 +145,23 @@ module attributes {
 }
 
 
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_aot_nba_roots_v1
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_aot_nba_sites_v1
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_aot_nba_accumulator_0
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_aot_nba_dirty_roots_v1
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_aot_nba_dirty_summary_v1
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_periodic_clock_plan_v1
-// CHECK-DAG: llvm.func @__obelisk_aot_static_nba_commit_v1
-// CHECK-DAG: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_aot_nba_roots_v1
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_aot_nba_sites_v1
+// CHECK-DAG: llvm.mlir.global internal @__talos_aot_nba_accumulator_0
+// CHECK-DAG: llvm.mlir.global internal @__talos_aot_nba_dirty_roots_v1
+// CHECK-DAG: llvm.mlir.global internal @__talos_aot_nba_dirty_summary_v1
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_periodic_clock_plan_v1
+// CHECK-DAG: llvm.func @__talos_aot_static_nba_commit_v1
+// CHECK-DAG: llvm.mlir.addressof @__talos_aot_nba_accumulator_0
 // CHECK-DAG: llvm.store
-// CHECK-DAG: llvm.call @obelisk_rt_v1_static_nba_commit_roots
-// CHECK-DAG: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
-// CHECK-NOT: llvm.call @obelisk_rt_v1_static_nba_claim
+// CHECK-DAG: llvm.call @talos_rt_v1_static_nba_commit_roots
+// CHECK-DAG: llvm.call @talos_rt_v1_scheduler_run_aot_nodes
+// CHECK-NOT: llvm.call @talos_rt_v1_static_nba_claim
 
 // Structural periodic-clock planning is independent of symbol names and sorts
 // the physical clocks by half-period. The fast clock (2) must precede the slow
 // clock (3), even though the root spawns slow first.
-// PERIODIC-LABEL: llvm.mlir.global internal constant @__obelisk_periodic_clock_plan_v1
+// PERIODIC-LABEL: llvm.mlir.global internal constant @__talos_periodic_clock_plan_v1
 // PERIODIC: llvm.mlir.constant(2 : i64) : i64
 // PERIODIC: llvm.insertvalue {{.*}}[5]
 // PERIODIC: llvm.insertvalue {{.*}}[0]
@@ -169,22 +169,22 @@ module attributes {
 // PERIODIC: llvm.insertvalue {{.*}}[5]
 // PERIODIC: llvm.insertvalue {{.*}}[1]
 
-// DIRECT: llvm.func @__obelisk_aot_static_nba_commit_v1
+// DIRECT: llvm.func @__talos_aot_static_nba_commit_v1
 // Writable capability alone must not remove the generated scalar barrier.
 // The runtime guard below rejects dirty roots, live observers, and handoffs.
-// DIRECT: llvm.call @obelisk_rt_v1_static_nba_direct_commit_guard
-// DIRECT: llvm.mlir.addressof @__obelisk_state_value
-// DIRECT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// DIRECT: llvm.call @talos_rt_v1_static_nba_direct_commit_guard
+// DIRECT: llvm.mlir.addressof @__talos_state_value
+// DIRECT: llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // DIRECT: llvm.load
 // DIRECT: llvm.store
 // DIRECT: llvm.select
-// DIRECT: llvm.call @obelisk_rt_v1_scheduler_activate_static_nodes
-// DIRECT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// DIRECT: llvm.call @talos_rt_v1_scheduler_activate_static_nodes
+// DIRECT: llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // DIRECT: llvm.xor
 // DIRECT: llvm.and
 // DIRECT: llvm.store
-// DIRECT: llvm.call @obelisk_rt_v1_static_nba_account_generated_commits
-// DIRECT: llvm.call @obelisk_rt_v1_static_nba_commit_roots
+// DIRECT: llvm.call @talos_rt_v1_static_nba_account_generated_commits
+// DIRECT: llvm.call @talos_rt_v1_static_nba_commit_roots
 
 // A stale four-state staged unknown plane must not leak through promotion.
 // The transitional two-state barrier clears canonical unknown bits once; the
@@ -198,33 +198,33 @@ module attributes {
 // Generated spawns are context-bound, so process construction reuses the
 // immutable design image validated by context creation instead of reparsing
 // it once per process.
-// TWO-STATE-DAG: llvm.func @obelisk_rt_v1_process_spawn(!llvm.ptr, !llvm.ptr, !llvm.ptr) -> i64
-// TWO-STATE-LABEL: llvm.func @root.__obelisk_spawn(
+// TWO-STATE-DAG: llvm.func @talos_rt_v1_process_spawn(!llvm.ptr, !llvm.ptr, !llvm.ptr) -> i64
+// TWO-STATE-LABEL: llvm.func @root.__talos_spawn(
 // TWO-STATE-SAME: %[[SPAWN_CTX:.*]]: !llvm.ptr)
-// TWO-STATE: llvm.call @obelisk_rt_v1_process_spawn(%[[SPAWN_CTX]], {{.*}}, {{.*}})
-// TWO-STATE-LABEL: llvm.func @__obelisk_eval_dispatch_v1
+// TWO-STATE: llvm.call @talos_rt_v1_process_spawn(%[[SPAWN_CTX]], {{.*}}, {{.*}})
+// TWO-STATE-LABEL: llvm.func @__talos_eval_dispatch_v1
 // TWO-STATE-SAME: alignment = 64 : i64
-// TWO-STATE: %[[DIRTY_ROOTS:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// TWO-STATE: %[[DIRTY_ROOTS:.*]] = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // TWO-STATE: llvm.load {{.*}} : !llvm.ptr -> i64
 // TWO-STATE: llvm.icmp "ne" {{.*}} : i64
 // TWO-STATE: llvm.cond_br
-// TWO-STATE: llvm.call @__obelisk_aot_static_nba_commit_two_state_fast_v1
-// TWO-STATE: llvm.call @__obelisk_aot_static_nba_commit_two_state_v1
-// TWO-STATE-LABEL: llvm.func internal @__obelisk_aot_static_nba_commit_two_state_v1
-// TWO-STATE: %[[CANON_UNKNOWN:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
-// TWO-STATE: %[[CANON_ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
+// TWO-STATE: llvm.call @__talos_aot_static_nba_commit_two_state_fast_v1
+// TWO-STATE: llvm.call @__talos_aot_static_nba_commit_two_state_v1
+// TWO-STATE-LABEL: llvm.func internal @__talos_aot_static_nba_commit_two_state_v1
+// TWO-STATE: %[[CANON_UNKNOWN:.*]] = llvm.mlir.addressof @__talos_state_unknown
+// TWO-STATE: %[[CANON_ACC:.*]] = llvm.mlir.addressof @__talos_aot_nba_accumulator_0
 // TWO-STATE: llvm.getelementptr %[[CANON_ACC]][32]
 // TWO-STATE-NEXT: {{.*}} = llvm.mlir.zero : i64
 // TWO-STATE: llvm.getelementptr %[[CANON_UNKNOWN]]
-// TWO-STATE-LABEL: llvm.func internal @__obelisk_aot_static_nba_commit_two_state_fast_v1
+// TWO-STATE-LABEL: llvm.func internal @__talos_aot_static_nba_commit_two_state_fast_v1
 // TWO-STATE-SAME: alignment = 128 : i64
 // The production materializer specializes the clone to the steady two-state
 // region and accesses an aligned byte root at its declared width. This is an
 // actual pass-pipeline check: widening it back to the packed 64-bit fallback
 // would reintroduce the adjacent-byte read/modify/write on the hot path.
 // TWO-STATE: llvm.mlir.constant(2 : i32) : i32
-// TWO-STATE: %[[FAST_UNKNOWN:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
-// TWO-STATE: %[[FAST_ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
+// TWO-STATE: %[[FAST_UNKNOWN:.*]] = llvm.mlir.addressof @__talos_state_unknown
+// TWO-STATE: %[[FAST_ACC:.*]] = llvm.mlir.addressof @__talos_aot_nba_accumulator_0
 // TWO-STATE: llvm.getelementptr %[[FAST_ACC]][32]
 // TWO-STATE-NEXT: {{.*}} = llvm.mlir.zero : i64
 // TWO-STATE: %[[FAST_VALUE_ADDR:.*]] = llvm.getelementptr {{.*}}[0]
@@ -234,7 +234,7 @@ module attributes {
 // The independent one-bit NBA root is byte-aligned by the production state
 // layout and uses an exact i8 access too. This checks the actual sub-byte
 // transformation rather than merely an already byte-wide source declaration.
-// TWO-STATE: %[[BIT_ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_1
+// TWO-STATE: %[[BIT_ACC:.*]] = llvm.mlir.addressof @__talos_aot_nba_accumulator_1
 // TWO-STATE: %[[BIT_OLD8:.*]] = llvm.load {{.*}} {{.*}} : !llvm.ptr -> i8
 // TWO-STATE: %[[BIT_NEW8:.*]] = llvm.trunc {{.*}} : i64 to i8
 // TWO-STATE: llvm.store %[[BIT_NEW8]], {{.*}} {{.*}} : i8, !llvm.ptr

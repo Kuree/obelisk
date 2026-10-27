@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir 2>&1 | FileCheck %s --check-prefix=PLAN
 // RUN: FileCheck %s --check-prefix=LOWER < %t.mlir
 
 // IEEE 1800-2023 4.4.2.3 and 4.5: a deferred kernel resumes in the Inactive
@@ -14,10 +14,10 @@
 // The finisher is a generated Active owner. The coordinator polls the latch
 // when the selected bit is deferred and stops on a finish.
 
-// PLAN: obelisk eval owner: bit=0 {{.*}}executor={{[^ ]*}}{{$}}
-// PLAN-NEXT: obelisk eval owner: bit=1 {{.*}} deferred{{$}}
+// PLAN: talos eval owner: bit=0 {{.*}}executor={{[^ ]*}}{{$}}
+// PLAN-NEXT: talos eval owner: bit=1 {{.*}} deferred{{$}}
 
-// LOWER-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
+// LOWER-LABEL: llvm.func @__talos_eval_dispatch_v1(
 // LOWER-NOT: prepare_eval_nba
 // LOWER: %[[BIT:.*]] = llvm.add
 // LOWER: %[[FIRST:.*]] = llvm.mlir.constant(1 : i64)
@@ -26,7 +26,7 @@
 // LOWER-NEXT: ^[[SWITCH]](%[[OWNER:.*]]: i64):
 // LOWER-NEXT: llvm.switch %[[OWNER]] : i64, ^[[STOPPED:bb[0-9]+]] [
 // LOWER: ^[[POLL]]:
-// LOWER-NEXT: %[[LATCH:.*]] = llvm.call @obelisk_rt_v1_scheduler_termination_requested(%arg1)
+// LOWER-NEXT: %[[LATCH:.*]] = llvm.call @talos_rt_v1_scheduler_termination_requested(%arg1)
 // LOWER-NEXT: %[[ZERO:.*]] = llvm.mlir.constant(0 : i32)
 // LOWER-NEXT: %[[FINISHED:.*]] = llvm.icmp "ne" %[[LATCH]], %[[ZERO]]
 // LOWER-NEXT: llvm.cond_br %[[FINISHED]], ^[[STOPPED]], ^[[SWITCH]](%[[BIT]] : i64)
@@ -109,19 +109,19 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // runtime Active and Inactive work. Once quiescent, the coordinator polls the
 // latch and only then runs the lowest pending deferred owner.
 
-// PLAN: obelisk eval owner: bit=0 {{.*}} deferred{{$}}
+// PLAN: talos eval owner: bit=0 {{.*}} deferred{{$}}
 
-// LOWER-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// LOWER: llvm.call @obelisk_rt_v1_scheduler_prepare_eval_nba(
+// LOWER-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// LOWER: llvm.call @talos_rt_v1_scheduler_prepare_eval_nba(
 // LOWER: %[[EMPTY:.*]] = llvm.icmp "eq" %{{.*}}, %{{.*}} : i64
 // LOWER-NEXT: llvm.cond_br %[[EMPTY]], ^[[CUT:bb[0-9]+]], ^[[SELECT:bb[0-9]+]]
 // LOWER-NEXT: ^[[SELECT]]:
 // LOWER: %[[DEFERRED:.*]] = llvm.icmp "uge"
 // LOWER-NEXT: llvm.cond_br %[[DEFERRED]], ^[[CUT]], ^[[SWITCH:bb[0-9]+]](
-// LOWER: llvm.call @obelisk_rt_v1_scheduler_termination_requested(%arg1)
+// LOWER: llvm.call @talos_rt_v1_scheduler_termination_requested(%arg1)
 // LOWER: llvm.cond_br %{{.*}}, ^{{bb[0-9]+}}, ^[[SCAN:bb[0-9]+]]
 // LOWER-NEXT: ^[[SCAN]]:
-// LOWER: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// LOWER: llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // LOWER: "llvm.intr.cttz"
 // LOWER: llvm.br ^[[SWITCH]](
 

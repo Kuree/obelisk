@@ -10,9 +10,9 @@ extern unsigned char acc4095[136];
 extern unsigned char acc4096[136];
 static unsigned char *const captures[] = {
 acc0, acc1, acc63, acc64, acc127, acc128, acc4095, acc4096};
-uint32_t obelisk_rt_v1_static_nba_specialization_guard_write(
+uint32_t talos_rt_v1_static_nba_specialization_guard_write(
         void *context, uint32_t root) { return 1; }
-uint32_t obelisk_rt_v1_scheduler_execute_aot_actor(void *context, uint32_t slot) {
+uint32_t talos_rt_v1_scheduler_execute_aot_actor(void *context, uint32_t slot) {
   uint64_t sum = 0;
   for (unsigned i = 0; i != sizeof(captures) / sizeof(*captures); ++i) {
     unsigned char *p = captures[i];
@@ -22,7 +22,7 @@ uint32_t obelisk_rt_v1_scheduler_execute_aot_actor(void *context, uint32_t slot)
   }
   return sum == 292 ? 0 : 1;
 }
-uint32_t obelisk_rt_v1_scheduler_prepare_eval_nba_local_write(
+uint32_t talos_rt_v1_scheduler_prepare_eval_nba_local_write(
         void *context, uint32_t local, uint32_t *region) {
   *region = UINT32_MAX;
   return local == 2 ? 0 : 1;

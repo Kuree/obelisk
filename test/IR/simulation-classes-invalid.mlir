@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 module {
   simulation.design @empty_random_reference_inventory {
@@ -1079,20 +1079,20 @@ module {
   simulation.design @unmarked_object_plan {
     simulation.scope.decl 0
     simulation.code_unit.decl 1 in 0 function hierarchy "cast"
-    simulation.class.decl @__obelisk_class_s3_C id 1 {
+    simulation.class.decl @__talos_class_s3_C id 1 {
       is_abstract = false, is_final = true, is_interface = false
     }
     simulation.func private @cast(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
-        %source: !simulation.class_handle<@__obelisk_class_s3_C>
+        %source: !simulation.class_handle<@__talos_class_s3_C>
             {simulation.capture_kind = 1 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
       // expected-error @+2 {{object plan requires the class bit-stream source feature marker}}
       %result, %matched, %watch =
           simulation.recursive.export_bitstream %source {
             plan = array<i64: 9702691408, 1, 64, 0,
-                5, 0, 3235077357463657086, 0, 64, 0>
-          } : (!simulation.class_handle<@__obelisk_class_s3_C>) ->
+                5, 0, -7123445604761477980, 0, 64, 0>
+          } : (!simulation.class_handle<@__talos_class_s3_C>) ->
               (i8, i1, !simulation.managed_watch)
       simulation.return
     }

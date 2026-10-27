@@ -4,12 +4,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEENCODER_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEENCODER_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEENCODER_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEENCODER_H
 
 #include "BytecodeEncoding.h"
 #include "BytecodePlan.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
+#include "talos/Conversion/SimulationToBytecode.h"
 
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Support/LLVM.h"
@@ -30,7 +30,7 @@ namespace llvm {
 class DataLayout;
 }
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 class Encoder {
 public:
@@ -167,7 +167,7 @@ private:
   mlir::LogicalResult
   encodeHandle(FunctionPlan &plan, mlir::Value result, uint64_t id,
                const llvm::DenseMap<uint64_t, uint64_t> &offsets,
-               obelisk_rt_descriptor_kind kind);
+               talos_rt_descriptor_kind kind);
   mlir::LogicalResult encodeHandleOffsetRegister(FunctionPlan &plan,
                                                  mlir::Value result,
                                                  mlir::Value input,
@@ -192,8 +192,8 @@ private:
                                          sim::SimSuspendObserveOp operation);
   mlir::LogicalResult encodeWait(FunctionPlan &plan, mlir::Operation *operation,
                                  mlir::ValueRange continuationOperands,
-                                 obelisk_rt_suspend_kind kind,
-                                 obelisk_rt_wait_flags flags,
+                                 talos_rt_suspend_kind kind,
+                                 talos_rt_wait_flags flags,
                                  llvm::ArrayRef<uint32_t> edges,
                                  llvm::ArrayRef<mlir::Value> watched,
                                  mlir::Value delay = {}, uint64_t payload = 0,
@@ -231,6 +231,6 @@ private:
   bool requiresRecursiveBitstreamFeature = false;
 };
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEENCODER_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEENCODER_H

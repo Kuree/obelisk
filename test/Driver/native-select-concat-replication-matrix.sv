@@ -1,9 +1,9 @@
-// RUN: obelisk -O3 --top=top %s -o %t.native
+// RUN: talos -O3 --top=top %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --top=top --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --top=top --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
-// RUN: obelisk -O0 --top=top -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
+// RUN: talos -O0 --top=top -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
 
 module top;
   bit seed;

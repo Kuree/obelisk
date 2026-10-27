@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim -O0 --vpi=off %s 2>&1 | FileCheck %s
+// RUN: not talos -emit-sim -O0 --vpi=off %s 2>&1 | FileCheck %s
 
 module scan_binary_suppression_invalid;
   string source;

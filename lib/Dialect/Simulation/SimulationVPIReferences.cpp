@@ -1,11 +1,11 @@
 //===- SimulationVPIReferences.cpp - Contextual VPI identities ------------===//
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationVPI.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationVPI.h"
 
 using namespace mlir;
 
-namespace obelisk::sim {
+namespace talos::sim {
 LogicalResult verifyVPIDefinitionMemberRef(Operation *use, SimDesignOp design,
                                            VPIObjectRefAttr reference,
                                            SymbolTableCollection &symbols) {
@@ -27,4 +27,4 @@ LogicalResult verifyVPIDefinitionMemberRef(Operation *use, SimDesignOp design,
   return use->emitOpError("references an unknown VPI member instance scope");
 }
 
-} // namespace obelisk::sim
+} // namespace talos::sim

@@ -1,0 +1,2031 @@
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+//===- LowerUnitControlFlow.cpp - Lower loops, blocks, and forks -------===//
+
+#include "LowerUnit.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+
+#include "talos/Dialect/ForeachLoopMetadata.h"
+
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
+
+#include <functional>
+#include <limits>
+#include <string>
+#include <utility>
+
+using namespace mlir;
+
+namespace talos::simlowering {
+
+LogicalResult UnitLowering::lowerWhile(Operation *op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.size() != 2) {
+    unsupported(op) << " (while loop arity)";
+    return failure();
+  }
+  Block *conditionBlock = addBlock();
+  Block *bodyBlock = addBlock();
+  Block *exitBlock = addBlock();
+  emitBranch(conditionBlock);
+  setCurrent(conditionBlock);
+  emitVPICheckpoint(op);
+  FailureOr<Value> conditionValue = lowerExpression(children[0]);
+  if (failed(conditionValue))
+    return failure();
+  FailureOr<Value> condition = truthValue(*conditionValue, location);
+  if (failed(condition))
+    return failure();
+  cf::CondBranchOp::create(builder, location, *condition, bodyBlock,
+                           ValueRange{}, exitBlock, ValueRange{});
+  loopTargets.push_back({exitBlock,
+                         conditionBlock,
+                         {},
+                         controlScopes.size(),
+                         vpiFrameScopes.size()});
+  setCurrent(bodyBlock);
+  if (failed(lowerStatement(children[1])))
+    return failure();
+  emitBranch(conditionBlock);
+  loopTargets.pop_back();
+  setCurrent(exitBlock);
+  return success();
+}
+
+LogicalResult UnitLowering::lowerDoWhile(Operation *op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  // The semantic inventory is condition followed by body, even though the
+  // body appears first in source.
+  if (children.size() != 2) {
+    unsupported(op) << " (do-while loop arity)";
+    return failure();
+  }
+  Block *bodyBlock = addBlock();
+  Block *conditionBlock = addBlock();
+  Block *exitBlock = addBlock();
+  emitBranch(bodyBlock);
+
+  loopTargets.push_back({exitBlock,
+                         conditionBlock,
+                         {},
+                         controlScopes.size(),
+                         vpiFrameScopes.size()});
+  setCurrent(bodyBlock);
+  if (failed(lowerStatement(children[1])))
+    return failure();
+  emitBranch(conditionBlock);
+
+  setCurrent(conditionBlock);
+  emitVPICheckpoint(op);
+  FailureOr<Value> conditionValue = lowerExpression(children[0]);
+  if (failed(conditionValue))
+    return failure();
+  FailureOr<Value> condition = truthValue(*conditionValue, location);
+  if (failed(condition))
+    return failure();
+  cf::CondBranchOp::create(builder, location, *condition, bodyBlock,
+                           ValueRange{}, exitBlock, ValueRange{});
+  loopTargets.pop_back();
+  setCurrent(exitBlock);
+  return success();
+}
+
+LogicalResult UnitLowering::lowerFor(semantic::SVForLoopStatementOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  uint64_t initializerCount = op.getInitializerCount();
+  uint64_t stepCount = op.getStepCount();
+  size_t conditionCount = op.getHasCondition() ? 1 : 0;
+  if (initializerCount > children.size() ||
+      conditionCount > children.size() - initializerCount ||
+      stepCount > children.size() - initializerCount - conditionCount ||
+      children.size() - initializerCount - conditionCount - stepCount != 1) {
+    op.emitError("malformed for-loop child inventory");
+    return failure();
+  }
+  size_t initializerSize = static_cast<size_t>(initializerCount);
+  size_t stepSize = static_cast<size_t>(stepCount);
+
+  ArrayRef<Operation *> inventory(children);
+  ArrayRef<Operation *> initializers = inventory.take_front(initializerSize);
+  Operation *condition =
+      op.getHasCondition() ? children[initializerSize] : nullptr;
+  ArrayRef<Operation *> steps =
+      inventory.slice(initializerSize + conditionCount, stepSize);
+  Operation *body = children.back();
+
+  // SystemVerilog evaluates expression initializers once, in source order,
+  // before the first condition check. Loop-variable declarations are separate
+  // declaration statements in the enclosing semantic block and have already
+  // been lowered before this node.
+  for (Operation *initializer : initializers) {
+    emitVPICheckpoint(initializer);
+    if (failed(lowerExpression(initializer)))
+      return failure();
+  }
+
+  Block *conditionBlock = addBlock();
+  Block *bodyBlock = addBlock();
+  Block *stepBlock = addBlock();
+  Block *exitBlock = addBlock();
+  emitBranch(conditionBlock);
+
+  setCurrent(conditionBlock);
+  emitVPICheckpoint(op);
+  if (condition) {
+    FailureOr<Value> conditionValue = lowerExpression(condition);
+    if (failed(conditionValue))
+      return failure();
+    FailureOr<Value> truth = truthValue(*conditionValue, location);
+    if (failed(truth))
+      return failure();
+    cf::CondBranchOp::create(builder, location, *truth, bodyBlock, ValueRange{},
+                             exitBlock, ValueRange{});
+  } else {
+    cf::BranchOp::create(builder, location, bodyBlock);
+  }
+
+  loopTargets.push_back(
+      {exitBlock, stepBlock, {}, controlScopes.size(), vpiFrameScopes.size()});
+  setCurrent(bodyBlock);
+  if (failed(lowerStatement(body)))
+    return failure();
+  emitBranch(stepBlock);
+
+  setCurrent(stepBlock);
+  for (Operation *step : steps) {
+    emitVPICheckpoint(step);
+    if (failed(lowerExpression(step)))
+      return failure();
+  }
+  emitBranch(conditionBlock);
+  loopTargets.pop_back();
+  setCurrent(exitBlock);
+  return success();
+}
+
+LogicalResult UnitLowering::lowerForever(Operation *op) {
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.size() != 1) {
+    unsupported(op) << " (forever loop arity)";
+    return failure();
+  }
+  Block *bodyBlock = addBlock();
+  Block *exitBlock = addBlock();
+  emitBranch(bodyBlock);
+
+  loopTargets.push_back(
+      {exitBlock, bodyBlock, {}, controlScopes.size(), vpiFrameScopes.size()});
+  setCurrent(bodyBlock);
+  if (failed(lowerStatement(children.front())))
+    return failure();
+  emitBranch(bodyBlock);
+  loopTargets.pop_back();
+  setCurrent(exitBlock);
+  return success();
+}
+
+LogicalResult
+UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.size() != 2) {
+    unsupported(op) << " (expected array expression and body)";
+    return failure();
+  }
+
+  struct SavedObserverCapture {
+    std::string path;
+    Value value;
+    bool existed;
+  };
+  SmallVector<SavedObserverCapture> savedObserverCaptures;
+  llvm::scope_exit restoreObserverCaptures([&] {
+    for (const SavedObserverCapture &capture : savedObserverCaptures) {
+      if (capture.existed)
+        observerCaptureOverrides[capture.path] = capture.value;
+      else
+        observerCaptureOverrides.erase(capture.path);
+    }
+  });
+  auto allocateObserverCapture = [&](StringRef path,
+                                     Type type) -> FailureOr<Value> {
+    auto previous = observerCaptureOverrides.find(path);
+    savedObserverCaptures.push_back(
+        {path.str(),
+         previous == observerCaptureOverrides.end() ? Value{}
+                                                    : previous->second,
+         previous != observerCaptureOverrides.end()});
+    Value initial = createDefaultValue(builder, location, type);
+    if (!initial) {
+      emitError(location) << "cannot initialize foreach iterator capture '"
+                          << path << "' of type " << type;
+      return failure();
+    }
+    Value reference = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(function.getContext(), type),
+        initial);
+    observerCaptureOverrides[path] = reference;
+    return reference;
+  };
+
+  if (foreach_metadata::hasRuntimeDimension(op.getLoopDimensions())) {
+    struct RuntimeDimension {
+      bool hasIterator = false;
+      bool runtime = false;
+      bool observerCapture = false;
+      int64_t left = 0;
+      int64_t right = 0;
+      std::string iteratorPath;
+      Type iteratorType;
+      Value observerReference;
+    };
+    SmallVector<RuntimeDimension> dimensions;
+    for (Attribute attribute : op.getLoopDimensions()) {
+      auto dimension = dyn_cast<DictionaryAttr>(attribute);
+      auto hasIterator =
+          dimension ? dimension.getAs<BoolAttr>(foreach_metadata::hasIterator)
+                    : BoolAttr{};
+      auto hasRange =
+          dimension
+              ? dimension.getAs<BoolAttr>(foreach_metadata::hasStaticRange)
+              : BoolAttr{};
+      if (!dimension || !hasIterator || !hasRange) {
+        emitError(location) << "malformed runtime foreach metadata";
+        return failure();
+      }
+      RuntimeDimension lowered;
+      lowered.hasIterator = hasIterator.getValue();
+      lowered.runtime = !hasRange.getValue();
+      lowered.observerCapture = dimension.contains(
+          sim::metadata::ForeachIteratorObserverCapture::getNameStr());
+      if (hasRange.getValue()) {
+        auto left = dimension.getAs<IntegerAttr>(foreach_metadata::left);
+        auto right = dimension.getAs<IntegerAttr>(foreach_metadata::right);
+        if (!left || !right) {
+          emitError(location) << "static foreach range metadata is missing";
+          return failure();
+        }
+        lowered.left = left.getInt();
+        lowered.right = right.getInt();
+      }
+      if (hasIterator.getValue()) {
+        auto path = dimension.getAs<StringAttr>(foreach_metadata::iteratorPath);
+        auto semanticIteratorType =
+            dimension.getAs<TypeAttr>(foreach_metadata::iteratorType);
+        if (!path || !semanticIteratorType) {
+          emitError(location) << "runtime foreach iterator metadata is missing";
+          return failure();
+        }
+        FailureOr<Type> iteratorType = normalizeSemanticType(
+            semanticIteratorType.getValue(), location, function);
+        if (failed(iteratorType))
+          return failure();
+        lowered.iteratorPath = path.getValue().str();
+        lowered.iteratorType = *iteratorType;
+      }
+      dimensions.push_back(std::move(lowered));
+    }
+    if (dimensions.empty())
+      return success();
+    // IEEE 1800-2017 12.7.3: an omitted loop variable suppresses iteration
+    // over that dimension. If every variable is omitted the body is never
+    // executed, including for runtime-sized collections.
+    if (llvm::none_of(dimensions, [](const RuntimeDimension &dimension) {
+          return dimension.hasIterator;
+        }))
+      return success();
+
+    FailureOr<Value> collection = lowerExpression(children[0]);
+    if (failed(collection))
+      return failure();
+    for (RuntimeDimension &dimension : dimensions) {
+      if (!dimension.observerCapture)
+        continue;
+      FailureOr<Value> reference = allocateObserverCapture(
+          dimension.iteratorPath, dimension.iteratorType);
+      if (failed(reference))
+        return failure();
+      dimension.observerReference = *reference;
+    }
+    Block *exit = addBlock();
+    Type indexType = builder.getI64Type();
+    auto constant = [&](uint64_t value) -> Value {
+      return arith::ConstantOp::create(builder, location, indexType,
+                                       builder.getI64IntegerAttr(value));
+    };
+
+    std::function<LogicalResult(unsigned, Value, Block *, ValueRange)>
+        emitDimension = [&](unsigned dimensionIndex, Value currentCollection,
+                            Block *parentStep,
+                            ValueRange parentStepOperands) -> LogicalResult {
+      if (dimensionIndex == dimensions.size()) {
+        if (!parentStep) {
+          emitError(location) << "runtime foreach has no iterated dimension";
+          return failure();
+        }
+        loopTargets.push_back({exit, parentStep,
+                               SmallVector<Value>(parentStepOperands.begin(),
+                                                  parentStepOperands.end()),
+                               controlScopes.size(), vpiFrameScopes.size()});
+        LogicalResult status = lowerStatement(children[1]);
+        loopTargets.pop_back();
+        return status;
+      }
+      RuntimeDimension &dimension = dimensions[dimensionIndex];
+      bool traverseOmitted =
+          !dimension.hasIterator &&
+          llvm::any_of(
+              ArrayRef(dimensions).drop_front(dimensionIndex + 1),
+              [](const RuntimeDimension &next) { return next.runtime; });
+      if (!dimension.hasIterator) {
+        // A terminal omitted dimension contributes no loop. An omitted outer
+        // dimension still traverses the collection so a later runtime
+        // dimension can be selected, but it does not create an iterator
+        // binding.
+        if (!traverseOmitted)
+          return emitDimension(dimensionIndex + 1, currentCollection,
+                               parentStep, parentStepOperands);
+      }
+
+      if (dimension.runtime &&
+          isa<sim::AssocArrayType>(currentCollection.getType())) {
+        auto associative =
+            cast<sim::AssocArrayType>(currentCollection.getType());
+        Type keyType = associative.getKeyType();
+        Value initialKey = createDefaultValue(builder, location, keyType);
+        FailureOr<std::pair<Value, Value>> first =
+            traverseAssoc(currentCollection, initialKey, 1, true, location);
+        if (failed(first))
+          return failure();
+        Block *header = addBlock();
+        header->addArgument(keyType, location);
+        header->addArgument(builder.getI1Type(), location);
+        Block *body = addBlock();
+        Block *step = addBlock();
+        step->addArgument(keyType, location);
+        Block *localExit = !parentStep ? exit : addBlock();
+        cf::BranchOp::create(builder, location, header,
+                             ValueRange{first->first, first->second});
+        setCurrent(header);
+        Value key = header->getArgument(0);
+        Value valid = header->getArgument(1);
+        cf::CondBranchOp::create(builder, location, valid, body, ValueRange{},
+                                 localExit, ValueRange{});
+
+        setCurrent(body);
+        bool hadPrevious = false;
+        Value saved;
+        if (dimension.hasIterator) {
+          auto previous = values.find(dimension.iteratorPath);
+          hadPrevious = previous != values.end();
+          saved = hadPrevious ? previous->second : Value{};
+          FailureOr<Value> iterator =
+              convert(key, dimension.iteratorType, associative.getSignedKey(),
+                      location, true);
+          if (failed(iterator))
+            return failure();
+          values[dimension.iteratorPath] = *iterator;
+          if (dimension.observerReference)
+            sim::SimRefStoreOp::create(builder, location, *iterator,
+                                       dimension.observerReference);
+        }
+
+        Value nestedCollection = currentCollection;
+        if (dimensionIndex + 1 != dimensions.size())
+          nestedCollection = sim::SimAssocReadOp::create(
+              builder, location, associative.getElementType(),
+              currentCollection, key);
+        if (failed(emitDimension(dimensionIndex + 1, nestedCollection, step,
+                                 ValueRange{key})))
+          return failure();
+        if (dimension.hasIterator) {
+          if (hadPrevious)
+            values[dimension.iteratorPath] = saved;
+          else
+            values.erase(dimension.iteratorPath);
+        }
+        if (current->empty() ||
+            !current->back().hasTrait<OpTrait::IsTerminator>())
+          cf::BranchOp::create(builder, location, step, ValueRange{key});
+
+        setCurrent(step);
+        Value previousKey = step->getArgument(0);
+        FailureOr<std::pair<Value, Value>> next =
+            traverseAssoc(currentCollection, previousKey, 1, false, location);
+        if (failed(next))
+          return failure();
+        cf::BranchOp::create(builder, location, header,
+                             ValueRange{next->first, next->second});
+        setCurrent(localExit);
+        if (parentStep)
+          cf::BranchOp::create(builder, location, parentStep,
+                               parentStepOperands);
+        return success();
+      }
+
+      Value count;
+      if (dimension.runtime) {
+        if (isa<sim::DynamicArrayType, sim::QueueType>(
+                currentCollection.getType())) {
+          count = sim::SimContainerSizeOp::create(builder, location, indexType,
+                                                  currentCollection);
+        } else if (isa<sim::StringType>(currentCollection.getType())) {
+          count = sim::SimStringLengthOp::create(builder, location, indexType,
+                                                 currentCollection);
+        } else {
+          emitError(location)
+              << "runtime foreach dimension is not a sequential container";
+          return failure();
+        }
+      } else {
+        APInt left(65, static_cast<uint64_t>(dimension.left), true);
+        APInt right(65, static_cast<uint64_t>(dimension.right), true);
+        APInt distance = left.sge(right) ? left - right : right - left;
+        ++distance;
+        if (distance.getActiveBits() > 64) {
+          emitError(location) << "foreach dimension range is too large";
+          return failure();
+        }
+        count = constant(distance.getZExtValue());
+      }
+
+      Block *header = addBlock();
+      header->addArgument(indexType, location);
+      Block *body = addBlock();
+      Block *step = addBlock();
+      Block *localExit = !parentStep ? exit : addBlock();
+      cf::BranchOp::create(builder, location, header, ValueRange{constant(0)});
+      setCurrent(header);
+      Value ordinal = header->getArgument(0);
+      Value more = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ult, ordinal, count);
+      cf::CondBranchOp::create(builder, location, more, body, ValueRange{},
+                               localExit, ValueRange{});
+
+      setCurrent(body);
+      Value sourceIndex = ordinal;
+      if (!dimension.runtime) {
+        Value left = arith::ConstantOp::create(
+            builder, location, indexType,
+            builder.getIntegerAttr(
+                indexType, APInt(64, static_cast<uint64_t>(dimension.left))));
+        sourceIndex =
+            dimension.left <= dimension.right
+                ? Value(arith::AddIOp::create(builder, location, left, ordinal))
+                : Value(
+                      arith::SubIOp::create(builder, location, left, ordinal));
+      }
+      auto previous = values.end();
+      bool hadPrevious = false;
+      Value saved;
+      if (dimension.hasIterator) {
+        previous = values.find(dimension.iteratorPath);
+        hadPrevious = previous != values.end();
+        saved = hadPrevious ? previous->second : Value{};
+        FailureOr<Value> iterator =
+            convert(sourceIndex, dimension.iteratorType, true, location, true);
+        if (failed(iterator))
+          return failure();
+        values[dimension.iteratorPath] = *iterator;
+        if (dimension.observerReference)
+          sim::SimRefStoreOp::create(builder, location, *iterator,
+                                     dimension.observerReference);
+      }
+
+      Value nestedCollection = currentCollection;
+      if (dimensionIndex + 1 != dimensions.size() &&
+          isa<sim::DynamicArrayType, sim::QueueType>(
+              currentCollection.getType())) {
+        Type nestedType =
+            isa<sim::DynamicArrayType>(currentCollection.getType())
+                ? cast<sim::DynamicArrayType>(currentCollection.getType())
+                      .getElementType()
+                : cast<sim::QueueType>(currentCollection.getType())
+                      .getElementType();
+        nestedCollection = sim::SimContainerReadOp::create(
+            builder, location, nestedType, currentCollection, sourceIndex);
+      } else if (dimensionIndex + 1 != dimensions.size()) {
+        if (auto fixed =
+                dyn_cast<sim::UnpackedArrayType>(currentCollection.getType()))
+          nestedCollection = sim::SimArrayDynExtractOp::create(
+              builder, location, fixed.getElementType(), currentCollection,
+              sourceIndex);
+      }
+      if (failed(emitDimension(dimensionIndex + 1, nestedCollection, step,
+                               ValueRange{})))
+        return failure();
+      if (dimension.hasIterator) {
+        if (hadPrevious)
+          values[dimension.iteratorPath] = saved;
+        else
+          values.erase(dimension.iteratorPath);
+      }
+      emitBranch(step);
+
+      setCurrent(step);
+      Value next =
+          arith::AddIOp::create(builder, location, ordinal, constant(1));
+      cf::BranchOp::create(builder, location, header, ValueRange{next});
+      setCurrent(localExit);
+      if (parentStep)
+        cf::BranchOp::create(builder, location, parentStep, parentStepOperands);
+      return success();
+    };
+
+    if (failed(emitDimension(0, *collection, nullptr, ValueRange{})))
+      return failure();
+    setCurrent(exit);
+    return success();
+  }
+
+  struct Dimension {
+    int64_t left;
+    int64_t right;
+    uint64_t size;
+    uint64_t stride;
+    std::string iteratorPath;
+    Type iteratorType;
+    bool observerCapture;
+    FlatSymbolRefAttr vpiLocal;
+    Value observerReference;
+  };
+  SmallVector<Dimension> dimensions;
+  for (Attribute attribute : op.getLoopDimensions()) {
+    auto dimension = dyn_cast<DictionaryAttr>(attribute);
+    auto hasIterator =
+        dimension ? dimension.getAs<BoolAttr>(foreach_metadata::hasIterator)
+                  : BoolAttr{};
+    if (!hasIterator) {
+      emitError(location) << "malformed foreach dimension metadata";
+      return failure();
+    }
+    // An omitted iterator skips that dimension.
+    if (!hasIterator.getValue())
+      continue;
+    auto hasRange = dimension.getAs<BoolAttr>(foreach_metadata::hasStaticRange);
+    auto left = dimension.getAs<IntegerAttr>(foreach_metadata::left);
+    auto right = dimension.getAs<IntegerAttr>(foreach_metadata::right);
+    auto path = dimension.getAs<StringAttr>(foreach_metadata::iteratorPath);
+    auto semanticIteratorType =
+        dimension.getAs<TypeAttr>(foreach_metadata::iteratorType);
+    if (!hasRange || !hasRange.getValue()) {
+      emitError(location)
+          << "runtime-sized foreach dimension survived simulation "
+             "preparation";
+      return failure();
+    }
+    if (!left || !right || !path || !semanticIteratorType) {
+      emitError(location) << "malformed foreach dimension metadata";
+      return failure();
+    }
+    FailureOr<Type> iteratorType = normalizeSemanticType(
+        semanticIteratorType.getValue(), location, function);
+    if (failed(iteratorType))
+      return failure();
+
+    int64_t leftValue = left.getInt();
+    int64_t rightValue = right.getInt();
+    llvm::APInt wideLeft(64, static_cast<uint64_t>(leftValue), true);
+    llvm::APInt wideRight(64, static_cast<uint64_t>(rightValue), true);
+    wideLeft = wideLeft.sext(65);
+    wideRight = wideRight.sext(65);
+    llvm::APInt distance =
+        wideLeft.sge(wideRight) ? wideLeft - wideRight : wideRight - wideLeft;
+    ++distance;
+    if (distance.getActiveBits() > 64) {
+      emitError(location) << "foreach dimension range is too large";
+      return failure();
+    }
+    dimensions.push_back(
+        {leftValue,
+         rightValue,
+         distance.getZExtValue(),
+         0,
+         path.getValue().str(),
+         *iteratorType,
+         dimension.contains(
+             sim::metadata::ForeachIteratorObserverCapture::getNameStr()),
+         dimension.getAs<FlatSymbolRefAttr>(
+             sim::metadata::VpiLocal::getNameStr()),
+         {}});
+  }
+  if (dimensions.empty())
+    return success();
+
+  for (Dimension &dimension : dimensions) {
+    const bool observedByVPI =
+        hasVPIFrameInstrumentation() && dimension.vpiLocal;
+    if (!dimension.observerCapture && !observedByVPI)
+      continue;
+    FailureOr<Value> reference =
+        allocateObserverCapture(dimension.iteratorPath, dimension.iteratorType);
+    if (failed(reference))
+      return failure();
+    dimension.observerReference = *reference;
+    if (observedByVPI)
+      bindVPILocal(dimension.vpiLocal, *reference, location);
+  }
+
+  uint64_t iterationCount = 1;
+  for (Dimension &dimension : llvm::reverse(dimensions)) {
+    dimension.stride = iterationCount;
+    if (dimension.size != 0 &&
+        iterationCount >
+            std::numeric_limits<uint64_t>::max() / dimension.size) {
+      emitError(location) << "foreach iteration space is too large";
+      return failure();
+    }
+    iterationCount *= dimension.size;
+  }
+
+  Type indexType = builder.getI64Type();
+  auto indexConstant = [&](uint64_t value) -> Value {
+    return arith::ConstantOp::create(
+        builder, location, indexType,
+        builder.getIntegerAttr(indexType, llvm::APInt(64, value)));
+  };
+  Block *header = addBlock();
+  header->addArgument(indexType, location);
+  Block *body = addBlock();
+  Block *step = addBlock();
+  step->addArgument(indexType, location);
+  Block *exit = addBlock();
+  cf::BranchOp::create(builder, location, header, ValueRange{indexConstant(0)});
+
+  setCurrent(header);
+  Value more = arith::CmpIOp::create(
+      builder, location, arith::CmpIPredicate::ult, header->getArgument(0),
+      indexConstant(iterationCount));
+  cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
+                           ValueRange{});
+
+  setCurrent(body);
+  struct SavedBinding {
+    std::string path;
+    Value value;
+    bool existed;
+  };
+  SmallVector<SavedBinding> savedBindings;
+  savedBindings.reserve(dimensions.size());
+  for (const Dimension &dimension : dimensions) {
+    auto previous = values.find(dimension.iteratorPath);
+    savedBindings.push_back(
+        {dimension.iteratorPath,
+         previous == values.end() ? Value{} : previous->second,
+         previous != values.end()});
+
+    Value position = header->getArgument(0);
+    if (dimension.stride != 1)
+      position = arith::DivUIOp::create(builder, location, position,
+                                        indexConstant(dimension.stride));
+    position = arith::RemUIOp::create(builder, location, position,
+                                      indexConstant(dimension.size));
+    Value leftValue =
+        arith::ConstantOp::create(builder, location, indexType,
+                                  builder.getI64IntegerAttr(dimension.left));
+    Value index = dimension.left <= dimension.right
+                      ? Value(arith::AddIOp::create(builder, location,
+                                                    leftValue, position))
+                      : Value(arith::SubIOp::create(builder, location,
+                                                    leftValue, position));
+    FailureOr<Value> converted =
+        convert(index, dimension.iteratorType, true, location, true);
+    if (failed(converted))
+      return failure();
+    values[dimension.iteratorPath] = *converted;
+    if (dimension.observerReference)
+      sim::SimRefStoreOp::create(builder, location, *converted,
+                                 dimension.observerReference);
+  }
+
+  loopTargets.push_back({exit,
+                         step,
+                         {header->getArgument(0)},
+                         controlScopes.size(),
+                         vpiFrameScopes.size()});
+  if (failed(lowerStatement(children[1])))
+    return failure();
+  if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>())
+    cf::BranchOp::create(builder, location, step,
+                         ValueRange{header->getArgument(0)});
+  loopTargets.pop_back();
+  for (const SavedBinding &binding : savedBindings) {
+    if (binding.existed)
+      values[binding.path] = binding.value;
+    else
+      values.erase(binding.path);
+  }
+
+  setCurrent(step);
+  Value next = arith::AddIOp::create(builder, location, step->getArgument(0),
+                                     indexConstant(1));
+  cf::BranchOp::create(builder, location, header, ValueRange{next});
+  setCurrent(exit);
+  return success();
+}
+
+LogicalResult UnitLowering::lowerRepeat(Operation *op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.size() != 2) {
+    unsupported(op) << " (repeat loop inventory)";
+    return failure();
+  }
+  FailureOr<Value> normalized = lowerRepeatCount(children[0]);
+  if (failed(normalized))
+    return failure();
+  Type countType = builder.getI64Type();
+
+  Block *header = addBlock();
+  header->addArgument(countType, location);
+  Block *body = addBlock();
+  Block *step = addBlock();
+  step->addArgument(countType, location);
+  Block *exit = addBlock();
+  cf::BranchOp::create(builder, location, header, ValueRange{*normalized});
+
+  setCurrent(header);
+  Value zero = arith::ConstantOp::create(builder, location, countType,
+                                         builder.getI64IntegerAttr(0));
+  Value more =
+      arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sgt,
+                            header->getArgument(0), zero);
+  cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
+                           ValueRange{});
+
+  loopTargets.push_back({exit,
+                         step,
+                         {header->getArgument(0)},
+                         controlScopes.size(),
+                         vpiFrameScopes.size()});
+  setCurrent(body);
+  if (failed(lowerStatement(children[1])))
+    return failure();
+  if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>())
+    cf::BranchOp::create(builder, location, step,
+                         ValueRange{header->getArgument(0)});
+
+  setCurrent(step);
+  Value one = arith::ConstantOp::create(builder, location, countType,
+                                        builder.getI64IntegerAttr(1));
+  Value remaining =
+      arith::SubIOp::create(builder, location, step->getArgument(0), one);
+  cf::BranchOp::create(builder, location, header, ValueRange{remaining});
+  loopTargets.pop_back();
+  setCurrent(exit);
+  return success();
+}
+
+LogicalResult
+UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
+  Location location = getSemanticLocation(op);
+  SmallVector<Operation *> children = getChildren(op);
+  StringRef path = op.getReferencedPath();
+  Value initial = localDefaults.lookup(path);
+  bool aggregateMemberInitializers =
+      sim::has<sim::metadata::AggregateMemberInitializers>(op);
+  auto initializeAggregateMembers = [&](Value destination) -> LogicalResult {
+    auto referenceType = dyn_cast<sim::RefType>(destination.getType());
+    if (!referenceType) {
+      emitError(location)
+          << "aggregate member initializer destination is not a reference";
+      return failure();
+    }
+    Type aggregateType = referenceType.getElementType();
+    for (Operation *child : children) {
+      auto ordinalAttr = sim::get<sim::metadata::InitializeSubelement>(child);
+      if (!ordinalAttr) {
+        emitError(getSemanticLocation(child))
+            << "aggregate member initializer has no field ordinal";
+        return failure();
+      }
+      int64_t ordinal = ordinalAttr.getInt();
+      if (ordinal < 0 || static_cast<uint64_t>(ordinal) >=
+                             sim::getAggregateNumElements(aggregateType)) {
+        emitError(getSemanticLocation(child))
+            << "aggregate member initializer ordinal " << ordinal
+            << " is out of range for " << aggregateType;
+        return failure();
+      }
+      Type fieldType =
+          sim::getAggregateElementType(aggregateType, unsigned(ordinal));
+      FailureOr<Value> lowered = lowerExpression(child);
+      if (failed(lowered))
+        return failure();
+      FailureOr<Value> converted = convert(
+          *lowered, fieldType, isSignedNode(child), getSemanticLocation(child));
+      if (failed(converted))
+        return failure();
+      Value fieldReference = sim::SimRefSubelementOp::create(
+          builder, getSemanticLocation(child),
+          sim::RefType::get(function.getContext(), fieldType), destination,
+          builder.getDenseI64ArrayAttr({ordinal}));
+      sim::SimRefStoreOp::create(builder, getSemanticLocation(child),
+                                 *converted, fieldReference);
+    }
+    return success();
+  };
+  if (automaticLocals.contains(path)) {
+    if (!initial) {
+      emitError(location)
+          << "automatic variable declaration has no frozen binding type";
+      return failure();
+    }
+    // An uninitialized event denotes a fresh synchronization object each time
+    // the automatic declaration executes (IEEE 1800-2023 6.17). Reusing the
+    // entry-block default would alias separate loop/block activations.
+    if (children.empty() && isa<sim::EventType>(initial.getType()))
+      initial =
+          sim::SimEventCreateOp::create(builder, location, initial.getType());
+    if (!children.empty() && !aggregateMemberInitializers) {
+      FailureOr<Value> lowered = lowerExpression(children.front());
+      if (failed(lowered))
+        return failure();
+      FailureOr<Value> converted =
+          convert(*lowered, initial.getType(), isSignedNode(children.front()),
+                  location);
+      if (failed(converted))
+        return failure();
+      initial = *converted;
+    }
+    Value destination = sim::SimRefAllocOp::create(
+        builder, location,
+        sim::RefType::get(function.getContext(), initial.getType()), initial);
+    recordImplicitEventActivationLocal(destination);
+    bindVPILocal(vpiLocalDeclarations.lookup(path), destination, location);
+    // An automatic declaration executes on each entry to this statement.
+    // Keep that reset explicit so SSA promotion does not mistake the
+    // allocator's default value for a once-per-function initialization when
+    // this block is reentered after a suspension or through a loop backedge.
+    sim::SimRefStoreOp::create(builder, location, initial, destination);
+    values[path] = destination;
+    lvalues[path] = destination;
+    if (aggregateMemberInitializers)
+      return initializeAggregateMembers(destination);
+    return success();
+  }
+  // A named event of static lifetime is a design object whose cell already
+  // exists (IEEE 1800-2017 6.21 and 15.5). Its declaration statement only
+  // brings the name into scope; there is nothing to allocate or initialize,
+  // and the event handle is bound rather than referenced.
+  Value bound = values.lookup(path);
+  if (children.empty() && bound && isa<sim::EventType>(bound.getType()))
+    return success();
+  Value destination = lvalues.lookup(path);
+  if (!destination || !isa<sim::RefType>(destination.getType())) {
+    emitError(location) << "variable declaration has no reference binding";
+    return failure();
+  }
+  // Descriptor-backed static locals are initialized once by the root
+  // initialization phase. The first direct activation claims a stable site;
+  // later and concurrent activations skip the initializer.
+  if (!initial && children.empty())
+    return success();
+  if (!initial) {
+    auto siteIDAttr = sim::get<sim::metadata::StaticSiteId>(op);
+    if (!siteIDAttr || !siteIDAttr.getValue().isStrictlyPositive()) {
+      emitError(location)
+          << "static declaration has no prepared initialization site ID";
+      return failure();
+    }
+    uint64_t siteID = siteIDAttr.getValue().getZExtValue();
+    Value first = sim::SimStaticOnceOp::create(
+        builder, location, builder.getI64IntegerAttr(siteID));
+    Block *initialize = addBlock();
+    Block *continuation = addBlock();
+    cf::CondBranchOp::create(builder, location, first, initialize, ValueRange{},
+                             continuation, ValueRange{});
+    setCurrent(initialize);
+    if (aggregateMemberInitializers) {
+      if (failed(initializeAggregateMembers(destination)))
+        return failure();
+    } else {
+      FailureOr<Value> lowered = lowerExpression(children.front());
+      if (failed(lowered))
+        return failure();
+      FailureOr<Value> converted = convert(
+          *lowered, cast<sim::RefType>(destination.getType()).getElementType(),
+          isSignedNode(children.front()), location);
+      if (failed(converted))
+        return failure();
+      sim::SimRefStoreOp::create(builder, location, *converted, destination);
+    }
+    cf::BranchOp::create(builder, location, continuation);
+    setCurrent(continuation);
+    return success();
+  }
+  if (aggregateMemberInitializers)
+    return initializeAggregateMembers(destination);
+  if (!children.empty()) {
+    FailureOr<Value> lowered = lowerExpression(children.front());
+    if (failed(lowered))
+      return failure();
+    FailureOr<Value> converted = convert(
+        *lowered, cast<sim::RefType>(destination.getType()).getElementType(),
+        isSignedNode(children.front()), location);
+    if (failed(converted))
+      return failure();
+    initial = *converted;
+  }
+  if (initial)
+    sim::SimRefStoreOp::create(builder, location, initial, destination);
+  return success();
+}
+
+FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
+UnitLowering::outlineForkBranch(
+    Operation *branch, uint64_t forkNode, unsigned branchIndex,
+    bool captureReferences,
+    ArrayRef<std::pair<Operation *, Value>> expressionCaptures,
+    ArrayRef<std::pair<Operation *, Value>> globalFutureCurrentCaptures,
+    ArrayRef<std::pair<StringRef, Value>> explicitCaptures,
+    SmallVectorImpl<MonitorObservation> *outlinedMonitorObservations,
+    bool *outlinedMonitorObservationComplete,
+    ArrayRef<StringRef> liveReferencePaths) {
+  auto design = function->getParentOfType<sim::SimDesignOp>();
+  if (!design)
+    return function.emitError("fork outlining requires a simulation design"),
+           failure();
+
+  Location location = getSemanticLocation(branch);
+  MLIRContext *context = function.getContext();
+  SmallVector<Type> inputs;
+  SmallVector<Value> captures;
+  SmallVector<DictionaryAttr> argumentAttrs;
+  SmallVector<Attribute> bindings;
+
+  Value processContext = function.getBody().front().getArgument(0);
+  inputs.push_back(processContext.getType());
+  captures.push_back(processContext);
+  argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Context));
+
+  DenseMap<Operation *, unsigned> expressionCaptureArguments;
+  DenseMap<Value, unsigned> expressionValueArguments;
+  DenseMap<Operation *, unsigned> globalFutureCurrentCaptureArguments;
+  DenseSet<Operation *> expressionCaptureTrees;
+  for (auto [expression, capture] : expressionCaptures) {
+    if (!expression || !capture || expressionCaptureArguments.count(expression))
+      continue;
+    auto [valueArgument, inserted] =
+        expressionValueArguments.try_emplace(capture, inputs.size());
+    expressionCaptureArguments.try_emplace(expression, valueArgument->second);
+    if (inserted) {
+      inputs.push_back(capture.getType());
+      captures.push_back(capture);
+      argumentAttrs.push_back(
+          captureMetadata(builder, sim::CaptureKind::Formal));
+    }
+    expression->walk(
+        [&](Operation *nested) { expressionCaptureTrees.insert(nested); });
+  }
+  for (auto [call, capture] : globalFutureCurrentCaptures) {
+    if (!call || !capture ||
+        !globalFutureCurrentCaptureArguments.try_emplace(call, inputs.size())
+             .second)
+      continue;
+    inputs.push_back(capture.getType());
+    captures.push_back(capture);
+    argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Formal));
+  }
+
+  llvm::StringSet<> capturedPaths;
+  llvm::StringMap<Value> capturedValues;
+  llvm::StringSet<> branchDeclarations;
+  auto captureMetadataFor = [&](Value capture) {
+    // A captured entry argument may still name concrete design storage. Keep
+    // its descriptor/view metadata on the outlined ABI so sampled reads and
+    // effect analysis can recover the same canonical state range. Falling
+    // back to Formal is appropriate only for lexical SSA values and values
+    // produced inside the parent body.
+    DictionaryAttr metadata;
+    if (auto argument = dyn_cast<BlockArgument>(capture);
+        argument && argument.getOwner() == &function.getBody().front())
+      metadata = function.getArgAttrDict(argument.getArgNumber());
+    if (!metadata)
+      metadata = captureMetadata(builder, sim::CaptureKind::Formal);
+    if (!isStaticallyAllocatedOverrideTarget(capture)) {
+      SmallVector<NamedAttribute> entries(metadata.begin(), metadata.end());
+      if (!metadata.contains(
+              sim::metadata::AutomaticReferenceCapture::getNameStr()))
+        entries.push_back(sim::named<sim::metadata::AutomaticReferenceCapture>(
+            builder.getUnitAttr()));
+      metadata = builder.getDictionaryAttr(entries);
+    }
+    return metadata;
+  };
+  auto addCaptureValue = [&](StringRef path, Value capture) {
+    if (!capturedPaths.insert(path).second)
+      return;
+    if (!capture)
+      return;
+    capturedValues[path] = capture;
+    unsigned argument = inputs.size();
+    inputs.push_back(capture.getType());
+    captures.push_back(capture);
+    argumentAttrs.push_back(captureMetadataFor(capture));
+    bindings.push_back(sim::ArgumentBindingAttr::get(
+        context, builder.getStringAttr(path), argument,
+        sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{},
+        /*copyIn=*/true));
+  };
+  // A live-reference path reads its captured value and binds its storage
+  // separately for lvalue uses, whichever kind of capture the branch takes.
+  llvm::StringSet<> liveReferences;
+  for (StringRef path : liveReferencePaths)
+    liveReferences.insert(path);
+  auto addCapture = [&](StringRef path) {
+    bool byReference = captureReferences && !liveReferences.contains(path);
+    Value capture = byReference ? lvalues.lookup(path) : values.lookup(path);
+    if (!capture)
+      capture = byReference ? values.lookup(path) : lvalues.lookup(path);
+    addCaptureValue(path, capture);
+  };
+  for (auto [path, capture] : explicitCaptures)
+    addCaptureValue(path, capture);
+  ArrayAttr parentBindings = sim::get<sim::metadata::Bindings>(function);
+  llvm::StringSet<> thisBindingPaths;
+  if (parentBindings && thisObject)
+    for (Attribute attribute : parentBindings) {
+      auto argument = dyn_cast<sim::ArgumentBindingAttr>(attribute);
+      if (argument && argument.getArgument() < function.getNumArguments() &&
+          function.getArgument(argument.getArgument()) == thisObject)
+        thisBindingPaths.insert(argument.getPath().getValue());
+    }
+  llvm::StringSet<> referencedPaths;
+  bool branchUsesThis = false;
+  auto collectCoveragePaths = [&](semantic::SVCovergroupTypeOp covergroup) {
+    covergroup->walk([&](Operation *nested) {
+      if (auto path = nested->getAttrOfType<StringAttr>("referenced_path");
+          path && !path.getValue().empty())
+        referencedPaths.insert(path.getValue());
+      if (auto callCaptures = sim::get<sim::metadata::CalleeCaptures>(nested))
+        for (Attribute capture : callCaptures)
+          referencedPaths.insert(cast<StringAttr>(capture).getValue());
+      if (auto observerCaptures =
+              sim::get<sim::metadata::ObserverCaptures>(nested))
+        for (Attribute capture : observerCaptures)
+          referencedPaths.insert(cast<StringAttr>(capture).getValue());
+    });
+  };
+  branch->walk([&](Operation *nested) {
+    // A captured expression is replaced wholesale in the outlined body. Its
+    // internal references must not retain descriptor-backed bindings that
+    // could accidentally make a later-region reread possible.
+    if (expressionCaptureTrees.contains(nested))
+      return;
+    StringRef path;
+    if (auto declaration =
+            dyn_cast<semantic::SVVariableDeclStatementOp>(nested)) {
+      path = declaration.getReferencedPath();
+      if (!path.empty())
+        branchDeclarations.insert(path);
+    } else if (auto named =
+                   dyn_cast<semantic::SVNamedValueExpressionOp>(nested)) {
+      path = named.getReferencedPath();
+      branchUsesThis |= sim::has<sim::metadata::ClassField>(named);
+    } else if (auto hierarchical =
+                   dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
+      path = hierarchical.getReferencedPath();
+    else if (auto member =
+                 dyn_cast<semantic::SVMemberAccessExpressionOp>(nested)) {
+      if (sim::has<sim::metadata::StaticClassProperty>(member))
+        path = member.getReferencedPath();
+    } else if (auto instance =
+                   dyn_cast<semantic::SVAssertionInstanceExpressionOp>(
+                       nested)) {
+      auto type = instance->getAttrOfType<TypeAttr>("semantic_type");
+      if (type && isa<semantic::SequenceType>(type.getValue()))
+        path = instance.getReferencedPath();
+    }
+    if (!path.empty())
+      referencedPaths.insert(path);
+    // A clocking variable also reads its clock, source, and published sample,
+    // and a cycle delay or clocking-block event waits on its clock; capture
+    // them as preparation does for the parent unit.
+    if (nested->hasAttr(clockingVariableAttrName)) {
+      for (StringLiteral name :
+           {clockingSourcePathAttrName, clockingEventPathAttrName,
+            clockingEventRawPathAttrName})
+        if (auto clockingPath = nested->getAttrOfType<StringAttr>(name))
+          referencedPaths.insert(clockingPath.getValue());
+      if (!path.empty())
+        referencedPaths.insert(getClockingSamplePath(path));
+    } else if (isa<semantic::SVCycleDelayControlOp>(nested) ||
+               nested->hasAttr(clockingBlockEventAttrName)) {
+      if (auto clockingPath =
+              nested->getAttrOfType<StringAttr>(clockingEventPathAttrName))
+        referencedPaths.insert(clockingPath.getValue());
+    }
+    if (auto construct =
+            dyn_cast<semantic::SVNewCovergroupExpressionOp>(nested))
+      if (semantic::SVCovergroupTypeOp covergroup =
+              findSemanticCovergroup(construct))
+        collectCoveragePaths(covergroup);
+    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested);
+        call && sim::has<sim::metadata::ClassInstance>(call)) {
+      auto formals = sim::get<sim::metadata::CalleeFormals>(call);
+      bool superCall = sim::has<sim::metadata::ClassSuper>(call);
+      branchUsesThis |=
+          superCall || (formals && getChildren(call).size() == formals.size());
+    }
+    if (auto callCaptures = sim::get<sim::metadata::CalleeCaptures>(nested))
+      for (Attribute capture : callCaptures)
+        referencedPaths.insert(cast<StringAttr>(capture).getValue());
+    if (auto observerCaptures =
+            sim::get<sim::metadata::ObserverCaptures>(nested))
+      for (Attribute capture : observerCaptures) {
+        StringRef path = cast<StringAttr>(capture).getValue();
+        referencedPaths.insert(path);
+        branchUsesThis |= thisBindingPaths.contains(path);
+      }
+  });
+  std::optional<unsigned> outlinedThisArgument;
+  if (branchUsesThis && thisObject) {
+    outlinedThisArgument = inputs.size();
+    inputs.push_back(thisObject.getType());
+    captures.push_back(thisObject);
+    argumentAttrs.push_back(captureMetadata(builder, sim::CaptureKind::Formal));
+    // Preserve the receiver's frozen path as an alias of the distinguished
+    // `this` argument. Observer and callee capture inventories resolve by
+    // path, while ordinary implicit member accesses use thisArgument.
+    for (const auto &entry : thisBindingPaths)
+      if (capturedPaths.insert(entry.getKey()).second)
+        bindings.push_back(sim::ArgumentBindingAttr::get(
+            context, builder.getStringAttr(entry.getKey()),
+            *outlinedThisArgument, sim::UnitArgumentKind::Direct,
+            /*copyOut=*/false, IntegerAttr{}, /*copyIn=*/true));
+  }
+  if (parentBindings)
+    for (Attribute attribute : parentBindings) {
+      StringRef path = sim::getUnitBindingPath(attribute);
+      if (path.empty())
+        continue;
+      // Only pass bindings actually referenced by the branch or a direct
+      // callee. This also excludes pattern variables from unrelated matches.
+      if (!referencedPaths.contains(path))
+        continue;
+      // An automatic declaration nested in this branch belongs to the child
+      // process activation. Preserve its frozen type and lifetime contract so
+      // the child allocates it at the declaration. Capturing a parent
+      // reference here would incorrectly share storage between activations.
+      if (auto local = dyn_cast<sim::LocalBindingAttr>(attribute);
+          local &&
+          (local.getAutomatic() ||
+           (hasVPIFrameInstrumentation() && local.getVpiLocal())) &&
+          branchDeclarations.contains(path)) {
+        if (capturedPaths.insert(path).second)
+          bindings.push_back(attribute);
+        continue;
+      }
+      // Elaborated constants are immutable compile-time facts, not runtime
+      // ABI captures. Preserve their typed binding on the outlined child.
+      if (isa<sim::ConstantBindingAttr>(attribute)) {
+        if (capturedPaths.insert(path).second)
+          bindings.push_back(attribute);
+        continue;
+      }
+      // Descriptor-backed storage is available from the process context in
+      // every outlined child. Preserve the binding instead of threading a
+      // reference through the spawn ABI.
+      if (isa<sim::DescriptorBindingAttr>(attribute)) {
+        if (capturedPaths.insert(path).second)
+          bindings.push_back(attribute);
+        continue;
+      }
+      addCapture(path);
+    }
+
+  // Foreach iterators and other lexical SSA bindings have no frozen function
+  // binding entry. Capture any such path referenced by the branch explicitly.
+  SmallVector<StringRef> lexicalPaths;
+  lexicalPaths.reserve(referencedPaths.size());
+  for (const auto &entry : referencedPaths)
+    if (!capturedPaths.contains(entry.getKey()))
+      lexicalPaths.push_back(entry.getKey());
+  llvm::sort(lexicalPaths);
+  for (StringRef path : lexicalPaths)
+    addCapture(path);
+  for (StringRef path : liveReferencePaths) {
+    Value captured = capturedValues.lookup(path);
+    Value reference = lvalues.lookup(path);
+    if (!captured || !reference || captured == reference)
+      continue;
+    unsigned argument = inputs.size();
+    inputs.push_back(reference.getType());
+    captures.push_back(reference);
+    argumentAttrs.push_back(captureMetadataFor(reference));
+    bindings.push_back(sim::ArgumentBindingAttr::get(
+        context, builder.getStringAttr(path), argument,
+        sim::UnitArgumentKind::LValueOnly, /*copyOut=*/false, IntegerAttr{},
+        /*copyIn=*/true));
+  }
+
+  uint64_t ordinal = nextForkOrdinal++;
+  std::string symbol = (function.getSymName() + ".fork." + Twine(forkNode) +
+                        "." + Twine(ordinal) + "." + Twine(branchIndex))
+                           .str();
+  uint64_t parentID = function.getCodeUnitId().value_or(0);
+  uint64_t scopeID = 0;
+  std::string parentHierarchy = function.getSymName().str();
+  for (sim::SimCodeUnitDeclOp declaration :
+       design.getBody().front().getOps<sim::SimCodeUnitDeclOp>()) {
+    if (declaration.getId() != parentID)
+      continue;
+    scopeID = declaration.getScopeId();
+    parentHierarchy = declaration.getHierarchicalName().str();
+    break;
+  }
+  std::string hierarchy = (Twine(parentHierarchy) + ".$fork." +
+                           Twine(forkNode) + "." + Twine(branchIndex))
+                              .str();
+  auto codeUnitIDAttr = sim::get<sim::metadata::ForkCodeUnitId>(branch);
+  if (!codeUnitIDAttr || !codeUnitIDAttr.getValue().isStrictlyPositive())
+    return emitError(location) << "fork branch has no prepared code-unit ID",
+           failure();
+  uint64_t codeUnitID = codeUnitIDAttr.getValue().getZExtValue();
+
+  OpBuilder outlineBuilder(function);
+  outlineBuilder.setInsertionPoint(function);
+  sim::SimCodeUnitDeclOp::create(outlineBuilder, location, codeUnitID, scopeID,
+                                 sim::EntryKind::Fork,
+                                 outlineBuilder.getStringAttr(hierarchy),
+                                 outlineBuilder.getStringAttr("fork branch"),
+                                 outlineBuilder.getUnitAttr());
+
+  SmallVector<NamedAttribute> attributes{
+      sim::named<sim::metadata::Bindings>(
+          outlineBuilder.getArrayAttr(bindings)),
+      outlineBuilder.getNamedAttr("code_unit_id",
+                                  outlineBuilder.getI64IntegerAttr(codeUnitID)),
+      outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+  };
+  if (hasVPIFrameInstrumentation() &&
+      sim::has<sim::metadata::VpiStatementId>(branch))
+    attributes.push_back(sim::named<sim::metadata::VpiFrameInstrumentation>(
+        outlineBuilder.getUnitAttr()));
+  if (outlinedThisArgument)
+    attributes.push_back(sim::named<sim::metadata::ThisArgument>(
+        outlineBuilder.getI32IntegerAttr(*outlinedThisArgument)));
+  SmallVector<Attribute> inheritedControls;
+  llvm::StringMap<uint64_t> inherited = inheritedControlIDs;
+  for (const ControlScope &scope : controlScopes)
+    inherited[scope.path] = scope.targetID;
+  SmallVector<StringRef> inheritedPaths;
+  inheritedPaths.reserve(inherited.size());
+  for (const auto &entry : inherited)
+    inheritedPaths.push_back(entry.getKey());
+  llvm::sort(inheritedPaths);
+  for (StringRef path : inheritedPaths)
+    inheritedControls.push_back(outlineBuilder.getDictionaryAttr({
+        outlineBuilder.getNamedAttr("path", outlineBuilder.getStringAttr(path)),
+        outlineBuilder.getNamedAttr(
+            "id", outlineBuilder.getI64IntegerAttr(inherited.lookup(path))),
+    }));
+  if (!inheritedControls.empty())
+    attributes.push_back(outlineBuilder.getNamedAttr(
+        "inherited_controls", outlineBuilder.getArrayAttr(inheritedControls)));
+  const StringRef inheritedAttributes[] = {
+      sim::metadata::DelayScale::getNameStr(),
+      sim::metadata::DelayQuantum::getNameStr(), "home_region", "domain"};
+  for (StringRef name : inheritedAttributes)
+    if (Attribute attribute = function->getAttr(name))
+      attributes.push_back(outlineBuilder.getNamedAttr(name, attribute));
+  attributes.push_back(sim::named<sim::metadata::HierarchicalName>(
+      outlineBuilder.getStringAttr(hierarchy)));
+
+  auto outlined =
+      sim::SimFuncOp::create(outlineBuilder, location, symbol,
+                             FunctionType::get(context, inputs, TypeRange{}),
+                             sim::EntryKind::Fork, attributes, argumentAttrs);
+  SymbolTable::setSymbolVisibility(outlined, SymbolTable::Visibility::Private);
+  // Future sampled-value calls are only legal while lowering the detached
+  // resolver.  Make that context visible before lowering the cloned branch;
+  // the caller cannot attach the marker after outlineForkBranch returns
+  // because nested lowering is completed inside this routine.
+  if (sim::has<sim::metadata::GlobalFutureResolver>(branch))
+    sim::mark<sim::metadata::GlobalFutureResolver>(outlined);
+  if (sim::has<sim::metadata::ProceduralAssertionAttempt>(branch) &&
+      !sim::has<sim::metadata::DefaultAssertionFailure>(branch))
+    sim::mark<sim::metadata::ProceduralAssertionAttempt>(outlined);
+
+  OpBuilder bodyBuilder = OpBuilder::atBlockEnd(&outlined.getBody().front());
+  IRMapping mapping;
+  Operation *root = bodyBuilder.clone(*branch, mapping);
+  UnitLowering nested(outlined, loweringInputs);
+  nested.outlinedLexicalScope = getLexicalScope(branch);
+  for (auto [expression, argument] : expressionCaptureArguments) {
+    Operation *cloned = mapping.lookupOrNull(expression);
+    if (!cloned) {
+      outlined.erase();
+      return emitError(location)
+                 << "outlined expression capture is outside the branch",
+             failure();
+    }
+    nested.expressionCaptures[cloned] = outlined.getArgument(argument);
+  }
+  for (auto [call, argument] : globalFutureCurrentCaptureArguments) {
+    Operation *cloned = mapping.lookupOrNull(call);
+    if (!cloned) {
+      outlined.erase();
+      return emitError(location)
+                 << "outlined global-future call is outside the branch",
+             failure();
+    }
+    nested.globalFutureCurrentCaptures[cloned] = outlined.getArgument(argument);
+  }
+  if (failed(nested.lower({root}))) {
+    outlined.erase();
+    return failure();
+  }
+  if (outlinedMonitorObservations)
+    llvm::append_range(*outlinedMonitorObservations,
+                       nested.monitorObservations);
+  if (outlinedMonitorObservationComplete)
+    *outlinedMonitorObservationComplete = nested.monitorObservationComplete;
+  root->erase();
+  sim::mark<sim::metadata::Lowered>(outlined);
+  return std::make_pair(outlined, std::move(captures));
+}
+
+FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
+UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
+                                      StringRef immediateName,
+                                      bool persistent) {
+  uint64_t ordinal = nextPostponedOrdinal++;
+  uint64_t node = call->getAttrOfType<IntegerAttr>("node_id")
+                      ? call->getAttrOfType<IntegerAttr>("node_id")
+                            .getValue()
+                            .getZExtValue()
+                      : ordinal;
+  std::string identity = (function.getSymName() + ".$postponed." + Twine(node) +
+                          "." + Twine(ordinal))
+                             .str();
+
+  auto previousForkID = sim::get<sim::metadata::ForkCodeUnitId>(call);
+  auto previousMonitorCallback = sim::get<sim::metadata::MonitorCallback>(call);
+  StringAttr previousName = call.getCalleeNameAttr();
+  sim::set<sim::metadata::ForkCodeUnitId>(
+      call, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+  call->setAttr("callee_name", builder.getStringAttr(immediateName));
+  if (persistent)
+    sim::mark<sim::metadata::MonitorCallback>(call);
+  SmallVector<MonitorObservation> observations;
+  bool observationComplete = false;
+  FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> outlined =
+      outlineForkBranch(call, node, static_cast<unsigned>(ordinal),
+                        /*captureReferences=*/true, {}, {}, {},
+                        persistent ? &observations : nullptr,
+                        persistent ? &observationComplete : nullptr);
+  call->setAttr("callee_name", previousName);
+  if (previousMonitorCallback)
+    sim::set<sim::metadata::MonitorCallback>(call, previousMonitorCallback);
+  else
+    sim::remove<sim::metadata::MonitorCallback>(call);
+  if (previousForkID)
+    sim::set<sim::metadata::ForkCodeUnitId>(call, previousForkID);
+  else
+    sim::remove<sim::metadata::ForkCodeUnitId>(call);
+  if (failed(outlined))
+    return failure();
+
+  sim::SimFuncOp callback = outlined->first;
+  callback->setAttr("home_region",
+                    sim::EventRegionAttr::get(function.getContext(),
+                                              sim::EventRegion::Postponed));
+  callback->setAttr(
+      "domain", sim::ExecutionDomainAttr::get(function.getContext(),
+                                              sim::ExecutionDomain::Design));
+  if (!persistent)
+    return outlined;
+  sim::mark<sim::metadata::PersistentMonitor>(callback);
+
+  Block &entry = callback.getBody().front();
+  Block *loop = entry.splitBlock(entry.begin());
+  SmallVector<sim::SimReturnOp> returns;
+  callback.walk([&](sim::SimReturnOp op) { returns.push_back(op); });
+
+  Block *dispatch = new Block;
+  callback.getBody().getBlocks().insert(loop->getIterator(), dispatch);
+  Block *stale = new Block;
+  callback.getBody().push_back(stale);
+  OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+  cf::BranchOp::create(entryBuilder, callback.getLoc(), dispatch);
+  OpBuilder dispatchBuilder = OpBuilder::atBlockEnd(dispatch);
+  Value current = sim::SimMonitorCurrentOp::create(
+      dispatchBuilder, callback.getLoc(), dispatchBuilder.getI1Type());
+  cf::CondBranchOp::create(dispatchBuilder, callback.getLoc(), current, loop,
+                           stale);
+
+  SmallVector<Value> watched;
+  for (BlockArgument argument : entry.getArguments().drop_front())
+    if (isa<sim::RefType, sim::NetType>(argument.getType()))
+      watched.push_back(argument);
+  for (sim::SimReturnOp returnOp : returns) {
+    OpBuilder waitBuilder(returnOp);
+    bool directObservations =
+        observationComplete && !observations.empty() &&
+        llvm::all_of(observations, [](const MonitorObservation &observation) {
+          return static_cast<bool>(observation.directWatch);
+        });
+    if (directObservations) {
+      SmallVector<Value> directWatches;
+      for (const MonitorObservation &observation : observations)
+        if (!llvm::is_contained(directWatches, observation.directWatch))
+          directWatches.push_back(observation.directWatch);
+      if (directWatches.size() == 1) {
+        sim::SimSuspendChangeOp::create(
+            waitBuilder, returnOp.getLoc(), directWatches.front(), ValueRange{},
+            schedule::ContinuationSiteAttr{},
+            sim::EventRegionAttr::get(function.getContext(),
+                                      sim::EventRegion::Postponed),
+            dispatch);
+      } else {
+        SmallVector<int32_t> edges(directWatches.size(),
+                                   static_cast<int32_t>(sim::EdgeKind::Change));
+        sim::SimSuspendAnyOp::create(
+            waitBuilder, returnOp.getLoc(), directWatches,
+            waitBuilder.getDenseI32ArrayAttr(edges),
+            schedule::ContinuationSiteAttr{},
+            sim::EventRegionAttr::get(function.getContext(),
+                                      sim::EventRegion::Postponed),
+            dispatch);
+      }
+    } else if (observationComplete && !observations.empty()) {
+      SmallVector<Value> operands;
+      SmallVector<int32_t> edges(observations.size(),
+                                 static_cast<int32_t>(sim::EdgeKind::Change));
+      SmallVector<int32_t> conditionIndices(observations.size(), -1);
+      operands.reserve(observations.size() * 2);
+      for (const MonitorObservation &observation : observations)
+        operands.push_back(observation.observer);
+      for (const MonitorObservation &observation : observations)
+        operands.push_back(observation.initial);
+      sim::SimSuspendObserveOp::create(
+          waitBuilder, returnOp.getLoc(), operands, uint32_t{0}, edges,
+          conditionIndices, schedule::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Postponed),
+          dispatch);
+    } else if ((observationComplete && observations.empty()) ||
+               watched.empty()) {
+      sim::SimSuspendForeverOp::create(
+          waitBuilder, returnOp.getLoc(), ValueRange{},
+          schedule::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Postponed),
+          dispatch);
+    } else if (watched.size() == 1) {
+      sim::SimSuspendChangeOp::create(
+          waitBuilder, returnOp.getLoc(), watched.front(), ValueRange{},
+          schedule::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Postponed),
+          dispatch);
+    } else {
+      SmallVector<int32_t> edges(watched.size(),
+                                 static_cast<int32_t>(sim::EdgeKind::Change));
+      sim::SimSuspendAnyOp::create(
+          waitBuilder, returnOp.getLoc(), watched,
+          waitBuilder.getDenseI32ArrayAttr(edges),
+          schedule::ContinuationSiteAttr{},
+          sim::EventRegionAttr::get(function.getContext(),
+                                    sim::EventRegion::Postponed),
+          dispatch);
+    }
+    returnOp.erase();
+  }
+  OpBuilder staleBuilder = OpBuilder::atBlockEnd(stale);
+  sim::SimReturnOp::create(staleBuilder, callback.getLoc(), ValueRange{});
+  return outlined;
+}
+
+FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>>
+UnitLowering::outlineAsyncPla(semantic::SVCallExpressionOp call,
+                              StringRef synchronousName) {
+  Location location = getSemanticLocation(call);
+  SmallVector<Operation *> children = getChildren(call);
+  if (children.size() != 3)
+    return failure();
+
+  // Record only the memory and input dependencies. The output reference is a
+  // capture too, but watching it would make the callback retrigger itself.
+  llvm::StringSet<> dependencyPaths;
+  auto collectDependencies = [&](Operation *root) {
+    root->walk([&](Operation *nested) {
+      StringRef path;
+      if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
+        path = named.getReferencedPath();
+      else if (auto hierarchical =
+                   dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
+        path = hierarchical.getReferencedPath();
+      else if (auto member =
+                   dyn_cast<semantic::SVMemberAccessExpressionOp>(nested))
+        path = member.getReferencedPath();
+      if (!path.empty())
+        dependencyPaths.insert(path);
+      if (auto callCaptures = sim::get<sim::metadata::CalleeCaptures>(nested))
+        for (Attribute capture : callCaptures)
+          dependencyPaths.insert(cast<StringAttr>(capture).getValue());
+      if (auto observerCaptures =
+              sim::get<sim::metadata::ObserverCaptures>(nested))
+        for (Attribute capture : observerCaptures)
+          dependencyPaths.insert(cast<StringAttr>(capture).getValue());
+    });
+  };
+  collectDependencies(children[0]);
+  collectDependencies(children[1]);
+
+  uint64_t ordinal = nextPlaOrdinal++;
+  uint64_t node = call->getAttrOfType<IntegerAttr>("node_id")
+                      ? call->getAttrOfType<IntegerAttr>("node_id")
+                            .getValue()
+                            .getZExtValue()
+                      : ordinal;
+  std::string identity =
+      (function.getSymName() + ".$pla." + Twine(node) + "." + Twine(ordinal))
+          .str();
+  auto previousForkID = sim::get<sim::metadata::ForkCodeUnitId>(call);
+  StringAttr previousName = call.getCalleeNameAttr();
+  sim::set<sim::metadata::ForkCodeUnitId>(
+      call, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+  call->setAttr("callee_name", builder.getStringAttr(synchronousName));
+  FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> outlined =
+      outlineForkBranch(call, node, static_cast<unsigned>(ordinal),
+                        /*captureReferences=*/true);
+  call->setAttr("callee_name", previousName);
+  if (previousForkID)
+    sim::set<sim::metadata::ForkCodeUnitId>(call, previousForkID);
+  else
+    sim::remove<sim::metadata::ForkCodeUnitId>(call);
+  if (failed(outlined))
+    return failure();
+
+  sim::SimFuncOp callback = outlined->first;
+  callback->setAttr("home_region",
+                    sim::EventRegionAttr::get(function.getContext(),
+                                              sim::EventRegion::Active));
+  callback->setAttr(
+      "domain", sim::ExecutionDomainAttr::get(function.getContext(),
+                                              sim::ExecutionDomain::Design));
+  // An async PLA call must not lose a source transition made later in the
+  // same activation. Priming executes this internal detached child only as
+  // far as its initial wait, atomically installing the subscriptions before
+  // the caller continues; it does not evaluate the PLA a second time.
+  ::talos::schedule::set<::talos::schedule::Field::DetachedControls>(
+      callback, builder.getUnitAttr());
+  ::talos::schedule::set<::talos::schedule::Field::PrimeOnSpawn>(
+      callback, builder.getUnitAttr());
+
+  Block &entry = callback.getBody().front();
+  SmallVector<Value> watched;
+  if (ArrayAttr bindings = sim::get<sim::metadata::Bindings>(callback))
+    for (Attribute attribute : bindings) {
+      auto binding = dyn_cast<sim::ArgumentBindingAttr>(attribute);
+      if (!binding || !dependencyPaths.contains(binding.getPath().getValue()) ||
+          binding.getArgument() >= callback.getNumArguments())
+        continue;
+      Value argument = callback.getArgument(binding.getArgument());
+      if (isa<sim::RefType, sim::NetType>(argument.getType()) &&
+          !llvm::is_contained(watched, argument))
+        watched.push_back(argument);
+    }
+  if (watched.empty()) {
+    callback.erase();
+    emitError(location)
+        << call.getCalleeName()
+        << " has no persistently watchable memory or input dependency";
+    return failure();
+  }
+
+  // The caller emitted the initial value already. Begin the child at a change
+  // wait, then reevaluate the cloned source expressions after each event.
+  Block *evaluate = entry.splitBlock(entry.begin());
+  Block *wait = new Block;
+  callback.getBody().getBlocks().insert(evaluate->getIterator(), wait);
+  OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+  cf::BranchOp::create(entryBuilder, location, wait);
+
+  OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+  auto active = sim::EventRegionAttr::get(function.getContext(),
+                                          sim::EventRegion::Active);
+  if (watched.size() == 1) {
+    sim::SimSuspendChangeOp::create(
+        waitBuilder, location, watched.front(), ValueRange{},
+        schedule::ContinuationSiteAttr{}, active, evaluate);
+  } else {
+    SmallVector<int32_t> edges(watched.size(),
+                               static_cast<int32_t>(sim::EdgeKind::Change));
+    sim::SimSuspendAnyOp::create(
+        waitBuilder, location, watched, waitBuilder.getDenseI32ArrayAttr(edges),
+        schedule::ContinuationSiteAttr{}, active, evaluate);
+  }
+
+  SmallVector<sim::SimReturnOp> returns;
+  evaluate->getParentOp()->walk(
+      [&](sim::SimReturnOp returnOp) { returns.push_back(returnOp); });
+  for (sim::SimReturnOp returnOp : returns) {
+    OpBuilder returnBuilder(returnOp);
+    cf::BranchOp::create(returnBuilder, returnOp.getLoc(), wait);
+    returnOp.erase();
+  }
+  return outlined;
+}
+
+LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
+  Location location = getSemanticLocation(op);
+  if (function.getEntryKind() == sim::EntryKind::Function &&
+      op.getBlockKind() != semantic::SVStatementBlockKind::JoinNone) {
+    emitError(location) << "a fork in a zero-time function must use join_none";
+    return failure();
+  }
+  SmallVector<Operation *> contents = getChildren(op);
+  SmallVector<Operation *> branches;
+  if (contents.size() == 1 &&
+      isa<semantic::SVStatementListOp>(contents.front()))
+    branches = getChildren(contents.front());
+  else
+    branches = contents;
+
+  // Declarations in the fork block are initialized in lexical order before
+  // any child starts. Slang places them before the branch statements.
+  while (!branches.empty() &&
+         isa<semantic::SVVariableDeclStatementOp>(branches.front())) {
+    if (failed(lowerVariableDeclaration(
+            cast<semantic::SVVariableDeclStatementOp>(branches.front()))))
+      return failure();
+    branches.erase(branches.begin());
+  }
+
+  std::optional<uint64_t> blockEventTargetID;
+  if (auto targetID = cov::get<cov::BlockEventTargetId>(op)) {
+    if (!targetID.getValue().isStrictlyPositive())
+      return op.emitError("coverage block-event target ID must be positive");
+    if (!branches.empty()) {
+      blockEventTargetID = targetID.getValue().getZExtValue();
+      emitCovergroupBlockEvent(*blockEventTargetID, /*eventKind=*/0, location);
+    }
+  }
+
+  uint64_t forkNode =
+      op->getAttrOfType<IntegerAttr>("node_id")
+          ? op->getAttrOfType<IntegerAttr>("node_id").getValue().getZExtValue()
+          : nextForkOrdinal;
+  SmallVector<Value> processes;
+  for (auto [index, branch] : llvm::enumerate(branches)) {
+    FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> outlined =
+        outlineForkBranch(branch, forkNode, index);
+    if (failed(outlined))
+      return failure();
+    // The branch retains its lexical statement owner. Only the explicit
+    // source fork establishes a new thread origin; helper outlining does not.
+    if (auto statement = sim::get<sim::metadata::VpiStatementId>(branch)) {
+      OpBuilder inventoryBuilder(outlined->first);
+      sim::SimVPIThreadOriginBindingOp::create(
+          inventoryBuilder, getSemanticLocation(branch),
+          *outlined->first.getCodeUnitId(),
+          statement.getValue().getZExtValue());
+    }
+    processes.push_back(sim::SimSpawnOp::create(
+                            builder, location, outlined->first.getSymNameAttr(),
+                            outlined->second, ArrayAttr{}, ArrayAttr{})
+                            .getProcess());
+  }
+
+  semantic::SVStatementBlockKind kind = op.getBlockKind();
+  if (kind == semantic::SVStatementBlockKind::JoinNone || processes.empty()) {
+    if (blockEventTargetID)
+      emitCovergroupBlockEvent(*blockEventTargetID, /*eventKind=*/1, location);
+    return success();
+  }
+  Block *continuation = addBlock();
+  sim::JoinKind joinKind = kind == semantic::SVStatementBlockKind::JoinAny
+                               ? sim::JoinKind::Any
+                               : sim::JoinKind::All;
+  sim::SimSuspendJoinOp::create(
+      builder, location, joinKind, processes, processes.size(),
+      schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, continuation);
+  setCurrent(continuation);
+  if (blockEventTargetID)
+    emitCovergroupBlockEvent(*blockEventTargetID, /*eventKind=*/1, location);
+  return success();
+}
+
+LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
+  auto path = op.getBlockPathAttr();
+  SmallVector<Operation *> contents = getChildren(op);
+  SmallVector<Operation *> sequentialContents = contents;
+  if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential &&
+      sequentialContents.size() == 1 &&
+      isa<semantic::SVStatementListOp>(sequentialContents.front()))
+    sequentialContents = getChildren(sequentialContents.front());
+  auto lowerContents = [&](std::optional<uint64_t> blockEventTargetID =
+                               std::nullopt) {
+    // A statement block is a lexical scope. Keep bindings introduced by the
+    // block (and bindings that shadow an outer declaration) from leaking into
+    // the lowering of following statements. The values themselves remain in
+    // SSA; only name resolution returns to the enclosing scope.
+    llvm::StringMap<Value> enclosingValues = values;
+    llvm::StringMap<Value> enclosingLValues = lvalues;
+    llvm::scope_exit restoreBindings([&] {
+      values = std::move(enclosingValues);
+      lvalues = std::move(enclosingLValues);
+    });
+    if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential) {
+      SmallVector<Operation *> statements = sequentialContents;
+      while (!statements.empty() &&
+             isa<semantic::SVVariableDeclStatementOp>(statements.front())) {
+        if (failed(lowerVariableDeclaration(
+                cast<semantic::SVVariableDeclStatementOp>(statements.front()))))
+          return failure();
+        statements.erase(statements.begin());
+      }
+      if (blockEventTargetID && !statements.empty())
+        emitCovergroupBlockEvent(*blockEventTargetID, /*eventKind=*/0,
+                                 getSemanticLocation(op));
+      return lowerSequence(statements);
+    }
+    return lowerFork(op);
+  };
+  if (!path) {
+    bool entered = enterVPIStatementFrame(op);
+    LogicalResult result = lowerContents();
+    if (entered) {
+      if (succeeded(result) &&
+          (current->empty() ||
+           !current->back().hasTrait<OpTrait::IsTerminator>()))
+        emitVPIFrameLeaves(vpiFrameScopes.size() - 1, getSemanticLocation(op));
+      vpiFrameScopes.pop_back();
+    }
+    return result;
+  }
+
+  // Slang represents a labeled concurrent assertion as a synthetic named
+  // statement block. The label names the assertion instance for assertion
+  // control; it is not a procedural `begin : name` activation and must not
+  // remain entered while the assertion monitor waits forever on its clock.
+  if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential &&
+      contents.size() == 1 &&
+      isa<semantic::SVConcurrentAssertionStatementOp>(contents.front()))
+    return lowerContents();
+
+  // A label on an immediate assertion names that assertion, not an enclosing
+  // procedural block. Preserve the prepared target identity on the assertion
+  // so a later `disable label` can cancel its pending deferred report without
+  // entering a dynamic control activation around the assertion statement.
+  if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential &&
+      contents.size() == 1 &&
+      isa<semantic::SVImmediateAssertionStatementOp>(contents.front())) {
+    auto targetID = sim::get<sim::metadata::ControlTargetId>(op);
+    if (!targetID || !targetID.getValue().isStrictlyPositive())
+      return emitError(getSemanticLocation(op))
+                 << "labeled assertion has no prepared control ID",
+             failure();
+    sim::set<sim::metadata::AssertionControlTargetId>(contents.front(),
+                                                      targetID);
+    return lowerContents();
+  }
+
+  Location location = getSemanticLocation(op);
+  auto targetIDAttr = sim::get<sim::metadata::ControlTargetId>(op);
+  if (!targetIDAttr || !targetIDAttr.getValue().isStrictlyPositive()) {
+    emitError(location) << "named block has no prepared control ID";
+    return failure();
+  }
+  uint64_t targetID = targetIDAttr.getValue().getZExtValue();
+  std::optional<uint64_t> blockEventTargetID;
+  if (auto eventTarget = cov::get<cov::BlockEventTargetId>(op)) {
+    if (!eventTarget.getValue().isStrictlyPositive())
+      return op.emitError("coverage block-event target ID must be positive");
+    SmallVector<Operation *> statements = sequentialContents;
+    while (!statements.empty() &&
+           isa<semantic::SVVariableDeclStatementOp>(statements.front()))
+      statements.erase(statements.begin());
+    if (op.getBlockKind() != semantic::SVStatementBlockKind::Sequential ||
+        !statements.empty())
+      blockEventTargetID = eventTarget.getValue().getZExtValue();
+  }
+  Value activation = sim::SimControlEnterOp::create(
+      builder, location, builder.getI64IntegerAttr(targetID));
+  Block *exit = addBlock();
+  Operation *parent = op->getParentOp();
+  if (isa_and_nonnull<semantic::SVTimedStatementOp>(parent))
+    parent = parent->getParentOp();
+  bool outermost = parent == function.getOperation();
+  if (outermost)
+    outermostScopeExit = exit;
+  if (outermost && sim::has<sim::metadata::ExternalControlTarget>(op))
+    externallyDisabledOutermostScope = op;
+  bool resumable = sim::has<sim::metadata::ResumableControlTarget>(op) &&
+                   function.getEntryKind() != sim::EntryKind::Function &&
+                   function.getEntryKind() != sim::EntryKind::Observer;
+  if (resumable) {
+    Block *body = addBlock();
+    sim::SimControlBoundaryOp::create(
+        builder, location, activation, ValueRange{},
+        schedule::ContinuationSiteAttr{}, exit, body);
+    setCurrent(body);
+  } else if (hasVPIFrameInstrumentation() &&
+             function.getEntryKind() == sim::EntryKind::Function) {
+    Block *body = addBlock();
+    sim::SimControlLocalBoundaryOp::create(builder, location, activation, exit,
+                                           body);
+    setCurrent(body);
+  }
+  const size_t vpiFrameDepth = vpiFrameScopes.size();
+  bool enteredVPIFrame = enterVPIStatementFrame(op);
+  controlScopes.push_back({path.getValue().str(), targetID, activation, exit,
+                           blockEventTargetID, vpiFrameDepth});
+  LogicalResult result = lowerContents(blockEventTargetID);
+  controlScopes.pop_back();
+  llvm::scope_exit popVPIFrame([&] {
+    if (enteredVPIFrame)
+      vpiFrameScopes.pop_back();
+  });
+  if (failed(result))
+    return failure();
+  if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>()) {
+    if (blockEventTargetID &&
+        op.getBlockKind() == semantic::SVStatementBlockKind::Sequential)
+      emitCovergroupBlockEvent(*blockEventTargetID, /*eventKind=*/1, location);
+    if (enteredVPIFrame)
+      emitVPIFrameLeaves(vpiFrameScopes.size() - 1, location);
+    sim::SimControlLeaveOp::create(builder, location, activation);
+    cf::BranchOp::create(builder, location, exit);
+  }
+  setCurrent(exit);
+  return success();
+}
+
+LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
+  Location location = getSemanticLocation(op);
+  auto path = op.getTargetPathAttr();
+  if (!path) {
+    unsupported(op) << " (unresolved disable target)";
+    return failure();
+  }
+  auto targetIDAttr = sim::get<sim::metadata::ControlTargetId>(op);
+  if (!targetIDAttr || !targetIDAttr.getValue().isStrictlyPositive()) {
+    emitError(location) << "disable has no prepared control ID";
+    return failure();
+  }
+  uint64_t targetID = targetIDAttr.getValue().getZExtValue();
+  bool hierarchical = op.getIsHierarchical();
+  // IEEE 1800-2023 16.14.6.4: disabling a procedural concurrent assertion
+  // clears its pending instances; its matured attempts are unaffected.
+  if (llvm::is_contained(llvm::make_second_range(proceduralAssertionLabels),
+                         path.getValue())) {
+    Value epoch = getProceduralAssertionLabelEpoch(path.getValue(), location);
+    Value current = sim::SimRefLoadOp::create(builder, location,
+                                              builder.getI64Type(), epoch);
+    Value one = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(1));
+    Value next = arith::AddIOp::create(builder, location, current, one);
+    sim::SimRefStoreOp::create(builder, location, next, epoch);
+    return success();
+  }
+  auto assertion = assertionControlIDs.find(path.getValue());
+  if (assertion != assertionControlIDs.end() && assertion->second == targetID) {
+    sim::SimControlDisableOp::create(
+        builder, location, builder.getI64IntegerAttr(targetID), Value{},
+        builder.getBoolAttr(hierarchical));
+    return success();
+  }
+  if (hasVPIFrameInstrumentation()) {
+    Value lexicalActivation;
+    if (!hierarchical)
+      for (const ControlScope &scope : llvm::reverse(controlScopes))
+        if (scope.path == path.getValue()) {
+          lexicalActivation = scope.activation;
+          break;
+        }
+    // An out-of-scope exact name denotes all live occurrences. A lexical
+    // source inside this activation can select its actual control token.
+    bool all = hierarchical || (!lexicalActivation &&
+                                !inheritedControlIDs.contains(path.getValue()));
+    Value selected = sim::SimControlDisableSelectedOp::create(
+        builder, location, builder.getI64IntegerAttr(targetID),
+        lexicalActivation, builder.getBoolAttr(all));
+    Value zero = arith::ConstantIntOp::create(builder, location, 0, 64);
+    Value unaffected = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, selected, zero);
+    Block *continuation = addBlock();
+    Block *dispatch = addBlock();
+    cf::CondBranchOp::create(builder, location, unaffected, continuation,
+                             dispatch);
+    setCurrent(dispatch);
+    for (const ControlScope &scope : llvm::reverse(controlScopes)) {
+      if (scope.targetID != targetID)
+        continue;
+      Value matches = sim::SimControlMatchOp::create(
+          builder, location, selected, scope.activation);
+      Block *leave = addBlock();
+      Block *next = addBlock();
+      cf::CondBranchOp::create(builder, location, matches, leave, next);
+      setCurrent(leave);
+      sim::SimVPIFrameObservationEndOp::create(
+          builder, location, getVPIObservedRefs(scope.vpiFrameDepth));
+      auto branch = cf::BranchOp::create(builder, location, scope.exit);
+      if (scope.exit == outermostScopeExit)
+        outermostScopeDisables.push_back(branch);
+      setCurrent(next);
+    }
+    if (function.getEntryKind() == sim::EntryKind::Function) {
+      if (failed(emitFunctionReturn(location, std::nullopt, false,
+                                    /*emitBlockEventEnd=*/false)))
+        return failure();
+      builder.setInsertionPoint(current->getTerminator());
+      sim::SimControlNonlocalExitOp::create(
+          builder, location, builder.getI64IntegerAttr(targetID), selected);
+    } else {
+      sim::SimVPIFrameObservationEndOp::create(builder, location,
+                                               getVPIObservedRefs());
+      sim::SimReturnOp::create(builder, location, ValueRange{});
+    }
+    setCurrent(continuation);
+    return success();
+  }
+  for (const ControlScope &scope : llvm::reverse(controlScopes)) {
+    if (scope.path == path.getValue()) {
+      sim::SimControlDisableOp::create(
+          builder, location, builder.getI64IntegerAttr(targetID),
+          hierarchical ? Value{} : scope.activation,
+          builder.getBoolAttr(hierarchical));
+      if (hasVPIFrameInstrumentation())
+        sim::SimVPIFrameObservationEndOp::create(
+            builder, location, getVPIObservedRefs(scope.vpiFrameDepth));
+      auto branch = cf::BranchOp::create(builder, location, scope.exit);
+      if (scope.exit == outermostScopeExit)
+        outermostScopeDisables.push_back(branch);
+      setCurrent(addBlock());
+      return success();
+    }
+  }
+
+  if (inheritedControlIDs.contains(path.getValue())) {
+    sim::SimControlDisableOp::create(
+        builder, location, builder.getI64IntegerAttr(targetID), Value{},
+        builder.getBoolAttr(hierarchical));
+    if (hasVPIFrameInstrumentation())
+      sim::SimVPIFrameObservationEndOp::create(builder, location,
+                                               getVPIObservedRefs());
+    sim::SimReturnOp::create(builder, location, ValueRange{});
+    setCurrent(addBlock());
+    return success();
+  }
+
+  // A resolved target outside the lexical activation stack is hierarchical:
+  // disable every live activation of that exact elaborated block identity.
+  sim::SimControlDisableOp::create(builder, location,
+                                   builder.getI64IntegerAttr(targetID), Value{},
+                                   builder.getBoolAttr(true));
+  if (function.getEntryKind() == sim::EntryKind::Task ||
+      function.getEntryKind() == sim::EntryKind::Function) {
+    // IEEE 1800-2023 9.6.2: a task that disables itself ends this activation
+    // as well, which the runtime has already dropped from the control stack.
+    auto ownTarget = sim::get<sim::metadata::ControlTargetId>(function);
+    bool disablesSelf = function.getEntryKind() == sim::EntryKind::Task &&
+                        ownTarget && ownTarget.getValue() == targetID;
+    Value escape =
+        disablesSelf
+            ? arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(true))
+                  .getResult()
+            : sim::SimControlEscapePendingOp::create(builder, location)
+                  .getResult();
+    Block *abandon = addBlock();
+    Block *continuation = addBlock();
+    cf::CondBranchOp::create(builder, location, escape, abandon, ValueRange{},
+                             continuation, ValueRange{});
+    setCurrent(abandon);
+    if (function.getEntryKind() == sim::EntryKind::Function) {
+      if (failed(emitFunctionReturn(location, std::nullopt, false,
+                                    /*emitBlockEventEnd=*/false)))
+        return failure();
+      builder.setInsertionPoint(current->getTerminator());
+      sim::SimControlNonlocalExitOp::create(
+          builder, location, builder.getI64IntegerAttr(targetID), Value{});
+    } else {
+      // A nonlocal exit discards this task activation. In particular it must
+      // neither copy output/inout formals nor leave controls that the runtime
+      // has already unwound through the target boundary.
+      if (hasVPIFrameInstrumentation())
+        sim::SimVPIFrameObservationEndOp::create(builder, location,
+                                                 getVPIObservedRefs());
+      sim::SimControlNonlocalExitOp::create(
+          builder, location, builder.getI64IntegerAttr(targetID), Value{});
+      sim::SimReturnOp::create(builder, location, ValueRange{});
+    }
+    setCurrent(continuation);
+  }
+  return success();
+}
+
+} // namespace talos::simlowering

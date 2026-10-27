@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-unroll-bounded-loops{maximum-loop-size=8},canonicalize,cse)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-unroll-bounded-loops{maximum-loop-size=8},canonicalize,cse)))' | FileCheck %s
 
 // Equal trip counts and similar source bodies have different residual costs.
 // Admission must account for the IR that constant propagation, dead guards,

@@ -1,13 +1,13 @@
 # The last LTO flag wins, including flags expanded from a command file. The
 # selected runtime archive is observed as in lto-options.test.
-# RUN: mkdir -p %t/bin %t/lib/obelisk/targets/%target_triple
-# RUN: ln -f %obelisk %t/bin/obelisk
-# RUN: touch %t/lib/obelisk/targets/%target_triple/.complete %t/lib/obelisk/targets/%target_triple/clang_rt.crtbegin.o
+# RUN: mkdir -p %t/bin %t/lib/talos/targets/%target_triple
+# RUN: ln -f %talos %t/bin/talos
+# RUN: touch %t/lib/talos/targets/%target_triple/.complete %t/lib/talos/targets/%target_triple/clang_rt.crtbegin.o
 
-# RUN: not %t/bin/obelisk -flto -fno-lto %S/no-lto.sv -o %t/restored 2>&1 | FileCheck %s --check-prefix=OBJECT
-# RUN: not %t/bin/obelisk -fno-lto -flto %S/no-lto.sv -o %t/enabled 2>&1 | FileCheck %s --check-prefix=LTO
-# RUN: not %t/bin/obelisk -fno-lto -f %S/Inputs/lto-flags.f %S/no-lto.sv -o %t/file-lto 2>&1 | FileCheck %s --check-prefix=LTO
-# RUN: not %t/bin/obelisk -f %S/Inputs/lto-flags.f -fno-lto %S/no-lto.sv -o %t/file-no-lto 2>&1 | FileCheck %s --check-prefix=OBJECT
+# RUN: not %t/bin/talos -flto -fno-lto %S/no-lto.sv -o %t/restored 2>&1 | FileCheck %s --check-prefix=OBJECT
+# RUN: not %t/bin/talos -fno-lto -flto %S/no-lto.sv -o %t/enabled 2>&1 | FileCheck %s --check-prefix=LTO
+# RUN: not %t/bin/talos -fno-lto -f %S/Inputs/lto-flags.f %S/no-lto.sv -o %t/file-lto 2>&1 | FileCheck %s --check-prefix=LTO
+# RUN: not %t/bin/talos -f %S/Inputs/lto-flags.f -fno-lto %S/no-lto.sv -o %t/file-no-lto 2>&1 | FileCheck %s --check-prefix=OBJECT
 
-# OBJECT: obelisk: error: native support is missing '{{.*[\\/]}}libobelisk_rt.a'
-# LTO: obelisk: error: native support is missing '{{.*[\\/]}}libobelisk_rt_lto.a'
+# OBJECT: talos: error: native support is missing '{{.*[\\/]}}libtalos_rt.a'
+# LTO: talos: error: native support is missing '{{.*[\\/]}}libtalos_rt_lto.a'

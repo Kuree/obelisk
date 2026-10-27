@@ -1,8 +1,8 @@
 //===- CoverageTest.cpp - Functional coverage runtime tests --------------===//
 
 #include "../lib/RuntimeInternal.h"
-#include "obelisk/Coverage/CoverageDatabase.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Coverage/CoverageDatabase.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "gtest/gtest.h"
 
@@ -41,7 +41,7 @@ void put32(std::vector<uint8_t> &bytes, size_t offset, uint32_t value) {
 }
 
 size_t sectionOffset(const std::vector<uint8_t> &bytes,
-                     obelisk::coverage::SectionKind kind) {
+                     talos::coverage::SectionKind kind) {
   uint64_t directory = read64(bytes, 24);
   uint32_t count = read32(bytes, 12);
   for (uint32_t index = 0; index != count; ++index) {
@@ -53,57 +53,57 @@ size_t sectionOffset(const std::vector<uint8_t> &bytes,
 }
 
 void refreshChecksum(std::vector<uint8_t> &bytes) {
-  const size_t payloadSize = bytes.size() - obelisk::coverage::ChecksumSize;
-  obelisk::coverage::Digest digest =
-      obelisk::coverage::sha256(bytes.data(), payloadSize);
+  const size_t payloadSize = bytes.size() - talos::coverage::ChecksumSize;
+  talos::coverage::Digest digest =
+      talos::coverage::sha256(bytes.data(), payloadSize);
   std::copy(digest.begin(), digest.end(), bytes.begin() + payloadSize);
 }
 
 class CoverageRuntimeTest : public testing::Test {
 protected:
   void SetUp() override {
-    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_context_create(&context), TALOS_RT_OK);
   }
-  void TearDown() override { obelisk_rt_v1_context_destroy(context); }
+  void TearDown() override { talos_rt_v1_context_destroy(context); }
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
 };
 
-obelisk_rt_status finalizeCoverage(
-    obelisk_rt_context *context, uint64_t lineCount, uint64_t toggleBitCount,
+talos_rt_status finalizeCoverage(
+    talos_rt_context *context, uint64_t lineCount, uint64_t toggleBitCount,
     const uint8_t *initialValue, const uint8_t *initialUnknown,
-    uint32_t persistenceMask = OBELISK_RT_COVERAGE_PERSIST_ALL) {
-  return obelisk_rt_v1_coverage_finalize(
+    uint32_t persistenceMask = TALOS_RT_COVERAGE_PERSIST_ALL) {
+  return talos_rt_v1_coverage_finalize(
       context, lineCount, toggleBitCount, initialValue, initialUnknown,
       persistenceMask);
 }
 
 template <typename Callback>
-obelisk_rt_status withManagedString(obelisk_rt_context *context,
+talos_rt_status withManagedString(talos_rt_context *context,
                                     const std::string &text,
                                     Callback &&callback) {
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  obelisk_rt_status status = obelisk_rt_v1_gc_lane_create(context, &lane);
-  if (status != OBELISK_RT_OK)
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_status status = talos_rt_v1_gc_lane_create(context, &lane);
+  if (status != TALOS_RT_OK)
     return status;
-  status = obelisk_rt_v1_gc_lane_enter(lane);
-  if (status != OBELISK_RT_OK) {
-    (void)obelisk_rt_v1_gc_lane_destroy(lane);
+  status = talos_rt_v1_gc_lane_enter(lane);
+  if (status != TALOS_RT_OK) {
+    (void)talos_rt_v1_gc_lane_destroy(lane);
     return status;
   }
-  obelisk_rt_string_v1 string = 0;
-  status = obelisk_rt_v1_string_create(lane, text.data(), text.size(), &string);
-  if (status == OBELISK_RT_OK)
+  talos_rt_string_v1 string = 0;
+  status = talos_rt_v1_string_create(lane, text.data(), text.size(), &string);
+  if (status == TALOS_RT_OK)
     status = callback(string);
-  obelisk_rt_status leaveStatus = obelisk_rt_v1_gc_lane_leave(lane);
-  obelisk_rt_status destroyStatus = obelisk_rt_v1_gc_lane_destroy(lane);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status leaveStatus = talos_rt_v1_gc_lane_leave(lane);
+  talos_rt_status destroyStatus = talos_rt_v1_gc_lane_destroy(lane);
+  if (status != TALOS_RT_OK)
     return status;
-  return leaveStatus != OBELISK_RT_OK ? leaveStatus : destroyStatus;
+  return leaveStatus != TALOS_RT_OK ? leaveStatus : destroyStatus;
 }
 
-obelisk::coverage::Database makeFunctionalSchema() {
-  using namespace obelisk::coverage;
+talos::coverage::Database makeFunctionalSchema() {
+  using namespace talos::coverage;
   Database schema;
   schema.scopes.push_back({1, 0, "top", 0, "top"});
   schema.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
@@ -165,8 +165,8 @@ obelisk::coverage::Database makeFunctionalSchema() {
   return schema;
 }
 
-obelisk::coverage::Database makeSharedAndSelectorSchema() {
-  using namespace obelisk::coverage;
+talos::coverage::Database makeSharedAndSelectorSchema() {
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalItems.push_back({22, 10, "product",
                                     FunctionalItemKind::Cross, 0, 100, 1, 2,
@@ -205,10 +205,10 @@ obelisk::coverage::Database makeSharedAndSelectorSchema() {
   return schema;
 }
 
-obelisk::coverage::Database
-makeCrossWithSchema(obelisk::coverage::CrossMatchesPolicy policy,
+talos::coverage::Database
+makeCrossWithSchema(talos::coverage::CrossMatchesPolicy policy,
                     uint64_t count, bool splitFirstTarget = false) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalBins = {
       {30, 20, "all", FunctionalBinKind::State, 0, 1, 0, "top.cg.first.all"},
@@ -289,8 +289,8 @@ makeCrossWithSchema(obelisk::coverage::CrossMatchesPolicy policy,
   return schema;
 }
 
-obelisk::coverage::Database makeScopedCodeCoverageSchema() {
-  using namespace obelisk::coverage;
+talos::coverage::Database makeScopedCodeCoverageSchema() {
+  using namespace talos::coverage;
   Database schema;
   schema.sourceFiles.push_back({100, "scope.sv", {}});
   schema.scopes.push_back({1, 0, "$root", 0, ""});
@@ -321,9 +321,9 @@ obelisk::coverage::Database makeScopedCodeCoverageSchema() {
   return schema;
 }
 
-obelisk::coverage::Digest
-addResolvedFunctionalConfiguration(obelisk::coverage::Database &database) {
-  using namespace obelisk::coverage;
+talos::coverage::Digest
+addResolvedFunctionalConfiguration(talos::coverage::Database &database) {
+  using namespace talos::coverage;
   database.functionalConfigurations.push_back({10, {}, 0});
   database.resolvedFunctionalItems.push_back({10,
                                               {},
@@ -503,14 +503,14 @@ addResolvedFunctionalConfiguration(obelisk::coverage::Database &database) {
 
 class CoverageRuntimeDesignTest : public testing::Test {
 protected:
-  obelisk_rt_context *
-  createContextForSchema(const obelisk::coverage::Database &schema,
+  talos_rt_context *
+  createContextForSchema(const talos::coverage::Database &schema,
                          bool preResolve = false);
 
 private:
   struct Execution {
-    obelisk_rt_execution_descriptor_v1 descriptor{};
-    obelisk_rt_execution_extension_v1 extension{};
+    talos_rt_execution_descriptor_v1 descriptor{};
+    talos_rt_execution_extension_v1 extension{};
     std::vector<uint8_t> image;
   };
   // Contexts borrow execution metadata, so it must survive helper return and
@@ -518,17 +518,17 @@ private:
   std::vector<std::unique_ptr<Execution>> executions;
 };
 
-obelisk_rt_context *CoverageRuntimeDesignTest::createContextForSchema(
-    const obelisk::coverage::Database &schema, bool preResolve) {
-  obelisk::coverage::Database runtimeSchema = schema;
+talos_rt_context *CoverageRuntimeDesignTest::createContextForSchema(
+    const talos::coverage::Database &schema, bool preResolve) {
+  talos::coverage::Database runtimeSchema = schema;
   if (preResolve && runtimeSchema.functionalConfigurations.empty())
     addResolvedFunctionalConfiguration(runtimeSchema);
   runtimeSchema.schemaFingerprint =
-      obelisk::coverage::computeSchemaFingerprint(runtimeSchema);
+      talos::coverage::computeSchemaFingerprint(runtimeSchema);
   std::vector<uint8_t> image;
-  obelisk::coverage::Diagnostic diagnostic;
-  if (obelisk::coverage::serialize(runtimeSchema, image, &diagnostic) !=
-      obelisk::coverage::Status::Ok) {
+  talos::coverage::Diagnostic diagnostic;
+  if (talos::coverage::serialize(runtimeSchema, image, &diagnostic) !=
+      talos::coverage::Status::Ok) {
     ADD_FAILURE() << "failed to serialize embedded coverage schema: "
                   << static_cast<unsigned>(diagnostic.status) << " field="
                   << (diagnostic.field ? diagnostic.field : "<none>")
@@ -537,56 +537,56 @@ obelisk_rt_context *CoverageRuntimeDesignTest::createContextForSchema(
   }
   Execution &execution = *executions.emplace_back(std::make_unique<Execution>());
   execution.image = std::move(image);
-  execution.descriptor.version = OBELISK_RT_VERSION;
-  execution.descriptor.flags = OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
+  execution.descriptor.version = TALOS_RT_VERSION;
+  execution.descriptor.flags = TALOS_RT_EXECUTION_COVERAGE_SCHEMA;
   execution.descriptor.reserved = sizeof(execution.descriptor);
   execution.descriptor.state_bit_count = 1;
-  execution.extension.version = OBELISK_RT_EXECUTION_EXTENSION_VERSION;
+  execution.extension.version = TALOS_RT_EXECUTION_EXTENSION_VERSION;
   execution.extension.size = sizeof(execution.extension);
   execution.extension.coverage_schema = execution.image.data();
   execution.extension.coverage_schema_size = execution.image.size();
-  obelisk_rt_context *result = nullptr;
-  if (obelisk_rt_v1_context_create_for_design(&execution.descriptor, &result) !=
-      OBELISK_RT_OK)
+  talos_rt_context *result = nullptr;
+  if (talos_rt_v1_context_create_for_design(&execution.descriptor, &result) !=
+      TALOS_RT_OK)
     ADD_FAILURE() << "failed to create context with embedded coverage schema";
   return result;
 }
 
-obelisk_rt_status createFunctional(obelisk_rt_context *context, uint64_t type,
-                                   obelisk_rt_covergroup_v1 *handle) {
-  return obelisk_rt_v1_covergroup_create(context, type, nullptr, 0, nullptr, 0,
+talos_rt_status createFunctional(talos_rt_context *context, uint64_t type,
+                                   talos_rt_covergroup_v1 *handle) {
+  return talos_rt_v1_covergroup_create(context, type, nullptr, 0, nullptr, 0,
                                          handle);
 }
 
-obelisk_rt_status sampleFunctional(obelisk_rt_context *context,
-                                   obelisk_rt_covergroup_v1 handle,
+talos_rt_status sampleFunctional(talos_rt_context *context,
+                                   talos_rt_covergroup_v1 handle,
                                    uint8_t first, uint8_t second) {
-  std::array<obelisk_rt_functional_value_v1, 2> values{};
+  std::array<talos_rt_functional_value_v1, 2> values{};
   values[0] = {60,      2,       1, &first,
-               nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+               nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
                0};
   values[1] = {61,      2,       1, &second,
-               nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+               nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
                0};
-  return obelisk_rt_v1_covergroup_sample(context, handle, values.data(),
+  return talos_rt_v1_covergroup_sample(context, handle, values.data(),
                                          values.size());
 }
 
-obelisk::coverage::Database saveCoverage(obelisk_rt_context *context,
+talos::coverage::Database saveCoverage(talos_rt_context *context,
                                          const std::string &suffix) {
   std::filesystem::path path =
       std::filesystem::temp_directory_path() /
-      ("obelisk-functional-" + suffix + "-" +
+      ("talos-functional-" + suffix + "-" +
        std::to_string(
            std::chrono::steady_clock::now().time_since_epoch().count()) +
        ".obcov");
   std::string pathText = path.string();
-  EXPECT_EQ(obelisk_rt_v1_coverage_save(context, pathText.data(),
+  EXPECT_EQ(talos_rt_v1_coverage_save(context, pathText.data(),
                                         pathText.size(), 0, 0),
-            OBELISK_RT_OK);
-  obelisk::coverage::Database result;
-  EXPECT_EQ(obelisk::coverage::readFile(pathText, result),
-            obelisk::coverage::Status::Ok);
+            TALOS_RT_OK);
+  talos::coverage::Database result;
+  EXPECT_EQ(talos::coverage::readFile(pathText, result),
+            talos::coverage::Status::Ok);
   std::error_code ignored;
   std::filesystem::remove(path, ignored);
   return result;
@@ -594,80 +594,80 @@ obelisk::coverage::Database saveCoverage(obelisk_rt_context *context,
 
 TEST_F(CoverageRuntimeTest, LineHitsAreAtomicAndSaturatingServiceIsQueryable) {
   ASSERT_EQ(finalizeCoverage(context, 3, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(finalizeCoverage(context, 3, 0, nullptr, nullptr),
-            OBELISK_RT_INVALID_LIFECYCLE);
+            TALOS_RT_INVALID_LIFECYCLE);
   std::vector<std::thread> workers;
   for (unsigned worker = 0; worker != 4; ++worker)
     workers.emplace_back([&] {
       for (unsigned iteration = 0; iteration != 1000; ++iteration)
-        EXPECT_EQ(obelisk_rt_v1_coverage_point_hit(context, iteration & 1, 1),
-                  OBELISK_RT_OK);
+        EXPECT_EQ(talos_rt_v1_coverage_point_hit(context, iteration & 1, 1),
+                  TALOS_RT_OK);
     });
   for (auto &worker : workers)
     worker.join();
   uint64_t covered = 0, total = 0;
   double percentage = 0;
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(context, OBELISK_RT_COVERAGE_STATEMENT,
+  ASSERT_EQ(talos_rt_v1_coverage_query(context, TALOS_RT_COVERAGE_STATEMENT,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 2u);
   EXPECT_EQ(total, 3u);
   EXPECT_DOUBLE_EQ(percentage, 200.0 / 3.0);
-  ASSERT_EQ(obelisk_rt_v1_coverage_reset(context, OBELISK_RT_COVERAGE_STATEMENT,
+  ASSERT_EQ(talos_rt_v1_coverage_reset(context, TALOS_RT_COVERAGE_STATEMENT,
                                          nullptr, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(context, OBELISK_RT_COVERAGE_STATEMENT,
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_query(context, TALOS_RT_COVERAGE_STATEMENT,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 0u);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      CrossNumPrintMissingReadsDefaultsAndPreservesExplicitOverride) {
-  obelisk::coverage::Database schema = makeSharedAndSelectorSchema();
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos::coverage::Database schema = makeSharedAndSelectorSchema();
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
 
-  EXPECT_EQ(obelisk_rt_v1_covergroup_set_integer_option(
+  EXPECT_EQ(talos_rt_v1_covergroup_set_integer_option(
                 context, handle, 0,
-                OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING,
+                TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING,
                 int64_t{INT32_MAX} + 1),
-            OBELISK_RT_INVALID_ARGUMENT);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_set_integer_option(
+            TALOS_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(talos_rt_v1_covergroup_set_integer_option(
                 context, handle, 0,
-                OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING, 7),
-            OBELISK_RT_OK);
+                TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING, 7),
+            TALOS_RT_OK);
   int64_t value = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
+  ASSERT_EQ(talos_rt_v1_covergroup_get_integer_option(
                 context, handle, 0,
-                OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING, &value),
-            OBELISK_RT_OK);
+                TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING, &value),
+            TALOS_RT_OK);
   EXPECT_EQ(value, 7);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
+  ASSERT_EQ(talos_rt_v1_covergroup_get_integer_option(
                 context, handle, 22,
-                OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING, &value),
-            OBELISK_RT_OK);
+                TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING, &value),
+            TALOS_RT_OK);
   EXPECT_EQ(value, 7);
 
-  ASSERT_EQ(obelisk_rt_v1_covergroup_set_integer_option(
+  ASSERT_EQ(talos_rt_v1_covergroup_set_integer_option(
                 context, handle, 22,
-                OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING, 3),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_set_integer_option(
+                TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING, 3),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_set_integer_option(
                 context, handle, 0,
-                OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING, 9),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
+                TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING, 9),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_get_integer_option(
                 context, handle, 22,
-                OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING, &value),
-            OBELISK_RT_OK);
+                TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING, &value),
+            TALOS_RT_OK);
   EXPECT_EQ(value, 3);
 
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
@@ -677,553 +677,553 @@ TEST_F(CoverageRuntimeDesignTest,
   schema.functionalItems[0].ordinal = 1;
   schema.functionalItems[1].ordinal = 0;
   schema.schemaFingerprint =
-      obelisk::coverage::computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+      talos::coverage::computeSchemaFingerprint(schema);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 changed = 0, other = 0;
-  ASSERT_EQ(createFunctional(context, 10, &changed), OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(context, 10, &other), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 changed = 0, other = 0;
+  ASSERT_EQ(createFunctional(context, 10, &changed), TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &other), TALOS_RT_OK);
   auto write = [&](uint64_t item,
-                   obelisk_rt_covergroup_instance_option_v1 option,
+                   talos_rt_covergroup_instance_option_v1 option,
                    int64_t value) {
-    ASSERT_EQ(obelisk_rt_v1_covergroup_set_integer_option(context, changed,
+    ASSERT_EQ(talos_rt_v1_covergroup_set_integer_option(context, changed,
                                                           item, option, value),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
   };
-  write(20, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 3);
-  write(21, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 7);
-  write(22, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0);
-  write(20, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST, 4);
-  write(0, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST, 3);
-  write(22, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST, 5);
-  write(0, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST, 2);
+  write(20, TALOS_RT_COVERGROUP_OPTION_WEIGHT, 3);
+  write(21, TALOS_RT_COVERGROUP_OPTION_WEIGHT, 7);
+  write(22, TALOS_RT_COVERGROUP_OPTION_WEIGHT, 0);
+  write(20, TALOS_RT_COVERGROUP_OPTION_AT_LEAST, 4);
+  write(0, TALOS_RT_COVERGROUP_OPTION_AT_LEAST, 3);
+  write(22, TALOS_RT_COVERGROUP_OPTION_AT_LEAST, 5);
+  write(0, TALOS_RT_COVERGROUP_OPTION_AT_LEAST, 2);
   for (auto [item, threshold, weight] :
        {std::array<int64_t, 3>{20, 4, 3}, {21, 2, 7}, {22, 5, 0}}) {
     int64_t value = -1;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
-                  context, changed, item, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST,
+    ASSERT_EQ(talos_rt_v1_covergroup_get_integer_option(
+                  context, changed, item, TALOS_RT_COVERGROUP_OPTION_AT_LEAST,
                   &value),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(value, threshold);
-    ASSERT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
-                  context, changed, item, OBELISK_RT_COVERGROUP_OPTION_WEIGHT,
+    ASSERT_EQ(talos_rt_v1_covergroup_get_integer_option(
+                  context, changed, item, TALOS_RT_COVERGROUP_OPTION_WEIGHT,
                   &value),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(value, weight);
-    ASSERT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
-                  context, other, item, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST,
+    ASSERT_EQ(talos_rt_v1_covergroup_get_integer_option(
+                  context, other, item, TALOS_RT_COVERGROUP_OPTION_AT_LEAST,
                   &value),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(value, 1);
   }
-  auto query = [&](obelisk_rt_covergroup_v1 handle, uint64_t item,
+  auto query = [&](talos_rt_covergroup_v1 handle, uint64_t item,
                    double expected) {
     double percentage = -1.0;
     int32_t covered = -1, total = -1;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                   context, handle, item, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_DOUBLE_EQ(percentage, expected);
   };
   for (unsigned hit = 0; hit != 3; ++hit)
-    ASSERT_EQ(sampleFunctional(context, changed, 0, 2), OBELISK_RT_OK);
+    ASSERT_EQ(sampleFunctional(context, changed, 0, 2), TALOS_RT_OK);
   query(changed, 20, 0.0);
   query(changed, 21, 100.0);
   query(changed, 22, 0.0);
-  ASSERT_EQ(sampleFunctional(context, changed, 0, 2), OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, changed, 0, 2), TALOS_RT_OK);
   query(changed, 20, 50.0);
   query(changed, 22, 0.0);
-  ASSERT_EQ(sampleFunctional(context, changed, 0, 2), OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, changed, 0, 2), TALOS_RT_OK);
   query(changed, 22, 100.0);
-  ASSERT_EQ(sampleFunctional(context, other, 0, 2), OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, other, 0, 2), TALOS_RT_OK);
   query(other, 20, 50.0);
   query(other, 22, 100.0);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      OptionReadsHonorDefaultsAndRejectInvalidScopes) {
   const auto schema = makeSharedAndSelectorSchema();
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
   struct Read {
     uint64_t item;
-    obelisk_rt_covergroup_instance_option_v1 option;
+    talos_rt_covergroup_instance_option_v1 option;
     int64_t value;
   };
   const Read defaults[] = {
-      {0, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, 64},
-      {20, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, 64},
-      {0, OBELISK_RT_COVERGROUP_OPTION_DETECT_OVERLAP, 0},
-      {20, OBELISK_RT_COVERGROUP_OPTION_DETECT_OVERLAP, 0},
-      {0, OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS, 1},
-      {22, OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS, 1},
-      {0, OBELISK_RT_COVERGROUP_OPTION_PER_INSTANCE, 0},
-      {0, OBELISK_RT_COVERGROUP_OPTION_GET_INST_COVERAGE, 0}};
+      {0, TALOS_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, 64},
+      {20, TALOS_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, 64},
+      {0, TALOS_RT_COVERGROUP_OPTION_DETECT_OVERLAP, 0},
+      {20, TALOS_RT_COVERGROUP_OPTION_DETECT_OVERLAP, 0},
+      {0, TALOS_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS, 1},
+      {22, TALOS_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS, 1},
+      {0, TALOS_RT_COVERGROUP_OPTION_PER_INSTANCE, 0},
+      {0, TALOS_RT_COVERGROUP_OPTION_GET_INST_COVERAGE, 0}};
   for (const auto &read : defaults) {
     int64_t value = -99;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
+    ASSERT_EQ(talos_rt_v1_covergroup_get_integer_option(
                   context, handle, read.item, read.option, &value),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(value, read.value);
-    EXPECT_EQ(obelisk_rt_v1_covergroup_set_integer_option(
+    EXPECT_EQ(talos_rt_v1_covergroup_set_integer_option(
                   context, handle, read.item, read.option, read.value),
-              OBELISK_RT_INVALID_ARGUMENT);
+              TALOS_RT_INVALID_ARGUMENT);
   }
   for (const auto &read :
-       {Read{22, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, 0},
-        Read{22, OBELISK_RT_COVERGROUP_OPTION_DETECT_OVERLAP, 0},
-        Read{20, OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS, 0},
-        Read{20, OBELISK_RT_COVERGROUP_OPTION_PER_INSTANCE, 0},
-        Read{22, OBELISK_RT_COVERGROUP_OPTION_GET_INST_COVERAGE, 0},
-        Read{0, OBELISK_RT_COVERGROUP_OPTION_NAME, 0}}) {
+       {Read{22, TALOS_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, 0},
+        Read{22, TALOS_RT_COVERGROUP_OPTION_DETECT_OVERLAP, 0},
+        Read{20, TALOS_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS, 0},
+        Read{20, TALOS_RT_COVERGROUP_OPTION_PER_INSTANCE, 0},
+        Read{22, TALOS_RT_COVERGROUP_OPTION_GET_INST_COVERAGE, 0},
+        Read{0, TALOS_RT_COVERGROUP_OPTION_NAME, 0}}) {
     int64_t value = -99;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
+    EXPECT_EQ(talos_rt_v1_covergroup_get_integer_option(
                   context, handle, read.item, read.option, &value),
-              OBELISK_RT_INVALID_ARGUMENT);
+              TALOS_RT_INVALID_ARGUMENT);
     EXPECT_EQ(value, -99);
   }
   int64_t value = -99;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
-                context, handle, 999, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX,
+  EXPECT_EQ(talos_rt_v1_covergroup_get_integer_option(
+                context, handle, 999, TALOS_RT_COVERGROUP_OPTION_AUTO_BIN_MAX,
                 &value),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(value, -99);
   EXPECT_EQ(
-      obelisk_rt_v1_covergroup_get_integer_option(
-          context, 0, 0, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, &value),
-      OBELISK_RT_INVALID_HANDLE);
-  EXPECT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
-                context, handle, 0, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX,
+      talos_rt_v1_covergroup_get_integer_option(
+          context, 0, 0, TALOS_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, &value),
+      TALOS_RT_INVALID_HANDLE);
+  EXPECT_EQ(talos_rt_v1_covergroup_get_integer_option(
+                context, handle, 0, TALOS_RT_COVERGROUP_OPTION_AUTO_BIN_MAX,
                 nullptr),
-            OBELISK_RT_INVALID_ARGUMENT);
-  obelisk_rt_v1_context_destroy(context);
+            TALOS_RT_INVALID_ARGUMENT);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, OptionNBAsKeepCapturedPathsAndStringsRooted) {
   const auto schema = makeSharedAndSelectorSchema();
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
-            OBELISK_RT_OK);
-  obelisk_rt_object_v1 *path = nullptr;
-  obelisk_rt_gc_root_v1 pathRoot{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &pathRoot, &path), OBELISK_RT_OK);
-  obelisk_rt_string_v1 text = 0;
-  obelisk_rt_gc_managed_root_range_v1 textRoot{};
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_push(lane, &textRoot, &text, 1),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_managed_execution_enter(context, &lane, &entered),
+            TALOS_RT_OK);
+  talos_rt_object_v1 *path = nullptr;
+  talos_rt_gc_root_v1 pathRoot{};
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &pathRoot, &path), TALOS_RT_OK);
+  talos_rt_string_v1 text = 0;
+  talos_rt_gc_managed_root_range_v1 textRoot{};
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_range_push(lane, &textRoot, &text, 1),
+            TALOS_RT_OK);
   auto capture = [&](uint64_t item,
-                     obelisk_rt_covergroup_instance_option_v1 option,
+                     talos_rt_covergroup_instance_option_v1 option,
                      uint64_t mask, int64_t index, bool character) {
-    return obelisk_rt_v1_reference_path_covergroup_option_create(
+    return talos_rt_v1_reference_path_covergroup_option_create(
         lane, handle, 0, item, option, mask, index, character, nullptr, 0, 0,
         nullptr, nullptr, 0, &path);
   };
   auto enqueue = [&](const void *value, uint64_t size, uint64_t delay = 0) {
-    return obelisk_rt_v1_scheduler_managed_nba(context, path, UINT64_MAX, value,
+    return talos_rt_v1_scheduler_managed_nba(context, path, UINT64_MAX, value,
                                                nullptr, size, delay);
   };
   uint64_t bits = 16;
   ASSERT_EQ(
-      capture(0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, UINT32_MAX, 0, false),
-      OBELISK_RT_OK);
-  ASSERT_EQ(enqueue(&bits, sizeof(bits)), OBELISK_RT_OK);
+      capture(0, TALOS_RT_COVERGROUP_OPTION_WEIGHT, UINT32_MAX, 0, false),
+      TALOS_RT_OK);
+  ASSERT_EQ(enqueue(&bits, sizeof(bits)), TALOS_RT_OK);
   bits = 3;
-  ASSERT_EQ(capture(0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 15, 0, false),
-            OBELISK_RT_OK);
-  ASSERT_EQ(enqueue(&bits, sizeof(bits)), OBELISK_RT_OK);
+  ASSERT_EQ(capture(0, TALOS_RT_COVERGROUP_OPTION_WEIGHT, 15, 0, false),
+            TALOS_RT_OK);
+  ASSERT_EQ(enqueue(&bits, sizeof(bits)), TALOS_RT_OK);
   bits = 0;
-  ASSERT_EQ(capture(0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 2, 0, false),
-            OBELISK_RT_OK);
-  ASSERT_EQ(enqueue(&bits, sizeof(bits)), OBELISK_RT_OK);
+  ASSERT_EQ(capture(0, TALOS_RT_COVERGROUP_OPTION_WEIGHT, 2, 0, false),
+            TALOS_RT_OK);
+  ASSERT_EQ(enqueue(&bits, sizeof(bits)), TALOS_RT_OK);
   constexpr char message[] = "whole rhs snapshot";
   ASSERT_EQ(
-      obelisk_rt_v1_string_create(lane, message, sizeof(message) - 1, &text),
-      OBELISK_RT_OK);
-  ASSERT_EQ(capture(20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, 0, 0, false),
-            OBELISK_RT_OK);
-  ASSERT_EQ(enqueue(&text, sizeof(text)), OBELISK_RT_OK);
+      talos_rt_v1_string_create(lane, message, sizeof(message) - 1, &text),
+      TALOS_RT_OK);
+  ASSERT_EQ(capture(20, TALOS_RT_COVERGROUP_OPTION_COMMENT, 0, 0, false),
+            TALOS_RT_OK);
+  ASSERT_EQ(enqueue(&text, sizeof(text)), TALOS_RT_OK);
   uint8_t character = 'W';
-  ASSERT_EQ(capture(20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, 0, 0, true),
-            OBELISK_RT_OK);
-  ASSERT_EQ(enqueue(&character, sizeof(character)), OBELISK_RT_OK);
+  ASSERT_EQ(capture(20, TALOS_RT_COVERGROUP_OPTION_COMMENT, 0, 0, true),
+            TALOS_RT_OK);
+  ASSERT_EQ(enqueue(&character, sizeof(character)), TALOS_RT_OK);
   bits = 2;
   ASSERT_EQ(
-      capture(20, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST, UINT32_MAX, 0, false),
-      OBELISK_RT_OK);
-  ASSERT_EQ(enqueue(&bits, sizeof(bits), 2), OBELISK_RT_OK);
+      capture(20, TALOS_RT_COVERGROUP_OPTION_AT_LEAST, UINT32_MAX, 0, false),
+      TALOS_RT_OK);
+  ASSERT_EQ(enqueue(&bits, sizeof(bits), 2), TALOS_RT_OK);
   // A static option path retains the normal field binding as well as the
   // type identity. Its profile and ordinary storage must commit together.
   std::array<uint8_t, 4> storage{50, 0, 0, 0};
-  ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
-                context, 10, 0, OBELISK_RT_COVERGROUP_OPTION_GOAL, 50),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_reference_path_covergroup_option_create(
-                lane, 0, 10, 0, OBELISK_RT_COVERGROUP_OPTION_GOAL, UINT32_MAX,
+  ASSERT_EQ(talos_rt_v1_covergroup_set_type_integer_option(
+                context, 10, 0, TALOS_RT_COVERGROUP_OPTION_GOAL, 50),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_reference_path_covergroup_option_create(
+                lane, 0, 10, 0, TALOS_RT_COVERGROUP_OPTION_GOAL, UINT32_MAX,
                 0, 0, nullptr, 0, 0, storage.data(), nullptr, 32, &path),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   bits = 80;
-  ASSERT_EQ(enqueue(&bits, sizeof(bits)), OBELISK_RT_OK);
-  EXPECT_EQ(capture(20, OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING,
+  ASSERT_EQ(enqueue(&bits, sizeof(bits)), TALOS_RT_OK);
+  EXPECT_EQ(capture(20, TALOS_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING,
                     UINT32_MAX, 0, false),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
   EXPECT_EQ(path, nullptr);
-  EXPECT_EQ(capture(0, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, UINT32_MAX, 0,
+  EXPECT_EQ(capture(0, TALOS_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, UINT32_MAX, 0,
                     false),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
   EXPECT_EQ(path, nullptr);
   // Only scheduled roots now keep the captured paths and heap string alive.
   path = nullptr;
   text = 0;
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   int64_t weight = -1;
   ASSERT_EQ(
-      obelisk_rt_v1_covergroup_get_integer_option(
-          context, handle, 0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, &weight),
-      OBELISK_RT_OK);
+      talos_rt_v1_covergroup_get_integer_option(
+          context, handle, 0, TALOS_RT_COVERGROUP_OPTION_WEIGHT, &weight),
+      TALOS_RT_OK);
   EXPECT_EQ(weight, 1);
   EXPECT_EQ(storage[0], 50);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_covergroup_get_integer_option(
-          context, handle, 0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, &weight),
-      OBELISK_RT_OK);
+      talos_rt_v1_covergroup_get_integer_option(
+          context, handle, 0, TALOS_RT_COVERGROUP_OPTION_WEIGHT, &weight),
+      TALOS_RT_OK);
   EXPECT_EQ(weight, 17);
   ASSERT_EQ(
-      obelisk_rt_v1_covergroup_get_integer_option(
-          context, handle, 20, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST, &weight),
-      OBELISK_RT_OK);
+      talos_rt_v1_covergroup_get_integer_option(
+          context, handle, 20, TALOS_RT_COVERGROUP_OPTION_AT_LEAST, &weight),
+      TALOS_RT_OK);
   EXPECT_EQ(weight, 2);
   EXPECT_EQ(storage[0], 80);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_get_string_option(
-                lane, handle, 20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, &text),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_get_string_option(
+                lane, handle, 20, TALOS_RT_COVERGROUP_OPTION_COMMENT, &text),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   char scratch[8];
   const char *bytes = nullptr;
   uint64_t size = 0;
-  ASSERT_EQ(obelisk_rt_v1_string_view(text, scratch, &bytes, &size),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_string_view(text, scratch, &bytes, &size),
+            TALOS_RT_OK);
   EXPECT_EQ(std::string(bytes, size), "Whole rhs snapshot");
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_pop(lane, &textRoot),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &pathRoot), OBELISK_RT_OK);
-  obelisk_rt_managed_execution_leave(lane, entered);
-  obelisk_rt_v1_context_destroy(context);
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_range_pop(lane, &textRoot),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &pathRoot), TALOS_RT_OK);
+  talos_rt_managed_execution_leave(lane, entered);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, StringOptionReadsReturnIndependentGcSnapshots) {
   const auto schema = makeSharedAndSelectorSchema();
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 first = 0, second = 0;
-  ASSERT_EQ(createFunctional(context, 10, &first), OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(context, 10, &second), OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  obelisk_rt_string_v1 values[4]{};
-  obelisk_rt_gc_managed_root_range_v1 roots{};
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_push(lane, &roots, values, 4),
-            OBELISK_RT_OK);
-  auto expectText = [](obelisk_rt_string_v1 value,
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 first = 0, second = 0;
+  ASSERT_EQ(createFunctional(context, 10, &first), TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &second), TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(context, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  talos_rt_string_v1 values[4]{};
+  talos_rt_gc_managed_root_range_v1 roots{};
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_range_push(lane, &roots, values, 4),
+            TALOS_RT_OK);
+  auto expectText = [](talos_rt_string_v1 value,
                        const std::string &expected) {
     char scratch[8];
     const char *bytes = nullptr;
     uint64_t size = 0;
-    ASSERT_EQ(obelisk_rt_v1_string_view(value, scratch, &bytes, &size),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_string_view(value, scratch, &bytes, &size),
+              TALOS_RT_OK);
     EXPECT_EQ(std::string(bytes, size), expected);
   };
-  ASSERT_EQ(obelisk_rt_v1_covergroup_get_string_option(
-                lane, first, 0, OBELISK_RT_COVERGROUP_OPTION_NAME, &values[0]),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_get_string_option(
-                lane, second, 0, OBELISK_RT_COVERGROUP_OPTION_NAME, &values[1]),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_get_string_option(
+                lane, first, 0, TALOS_RT_COVERGROUP_OPTION_NAME, &values[0]),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_get_string_option(
+                lane, second, 0, TALOS_RT_COVERGROUP_OPTION_NAME, &values[1]),
+            TALOS_RT_OK);
   EXPECT_NE(values[0], values[1]);
   expectText(values[0], "$auto$1");
   expectText(values[1], "$auto$2");
   for (uint64_t item : {uint64_t{0}, uint64_t{20}, uint64_t{22}}) {
-    ASSERT_EQ(obelisk_rt_v1_covergroup_get_string_option(
-                  lane, first, item, OBELISK_RT_COVERGROUP_OPTION_COMMENT,
+    ASSERT_EQ(talos_rt_v1_covergroup_get_string_option(
+                  lane, first, item, TALOS_RT_COVERGROUP_OPTION_COMMENT,
                   &values[2]),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     expectText(values[2], "");
   }
   const std::string comment = "a long point comment with independent storage";
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, comment.data(), comment.size(),
+  ASSERT_EQ(talos_rt_v1_string_create(lane, comment.data(), comment.size(),
                                         &values[3]),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_covergroup_set_string_option(
-          context, first, 20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, values[3]),
-      OBELISK_RT_OK);
+      talos_rt_v1_covergroup_set_string_option(
+          context, first, 20, TALOS_RT_COVERGROUP_OPTION_COMMENT, values[3]),
+      TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_covergroup_get_string_option(
-          lane, first, 20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, &values[2]),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "edited", 6, &values[3]),
-            OBELISK_RT_OK);
+      talos_rt_v1_covergroup_get_string_option(
+          lane, first, 20, TALOS_RT_COVERGROUP_OPTION_COMMENT, &values[2]),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_string_create(lane, "edited", 6, &values[3]),
+            TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_covergroup_set_string_option(
-          context, first, 20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, values[3]),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_set_name(context, first, values[3]),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+      talos_rt_v1_covergroup_set_string_option(
+          context, first, 20, TALOS_RT_COVERGROUP_OPTION_COMMENT, values[3]),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_set_name(context, first, values[3]),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   expectText(values[0], "$auto$1");
   expectText(values[2], comment);
   ASSERT_EQ(
-      obelisk_rt_v1_covergroup_get_string_option(
-          lane, first, 20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, &values[3]),
-      OBELISK_RT_OK);
+      talos_rt_v1_covergroup_get_string_option(
+          lane, first, 20, TALOS_RT_COVERGROUP_OPTION_COMMENT, &values[3]),
+      TALOS_RT_OK);
   expectText(values[3], "edited");
-  ASSERT_EQ(obelisk_rt_v1_covergroup_get_string_option(
-                lane, first, 0, OBELISK_RT_COVERGROUP_OPTION_NAME, &values[3]),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_get_string_option(
+                lane, first, 0, TALOS_RT_COVERGROUP_OPTION_NAME, &values[3]),
+            TALOS_RT_OK);
   expectText(values[3], "edited");
   for (const auto &invalid :
-       {std::make_pair(uint64_t{20}, OBELISK_RT_COVERGROUP_OPTION_NAME),
-        std::make_pair(uint64_t{0}, OBELISK_RT_COVERGROUP_OPTION_WEIGHT)}) {
-    EXPECT_EQ(obelisk_rt_v1_covergroup_get_string_option(
+       {std::make_pair(uint64_t{20}, TALOS_RT_COVERGROUP_OPTION_NAME),
+        std::make_pair(uint64_t{0}, TALOS_RT_COVERGROUP_OPTION_WEIGHT)}) {
+    EXPECT_EQ(talos_rt_v1_covergroup_get_string_option(
                   lane, first, invalid.first, invalid.second, &values[3]),
-              OBELISK_RT_INVALID_ARGUMENT);
+              TALOS_RT_INVALID_ARGUMENT);
     expectText(values[3], "edited");
   }
   EXPECT_EQ(
-      obelisk_rt_v1_covergroup_get_string_option(
-          lane, first, 999, OBELISK_RT_COVERGROUP_OPTION_COMMENT, &values[3]),
-      OBELISK_RT_INVALID_DESIGN);
+      talos_rt_v1_covergroup_get_string_option(
+          lane, first, 999, TALOS_RT_COVERGROUP_OPTION_COMMENT, &values[3]),
+      TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(
-      obelisk_rt_v1_covergroup_get_string_option(
-          nullptr, first, 0, OBELISK_RT_COVERGROUP_OPTION_NAME, &values[3]),
-      OBELISK_RT_INVALID_ARGUMENT);
-  EXPECT_EQ(obelisk_rt_v1_covergroup_get_string_option(
-                lane, 0, 0, OBELISK_RT_COVERGROUP_OPTION_NAME, &values[3]),
-            OBELISK_RT_INVALID_HANDLE);
-  EXPECT_EQ(obelisk_rt_v1_covergroup_get_string_option(
-                lane, first, 0, OBELISK_RT_COVERGROUP_OPTION_NAME, nullptr),
-            OBELISK_RT_INVALID_ARGUMENT);
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_pop(lane, &roots),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_covergroup_get_string_option(
+          nullptr, first, 0, TALOS_RT_COVERGROUP_OPTION_NAME, &values[3]),
+      TALOS_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(talos_rt_v1_covergroup_get_string_option(
+                lane, 0, 0, TALOS_RT_COVERGROUP_OPTION_NAME, &values[3]),
+            TALOS_RT_INVALID_HANDLE);
+  EXPECT_EQ(talos_rt_v1_covergroup_get_string_option(
+                lane, first, 0, TALOS_RT_COVERGROUP_OPTION_NAME, nullptr),
+            TALOS_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_range_pop(lane, &roots),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, Clause40ControlAndQueryHonorScopeSelection) {
-  obelisk::coverage::Database schema = makeScopedCodeCoverageSchema();
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos::coverage::Database schema = makeScopedCodeCoverageSchema();
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   constexpr std::array<uint8_t, 1> zero{0};
   ASSERT_EQ(finalizeCoverage(context, 4, 3, zero.data(), zero.data()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
-  obelisk_rt_string_v1 dut = 0;
-  obelisk_rt_string_v1 missing = 0;
-  ASSERT_EQ(obelisk_rt_v1_string_create(nullptr, "DUT", 3, &dut),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_string_create(nullptr, "missing", 7, &missing),
-            OBELISK_RT_OK);
+  talos_rt_string_v1 dut = 0;
+  talos_rt_string_v1 missing = 0;
+  ASSERT_EQ(talos_rt_v1_string_create(nullptr, "DUT", 3, &dut),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_string_create(nullptr, "missing", 7, &missing),
+            TALOS_RT_OK);
 
   int32_t result = -99;
-  EXPECT_EQ(obelisk_rt_v1_coverage_control_definition(context, 3, 22, 10, dut,
+  EXPECT_EQ(talos_rt_v1_coverage_control_definition(context, 3, 22, 10, dut,
                                                       &result),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(result, 2); // SV_COV_PARTIAL: one statement is excluded.
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 22, 10, dut, 1, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 22, 10, dut, 1, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 2);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 22, 11, dut, 1, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 22, 11, dut, 1, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 3);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_instance(context, 22, 10, 3, 1, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_instance(context, 22, 10, 3, 1, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_instance(context, 22, 11, 3, 1, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_instance(context, 22, 11, 3, 1, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 2);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_instance(context, 22, 10, 1, 1, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_instance(context, 22, 10, 1, 1, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 0);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_instance(context, 22, 11, 1, 1, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_instance(context, 22, 11, 1, 1, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 3);
 
-  ASSERT_EQ(obelisk_rt_v1_coverage_point_hit(context, 0, 1), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_point_hit(context, 0, 1), TALOS_RT_OK);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 22, 10, dut, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 22, 10, dut, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_control_instance(context, 1, 22, 11, 3, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_control_instance(context, 1, 22, 11, 3, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1);
-  ASSERT_EQ(obelisk_rt_v1_coverage_point_hit(context, 0, 1), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_point_hit(context, 2, 1), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_point_hit(context, 0, 1), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_point_hit(context, 2, 1), TALOS_RT_OK);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_instance(context, 22, 10, 5, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_instance(context, 22, 10, 5, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 0);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_control_instance(context, 0, 22, 11, 3, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_control_instance(context, 0, 22, 11, 3, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1);
-  ASSERT_EQ(obelisk_rt_v1_coverage_point_hit(context, 2, 1), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_point_hit(context, 2, 1), TALOS_RT_OK);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_instance(context, 22, 10, 5, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_instance(context, 22, 10, 5, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1);
-  EXPECT_EQ(obelisk_rt_v1_coverage_control_definition(context, 2, 22, 10, dut,
+  EXPECT_EQ(talos_rt_v1_coverage_control_definition(context, 2, 22, 10, dut,
                                                       &result),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(result, 1);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 22, 11, dut, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 22, 11, dut, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1); // The descendant was outside SV_COV_MODULE reset.
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_control_instance(context, 2, 22, 11, 3, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_control_instance(context, 2, 22, 11, 3, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_instance(context, 22, 11, 3, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_instance(context, 22, 11, 3, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 0);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_control_instance(context, 0, 22, 11, 3, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_control_instance(context, 0, 22, 11, 3, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1);
-  ASSERT_EQ(obelisk_rt_v1_coverage_point_hit(context, 0, 1), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_point_hit(context, 2, 1), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_point_hit(context, 0, 1), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_point_hit(context, 2, 1), TALOS_RT_OK);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_instance(context, 22, 11, 3, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_instance(context, 22, 11, 3, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 2);
 
   constexpr std::array<uint8_t, 1> ones{0x7};
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_transition(context, 0, 3, ones.data(),
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_transition(context, 0, 3, ones.data(),
                                                      zero.data()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_control_instance(context, 1, 23, 10, 3, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_control_instance(context, 1, 23, 10, 3, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_transition(context, 0, 3, zero.data(),
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_transition(context, 0, 3, zero.data(),
                                                      zero.data()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 23, 10, dut, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 23, 10, dut, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 3);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 23, 11, dut, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 23, 11, dut, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 5);
-  EXPECT_EQ(obelisk_rt_v1_coverage_control_definition(context, 2, 23, 10, dut,
+  EXPECT_EQ(talos_rt_v1_coverage_control_definition(context, 2, 23, 10, dut,
                                                       &result),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(result, 1);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 23, 11, dut, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 23, 11, dut, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 2);
 
-  EXPECT_EQ(obelisk_rt_v1_coverage_control_definition(context, 3, 21, 10, dut,
+  EXPECT_EQ(talos_rt_v1_coverage_control_definition(context, 3, 21, 10, dut,
                                                       &result),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(result, 0);
-  EXPECT_EQ(obelisk_rt_v1_coverage_control_definition(context, 1, 21, 10, dut,
+  EXPECT_EQ(talos_rt_v1_coverage_control_definition(context, 1, 21, 10, dut,
                                                       &result),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(result, 1);
-  EXPECT_EQ(obelisk_rt_v1_coverage_query_definition(context, 22, 10, missing, 1,
+  EXPECT_EQ(talos_rt_v1_coverage_query_definition(context, 22, 10, missing, 1,
                                                     &result),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(result, -1);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_instance(context, 22, 10, 999, 1, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_instance(context, 22, 10, 999, 1, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, -1);
-  EXPECT_EQ(obelisk_rt_v1_coverage_control_definition(context, 4, 22, 10, dut,
+  EXPECT_EQ(talos_rt_v1_coverage_control_definition(context, 4, 22, 10, dut,
                                                       &result),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(result, -1);
-  EXPECT_EQ(obelisk_rt_v1_coverage_control_definition(context, 3, 24, 10, dut,
+  EXPECT_EQ(talos_rt_v1_coverage_control_definition(context, 3, 24, 10, dut,
                                                       &result),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(result, -1);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 22, 12, dut, 1, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 22, 12, dut, 1, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, -1);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 22, 10, dut, 2, &result),
-      OBELISK_RT_INVALID_ARGUMENT);
+      talos_rt_v1_coverage_query_definition(context, 22, 10, dut, 2, &result),
+      TALOS_RT_INVALID_ARGUMENT);
 
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      Clause40MetricDatabasesSaveFilterAndMergeTransactionally) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeScopedCodeCoverageSchema();
-  obelisk_rt_context *producer = createContextForSchema(schema, false);
+  talos_rt_context *producer = createContextForSchema(schema, false);
   ASSERT_NE(producer, nullptr);
   constexpr std::array<uint8_t, 1> zero{0};
   constexpr std::array<uint8_t, 1> ones{0x7};
   ASSERT_EQ(
       finalizeCoverage(producer, 4, 3, zero.data(), zero.data()),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_point_hit(producer, 0, 1), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_transition(producer, 0, 3,
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_point_hit(producer, 0, 1), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_transition(producer, 0, 3,
                                                      ones.data(), zero.data()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   const std::string suffix = std::to_string(
       std::chrono::steady_clock::now().time_since_epoch().count());
   std::filesystem::path linePath =
       std::filesystem::temp_directory_path() /
-      ("obelisk-clause40-line-" + suffix + ".obcov");
+      ("talos-clause40-line-" + suffix + ".obcov");
   std::filesystem::path togglePath =
       std::filesystem::temp_directory_path() /
-      ("obelisk-clause40-toggle-" + suffix + ".obcov");
-  auto save = [](obelisk_rt_context *context, int32_t coverageType,
+      ("talos-clause40-toggle-" + suffix + ".obcov");
+  auto save = [](talos_rt_context *context, int32_t coverageType,
                  const std::filesystem::path &path, int32_t *result) {
     return withManagedString(context, path.string(), [&](auto name) {
-      return obelisk_rt_v1_coverage_database_save(context, coverageType, name,
+      return talos_rt_v1_coverage_database_save(context, coverageType, name,
                                                   result);
     });
   };
-  auto merge = [](obelisk_rt_context *context, int32_t coverageType,
+  auto merge = [](talos_rt_context *context, int32_t coverageType,
                   const std::filesystem::path &path, int32_t *result) {
     return withManagedString(context, path.string(), [&](auto name) {
-      return obelisk_rt_v1_coverage_database_merge(context, coverageType, name,
+      return talos_rt_v1_coverage_database_merge(context, coverageType, name,
                                                    result);
     });
   };
   int32_t result = -99;
-  ASSERT_EQ(save(producer, 22, linePath, &result), OBELISK_RT_OK);
+  ASSERT_EQ(save(producer, 22, linePath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, 1);
-  ASSERT_EQ(save(producer, 23, togglePath, &result), OBELISK_RT_OK);
+  ASSERT_EQ(save(producer, 23, togglePath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, 1);
 
   Database savedLine, savedToggle;
@@ -1248,53 +1248,53 @@ TEST_F(CoverageRuntimeDesignTest,
   metadataConflict.runs.front().name = "conflicting-test-name";
   std::filesystem::path metadataConflictPath =
       std::filesystem::temp_directory_path() /
-      ("obelisk-clause40-metadata-conflict-" + suffix + ".obcov");
+      ("talos-clause40-metadata-conflict-" + suffix + ".obcov");
   ASSERT_EQ(
       writeFileAtomically(metadataConflictPath.string(), metadataConflict),
       Status::Ok);
 
-  ASSERT_EQ(save(producer, 21, linePath, &result), OBELISK_RT_OK);
+  ASSERT_EQ(save(producer, 21, linePath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, 0);
   Database untouched;
   ASSERT_EQ(readFile(linePath.string(), untouched), Status::Ok);
   EXPECT_EQ(untouched.runs.front().flags, RunContainsLine);
 
-  obelisk_rt_context *consumer = createContextForSchema(schema, false);
+  talos_rt_context *consumer = createContextForSchema(schema, false);
   ASSERT_NE(consumer, nullptr);
   ASSERT_EQ(
       finalizeCoverage(consumer, 4, 3, zero.data(), zero.data()),
-      OBELISK_RT_OK);
-  ASSERT_EQ(merge(consumer, 22, linePath, &result), OBELISK_RT_OK);
+      TALOS_RT_OK);
+  ASSERT_EQ(merge(consumer, 22, linePath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, 1);
-  ASSERT_EQ(merge(consumer, 23, metadataConflictPath, &result), OBELISK_RT_OK);
+  ASSERT_EQ(merge(consumer, 23, metadataConflictPath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, -1);
   uint64_t covered = 0, total = 0;
   double percentage = 0.0;
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(consumer, OBELISK_RT_COVERAGE_TOGGLE,
+  ASSERT_EQ(talos_rt_v1_coverage_query(consumer, TALOS_RT_COVERAGE_TOGGLE,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 0u);
-  ASSERT_EQ(merge(consumer, 23, togglePath, &result), OBELISK_RT_OK);
+  ASSERT_EQ(merge(consumer, 23, togglePath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, 1);
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(consumer,
-                                         OBELISK_RT_COVERAGE_STATEMENT,
+  ASSERT_EQ(talos_rt_v1_coverage_query(consumer,
+                                         TALOS_RT_COVERAGE_STATEMENT,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 1u);
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(consumer, OBELISK_RT_COVERAGE_TOGGLE,
+  ASSERT_EQ(talos_rt_v1_coverage_query(consumer, TALOS_RT_COVERAGE_TOGGLE,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 3u);
 
-  ASSERT_EQ(merge(consumer, 22, linePath, &result), OBELISK_RT_OK);
+  ASSERT_EQ(merge(consumer, 22, linePath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, -1);
-  ASSERT_EQ(merge(consumer, 23, linePath, &result), OBELISK_RT_OK);
+  ASSERT_EQ(merge(consumer, 23, linePath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, 0);
 
   std::filesystem::path missingPath =
       std::filesystem::temp_directory_path() /
-      ("obelisk-clause40-missing-" + suffix + ".obcov");
-  ASSERT_EQ(merge(consumer, 22, missingPath, &result), OBELISK_RT_OK);
+      ("talos-clause40-missing-" + suffix + ".obcov");
+  ASSERT_EQ(merge(consumer, 22, missingPath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, -1);
 
   Database mismatched = savedLine;
@@ -1302,35 +1302,35 @@ TEST_F(CoverageRuntimeDesignTest,
   mismatched.schemaFingerprint = computeSchemaFingerprint(mismatched);
   std::filesystem::path mismatchPath =
       std::filesystem::temp_directory_path() /
-      ("obelisk-clause40-mismatch-" + suffix + ".obcov");
+      ("talos-clause40-mismatch-" + suffix + ".obcov");
   ASSERT_EQ(writeFileAtomically(mismatchPath.string(), mismatched), Status::Ok);
-  ASSERT_EQ(merge(consumer, 22, mismatchPath, &result), OBELISK_RT_OK);
+  ASSERT_EQ(merge(consumer, 22, mismatchPath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, -1);
 
   // IEEE 1800-2023 40.3.2.4: the saving run may merge its own data back,
   // which restores reset counters; merging it again is a duplicate run.
   ASSERT_EQ(
-      obelisk_rt_v1_coverage_control_instance(producer, 2, 23, 11, 1, &result),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(producer, OBELISK_RT_COVERAGE_TOGGLE,
+      talos_rt_v1_coverage_control_instance(producer, 2, 23, 11, 1, &result),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_query(producer, TALOS_RT_COVERAGE_TOGGLE,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 0u);
-  ASSERT_EQ(merge(producer, 23, togglePath, &result), OBELISK_RT_OK);
+  ASSERT_EQ(merge(producer, 23, togglePath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, 1);
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(producer, OBELISK_RT_COVERAGE_TOGGLE,
+  ASSERT_EQ(talos_rt_v1_coverage_query(producer, TALOS_RT_COVERAGE_TOGGLE,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 3u);
-  ASSERT_EQ(merge(producer, 23, togglePath, &result), OBELISK_RT_OK);
+  ASSERT_EQ(merge(producer, 23, togglePath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, -1);
 
-  ASSERT_EQ(save(producer, 99, linePath, &result), OBELISK_RT_OK);
+  ASSERT_EQ(save(producer, 99, linePath, &result), TALOS_RT_OK);
   EXPECT_EQ(result, -1);
   EXPECT_FALSE(std::filesystem::exists(linePath));
 
-  obelisk_rt_v1_context_destroy(consumer);
-  obelisk_rt_v1_context_destroy(producer);
+  talos_rt_v1_context_destroy(consumer);
+  talos_rt_v1_context_destroy(producer);
   std::error_code ignored;
   std::filesystem::remove(linePath, ignored);
   std::filesystem::remove(togglePath, ignored);
@@ -1340,17 +1340,17 @@ TEST_F(CoverageRuntimeDesignTest,
 
 TEST_F(CoverageRuntimeDesignTest,
      Clause40QueriesAndScopedResetIncludeLoadedBaselines) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeScopedCodeCoverageSchema();
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   constexpr std::array<uint8_t, 1> zero{0};
   ASSERT_EQ(
       finalizeCoverage(context, 4, 3, zero.data(), zero.data()),
-      OBELISK_RT_OK);
+      TALOS_RT_OK);
 
   Database incoming = schema;
-  obelisk::coverage::Run run;
+  talos::coverage::Run run;
   run.uuid.back() = 1;
   run.name = "baseline";
   run.flags = RunContainsLine | RunContainsToggle;
@@ -1359,51 +1359,51 @@ TEST_F(CoverageRuntimeDesignTest,
   incoming.counters.push_back({run.uuid, MetricKind::Toggle, 20, 0, 0, 0, 1});
   std::filesystem::path path =
       std::filesystem::temp_directory_path() /
-      ("obelisk-clause40-baseline-" +
+      ("talos-clause40-baseline-" +
        std::to_string(
            std::chrono::steady_clock::now().time_since_epoch().count()) +
        ".obcov");
   ASSERT_EQ(writeFileAtomically(path.string(), incoming), Status::Ok);
   std::string pathText = path.string();
   ASSERT_EQ(
-      obelisk_rt_v1_coverage_load(context, pathText.data(), pathText.size()),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_load(context, pathText.data(), pathText.size()),
+      TALOS_RT_OK);
 
-  obelisk_rt_string_v1 dut = 0;
-  ASSERT_EQ(obelisk_rt_v1_string_create(nullptr, "DUT", 3, &dut),
-            OBELISK_RT_OK);
+  talos_rt_string_v1 dut = 0;
+  ASSERT_EQ(talos_rt_v1_string_create(nullptr, "DUT", 3, &dut),
+            TALOS_RT_OK);
   int32_t result = -99;
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 22, 10, dut, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 22, 10, dut, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 23, 10, dut, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 23, 10, dut, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1);
 
-  EXPECT_EQ(obelisk_rt_v1_coverage_control_definition(context, 2, 22, 10, dut,
+  EXPECT_EQ(talos_rt_v1_coverage_control_definition(context, 2, 22, 10, dut,
                                                       &result),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(result, 1);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 22, 10, dut, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 22, 10, dut, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 0);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 23, 10, dut, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 23, 10, dut, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_control_instance(context, 2, 23, 10, 3, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_control_instance(context, 2, 23, 10, 3, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 1);
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_query_definition(context, 23, 10, dut, 0, &result),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_query_definition(context, 23, 10, dut, 0, &result),
+      TALOS_RT_OK);
   EXPECT_EQ(result, 0);
 
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
   std::error_code ignored;
   std::filesystem::remove(path, ignored);
 }
@@ -1412,140 +1412,140 @@ TEST_F(CoverageRuntimeTest, ToggleResetRebasesTheCoverageShadow) {
   constexpr std::array<uint8_t, 1> zero{0};
   ASSERT_EQ(
       finalizeCoverage(context, 0, 2, zero.data(), zero.data()),
-      OBELISK_RT_OK);
+      TALOS_RT_OK);
   constexpr std::array<uint8_t, 1> one{1};
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_transition(context, 0, 2, one.data(),
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_transition(context, 0, 2, one.data(),
                                                      zero.data()),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_transition(context, 0, 2, zero.data(),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_transition(context, 0, 2, zero.data(),
                                                      zero.data()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint64_t covered = 0, total = 0;
   double percentage = 0;
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(context, OBELISK_RT_COVERAGE_TOGGLE,
+  ASSERT_EQ(talos_rt_v1_coverage_query(context, TALOS_RT_COVERAGE_TOGGLE,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 2u);
   EXPECT_EQ(total, 4u);
   EXPECT_DOUBLE_EQ(percentage, 50.0);
 
-  ASSERT_EQ(obelisk_rt_v1_coverage_reset(context, OBELISK_RT_COVERAGE_TOGGLE,
+  ASSERT_EQ(talos_rt_v1_coverage_reset(context, TALOS_RT_COVERAGE_TOGGLE,
                                          one.data(), zero.data()),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_transition(context, 0, 2, zero.data(),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_transition(context, 0, 2, zero.data(),
                                                      zero.data()),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(context, OBELISK_RT_COVERAGE_TOGGLE,
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_query(context, TALOS_RT_COVERAGE_TOGGLE,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 1u);
   EXPECT_EQ(total, 4u);
   EXPECT_DOUBLE_EQ(percentage, 25.0);
 }
 
 TEST(CoverageBindingTest, CanonicalTransitionsUpdateEverySourceAlias) {
-  obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_VERSION;
+  talos_rt_execution_descriptor_v1 execution{};
+  execution.version = TALOS_RT_VERSION;
   execution.state_bit_count = 2;
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 2),
-            OBELISK_RT_OK);
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_register_static(context, 1, 0, 2),
+            TALOS_RT_OK);
   constexpr std::array<uint8_t, 1> zero{0};
   ASSERT_EQ(
       finalizeCoverage(context, 0, 4, zero.data(), zero.data()),
-      OBELISK_RT_OK);
-  uint64_t state = obelisk_rt_v1_native_state_static_handle(1);
+      TALOS_RT_OK);
+  uint64_t state = talos_rt_v1_native_state_static_handle(1);
   ASSERT_NE(state, UINT64_MAX);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 0, 2, state),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 2, 2, state),
-            OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 1, 1, state),
-            OBELISK_RT_INVALID_DESIGN);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_seal(context), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 0, 1, state),
-            OBELISK_RT_INVALID_LIFECYCLE);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_bind(context, 0, 2, state),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_bind(context, 2, 2, state),
+            TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_coverage_toggle_bind(context, 1, 1, state),
+            TALOS_RT_INVALID_DESIGN);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_seal(context), TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_coverage_toggle_bind(context, 0, 1, state),
+            TALOS_RT_INVALID_LIFECYCLE);
 
   uint8_t oldValue = 0;
   uint8_t newValue = 1;
-  obelisk_rt_v1_scheduler_signal_transition(context, state, 2, &oldValue,
+  talos_rt_v1_scheduler_signal_transition(context, state, 2, &oldValue,
                                             nullptr, &newValue, nullptr);
   uint64_t covered = 0, total = 0;
   double percentage = 0;
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(context, OBELISK_RT_COVERAGE_TOGGLE,
+  ASSERT_EQ(talos_rt_v1_coverage_query(context, TALOS_RT_COVERAGE_TOGGLE,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 2u);
   EXPECT_EQ(total, 8u);
   EXPECT_DOUBLE_EQ(percentage, 25.0);
 
   oldValue = 1;
   newValue = 0;
-  obelisk_rt_v1_scheduler_signal_transition(context, state, 2, &oldValue,
+  talos_rt_v1_scheduler_signal_transition(context, state, 2, &oldValue,
                                             nullptr, &newValue, nullptr);
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(context, OBELISK_RT_COVERAGE_TOGGLE,
+  ASSERT_EQ(talos_rt_v1_coverage_query(context, TALOS_RT_COVERAGE_TOGGLE,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 4u);
   EXPECT_DOUBLE_EQ(percentage, 50.0);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(CoverageBindingTest, SealRejectsMissingIncludedBinding) {
-  obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_VERSION;
+  talos_rt_execution_descriptor_v1 execution{};
+  execution.version = TALOS_RT_VERSION;
   execution.state_bit_count = 2;
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 2),
-            OBELISK_RT_OK);
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_register_static(context, 1, 0, 2),
+            TALOS_RT_OK);
   constexpr std::array<uint8_t, 1> zero{0};
   ASSERT_EQ(
       finalizeCoverage(context, 0, 2, zero.data(), zero.data()),
-      OBELISK_RT_OK);
-  uint64_t state = obelisk_rt_v1_native_state_static_handle(1);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 0, 1, state),
-            OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_coverage_toggle_seal(context),
-            OBELISK_RT_INVALID_DESIGN);
-  obelisk_rt_v1_context_destroy(context);
+      TALOS_RT_OK);
+  uint64_t state = talos_rt_v1_native_state_static_handle(1);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_bind(context, 0, 1, state),
+            TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_coverage_toggle_seal(context),
+            TALOS_RT_INVALID_DESIGN);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(CoverageBindingTest, DisjointPhysicalSegmentsDoNotOverlap) {
-  obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_VERSION;
+  talos_rt_execution_descriptor_v1 execution{};
+  execution.version = TALOS_RT_VERSION;
   execution.state_bit_count = 131;
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 131),
-            OBELISK_RT_OK);
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_register_static(context, 1, 0, 131),
+            TALOS_RT_OK);
   constexpr std::array<uint8_t, 1> zero{0};
   ASSERT_EQ(
       finalizeCoverage(context, 0, 5, zero.data(), zero.data()),
-      OBELISK_RT_OK);
-  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
-  uint64_t high = obelisk_rt_v1_native_handle_offset(root, 128);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 0, 2, root),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 2, 3, high),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_seal(context), OBELISK_RT_OK);
+      TALOS_RT_OK);
+  uint64_t root = talos_rt_v1_native_state_static_handle(1);
+  uint64_t high = talos_rt_v1_native_handle_offset(root, 128);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_bind(context, 0, 2, root),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_bind(context, 2, 3, high),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_seal(context), TALOS_RT_OK);
 
   constexpr uint8_t one = 3;
-  obelisk_rt_v1_scheduler_signal_transition(context, root, 2, zero.data(),
+  talos_rt_v1_scheduler_signal_transition(context, root, 2, zero.data(),
                                             nullptr, &one, nullptr);
   uint64_t covered = 0, total = 0;
   double percentage = 0;
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(context, OBELISK_RT_COVERAGE_TOGGLE,
+  ASSERT_EQ(talos_rt_v1_coverage_query(context, TALOS_RT_COVERAGE_TOGGLE,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 2u);
   EXPECT_EQ(total, 10u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeTest, CoverageCommandLineOptionsAreValidated) {
@@ -1555,69 +1555,69 @@ TEST_F(CoverageRuntimeTest, CoverageCommandLineOptionsAreValidated) {
                          "--coverage-tag=suite=ci",
                          "--coverage-tag=shard=3",
                          "--no-coverage-dump"};
-  EXPECT_EQ(obelisk_rt_v1_context_configure_argv(
+  EXPECT_EQ(talos_rt_v1_context_configure_argv(
                 context, static_cast<int>(std::size(valid)), valid),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   const char *duplicateTag[] = {"sim", "--coverage-tag=suite=a",
                                 "--coverage-tag=suite=b"};
   EXPECT_EQ(
-      obelisk_rt_v1_context_configure_argv(
+      talos_rt_v1_context_configure_argv(
           context, static_cast<int>(std::size(duplicateTag)), duplicateTag),
-      OBELISK_RT_INVALID_ARGUMENT);
+      TALOS_RT_INVALID_ARGUMENT);
   const char *emptyOutput[] = {"sim", "--coverage-output="};
-  EXPECT_EQ(obelisk_rt_v1_context_configure_argv(
+  EXPECT_EQ(talos_rt_v1_context_configure_argv(
                 context, static_cast<int>(std::size(emptyOutput)), emptyOutput),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
   const char *missingLoad[] = {"sim", "--coverage-load=missing.obcov"};
-  EXPECT_EQ(obelisk_rt_v1_context_configure_argv(
+  EXPECT_EQ(talos_rt_v1_context_configure_argv(
                 context, static_cast<int>(std::size(missingLoad)), missingLoad),
-            OBELISK_RT_IO_ERROR);
+            TALOS_RT_IO_ERROR);
 }
 
 TEST_F(CoverageRuntimeDesignTest, CoverageSaveFailureNamesTheRequestedOutput) {
-  obelisk::coverage::Database schema;
-  schema.schemaFingerprint = obelisk::coverage::computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos::coverage::Database schema;
+  schema.schemaFingerprint = talos::coverage::computeSchemaFingerprint(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
   std::filesystem::path output =
       std::filesystem::temp_directory_path() /
-      ("obelisk-coverage-output-directory-" +
+      ("talos-coverage-output-directory-" +
        std::to_string(
            std::chrono::steady_clock::now().time_since_epoch().count()));
   ASSERT_TRUE(std::filesystem::create_directory(output));
   std::string outputText = output.string();
 
-  EXPECT_EQ(obelisk_rt_v1_coverage_save(context, outputText.data(),
+  EXPECT_EQ(talos_rt_v1_coverage_save(context, outputText.data(),
                                         outputText.size(), 0, 0),
-            OBELISK_RT_IO_ERROR);
-  obelisk_rt_buffer_v1 message{};
-  ASSERT_EQ(obelisk_rt_v1_last_error(context, &message), OBELISK_RT_OK);
+            TALOS_RT_IO_ERROR);
+  talos_rt_buffer_v1 message{};
+  ASSERT_EQ(talos_rt_v1_last_error(context, &message), TALOS_RT_OK);
   std::string text(reinterpret_cast<const char *>(message.data), message.size);
-  obelisk_rt_v1_buffer_release(&message);
+  talos_rt_v1_buffer_release(&message);
   EXPECT_NE(text.find("failed to write coverage database"), std::string::npos);
   EXPECT_NE(text.find(outputText), std::string::npos);
   EXPECT_NE(text.find("rename"), std::string::npos);
 
   std::error_code ignored;
   std::filesystem::remove(output, ignored);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeTest, CoverageSnapshotFailureReplacesPriorDiagnostic) {
   char byte = 'x';
   uint64_t written = 0;
-  ASSERT_EQ(obelisk_rt_v1_file_write(context, UINT32_MAX, &byte, 1, &written),
-            OBELISK_RT_INVALID_HANDLE);
-  const std::string output = "/tmp/obelisk-uninitialized-coverage.obcov";
-  EXPECT_EQ(obelisk_rt_v1_coverage_save(context, output.data(), output.size(),
+  ASSERT_EQ(talos_rt_v1_file_write(context, UINT32_MAX, &byte, 1, &written),
+            TALOS_RT_INVALID_HANDLE);
+  const std::string output = "/tmp/talos-uninitialized-coverage.obcov";
+  EXPECT_EQ(talos_rt_v1_coverage_save(context, output.data(), output.size(),
                                         0, 0),
-            OBELISK_RT_INVALID_LIFECYCLE);
-  obelisk_rt_buffer_v1 message{};
-  ASSERT_EQ(obelisk_rt_v1_last_error(context, &message), OBELISK_RT_OK);
+            TALOS_RT_INVALID_LIFECYCLE);
+  talos_rt_buffer_v1 message{};
+  ASSERT_EQ(talos_rt_v1_last_error(context, &message), TALOS_RT_OK);
   std::string text(reinterpret_cast<const char *>(message.data), message.size);
-  obelisk_rt_v1_buffer_release(&message);
+  talos_rt_v1_buffer_release(&message);
   EXPECT_NE(text.find("failed to create coverage snapshot"), std::string::npos);
   EXPECT_NE(text.find(output), std::string::npos);
   EXPECT_NE(text.find("invalid process lifecycle transition"),
@@ -1627,61 +1627,61 @@ TEST_F(CoverageRuntimeTest, CoverageSnapshotFailureReplacesPriorDiagnostic) {
 
 TEST_F(CoverageRuntimeTest, LoadedSchemaMustMatchFinalizedCounterLayout) {
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk::coverage::Database database;
+            TALOS_RT_OK);
+  talos::coverage::Database database;
   database.sourceFiles.push_back({1, "loaded.sv", {}});
   database.scopes.push_back({2, 0, "top", 0, "top"});
   database.linePoints.push_back({3, 1, 1, 2, "", 1, 1, 1, 2, 0, 0});
   std::filesystem::path path =
       std::filesystem::temp_directory_path() /
-      ("obelisk-coverage-layout-" +
+      ("talos-coverage-layout-" +
        std::to_string(
            std::chrono::steady_clock::now().time_since_epoch().count()) +
        ".obcov");
-  ASSERT_EQ(obelisk::coverage::writeFileAtomically(path.string(), database),
-            obelisk::coverage::Status::Ok);
+  ASSERT_EQ(talos::coverage::writeFileAtomically(path.string(), database),
+            talos::coverage::Status::Ok);
   std::string pathText = path.string();
   EXPECT_EQ(
-      obelisk_rt_v1_coverage_load(context, pathText.data(), pathText.size()),
-      OBELISK_RT_INVALID_DESIGN);
+      talos_rt_v1_coverage_load(context, pathText.data(), pathText.size()),
+      TALOS_RT_INVALID_DESIGN);
   std::error_code ignored;
   std::filesystem::remove(path, ignored);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      FunctionalExclusionsChangeQueriesButRetainCounters) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.exclusions.push_back(
       {31, MetricKind::Functional, "not part of denominator", 0});
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(context, handle, 1, 2), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handle, 1, 2), TALOS_RT_OK);
   double percentage = 0.0;
   int32_t covered = 0, total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, handle, 0, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 100.0);
   EXPECT_EQ(covered, 2);
   EXPECT_EQ(total, 2);
 
   std::filesystem::path path =
       std::filesystem::temp_directory_path() /
-      ("obelisk-functional-exclusion-" +
+      ("talos-functional-exclusion-" +
        std::to_string(
            std::chrono::steady_clock::now().time_since_epoch().count()) +
        ".obcov");
   std::string pathText = path.string();
-  ASSERT_EQ(obelisk_rt_v1_coverage_save(context, pathText.data(),
+  ASSERT_EQ(talos_rt_v1_coverage_save(context, pathText.data(),
                                         pathText.size(), 0, 0),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   Database saved;
   ASSERT_EQ(readFile(pathText, saved), Status::Ok);
   auto resolvedExcluded = std::find_if(
@@ -1697,7 +1697,7 @@ TEST_F(CoverageRuntimeDesignTest,
                    });
   ASSERT_NE(excluded, saved.counters.end());
   EXPECT_EQ(excluded->value, 1u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
   std::error_code ignored;
   std::filesystem::remove(path, ignored);
 
@@ -1708,44 +1708,44 @@ TEST_F(CoverageRuntimeDesignTest,
   context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(context, handle, 1, 2), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+            TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handle, 1, 2), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, handle, 0, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 0.0);
   EXPECT_EQ(covered, 0);
   EXPECT_EQ(total, 0);
-  ASSERT_EQ(obelisk_rt_v1_functional_coverage_get(context, &percentage),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_functional_coverage_get(context, &percentage),
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 100.0);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, SharedAndSelectorDagBindsAndSamplesOnce) {
-  obelisk::coverage::Database schema = makeSharedAndSelectorSchema();
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos::coverage::Database schema = makeSharedAndSelectorSchema();
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), TALOS_RT_OK);
 
   double percentage = 0.0;
   int32_t covered = 0, total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, handle, 22, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 100.0);
   EXPECT_EQ(covered, 1);
   EXPECT_EQ(total, 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(CoverageDatabaseTest, CrossWithConstructorQueueIsStrictlyValidated) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeCrossWithSchema(CrossMatchesPolicy::Count, 1);
   EXPECT_EQ(validate(schema), Status::Ok);
   Database wrongAnchor = schema;
@@ -1770,7 +1770,7 @@ TEST(CoverageDatabaseTest, CrossWithConstructorQueueIsStrictlyValidated) {
 
 TEST(CoverageDatabaseTest,
      SchemaOnlyClassificationRejectsEveryResolvedTupleLayer) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   EXPECT_TRUE(isSchemaOnly(schema));
   schema.functionalConfigurations.push_back({});
@@ -1786,8 +1786,8 @@ TEST(CoverageDatabaseTest,
   EXPECT_FALSE(isSchemaOnly(schema));
 }
 
-static obelisk::coverage::Database makeSymbolicCrossWithSchema() {
-  using namespace obelisk::coverage;
+static talos::coverage::Database makeSymbolicCrossWithSchema() {
+  using namespace talos::coverage;
   Database schema = makeCrossWithSchema(CrossMatchesPolicy::Count, 1, true);
   CrossSelectorNode base;
   base.id = 69;
@@ -1820,7 +1820,7 @@ static obelisk::coverage::Database makeSymbolicCrossWithSchema() {
 }
 
 TEST(CoverageDatabaseTest, SymbolicCrossPredicateGraphAndOperandsAreValidated) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeSymbolicCrossWithSchema();
   ASSERT_EQ(validate(schema), Status::Ok);
   std::vector<uint8_t> bytes;
@@ -1851,33 +1851,33 @@ TEST(CoverageDatabaseTest, SymbolicCrossPredicateGraphAndOperandsAreValidated) {
 
 TEST_F(CoverageRuntimeDesignTest,
        SymbolicCrossWithSnapshotsConstructorValuesAndSelectsWholeBins) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeSymbolicCrossWithSchema();
-  obelisk_rt_context *local = createContextForSchema(schema, false);
+  talos_rt_context *local = createContextForSchema(schema, false);
   ASSERT_NE(local, nullptr);
-  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
   uint8_t bound = 2;
-  obelisk_rt_functional_value_v1 value = {
+  talos_rt_functional_value_v1 value = {
       100,     2,       1, &bound,
-      nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+      nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
       0};
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0, &value, 1,
+  ASSERT_EQ(talos_rt_v1_covergroup_create(local, 10, nullptr, 0, &value, 1,
                                             &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   bound = 0;
-  ASSERT_EQ(sampleFunctional(local, handle, 2, 0), OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(local, handle, 2, 0), TALOS_RT_OK);
   double percentage = 0;
   int32_t covered = 0, total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 local, handle, 22, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 0);
   EXPECT_EQ(total, 1);
-  ASSERT_EQ(sampleFunctional(local, handle, 1, 3), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(sampleFunctional(local, handle, 1, 3), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 local, handle, 22, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 1);
   Database saved = saveCoverage(local, "symbolic-with");
   ASSERT_EQ(validate(saved), Status::Ok);
@@ -1894,13 +1894,13 @@ TEST_F(CoverageRuntimeDesignTest,
   const auto &atom = saved.resolvedFunctionalValueAtoms[snapshot->firstAtom];
   EXPECT_EQ(saved.resolvedFunctionalValueLimbs[atom.firstLimb].lowAval, 2u);
   // A second constructor takes its own bound and gets a distinct configuration.
-  obelisk_rt_covergroup_v1 empty = 0;
+  talos_rt_covergroup_v1 empty = 0;
   ASSERT_EQ(
-      obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0, &value, 1, &empty),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+      talos_rt_v1_covergroup_create(local, 10, nullptr, 0, &value, 1, &empty),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 local, empty, 22, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(total, 0);
   EXPECT_EQ(
       saveCoverage(local, "symbolic-with-two").functionalConfigurations.size(),
@@ -1908,12 +1908,12 @@ TEST_F(CoverageRuntimeDesignTest,
   // Removing the operand tag cannot silently leave an executable program.
   snapshot->role = ResolvedFunctionalValueSetRole::TupleComponent;
   EXPECT_EQ(validate(saved), Status::InvalidReference);
-  obelisk_rt_v1_context_destroy(local);
+  talos_rt_v1_context_destroy(local);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        ScalarCrossWithCountsPerBinAndPersistsCompactBindings) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   // Each split first-target bin has two values; the other target has four.
   // These few contexts exercise distinct semantics without a configuration
   // sweep.
@@ -1938,10 +1938,10 @@ TEST_F(CoverageRuntimeDesignTest,
     descriptor.resultKind = FunctionalExpressionResultKind::Boolean;
     schema.schemaFingerprint = computeSchemaFingerprint(schema);
     ASSERT_EQ(validate(schema), Status::Ok);
-    obelisk_rt_context *local = createContextForSchema(schema, false);
+    talos_rt_context *local = createContextForSchema(schema, false);
     ASSERT_NE(local, nullptr);
-    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-    obelisk_rt_functional_value_v1 predicate = {
+    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+    talos_rt_functional_value_v1 predicate = {
         100,
         1,
         1,
@@ -1949,20 +1949,20 @@ TEST_F(CoverageRuntimeDesignTest,
         unknown ? &unknown : nullptr,
         nullptr,
         0,
-        static_cast<obelisk_rt_functional_value_kind_v1>(
-            unknown ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
-                    : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL),
+        static_cast<talos_rt_functional_value_kind_v1>(
+            unknown ? TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE
+                    : TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL),
         0};
-    obelisk_rt_covergroup_v1 handle = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0, &predicate,
+    talos_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(talos_rt_v1_covergroup_create(local, 10, nullptr, 0, &predicate,
                                               1, &handle),
-              OBELISK_RT_OK);
-    ASSERT_EQ(sampleFunctional(local, handle, 2, 2), OBELISK_RT_OK);
+              TALOS_RT_OK);
+    ASSERT_EQ(sampleFunctional(local, handle, 2, 2), TALOS_RT_OK);
     double percentage = 0;
     int32_t covered = 0, total = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                   local, handle, 22, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(covered, 1);
     EXPECT_EQ(total, selected ? 1 : 2);
     Database saved = saveCoverage(local, "scalar-with");
@@ -1983,13 +1983,13 @@ TEST_F(CoverageRuntimeDesignTest,
     EXPECT_EQ(validate(saved), Status::InvalidReference);
     binding.flags = ResolvedCrossSelectorScalarTrue;
     EXPECT_EQ(validate(saved), Status::InvalidReference);
-    obelisk_rt_v1_context_destroy(local);
+    talos_rt_v1_context_destroy(local);
   }
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        PreparedCrossValuesPreserveSharedSelectorCorrelations) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeSharedAndSelectorSchema();
   schema.functionalValueLimbs[2].lowAval = 0;
   schema.functionalValueLimbs[2].highAval = 0;
@@ -2019,50 +2019,50 @@ TEST_F(CoverageRuntimeDesignTest,
       schema.crossSelectorOperands.end(),
       {{76, 74, 0}, {76, 75, 1}, {77, 73, 0}, {77, 76, 1}});
   schema.crossBins.front().rootSelector = 77;
-  obelisk_rt_context *local = createContextForSchema(schema);
+  talos_rt_context *local = createContextForSchema(schema);
   ASSERT_NE(local, nullptr);
-  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), TALOS_RT_OK);
   uint64_t token = 0;
   ASSERT_EQ(
-      obelisk_rt_coverage_prepare_construction(local, 10, nullptr, 0, &token),
-      OBELISK_RT_OK);
+      talos_rt_coverage_prepare_construction(local, 10, nullptr, 0, &token),
+      TALOS_RT_OK);
   CoverageTupleQueueSnapshot values;
   ASSERT_EQ(
-      obelisk_rt_coverage_prepared_candidates(local, token, 77, 2, values),
-      OBELISK_RT_OK);
+      talos_rt_coverage_prepared_candidates(local, token, 77, 2, values),
+      TALOS_RT_OK);
   EXPECT_EQ(values.count, 2u);
   EXPECT_EQ(values.value, (std::vector<uint8_t>{0, 5}));
   EXPECT_TRUE(local->coverage->schema->functionalConfigurations.empty());
   EXPECT_TRUE(local->coverage->instances.empty());
   EXPECT_TRUE(local->coverage->types.empty());
-  ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, token),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_coverage_release_preparation(local, token),
+            TALOS_RT_OK);
   EXPECT_EQ(
-      obelisk_rt_coverage_prepared_candidates(local, token, 77, 2, values),
-      OBELISK_RT_INVALID_HANDLE);
+      talos_rt_coverage_prepared_candidates(local, token, 77, 2, values),
+      TALOS_RT_INVALID_HANDLE);
   uint64_t replacement = 0;
-  ASSERT_EQ(obelisk_rt_coverage_prepare_construction(local, 10, nullptr, 0,
+  ASSERT_EQ(talos_rt_coverage_prepare_construction(local, 10, nullptr, 0,
                                                      &replacement),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_NE(token, replacement);
   EXPECT_EQ(static_cast<uint32_t>(token), static_cast<uint32_t>(replacement));
   EXPECT_EQ(local->coverage->preparations.size(), 1u);
-  EXPECT_EQ(obelisk_rt_coverage_release_preparation(local, token),
-            OBELISK_RT_INVALID_HANDLE);
-  ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, replacement),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 instance = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0, nullptr, 0,
+  EXPECT_EQ(talos_rt_coverage_release_preparation(local, token),
+            TALOS_RT_INVALID_HANDLE);
+  ASSERT_EQ(talos_rt_coverage_release_preparation(local, replacement),
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 instance = 0;
+  ASSERT_EQ(talos_rt_v1_covergroup_create(local, 10, nullptr, 0, nullptr, 0,
                                             &instance),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(instance, 1u);
   EXPECT_EQ(validate(saveCoverage(local, "prepared-correlations")), Status::Ok);
-  obelisk_rt_v1_context_destroy(local);
+  talos_rt_v1_context_destroy(local);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        PreparedCrossValuesResolveWideConstructorRangesAndPreserveOutput) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeSharedAndSelectorSchema();
   schema.functionalBins.erase(schema.functionalBins.begin() + 1);
   schema.functionalValueSets = {
@@ -2102,31 +2102,31 @@ TEST_F(CoverageRuntimeDesignTest,
   schema.crossTargets[0].tupleBitWidth = 65;
   schema.crossTargets[1].tupleBitOffset = 65;
   schema.crossTargets[1].tupleBitWidth = 1;
-  obelisk_rt_context *local = createContextForSchema(schema);
+  talos_rt_context *local = createContextForSchema(schema);
   ASSERT_NE(local, nullptr);
-  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), TALOS_RT_OK);
   uint64_t token = 53;
   EXPECT_EQ(
-      obelisk_rt_coverage_prepare_construction(local, 10, nullptr, 0, &token),
-      OBELISK_RT_INVALID_DESIGN);
+      talos_rt_coverage_prepare_construction(local, 10, nullptr, 0, &token),
+      TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(token, 53u);
   std::array<uint8_t, 9> upperBytes{}, lowerBytes;
   lowerBytes.fill(UINT8_MAX);
   lowerBytes[0] = UINT8_MAX - 1;
   lowerBytes[8] = 0;
   upperBytes[8] = 1;
-  std::array<obelisk_rt_functional_value_v1, 2> encoded{
+  std::array<talos_rt_functional_value_v1, 2> encoded{
       {{100, 65, 9, lowerBytes.data(), nullptr, nullptr, 0,
-        OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+        TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
        {101, 65, 9, upperBytes.data(), nullptr, nullptr, 0,
-        OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0}}};
-  ASSERT_EQ(obelisk_rt_coverage_prepare_construction(local, 10, encoded.data(),
+        TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0}}};
+  ASSERT_EQ(talos_rt_coverage_prepare_construction(local, 10, encoded.data(),
                                                      encoded.size(), &token),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   CoverageTupleQueueSnapshot values;
   ASSERT_EQ(
-      obelisk_rt_coverage_prepared_candidates(local, token, 73, 3, values),
-      OBELISK_RT_OK);
+      talos_rt_coverage_prepared_candidates(local, token, 73, 3, values),
+      TALOS_RT_OK);
   EXPECT_EQ(values.count, 3u);
   ASSERT_EQ(values.valueSize, 9u);
   EXPECT_EQ(read64(values.value, 0), UINT64_MAX - 1);
@@ -2135,31 +2135,31 @@ TEST_F(CoverageRuntimeDesignTest,
   EXPECT_EQ(values.value[26], 1u);
   const auto previous = values.value;
   EXPECT_EQ(
-      obelisk_rt_coverage_prepared_candidates(local, token, 73, 2, values),
-      OBELISK_RT_OUT_OF_RESOURCES);
+      talos_rt_coverage_prepared_candidates(local, token, 73, 2, values),
+      TALOS_RT_OUT_OF_RESOURCES);
   EXPECT_EQ(values.value, previous);
   EXPECT_EQ(values.count, 3u);
-  ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, token),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_coverage_release_preparation(local, token),
+            TALOS_RT_OK);
   upperBytes[0] = 1;
-  ASSERT_EQ(obelisk_rt_coverage_prepare_construction(local, 10, encoded.data(),
+  ASSERT_EQ(talos_rt_coverage_prepare_construction(local, 10, encoded.data(),
                                                      encoded.size(), &token),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_coverage_prepared_candidates(local, token, 73, 4, values),
-      OBELISK_RT_OK);
+      talos_rt_coverage_prepared_candidates(local, token, 73, 4, values),
+      TALOS_RT_OK);
   EXPECT_EQ(values.count, 4u);
   EXPECT_EQ(read64(values.value, 27), 1u);
   EXPECT_EQ(values.value[35], 1u);
   EXPECT_TRUE(local->coverage->schema->functionalConfigurations.empty());
-  ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, token),
-            OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(local);
+  ASSERT_EQ(talos_rt_coverage_release_preparation(local, token),
+            TALOS_RT_OK);
+  talos_rt_v1_context_destroy(local);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        PreparedCrossValuesPreserveSignedUnknownPlanesAndContextIdentity) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeSharedAndSelectorSchema();
   schema.functionalExpressions[0].signedness = CoverageSignedness::Signed;
   schema.functionalExpressions[0].flags =
@@ -2172,42 +2172,42 @@ TEST_F(CoverageRuntimeDesignTest,
   schema.crossTargets[0].tupleFlags =
       CrossTargetDomainFourState | CrossTupleFieldFourState;
   schema.crossPlans[0].tupleFlags = CrossTupleFourState;
-  obelisk_rt_context *local = createContextForSchema(schema);
-  obelisk_rt_context *other = createContextForSchema(schema);
+  talos_rt_context *local = createContextForSchema(schema);
+  talos_rt_context *other = createContextForSchema(schema);
   ASSERT_NE(local, nullptr);
   ASSERT_NE(other, nullptr);
-  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  ASSERT_EQ(finalizeCoverage(other, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  ASSERT_EQ(finalizeCoverage(other, 0, 0, nullptr, nullptr), TALOS_RT_OK);
   uint64_t token = 0, foreign = 0;
   ASSERT_EQ(
-      obelisk_rt_coverage_prepare_construction(local, 10, nullptr, 0, &token),
-      OBELISK_RT_OK);
+      talos_rt_coverage_prepare_construction(local, 10, nullptr, 0, &token),
+      TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_coverage_prepare_construction(other, 10, nullptr, 0, &foreign),
-      OBELISK_RT_OK);
+      talos_rt_coverage_prepare_construction(other, 10, nullptr, 0, &foreign),
+      TALOS_RT_OK);
   CoverageTupleQueueSnapshot values;
   ASSERT_EQ(
-      obelisk_rt_coverage_prepared_candidates(local, token, 73, 1, values),
-      OBELISK_RT_OK);
+      talos_rt_coverage_prepared_candidates(local, token, 73, 1, values),
+      TALOS_RT_OK);
   EXPECT_EQ(values.value, (std::vector<uint8_t>{8}));
   EXPECT_EQ(values.unknown, (std::vector<uint8_t>{1}));
   EXPECT_TRUE(values.fourState);
   EXPECT_EQ(
-      obelisk_rt_coverage_prepared_candidates(other, token, 73, 1, values),
-      OBELISK_RT_INVALID_HANDLE);
-  EXPECT_EQ(obelisk_rt_coverage_release_preparation(local, foreign),
-            OBELISK_RT_INVALID_HANDLE);
-  ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, token),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_coverage_release_preparation(other, foreign),
-            OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(local);
-  obelisk_rt_v1_context_destroy(other);
+      talos_rt_coverage_prepared_candidates(other, token, 73, 1, values),
+      TALOS_RT_INVALID_HANDLE);
+  EXPECT_EQ(talos_rt_coverage_release_preparation(local, foreign),
+            TALOS_RT_INVALID_HANDLE);
+  ASSERT_EQ(talos_rt_coverage_release_preparation(local, token),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_coverage_release_preparation(other, foreign),
+            TALOS_RT_OK);
+  talos_rt_v1_context_destroy(local);
+  talos_rt_v1_context_destroy(other);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        PreparedCandidateABIValidatesQueuesAndPreservesFailedOutputs) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (bool fourState : {false, true}) {
     Database schema = makeSharedAndSelectorSchema();
     if (fourState) {
@@ -2219,67 +2219,67 @@ TEST_F(CoverageRuntimeDesignTest,
           CrossTargetDomainFourState | CrossTupleFieldFourState;
       schema.crossPlans[0].tupleFlags = CrossTupleFourState;
     }
-    obelisk_rt_context *local = createContextForSchema(schema);
+    talos_rt_context *local = createContextForSchema(schema);
     ASSERT_NE(local, nullptr);
-    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), TALOS_RT_OK);
     uint64_t token = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_prepare(local, 10, nullptr, 0, &token),
-              OBELISK_RT_OK);
-    obelisk_rt_gc_lane_v1 *lane = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(local, &lane), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-    obelisk_rt_element_type_v1 element{};
-    element.version = OBELISK_RT_VERSION;
-    element.kind = OBELISK_RT_ELEMENT_AGGREGATE;
+    ASSERT_EQ(talos_rt_v1_covergroup_prepare(local, 10, nullptr, 0, &token),
+              TALOS_RT_OK);
+    talos_rt_gc_lane_v1 *lane = nullptr;
+    ASSERT_EQ(talos_rt_v1_gc_lane_create(local, &lane), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+    talos_rt_element_type_v1 element{};
+    element.version = TALOS_RT_VERSION;
+    element.kind = TALOS_RT_ELEMENT_AGGREGATE;
     element.type_id = 220;
     element.value_size = 1;
     element.alignment = 1;
     element.bit_width = 8;
-    element.flags = fourState ? OBELISK_RT_ELEMENT_FOUR_STATE : 0;
-    obelisk_rt_object_v1 *queue = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &element, UINT64_MAX, &queue),
-              OBELISK_RT_OK);
-    obelisk_rt_gc_root_v1 root{};
-    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &queue), OBELISK_RT_OK);
-    EXPECT_EQ(obelisk_rt_v1_covergroup_candidates(local, token, 73, queue, 0),
-              OBELISK_RT_OUT_OF_RESOURCES);
-    EXPECT_EQ(obelisk_rt_v1_container_size(queue), 0u);
-    EXPECT_EQ(obelisk_rt_v1_covergroup_candidates(local, token, 73, nullptr, 1),
-              OBELISK_RT_INVALID_ARGUMENT);
-    obelisk_rt_element_type_v1 wrongElement = element;
+    element.flags = fourState ? TALOS_RT_ELEMENT_FOUR_STATE : 0;
+    talos_rt_object_v1 *queue = nullptr;
+    ASSERT_EQ(talos_rt_v1_queue_create(lane, &element, UINT64_MAX, &queue),
+              TALOS_RT_OK);
+    talos_rt_gc_root_v1 root{};
+    ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &root, &queue), TALOS_RT_OK);
+    EXPECT_EQ(talos_rt_v1_covergroup_candidates(local, token, 73, queue, 0),
+              TALOS_RT_OUT_OF_RESOURCES);
+    EXPECT_EQ(talos_rt_v1_container_size(queue), 0u);
+    EXPECT_EQ(talos_rt_v1_covergroup_candidates(local, token, 73, nullptr, 1),
+              TALOS_RT_INVALID_ARGUMENT);
+    talos_rt_element_type_v1 wrongElement = element;
     wrongElement.type_id = 221;
-    obelisk_rt_object_v1 *wrong = nullptr;
+    talos_rt_object_v1 *wrong = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_queue_create(lane, &wrongElement, UINT64_MAX, &wrong),
-        OBELISK_RT_OK);
-    EXPECT_EQ(obelisk_rt_v1_covergroup_candidates(local, token, 73, wrong, 1),
-              OBELISK_RT_INVALID_DESIGN);
-    ASSERT_EQ(obelisk_rt_v1_covergroup_candidates(local, token, 73, queue, 1),
-              OBELISK_RT_OK);
+        talos_rt_v1_queue_create(lane, &wrongElement, UINT64_MAX, &wrong),
+        TALOS_RT_OK);
+    EXPECT_EQ(talos_rt_v1_covergroup_candidates(local, token, 73, wrong, 1),
+              TALOS_RT_INVALID_DESIGN);
+    ASSERT_EQ(talos_rt_v1_covergroup_candidates(local, token, 73, queue, 1),
+              TALOS_RT_OK);
     CoverageTupleQueueSnapshot values;
-    ASSERT_EQ(obelisk_rt_coverage_tuple_queue_snapshot(local, queue, 220, 4,
+    ASSERT_EQ(talos_rt_coverage_tuple_queue_snapshot(local, queue, 220, 4,
                                                        fourState, 1, values),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(values.count, 1u);
     EXPECT_EQ(values.value, (std::vector<uint8_t>{8}));
     EXPECT_EQ(values.unknown,
               fourState ? std::vector<uint8_t>{1} : std::vector<uint8_t>{});
-    EXPECT_EQ(obelisk_rt_v1_covergroup_candidates(local, token, 73, queue, 1),
-              OBELISK_RT_INVALID_DESIGN);
-    ASSERT_EQ(obelisk_rt_v1_covergroup_release_preparation(local, token),
-              OBELISK_RT_OK);
-    EXPECT_EQ(obelisk_rt_v1_covergroup_candidates(local, token, 73, queue, 1),
-              OBELISK_RT_INVALID_HANDLE);
-    ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-    obelisk_rt_v1_context_destroy(local);
+    EXPECT_EQ(talos_rt_v1_covergroup_candidates(local, token, 73, queue, 1),
+              TALOS_RT_INVALID_DESIGN);
+    ASSERT_EQ(talos_rt_v1_covergroup_release_preparation(local, token),
+              TALOS_RT_OK);
+    EXPECT_EQ(talos_rt_v1_covergroup_candidates(local, token, 73, queue, 1),
+              TALOS_RT_INVALID_HANDLE);
+    ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &root), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+    talos_rt_v1_context_destroy(local);
   }
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        PreparedCrossValuesApplyTupleSetMatchesToFrozenAssociatedValues) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (auto policy : {CrossMatchesPolicy::Count, CrossMatchesPolicy::All}) {
     Database schema =
         makeCrossWithSchema(policy, policy == CrossMatchesPolicy::Count ? 5 : 0,
@@ -2305,64 +2305,64 @@ TEST_F(CoverageRuntimeDesignTest,
     expression.evaluationPhase =
         FunctionalExpressionEvaluationPhase::Constructor;
     schema.functionalExpressions.push_back(expression);
-    obelisk_rt_context *local = createContextForSchema(schema);
+    talos_rt_context *local = createContextForSchema(schema);
     ASSERT_NE(local, nullptr);
-    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-    obelisk_rt_gc_lane_v1 *lane = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(local, &lane), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-    obelisk_rt_element_type_v1 element{};
-    element.version = OBELISK_RT_VERSION;
-    element.kind = OBELISK_RT_ELEMENT_AGGREGATE;
+    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+    talos_rt_gc_lane_v1 *lane = nullptr;
+    ASSERT_EQ(talos_rt_v1_gc_lane_create(local, &lane), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+    talos_rt_element_type_v1 element{};
+    element.version = TALOS_RT_VERSION;
+    element.kind = TALOS_RT_ELEMENT_AGGREGATE;
     element.type_id = 220;
     element.value_size = 1;
     element.alignment = 1;
     element.bit_width = 8;
-    obelisk_rt_object_v1 *queue = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &element, UINT64_MAX, &queue),
-              OBELISK_RT_OK);
-    obelisk_rt_gc_root_v1 root{};
-    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &queue), OBELISK_RT_OK);
+    talos_rt_object_v1 *queue = nullptr;
+    ASSERT_EQ(talos_rt_v1_queue_create(lane, &element, UINT64_MAX, &queue),
+              TALOS_RT_OK);
+    talos_rt_gc_root_v1 root{};
+    ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &root, &queue), TALOS_RT_OK);
     const std::vector<uint8_t> selected{0, 4, 8, 12, 1, 5, 9, 13};
     for (size_t ordinal = 0; ordinal != selected.size(); ++ordinal)
-      ASSERT_EQ(obelisk_rt_v1_container_write(lane, queue, ordinal,
+      ASSERT_EQ(talos_rt_v1_container_write(lane, queue, ordinal,
                                               &selected[ordinal], nullptr),
-                OBELISK_RT_OK);
-    obelisk_rt_functional_value_v1 encoded{};
+                TALOS_RT_OK);
+    talos_rt_functional_value_v1 encoded{};
     encoded.id = 100;
     encoded.owner = queue;
-    encoded.kind = OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
+    encoded.kind = TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
     uint64_t token = 0;
-    ASSERT_EQ(obelisk_rt_coverage_prepare_construction(local, 10, &encoded, 1,
+    ASSERT_EQ(talos_rt_coverage_prepare_construction(local, 10, &encoded, 1,
                                                        &token),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     // Alter the original queue after staging; the constructor owns its
     // snapshot.
     const std::vector<uint8_t> remaining{2, 6, 10, 14, 3, 7, 11, 15};
     for (size_t ordinal = 0; ordinal != remaining.size(); ++ordinal)
-      ASSERT_EQ(obelisk_rt_v1_container_write(lane, queue,
+      ASSERT_EQ(talos_rt_v1_container_write(lane, queue,
                                               selected.size() + ordinal,
                                               &remaining[ordinal], nullptr),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
     CoverageTupleQueueSnapshot values;
     ASSERT_EQ(
-        obelisk_rt_coverage_prepared_candidates(local, token, 70, 8, values),
-        OBELISK_RT_OK);
+        talos_rt_coverage_prepared_candidates(local, token, 70, 8, values),
+        TALOS_RT_OK);
     EXPECT_EQ(values.count, 8u);
     // Canonical candidates follow the interleaved value-bit order.
     EXPECT_EQ(values.value, (std::vector<uint8_t>{0, 4, 1, 5, 8, 12, 9, 13}));
-    ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, token),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-    obelisk_rt_v1_context_destroy(local);
+    ASSERT_EQ(talos_rt_coverage_release_preparation(local, token),
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &root), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+    talos_rt_v1_context_destroy(local);
   }
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        PreparedCrossIntersectSelectsWholeBinsAfterExclusions) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeCrossWithSchema(CrossMatchesPolicy::Count, 1);
   schema.functionalExpressions.erase(
       std::remove_if(schema.functionalExpressions.begin(),
@@ -2413,34 +2413,34 @@ TEST_F(CoverageRuntimeDesignTest,
                                          FunctionalValueAtomKind::IntegralValue,
                                          inclusive, 0, 0});
   schema.functionalValueLimbs.push_back({54, 0, 0, 0, 0, 0, 0, 0});
-  obelisk_rt_context *local = createContextForSchema(schema);
+  talos_rt_context *local = createContextForSchema(schema);
   ASSERT_NE(local, nullptr);
-  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), TALOS_RT_OK);
   uint8_t one = 1;
-  obelisk_rt_functional_value_v1 encoded{
+  talos_rt_functional_value_v1 encoded{
       100,     2,       1, &one,
-      nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+      nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
       0};
   uint64_t token = 0;
   ASSERT_EQ(
-      obelisk_rt_coverage_prepare_construction(local, 10, &encoded, 1, &token),
-      OBELISK_RT_OK);
+      talos_rt_coverage_prepare_construction(local, 10, &encoded, 1, &token),
+      TALOS_RT_OK);
   CoverageTupleQueueSnapshot values;
   ASSERT_EQ(
-      obelisk_rt_coverage_prepared_candidates(local, token, 70, 12, values),
-      OBELISK_RT_OK);
+      talos_rt_coverage_prepared_candidates(local, token, 70, 12, values),
+      TALOS_RT_OK);
   EXPECT_EQ(values.count, 12u);
   EXPECT_EQ(values.value,
             (std::vector<uint8_t>{1, 5, 9, 13, 2, 6, 3, 7, 10, 14, 11, 15}));
-  ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, token),
-            OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(local);
+  ASSERT_EQ(talos_rt_coverage_release_preparation(local, token),
+            TALOS_RT_OK);
+  talos_rt_v1_context_destroy(local);
 }
 
 // Own the descriptor and GC lane as long as the constructor payload is live.
 struct CrossWithQueue {
-  obelisk_rt_element_type_v1 element{OBELISK_RT_VERSION,
-                                     OBELISK_RT_ELEMENT_AGGREGATE,
+  talos_rt_element_type_v1 element{TALOS_RT_VERSION,
+                                     TALOS_RT_ELEMENT_AGGREGATE,
                                      220,
                                      0,
                                      0,
@@ -2449,34 +2449,34 @@ struct CrossWithQueue {
                                      8,
                                      nullptr,
                                      nullptr};
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  obelisk_rt_object_v1 *queue = nullptr;
-  obelisk_rt_gc_root_v1 root{};
-  void initialize(obelisk_rt_context *context, bool all) {
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &element, UINT64_MAX, &queue),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &queue), OBELISK_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_object_v1 *queue = nullptr;
+  talos_rt_gc_root_v1 root{};
+  void initialize(talos_rt_context *context, bool all) {
+    ASSERT_EQ(talos_rt_v1_gc_lane_create(context, &lane), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_queue_create(lane, &element, UINT64_MAX, &queue),
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &root, &queue), TALOS_RT_OK);
     for (uint8_t first = 0; first != 4; ++first)
       for (uint8_t second = 0; second != 4; ++second)
         if (all || first == second) {
           uint8_t tuple = first | (second << 2);
-          ASSERT_EQ(obelisk_rt_v1_queue_push(lane, queue, 0, &tuple, nullptr),
-                    OBELISK_RT_OK);
+          ASSERT_EQ(talos_rt_v1_queue_push(lane, queue, 0, &tuple, nullptr),
+                    TALOS_RT_OK);
         }
   }
-  obelisk_rt_functional_value_v1 payload() const {
+  talos_rt_functional_value_v1 payload() const {
     return {100,     0,     0, nullptr,
-            nullptr, queue, 0, OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER,
+            nullptr, queue, 0, TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER,
             0};
   }
   void close() {
     if (!lane)
       return;
-    EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
-    EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-    EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+    EXPECT_EQ(talos_rt_v1_gc_root_pop(lane, &root), TALOS_RT_OK);
+    EXPECT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+    EXPECT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
     lane = nullptr;
   }
   ~CrossWithQueue() { close(); }
@@ -2484,7 +2484,7 @@ struct CrossWithQueue {
 
 TEST_F(CoverageRuntimeDesignTest,
        PreparedScalarChildResolvesBeforeIteratorParent) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (auto [count, truth, expected] :
        {std::tuple{uint64_t{8}, uint8_t{1}, uint64_t{16}},
         std::tuple{uint64_t{9}, uint8_t{1}, uint64_t{0}},
@@ -2513,51 +2513,51 @@ TEST_F(CoverageRuntimeDesignTest,
     schema.functionalExpressions.push_back(descriptor);
     schema.schemaFingerprint = computeSchemaFingerprint(schema);
     ASSERT_EQ(validate(schema), Status::Ok);
-    obelisk_rt_context *local = createContextForSchema(schema, false);
+    talos_rt_context *local = createContextForSchema(schema, false);
     ASSERT_NE(local, nullptr);
-    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-    obelisk_rt_functional_value_v1 scalar = {
+    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+    talos_rt_functional_value_v1 scalar = {
         100,     1,       1, &truth,
-        nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+        nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
         0};
     uint64_t token = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_prepare(local, 10, &scalar, 1, &token),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_covergroup_prepare(local, 10, &scalar, 1, &token),
+              TALOS_RT_OK);
     CoverageTupleQueueSnapshot candidates;
-    ASSERT_EQ(obelisk_rt_coverage_prepared_candidates(local, token, 71, 16,
+    ASSERT_EQ(talos_rt_coverage_prepared_candidates(local, token, 71, 16,
                                                       candidates),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(candidates.count, expected);
     CrossWithQueue all;
     all.initialize(local, true);
-    ASSERT_EQ(obelisk_rt_v1_covergroup_bind_with(local, token, 71, all.queue),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_covergroup_release_preparation(local, token),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_covergroup_bind_with(local, token, 71, all.queue),
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_covergroup_release_preparation(local, token),
+              TALOS_RT_OK);
     auto queue = all.payload();
     queue.id = 101;
-    std::array<obelisk_rt_functional_value_v1, 2> predicates{scalar, queue};
-    obelisk_rt_covergroup_v1 handle = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0,
+    std::array<talos_rt_functional_value_v1, 2> predicates{scalar, queue};
+    talos_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(talos_rt_v1_covergroup_create(local, 10, nullptr, 0,
                                               predicates.data(),
                                               predicates.size(), &handle),
-              OBELISK_RT_OK);
-    ASSERT_EQ(sampleFunctional(local, handle, 2, 2), OBELISK_RT_OK);
+              TALOS_RT_OK);
+    ASSERT_EQ(sampleFunctional(local, handle, 2, 2), TALOS_RT_OK);
     double percentage = 0;
     int32_t covered = 0, total = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                   local, handle, 22, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(covered, expected ? 1 : 0);
     EXPECT_EQ(total, expected ? 1 : 0);
     all.close();
-    obelisk_rt_v1_context_destroy(local);
+    talos_rt_v1_context_destroy(local);
   }
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        PreparedNestedWithCountsPerBinAndRestoresWholeBinValues) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (auto [policy, count, expected] :
        {std::tuple{CrossMatchesPolicy::Count, uint64_t{2}, uint64_t{16}},
         std::tuple{CrossMatchesPolicy::Count, uint64_t{3}, uint64_t{0}},
@@ -2582,67 +2582,67 @@ TEST_F(CoverageRuntimeDesignTest,
     schema.functionalExpressions.push_back(expression);
     schema.schemaFingerprint = computeSchemaFingerprint(schema);
     ASSERT_EQ(validate(schema), Status::Ok);
-    obelisk_rt_context *local = createContextForSchema(schema, false);
+    talos_rt_context *local = createContextForSchema(schema, false);
     ASSERT_NE(local, nullptr);
-    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), TALOS_RT_OK);
     uint64_t token = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_prepare(local, 10, nullptr, 0, &token),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_covergroup_prepare(local, 10, nullptr, 0, &token),
+              TALOS_RT_OK);
     CrossWithQueue child;
     child.initialize(local, false);
-    ASSERT_EQ(obelisk_rt_v1_covergroup_bind_with(local, token, 70, child.queue),
-              OBELISK_RT_OK);
-    EXPECT_EQ(obelisk_rt_v1_covergroup_bind_with(local, token, 70, child.queue),
-              OBELISK_RT_INVALID_DESIGN);
+    ASSERT_EQ(talos_rt_v1_covergroup_bind_with(local, token, 70, child.queue),
+              TALOS_RT_OK);
+    EXPECT_EQ(talos_rt_v1_covergroup_bind_with(local, token, 70, child.queue),
+              TALOS_RT_INVALID_DESIGN);
     CoverageTupleQueueSnapshot candidates;
-    ASSERT_EQ(obelisk_rt_coverage_prepared_candidates(local, token, 71, 16,
+    ASSERT_EQ(talos_rt_coverage_prepared_candidates(local, token, 71, 16,
                                                       candidates),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     // Each split first-target bin contains two satisfying diagonal values.
     // The parent's predicate still sees every value of a selected bin tuple.
     EXPECT_EQ(candidates.count, expected);
     CrossWithQueue all;
     all.initialize(local, true);
-    ASSERT_EQ(obelisk_rt_v1_covergroup_bind_with(local, token, 71, all.queue),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_coverage_prepared_candidates(local, token, 71, 16,
+    ASSERT_EQ(talos_rt_v1_covergroup_bind_with(local, token, 71, all.queue),
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_coverage_prepared_candidates(local, token, 71, 16,
                                                       candidates),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(candidates.count, expected);
-    ASSERT_EQ(obelisk_rt_v1_covergroup_release_preparation(local, token),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_covergroup_release_preparation(local, token),
+              TALOS_RT_OK);
     all.close();
     child.close();
-    obelisk_rt_v1_context_destroy(local);
+    talos_rt_v1_context_destroy(local);
   }
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      CrossWithPersistsSatisfyingTuplesAndAppliesMatchesPolicies) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   auto exercise = [&](CrossMatchesPolicy policy, uint64_t count,
                       bool everyPredicate, bool expectedSelected,
                       const std::string &suffix) {
     Database schema = makeCrossWithSchema(policy, count);
-    obelisk_rt_context *local = createContextForSchema(schema, false);
+    talos_rt_context *local = createContextForSchema(schema, false);
     ASSERT_NE(local, nullptr);
     ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     CrossWithQueue queue;
     queue.initialize(local, everyPredicate);
     auto predicate = queue.payload();
-    obelisk_rt_covergroup_v1 handle = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0, &predicate,
+    talos_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(talos_rt_v1_covergroup_create(local, 10, nullptr, 0, &predicate,
                                               1, &handle),
-              OBELISK_RT_OK);
-    ASSERT_EQ(sampleFunctional(local, handle, 2, 2), OBELISK_RT_OK);
+              TALOS_RT_OK);
+    ASSERT_EQ(sampleFunctional(local, handle, 2, 2), TALOS_RT_OK);
 
     double percentage = 0.0;
     int32_t covered = 0;
     int32_t total = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                   local, handle, 22, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(total, expectedSelected ? 1 : 0);
     EXPECT_EQ(covered, expectedSelected ? 1 : 0);
 
@@ -2664,7 +2664,7 @@ TEST_F(CoverageRuntimeDesignTest,
                       }),
         satisfyingCount * 2);
     queue.close();
-    obelisk_rt_v1_context_destroy(local);
+    talos_rt_v1_context_destroy(local);
   };
 
   exercise(CrossMatchesPolicy::Count, /*count=*/4,
@@ -2678,7 +2678,7 @@ TEST_F(CoverageRuntimeDesignTest,
 
 TEST_F(CoverageRuntimeDesignTest,
      CrossSetConsumesManagedQueueAndPersistsCanonicalTuple) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeCrossWithSchema(CrossMatchesPolicy::Count, 1);
   schema.functionalExpressions.erase(
       std::remove_if(
@@ -2704,15 +2704,15 @@ TEST_F(CoverageRuntimeDesignTest,
       schema.functionalExpressions.begin(), schema.functionalExpressions.end(),
       [](const auto &left, const auto &right) { return left.id < right.id; });
 
-  obelisk_rt_context *local = createContextForSchema(schema, false);
+  talos_rt_context *local = createContextForSchema(schema, false);
   ASSERT_NE(local, nullptr);
   ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(local, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  obelisk_rt_element_type_v1 element{OBELISK_RT_VERSION,
-                                     OBELISK_RT_ELEMENT_AGGREGATE,
+            TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(local, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  talos_rt_element_type_v1 element{TALOS_RT_VERSION,
+                                     TALOS_RT_ELEMENT_AGGREGATE,
                                      220,
                                      0,
                                      0,
@@ -2721,51 +2721,51 @@ TEST_F(CoverageRuntimeDesignTest,
                                      8,
                                      nullptr,
                                      nullptr};
-  obelisk_rt_object_v1 *firstQueue = nullptr;
-  obelisk_rt_object_v1 *secondQueue = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &element, UINT64_MAX, &firstQueue),
-            OBELISK_RT_OK);
+  talos_rt_object_v1 *firstQueue = nullptr;
+  talos_rt_object_v1 *secondQueue = nullptr;
+  ASSERT_EQ(talos_rt_v1_queue_create(lane, &element, UINT64_MAX, &firstQueue),
+            TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_queue_create(lane, &element, UINT64_MAX, &secondQueue),
-      OBELISK_RT_OK);
-  obelisk_rt_gc_root_v1 firstRoot{};
-  obelisk_rt_gc_root_v1 secondRoot{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &firstRoot, &firstQueue),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &secondRoot, &secondQueue),
-            OBELISK_RT_OK);
+      talos_rt_v1_queue_create(lane, &element, UINT64_MAX, &secondQueue),
+      TALOS_RT_OK);
+  talos_rt_gc_root_v1 firstRoot{};
+  talos_rt_gc_root_v1 secondRoot{};
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &firstRoot, &firstQueue),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &secondRoot, &secondQueue),
+            TALOS_RT_OK);
   const uint8_t firstTuple = uint8_t{1} | (uint8_t{1} << 2);
   const uint8_t secondTuple = uint8_t{2} | (uint8_t{2} << 2);
   for (uint8_t tuple : {secondTuple, firstTuple, secondTuple})
-    ASSERT_EQ(obelisk_rt_v1_queue_push(lane, firstQueue, 0, &tuple, nullptr),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_queue_push(lane, firstQueue, 0, &tuple, nullptr),
+              TALOS_RT_OK);
   for (uint8_t tuple : {firstTuple, secondTuple})
-    ASSERT_EQ(obelisk_rt_v1_queue_push(lane, secondQueue, 0, &tuple, nullptr),
-              OBELISK_RT_OK);
-  const obelisk_rt_functional_value_v1 firstExpression{
+    ASSERT_EQ(talos_rt_v1_queue_push(lane, secondQueue, 0, &tuple, nullptr),
+              TALOS_RT_OK);
+  const talos_rt_functional_value_v1 firstExpression{
       100,     0,          0, nullptr,
-      nullptr, firstQueue, 0, OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER,
+      nullptr, firstQueue, 0, TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER,
       0};
-  const obelisk_rt_functional_value_v1 secondExpression{
+  const talos_rt_functional_value_v1 secondExpression{
       100,     0,           0, nullptr,
-      nullptr, secondQueue, 0, OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER,
+      nullptr, secondQueue, 0, TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER,
       0};
-  obelisk_rt_covergroup_v1 firstHandle = 0;
-  obelisk_rt_covergroup_v1 secondHandle = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0,
+  talos_rt_covergroup_v1 firstHandle = 0;
+  talos_rt_covergroup_v1 secondHandle = 0;
+  ASSERT_EQ(talos_rt_v1_covergroup_create(local, 10, nullptr, 0,
                                             &firstExpression, 1, &firstHandle),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_create(
                 local, 10, nullptr, 0, &secondExpression, 1, &secondHandle),
-            OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(local, firstHandle, 2, 2), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(local, secondHandle, 1, 1), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(local, firstHandle, 2, 2), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(local, secondHandle, 1, 1), TALOS_RT_OK);
   double percentage = 0.0;
   int32_t covered = 0;
   int32_t total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 local, firstHandle, 22, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 1);
   EXPECT_EQ(total, 1);
   Database saved = saveCoverage(local, "cross-set-queue");
@@ -2775,15 +2775,15 @@ TEST_F(CoverageRuntimeDesignTest,
   ASSERT_EQ(saved.resolvedInstances.size(), 2u);
   EXPECT_EQ(saved.resolvedInstances[0].configuration,
             saved.resolvedInstances[1].configuration);
-  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &secondRoot), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &firstRoot), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(local);
+  EXPECT_EQ(talos_rt_v1_gc_root_pop(lane, &secondRoot), TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_gc_root_pop(lane, &firstRoot), TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(local);
 }
 
 TEST(CoverageDatabaseTest, MembershipClausesAndRangeFlagsValidateAndRoundTrip) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (uint32_t flags :
        {0u, CrossPredicateLowerUnbounded, CrossPredicateUpperUnbounded,
         CrossPredicateAbsoluteTolerance}) {
@@ -2826,7 +2826,7 @@ TEST(CoverageDatabaseTest, MembershipClausesAndRangeFlagsValidateAndRoundTrip) {
 }
 
 TEST(CoverageDatabaseTest, ReplicationWidthsAndZeroSizeParentsAreValidated) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (uint32_t width : {0u, 4u}) {
     Database schema = makeSymbolicCrossWithSchema();
     auto &repeat = schema.crossPredicateNodes.back();
@@ -2863,7 +2863,7 @@ TEST(CoverageDatabaseTest, ReplicationWidthsAndZeroSizeParentsAreValidated) {
 }
 
 TEST(CoverageDatabaseTest, ShiftPredicateKindsAreValidatedAndRoundTrip) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (CrossPredicateKind kind :
        {CrossPredicateKind::ShiftLeft, CrossPredicateKind::ShiftRight,
         CrossPredicateKind::ArithmeticShiftLeft,
@@ -2889,7 +2889,7 @@ TEST(CoverageDatabaseTest, ShiftPredicateKindsAreValidatedAndRoundTrip) {
 }
 
 TEST(CoverageDatabaseTest, PooledPredicateOperandsValidateEveryRangeAndEdge) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (CrossPredicateKind kind :
        {CrossPredicateKind::Conditional, CrossPredicateKind::Concatenate}) {
     Database schema = makeSymbolicCrossWithSchema();
@@ -2928,7 +2928,7 @@ TEST(CoverageDatabaseTest, PooledPredicateOperandsValidateEveryRangeAndEdge) {
 }
 
 TEST(CoverageDatabaseTest, UnaryPredicateKindsAreValidatedAndRoundTrip) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (CrossPredicateKind kind :
        {CrossPredicateKind::Negate, CrossPredicateKind::ReductionAnd,
         CrossPredicateKind::ReductionOr, CrossPredicateKind::ReductionXor,
@@ -2965,7 +2965,7 @@ TEST(CoverageDatabaseTest, UnaryPredicateKindsAreValidatedAndRoundTrip) {
 }
 
 TEST(CoverageDatabaseTest, SymbolicSelectLayoutsAreValidatedAndRoundTrip) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeSymbolicCrossWithSchema();
   auto &select = schema.crossPredicateNodes.back();
   select.kind = CrossPredicateKind::ElementSelect;
@@ -3013,7 +3013,7 @@ TEST(CoverageDatabaseTest, SymbolicSelectLayoutsAreValidatedAndRoundTrip) {
 }
 
 TEST_F(CoverageRuntimeDesignTest, SymbolicPredicateSnapshotsPreserveXAndZ) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeSymbolicCrossWithSchema();
   schema.crossPredicateNodes[1].flags = 0;
   schema.crossPredicateNodes[2].kind = CrossPredicateKind::BitAnd;
@@ -3035,30 +3035,30 @@ TEST_F(CoverageRuntimeDesignTest, SymbolicPredicateSnapshotsPreserveXAndZ) {
   schema.crossSelectorNodes.back().predicateRoot = 204;
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
   ASSERT_EQ(validate(schema), Status::Ok);
-  obelisk_rt_context *local = createContextForSchema(schema, false);
+  talos_rt_context *local = createContextForSchema(schema, false);
   ASSERT_NE(local, nullptr);
-  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), TALOS_RT_OK);
 
   uint8_t maskValue = 0, literalValue = 0, unknown = 2;
-  std::array<obelisk_rt_functional_value_v1, 2> values = {
-      obelisk_rt_functional_value_v1{100, 2, 1, &maskValue, &unknown, nullptr,
-                                     0, OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE,
+  std::array<talos_rt_functional_value_v1, 2> values = {
+      talos_rt_functional_value_v1{100, 2, 1, &maskValue, &unknown, nullptr,
+                                     0, TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE,
                                      0},
-      obelisk_rt_functional_value_v1{
+      talos_rt_functional_value_v1{
           101, 2, 1, &literalValue, &unknown, nullptr, 0,
-          OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE, 0}};
+          TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE, 0}};
   for (uint8_t encoded : {uint8_t{0}, uint8_t{2}}) {
     maskValue = encoded;
-    obelisk_rt_covergroup_v1 handle = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_create(
+    talos_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(talos_rt_v1_covergroup_create(
                   local, 10, nullptr, 0, values.data(), values.size(), &handle),
-              OBELISK_RT_OK);
-    ASSERT_EQ(sampleFunctional(local, handle, 2, 0), OBELISK_RT_OK);
+              TALOS_RT_OK);
+    ASSERT_EQ(sampleFunctional(local, handle, 2, 0), TALOS_RT_OK);
     double percentage = 0;
     int32_t covered = 0, total = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                   local, handle, 22, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(covered, 1);
     EXPECT_EQ(total, 1);
   }
@@ -3076,11 +3076,11 @@ TEST_F(CoverageRuntimeDesignTest, SymbolicPredicateSnapshotsPreserveXAndZ) {
   }
   EXPECT_EQ(x, 3u);
   EXPECT_EQ(z, 1u);
-  obelisk_rt_v1_context_destroy(local);
+  talos_rt_v1_context_destroy(local);
 }
 
 TEST_F(CoverageRuntimeDesignTest, CrossWithMatchesCountIsAppliedPerBinTuple) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   // The predicate is true for four value tuples globally, but only twice in
   // each candidate bin tuple because the first target is split into [0:1]
   // and [2:3]. IEEE 1800-2023 19.6.1.2 therefore rejects both tuples for
@@ -3090,34 +3090,34 @@ TEST_F(CoverageRuntimeDesignTest, CrossWithMatchesCountIsAppliedPerBinTuple) {
                                         /*count=*/3,
                                         /*splitFirstTarget=*/true);
   ASSERT_EQ(validate(schema), Status::Ok);
-  obelisk_rt_context *local = createContextForSchema(schema, false);
+  talos_rt_context *local = createContextForSchema(schema, false);
   ASSERT_NE(local, nullptr);
   ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   CrossWithQueue queue;
   queue.initialize(local, false);
   auto predicate = queue.payload();
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0, &predicate,
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(talos_rt_v1_covergroup_create(local, 10, nullptr, 0, &predicate,
                                             1, &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   double percentage = 0.0;
   int32_t covered = 0;
   int32_t total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 local, handle, 22, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 0.0);
   EXPECT_EQ(covered, 0);
   EXPECT_EQ(total, 0);
   queue.close();
-  obelisk_rt_v1_context_destroy(local);
+  talos_rt_v1_context_destroy(local);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        CrossWithWideDynamicMatchesPreservesExactCount) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeCrossWithSchema(CrossMatchesPolicy::Count, /*count=*/0);
   schema.crossSelectorNodes.front().matchesExpression = 200;
   FunctionalExpression matches;
@@ -3134,27 +3134,27 @@ TEST_F(CoverageRuntimeDesignTest,
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
   ASSERT_EQ(validate(schema), Status::Ok);
 
-  obelisk_rt_context *local = createContextForSchema(schema, false);
+  talos_rt_context *local = createContextForSchema(schema, false);
   ASSERT_NE(local, nullptr);
   ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   CrossWithQueue queue;
   queue.initialize(local, false);
   std::array<uint8_t, 16> storage{};
-  std::array<obelisk_rt_functional_value_v1, 2> expressions{};
+  std::array<talos_rt_functional_value_v1, 2> expressions{};
   expressions.front() = queue.payload();
   // 2^64 is positive and legal, but exceeds every bounded candidate bin
   // tuple. Its exact typed value is retained in the resolved database.
   storage[8] = 1;
   expressions.back() = {
       200,     66,      9, storage.data(),
-      nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+      nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
       0};
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0,
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(talos_rt_v1_covergroup_create(local, 10, nullptr, 0,
                                             expressions.data(),
                                             expressions.size(), &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   Database saved = saveCoverage(local, "wide-dynamic-matches");
   ASSERT_EQ(validate(saved), Status::Ok);
   ASSERT_EQ(saved.resolvedCrossSelectorBindings.size(), 1u);
@@ -3175,9 +3175,9 @@ TEST_F(CoverageRuntimeDesignTest,
   EXPECT_EQ(saved.resolvedFunctionalValueLimbs[atom.firstLimb + 1].lowAval, 1u);
   double percentage = 0.0;
   int32_t covered = 0, total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 local, handle, 22, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(total, 0);
 
   Database invalid = saved;
@@ -3198,11 +3198,11 @@ TEST_F(CoverageRuntimeDesignTest,
   unknown.lowBval = unknown.highBval = 1;
   EXPECT_EQ(validate(invalid), Status::InvalidReference);
   queue.close();
-  obelisk_rt_v1_context_destroy(local);
+  talos_rt_v1_context_destroy(local);
 }
 
 TEST_F(CoverageRuntimeDesignTest, ConstructorInputsSnapshotAndRefsRemainLive) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalFormals.push_back(
       {70, 10, "snapshot", FunctionalFormalKind::Constructor,
@@ -3214,91 +3214,91 @@ TEST_F(CoverageRuntimeDesignTest, ConstructorInputsSnapshotAndRefsRemainLive) {
        FunctionalFormalDirection::Ref, FunctionalExpressionResultKind::Integral,
        0, 8, CoverageSignedness::Unsigned, 1, 0});
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
 
   uint8_t snapshot = 3;
   uint8_t live = 5;
   uint64_t liveHandle = UINT64_MAX;
   ASSERT_EQ(
-      obelisk_rt_v1_native_state_alloc(context, 8, &live, nullptr, &liveHandle),
-      OBELISK_RT_OK);
-  std::array<obelisk_rt_functional_value_v1, 2> formals{};
+      talos_rt_v1_native_state_alloc(context, 8, &live, nullptr, &liveHandle),
+      TALOS_RT_OK);
+  std::array<talos_rt_functional_value_v1, 2> formals{};
   formals[0] = {70,      8,       1, &snapshot,
-                nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
                 0};
   formals[1] = {
       71,      8,       1,          nullptr,
-      nullptr, nullptr, liveHandle, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+      nullptr, nullptr, liveHandle, TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
       0};
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals.data(),
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, formals.data(),
                                             formals.size(), nullptr, 0,
                                             &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   snapshot = 9;
   uint8_t dummy = 0;
   live = 7;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, liveHandle, 0, 8, 1, 0,
-                OBELISK_RT_ARGUMENT_VALUE_BITS, &live, nullptr),
-            OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_BITS, &live, nullptr),
+            TALOS_RT_OK);
   // The covergroup owns a retain on automatic ref storage after the caller
   // drops its original reference.
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, liveHandle, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, liveHandle, 0),
+            TALOS_RT_OK);
   uint8_t actual = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 70, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 8, 1,
+  ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 70, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 8, 1,
                 nullptr, nullptr, 0, &actual, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(actual, 3);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 8, 1,
+  ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 8, 1,
                 nullptr, nullptr, 0, &actual, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(actual, 7);
   std::array<uint64_t, 3> reference{};
-  ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+  ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
                 192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(reference, (std::array<uint64_t, 3>{0, liveHandle, 0}));
   live = 11;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, liveHandle, 0, 8, 1, 0,
-                OBELISK_RT_ARGUMENT_VALUE_BITS, &live, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_load(
+                TALOS_RT_ARGUMENT_VALUE_BITS, &live, nullptr),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_argument_ref_load(
                 context, &dummy, &dummy, 8, nullptr, reference[1], reference[2],
-                8, 1, 0, OBELISK_RT_ARGUMENT_VALUE_BITS, &actual, nullptr),
-            OBELISK_RT_OK);
+                8, 1, 0, TALOS_RT_ARGUMENT_VALUE_BITS, &actual, nullptr),
+            TALOS_RT_OK);
   EXPECT_EQ(actual, 11);
   for (auto [id, width, size] :
        {std::tuple{uint64_t{70}, uint64_t{192}, uint64_t{24}},
         std::tuple{uint64_t{71}, uint64_t{8}, uint64_t{24}},
         std::tuple{uint64_t{71}, uint64_t{192}, uint64_t{8}}}) {
     reference.fill(UINT64_MAX);
-    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+    EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
                   width, size, nullptr, nullptr, 0, reference.data(), nullptr),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(reference,
               (std::array<uint64_t, 3>{UINT64_MAX, UINT64_MAX, UINT64_MAX}));
   }
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        SampleOrdinalsPreserveInterleavedDefaultsAndIndependentItemGuards) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   constexpr uint32_t itemCount = 64;
   Database schema;
   schema.scopes.push_back({1, 0, "top", 0, "top"});
   schema.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
   std::array<uint8_t, itemCount> values{}, pointGuards{}, binGuards{};
-  std::vector<obelisk_rt_functional_value_v1> batch;
+  std::vector<talos_rt_functional_value_v1> batch;
   for (uint32_t ordinal = 0; ordinal != itemCount; ++ordinal) {
     const uint64_t item = 1000 + ordinal, bin = 2000 + 2 * ordinal;
     const uint64_t set = 3000 + ordinal, formal = 4000 + ordinal;
@@ -3367,37 +3367,37 @@ TEST_F(CoverageRuntimeDesignTest,
     pointGuards[ordinal] = ordinal % 3 != 0;
     binGuards[ordinal] = ordinal % 4 != 0;
     batch.push_back({expression, 2, 1, &values[ordinal], nullptr, nullptr, 0,
-                     OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0});
+                     TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0});
     batch.push_back({expression + 1, 1, 1, &pointGuards[ordinal], nullptr,
-                     nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0});
+                     nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0});
     batch.push_back({expression + 2, 1, 1, &binGuards[ordinal], nullptr,
-                     nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0});
+                     nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0});
     if (ordinal % 2)
       batch.push_back({expression + 3, 2, 1, &values[ordinal], nullptr, nullptr,
-                       0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0});
+                       0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0});
   }
   detail::sortByKey(schema.functionalExpressions.begin(),
                     schema.functionalExpressions.end(),
                     [](const auto &expression) { return expression.id; });
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  obelisk_rt_covergroup_v1 first = 0, second = 0;
-  ASSERT_EQ(createFunctional(context, 10, &first), OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(context, 10, &second), OBELISK_RT_OK);
+  talos_rt_covergroup_v1 first = 0, second = 0;
+  ASSERT_EQ(createFunctional(context, 10, &first), TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &second), TALOS_RT_OK);
   auto sample = [&](uint64_t handle) {
-    return obelisk_rt_v1_covergroup_sample(context, handle, batch.data(),
+    return talos_rt_v1_covergroup_sample(context, handle, batch.data(),
                                            batch.size());
   };
-  ASSERT_EQ(sample(first), OBELISK_RT_OK);
-  ASSERT_EQ(sample(second), OBELISK_RT_OK);
+  ASSERT_EQ(sample(first), TALOS_RT_OK);
+  ASSERT_EQ(sample(second), TALOS_RT_OK);
   for (auto &value : values)
     value = (value + 1) % 4;
-  ASSERT_EQ(sample(first), OBELISK_RT_OK);
+  ASSERT_EQ(sample(first), TALOS_RT_OK);
   // A malformed late value must not partially publish the earlier items.
   uint32_t lastKind = batch.back().kind;
   batch.back().kind = UINT32_MAX;
-  EXPECT_EQ(sample(first), OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(sample(first), TALOS_RT_INVALID_DESIGN);
   batch.back().kind = lastKind;
   for (uint64_t handle : {first, second}) {
     const auto &instance = context->coverage->instances.at(handle);
@@ -3413,11 +3413,11 @@ TEST_F(CoverageRuntimeDesignTest,
           << "item " << ordinal << " handle " << handle;
     }
   }
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, RealFormalsPreservePrecisionBitsAndLiveRefs) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   for (auto [id, name, direction, kind, ordinal] :
        {std::tuple{uint64_t{70}, "snapshot", FunctionalFormalDirection::Input,
@@ -3435,101 +3435,101 @@ TEST_F(CoverageRuntimeDesignTest, RealFormalsPreservePrecisionBitsAndLiveRefs) {
        FunctionalExpressionResultKind::Integral, 0, 32,
        CoverageSignedness::Unsigned, 3, 0});
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
   uint32_t snapshot = UINT32_C(0x80000000);
   uint32_t live = UINT32_C(0x3dcccccd);
   uint64_t wide = UINT64_C(0x3ff8000000000000);
   uint32_t integer = UINT32_C(0x3f800000);
   uint64_t liveHandle = UINT64_MAX, wideHandle = UINT64_MAX;
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+  ASSERT_EQ(talos_rt_v1_native_state_alloc(
                 context, 32, reinterpret_cast<const uint8_t *>(&live), nullptr,
                 &liveHandle),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_alloc(
                 context, 64, reinterpret_cast<const uint8_t *>(&wide), nullptr,
                 &wideHandle),
-            OBELISK_RT_OK);
-  std::array<obelisk_rt_functional_value_v1, 4> formals{
-      obelisk_rt_functional_value_v1{70, 32, 4, &snapshot, nullptr, nullptr, 0,
-                                     OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL, 0},
+            TALOS_RT_OK);
+  std::array<talos_rt_functional_value_v1, 4> formals{
+      talos_rt_functional_value_v1{70, 32, 4, &snapshot, nullptr, nullptr, 0,
+                                     TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL, 0},
       {71, 32, 4, nullptr, nullptr, nullptr, liveHandle,
-       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
       {72, 64, 8, nullptr, nullptr, nullptr, wideHandle,
-       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
       {73, 32, 4, &integer, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0}};
-  obelisk_rt_covergroup_v1 handle = UINT64_MAX;
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals.data(),
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0}};
+  talos_rt_covergroup_v1 handle = UINT64_MAX;
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL;
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals.data(),
                                             formals.size(), nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(handle, UINT64_MAX);
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals.data(),
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL;
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, formals.data(),
                                             formals.size(), nullptr, 0,
                                             &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint32_t wrongReal = UINT32_MAX;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 73, OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL, 32,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 73, TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL, 32,
                 4, nullptr, nullptr, 0, &wrongReal, nullptr),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(wrongReal, UINT32_MAX);
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 73, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 32,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 73, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 32,
                 4, nullptr, nullptr, 0, &wrongReal, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(wrongReal, integer);
   snapshot = 0;
   live = UINT32_C(0x7fc12345);
   uint8_t dummy = 0;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, liveHandle, 0, 32, 4, 0,
-                OBELISK_RT_ARGUMENT_VALUE_BITS, &live, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, liveHandle, 0),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, wideHandle, 0),
-            OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_BITS, &live, nullptr),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, liveHandle, 0),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, wideHandle, 0),
+            TALOS_RT_OK);
   for (auto [id, expected] : {std::pair{uint64_t{70}, UINT32_C(0x80000000)},
                               std::pair{uint64_t{71}, UINT32_C(0x7fc12345)}}) {
     uint32_t actual = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL,
+    ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL,
                   32, 4, nullptr, nullptr, 0, &actual, nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(actual, expected);
     actual = UINT32_MAX;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 32,
+    EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 32,
                   4, nullptr, nullptr, 0, &actual, nullptr),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(actual, UINT32_MAX);
   }
   uint64_t actual = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 72, OBELISK_RT_FUNCTIONAL_VALUE_REAL, 64, 8,
+  ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 72, TALOS_RT_FUNCTIONAL_VALUE_REAL, 64, 8,
                 nullptr, nullptr, 0, &actual, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(actual, wide);
   actual = UINT64_MAX;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 72, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 64,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 72, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 64,
                 8, nullptr, nullptr, 0, &actual, nullptr),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(actual, UINT64_MAX);
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_REAL, 64, 8,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_REAL, 64, 8,
                 nullptr, nullptr, 0, &actual, nullptr),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(actual, UINT64_MAX);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, StringConstructorValuesAndRefPathsSurviveGc) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalFormals.push_back(
       {90, 10, "snapshot", FunctionalFormalKind::Constructor,
@@ -3540,33 +3540,33 @@ TEST_F(CoverageRuntimeDesignTest, StringConstructorValuesAndRefPathsSurviveGc) {
        FunctionalFormalDirection::Ref, FunctionalExpressionResultKind::String,
        0, 0, CoverageSignedness::NotApplicable, 1, 0});
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
-            OBELISK_RT_OK);
-  std::array<obelisk_rt_string_v1, 2> strings{};
-  obelisk_rt_gc_managed_root_range_v1 stringRoots{};
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_push(
+  ASSERT_EQ(talos_rt_managed_execution_enter(context, &lane, &entered),
+            TALOS_RT_OK);
+  std::array<talos_rt_string_v1, 2> strings{};
+  talos_rt_gc_managed_root_range_v1 stringRoots{};
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_range_push(
                 lane, &stringRoots, strings.data(), strings.size()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   const std::string frozenText = "an independently captured constructor string";
   const std::string initialText = "an initial live constructor string";
   const std::string updatedText = "the updated live constructor string";
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, frozenText.data(),
+  ASSERT_EQ(talos_rt_v1_string_create(lane, frozenText.data(),
                                         frozenText.size(), &strings[0]),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, initialText.data(),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_string_create(lane, initialText.data(),
                                         initialText.size(), &strings[1]),
-            OBELISK_RT_OK);
-  const obelisk_rt_trace_entry_v1 entry{
-      0,      0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_STRING,
+            TALOS_RT_OK);
+  const talos_rt_trace_entry_v1 entry{
+      0,      0, 1, TALOS_RT_TRACE_STRONG, TALOS_RT_MANAGED_SLOT_STRING,
       nullptr};
-  const obelisk_rt_trace_layout_v1 trace{
-      OBELISK_RT_VERSION, 0, 8, 8, &entry, 1};
-  const obelisk_rt_element_type_v1 element{OBELISK_RT_VERSION,
-                                           OBELISK_RT_ELEMENT_STRING,
+  const talos_rt_trace_layout_v1 trace{
+      TALOS_RT_VERSION, 0, 8, 8, &entry, 1};
+  const talos_rt_element_type_v1 element{TALOS_RT_VERSION,
+                                           TALOS_RT_ELEMENT_STRING,
                                            99,
                                            0,
                                            0,
@@ -3575,84 +3575,84 @@ TEST_F(CoverageRuntimeDesignTest, StringConstructorValuesAndRefPathsSurviveGc) {
                                            0,
                                            &trace,
                                            nullptr};
-  obelisk_rt_object_v1 *array = nullptr;
-  obelisk_rt_gc_root_v1 arrayRoot{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &arrayRoot, &array),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &element, 1, &array),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_container_write(lane, array, 0, &strings[1], nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_object_v1 *path = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_reference_path_index_create(
+  talos_rt_object_v1 *array = nullptr;
+  talos_rt_gc_root_v1 arrayRoot{};
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &arrayRoot, &array),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_dynamic_array_create(lane, &element, 1, &array),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_container_write(lane, array, 0, &strings[1], nullptr),
+            TALOS_RT_OK);
+  talos_rt_object_v1 *path = nullptr;
+  ASSERT_EQ(talos_rt_v1_reference_path_index_create(
                 lane, array, 0, nullptr, 0, 0, nullptr, nullptr, 0, &path),
-            OBELISK_RT_OK);
-  const std::array<obelisk_rt_functional_value_v1, 2> formals{
+            TALOS_RT_OK);
+  const std::array<talos_rt_functional_value_v1, 2> formals{
       {{90, 0, 0, nullptr, nullptr, nullptr, strings[0],
-        OBELISK_RT_FUNCTIONAL_VALUE_STRING, 0},
+        TALOS_RT_FUNCTIONAL_VALUE_STRING, 0},
        {71, 64, 8, nullptr, nullptr, path, 0,
-        OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 2}}};
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals.data(),
+        TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 2}}};
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, formals.data(),
                                             formals.size(), nullptr, 0,
                                             &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   strings[0] = 0;
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, updatedText.data(),
+  ASSERT_EQ(talos_rt_v1_string_create(lane, updatedText.data(),
                                         updatedText.size(), &strings[1]),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_container_write(lane, array, 0, &strings[1], nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_pop(lane, &stringRoots),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_container_write(lane, array, 0, &strings[1], nullptr),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_range_pop(lane, &stringRoots),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &arrayRoot), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   std::array<uint64_t, 3> reference{};
-  ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+  ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
                 192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_EQ(reference[2], 2u);
-  obelisk_rt_string_v1 projectedString = 0;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_load(
+  talos_rt_string_v1 projectedString = 0;
+  ASSERT_EQ(talos_rt_v1_argument_ref_load(
                 context, nullptr, nullptr, 0,
-                obelisk_rt_object_from_managed_word(reference[0]), reference[1],
-                reference[2], 64, 8, 0, OBELISK_RT_ARGUMENT_VALUE_STRING,
+                talos_rt_object_from_managed_word(reference[0]), reference[1],
+                reference[2], 64, 8, 0, TALOS_RT_ARGUMENT_VALUE_STRING,
                 &projectedString, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   char projectedScratch[8];
   const char *projectedBytes = nullptr;
   uint64_t projectedSize = 0;
-  ASSERT_EQ(obelisk_rt_v1_string_view(projectedString, projectedScratch,
+  ASSERT_EQ(talos_rt_v1_string_view(projectedString, projectedScratch,
                                       &projectedBytes, &projectedSize),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(std::string(projectedBytes, projectedSize), updatedText);
   for (auto [id, expected] : {std::pair{uint64_t{90}, frozenText},
                               std::pair{uint64_t{71}, updatedText}}) {
-    obelisk_rt_string_v1 value = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_STRING, 64,
+    talos_rt_string_v1 value = 0;
+    ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_STRING, 64,
                   8, nullptr, nullptr, 0, &value, nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     char scratch[8];
     const char *bytes = nullptr;
     uint64_t size = 0;
-    ASSERT_EQ(obelisk_rt_v1_string_view(value, scratch, &bytes, &size),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_string_view(value, scratch, &bytes, &size),
+              TALOS_RT_OK);
     EXPECT_EQ(std::string(bytes, size), expected);
     value = UINT64_MAX;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 64,
+    EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 64,
                   8, nullptr, nullptr, 0, &value, nullptr),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(value, UINT64_MAX);
   }
-  obelisk_rt_managed_execution_leave(lane, entered);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_managed_execution_leave(lane, entered);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, ContainerFormalsRetainSnapshotsAndLiveStorage) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalContainerTypes.push_back(
       {800, FunctionalContainerKind::DynamicArray,
@@ -3667,14 +3667,14 @@ TEST_F(CoverageRuntimeDesignTest, ContainerFormalsRetainSnapshotsAndLiveStorage)
        FunctionalExpressionResultKind::Container, 0, 0,
        CoverageSignedness::NotApplicable, 1, 0, 800}};
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
-            OBELISK_RT_OK);
-  const obelisk_rt_element_type_v1 element{OBELISK_RT_VERSION,
-                                           OBELISK_RT_ELEMENT_BITS,
+  ASSERT_EQ(talos_rt_managed_execution_enter(context, &lane, &entered),
+            TALOS_RT_OK);
+  const talos_rt_element_type_v1 element{TALOS_RT_VERSION,
+                                           TALOS_RT_ELEMENT_BITS,
                                            99,
                                            0,
                                            0,
@@ -3683,91 +3683,91 @@ TEST_F(CoverageRuntimeDesignTest, ContainerFormalsRetainSnapshotsAndLiveStorage)
                                            32,
                                            nullptr,
                                            nullptr};
-  obelisk_rt_object_v1 *frozen = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &element, 1, &frozen),
-            OBELISK_RT_OK);
+  talos_rt_object_v1 *frozen = nullptr;
+  ASSERT_EQ(talos_rt_v1_dynamic_array_create(lane, &element, 1, &frozen),
+            TALOS_RT_OK);
   uint32_t initial = 3;
-  ASSERT_EQ(obelisk_rt_v1_container_write(lane, frozen, 0, &initial, nullptr),
-            OBELISK_RT_OK);
-  uint64_t word = obelisk_rt_managed_word_from_object(frozen), storage = 0;
-  const obelisk_rt_managed_root_slot_v1 root{
-      0, OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER, 0};
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_typed_roots(
+  ASSERT_EQ(talos_rt_v1_container_write(lane, frozen, 0, &initial, nullptr),
+            TALOS_RT_OK);
+  uint64_t word = talos_rt_managed_word_from_object(frozen), storage = 0;
+  const talos_rt_managed_root_slot_v1 root{
+      0, TALOS_RT_MANAGED_ROOT_KIND_CONTAINER, 0};
+  ASSERT_EQ(talos_rt_v1_native_state_alloc_with_typed_roots(
                 context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
                 &root, 1, &storage),
-            OBELISK_RT_OK);
-  std::array<obelisk_rt_functional_value_v1, 2> formals{
+            TALOS_RT_OK);
+  std::array<talos_rt_functional_value_v1, 2> formals{
       {{70, 0, 0, nullptr, nullptr, frozen, 0,
-        OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 0},
+        TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 0},
        {71, 64, 8, nullptr, nullptr, nullptr, storage,
-        OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0}}};
-  obelisk_rt_covergroup_v1 handle = 0;
+        TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0}}};
+  talos_rt_covergroup_v1 handle = 0;
   auto create = [&] {
-    return obelisk_rt_v1_covergroup_create(context, 10, formals.data(),
+    return talos_rt_v1_covergroup_create(context, 10, formals.data(),
                                            formals.size(), nullptr, 0, &handle);
   };
   auto original = formals[0];
   for (auto [kind, typeID, bound] :
-       {std::tuple{uint32_t{OBELISK_RT_CONTAINER_QUEUE}, uint64_t{99},
+       {std::tuple{uint32_t{TALOS_RT_CONTAINER_QUEUE}, uint64_t{99},
                    uint64_t{4}},
-        std::tuple{uint32_t{OBELISK_RT_CONTAINER_DYNAMIC_ARRAY}, uint64_t{100},
+        std::tuple{uint32_t{TALOS_RT_CONTAINER_DYNAMIC_ARRAY}, uint64_t{100},
                    uint64_t{0}}}) {
-    obelisk_rt_object_v1 *wrong = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_container_create_typed(
-                  lane, kind, typeID, OBELISK_RT_ELEMENT_BITS, 0, 4, 4, 32,
+    talos_rt_object_v1 *wrong = nullptr;
+    ASSERT_EQ(talos_rt_v1_container_create_typed(
+                  lane, kind, typeID, TALOS_RT_ELEMENT_BITS, 0, 4, 4, 32,
                   nullptr, 0, 1, bound, &wrong),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     formals[0].owner = wrong;
-    EXPECT_EQ(create(), OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(create(), TALOS_RT_INVALID_DESIGN);
   }
   formals[0] = original;
-  ASSERT_EQ(create(), OBELISK_RT_OK);
-  obelisk_rt_object_v1 *updated = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &element, 1, &updated),
-            OBELISK_RT_OK);
+  ASSERT_EQ(create(), TALOS_RT_OK);
+  talos_rt_object_v1 *updated = nullptr;
+  ASSERT_EQ(talos_rt_v1_dynamic_array_create(lane, &element, 1, &updated),
+            TALOS_RT_OK);
   initial = 7;
-  ASSERT_EQ(obelisk_rt_v1_container_write(lane, updated, 0, &initial, nullptr),
-            OBELISK_RT_OK);
-  word = obelisk_rt_managed_word_from_object(updated);
+  ASSERT_EQ(talos_rt_v1_container_write(lane, updated, 0, &initial, nullptr),
+            TALOS_RT_OK);
+  word = talos_rt_managed_word_from_object(updated);
   uint8_t dummy = 0;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-                OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr),
-            OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_BITS, &word, nullptr),
+            TALOS_RT_OK);
   // The constructor retains automatic storage and the captured array after
   // the caller relinquishes both. Collection must trace the complete values.
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, storage, 0),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (auto [id, expected] : {std::pair{uint64_t{70}, uint32_t{3}},
                               std::pair{uint64_t{71}, uint32_t{7}}}) {
     uint64_t actual = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+    ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
                   context, handle, id,
-                  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 64, 8, nullptr,
+                  TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 64, 8, nullptr,
                   nullptr, 0, &actual, nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     uint32_t value = 0;
     ASSERT_EQ(
-        obelisk_rt_v1_container_read(
-            obelisk_rt_object_from_managed_word(actual), 0, &value, nullptr),
-        OBELISK_RT_OK);
+        talos_rt_v1_container_read(
+            talos_rt_object_from_managed_word(actual), 0, &value, nullptr),
+        TALOS_RT_OK);
     EXPECT_EQ(value, expected);
     actual = UINT64_MAX;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+    EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
                   context, handle, id,
-                  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 32, 8, nullptr,
+                  TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 32, 8, nullptr,
                   nullptr, 0, &actual, nullptr),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(actual, UINT64_MAX);
   }
-  obelisk_rt_managed_execution_leave(lane, entered);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_managed_execution_leave(lane, entered);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        CovergroupFormalsCopyHandlesAndValidateLiveNominalTypes) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalTypes.push_back({2, 1, "source", 0, 2023, "top.source"});
   schema.functionalTypes.push_back({3, 1, "derived", 2, 2023, "top.derived"});
@@ -3800,111 +3800,111 @@ TEST_F(CoverageRuntimeDesignTest,
   std::rotate(schema.functionalTypes.begin(),
               schema.functionalTypes.begin() + 1, schema.functionalTypes.end());
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 first = 0, derived = 0, unrelated = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 2, nullptr, 0, nullptr, 0,
+  ASSERT_EQ(talos_rt_managed_execution_enter(context, &lane, &entered),
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 first = 0, derived = 0, unrelated = 0;
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 2, nullptr, 0, nullptr, 0,
                                             &first),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 3, nullptr, 0, nullptr, 0,
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 3, nullptr, 0, nullptr, 0,
                                             &derived),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 4, nullptr, 0, nullptr, 0,
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 4, nullptr, 0, nullptr, 0,
                                             &unrelated),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint64_t word = first, storage = 0;
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+  ASSERT_EQ(talos_rt_v1_native_state_alloc(
                 context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
                 &storage),
-            OBELISK_RT_OK);
-  obelisk_rt_functional_value_v1 formals[] = {
+            TALOS_RT_OK);
+  talos_rt_functional_value_v1 formals[] = {
       {70, 0, 0, nullptr, nullptr, nullptr, first,
-       OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP, 0},
       {71, 64, 8, nullptr, nullptr, nullptr, storage,
-       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
       {72, 0, 0, nullptr, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP, 0}};
-  obelisk_rt_covergroup_v1 handle = 0;
+       TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP, 0}};
+  talos_rt_covergroup_v1 handle = 0;
   for (uint64_t invalid : {unrelated, UINT64_MAX}) {
     formals[0].payload = invalid;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr,
+    EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr,
                                               0, &handle),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(handle, 0u);
   }
   formals[0].payload = first;
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_CHANDLE;
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+            TALOS_RT_INVALID_DESIGN);
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP;
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint8_t sampled = 0;
-  obelisk_rt_functional_value_v1 expressions[] = {
+  talos_rt_functional_value_v1 expressions[] = {
       {60, 2, 1, &sampled, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {61, 2, 1, &sampled, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {74, 0, 0, nullptr, nullptr, nullptr, derived,
-       OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP, 0}};
-  ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
-            OBELISK_RT_OK);
+       TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP, 0}};
+  ASSERT_EQ(talos_rt_v1_covergroup_sample(context, handle, expressions, 3),
+            TALOS_RT_OK);
   expressions[2].payload = unrelated;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_covergroup_sample(context, handle, expressions, 3),
+            TALOS_RT_INVALID_DESIGN);
   expressions[2].payload = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_sample(context, handle, expressions, 3),
+            TALOS_RT_OK);
   auto store = [&](uint64_t replacement) {
     uint8_t dummy = 0;
-    return obelisk_rt_v1_argument_ref_store(
+    return talos_rt_v1_argument_ref_store(
         context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-        OBELISK_RT_ARGUMENT_VALUE_BITS, &replacement, nullptr);
+        TALOS_RT_ARGUMENT_VALUE_BITS, &replacement, nullptr);
   };
-  ASSERT_EQ(store(derived), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(store(derived), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, storage, 0),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (uint64_t id : {70, 71, 72}) {
     uint64_t captured = 42;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP,
+    ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP,
                   64, 8, nullptr, nullptr, 0, &captured, nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(captured, id == 70 ? first : id == 71 ? derived : 0);
     captured = 42;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE, 64,
+    EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_CHANDLE, 64,
                   8, nullptr, nullptr, 0, &captured, nullptr),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(captured, 42u);
   }
-  ASSERT_EQ(store(unrelated), OBELISK_RT_OK);
+  ASSERT_EQ(store(unrelated), TALOS_RT_OK);
   uint64_t captured = 42;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP, 64,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP, 64,
                 8, nullptr, nullptr, 0, &captured, nullptr),
-            OBELISK_RT_INVALID_HANDLE);
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(captured, 42u);
   std::array<uint64_t, 3> reference{7, 8, 9};
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
                 192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
-            OBELISK_RT_INVALID_HANDLE);
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(reference, (std::array<uint64_t, 3>{7, 8, 9}));
-  obelisk_rt_managed_execution_leave(lane, entered);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_managed_execution_leave(lane, entered);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        VirtualInterfaceFormalsCopyScopesAndValidateLiveSpecializations) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalVirtualInterfaceTypes = {{1000, 99}, {1001, 99}, {1002, 88}};
   schema.functionalVirtualInterfaceScopes = {{7, 99}, {9, 99}, {11, 88}};
@@ -3934,114 +3934,114 @@ TEST_F(CoverageRuntimeDesignTest,
   defaultValue.resultOrdinal = 2;
   schema.functionalExpressions.push_back(defaultValue);
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_managed_execution_enter(context, &lane, &entered),
+            TALOS_RT_OK);
   const uint64_t first = 7, second = 9;
   uint64_t word = first, storage = 0;
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+  ASSERT_EQ(talos_rt_v1_native_state_alloc(
                 context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
                 &storage),
-            OBELISK_RT_OK);
-  obelisk_rt_functional_value_v1 formals[] = {
+            TALOS_RT_OK);
+  talos_rt_functional_value_v1 formals[] = {
       {70, 0, 0, nullptr, nullptr, nullptr, first,
-       OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE, 0},
       {71, 64, 8, nullptr, nullptr, nullptr, storage,
-       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
       {72, 0, 0, nullptr, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE, 0}};
-  obelisk_rt_covergroup_v1 handle = 0;
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+       TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE, 0}};
+  talos_rt_covergroup_v1 handle = 0;
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_CHANDLE;
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE;
+            TALOS_RT_INVALID_DESIGN);
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE;
   formals[0].bit_width = 64;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   formals[0].bit_width = 0;
   for (uint64_t invalid : {uint64_t{11}, UINT64_MAX}) {
     formals[0].payload = invalid;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr,
+    EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr,
                                               0, &handle),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(handle, 0u);
   }
   formals[0].payload = first;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint8_t sampled = 0;
-  obelisk_rt_functional_value_v1 expressions[] = {
+  talos_rt_functional_value_v1 expressions[] = {
       {60, 2, 1, &sampled, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {61, 2, 1, &sampled, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {74, 0, 0, nullptr, nullptr, nullptr, first,
-       OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE, 0}};
+       TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE, 0}};
   // Modport views share the same instance identity and parameter
   // specialization.
   for (uint64_t identity : {first, second, uint64_t{0}}) {
     expressions[2].payload = identity;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_covergroup_sample(context, handle, expressions, 3),
+              TALOS_RT_OK);
   }
   expressions[2].payload = 11;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_covergroup_sample(context, handle, expressions, 3),
+            TALOS_RT_INVALID_DESIGN);
   word = second;
   uint8_t dummy = 0;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-                OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_BITS, &word, nullptr),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, storage, 0),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (uint64_t id : {70, 71, 72}) {
     uint64_t captured = 42;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+    ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
                   context, handle, id,
-                  OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE, 64, 8, nullptr,
+                  TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE, 64, 8, nullptr,
                   nullptr, 0, &captured, nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(captured, id == 70 ? first : id == 71 ? second : 0);
     captured = 42;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE, 64,
+    EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_CHANDLE, 64,
                   8, nullptr, nullptr, 0, &captured, nullptr),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(captured, 42u);
   }
   uint64_t invalid = 11;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-                OBELISK_RT_ARGUMENT_VALUE_BITS, &invalid, nullptr),
-            OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_BITS, &invalid, nullptr),
+            TALOS_RT_OK);
   uint64_t captured = 42;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
                 context, handle, 71,
-                OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE, 64, 8, nullptr,
+                TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE, 64, 8, nullptr,
                 nullptr, 0, &captured, nullptr),
-            OBELISK_RT_INVALID_HANDLE);
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(captured, 42u);
   std::array<uint64_t, 3> reference{7, 8, 9};
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
                 192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
-            OBELISK_RT_INVALID_HANDLE);
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(reference, (std::array<uint64_t, 3>{7, 8, 9}));
-  obelisk_rt_managed_execution_leave(lane, entered);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_managed_execution_leave(lane, entered);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        SemaphoreFormalsRetainSharedBucketsAndValidateLiveRefs) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   for (uint64_t id : {70, 71, 72})
     schema.functionalFormals.push_back(
@@ -4068,143 +4068,143 @@ TEST_F(CoverageRuntimeDesignTest,
   defaultValue.resultOrdinal = 2;
   schema.functionalExpressions.push_back(defaultValue);
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
-            OBELISK_RT_OK);
-  obelisk_rt_object_v1 *first = nullptr, *second = nullptr,
+  ASSERT_EQ(talos_rt_managed_execution_enter(context, &lane, &entered),
+            TALOS_RT_OK);
+  talos_rt_object_v1 *first = nullptr, *second = nullptr,
                        *unrelated = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 2, &first), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 3, &second), OBELISK_RT_OK);
-  obelisk_rt_element_type_v1 element{};
-  element.version = OBELISK_RT_VERSION;
+  ASSERT_EQ(talos_rt_v1_semaphore_create(lane, 2, &first), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_semaphore_create(lane, 3, &second), TALOS_RT_OK);
+  talos_rt_element_type_v1 element{};
+  element.version = TALOS_RT_VERSION;
   element.type_id = 99;
-  element.kind = OBELISK_RT_ELEMENT_BITS;
+  element.kind = TALOS_RT_ELEMENT_BITS;
   element.value_size = 4;
   element.alignment = 4;
   element.bit_width = 32;
-  ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &element, UINT64_MAX, &unrelated),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_root_v1 unrelatedRoot{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &unrelatedRoot, &unrelated),
-            OBELISK_RT_OK);
-  const uint64_t firstWord = obelisk_rt_managed_word_from_object(first);
-  const uint64_t secondWord = obelisk_rt_managed_word_from_object(second);
+  ASSERT_EQ(talos_rt_v1_queue_create(lane, &element, UINT64_MAX, &unrelated),
+            TALOS_RT_OK);
+  talos_rt_gc_root_v1 unrelatedRoot{};
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &unrelatedRoot, &unrelated),
+            TALOS_RT_OK);
+  const uint64_t firstWord = talos_rt_managed_word_from_object(first);
+  const uint64_t secondWord = talos_rt_managed_word_from_object(second);
   uint64_t word = firstWord, storage = 0;
-  const obelisk_rt_managed_root_slot_v1 root{
-      0, OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER, 0};
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_typed_roots(
+  const talos_rt_managed_root_slot_v1 root{
+      0, TALOS_RT_MANAGED_ROOT_KIND_CONTAINER, 0};
+  ASSERT_EQ(talos_rt_v1_native_state_alloc_with_typed_roots(
                 context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
                 &root, 1, &storage),
-            OBELISK_RT_OK);
-  obelisk_rt_functional_value_v1 formals[] = {
+            TALOS_RT_OK);
+  talos_rt_functional_value_v1 formals[] = {
       {70, 0, 0, nullptr, nullptr, first, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE, 0},
       {71, 64, 8, nullptr, nullptr, nullptr, storage,
-       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
       {72, 0, 0, nullptr, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE, 0}};
-  obelisk_rt_covergroup_v1 handle = 0;
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+       TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE, 0}};
+  talos_rt_covergroup_v1 handle = 0;
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE;
+            TALOS_RT_INVALID_DESIGN);
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE;
   formals[0].bit_width = 64;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   formals[0].bit_width = 0;
   formals[0].owner = unrelated;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(handle, 0u);
   formals[0].owner = first;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint8_t sampled = 0;
-  obelisk_rt_functional_value_v1 expressions[] = {
+  talos_rt_functional_value_v1 expressions[] = {
       {60, 2, 1, &sampled, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {61, 2, 1, &sampled, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {74, 0, 0, nullptr, nullptr, first, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE, 0}};
+       TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE, 0}};
   for (auto *identity :
-       {first, second, static_cast<obelisk_rt_object_v1 *>(nullptr)}) {
+       {first, second, static_cast<talos_rt_object_v1 *>(nullptr)}) {
     expressions[2].owner = identity;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_covergroup_sample(context, handle, expressions, 3),
+              TALOS_RT_OK);
   }
   expressions[2].owner = unrelated;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_covergroup_sample(context, handle, expressions, 3),
+            TALOS_RT_INVALID_DESIGN);
   uint32_t acquired = 0;
-  ASSERT_EQ(obelisk_rt_v1_semaphore_try_get(first, 1, &acquired),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_semaphore_try_get(first, 1, &acquired),
+            TALOS_RT_OK);
   ASSERT_EQ(acquired, 1u);
   word = secondWord;
   uint8_t dummy = 0;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-                OBELISK_RT_ARGUMENT_VALUE_CLASS, &word, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_CLASS, &word, nullptr),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, storage, 0),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (uint64_t id : {70, 71, 72}) {
     uint64_t captured = 42;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE,
+    ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE,
                   64, 8, nullptr, nullptr, 0, &captured, nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(captured, id == 70 ? firstWord : id == 71 ? secondWord : 0);
     captured = 42;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+    EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
                   context, handle, id,
-                  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 64, 8, nullptr,
+                  TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 64, 8, nullptr,
                   nullptr, 0, &captured, nullptr),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(captured, 42u);
   }
   // The copied input still observes the original bucket's acquired key.
-  ASSERT_EQ(obelisk_rt_v1_semaphore_try_get(
-                obelisk_rt_object_from_managed_word(firstWord), 2, &acquired),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_semaphore_try_get(
+                talos_rt_object_from_managed_word(firstWord), 2, &acquired),
+            TALOS_RT_OK);
   EXPECT_EQ(acquired, 0u);
-  ASSERT_EQ(obelisk_rt_v1_semaphore_try_get(
-                obelisk_rt_object_from_managed_word(firstWord), 1, &acquired),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_semaphore_try_get(
+                talos_rt_object_from_managed_word(firstWord), 1, &acquired),
+            TALOS_RT_OK);
   EXPECT_EQ(acquired, 1u);
-  uint64_t invalid = obelisk_rt_managed_word_from_object(unrelated);
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  uint64_t invalid = talos_rt_managed_word_from_object(unrelated);
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-                OBELISK_RT_ARGUMENT_VALUE_CLASS, &invalid, nullptr),
-            OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_CLASS, &invalid, nullptr),
+            TALOS_RT_OK);
   uint64_t captured = 42;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE, 64,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE, 64,
                 8, nullptr, nullptr, 0, &captured, nullptr),
-            OBELISK_RT_INVALID_HANDLE);
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(captured, 42u);
   std::array<uint64_t, 3> reference{7, 8, 9};
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
                 192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
-            OBELISK_RT_INVALID_HANDLE);
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(reference, (std::array<uint64_t, 3>{7, 8, 9}));
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &unrelatedRoot), OBELISK_RT_OK);
-  obelisk_rt_managed_execution_leave(lane, entered);
-  obelisk_rt_v1_context_destroy(context);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &unrelatedRoot), TALOS_RT_OK);
+  talos_rt_managed_execution_leave(lane, entered);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        MailboxFormalsRetainSharedMessagesAndValidateNominalTypes) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalContainerTypes.push_back(
       {77, FunctionalContainerKind::Mailbox, FunctionalContainerKeyKind::None,
@@ -4234,233 +4234,233 @@ TEST_F(CoverageRuntimeDesignTest,
   defaultValue.resultOrdinal = 2;
   schema.functionalExpressions.push_back(defaultValue);
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_managed_execution_enter(context, &lane, &entered),
+            TALOS_RT_OK);
   // The first mailbox is a user class derived from a builtin. Its identity
   // must be captured without replacing it by the private container payload.
-  const uint64_t payloadOffset = sizeof(obelisk_rt_managed_word_v1);
-  obelisk_rt_trace_entry_v1 payloadTrace{};
+  const uint64_t payloadOffset = sizeof(talos_rt_managed_word_v1);
+  talos_rt_trace_entry_v1 payloadTrace{};
   payloadTrace.offset = payloadOffset;
   payloadTrace.count = 1;
-  payloadTrace.kind = OBELISK_RT_TRACE_STRONG;
-  payloadTrace.slot_kind = OBELISK_RT_MANAGED_SLOT_MAILBOX;
-  obelisk_rt_trace_layout_v1 baseLayout{OBELISK_RT_VERSION,
+  payloadTrace.kind = TALOS_RT_TRACE_STRONG;
+  payloadTrace.slot_kind = TALOS_RT_MANAGED_SLOT_MAILBOX;
+  talos_rt_trace_layout_v1 baseLayout{TALOS_RT_VERSION,
                                         0,
                                         payloadOffset +
-                                            sizeof(obelisk_rt_managed_word_v1),
-                                        alignof(obelisk_rt_managed_word_v1),
+                                            sizeof(talos_rt_managed_word_v1),
+                                        alignof(talos_rt_managed_word_v1),
                                         &payloadTrace,
                                         1};
-  obelisk_rt_trace_entry_v1 inheritedTrace{};
+  talos_rt_trace_entry_v1 inheritedTrace{};
   inheritedTrace.count = 1;
-  inheritedTrace.kind = OBELISK_RT_TRACE_EMBEDDED;
+  inheritedTrace.kind = TALOS_RT_TRACE_EMBEDDED;
   inheritedTrace.child_layout = &baseLayout;
-  obelisk_rt_trace_layout_v1 derivedLayout{
-      OBELISK_RT_VERSION, 0, baseLayout.size, baseLayout.alignment,
+  talos_rt_trace_layout_v1 derivedLayout{
+      TALOS_RT_VERSION, 0, baseLayout.size, baseLayout.alignment,
       &inheritedTrace,    1};
-  obelisk_rt_class_descriptor_v1 base{};
-  base.version = OBELISK_RT_VERSION;
+  talos_rt_class_descriptor_v1 base{};
+  base.version = TALOS_RT_VERSION;
   base.class_id = 1;
   base.instance_size = baseLayout.size;
   base.instance_alignment = baseLayout.alignment;
   base.layout = &baseLayout;
-  base.builtin_base_kind = OBELISK_RT_BUILTIN_CLASS_MAILBOX;
+  base.builtin_base_kind = TALOS_RT_BUILTIN_CLASS_MAILBOX;
   base.builtin_base_offset = payloadOffset;
-  obelisk_rt_class_descriptor_v1 derived{};
-  derived.version = OBELISK_RT_VERSION;
+  talos_rt_class_descriptor_v1 derived{};
+  derived.version = TALOS_RT_VERSION;
   derived.class_id = 2;
   derived.instance_size = derivedLayout.size;
   derived.instance_alignment = derivedLayout.alignment;
   derived.layout = &derivedLayout;
   derived.base = &base;
-  ASSERT_EQ(obelisk_rt_v1_class_register(context, &base), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_class_register(context, &derived), OBELISK_RT_OK);
-  std::array<obelisk_rt_object_v1 *, 5> allocationObjects{};
+  ASSERT_EQ(talos_rt_v1_class_register(context, &base), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_class_register(context, &derived), TALOS_RT_OK);
+  std::array<talos_rt_object_v1 *, 5> allocationObjects{};
   auto *&first = allocationObjects[0];
   auto *&second = allocationObjects[1];
   auto *&unrelated = allocationObjects[2];
   auto *&wrongMessage = allocationObjects[3];
   auto *&firstPayload = allocationObjects[4];
-  obelisk_rt_gc_root_range_v1 allocationRoots{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_range_push(lane, &allocationRoots,
+  talos_rt_gc_root_range_v1 allocationRoots{};
+  ASSERT_EQ(talos_rt_v1_gc_root_range_push(lane, &allocationRoots,
                                              allocationObjects.data(),
                                              allocationObjects.size()),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
-                lane, 99, OBELISK_RT_ELEMENT_BITS, 0, 4, 4, 32, nullptr, 0, 1,
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_mailbox_create_typed(
+                lane, 99, TALOS_RT_ELEMENT_BITS, 0, 4, 4, 32, nullptr, 0, 1,
                 &firstPayload),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &derived, &first),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &derived, &first),
+            TALOS_RT_OK);
   const uint64_t payloadWord =
-      obelisk_rt_managed_word_from_object(firstPayload);
-  ASSERT_EQ(obelisk_rt_v1_object_write(first, payloadOffset, &payloadWord,
+      talos_rt_managed_word_from_object(firstPayload);
+  ASSERT_EQ(talos_rt_v1_object_write(first, payloadOffset, &payloadWord,
                                        sizeof(payloadWord)),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(lane, 99,
-                                               OBELISK_RT_ELEMENT_BITS, 0, 4, 4,
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_mailbox_create_typed(lane, 99,
+                                               TALOS_RT_ELEMENT_BITS, 0, 4, 4,
                                                32, nullptr, 0, 0, &second),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
-                lane, 100, OBELISK_RT_ELEMENT_BITS, 0, 4, 4, 32, nullptr, 0, 0,
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_mailbox_create_typed(
+                lane, 100, TALOS_RT_ELEMENT_BITS, 0, 4, 4, 32, nullptr, 0, 0,
                 &wrongMessage),
-            OBELISK_RT_OK);
-  obelisk_rt_element_type_v1 element{};
-  element.version = OBELISK_RT_VERSION;
+            TALOS_RT_OK);
+  talos_rt_element_type_v1 element{};
+  element.version = TALOS_RT_VERSION;
   element.type_id = 99;
-  element.kind = OBELISK_RT_ELEMENT_BITS;
+  element.kind = TALOS_RT_ELEMENT_BITS;
   element.value_size = 4;
   element.alignment = 4;
   element.bit_width = 32;
-  ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &element, UINT64_MAX, &unrelated),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_root_v1 unrelatedRoot{};
-  const uint64_t firstWord = obelisk_rt_managed_word_from_object(first);
+  ASSERT_EQ(talos_rt_v1_queue_create(lane, &element, UINT64_MAX, &unrelated),
+            TALOS_RT_OK);
+  talos_rt_gc_root_v1 unrelatedRoot{};
+  const uint64_t firstWord = talos_rt_managed_word_from_object(first);
   EXPECT_NE(firstWord, payloadWord);
-  const uint64_t secondWord = obelisk_rt_managed_word_from_object(second);
+  const uint64_t secondWord = talos_rt_managed_word_from_object(second);
   uint64_t word = firstWord, storage = 0;
-  const obelisk_rt_managed_root_slot_v1 root{
+  const talos_rt_managed_root_slot_v1 root{
       0,
-      OBELISK_RT_MANAGED_ROOT_KIND_CLASS |
-          OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER,
+      TALOS_RT_MANAGED_ROOT_KIND_CLASS |
+          TALOS_RT_MANAGED_ROOT_KIND_CONTAINER,
       0};
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_typed_roots(
+  ASSERT_EQ(talos_rt_v1_native_state_alloc_with_typed_roots(
                 context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
                 &root, 1, &storage),
-            OBELISK_RT_OK);
-  obelisk_rt_functional_value_v1 formals[] = {
+            TALOS_RT_OK);
+  talos_rt_functional_value_v1 formals[] = {
       {70, 0, 0, nullptr, nullptr, first, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_MAILBOX, 0},
       {71, 64, 8, nullptr, nullptr, nullptr, storage,
-       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
       {72, 0, 0, nullptr, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX, 0}};
-  obelisk_rt_covergroup_v1 handle = 0;
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+       TALOS_RT_FUNCTIONAL_VALUE_MAILBOX, 0}};
+  talos_rt_covergroup_v1 handle = 0;
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX;
+            TALOS_RT_INVALID_DESIGN);
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_MAILBOX;
   formals[0].bit_width = 64;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   formals[0].bit_width = 0;
   formals[0].owner = unrelated;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(handle, 0u);
   formals[0].owner = wrongMessage;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   formals[0].owner = first;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint8_t sampled = 0;
-  obelisk_rt_functional_value_v1 expressions[] = {
+  talos_rt_functional_value_v1 expressions[] = {
       {60, 2, 1, &sampled, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {61, 2, 1, &sampled, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {74, 0, 0, nullptr, nullptr, first, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX, 0}};
+       TALOS_RT_FUNCTIONAL_VALUE_MAILBOX, 0}};
   for (auto *identity :
-       {first, second, static_cast<obelisk_rt_object_v1 *>(nullptr)}) {
+       {first, second, static_cast<talos_rt_object_v1 *>(nullptr)}) {
     expressions[2].owner = identity;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_covergroup_sample(context, handle, expressions, 3),
+              TALOS_RT_OK);
   }
   expressions[2].owner = unrelated;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_covergroup_sample(context, handle, expressions, 3),
+            TALOS_RT_INVALID_DESIGN);
   expressions[2].owner = wrongMessage;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_covergroup_sample(context, handle, expressions, 3),
+            TALOS_RT_INVALID_DESIGN);
   uint32_t sent = 0, message = 11;
   for (auto *mailbox : {first, second, second}) {
     ASSERT_EQ(
-        obelisk_rt_v1_mailbox_try_put(lane, mailbox, &message, nullptr, &sent),
-        OBELISK_RT_OK);
+        talos_rt_v1_mailbox_try_put(lane, mailbox, &message, nullptr, &sent),
+        TALOS_RT_OK);
     ASSERT_EQ(sent, 1u);
   }
   word = secondWord;
   uint8_t dummy = 0;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-                OBELISK_RT_ARGUMENT_VALUE_CLASS, &word, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &allocationRoots),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &unrelatedRoot, &unrelated),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_CLASS, &word, nullptr),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, storage, 0),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_range_pop(lane, &allocationRoots),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &unrelatedRoot, &unrelated),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (uint64_t id : {70, 71, 72}) {
     uint64_t captured = 42;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX, 64,
+    ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_MAILBOX, 64,
                   8, nullptr, nullptr, 0, &captured, nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(captured, id == 70 ? firstWord : id == 71 ? secondWord : 0);
     captured = 42;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+    EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
                   context, handle, id,
-                  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 64, 8, nullptr,
+                  TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 64, 8, nullptr,
                   nullptr, 0, &captured, nullptr),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(captured, 42u);
   }
   uint32_t count = 0;
-  EXPECT_EQ(obelisk_rt_v1_object_is_instance(first, &derived), 1u);
-  obelisk_rt_object_v1 *retainedPayload = nullptr;
-  ASSERT_EQ(obelisk_rt_builtin_class_payload(first, BuiltinClassKind::Mailbox,
+  EXPECT_EQ(talos_rt_v1_object_is_instance(first, &derived), 1u);
+  talos_rt_object_v1 *retainedPayload = nullptr;
+  ASSERT_EQ(talos_rt_builtin_class_payload(first, BuiltinClassKind::Mailbox,
                                              &retainedPayload),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(retainedPayload, firstPayload);
-  ASSERT_EQ(obelisk_rt_v1_mailbox_num(first, &count), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_mailbox_num(first, &count), TALOS_RT_OK);
   EXPECT_EQ(count, 1u);
-  ASSERT_EQ(obelisk_rt_v1_mailbox_num(second, &count), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_mailbox_num(second, &count), TALOS_RT_OK);
   EXPECT_EQ(count, 2u);
   uint32_t received = 0;
-  ASSERT_EQ(obelisk_rt_v1_mailbox_try_get(first, &message, nullptr, &received),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_mailbox_try_get(first, &message, nullptr, &received),
+            TALOS_RT_OK);
   EXPECT_EQ(received, 1u);
   EXPECT_EQ(message, 11u);
-  ASSERT_EQ(obelisk_rt_v1_mailbox_num(first, &count), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_mailbox_num(first, &count), TALOS_RT_OK);
   EXPECT_EQ(count, 0u);
-  uint64_t invalid = obelisk_rt_managed_word_from_object(unrelated);
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  uint64_t invalid = talos_rt_managed_word_from_object(unrelated);
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-                OBELISK_RT_ARGUMENT_VALUE_CLASS, &invalid, nullptr),
-            OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_CLASS, &invalid, nullptr),
+            TALOS_RT_OK);
   uint64_t captured = 42;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX, 64, 8,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_MAILBOX, 64, 8,
                 nullptr, nullptr, 0, &captured, nullptr),
-            OBELISK_RT_INVALID_HANDLE);
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(captured, 42u);
   std::array<uint64_t, 3> reference{7, 8, 9};
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
                 192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
-            OBELISK_RT_INVALID_HANDLE);
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(reference, (std::array<uint64_t, 3>{7, 8, 9}));
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &unrelatedRoot), OBELISK_RT_OK);
-  obelisk_rt_managed_execution_leave(lane, entered);
-  obelisk_rt_v1_context_destroy(context);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &unrelatedRoot), TALOS_RT_OK);
+  talos_rt_managed_execution_leave(lane, entered);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        ProcessFormalsCopyIdentitiesAndRetainLiveAliases) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   for (uint64_t id : {70, 71, 72})
     schema.functionalFormals.push_back({id, 10, "process" + std::to_string(id),
@@ -4487,115 +4487,115 @@ TEST_F(CoverageRuntimeDesignTest,
   defaultValue.resultOrdinal = 2;
   schema.functionalExpressions.push_back(defaultValue);
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
-            OBELISK_RT_OK);
-  const uint64_t first = OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG | 7;
-  const uint64_t second = OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG | 9;
+  ASSERT_EQ(talos_rt_managed_execution_enter(context, &lane, &entered),
+            TALOS_RT_OK);
+  const uint64_t first = TALOS_RT_LOGICAL_PROCESS_NATIVE_TAG | 7;
+  const uint64_t second = TALOS_RT_LOGICAL_PROCESS_NATIVE_TAG | 9;
   context->terminatedNativeProcesses.insert(7);
   context->terminatedDesignTasks.insert(7);
   context->killedDesignTasks.insert(9);
   context->activeLogicalProcessToken = second;
   uint64_t word = first, storage = 0;
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+  ASSERT_EQ(talos_rt_v1_native_state_alloc(
                 context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
                 &storage),
-            OBELISK_RT_OK);
-  obelisk_rt_functional_value_v1 formals[] = {
+            TALOS_RT_OK);
+  talos_rt_functional_value_v1 formals[] = {
       {70, 0, 0, nullptr, nullptr, nullptr, first,
-       OBELISK_RT_FUNCTIONAL_VALUE_PROCESS, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_PROCESS, 0},
       {71, 64, 8, nullptr, nullptr, nullptr, storage,
-       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
       {72, 0, 0, nullptr, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_PROCESS, 0}};
-  obelisk_rt_covergroup_v1 handle = 0;
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+       TALOS_RT_FUNCTIONAL_VALUE_PROCESS, 0}};
+  talos_rt_covergroup_v1 handle = 0;
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_CHANDLE;
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_PROCESS;
+            TALOS_RT_INVALID_DESIGN);
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_PROCESS;
   formals[0].bit_width = 64;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   formals[0].bit_width = 0;
   formals[0].payload = UINT64_MAX;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(handle, 0u);
   formals[0].payload = first;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint8_t sampled = 0;
-  obelisk_rt_functional_value_v1 expressions[] = {
+  talos_rt_functional_value_v1 expressions[] = {
       {60, 2, 1, &sampled, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {61, 2, 1, &sampled, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {74, 0, 0, nullptr, nullptr, nullptr, first,
-       OBELISK_RT_FUNCTIONAL_VALUE_PROCESS, 0}};
+       TALOS_RT_FUNCTIONAL_VALUE_PROCESS, 0}};
   // Completed identities remain valid in both scheduler namespaces.
   for (uint64_t identity :
        {first, second, uint64_t{7}, uint64_t{9}, uint64_t{0}}) {
     expressions[2].payload = identity;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_covergroup_sample(context, handle, expressions, 3),
+              TALOS_RT_OK);
   }
   expressions[2].payload = UINT64_MAX;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_covergroup_sample(context, handle, expressions, 3),
+            TALOS_RT_INVALID_DESIGN);
   word = second;
   uint8_t dummy = 0;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-                OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_BITS, &word, nullptr),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, storage, 0),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (uint64_t id : {70, 71, 72}) {
     uint64_t captured = 42;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_PROCESS, 64,
+    ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_PROCESS, 64,
                   8, nullptr, nullptr, 0, &captured, nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(captured, id == 70 ? first : id == 71 ? second : 0);
     captured = 42;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE, 64,
+    EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_CHANDLE, 64,
                   8, nullptr, nullptr, 0, &captured, nullptr),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(captured, 42u);
   }
   uint64_t invalid = UINT64_MAX;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-                OBELISK_RT_ARGUMENT_VALUE_BITS, &invalid, nullptr),
-            OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_BITS, &invalid, nullptr),
+            TALOS_RT_OK);
   uint64_t captured = 42;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_PROCESS, 64, 8,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_PROCESS, 64, 8,
                 nullptr, nullptr, 0, &captured, nullptr),
-            OBELISK_RT_INVALID_HANDLE);
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(captured, 42u);
   std::array<uint64_t, 3> reference{7, 8, 9};
-  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+  EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                context, handle, 71, TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
                 192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
-            OBELISK_RT_INVALID_HANDLE);
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(reference, (std::array<uint64_t, 3>{7, 8, 9}));
-  obelisk_rt_managed_execution_leave(lane, entered);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_managed_execution_leave(lane, entered);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        EventFormalsCopyIdentityAndRetainLiveAliases) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   for (uint64_t id : {70, 71, 72})
     schema.functionalFormals.push_back({id, 10, "event" + std::to_string(id),
@@ -4607,74 +4607,74 @@ TEST_F(CoverageRuntimeDesignTest,
                                         0, 0, CoverageSignedness::NotApplicable,
                                         static_cast<uint32_t>(id - 70), 0, 0});
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_managed_execution_enter(context, &lane, &entered),
+            TALOS_RT_OK);
   uint64_t first = UINT64_MAX, second = UINT64_MAX;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_event_create(context, &first),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_event_create(context, &second),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_event_create(context, &first),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_event_create(context, &second),
+            TALOS_RT_OK);
   ASSERT_NE(first, second);
   uint64_t word = first, storage = 0;
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+  ASSERT_EQ(talos_rt_v1_native_state_alloc(
                 context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
                 &storage),
-            OBELISK_RT_OK);
-  obelisk_rt_functional_value_v1 formals[] = {
+            TALOS_RT_OK);
+  talos_rt_functional_value_v1 formals[] = {
       {70, 0, 0, nullptr, nullptr, nullptr, first,
-       OBELISK_RT_FUNCTIONAL_VALUE_EVENT, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_EVENT, 0},
       {71, 64, 8, nullptr, nullptr, nullptr, storage,
-       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
       {72, 0, 0, nullptr, nullptr, nullptr, UINT64_MAX,
-       OBELISK_RT_FUNCTIONAL_VALUE_EVENT, 0}};
-  obelisk_rt_covergroup_v1 handle = 0;
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+       TALOS_RT_FUNCTIONAL_VALUE_EVENT, 0}};
+  talos_rt_covergroup_v1 handle = 0;
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_CHANDLE;
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_EVENT;
+            TALOS_RT_INVALID_DESIGN);
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_EVENT;
   formals[0].bit_width = 64;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   formals[0].bit_width = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   word = second;
   uint8_t dummy = 0;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-                OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_BITS, &word, nullptr),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, storage, 0),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (uint64_t id : {70, 71, 72}) {
     uint64_t captured = 42;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_EVENT, 64, 8,
+    ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_EVENT, 64, 8,
                   nullptr, nullptr, 0, &captured, nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(captured, id == 70 ? first : id == 71 ? second : UINT64_MAX);
     captured = 42;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE, 64,
+    EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_CHANDLE, 64,
                   8, nullptr, nullptr, 0, &captured, nullptr),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(captured, 42u);
   }
-  obelisk_rt_managed_execution_leave(lane, entered);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_managed_execution_leave(lane, entered);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        ChandleFormalsCopyOpaqueWordsAndAliasStorage) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   for (uint64_t id : {70, 71, 72})
     schema.functionalFormals.push_back({id, 10, "chandle" + std::to_string(id),
@@ -4686,81 +4686,81 @@ TEST_F(CoverageRuntimeDesignTest,
                                         0, 0, CoverageSignedness::NotApplicable,
                                         static_cast<uint32_t>(id - 70), 0, 0});
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_managed_execution_enter(context, &lane, &entered),
+            TALOS_RT_OK);
   // Foreign pointers are opaque: even an unmapped word must never be followed
   // by validation or GC, nor confused with a managed class or numeric value.
   uint64_t word = UINT64_MAX, storage = 0;
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+  ASSERT_EQ(talos_rt_v1_native_state_alloc(
                 context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
                 &storage),
-            OBELISK_RT_OK);
-  obelisk_rt_functional_value_v1 formals[] = {
+            TALOS_RT_OK);
+  talos_rt_functional_value_v1 formals[] = {
       {70, 0, 0, nullptr, nullptr, nullptr, word,
-       OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_CHANDLE, 0},
       {71, 64, 8, nullptr, nullptr, nullptr, storage,
-       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
       {72, 0, 0, nullptr, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE, 0}};
-  obelisk_rt_covergroup_v1 handle = 0;
+       TALOS_RT_FUNCTIONAL_VALUE_CHANDLE, 0}};
+  talos_rt_covergroup_v1 handle = 0;
   auto valid = formals[0];
-  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  formals[0].kind = TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL;
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   formals[0] = valid;
   formals[0].bit_width = 64;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   formals[0] = valid;
   formals[0].value = &word;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   formals[0] = valid;
-  formals[0].owner = reinterpret_cast<obelisk_rt_object_v1 *>(&word);
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  formals[0].owner = reinterpret_cast<talos_rt_object_v1 *>(&word);
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   formals[0] = valid;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
                                             &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   word = UINT64_C(0x123456789abcdef0);
   uint8_t dummy = 0;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-                OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_BITS, &word, nullptr),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, storage, 0),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (uint64_t id : {70, 71, 72}) {
     uint64_t captured = 42;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE, 64,
+    ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_CHANDLE, 64,
                   8, nullptr, nullptr, 0, &captured, nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(captured, id == 70 ? UINT64_MAX : id == 71 ? word : uint64_t{0});
     captured = 42;
-    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 64,
+    EXPECT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 64,
                   8, nullptr, nullptr, 0, &captured, nullptr),
-              OBELISK_RT_INVALID_DESIGN);
+              TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(captured, 42u);
   }
-  obelisk_rt_managed_execution_leave(lane, entered);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_managed_execution_leave(lane, entered);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        ClassFormalsRetainIdentityLiveStorageAndInterfaces) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalClassTypes = {{800, 99}, {801, 101}};
   for (uint64_t id : {70, 71, 72, 73})
@@ -4773,18 +4773,18 @@ TEST_F(CoverageRuntimeDesignTest,
          CoverageSignedness::NotApplicable, static_cast<uint32_t>(id - 70), 0,
          id == 72 ? uint64_t{801} : uint64_t{800}});
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
-            OBELISK_RT_OK);
-  obelisk_rt_class_descriptor_v1 base{};
-  base.version = OBELISK_RT_VERSION;
+  ASSERT_EQ(talos_rt_managed_execution_enter(context, &lane, &entered),
+            TALOS_RT_OK);
+  talos_rt_class_descriptor_v1 base{};
+  base.version = TALOS_RT_VERSION;
   base.class_id = 99;
   base.instance_size = 16;
   base.instance_alignment = 8;
-  obelisk_rt_interface_descriptor_v1 implemented{101, nullptr, 0, nullptr, 0};
+  talos_rt_interface_descriptor_v1 implemented{101, nullptr, 0, nullptr, 0};
   base.interfaces = &implemented;
   base.interface_count = 1;
   auto derived = base;
@@ -4796,78 +4796,78 @@ TEST_F(CoverageRuntimeDesignTest,
   derived.interface_count = 0;
   auto viewDescriptor = base;
   viewDescriptor.class_id = 101;
-  viewDescriptor.flags = OBELISK_RT_CLASS_INTERFACE | OBELISK_RT_CLASS_ABSTRACT;
+  viewDescriptor.flags = TALOS_RT_CLASS_INTERFACE | TALOS_RT_CLASS_ABSTRACT;
   viewDescriptor.interfaces = nullptr;
   viewDescriptor.interface_count = 0;
   auto unrelated = viewDescriptor;
   unrelated.class_id = 102;
   unrelated.flags = 0;
   for (const auto *descriptor : {&base, &derived, &viewDescriptor, &unrelated})
-    ASSERT_EQ(obelisk_rt_v1_class_register(context, descriptor), OBELISK_RT_OK);
-  obelisk_rt_object_v1 *original = nullptr, *replacement = nullptr,
+    ASSERT_EQ(talos_rt_v1_class_register(context, descriptor), TALOS_RT_OK);
+  talos_rt_object_v1 *original = nullptr, *replacement = nullptr,
                        *wrong = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &derived, &original),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &derived, &replacement),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &unrelated, &wrong),
-            OBELISK_RT_OK);
-  uint64_t originalID = obelisk_rt_v1_object_id(original);
-  uint64_t replacementID = obelisk_rt_v1_object_id(replacement);
-  uint64_t word = obelisk_rt_managed_word_from_object(original), storage = 0;
-  const obelisk_rt_managed_root_slot_v1 root{
-      0, OBELISK_RT_MANAGED_ROOT_KIND_CLASS, 0};
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_typed_roots(
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &derived, &original),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &derived, &replacement),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &unrelated, &wrong),
+            TALOS_RT_OK);
+  uint64_t originalID = talos_rt_v1_object_id(original);
+  uint64_t replacementID = talos_rt_v1_object_id(replacement);
+  uint64_t word = talos_rt_managed_word_from_object(original), storage = 0;
+  const talos_rt_managed_root_slot_v1 root{
+      0, TALOS_RT_MANAGED_ROOT_KIND_CLASS, 0};
+  ASSERT_EQ(talos_rt_v1_native_state_alloc_with_typed_roots(
                 context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
                 &root, 1, &storage),
-            OBELISK_RT_OK);
-  obelisk_rt_functional_value_v1 formals[] = {
+            TALOS_RT_OK);
+  talos_rt_functional_value_v1 formals[] = {
       {70, 0, 0, nullptr, nullptr, original, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE, 0},
       {71, 64, 8, nullptr, nullptr, nullptr, storage,
-       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
       {72, 0, 0, nullptr, nullptr, original, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE, 0},
       {73, 0, 0, nullptr, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE, 0}};
-  obelisk_rt_covergroup_v1 handle = 0;
+       TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE, 0}};
+  talos_rt_covergroup_v1 handle = 0;
   formals[0].owner = wrong;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 4, nullptr, 0,
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 4, nullptr, 0,
                                             &handle),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   formals[0].owner = original;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 4, nullptr, 0,
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 4, nullptr, 0,
                                             &handle),
-            OBELISK_RT_OK);
-  word = obelisk_rt_managed_word_from_object(replacement);
+            TALOS_RT_OK);
+  word = talos_rt_managed_word_from_object(replacement);
   uint8_t dummy = 0;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
-                OBELISK_RT_ARGUMENT_VALUE_CLASS, &word, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
-            OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_CLASS, &word, nullptr),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, storage, 0),
+            TALOS_RT_OK);
   original = nullptr;
   replacement = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (uint64_t id : {70, 71, 72, 73}) {
     uint64_t captured = UINT64_MAX;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE,
+    ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE,
                   64, 8, nullptr, nullptr, 0, &captured, nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(
-        obelisk_rt_v1_object_id(obelisk_rt_object_from_managed_word(captured)),
+        talos_rt_v1_object_id(talos_rt_object_from_managed_word(captured)),
         id == 73   ? uint64_t{0}
         : id == 71 ? replacementID
                    : originalID);
   }
-  obelisk_rt_managed_execution_leave(lane, entered);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_managed_execution_leave(lane, entered);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, AggregateFormalsTraceSnapshotsAndLiveStorage) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalAggregateTypes = {{800, 99, 24, 1, 192, 0}};
   schema.functionalFormals = {
@@ -4880,26 +4880,26 @@ TEST_F(CoverageRuntimeDesignTest, AggregateFormalsTraceSnapshotsAndLiveStorage) 
        FunctionalExpressionResultKind::Aggregate, 0, 192,
        CoverageSignedness::NotApplicable, 1, 0, 800}};
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  talos_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
-  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_managed_execution_enter(context, &lane, &entered),
+            TALOS_RT_OK);
   struct Record {
     uint64_t number;
-    obelisk_rt_string_v1 label;
-    obelisk_rt_managed_word_v1 array;
+    talos_rt_string_v1 label;
+    talos_rt_managed_word_v1 array;
   } record{3, 0, 0};
-  std::array<obelisk_rt_trace_entry_v1, 2> traceEntries{
-      {{8, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_STRING,
+  std::array<talos_rt_trace_entry_v1, 2> traceEntries{
+      {{8, 0, 1, TALOS_RT_TRACE_STRONG, TALOS_RT_MANAGED_SLOT_STRING,
         nullptr},
-       {16, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_CONTAINER,
+       {16, 0, 1, TALOS_RT_TRACE_STRONG, TALOS_RT_MANAGED_SLOT_CONTAINER,
         nullptr}}};
-  const obelisk_rt_trace_layout_v1 trace{
-      OBELISK_RT_VERSION, 0, 24, 1, traceEntries.data(), traceEntries.size()};
-  const obelisk_rt_element_type_v1 element{OBELISK_RT_VERSION,
-                                           OBELISK_RT_ELEMENT_AGGREGATE,
+  const talos_rt_trace_layout_v1 trace{
+      TALOS_RT_VERSION, 0, 24, 1, traceEntries.data(), traceEntries.size()};
+  const talos_rt_element_type_v1 element{TALOS_RT_VERSION,
+                                           TALOS_RT_ELEMENT_AGGREGATE,
                                            99,
                                            0,
                                            0,
@@ -4908,8 +4908,8 @@ TEST_F(CoverageRuntimeDesignTest, AggregateFormalsTraceSnapshotsAndLiveStorage) 
                                            192,
                                            &trace,
                                            nullptr};
-  const obelisk_rt_element_type_v1 nestedElement{OBELISK_RT_VERSION,
-                                                 OBELISK_RT_ELEMENT_BITS,
+  const talos_rt_element_type_v1 nestedElement{TALOS_RT_VERSION,
+                                                 TALOS_RT_ELEMENT_BITS,
                                                  100,
                                                  0,
                                                  0,
@@ -4918,98 +4918,98 @@ TEST_F(CoverageRuntimeDesignTest, AggregateFormalsTraceSnapshotsAndLiveStorage) 
                                                  32,
                                                  nullptr,
                                                  nullptr};
-  obelisk_rt_gc_managed_root_range_v1 recordRoots{};
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_push(lane, &recordRoots,
+  talos_rt_gc_managed_root_range_v1 recordRoots{};
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_range_push(lane, &recordRoots,
                                                      &record.label, 2),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "before", 6, &record.label),
-            OBELISK_RT_OK);
-  obelisk_rt_object_v1 *nested = nullptr, *array = nullptr, *snapshot = nullptr;
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_string_create(lane, "before", 6, &record.label),
+            TALOS_RT_OK);
+  talos_rt_object_v1 *nested = nullptr, *array = nullptr, *snapshot = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_dynamic_array_create(lane, &nestedElement, 1, &nested),
-      OBELISK_RT_OK);
+      talos_rt_v1_dynamic_array_create(lane, &nestedElement, 1, &nested),
+      TALOS_RT_OK);
   uint32_t initial = 11;
-  ASSERT_EQ(obelisk_rt_v1_container_write(lane, nested, 0, &initial, nullptr),
-            OBELISK_RT_OK);
-  record.array = obelisk_rt_managed_word_from_object(nested);
-  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &element, 1, &array),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_container_write(lane, array, 0, &record, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_reference_path_index_create(
+  ASSERT_EQ(talos_rt_v1_container_write(lane, nested, 0, &initial, nullptr),
+            TALOS_RT_OK);
+  record.array = talos_rt_managed_word_from_object(nested);
+  ASSERT_EQ(talos_rt_v1_dynamic_array_create(lane, &element, 1, &array),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_container_write(lane, array, 0, &record, nullptr),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_reference_path_index_create(
                 lane, array, 0, nullptr, 0, 0, nullptr, nullptr, 0, &snapshot),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_root_v1 snapshotRoot{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &snapshotRoot, &snapshot),
-            OBELISK_RT_OK);
-  const obelisk_rt_managed_root_slot_v1 roots[] = {
-      {64, OBELISK_RT_MANAGED_ROOT_KIND_STRING, 0},
-      {128, OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER, 0}};
+            TALOS_RT_OK);
+  talos_rt_gc_root_v1 snapshotRoot{};
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &snapshotRoot, &snapshot),
+            TALOS_RT_OK);
+  const talos_rt_managed_root_slot_v1 roots[] = {
+      {64, TALOS_RT_MANAGED_ROOT_KIND_STRING, 0},
+      {128, TALOS_RT_MANAGED_ROOT_KIND_CONTAINER, 0}};
   uint64_t storage = 0;
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_typed_roots(
+  ASSERT_EQ(talos_rt_v1_native_state_alloc_with_typed_roots(
                 context, 192, reinterpret_cast<const uint8_t *>(&record),
                 nullptr, roots, 2, &storage),
-            OBELISK_RT_OK);
-  obelisk_rt_functional_value_v1 formals[] = {
+            TALOS_RT_OK);
+  talos_rt_functional_value_v1 formals[] = {
       {70, 0, 0, nullptr, nullptr, snapshot, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE, 0},
       {71, 192, 24, nullptr, nullptr, nullptr, storage,
-       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0}};
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 2, nullptr, 0,
+       TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0}};
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, formals, 2, nullptr, 0,
                                             &handle),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &snapshotRoot), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &snapshotRoot), TALOS_RT_OK);
   record.number = 7;
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "after", 5, &record.label),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_string_create(lane, "after", 5, &record.label),
+            TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_dynamic_array_create(lane, &nestedElement, 1, &nested),
-      OBELISK_RT_OK);
+      talos_rt_v1_dynamic_array_create(lane, &nestedElement, 1, &nested),
+      TALOS_RT_OK);
   initial = 22;
-  ASSERT_EQ(obelisk_rt_v1_container_write(lane, nested, 0, &initial, nullptr),
-            OBELISK_RT_OK);
-  record.array = obelisk_rt_managed_word_from_object(nested);
+  ASSERT_EQ(talos_rt_v1_container_write(lane, nested, 0, &initial, nullptr),
+            TALOS_RT_OK);
+  record.array = talos_rt_managed_word_from_object(nested);
   uint8_t dummy = 0;
-  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+  ASSERT_EQ(talos_rt_v1_argument_ref_store(
                 context, &dummy, &dummy, 8, nullptr, storage, 0, 192, 24, 0,
-                OBELISK_RT_ARGUMENT_VALUE_BITS, &record, nullptr),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_pop(lane, &recordRoots),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+                TALOS_RT_ARGUMENT_VALUE_BITS, &record, nullptr),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, storage, 0),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_range_pop(lane, &recordRoots),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (auto [id, expected] : {std::pair{uint64_t{70}, uint64_t{3}},
                               std::pair{uint64_t{71}, uint64_t{7}}}) {
     std::array<uint64_t, 3> reference{};
-    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
-                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+    ASSERT_EQ(talos_rt_v1_covergroup_formal_read(
+                  context, handle, id, TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
                   192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     Record actual{};
-    ASSERT_EQ(obelisk_rt_v1_argument_ref_load(
+    ASSERT_EQ(talos_rt_v1_argument_ref_load(
                   context, &dummy, &dummy, 8,
-                  obelisk_rt_object_from_managed_word(reference[0]),
+                  talos_rt_object_from_managed_word(reference[0]),
                   reference[1], reference[2], 192, 24, 0,
-                  OBELISK_RT_ARGUMENT_VALUE_BITS, &actual, nullptr),
-              OBELISK_RT_OK);
+                  TALOS_RT_ARGUMENT_VALUE_BITS, &actual, nullptr),
+              TALOS_RT_OK);
     EXPECT_EQ(actual.number, expected);
-    EXPECT_EQ(obelisk_rt_validate_string(context, actual.label), OBELISK_RT_OK);
+    EXPECT_EQ(talos_rt_validate_string(context, actual.label), TALOS_RT_OK);
     uint32_t value = 0;
-    ASSERT_EQ(obelisk_rt_v1_container_read(
-                  obelisk_rt_object_from_managed_word(actual.array), 0, &value,
+    ASSERT_EQ(talos_rt_v1_container_read(
+                  talos_rt_object_from_managed_word(actual.array), 0, &value,
                   nullptr),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(value, id == 70 ? 11u : 22u);
   }
-  obelisk_rt_managed_execution_leave(lane, entered);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_managed_execution_leave(lane, entered);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      ConflictingTypeProfileDoesNotPublishConfiguration) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   FunctionalExpression comment;
   comment.id = 62;
@@ -5030,25 +5030,25 @@ TEST_F(CoverageRuntimeDesignTest,
        FunctionalConfigurationOptionKind::Comment,
        static_cast<uint32_t>(FunctionalConfigurationOptionKind::Comment), 0});
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  auto construct = [&](const char *text, obelisk_rt_covergroup_v1 &handle) {
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  auto construct = [&](const char *text, talos_rt_covergroup_v1 &handle) {
     return withManagedString(context, text, [&](auto value) {
-      const obelisk_rt_functional_value_v1 expression{
+      const talos_rt_functional_value_v1 expression{
           62,      0,       0,     nullptr,
-          nullptr, nullptr, value, OBELISK_RT_FUNCTIONAL_VALUE_STRING,
+          nullptr, nullptr, value, TALOS_RT_FUNCTIONAL_VALUE_STRING,
           0};
-      return obelisk_rt_v1_covergroup_create(context, 10, nullptr, 0,
+      return talos_rt_v1_covergroup_create(context, 10, nullptr, 0,
                                              &expression, 1, &handle);
     });
   };
-  obelisk_rt_covergroup_v1 first = 0, rejected = 0, reused = 0;
-  ASSERT_EQ(construct("same static comment", first), OBELISK_RT_OK);
+  talos_rt_covergroup_v1 first = 0, rejected = 0, reused = 0;
+  ASSERT_EQ(construct("same static comment", first), TALOS_RT_OK);
   EXPECT_EQ(construct("conflicting static comment", rejected),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(rejected, 0u);
-  ASSERT_EQ(construct("same static comment", reused), OBELISK_RT_OK);
+  ASSERT_EQ(construct("same static comment", reused), TALOS_RT_OK);
   EXPECT_NE(first, reused);
   Database saved = saveCoverage(context, "type-profile-transaction");
   ASSERT_EQ(saved.functionalConfigurations.size(), 1u);
@@ -5059,11 +5059,11 @@ TEST_F(CoverageRuntimeDesignTest,
   EXPECT_EQ(saved.functionalConfigurationOptions.front().option,
             FunctionalConfigurationOptionKind::DistributeFirst);
   EXPECT_EQ(saved.functionalConfigurationOptions.front().value, 0u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, InvalidUtf8CommentDoesNotPublishResolvedState) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   FunctionalExpression comment;
   comment.id = 62;
@@ -5084,46 +5084,46 @@ TEST_F(CoverageRuntimeDesignTest, InvalidUtf8CommentDoesNotPublishResolvedState)
        FunctionalConfigurationOptionKind::Comment,
        static_cast<uint32_t>(FunctionalConfigurationOptionKind::Comment), 0});
 
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   const std::string invalid("\xc3\x28", 2);
-  obelisk_rt_covergroup_v1 rejected = 0;
+  talos_rt_covergroup_v1 rejected = 0;
   ASSERT_EQ(withManagedString(context, invalid,
                               [&](auto value) {
-                                const obelisk_rt_functional_value_v1 expression{
+                                const talos_rt_functional_value_v1 expression{
                                     62,      0,
                                     0,       nullptr,
                                     nullptr, nullptr,
-                                    value,   OBELISK_RT_FUNCTIONAL_VALUE_STRING,
+                                    value,   TALOS_RT_FUNCTIONAL_VALUE_STRING,
                                     0};
-                                return obelisk_rt_v1_covergroup_create(
+                                return talos_rt_v1_covergroup_create(
                                     context, 10, nullptr, 0, &expression, 1,
                                     &rejected);
                               }),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(rejected, 0u);
   Database afterFailure = saveCoverage(context, "invalid-comment");
   EXPECT_TRUE(afterFailure.functionalConfigurations.empty());
   EXPECT_TRUE(afterFailure.functionalConfigurationOptions.empty());
   EXPECT_TRUE(afterFailure.resolvedInstances.empty());
 
-  obelisk_rt_covergroup_v1 accepted = 0;
+  talos_rt_covergroup_v1 accepted = 0;
   ASSERT_EQ(withManagedString(context, "valid comment",
                               [&](auto value) {
-                                const obelisk_rt_functional_value_v1 expression{
+                                const talos_rt_functional_value_v1 expression{
                                     62,      0,
                                     0,       nullptr,
                                     nullptr, nullptr,
-                                    value,   OBELISK_RT_FUNCTIONAL_VALUE_STRING,
+                                    value,   TALOS_RT_FUNCTIONAL_VALUE_STRING,
                                     0};
-                                return obelisk_rt_v1_covergroup_create(
+                                return talos_rt_v1_covergroup_create(
                                     context, 10, nullptr, 0, &expression, 1,
                                     &accepted);
                               }),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_NE(accepted, 0u);
   Database afterSuccess = saveCoverage(context, "valid-comment");
   ASSERT_EQ(afterSuccess.functionalConfigurations.size(), 1u);
@@ -5137,12 +5137,12 @@ TEST_F(CoverageRuntimeDesignTest, InvalidUtf8CommentDoesNotPublishResolvedState)
   EXPECT_EQ(storedComment->stringValue, "valid comment");
   ASSERT_EQ(afterSuccess.resolvedInstances.size(), 1u);
   EXPECT_EQ(afterSuccess.resolvedInstances[0].id, accepted);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      TypeQueriesBeforeConstructionDoNotResolveConstructorExpressions) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   FunctionalExpression comment;
   comment.id = 62;
@@ -5163,26 +5163,26 @@ TEST_F(CoverageRuntimeDesignTest,
        FunctionalConfigurationOptionKind::Comment,
        static_cast<uint32_t>(FunctionalConfigurationOptionKind::Comment), 0});
 
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   double percentage = -1.0;
   int32_t covered = -1;
   int32_t total = -1;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_type_query(
+  EXPECT_EQ(talos_rt_v1_covergroup_type_query(
                 context, 10, 0, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 0.0);
   EXPECT_EQ(covered, 0);
   EXPECT_EQ(total, 0);
 
   percentage = -1.0;
   covered = total = -1;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_type_query(
+  EXPECT_EQ(talos_rt_v1_covergroup_type_query(
                 context, 10, 20, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 0.0);
   EXPECT_EQ(covered, 0);
   EXPECT_EQ(total, 0);
@@ -5191,86 +5191,86 @@ TEST_F(CoverageRuntimeDesignTest,
   // Zero-denominator queries honor only the queried owner's type weight;
   // they still must not attempt to evaluate the unresolved comment expression.
   for (uint64_t owner : {uint64_t{0}, uint64_t{20}}) {
-    ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
-                  context, 10, owner, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_covergroup_set_type_integer_option(
+                  context, 10, owner, TALOS_RT_COVERGROUP_OPTION_WEIGHT, 0),
+              TALOS_RT_OK);
     covered = total = -1;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_type_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_type_query(
                   context, 10, owner, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_DOUBLE_EQ(percentage, 100.0);
     EXPECT_EQ(covered, 0);
     EXPECT_EQ(total, 0);
-    ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
-                  context, 10, owner, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 2),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_covergroup_type_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_set_type_integer_option(
+                  context, 10, owner, TALOS_RT_COVERGROUP_OPTION_WEIGHT, 2),
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_covergroup_type_query(
                   context, 10, owner, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_DOUBLE_EQ(percentage, 0.0);
     EXPECT_EQ(covered, 0);
     EXPECT_EQ(total, 0);
   }
-  ASSERT_EQ(obelisk_rt_v1_functional_coverage_get(context, &percentage),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_functional_coverage_get(context, &percentage),
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 100.0);
-  EXPECT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
-                context, 11, 0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0),
-            OBELISK_RT_INVALID_DESIGN);
-  EXPECT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
-                context, 10, 22, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_covergroup_set_type_integer_option(
+                context, 11, 0, TALOS_RT_COVERGROUP_OPTION_WEIGHT, 0),
+            TALOS_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_covergroup_set_type_integer_option(
+                context, 10, 22, TALOS_RT_COVERGROUP_OPTION_WEIGHT, 0),
+            TALOS_RT_INVALID_DESIGN);
 
-  EXPECT_EQ(obelisk_rt_v1_covergroup_type_query(
+  EXPECT_EQ(talos_rt_v1_covergroup_type_query(
                 context, 11, 0, &percentage, &covered, &total),
-            OBELISK_RT_INVALID_DESIGN);
-  EXPECT_EQ(obelisk_rt_v1_covergroup_type_query(
+            TALOS_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_covergroup_type_query(
                 context, 10, 22, &percentage, &covered, &total),
-            OBELISK_RT_INVALID_DESIGN);
-  obelisk_rt_v1_context_destroy(context);
+            TALOS_RT_INVALID_DESIGN);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, DistributionUpdatesReusePayloadlessConfigs) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  std::array<obelisk_rt_covergroup_v1, 4> handles{};
-  ASSERT_EQ(createFunctional(context, 10, &handles[0]), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(context, handles[0], 0, 2), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  std::array<talos_rt_covergroup_v1, 4> handles{};
+  ASSERT_EQ(createFunctional(context, 10, &handles[0]), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handles[0], 0, 2), TALOS_RT_OK);
   for (size_t ordinal = 1; ordinal != handles.size(); ++ordinal) {
-    ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
-                  context, 10, 0, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST,
+    ASSERT_EQ(talos_rt_v1_covergroup_set_type_integer_option(
+                  context, 10, 0, TALOS_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST,
                   ordinal % 2),
-              OBELISK_RT_OK);
-    ASSERT_EQ(createFunctional(context, 10, &handles[ordinal]), OBELISK_RT_OK);
+              TALOS_RT_OK);
+    ASSERT_EQ(createFunctional(context, 10, &handles[ordinal]), TALOS_RT_OK);
   }
   ASSERT_EQ(
-      obelisk_rt_v1_covergroup_set_type_integer_option(
-          context, 10, 0, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 0),
-      OBELISK_RT_OK);
+      talos_rt_v1_covergroup_set_type_integer_option(
+          context, 10, 0, TALOS_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 0),
+      TALOS_RT_OK);
   for (size_t ordinal = 0; ordinal != handles.size(); ++ordinal) {
     double percentage = -1;
     int32_t covered = -1, total = -1;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                   context, handles[ordinal], 0, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(covered, ordinal == 0 ? 2 : 0);
     EXPECT_EQ(total, 3);
   }
   EXPECT_EQ(
-      obelisk_rt_v1_covergroup_set_type_integer_option(
-          context, 10, 0, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 2),
-      OBELISK_RT_INVALID_ARGUMENT);
+      talos_rt_v1_covergroup_set_type_integer_option(
+          context, 10, 0, TALOS_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 2),
+      TALOS_RT_INVALID_ARGUMENT);
   EXPECT_EQ(
-      obelisk_rt_v1_covergroup_set_type_integer_option(
-          context, 10, 20, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 1),
-      OBELISK_RT_INVALID_ARGUMENT);
+      talos_rt_v1_covergroup_set_type_integer_option(
+          context, 10, 20, TALOS_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 1),
+      TALOS_RT_INVALID_ARGUMENT);
   EXPECT_EQ(
-      obelisk_rt_v1_covergroup_set_type_integer_option(
-          context, 11, 0, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 1),
-      OBELISK_RT_INVALID_DESIGN);
+      talos_rt_v1_covergroup_set_type_integer_option(
+          context, 11, 0, TALOS_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 1),
+      TALOS_RT_INVALID_DESIGN);
   Database saved = saveCoverage(context, "distribution-cache");
   ASSERT_EQ(saved.functionalConfigurations.size(), 2u);
   ASSERT_EQ(saved.resolvedInstances.size(), handles.size());
@@ -5293,90 +5293,90 @@ TEST_F(CoverageRuntimeDesignTest, DistributionUpdatesReusePayloadlessConfigs) {
   EXPECT_EQ(current->value, 0u);
   // Load both policies while live configurations and constructor-cache entries
   // exist. A later constructor must still select its current policy by key.
-  obelisk_rt_context *loaded = createContextForSchema(schema);
+  talos_rt_context *loaded = createContextForSchema(schema);
   ASSERT_NE(loaded, nullptr);
-  ASSERT_EQ(finalizeCoverage(loaded, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 first = 0, second = 0, third = 0;
-  ASSERT_EQ(createFunctional(loaded, 10, &first), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(loaded, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 first = 0, second = 0, third = 0;
+  ASSERT_EQ(createFunctional(loaded, 10, &first), TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_covergroup_set_type_integer_option(
-          loaded, 10, 0, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 1),
-      OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(loaded, 10, &second), OBELISK_RT_OK);
+      talos_rt_v1_covergroup_set_type_integer_option(
+          loaded, 10, 0, TALOS_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 1),
+      TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(loaded, 10, &second), TALOS_RT_OK);
   const auto path =
       std::filesystem::temp_directory_path() /
-      ("obelisk-distribution-load-" +
+      ("talos-distribution-load-" +
        std::to_string(
            std::chrono::steady_clock::now().time_since_epoch().count()) +
        ".obcov");
   const std::string pathText = path.string();
   ASSERT_EQ(writeFileAtomically(pathText, saved), Status::Ok);
   ASSERT_EQ(
-      obelisk_rt_v1_coverage_load(loaded, pathText.data(), pathText.size()),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_load(loaded, pathText.data(), pathText.size()),
+      TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_covergroup_set_type_integer_option(
-          loaded, 10, 0, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 0),
-      OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(loaded, 10, &third), OBELISK_RT_OK);
+      talos_rt_v1_covergroup_set_type_integer_option(
+          loaded, 10, 0, TALOS_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 0),
+      TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(loaded, 10, &third), TALOS_RT_OK);
   Database reloaded = saveCoverage(loaded, "distribution-reloaded");
   EXPECT_EQ(reloaded.functionalConfigurations.size(), 2u);
   EXPECT_EQ(reloaded.resolvedInstances.size(), handles.size() + 3);
-  obelisk_rt_v1_context_destroy(loaded);
+  talos_rt_v1_context_destroy(loaded);
   std::error_code ignored;
   std::filesystem::remove(path, ignored);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, EmptyGroupsKeepIdentitiesAndValidateReferences) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema;
   schema.scopes.push_back({1, 0, "top", 0, "top"});
   schema.functionalTypes.push_back({10, 1, "empty", 0, 2023, "top.empty"});
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 first = 0, second = 0, invalid = 0;
-  ASSERT_EQ(createFunctional(context, 10, &first), OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(context, 10, &second), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 first = 0, second = 0, invalid = 0;
+  ASSERT_EQ(createFunctional(context, 10, &first), TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &second), TALOS_RT_OK);
   EXPECT_NE(first, 0u);
   EXPECT_NE(first, second);
-  EXPECT_EQ(createFunctional(context, 11, &invalid), OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(createFunctional(context, 11, &invalid), TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(invalid, 0u);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, first, nullptr, 0),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_sample(context, first, nullptr, 0),
+            TALOS_RT_OK);
   double percentage = -1.0;
   int32_t covered = -1, total = -1;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, first, 0, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 0.0);
   EXPECT_EQ(covered, 0);
   EXPECT_EQ(total, 0);
-  EXPECT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  EXPECT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, first, 20, &percentage, &covered, &total),
-            OBELISK_RT_INVALID_DESIGN);
-  EXPECT_EQ(obelisk_rt_v1_covergroup_type_query(
+            TALOS_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_covergroup_type_query(
                 context, 11, 0, &percentage, &covered, &total),
-            OBELISK_RT_INVALID_DESIGN);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_set_integer_option(
-                context, first, 0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+            TALOS_RT_INVALID_DESIGN);
+  ASSERT_EQ(talos_rt_v1_covergroup_set_integer_option(
+                context, first, 0, TALOS_RT_COVERGROUP_OPTION_WEIGHT, 0),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, first, 0, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 100.0);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
-                context, 10, 0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_type_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_set_type_integer_option(
+                context, 10, 0, TALOS_RT_COVERGROUP_OPTION_WEIGHT, 0),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_type_query(
                 context, 10, 0, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 100.0);
   EXPECT_EQ(covered, 0);
   EXPECT_EQ(total, 0);
-  ASSERT_EQ(obelisk_rt_v1_functional_coverage_get(context, &percentage),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_functional_coverage_get(context, &percentage),
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 100.0);
   Database saved = saveCoverage(context, "empty-groups");
   ASSERT_EQ(saved.runs.size(), 1u);
@@ -5387,34 +5387,34 @@ TEST_F(CoverageRuntimeDesignTest, EmptyGroupsKeepIdentitiesAndValidateReferences
   EXPECT_TRUE(saved.resolvedFunctionalItems.empty());
   EXPECT_TRUE(saved.resolvedFunctionalBins.empty());
   EXPECT_TRUE(saved.counters.empty());
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      LoadedQueryIndexesRefreshWithoutReplacingLiveProfiles) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
-  obelisk_rt_context *producer = createContextForSchema(schema);
-  obelisk_rt_context *consumer = createContextForSchema(schema);
+  talos_rt_context *producer = createContextForSchema(schema);
+  talos_rt_context *consumer = createContextForSchema(schema);
   ASSERT_NE(producer, nullptr);
   ASSERT_NE(consumer, nullptr);
-  ASSERT_EQ(finalizeCoverage(producer, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  ASSERT_EQ(finalizeCoverage(consumer, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 named = 0, generated = 0, live = 0;
-  ASSERT_EQ(createFunctional(producer, 10, &named), OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(producer, 10, &generated), OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(consumer, 10, &live), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(producer, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  ASSERT_EQ(finalizeCoverage(consumer, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 named = 0, generated = 0, live = 0;
+  ASSERT_EQ(createFunctional(producer, 10, &named), TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(producer, 10, &generated), TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(consumer, 10, &live), TALOS_RT_OK);
   ASSERT_EQ(withManagedString(producer, "same",
                               [&](auto name) {
-                                return obelisk_rt_v1_covergroup_set_name(
+                                return talos_rt_v1_covergroup_set_name(
                                     producer, named, name);
                               }),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_set_integer_option(
-                producer, named, 20, OBELISK_RT_COVERGROUP_OPTION_GOAL, 50),
-            OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(producer, named, 0, 2), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(producer, generated, 0, 2), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_set_integer_option(
+                producer, named, 20, TALOS_RT_COVERGROUP_OPTION_GOAL, 50),
+            TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(producer, named, 0, 2), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(producer, generated, 0, 2), TALOS_RT_OK);
   Database first = saveCoverage(producer, "loaded-query-first");
   Database second = first;
   second.runs.front().uuid.back() ^= 1;
@@ -5438,58 +5438,58 @@ TEST_F(CoverageRuntimeDesignTest,
   auto query = [&](uint64_t item, double expected) {
     double percentage = -1.0;
     int32_t covered = -1, total = -1;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_type_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_type_query(
                   consumer, 10, item, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_NEAR(percentage, expected, 1.0e-9);
   };
   query(0, 0.0); // Populate an empty loaded-data cache before the first load.
   std::filesystem::path path =
       std::filesystem::temp_directory_path() /
-      ("obelisk-loaded-query-" +
+      ("talos-loaded-query-" +
        std::to_string(
            std::chrono::steady_clock::now().time_since_epoch().count()) +
        ".obcov");
   const std::string pathText = path.string();
   ASSERT_EQ(writeFileAtomically(pathText, first), Status::Ok);
   ASSERT_EQ(
-      obelisk_rt_v1_coverage_load(consumer, pathText.data(), pathText.size()),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_load(consumer, pathText.data(), pathText.size()),
+      TALOS_RT_OK);
   // Goals are targets, not divisors (IEEE 1800-2023 19.11): the named
   // instance's item goal 50 leaves its 1/2 coverpoint at 50%.
   query(0, 50.0);
   ASSERT_EQ(writeFileAtomically(pathText, second), Status::Ok);
   ASSERT_EQ(
-      obelisk_rt_v1_coverage_load(consumer, pathText.data(), pathText.size()),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_load(consumer, pathText.data(), pathText.size()),
+      TALOS_RT_OK);
   // The explicit name merges across the two runs; generated names retain two
   // identities. The live instance is still empty and independent.
   query(0, 62.5);
   query(20, 50.0);
   query(21, 75.0);
-  ASSERT_EQ(sampleFunctional(consumer, live, 0, 2), OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(consumer, live, 0, 2), TALOS_RT_OK);
   query(0, 81.25);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
-                consumer, 10, 0, OBELISK_RT_COVERGROUP_OPTION_GOAL, 50),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_set_type_integer_option(
+                consumer, 10, 0, TALOS_RT_COVERGROUP_OPTION_GOAL, 50),
+            TALOS_RT_OK);
   // With merge_instances off, type coverage is the weighted average of the
   // instances (19.11.3); a type goal does not rescale it.
   query(0, 81.25);
   query(20, 62.5);
-  ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
-                consumer, 10, 0, OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES, 1),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_covergroup_set_type_integer_option(
+                consumer, 10, 0, TALOS_RT_COVERGROUP_OPTION_MERGE_INSTANCES, 1),
+            TALOS_RT_OK);
   query(0, 100.0);
   query(20, 100.0);
-  obelisk_rt_v1_context_destroy(consumer);
-  obelisk_rt_v1_context_destroy(producer);
+  talos_rt_v1_context_destroy(consumer);
+  talos_rt_v1_context_destroy(producer);
   std::error_code ignored;
   std::filesystem::remove(path, ignored);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        SparseCrossUpdatesPreserveHistoryIsolationAndSaturatingCounts) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalBins.clear();
   schema.functionalBinPlans.clear();
@@ -5524,27 +5524,27 @@ TEST_F(CoverageRuntimeDesignTest,
     schema.functionalExpressions.push_back(iff);
   }
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0, other = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(context, 10, &other), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0, other = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &other), TALOS_RT_OK);
   uint8_t first = 0, second = 0, firstGuard = 1, secondGuard = 1;
-  std::array<obelisk_rt_functional_value_v1, 4> batch{
-      obelisk_rt_functional_value_v1{60, 3, 1, &first, nullptr, nullptr, 0,
-                                     OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+  std::array<talos_rt_functional_value_v1, 4> batch{
+      talos_rt_functional_value_v1{60, 3, 1, &first, nullptr, nullptr, 0,
+                                     TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {61, 3, 1, &second, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {62, 1, 1, &firstGuard, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
       {63, 1, 1, &secondGuard, nullptr, nullptr, 0,
-       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0}};
+       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0}};
   auto sample = [&](uint64_t selected) {
-    return obelisk_rt_v1_covergroup_sample(context, selected, batch.data(),
+    return talos_rt_v1_covergroup_sample(context, selected, batch.data(),
                                            batch.size());
   };
-  ASSERT_EQ(sample(handle), OBELISK_RT_OK);
+  ASSERT_EQ(sample(handle), TALOS_RT_OK);
   auto &instance = context->coverage->instances.at(handle);
   const auto &type = context->coverage->types.at({10, instance.configuration});
   auto product =
@@ -5560,7 +5560,7 @@ TEST_F(CoverageRuntimeDesignTest,
     for (first = 0; first != 8; ++first)
       for (second = 0; second != 8; ++second) {
         secondGuard = pass || first < 4;
-        ASSERT_EQ(sample(handle), OBELISK_RT_OK);
+        ASSERT_EQ(sample(handle), TALOS_RT_OK);
         if (!pass && !first && !second) {
           EXPECT_EQ(originalCounter->count, UINT64_MAX);
           EXPECT_FALSE(originalCounter->overflow);
@@ -5581,12 +5581,12 @@ TEST_F(CoverageRuntimeDesignTest,
   first = second = 0;
   secondGuard = 1;
   batch.back().kind = UINT32_MAX;
-  EXPECT_EQ(sample(handle), OBELISK_RT_INVALID_DESIGN);
-  batch.back().kind = OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
+  EXPECT_EQ(sample(handle), TALOS_RT_INVALID_DESIGN);
+  batch.back().kind = TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL;
   for (size_t index = 0; index != instance.bins.size(); ++index)
     EXPECT_EQ(instance.bins[index].count, binCounts[index]);
   EXPECT_EQ(tuples.size(), 64u);
-  ASSERT_EQ(sample(other), OBELISK_RT_OK);
+  ASSERT_EQ(sample(other), TALOS_RT_OK);
   for (const auto &[cross, counters] :
        context->coverage->instances.at(other).crossTuples) {
     ASSERT_EQ(counters.size(), 1u);
@@ -5594,9 +5594,9 @@ TEST_F(CoverageRuntimeDesignTest,
   }
   double percentage = 0;
   int32_t covered = 0, total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, handle, 22, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_DOUBLE_EQ(percentage, 100.0);
   EXPECT_EQ(covered, 64);
   EXPECT_EQ(total, 64);
@@ -5612,14 +5612,14 @@ TEST_F(CoverageRuntimeDesignTest,
       EXPECT_GE(tuple.hits, 1u);
   }
   EXPECT_EQ(saturated, 1u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 // A wide cross with only four observed tuples exercises target order without
 // expanding a large sample space. The fully overlapping variant verifies that
 // an empty final target is detected before considering its enormous product.
-obelisk::coverage::Database makeWideCrossSchema(bool fullyOverlapping) {
-  using namespace obelisk::coverage;
+talos::coverage::Database makeWideCrossSchema(bool fullyOverlapping) {
+  using namespace talos::coverage;
   Database schema;
   schema.scopes.push_back({1, 0, "top", 0, "top"});
   schema.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
@@ -5678,15 +5678,15 @@ obelisk::coverage::Database makeWideCrossSchema(bool fullyOverlapping) {
 
 TEST_F(CoverageRuntimeDesignTest,
        WideCrossPreservesOverlappingTupleComponents) {
-  using namespace obelisk::coverage;
-  obelisk_rt_context *context =
+  using namespace talos::coverage;
+  talos_rt_context *context =
       createContextForSchema(makeWideCrossSchema(false));
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
   std::array<uint8_t, 64> values{};
-  std::array<obelisk_rt_functional_value_v1, 64> batch;
+  std::array<talos_rt_functional_value_v1, 64> batch;
   for (size_t ordinal = 0; ordinal != batch.size(); ++ordinal)
     batch[ordinal] = {4000 + ordinal,
                       1,
@@ -5695,18 +5695,18 @@ TEST_F(CoverageRuntimeDesignTest,
                       nullptr,
                       nullptr,
                       0,
-                      OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                      TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
                       0};
   auto sample = [&] {
-    return obelisk_rt_v1_covergroup_sample(context, handle, batch.data(),
+    return talos_rt_v1_covergroup_sample(context, handle, batch.data(),
                                            batch.size());
   };
-  ASSERT_EQ(sample(), OBELISK_RT_OK);
-  ASSERT_EQ(sample(), OBELISK_RT_OK);
+  ASSERT_EQ(sample(), TALOS_RT_OK);
+  ASSERT_EQ(sample(), TALOS_RT_OK);
   // IEEE 1800-2023 19.6: a missing bin on any target makes this sample's
   // Cartesian product empty, even when the other targets overlap.
   values.back() = 1;
-  ASSERT_EQ(sample(), OBELISK_RT_OK);
+  ASSERT_EQ(sample(), TALOS_RT_OK);
   auto &instance = context->coverage->instances.at(handle);
   const auto &type = context->coverage->types.at({10, instance.configuration});
   ASSERT_EQ(type.crosses.size(), 1u);
@@ -5732,20 +5732,20 @@ TEST_F(CoverageRuntimeDesignTest,
     EXPECT_EQ(tuple.componentCount, 64u);
     EXPECT_EQ(tuple.hits, 2u);
   }
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        WideCrossEmptyFinalTargetPrecedesProductOverflowAndCommitsAtomically) {
-  obelisk_rt_context *context =
+  talos_rt_context *context =
       createContextForSchema(makeWideCrossSchema(true));
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
   std::array<uint8_t, 64> values{};
   values.back() = 1;
-  std::array<obelisk_rt_functional_value_v1, 64> batch;
+  std::array<talos_rt_functional_value_v1, 64> batch;
   for (size_t ordinal = 0; ordinal != batch.size(); ++ordinal)
     batch[ordinal] = {4000 + ordinal,
                       1,
@@ -5754,33 +5754,33 @@ TEST_F(CoverageRuntimeDesignTest,
                       nullptr,
                       nullptr,
                       0,
-                      OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                      TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
                       0};
   auto sample = [&] {
-    return obelisk_rt_v1_covergroup_sample(context, handle, batch.data(),
+    return talos_rt_v1_covergroup_sample(context, handle, batch.data(),
                                            batch.size());
   };
   // Do not enumerate 4^63 prefixes: the final target has no matching bin.
-  ASSERT_EQ(sample(), OBELISK_RT_OK);
+  ASSERT_EQ(sample(), TALOS_RT_OK);
   auto &instance = context->coverage->instances.at(handle);
   EXPECT_TRUE(instance.crossTuples.empty());
   std::vector<uint64_t> counts;
   for (const auto &bin : instance.bins)
     counts.push_back(bin.count);
   values.back() = 0;
-  EXPECT_EQ(sample(), OBELISK_RT_OUT_OF_RESOURCES);
+  EXPECT_EQ(sample(), TALOS_RT_OUT_OF_RESOURCES);
   EXPECT_TRUE(instance.crossTuples.empty());
   for (size_t bin = 0; bin != counts.size(); ++bin)
     EXPECT_EQ(instance.bins[bin].count, counts[bin]);
   values.back() = 1;
-  ASSERT_EQ(sample(), OBELISK_RT_OK);
+  ASSERT_EQ(sample(), TALOS_RT_OK);
   for (size_t bin = 0; bin != counts.size(); ++bin)
     EXPECT_EQ(instance.bins[bin].count, 2 * counts[bin]);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, ItemTypeAveragesUseMutableInstanceWeights) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalItems.push_back({22, 10, "product",
                                     FunctionalItemKind::Cross, 0, 100, 1, 2,
@@ -5794,20 +5794,20 @@ TEST_F(CoverageRuntimeDesignTest, ItemTypeAveragesUseMutableInstanceWeights) {
        CoverageSignedness::Unsigned, 0}};
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
   ASSERT_EQ(validate(schema), Status::Ok);
-  obelisk_rt_context *context = createContextForSchema(schema);
-  obelisk_rt_context *loaded = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *loaded = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
   ASSERT_NE(loaded, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  ASSERT_EQ(finalizeCoverage(loaded, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 hit = 0, miss = 0;
-  ASSERT_EQ(createFunctional(context, 10, &hit), OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(context, 10, &miss), OBELISK_RT_OK);
-  auto weight = [&](obelisk_rt_covergroup_v1 handle, uint64_t item, int value) {
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  ASSERT_EQ(finalizeCoverage(loaded, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 hit = 0, miss = 0;
+  ASSERT_EQ(createFunctional(context, 10, &hit), TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &miss), TALOS_RT_OK);
+  auto weight = [&](talos_rt_covergroup_v1 handle, uint64_t item, int value) {
     ASSERT_EQ(
-        obelisk_rt_v1_covergroup_set_integer_option(
-            context, handle, item, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, value),
-        OBELISK_RT_OK);
+        talos_rt_v1_covergroup_set_integer_option(
+            context, handle, item, TALOS_RT_COVERGROUP_OPTION_WEIGHT, value),
+        TALOS_RT_OK);
   };
   weight(hit, 0, 11);
   weight(miss, 0, 17); // Group weights must not affect item averages.
@@ -5815,15 +5815,15 @@ TEST_F(CoverageRuntimeDesignTest, ItemTypeAveragesUseMutableInstanceWeights) {
   weight(miss, 20, 1);
   weight(hit, 22, 5);
   weight(miss, 22, 1);
-  ASSERT_EQ(sampleFunctional(context, hit, 0, 2), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(context, hit, 1, 2), OBELISK_RT_OK);
-  auto query = [&](obelisk_rt_context *where, uint64_t item, double expected,
+  ASSERT_EQ(sampleFunctional(context, hit, 0, 2), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, hit, 1, 2), TALOS_RT_OK);
+  auto query = [&](talos_rt_context *where, uint64_t item, double expected,
                    bool empty = false) {
     double percentage = -1.0;
     int32_t covered = -1, total = -1;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_type_query(where, 10, item, &percentage,
+    ASSERT_EQ(talos_rt_v1_covergroup_type_query(where, 10, item, &percentage,
                                                   &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_NEAR(percentage, expected, 1.0e-9);
     if (empty) {
       EXPECT_EQ(covered, 0);
@@ -5837,7 +5837,7 @@ TEST_F(CoverageRuntimeDesignTest, ItemTypeAveragesUseMutableInstanceWeights) {
   query(context, 22, 500.0 / 6.0);
   std::filesystem::path path =
       std::filesystem::temp_directory_path() /
-      ("obelisk-item-weights-" +
+      ("talos-item-weights-" +
        std::to_string(
            std::chrono::steady_clock::now().time_since_epoch().count()) +
        ".obcov");
@@ -5846,8 +5846,8 @@ TEST_F(CoverageRuntimeDesignTest, ItemTypeAveragesUseMutableInstanceWeights) {
       writeFileAtomically(pathText, saveCoverage(context, "item-weights")),
       Status::Ok);
   ASSERT_EQ(
-      obelisk_rt_v1_coverage_load(loaded, pathText.data(), pathText.size()),
-      OBELISK_RT_OK);
+      talos_rt_v1_coverage_load(loaded, pathText.data(), pathText.size()),
+      TALOS_RT_OK);
   query(loaded, 20, 75.0);
   query(loaded, 22, 500.0 / 6.0);
   weight(hit, 20, 0);
@@ -5860,13 +5860,13 @@ TEST_F(CoverageRuntimeDesignTest, ItemTypeAveragesUseMutableInstanceWeights) {
   query(context, 20, 0.0, true);
   query(context, 22, 0.0, true);
   for (uint64_t item : {uint64_t{20}, uint64_t{22}}) {
-    ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
-                  context, 10, item, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_covergroup_set_type_integer_option(
+                  context, 10, item, TALOS_RT_COVERGROUP_OPTION_WEIGHT, 0),
+              TALOS_RT_OK);
     query(context, item, 100.0, true);
   }
-  obelisk_rt_v1_context_destroy(loaded);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(loaded);
+  talos_rt_v1_context_destroy(context);
   std::error_code ignored;
   std::filesystem::remove(path, ignored);
 }
@@ -5874,22 +5874,22 @@ TEST_F(CoverageRuntimeDesignTest, ItemTypeAveragesUseMutableInstanceWeights) {
 TEST(CoverageDatabaseTest, AtomicWriteReplacesExistingImageAndCleansTemporary) {
   std::filesystem::path path =
       std::filesystem::temp_directory_path() /
-      ("obelisk-coverage-replace-" +
+      ("talos-coverage-replace-" +
        std::to_string(
            std::chrono::steady_clock::now().time_since_epoch().count()) +
        ".obcov");
-  obelisk::coverage::Database first;
+  talos::coverage::Database first;
   first.producer = "first";
-  obelisk::coverage::Database second;
+  talos::coverage::Database second;
   second.producer = "second";
-  ASSERT_EQ(obelisk::coverage::writeFileAtomically(path.string(), first),
-            obelisk::coverage::Status::Ok);
-  ASSERT_EQ(obelisk::coverage::writeFileAtomically(path.string(), second),
-            obelisk::coverage::Status::Ok);
+  ASSERT_EQ(talos::coverage::writeFileAtomically(path.string(), first),
+            talos::coverage::Status::Ok);
+  ASSERT_EQ(talos::coverage::writeFileAtomically(path.string(), second),
+            talos::coverage::Status::Ok);
 
-  obelisk::coverage::Database decoded;
-  ASSERT_EQ(obelisk::coverage::readFile(path.string(), decoded),
-            obelisk::coverage::Status::Ok);
+  talos::coverage::Database decoded;
+  ASSERT_EQ(talos::coverage::readFile(path.string(), decoded),
+            talos::coverage::Status::Ok);
   EXPECT_EQ(decoded.producer, "second");
 
   const std::string temporaryPrefix = path.filename().string() + ".tmp.";
@@ -5903,62 +5903,62 @@ TEST(CoverageDatabaseTest, AtomicWriteReplacesExistingImageAndCleansTemporary) {
 }
 
 TEST_F(CoverageRuntimeDesignTest, ParsesAndBindsEmbeddedSchema) {
-  obelisk::coverage::Database schema;
+  talos::coverage::Database schema;
   schema.sourceFiles.push_back({1, "design.sv", {}});
   schema.scopes.push_back({2, 0, "top", 0, "top"});
   schema.linePoints.push_back({3, 1, 1, 2, "", 7, 3, 7, 8, 0, 0});
   schema.toggleObjects.push_back({4, 2, 1, "state", 0, 2, 1, 1, 1, 5, 0});
   schema.toggleDimensions.push_back(
-      {4, UINT32_MAX, obelisk::coverage::ToggleDimensionKind::Root, 1, 1, 0, 0,
+      {4, UINT32_MAX, talos::coverage::ToggleDimensionKind::Root, 1, 1, 0, 0,
        0, 2, "", 0});
   schema.toggleDimensions.push_back(
-      {4, 0, obelisk::coverage::ToggleDimensionKind::Scalar, UINT32_MAX, 0, 1,
+      {4, 0, talos::coverage::ToggleDimensionKind::Scalar, UINT32_MAX, 0, 1,
        0, 0, 2, "", 0});
   schema.exclusions.push_back(
-      {4, obelisk::coverage::MetricKind::Toggle, "excluded", 0});
+      {4, talos::coverage::MetricKind::Toggle, "excluded", 0});
   std::vector<uint8_t> image;
-  ASSERT_EQ(obelisk::coverage::serialize(schema, image),
-            obelisk::coverage::Status::Ok);
+  ASSERT_EQ(talos::coverage::serialize(schema, image),
+            talos::coverage::Status::Ok);
 
   struct Execution {
-    obelisk_rt_execution_descriptor_v1 descriptor{};
-    obelisk_rt_execution_extension_v1 extension{};
+    talos_rt_execution_descriptor_v1 descriptor{};
+    talos_rt_execution_extension_v1 extension{};
   } execution;
   static_assert(offsetof(Execution, extension) ==
-                sizeof(obelisk_rt_execution_descriptor_v1));
-  execution.descriptor.version = OBELISK_RT_VERSION;
-  execution.descriptor.flags = OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
+                sizeof(talos_rt_execution_descriptor_v1));
+  execution.descriptor.version = TALOS_RT_VERSION;
+  execution.descriptor.flags = TALOS_RT_EXECUTION_COVERAGE_SCHEMA;
   execution.descriptor.reserved = sizeof(execution.descriptor);
-  execution.extension.version = OBELISK_RT_EXECUTION_EXTENSION_VERSION;
+  execution.extension.version = TALOS_RT_EXECUTION_EXTENSION_VERSION;
   execution.extension.size = sizeof(execution.extension);
   execution.extension.coverage_schema = image.data();
   execution.extension.coverage_schema_size = image.size();
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&execution.descriptor, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&execution.descriptor, &context),
+      TALOS_RT_OK);
   constexpr std::array<uint8_t, 1> zero{0};
   EXPECT_EQ(
       finalizeCoverage(context, 0, 2, zero.data(), zero.data()),
-      OBELISK_RT_INVALID_DESIGN);
+      TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(
       finalizeCoverage(context, 1, 2, zero.data(), zero.data()),
-      OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_coverage_toggle_seal(context), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+      TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_coverage_toggle_seal(context), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 
   image.back() ^= 1;
   execution.extension.coverage_schema = image.data();
   context = nullptr;
   EXPECT_EQ(
-      obelisk_rt_v1_context_create_for_design(&execution.descriptor, &context),
-      OBELISK_RT_INVALID_DESIGN);
+      talos_rt_v1_context_create_for_design(&execution.descriptor, &context),
+      TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
 }
 
 TEST_F(CoverageRuntimeDesignTest, RejectsResolvedStateInEmbeddedSchema) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   addResolvedFunctionalConfiguration(schema);
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
@@ -5967,72 +5967,72 @@ TEST_F(CoverageRuntimeDesignTest, RejectsResolvedStateInEmbeddedSchema) {
   ASSERT_EQ(serialize(schema, image), Status::Ok);
 
   struct Execution {
-    obelisk_rt_execution_descriptor_v1 descriptor{};
-    obelisk_rt_execution_extension_v1 extension{};
+    talos_rt_execution_descriptor_v1 descriptor{};
+    talos_rt_execution_extension_v1 extension{};
   } execution;
   static_assert(offsetof(Execution, extension) ==
-                sizeof(obelisk_rt_execution_descriptor_v1));
-  execution.descriptor.version = OBELISK_RT_VERSION;
-  execution.descriptor.flags = OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
+                sizeof(talos_rt_execution_descriptor_v1));
+  execution.descriptor.version = TALOS_RT_VERSION;
+  execution.descriptor.flags = TALOS_RT_EXECUTION_COVERAGE_SCHEMA;
   execution.descriptor.reserved = sizeof(execution.descriptor);
-  execution.extension.version = OBELISK_RT_EXECUTION_EXTENSION_VERSION;
+  execution.extension.version = TALOS_RT_EXECUTION_EXTENSION_VERSION;
   execution.extension.size = sizeof(execution.extension);
   execution.extension.coverage_schema = image.data();
   execution.extension.coverage_schema_size = image.size();
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   EXPECT_EQ(
-      obelisk_rt_v1_context_create_for_design(&execution.descriptor, &context),
-      OBELISK_RT_INVALID_DESIGN);
+      talos_rt_v1_context_create_for_design(&execution.descriptor, &context),
+      TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      PersistsDistinctFunctionalInstancesFromEmbeddedSchema) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
   std::vector<uint8_t> image;
   ASSERT_EQ(serialize(schema, image), Status::Ok);
 
   struct Execution {
-    obelisk_rt_execution_descriptor_v1 descriptor{};
-    obelisk_rt_execution_extension_v1 extension{};
+    talos_rt_execution_descriptor_v1 descriptor{};
+    talos_rt_execution_extension_v1 extension{};
   } execution;
   static_assert(offsetof(Execution, extension) ==
-                sizeof(obelisk_rt_execution_descriptor_v1));
-  execution.descriptor.version = OBELISK_RT_VERSION;
-  execution.descriptor.flags = OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
+                sizeof(talos_rt_execution_descriptor_v1));
+  execution.descriptor.version = TALOS_RT_VERSION;
+  execution.descriptor.flags = TALOS_RT_EXECUTION_COVERAGE_SCHEMA;
   execution.descriptor.reserved = sizeof(execution.descriptor);
-  execution.extension.version = OBELISK_RT_EXECUTION_EXTENSION_VERSION;
+  execution.extension.version = TALOS_RT_EXECUTION_EXTENSION_VERSION;
   execution.extension.size = sizeof(execution.extension);
   execution.extension.coverage_schema = image.data();
   execution.extension.coverage_schema_size = image.size();
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&execution.descriptor, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&execution.descriptor, &context),
+      TALOS_RT_OK);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 first = 0;
-  obelisk_rt_covergroup_v1 second = 0;
-  ASSERT_EQ(createFunctional(context, 10, &first), OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(context, 10, &second), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 first = 0;
+  talos_rt_covergroup_v1 second = 0;
+  ASSERT_EQ(createFunctional(context, 10, &first), TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &second), TALOS_RT_OK);
   ASSERT_NE(first, second);
-  ASSERT_EQ(sampleFunctional(context, first, 0, 3), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(context, second, 1, 2), OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, first, 0, 3), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, second, 1, 2), TALOS_RT_OK);
 
   std::filesystem::path path =
       std::filesystem::temp_directory_path() /
-      ("obelisk-functional-save-" +
+      ("talos-functional-save-" +
        std::to_string(
            std::chrono::steady_clock::now().time_since_epoch().count()) +
        ".obcov");
   std::string pathText = path.string();
-  ASSERT_EQ(obelisk_rt_v1_coverage_save(context, pathText.data(),
+  ASSERT_EQ(talos_rt_v1_coverage_save(context, pathText.data(),
                                         pathText.size(), 0, 17),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   Database snapshot;
   ASSERT_EQ(readFile(pathText, snapshot), Status::Ok);
   ASSERT_EQ(snapshot.resolvedInstances.size(), 2u);
@@ -6076,30 +6076,30 @@ TEST_F(CoverageRuntimeDesignTest,
   EXPECT_EQ(count(second, twoBin), 1u);
 
   uint8_t malformedValue = 0;
-  obelisk_rt_functional_value_v1 malformed{
+  talos_rt_functional_value_v1 malformed{
       999,     1,       1, &malformedValue,
-      nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+      nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
       0};
-  obelisk_rt_covergroup_v1 rejected = 0;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, &malformed, 1, nullptr,
+  talos_rt_covergroup_v1 rejected = 0;
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, &malformed, 1, nullptr,
                                             0, &rejected),
-            OBELISK_RT_INVALID_DESIGN);
-  obelisk_rt_v1_context_destroy(context);
+            TALOS_RT_INVALID_DESIGN);
+  talos_rt_v1_context_destroy(context);
   std::error_code ignored;
   std::filesystem::remove(path, ignored);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      TemplateOnlySchemaResolvesStableNamespacesAndRoundTrips) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(context, handle, 1, 2), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handle, 1, 2), TALOS_RT_OK);
 
   Database saved = saveCoverage(context, "template-only");
   ASSERT_EQ(validate(saved), Status::Ok);
@@ -6136,11 +6136,11 @@ TEST_F(CoverageRuntimeDesignTest,
       });
   ASSERT_NE(counter, saved.counters.end());
   EXPECT_EQ(counter->value, 1u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, KnownBoundConsecutiveTransitionArrayResolves) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema;
   schema.scopes.push_back({1, 0, "top", 0, "top"});
   schema.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
@@ -6188,29 +6188,29 @@ TEST_F(CoverageRuntimeDesignTest, KnownBoundConsecutiveTransitionArrayResolves) 
   schema.functionalExpressions.push_back(valueExpression);
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
 
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
   uint8_t transitionValue = 3;
-  obelisk_rt_functional_value_v1 constructorValue{
+  talos_rt_functional_value_v1 constructorValue{
       70,      4,       1, &transitionValue,
-      nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+      nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
       0};
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, nullptr, 0,
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, nullptr, 0,
                                             &constructorValue, 1, &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   auto sample = [&](uint8_t value) {
-    obelisk_rt_functional_value_v1 sampled{
+    talos_rt_functional_value_v1 sampled{
         60,      4,       1, &value,
-        nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+        nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
         0};
-    return obelisk_rt_v1_covergroup_sample(context, handle, &sampled, 1);
+    return talos_rt_v1_covergroup_sample(context, handle, &sampled, 1);
   };
-  ASSERT_EQ(sample(3), OBELISK_RT_OK);
-  ASSERT_EQ(sample(3), OBELISK_RT_OK);
-  ASSERT_EQ(sample(3), OBELISK_RT_OK);
+  ASSERT_EQ(sample(3), TALOS_RT_OK);
+  ASSERT_EQ(sample(3), TALOS_RT_OK);
+  ASSERT_EQ(sample(3), TALOS_RT_OK);
 
   Database saved = saveCoverage(context, "known-transition-bounds");
   ASSERT_EQ(validate(saved), Status::Ok);
@@ -6220,12 +6220,12 @@ TEST_F(CoverageRuntimeDesignTest, KnownBoundConsecutiveTransitionArrayResolves) 
   ASSERT_EQ(saved.counters.size(), 2u);
   EXPECT_EQ(saved.counters[0].value, 2u);
   EXPECT_EQ(saved.counters[1].value, 1u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      WildcardTransitionArrayRejectsHugeExpansionBeforeAllocation) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema;
   schema.scopes.push_back({1, 0, "top", 0, "top"});
   schema.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
@@ -6273,13 +6273,13 @@ TEST_F(CoverageRuntimeDesignTest,
   schema.functionalExpressions.push_back(valueExpression);
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
 
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint32_t encoded = UINT32_MAX;
   uint32_t unknown = UINT32_MAX;
-  obelisk_rt_functional_value_v1 constructorValue{
+  talos_rt_functional_value_v1 constructorValue{
       70,
       32,
       sizeof(encoded),
@@ -6287,20 +6287,20 @@ TEST_F(CoverageRuntimeDesignTest,
       &unknown,
       nullptr,
       0,
-      OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE,
+      TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE,
       0};
-  obelisk_rt_covergroup_v1 handle = 0;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, nullptr, 0,
+  talos_rt_covergroup_v1 handle = 0;
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, nullptr, 0,
                                             &constructorValue, 1, &handle),
-            OBELISK_RT_OUT_OF_RESOURCES);
+            TALOS_RT_OUT_OF_RESOURCES);
   EXPECT_EQ(handle, 0u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
-obelisk::coverage::Database
+talos::coverage::Database
 makeGuardedTransitionSchema(uint32_t length, bool guardExclusions,
                             bool partialOrdinary = false) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema;
   schema.scopes.push_back({1, 0, "top", 0, "top"});
   schema.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
@@ -6393,13 +6393,13 @@ makeGuardedTransitionSchema(uint32_t length, bool guardExclusions,
   return schema;
 }
 
-obelisk_rt_status
-createGuardedTransitionFunctional(obelisk_rt_context *context, uint32_t length,
+talos_rt_status
+createGuardedTransitionFunctional(talos_rt_context *context, uint32_t length,
                                   bool matchingExclusions, bool partialOrdinary,
-                                  obelisk_rt_covergroup_v1 *handle) {
+                                  talos_rt_covergroup_v1 *handle) {
   size_t count = 3 * length;
   std::vector<uint8_t> values(count + partialOrdinary);
-  std::vector<obelisk_rt_functional_value_v1> expressions(values.size());
+  std::vector<talos_rt_functional_value_v1> expressions(values.size());
   for (size_t index = 0; index != count; ++index) {
     values[index] = matchingExclusions || index < length
                         ? 1 + index % length % 2
@@ -6411,93 +6411,93 @@ createGuardedTransitionFunctional(obelisk_rt_context *context, uint32_t length,
                           nullptr,
                           nullptr,
                           0,
-                          OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                          TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
                           0};
   }
   if (partialOrdinary) {
     values.back() = 3;
     expressions.back() = {
         20000,   2,       1, &values.back(),
-        nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+        nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
         0};
   }
-  return obelisk_rt_v1_covergroup_create(
+  return talos_rt_v1_covergroup_create(
       context, 10, nullptr, 0, expressions.data(), expressions.size(), handle);
 }
 
 struct GuardedTransitionSample {
-  obelisk_rt_context *context;
-  obelisk_rt_covergroup_v1 handle;
+  talos_rt_context *context;
+  talos_rt_covergroup_v1 handle;
   uint8_t enabled = 1, ignored = 0, illegal = 0;
 
-  obelisk_rt_status operator()(uint8_t value) {
-    std::array<obelisk_rt_functional_value_v1, 4> batch{
-        obelisk_rt_functional_value_v1{60, 2, 1, &value, nullptr, nullptr, 0,
-                                       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+  talos_rt_status operator()(uint8_t value) {
+    std::array<talos_rt_functional_value_v1, 4> batch{
+        talos_rt_functional_value_v1{60, 2, 1, &value, nullptr, nullptr, 0,
+                                       TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
         {61, 1, 1, &enabled, nullptr, nullptr, 0,
-         OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+         TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
         {62, 1, 1, &ignored, nullptr, nullptr, 0,
-         OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+         TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
         {63, 1, 1, &illegal, nullptr, nullptr, 0,
-         OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0}};
-    return obelisk_rt_v1_covergroup_sample(context, handle, batch.data(),
+         TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0}};
+    return talos_rt_v1_covergroup_sample(context, handle, batch.data(),
                                            batch.size());
   }
 };
 
 TEST_F(CoverageRuntimeDesignTest,
        TransitionBinIffGuardsCountersWithoutChangingDenominator) {
-  obelisk_rt_context *context =
+  talos_rt_context *context =
       createContextForSchema(makeGuardedTransitionSchema(2, true));
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
   ASSERT_EQ(
       createGuardedTransitionFunctional(context, 2, false, false, &handle),
-      OBELISK_RT_OK);
+      TALOS_RT_OK);
   GuardedTransitionSample sample{context, handle};
   sample.enabled = 0;
   const auto &bins = context->coverage->instances.at(handle).bins;
-  ASSERT_EQ(sample(1), OBELISK_RT_OK);
-  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  ASSERT_EQ(sample(1), TALOS_RT_OK);
+  ASSERT_EQ(sample(2), TALOS_RT_OK);
   EXPECT_EQ(bins.front().count, 0u);
   sample.enabled = 1;
-  ASSERT_EQ(sample(1), OBELISK_RT_OK);
-  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  ASSERT_EQ(sample(1), TALOS_RT_OK);
+  ASSERT_EQ(sample(2), TALOS_RT_OK);
   EXPECT_EQ(bins.front().count, 1u);
   double percentage = 0;
   int32_t covered = 0, total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, handle, 20, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(total, 1);
   EXPECT_EQ(covered, 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        GuardedTransitionExclusionsRemainStaticAndGuardIllegalDiagnostics) {
-  using namespace obelisk::coverage;
-  obelisk_rt_context *context =
+  using namespace talos::coverage;
+  talos_rt_context *context =
       createContextForSchema(makeGuardedTransitionSchema(2, true));
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
   ASSERT_EQ(createGuardedTransitionFunctional(context, 2, true, false, &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   GuardedTransitionSample sample{context, handle};
   const auto &bins = context->coverage->instances.at(handle).bins;
   EXPECT_TRUE(bins.front().flags & FunctionalBinEmpty);
-  ASSERT_EQ(sample(1), OBELISK_RT_OK);
-  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  ASSERT_EQ(sample(1), TALOS_RT_OK);
+  ASSERT_EQ(sample(2), TALOS_RT_OK);
   EXPECT_TRUE(
       saveCoverage(context, "disabled-illegal").illegalBinDiagnostics.empty());
   sample.illegal = 1;
-  ASSERT_EQ(sample(1), OBELISK_RT_OK);
-  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  ASSERT_EQ(sample(1), TALOS_RT_OK);
+  ASSERT_EQ(sample(2), TALOS_RT_OK);
   sample.illegal = 0;
-  ASSERT_EQ(sample(1), OBELISK_RT_OK);
-  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  ASSERT_EQ(sample(1), TALOS_RT_OK);
+  ASSERT_EQ(sample(2), TALOS_RT_OK);
   EXPECT_EQ(bins.front().count, 0u);
   Database saved = saveCoverage(context, "guarded-transition-exclusions");
   ASSERT_EQ(saved.illegalBinDiagnostics.size(), 1u);
@@ -6505,50 +6505,50 @@ TEST_F(CoverageRuntimeDesignTest,
   EXPECT_EQ(saved.illegalBinDiagnostics.front().count, 1u);
   double percentage = 0;
   int32_t covered = 0, total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, handle, 20, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(total, 0);
   EXPECT_EQ(covered, 0);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        GuardedTransitionExclusionsRemoveDisabledMatchingSubsequences) {
-  using namespace obelisk::coverage;
-  obelisk_rt_context *context =
+  using namespace talos::coverage;
+  talos_rt_context *context =
       createContextForSchema(makeGuardedTransitionSchema(2, true, true));
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
   ASSERT_EQ(createGuardedTransitionFunctional(context, 2, true, true, &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   GuardedTransitionSample sample{context, handle};
   const auto &bins = context->coverage->instances.at(handle).bins;
   EXPECT_FALSE(bins.front().flags & FunctionalBinEmpty);
-  ASSERT_EQ(sample(1), OBELISK_RT_OK);
-  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  ASSERT_EQ(sample(1), TALOS_RT_OK);
+  ASSERT_EQ(sample(2), TALOS_RT_OK);
   EXPECT_EQ(bins.front().count, 0u);
-  ASSERT_EQ(sample(3), OBELISK_RT_OK);
-  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  ASSERT_EQ(sample(3), TALOS_RT_OK);
+  ASSERT_EQ(sample(2), TALOS_RT_OK);
   EXPECT_EQ(bins.front().count, 1u);
   EXPECT_TRUE(saveCoverage(context, "partial-exclusions")
                   .illegalBinDiagnostics.empty());
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        LongFixedTransitionExclusionsKeepGuardedOrdinaryBinsEmpty) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (bool guardExclusions : {false, true}) {
-    obelisk_rt_context *context = createContextForSchema(
+    talos_rt_context *context = createContextForSchema(
         makeGuardedTransitionSchema(64, guardExclusions));
     ASSERT_NE(context, nullptr);
-    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+    talos_rt_covergroup_v1 handle = 0;
     ASSERT_EQ(
         createGuardedTransitionFunctional(context, 64, true, false, &handle),
-        OBELISK_RT_OK);
+        TALOS_RT_OK);
     const auto &instance = context->coverage->instances.at(handle);
     EXPECT_TRUE(instance.bins.front().flags & FunctionalBinEmpty);
     const auto &type =
@@ -6556,20 +6556,20 @@ TEST_F(CoverageRuntimeDesignTest,
     EXPECT_EQ(type.suppressedTransitionAlternatives.size(), 1u);
     double percentage = 0;
     int32_t covered = 0, total = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                   context, handle, 20, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(total, 0);
     EXPECT_EQ(covered, 0);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
-obelisk::coverage::Database
+talos::coverage::Database
 makeRepeatedExclusionSchema(uint64_t ordinaryLower, uint64_t ordinaryUpper,
                             uint64_t ignoredLower, uint64_t ignoredUpper,
                             bool partialOrdinary = false) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeGuardedTransitionSchema(2, true, partialOrdinary);
   const std::array<std::tuple<size_t, uint64_t, uint64_t>, 2> bounds{
       {{0, ordinaryLower, ordinaryUpper}, {2, ignoredLower, ignoredUpper}}};
@@ -6583,12 +6583,12 @@ makeRepeatedExclusionSchema(uint64_t ordinaryLower, uint64_t ordinaryUpper,
   return schema;
 }
 
-obelisk_rt_status
-createRepeatedExclusionFunctional(obelisk_rt_context *context,
+talos_rt_status
+createRepeatedExclusionFunctional(talos_rt_context *context,
                                   bool partialOrdinary, uint8_t ignoredLast,
-                                  obelisk_rt_covergroup_v1 *handle) {
+                                  talos_rt_covergroup_v1 *handle) {
   std::array<uint8_t, 7> values{1, 2, 1, ignoredLast, 0, 0, 3};
-  std::array<obelisk_rt_functional_value_v1, 7> expressions;
+  std::array<talos_rt_functional_value_v1, 7> expressions;
   for (size_t index = 0; index != expressions.size(); ++index)
     expressions[index] = {index == 6 ? 20000 : 10000 + index,
                           2,
@@ -6597,43 +6597,43 @@ createRepeatedExclusionFunctional(obelisk_rt_context *context,
                           nullptr,
                           nullptr,
                           0,
-                          OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                          TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
                           0};
-  return obelisk_rt_v1_covergroup_create(context, 10, nullptr, 0,
+  return talos_rt_v1_covergroup_create(context, 10, nullptr, 0,
                                          expressions.data(),
                                          partialOrdinary ? 7 : 6, handle);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        RepeatedTransitionExclusionsRemoveEveryCoveredLengthFromDenominator) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   constexpr std::array<std::array<uint64_t, 4>, 4> bounds{
       {{2, 2, 1, 1}, {3, 3, 2, 3}, {2, 3, 1, 1}, {2, 3, 2, 2}}};
   for (const auto &test : bounds) {
     Database schema =
         makeRepeatedExclusionSchema(test[0], test[1], test[2], test[3]);
-    obelisk_rt_context *context = createContextForSchema(schema);
+    talos_rt_context *context = createContextForSchema(schema);
     ASSERT_NE(context, nullptr);
-    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+    talos_rt_covergroup_v1 handle = 0;
     ASSERT_EQ(createRepeatedExclusionFunctional(context, false, 2, &handle),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     const auto &instance = context->coverage->instances.at(handle);
     EXPECT_TRUE(instance.bins.front().flags & FunctionalBinEmpty);
     double percentage = 0;
     int32_t covered = 0, total = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                   context, handle, 20, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(covered, 0);
     EXPECT_EQ(total, 0);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        BoundedTransitionExclusionsPreserveShorterOverlappingMatches) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (bool adjacentRepetition : {false, true}) {
     Database schema =
         makeRepeatedExclusionSchema(1, adjacentRepetition ? 2 : 3, 2, 2);
@@ -6646,98 +6646,98 @@ TEST_F(CoverageRuntimeDesignTest,
       ignoredLast.lowerBound = ignoredLast.upperBound = 2;
       schema.schemaFingerprint = computeSchemaFingerprint(schema);
     }
-    obelisk_rt_context *context = createContextForSchema(schema);
+    talos_rt_context *context = createContextForSchema(schema);
     ASSERT_NE(context, nullptr);
-    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+    talos_rt_covergroup_v1 handle = 0;
     ASSERT_EQ(createRepeatedExclusionFunctional(context, false, 2, &handle),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     const auto &instance = context->coverage->instances.at(handle);
     EXPECT_FALSE(instance.bins.front().flags & FunctionalBinEmpty);
     GuardedTransitionSample sample{context, handle};
-    ASSERT_EQ(sample(1), OBELISK_RT_OK);
-    ASSERT_EQ(sample(1), OBELISK_RT_OK);
-    ASSERT_EQ(sample(2), OBELISK_RT_OK);
+    ASSERT_EQ(sample(1), TALOS_RT_OK);
+    ASSERT_EQ(sample(1), TALOS_RT_OK);
+    ASSERT_EQ(sample(2), TALOS_RT_OK);
     EXPECT_EQ(instance.bins.front().count, 1u);
     if (adjacentRepetition) {
-      ASSERT_EQ(sample(2), OBELISK_RT_OK);
+      ASSERT_EQ(sample(2), TALOS_RT_OK);
       EXPECT_EQ(instance.bins.front().count, 2u);
     }
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        RepeatedTransitionPrefixKeepsEarlierExclusionTaint) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeRepeatedExclusionSchema(3, 3, 1, 1, true);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
   ASSERT_EQ(createRepeatedExclusionFunctional(context, true, 1, &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   const auto &instance = context->coverage->instances.at(handle);
   EXPECT_FALSE(instance.bins.front().flags & FunctionalBinEmpty);
   GuardedTransitionSample sample{context, handle};
   for (uint8_t value : {1, 1, 3, 2})
-    ASSERT_EQ(sample(value), OBELISK_RT_OK);
+    ASSERT_EQ(sample(value), TALOS_RT_OK);
   EXPECT_EQ(instance.bins.front().count, 0u);
   for (uint8_t value : {3, 3, 3, 2})
-    ASSERT_EQ(sample(value), OBELISK_RT_OK);
+    ASSERT_EQ(sample(value), TALOS_RT_OK);
   EXPECT_EQ(instance.bins.front().count, 1u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        RepeatedIllegalTransitionReportsOncePerSampleWhenGuarded) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeRepeatedExclusionSchema(3, 3, 2, 3);
   schema.functionalBins[1].flags = FunctionalBinIllegal;
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
   ASSERT_EQ(createRepeatedExclusionFunctional(context, false, 2, &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   const auto &bins = context->coverage->instances.at(handle).bins;
   EXPECT_TRUE(bins.front().flags & FunctionalBinEmpty);
   GuardedTransitionSample sample{context, handle};
   for (uint8_t value : {1, 1, 2})
-    ASSERT_EQ(sample(value), OBELISK_RT_OK);
+    ASSERT_EQ(sample(value), TALOS_RT_OK);
   EXPECT_TRUE(saveCoverage(context, "disabled-repeated-illegal")
                   .illegalBinDiagnostics.empty());
   // This guard belongs to the bin changed from ignored to illegal above.
   sample.ignored = 1;
   for (uint8_t value : {1, 1, 1, 2})
-    ASSERT_EQ(sample(value), OBELISK_RT_OK);
+    ASSERT_EQ(sample(value), TALOS_RT_OK);
   EXPECT_EQ(bins.front().count, 0u);
   Database saved = saveCoverage(context, "enabled-repeated-illegal");
   ASSERT_EQ(saved.illegalBinDiagnostics.size(), 1u);
   EXPECT_EQ(saved.illegalBinDiagnostics.front().bin, bins[1].id);
   EXPECT_EQ(saved.illegalBinDiagnostics.front().count, 1u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        GappedTransitionExclusionsKeepHistoryBoundedAndPreserveCleanMatches) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (auto repetition : {TransitionRepetitionKind::Goto,
                           TransitionRepetitionKind::Nonconsecutive}) {
     Database schema = makeRepeatedExclusionSchema(2, 2, 1, 1);
     schema.transitionSteps.front().repetition = repetition;
     schema.schemaFingerprint = computeSchemaFingerprint(schema);
-    obelisk_rt_context *context = createContextForSchema(schema);
+    talos_rt_context *context = createContextForSchema(schema);
     ASSERT_NE(context, nullptr);
-    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+    talos_rt_covergroup_v1 handle = 0;
     ASSERT_EQ(createRepeatedExclusionFunctional(context, false, 1, &handle),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     GuardedTransitionSample sample{context, handle};
-    ASSERT_EQ(sample(1), OBELISK_RT_OK);
+    ASSERT_EQ(sample(1), TALOS_RT_OK);
     for (uint32_t ordinal = 0; ordinal != 128; ++ordinal) {
-      ASSERT_EQ(sample(3), OBELISK_RT_OK);
+      ASSERT_EQ(sample(3), TALOS_RT_OK);
       size_t states = 0;
       for (const auto &active :
            context->coverage->instances.at(handle).transitionActive)
@@ -6745,29 +6745,29 @@ TEST_F(CoverageRuntimeDesignTest,
           states += active->size();
       EXPECT_LE(states, 6u);
     }
-    ASSERT_EQ(sample(1), OBELISK_RT_OK);
+    ASSERT_EQ(sample(1), TALOS_RT_OK);
     if (repetition == TransitionRepetitionKind::Nonconsecutive)
-      ASSERT_EQ(sample(3), OBELISK_RT_OK);
-    ASSERT_EQ(sample(2), OBELISK_RT_OK);
+      ASSERT_EQ(sample(3), TALOS_RT_OK);
+    ASSERT_EQ(sample(2), TALOS_RT_OK);
     const auto &bins = context->coverage->instances.at(handle).bins;
     EXPECT_FALSE(bins.front().flags & FunctionalBinEmpty);
     EXPECT_EQ(bins.front().count, 1u);
     // The earlier adjacent ignored pair remains part of every completed
     // ordinary match even though its iff is disabled.
     for (uint8_t value : {1, 1, 2})
-      ASSERT_EQ(sample(value), OBELISK_RT_OK);
+      ASSERT_EQ(sample(value), TALOS_RT_OK);
     EXPECT_EQ(bins.front().count, 1u);
     EXPECT_TRUE(saveCoverage(context, "gapped-disabled-exclusions")
                     .illegalBinDiagnostics.empty());
     double percentage = 0;
     int32_t covered = 0, total = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                   context, handle, 20, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(covered, 1);
     EXPECT_EQ(total, 1);
     EXPECT_DOUBLE_EQ(percentage, 100.0);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -6775,21 +6775,21 @@ TEST_F(CoverageRuntimeDesignTest,
        HugeRepeatedTransitionExclusionDerivationFailsBeforePublication) {
   auto schema =
       makeRepeatedExclusionSchema(UINT64_MAX - 1, UINT64_MAX - 1, 1, 1);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
   EXPECT_EQ(createRepeatedExclusionFunctional(context, false, 2, &handle),
-            OBELISK_RT_OUT_OF_RESOURCES);
+            TALOS_RT_OUT_OF_RESOURCES);
   EXPECT_EQ(handle, 0u);
   EXPECT_TRUE(context->coverage->instances.empty());
   EXPECT_TRUE(context->coverage->types.empty());
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      FixedTransitionExclusionDerivationHasDeterministicWorkLimit) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema;
   schema.scopes.push_back({1, 0, "top", 0, "top"});
   schema.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
@@ -6872,12 +6872,12 @@ TEST_F(CoverageRuntimeDesignTest,
       [](const auto &left, const auto &right) { return left.id < right.id; });
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
 
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::vector<uint8_t> values(stepCount);
-  std::vector<obelisk_rt_functional_value_v1> expressions(stepCount);
+  std::vector<talos_rt_functional_value_v1> expressions(stepCount);
   for (uint32_t ordinal = 0; ordinal != stepCount; ++ordinal) {
     values[ordinal] = ordinal & 1;
     expressions[ordinal] = {100000 + ordinal,
@@ -6887,21 +6887,21 @@ TEST_F(CoverageRuntimeDesignTest,
                             nullptr,
                             nullptr,
                             0,
-                            OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                            TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
                             0};
   }
-  obelisk_rt_covergroup_v1 handle = 0;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, nullptr, 0,
+  talos_rt_covergroup_v1 handle = 0;
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, nullptr, 0,
                                             expressions.data(),
                                             expressions.size(), &handle),
-            OBELISK_RT_OUT_OF_RESOURCES);
+            TALOS_RT_OUT_OF_RESOURCES);
   EXPECT_EQ(handle, 0u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      SymbolicTransitionExclusionDerivationHasDeterministicWorkLimit) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema;
   schema.scopes.push_back({1, 0, "top", 0, "top"});
   schema.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
@@ -7004,12 +7004,12 @@ TEST_F(CoverageRuntimeDesignTest,
                                     TransitionRepetitionKind::Once, 0});
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
 
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::vector<uint8_t> values(stepCount + 1);
-  std::vector<obelisk_rt_functional_value_v1> expressions(stepCount + 1);
+  std::vector<talos_rt_functional_value_v1> expressions(stepCount + 1);
   for (uint32_t ordinal = 0; ordinal != expressions.size(); ++ordinal)
     expressions[ordinal] = {ordinal == stepCount ? 200000 : 100000 + ordinal,
                             1,
@@ -7018,21 +7018,21 @@ TEST_F(CoverageRuntimeDesignTest,
                             nullptr,
                             nullptr,
                             0,
-                            OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                            TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
                             0};
   values[stepCount] = 1;
-  obelisk_rt_covergroup_v1 handle = 0;
-  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, nullptr, 0,
+  talos_rt_covergroup_v1 handle = 0;
+  EXPECT_EQ(talos_rt_v1_covergroup_create(context, 10, nullptr, 0,
                                             expressions.data(),
                                             expressions.size(), &handle),
-            OBELISK_RT_OUT_OF_RESOURCES);
+            TALOS_RT_OUT_OF_RESOURCES);
   EXPECT_EQ(handle, 0u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      CompilerShapedDeferredSingletonFourStateAndRangeRoundTrip) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   for (auto &set : schema.functionalValueSets)
     set.flags = FunctionalValueSetNeedsResolution;
@@ -7072,45 +7072,45 @@ TEST_F(CoverageRuntimeDesignTest,
   addConstructorExpression(73, 52, FunctionalExpressionRole::ValueAtomUpper, 3);
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
 
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint8_t zero = 0;
   uint8_t xEncoded = 1, xUnknown = 1;
   uint8_t low = 1, high = 2;
-  std::array<obelisk_rt_functional_value_v1, 4> constructorValues{};
+  std::array<talos_rt_functional_value_v1, 4> constructorValues{};
   constructorValues[0] = {
       70,      2,       1, &zero,
-      nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+      nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
       0};
   constructorValues[1] = {
       71,        2,       1, &xEncoded,
-      &xUnknown, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE,
+      &xUnknown, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE,
       0};
   constructorValues[2] = {
-      72, 2, 1, &low, nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+      72, 2, 1, &low, nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
       0};
   constructorValues[3] = {
       73,      2,       1, &high,
-      nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+      nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
       0};
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, nullptr, 0,
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, nullptr, 0,
                                             constructorValues.data(),
                                             constructorValues.size(), &handle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint8_t second = 2;
-  std::array<obelisk_rt_functional_value_v1, 2> samples{};
+  std::array<talos_rt_functional_value_v1, 2> samples{};
   samples[0] = {60,        2,       1, &xEncoded,
-                &xUnknown, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE,
+                &xUnknown, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE,
                 0};
   samples[1] = {61,      2,       1, &second,
-                nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
                 0};
-  ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, samples.data(),
+  ASSERT_EQ(talos_rt_v1_covergroup_sample(context, handle, samples.data(),
                                             samples.size()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   Database saved = saveCoverage(context, "compiler-shaped");
   ASSERT_EQ(validate(saved), Status::Ok);
@@ -7135,12 +7135,12 @@ TEST_F(CoverageRuntimeDesignTest,
   // value contains X or Z from the resolved bin values.
   EXPECT_EQ(count(31), 0u);
   EXPECT_EQ(count(40), 1u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      LateDefaultAndAutomaticGroupsPreserveDeclarationOrder) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalItems[1].ordinal = 3;
   schema.functionalBins[0].ordinal = 2;
@@ -7193,15 +7193,15 @@ TEST_F(CoverageRuntimeDesignTest,
   std::sort(
       schema.functionalBinPlans.begin(), schema.functionalBinPlans.end(),
       [](const auto &left, const auto &right) { return left.bin < right.bin; });
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 first = 0, second = 0;
-  ASSERT_EQ(createFunctional(context, 10, &first), OBELISK_RT_OK);
-  ASSERT_EQ(createFunctional(context, 10, &second), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 first = 0, second = 0;
+  ASSERT_EQ(createFunctional(context, 10, &first), TALOS_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &second), TALOS_RT_OK);
   EXPECT_NE(first, second);
   Database saved = saveCoverage(context, "late-bin-groups");
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
   ASSERT_EQ(validate(saved), Status::Ok);
   ASSERT_EQ(saved.functionalConfigurations.size(), 1u);
   ASSERT_EQ(saved.resolvedFunctionalBins.size(), 12u);
@@ -7235,7 +7235,7 @@ TEST_F(CoverageRuntimeDesignTest,
 }
 
 TEST_F(CoverageRuntimeDesignTest, DefaultBinCatchesButNeverEntersDenominator) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalBins.push_back({32, 20, "other", FunctionalBinKind::State,
                                    FunctionalBinDefault, 1, 2,
@@ -7246,18 +7246,18 @@ TEST_F(CoverageRuntimeDesignTest, DefaultBinCatchesButNeverEntersDenominator) {
   std::sort(schema.functionalBinPlans.begin(), schema.functionalBinPlans.end(),
             [](const auto &a, const auto &b) { return a.bin < b.bin; });
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(context, handle, 3, 2), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handle, 3, 2), TALOS_RT_OK);
   double percentage = 0.0;
   int32_t covered = 0, total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, handle, 0, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 1);
   EXPECT_EQ(total, 3);
   EXPECT_DOUBLE_EQ(percentage, 50.0);
@@ -7273,12 +7273,12 @@ TEST_F(CoverageRuntimeDesignTest, DefaultBinCatchesButNeverEntersDenominator) {
       });
   ASSERT_NE(counter, saved.counters.end());
   EXPECT_EQ(counter->value, 1u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      FourStateExactWildcardAndIffUseCanonicalLogicPlanes) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   constexpr uint32_t inclusive =
       FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive;
@@ -7330,22 +7330,22 @@ TEST_F(CoverageRuntimeDesignTest,
   wildcardPlan->iffExpression = 63;
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
 
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
   auto sample = [&](uint8_t value, uint8_t unknown, uint8_t pointIffValue,
                     uint8_t pointIffUnknown, uint8_t binIffValue,
                     uint8_t binIffUnknown) {
     uint8_t second = 2;
-    std::array<obelisk_rt_functional_value_v1, 4> values{};
+    std::array<talos_rt_functional_value_v1, 4> values{};
     values[0] = {60,       2,       1, &value,
-                 &unknown, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE,
+                 &unknown, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE,
                  0};
     values[1] = {61,      2,       1, &second,
-                 nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                 nullptr, nullptr, 0, TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
                  0};
     values[2] = {62,
                  1,
@@ -7354,7 +7354,7 @@ TEST_F(CoverageRuntimeDesignTest,
                  &pointIffUnknown,
                  nullptr,
                  0,
-                 OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE,
+                 TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE,
                  0};
     values[3] = {63,
                  1,
@@ -7363,25 +7363,25 @@ TEST_F(CoverageRuntimeDesignTest,
                  &binIffUnknown,
                  nullptr,
                  0,
-                 OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE,
+                 TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE,
                  0};
-    return obelisk_rt_v1_covergroup_sample(context, handle, values.data(),
+    return talos_rt_v1_covergroup_sample(context, handle, values.data(),
                                            values.size());
   };
   uint8_t knownOne = 1;
   uint8_t known = 0;
   // X is (encoded=1,bval=1), Z is (encoded=0,bval=1).
-  ASSERT_EQ(sample(1, 1, knownOne, known, knownOne, known), OBELISK_RT_OK);
-  ASSERT_EQ(sample(0, 1, knownOne, known, knownOne, known), OBELISK_RT_OK);
+  ASSERT_EQ(sample(1, 1, knownOne, known, knownOne, known), TALOS_RT_OK);
+  ASSERT_EQ(sample(0, 1, knownOne, known, knownOne, known), TALOS_RT_OK);
   // The sampled X is in the wildcarded low bit and therefore does not match.
-  ASSERT_EQ(sample(3, 1, knownOne, known, knownOne, known), OBELISK_RT_OK);
+  ASSERT_EQ(sample(3, 1, knownOne, known, knownOne, known), TALOS_RT_OK);
   // X and Z iff results are both false, even though their encoded low bits
   // differ. Neither may admit the otherwise matching known value 2'b11.
-  ASSERT_EQ(sample(3, 0, 1, 1, knownOne, known), OBELISK_RT_OK);
-  ASSERT_EQ(sample(3, 0, 0, 1, knownOne, known), OBELISK_RT_OK);
-  ASSERT_EQ(sample(3, 0, knownOne, known, 1, 1), OBELISK_RT_OK);
-  ASSERT_EQ(sample(3, 0, knownOne, known, 0, 1), OBELISK_RT_OK);
-  ASSERT_EQ(sample(3, 0, knownOne, known, knownOne, known), OBELISK_RT_OK);
+  ASSERT_EQ(sample(3, 0, 1, 1, knownOne, known), TALOS_RT_OK);
+  ASSERT_EQ(sample(3, 0, 0, 1, knownOne, known), TALOS_RT_OK);
+  ASSERT_EQ(sample(3, 0, knownOne, known, 1, 1), TALOS_RT_OK);
+  ASSERT_EQ(sample(3, 0, knownOne, known, 0, 1), TALOS_RT_OK);
+  ASSERT_EQ(sample(3, 0, knownOne, known, knownOne, known), TALOS_RT_OK);
 
   Database saved = saveCoverage(context, "four-state");
   auto count = [&](uint64_t templateBin) {
@@ -7404,12 +7404,12 @@ TEST_F(CoverageRuntimeDesignTest,
   EXPECT_EQ(count(30), 1u);
   EXPECT_EQ(count(31), 1u);
   EXPECT_EQ(count(32), 1u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        NumericExclusionUnionsCoverWideSignedPartitionsAndKeepOutsideValues) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalItems.resize(1);
   schema.functionalBins.clear();
@@ -7455,27 +7455,27 @@ TEST_F(CoverageRuntimeDesignTest,
     addBin(1000 + ordinal, 15 - int64_t{ordinal}, 15 - int64_t{ordinal},
            FunctionalBinIgnore);
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
-  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
   for (const auto &bin : context->coverage->instances.at(handle).bins)
     if (!(bin.flags & FunctionalBinIgnore))
       EXPECT_EQ(bool(bin.flags & FunctionalBinEmpty), bin.templateBin != 31);
   double percentage = 0;
   int32_t covered = 0, total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, handle, 20, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 0);
   EXPECT_EQ(total, 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        RealIntervalsWithoutExclusionsRespectSamplePrecisionAndOpenEndpoints) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   constexpr uint32_t lower = FunctionalValueAtomLowerInclusive;
   constexpr uint32_t both = lower | FunctionalValueAtomUpperInclusive;
   double nextFloat =
@@ -7530,14 +7530,14 @@ TEST_F(CoverageRuntimeDesignTest,
       schema.functionalBinPlans.push_back({bin, set});
     }
     schema.schemaFingerprint = computeSchemaFingerprint(schema);
-    obelisk_rt_context *context = createContextForSchema(schema, false);
+    talos_rt_context *context = createContextForSchema(schema, false);
     ASSERT_NE(context, nullptr);
-    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-    obelisk_rt_covergroup_v1 handle = 0;
-    ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+    talos_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
     for (double value : {1.0, nextFloat}) {
       float narrow = value;
-      obelisk_rt_functional_value_v1 packet{
+      talos_rt_functional_value_v1 packet{
           60,
           shortReal ? 32u : 64u,
           shortReal ? sizeof(narrow) : sizeof(value),
@@ -7545,12 +7545,12 @@ TEST_F(CoverageRuntimeDesignTest,
           nullptr,
           nullptr,
           0,
-          static_cast<obelisk_rt_functional_value_kind_v1>(
-              shortReal ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
-                        : OBELISK_RT_FUNCTIONAL_VALUE_REAL),
+          static_cast<talos_rt_functional_value_kind_v1>(
+              shortReal ? TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL
+                        : TALOS_RT_FUNCTIONAL_VALUE_REAL),
           0};
-      ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, &packet, 1),
-                OBELISK_RT_OK);
+      ASSERT_EQ(talos_rt_v1_covergroup_sample(context, handle, &packet, 1),
+                TALOS_RT_OK);
     }
     const auto &bins = context->coverage->instances.at(handle).bins;
     ASSERT_EQ(bins.size(), intervals.size());
@@ -7564,19 +7564,19 @@ TEST_F(CoverageRuntimeDesignTest,
     }
     double percentage = 0;
     int32_t covered = 0, total = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                   context, handle, 20, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(covered, 3);
     EXPECT_EQ(total, shortReal ? 3 : 5);
     EXPECT_DOUBLE_EQ(percentage, shortReal ? 100.0 : 60.0);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        RealExclusionUnionsRespectPrecisionAdjacencyOpenBoundsAndSignedZero) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   constexpr uint32_t lower = FunctionalValueAtomLowerInclusive;
   constexpr uint32_t upper = FunctionalValueAtomUpperInclusive;
   constexpr uint32_t both = lower | upper;
@@ -7679,42 +7679,42 @@ TEST_F(CoverageRuntimeDesignTest,
                         schema.functionalExpressions.end(),
                         [](const auto &expression) { return expression.id; });
       schema.schemaFingerprint = computeSchemaFingerprint(schema);
-      obelisk_rt_context *context = createContextForSchema(schema, false);
+      talos_rt_context *context = createContextForSchema(schema, false);
       ASSERT_NE(context, nullptr);
       ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-                OBELISK_RT_OK);
-      obelisk_rt_covergroup_v1 handle = 0;
+                TALOS_RT_OK);
+      talos_rt_covergroup_v1 handle = 0;
       if (test.leftFlags & FunctionalValueAtomLowerUnbounded) {
         double zero = 0;
-        std::array<obelisk_rt_functional_value_v1, 2> bounds{
+        std::array<talos_rt_functional_value_v1, 2> bounds{
             {{101, 64, sizeof(zero), &zero, nullptr, nullptr, 0,
-              OBELISK_RT_FUNCTIONAL_VALUE_REAL, 0},
+              TALOS_RT_FUNCTIONAL_VALUE_REAL, 0},
              {102, 64, sizeof(zero), &zero, nullptr, nullptr, 0,
-              OBELISK_RT_FUNCTIONAL_VALUE_REAL, 0}}};
-        ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, nullptr, 0,
+              TALOS_RT_FUNCTIONAL_VALUE_REAL, 0}}};
+        ASSERT_EQ(talos_rt_v1_covergroup_create(context, 10, nullptr, 0,
                                                   bounds.data(), bounds.size(),
                                                   &handle),
-                  OBELISK_RT_OK);
+                  TALOS_RT_OK);
       } else
-        ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+        ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
       const auto &bins = context->coverage->instances.at(handle).bins;
       bool empty = shortReal ? test.shortEmpty : test.realEmpty;
       EXPECT_EQ(bool(bins.front().flags & FunctionalBinEmpty), empty);
       double percentage = 0;
       int32_t covered = 0, total = 0;
-      ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+      ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                     context, handle, 20, &percentage, &covered, &total),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
       EXPECT_EQ(covered, 0);
       EXPECT_EQ(total, empty ? 0 : 1);
-      obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_context_destroy(context);
     }
   }
 }
 
 TEST_F(CoverageRuntimeDesignTest,
        GuardedStateExclusionsRemoveValuesAndOnlyGateIllegalDiagnostics) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   constexpr uint32_t inclusive =
       FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive;
   for (bool fullyExcluded : {false, true}) {
@@ -7761,60 +7761,60 @@ TEST_F(CoverageRuntimeDesignTest,
                       schema.functionalBinPlans.end(),
                       [](const auto &plan) { return plan.bin; });
     schema.schemaFingerprint = computeSchemaFingerprint(schema);
-    obelisk_rt_context *context = createContextForSchema(schema, false);
+    talos_rt_context *context = createContextForSchema(schema, false);
     ASSERT_NE(context, nullptr);
-    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
-    obelisk_rt_covergroup_v1 handle = 0;
-    ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), TALOS_RT_OK);
+    talos_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
     auto sample = [&](uint8_t value, uint8_t guard, uint8_t unknown = 0) {
       uint8_t second = 2;
-      std::array<obelisk_rt_functional_value_v1, 4> values{
+      std::array<talos_rt_functional_value_v1, 4> values{
           {{60, 2, 1, &value, nullptr, nullptr, 0,
-            OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+            TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
            {61, 2, 1, &second, nullptr, nullptr, 0,
-            OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+            TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
            {62, 1, 1, &guard, &unknown, nullptr, 0,
-            OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE, 0},
+            TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE, 0},
            {63, 1, 1, &guard, &unknown, nullptr, 0,
-            OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE, 0}}};
-      return obelisk_rt_v1_covergroup_sample(context, handle, values.data(),
+            TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE, 0}}};
+      return talos_rt_v1_covergroup_sample(context, handle, values.data(),
                                              values.size());
     };
     const auto &bins = context->coverage->instances.at(handle).bins;
     EXPECT_EQ(bool(bins[0].flags & FunctionalBinEmpty), fullyExcluded);
     EXPECT_TRUE(bins[1].flags & FunctionalBinEmpty);
     for (uint8_t value : {0, 1}) {
-      ASSERT_EQ(sample(value, 0), OBELISK_RT_OK);
-      ASSERT_EQ(sample(value, 1, 1), OBELISK_RT_OK);
-      ASSERT_EQ(sample(value, 0, 1), OBELISK_RT_OK);
+      ASSERT_EQ(sample(value, 0), TALOS_RT_OK);
+      ASSERT_EQ(sample(value, 1, 1), TALOS_RT_OK);
+      ASSERT_EQ(sample(value, 0, 1), TALOS_RT_OK);
     }
     EXPECT_EQ(bins[0].count, 0u);
     EXPECT_EQ(bins[1].count, 0u);
     EXPECT_TRUE(saveCoverage(context, "disabled-state-exclusions")
                     .illegalBinDiagnostics.empty());
-    ASSERT_EQ(sample(2, 0), OBELISK_RT_OK);
+    ASSERT_EQ(sample(2, 0), TALOS_RT_OK);
     EXPECT_EQ(bins[0].count, fullyExcluded ? 0u : 1u);
     double percentage = 0;
     int32_t covered = 0, total = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+    ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                   context, handle, 20, &percentage, &covered, &total),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(covered, fullyExcluded ? 0 : 1);
     EXPECT_EQ(total, fullyExcluded ? 0 : 1);
-    ASSERT_EQ(sample(1, 1), OBELISK_RT_OK);
-    ASSERT_EQ(sample(0, 1), OBELISK_RT_OK);
+    ASSERT_EQ(sample(1, 1), TALOS_RT_OK);
+    ASSERT_EQ(sample(0, 1), TALOS_RT_OK);
     EXPECT_EQ(bins[0].count, fullyExcluded ? 0u : 1u);
     Database saved = saveCoverage(context, "enabled-state-exclusions");
     ASSERT_EQ(saved.illegalBinDiagnostics.size(), 1u);
     EXPECT_EQ(saved.illegalBinDiagnostics.front().bin, bins[3].id);
     EXPECT_EQ(saved.illegalBinDiagnostics.front().count, 1u);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      IgnoreIllegalOverlapEmptiesOrdinaryBinAndIllegalWins) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   constexpr uint32_t inclusive =
       FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive;
@@ -7846,19 +7846,19 @@ TEST_F(CoverageRuntimeDesignTest,
             [](const auto &a, const auto &b) { return a.bin < b.bin; });
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
 
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), TALOS_RT_OK);
 
   double percentage = 0.0;
   int32_t covered = 0, total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, handle, 0, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 1);
   EXPECT_EQ(total, 2);
   EXPECT_DOUBLE_EQ(percentage, 50.0);
@@ -7884,12 +7884,12 @@ TEST_F(CoverageRuntimeDesignTest,
   EXPECT_EQ(saved.illegalBinDiagnostics.front().bin, illegal->id);
   // Repeated hits share a diagnostic only within the same run, bin,
   // instance and simulation time. Live and loaded rows remain independent.
-  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), TALOS_RT_OK);
   Database repeated = saveCoverage(context, "illegal-repeated");
   ASSERT_EQ(repeated.illegalBinDiagnostics.size(), 1u);
   EXPECT_EQ(repeated.illegalBinDiagnostics.front().count, 2u);
   context->schedulerTime = 7;
-  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), TALOS_RT_OK);
   Database beforeReload = saveCoverage(context, "illegal-index");
   ASSERT_EQ(beforeReload.illegalBinDiagnostics.size(), 2u);
   ASSERT_EQ(beforeReload.runs.size(), 1u);
@@ -7907,28 +7907,28 @@ TEST_F(CoverageRuntimeDesignTest,
     row.run = loadedRun;
   const std::string reloadPath =
       (std::filesystem::temp_directory_path() /
-       ("obelisk-illegal-index-" +
+       ("talos-illegal-index-" +
         std::to_string(
             std::chrono::steady_clock::now().time_since_epoch().count()) +
         ".obcov"))
           .string();
   ASSERT_EQ(writeFileAtomically(reloadPath, beforeReload), Status::Ok);
-  obelisk_rt_status loadStatus = obelisk_rt_v1_coverage_load(
+  talos_rt_status loadStatus = talos_rt_v1_coverage_load(
       context, reloadPath.data(), reloadPath.size());
   std::error_code ignored;
   std::filesystem::remove(reloadPath, ignored);
-  ASSERT_EQ(loadStatus, OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), OBELISK_RT_OK);
+  ASSERT_EQ(loadStatus, TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), TALOS_RT_OK);
   Database afterReload = saveCoverage(context, "illegal-after-load");
   ASSERT_EQ(afterReload.illegalBinDiagnostics.size(), 4u);
   for (const auto &row : afterReload.illegalBinDiagnostics)
     EXPECT_EQ(row.count,
               row.simulationTime == 7 && row.run == loadedRun ? 1u : 2u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, WideWildcardExclusionUnionUsesIterativeProof) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   constexpr uint32_t bitWidth = 8192;
   constexpr uint32_t limbCount = bitWidth / 64;
   constexpr uint32_t inclusive =
@@ -8010,17 +8010,17 @@ TEST_F(CoverageRuntimeDesignTest, WideWildcardExclusionUnionUsesIterativeProof) 
   schema.functionalExpressions.push_back(sample);
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
 
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
   double percentage = 0.0;
   int32_t covered = 0, total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, handle, 0, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 0);
   EXPECT_EQ(total, 1);
 
@@ -8035,11 +8035,11 @@ TEST_F(CoverageRuntimeDesignTest, WideWildcardExclusionUnionUsesIterativeProof) 
   };
   EXPECT_TRUE(flagsFor(30) & FunctionalBinEmpty);
   EXPECT_FALSE(flagsFor(40) & FunctionalBinEmpty);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest, SignedWideAndRealIntervalsMatchDirectly) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   constexpr uint32_t inclusive =
       FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive;
@@ -8074,17 +8074,17 @@ TEST_F(CoverageRuntimeDesignTest, SignedWideAndRealIntervalsMatchDirectly) {
       CoverageSignedness::NotApplicable;
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
 
-  obelisk_rt_context *context = createContextForSchema(schema, false);
+  talos_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
   std::array<uint8_t, 9> negativeOne{};
   std::fill_n(negativeOne.begin(), 8, UINT8_MAX);
   negativeOne.back() = 1;
   double real = 2.0;
-  std::array<obelisk_rt_functional_value_v1, 2> values{};
+  std::array<talos_rt_functional_value_v1, 2> values{};
   values[0] = {60,
                65,
                negativeOne.size(),
@@ -8092,7 +8092,7 @@ TEST_F(CoverageRuntimeDesignTest, SignedWideAndRealIntervalsMatchDirectly) {
                nullptr,
                nullptr,
                0,
-               OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+               TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL,
                0};
   values[1] = {61,
                64,
@@ -8101,25 +8101,25 @@ TEST_F(CoverageRuntimeDesignTest, SignedWideAndRealIntervalsMatchDirectly) {
                nullptr,
                nullptr,
                0,
-               OBELISK_RT_FUNCTIONAL_VALUE_REAL,
+               TALOS_RT_FUNCTIONAL_VALUE_REAL,
                0};
-  ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, values.data(),
+  ASSERT_EQ(talos_rt_v1_covergroup_sample(context, handle, values.data(),
                                             values.size()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   double percentage = 0.0;
   int32_t covered = 0, total = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+  ASSERT_EQ(talos_rt_v1_covergroup_instance_query(
                 context, handle, 0, &percentage, &covered, &total),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 2);
   EXPECT_EQ(total, 2);
   EXPECT_DOUBLE_EQ(percentage, 100.0);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      FunctionalConfigurationIgnoresUnrelatedMetricSchema) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database functionalOnly = makeFunctionalSchema();
   Database withLine = functionalOnly;
   withLine.sourceFiles.push_back({50, "line.sv", {}});
@@ -8128,24 +8128,24 @@ TEST_F(CoverageRuntimeDesignTest,
 
   auto snapshotConfiguration = [&](const Database &schema, uint64_t lineCount,
                                    const std::string &suffix) -> Digest {
-    obelisk_rt_context *local = createContextForSchema(schema);
+    talos_rt_context *local = createContextForSchema(schema);
     if (!local)
       return {};
     EXPECT_EQ(
         finalizeCoverage(local, lineCount, 0, nullptr, nullptr),
-        OBELISK_RT_OK);
-    obelisk_rt_covergroup_v1 handle = 0;
-    EXPECT_EQ(createFunctional(local, 10, &handle), OBELISK_RT_OK);
+        TALOS_RT_OK);
+    talos_rt_covergroup_v1 handle = 0;
+    EXPECT_EQ(createFunctional(local, 10, &handle), TALOS_RT_OK);
     std::filesystem::path path =
         std::filesystem::temp_directory_path() /
-        ("obelisk-functional-configuration-" + suffix + "-" +
+        ("talos-functional-configuration-" + suffix + "-" +
          std::to_string(
              std::chrono::steady_clock::now().time_since_epoch().count()) +
          ".obcov");
     std::string pathText = path.string();
-    EXPECT_EQ(obelisk_rt_v1_coverage_save(local, pathText.data(),
+    EXPECT_EQ(talos_rt_v1_coverage_save(local, pathText.data(),
                                           pathText.size(), 0, 0),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     Database snapshot;
     EXPECT_EQ(readFile(pathText, snapshot), Status::Ok);
     Digest result{};
@@ -8153,7 +8153,7 @@ TEST_F(CoverageRuntimeDesignTest,
       result = snapshot.resolvedInstances[0].configuration;
     else
       ADD_FAILURE() << "missing resolved functional instance";
-    obelisk_rt_v1_context_destroy(local);
+    talos_rt_v1_context_destroy(local);
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
     return result;
@@ -8165,21 +8165,21 @@ TEST_F(CoverageRuntimeDesignTest,
 
 TEST_F(CoverageRuntimeDesignTest,
      Clause40CodeMetricSaveOmitsResolvedFunctionalPayload) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.sourceFiles.push_back({50, "line.sv", {}});
   schema.linePoints.push_back({51, 50, 50, 1, "", 1, 1, 1, 2, 0, 0});
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 1, 0, nullptr, nullptr),
-            OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), TALOS_RT_OK);
 
   std::filesystem::path path =
       std::filesystem::temp_directory_path() /
-      ("obelisk-clause40-no-functional-payload-" +
+      ("talos-clause40-no-functional-payload-" +
        std::to_string(
            std::chrono::steady_clock::now().time_since_epoch().count()) +
        ".obcov");
@@ -8187,10 +8187,10 @@ TEST_F(CoverageRuntimeDesignTest,
   int32_t status = -99;
   ASSERT_EQ(withManagedString(context, pathText,
                               [&](auto name) {
-                                return obelisk_rt_v1_coverage_database_save(
+                                return talos_rt_v1_coverage_database_save(
                                     context, 22, name, &status);
                               }),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(status, 1);
   Database saved;
   ASSERT_EQ(readFile(pathText, saved), Status::Ok);
@@ -8222,28 +8222,28 @@ TEST_F(CoverageRuntimeDesignTest,
       saved.sparseCrossTupleComponents.size()};
   EXPECT_TRUE(std::all_of(resolvedSizes.begin(), resolvedSizes.end(),
                           [](size_t size) { return size == 0; }));
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
   std::error_code ignored;
   std::filesystem::remove(path, ignored);
 }
 
 TEST_F(CoverageRuntimeDesignTest,
      PersistenceMaskRetainsStaticSchemaButOnlySelectedRunData) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema = makeFunctionalSchema();
   schema.sourceFiles.push_back({50, "line.sv", {}});
   schema.linePoints.push_back({51, 50, 50, 1, "", 1, 1, 1, 2, 0, 0});
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
 
-  obelisk_rt_context *context = createContextForSchema(schema);
+  talos_rt_context *context = createContextForSchema(schema);
   ASSERT_NE(context, nullptr);
   ASSERT_EQ(finalizeCoverage(context, 1, 0, nullptr, nullptr,
-                             OBELISK_RT_COVERAGE_PERSIST_LINE),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_point_hit(context, 0, 1), OBELISK_RT_OK);
-  obelisk_rt_covergroup_v1 instance = 0;
-  ASSERT_EQ(createFunctional(context, 10, &instance), OBELISK_RT_OK);
-  ASSERT_EQ(sampleFunctional(context, instance, 0, 2), OBELISK_RT_OK);
+                             TALOS_RT_COVERAGE_PERSIST_LINE),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_point_hit(context, 0, 1), TALOS_RT_OK);
+  talos_rt_covergroup_v1 instance = 0;
+  ASSERT_EQ(createFunctional(context, 10, &instance), TALOS_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, instance, 0, 2), TALOS_RT_OK);
 
   Database snapshot = saveCoverage(context, "line-persistence-mask");
   ASSERT_EQ(snapshot.runs.size(), 1u);
@@ -8267,12 +8267,12 @@ TEST_F(CoverageRuntimeDesignTest,
   EXPECT_TRUE(snapshot.sparseCrossTuples.empty());
   EXPECT_TRUE(snapshot.illegalBinDiagnostics.empty());
 
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(CoverageDatabaseTest,
      FunctionalOrdinalsAndInstanceCountersRoundTripAndValidate) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database database = makeFunctionalSchema();
   database.sourceFiles.push_back({1, "expanded.sv", {}});
   database.sourceFiles.push_back({2, "macro.svh", {}});
@@ -8282,7 +8282,7 @@ TEST(CoverageDatabaseTest,
       {30, FunctionalSourceRole::MacroDefinition, 0, 2, 2, "MAKE_BIN", 7, 1, 7,
        20, 0});
   Digest configuration = addResolvedFunctionalConfiguration(database);
-  obelisk::coverage::Run run;
+  talos::coverage::Run run;
   run.uuid.back() = 1;
   run.name = "run";
   run.flags = RunContainsFunctional;
@@ -8369,7 +8369,7 @@ TEST(CoverageDatabaseTest,
 }
 
 TEST(CoverageDatabaseTest, ToggleDimensionTreeRoundTripsAndRejectsBadParents) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database schema;
   schema.sourceFiles.push_back({1, "aggregate.sv", {}});
   schema.scopes.push_back({2, 0, "top", 0, "top"});
@@ -8420,31 +8420,31 @@ TEST(CoverageDatabaseTest, ToggleDimensionTreeRoundTripsAndRejectsBadParents) {
 }
 
 TEST(CoverageDatabaseTest, RejectsNullReferencesAndAmbiguousRunMetadata) {
-  obelisk::coverage::Database database;
+  talos::coverage::Database database;
   database.linePoints.push_back({1, 0, 0, 0, "", 1, 1, 1, 1, 0, 0});
-  EXPECT_EQ(obelisk::coverage::validate(database),
-            obelisk::coverage::Status::InvalidReference);
+  EXPECT_EQ(talos::coverage::validate(database),
+            talos::coverage::Status::InvalidReference);
 
   database.linePoints.clear();
-  obelisk::coverage::Run run;
+  talos::coverage::Run run;
   run.name = "nil";
   database.runs.push_back(run);
-  EXPECT_EQ(obelisk::coverage::validate(database),
-            obelisk::coverage::Status::DuplicateRun);
+  EXPECT_EQ(talos::coverage::validate(database),
+            talos::coverage::Status::DuplicateRun);
 
   database.runs.front().uuid.back() = 1;
   database.runs.front().tags.push_back({"", "value"});
-  EXPECT_EQ(obelisk::coverage::validate(database),
-            obelisk::coverage::Status::UnsortedOrDuplicate);
+  EXPECT_EQ(talos::coverage::validate(database),
+            talos::coverage::Status::UnsortedOrDuplicate);
 }
 
 TEST(CoverageDatabaseTest, RunMetricFlagsOwnEveryDynamicCounter) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database database;
   database.sourceFiles.push_back({1, "source.sv", {}});
   database.scopes.push_back({2, 0, "top", 0, "top"});
   database.linePoints.push_back({3, 1, 1, 2, "", 1, 1, 1, 2, 0, 0});
-  obelisk::coverage::Run run;
+  talos::coverage::Run run;
   run.uuid.back() = 1;
   run.name = "run";
   run.flags = RunContainsLine;
@@ -8459,13 +8459,13 @@ TEST(CoverageDatabaseTest, RunMetricFlagsOwnEveryDynamicCounter) {
 }
 
 TEST(CoverageDatabaseTest, AssertionPointsRoundTripAndOwnTheirCounters) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database database;
   database.sourceFiles.push_back({1, "source.sv", {}});
   database.scopes.push_back({2, 0, "top", 0, "top"});
   database.assertionPoints.push_back(
       {3, 2, 1, "check", AssertionKind::Cover, 4, 5, 4, 30, 0});
-  obelisk::coverage::Run run;
+  talos::coverage::Run run;
   run.uuid.back() = 1;
   run.name = "run";
   run.flags = RunContainsAssertion;
@@ -8492,13 +8492,13 @@ TEST(CoverageDatabaseTest, AssertionPointsRoundTripAndOwnTheirCounters) {
 }
 
 TEST(CoverageDatabaseTest, FSMStatesRoundTripAndShareTheirMachine) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database database;
   database.sourceFiles.push_back({1, "source.sv", {}});
   database.scopes.push_back({2, 0, "top", 0, "top"});
   database.fsmStates.push_back({3, 2, 1, 9, 0, "cs", "IDLE", 2, 5, 3, 0});
   database.fsmStates.push_back({4, 2, 1, 9, 3, "cs", "DONE", 2, 6, 3, 0});
-  obelisk::coverage::Run run;
+  talos::coverage::Run run;
   run.uuid.back() = 1;
   run.name = "run";
   run.flags = RunContainsFSM;
@@ -8525,12 +8525,12 @@ TEST(CoverageDatabaseTest, FSMStatesRoundTripAndShareTheirMachine) {
 }
 
 TEST(CoverageDatabaseTest, ZeroMetricRunsNeverCoalesceAsDisjointPayloads) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   Database first;
   first.sourceFiles.push_back({1, "source.sv", {}});
   first.scopes.push_back({2, 0, "top", 0, "top"});
   first.linePoints.push_back({3, 1, 1, 2, "", 1, 1, 1, 2, 0, 0});
-  obelisk::coverage::Run run;
+  talos::coverage::Run run;
   run.uuid.back() = 1;
   run.name = "run";
   first.runs.push_back(run);
@@ -8544,96 +8544,96 @@ TEST(CoverageDatabaseTest, ZeroMetricRunsNeverCoalesceAsDisjointPayloads) {
 }
 
 TEST(CoverageDatabaseTest, RejectsNoncanonicalReservedBytesAndRunTagCounts) {
-  obelisk::coverage::Database database;
+  talos::coverage::Database database;
   database.sourceFiles.push_back({1, "source.sv", {}});
-  obelisk::coverage::Run run;
+  talos::coverage::Run run;
   run.uuid.back() = 1;
   run.name = "run";
   run.tags.push_back({"suite", "smoke"});
   database.runs.push_back(run);
   std::vector<uint8_t> image;
-  ASSERT_EQ(obelisk::coverage::serialize(database, image),
-            obelisk::coverage::Status::Ok);
+  ASSERT_EQ(talos::coverage::serialize(database, image),
+            talos::coverage::Status::Ok);
 
   size_t sources =
-      sectionOffset(image, obelisk::coverage::SectionKind::SourceFiles);
+      sectionOffset(image, talos::coverage::SectionKind::SourceFiles);
   ASSERT_NE(sources, std::string::npos);
   image[sources + 12] = 1;
   refreshChecksum(image);
-  obelisk::coverage::Database parsed;
-  EXPECT_EQ(obelisk::coverage::parse(image.data(), image.size(), parsed),
-            obelisk::coverage::Status::InvalidDatabase);
+  talos::coverage::Database parsed;
+  EXPECT_EQ(talos::coverage::parse(image.data(), image.size(), parsed),
+            talos::coverage::Status::InvalidDatabase);
 
-  ASSERT_EQ(obelisk::coverage::serialize(database, image),
-            obelisk::coverage::Status::Ok);
-  size_t runs = sectionOffset(image, obelisk::coverage::SectionKind::Runs);
+  ASSERT_EQ(talos::coverage::serialize(database, image),
+            talos::coverage::Status::Ok);
+  size_t runs = sectionOffset(image, talos::coverage::SectionKind::Runs);
   ASSERT_NE(runs, std::string::npos);
   put32(image, runs + 48, 2);
   refreshChecksum(image);
-  EXPECT_EQ(obelisk::coverage::parse(image.data(), image.size(), parsed),
-            obelisk::coverage::Status::BadCount);
+  EXPECT_EQ(talos::coverage::parse(image.data(), image.size(), parsed),
+            talos::coverage::Status::BadCount);
 
-  ASSERT_EQ(obelisk::coverage::serialize(database, image),
-            obelisk::coverage::Status::Ok);
+  ASSERT_EQ(talos::coverage::serialize(database, image),
+            talos::coverage::Status::Ok);
   put32(image, 8, 1);
   refreshChecksum(image);
-  EXPECT_EQ(obelisk::coverage::parse(image.data(), image.size(), parsed),
-            obelisk::coverage::Status::InvalidEnum);
+  EXPECT_EQ(talos::coverage::parse(image.data(), image.size(), parsed),
+            talos::coverage::Status::InvalidEnum);
 }
 
 TEST(CoverageDatabaseTest, RejectsNoncanonicalPhysicalMetadataOrder) {
-  obelisk::coverage::Database database;
-  obelisk::coverage::Run first;
+  talos::coverage::Database database;
+  talos::coverage::Run first;
   first.uuid.back() = 1;
   first.name = "first";
   first.tags.push_back({"suite", "one"});
   database.runs.push_back(first);
-  obelisk::coverage::Run second;
+  talos::coverage::Run second;
   second.uuid.back() = 2;
   second.name = "second";
   second.tags.push_back({"suite", "two"});
   database.runs.push_back(second);
   std::vector<uint8_t> image;
-  ASSERT_EQ(obelisk::coverage::serialize(database, image),
-            obelisk::coverage::Status::Ok);
+  ASSERT_EQ(talos::coverage::serialize(database, image),
+            talos::coverage::Status::Ok);
 
   size_t metadata =
-      sectionOffset(image, obelisk::coverage::SectionKind::UserMetadata);
+      sectionOffset(image, talos::coverage::SectionKind::UserMetadata);
   ASSERT_NE(metadata, std::string::npos);
   // Record zero is producer metadata. Reverse the two otherwise-valid run
   // records so redistribution into Run::tags cannot hide wire disorder.
   for (size_t byte = 0; byte != 24; ++byte)
     std::swap(image[metadata + 24 + byte], image[metadata + 48 + byte]);
   refreshChecksum(image);
-  obelisk::coverage::Database parsed;
-  EXPECT_EQ(obelisk::coverage::parse(image.data(), image.size(), parsed),
-            obelisk::coverage::Status::UnsortedOrDuplicate);
+  talos::coverage::Database parsed;
+  EXPECT_EQ(talos::coverage::parse(image.data(), image.size(), parsed),
+            talos::coverage::Status::UnsortedOrDuplicate);
 }
 
 TEST(CoverageDatabaseTest,
      AggregateMergeRemapsInstancesAndSaturatesDeterministically) {
-  obelisk::coverage::Database first = makeFunctionalSchema();
-  obelisk::coverage::Digest configuration =
+  talos::coverage::Database first = makeFunctionalSchema();
+  talos::coverage::Digest configuration =
       addResolvedFunctionalConfiguration(first);
-  obelisk::coverage::Run firstRun;
+  talos::coverage::Run firstRun;
   firstRun.uuid.back() = 1;
   firstRun.name = "first";
-  firstRun.flags = obelisk::coverage::RunContainsFunctional;
+  firstRun.flags = talos::coverage::RunContainsFunctional;
   first.runs.push_back(firstRun);
   first.resolvedInstances.push_back(
       {firstRun.uuid, 10, 1, "named", 0, configuration});
   first.resolvedInstances.push_back(
       {firstRun.uuid, 10, 2, "$auto$2",
-       obelisk::coverage::ResolvedInstanceGeneratedName, configuration});
+       talos::coverage::ResolvedInstanceGeneratedName, configuration});
   first.counters.push_back({firstRun.uuid,
-                            obelisk::coverage::MetricKind::Functional, 130, 1,
+                            talos::coverage::MetricKind::Functional, 130, 1,
                             0, 0, UINT64_MAX - 2});
   first.counters.push_back({firstRun.uuid,
-                            obelisk::coverage::MetricKind::Functional, 130, 2,
+                            talos::coverage::MetricKind::Functional, 130, 2,
                             0, 0, 3});
-  first.schemaFingerprint = obelisk::coverage::computeSchemaFingerprint(first);
+  first.schemaFingerprint = talos::coverage::computeSchemaFingerprint(first);
 
-  obelisk::coverage::Database second = first;
+  talos::coverage::Database second = first;
   second.runs.front().uuid.back() = 2;
   second.runs.front().name = "second";
   second.resolvedInstances[0].run = second.runs.front().uuid;
@@ -8646,18 +8646,18 @@ TEST(CoverageDatabaseTest,
   second.counters[1].run = second.runs.front().uuid;
   second.counters[1].instance = 5;
   second.counters[1].value = 7;
-  obelisk::coverage::Database firstInput = first;
-  obelisk::coverage::Database forward = firstInput;
-  ASSERT_EQ(obelisk::coverage::merge(forward, second, true),
-            obelisk::coverage::Status::Ok);
+  talos::coverage::Database firstInput = first;
+  talos::coverage::Database forward = firstInput;
+  ASSERT_EQ(talos::coverage::merge(forward, second, true),
+            talos::coverage::Status::Ok);
   ASSERT_EQ(forward.resolvedInstances.size(), 3u);
   EXPECT_EQ(forward.resolvedInstances.front().flags, 0u);
   EXPECT_EQ(
       std::count_if(forward.resolvedInstances.begin(),
                     forward.resolvedInstances.end(),
-                    [](const obelisk::coverage::ResolvedInstance &instance) {
+                    [](const talos::coverage::ResolvedInstance &instance) {
                       return instance.flags &
-                             obelisk::coverage::ResolvedInstanceGeneratedName;
+                             talos::coverage::ResolvedInstanceGeneratedName;
                     }),
       2);
   ASSERT_EQ(forward.counters.size(), 3u);
@@ -8666,14 +8666,14 @@ TEST(CoverageDatabaseTest,
   EXPECT_EQ(forward.counters[1].value, 3u);
   EXPECT_EQ(forward.counters[2].value, 7u);
 
-  obelisk::coverage::Database reverse = second;
-  ASSERT_EQ(obelisk::coverage::merge(reverse, firstInput, true),
-            obelisk::coverage::Status::Ok);
+  talos::coverage::Database reverse = second;
+  ASSERT_EQ(talos::coverage::merge(reverse, firstInput, true),
+            talos::coverage::Status::Ok);
   std::vector<uint8_t> forwardImage, reverseImage;
-  ASSERT_EQ(obelisk::coverage::serialize(forward, forwardImage),
-            obelisk::coverage::Status::Ok);
-  ASSERT_EQ(obelisk::coverage::serialize(reverse, reverseImage),
-            obelisk::coverage::Status::Ok);
+  ASSERT_EQ(talos::coverage::serialize(forward, forwardImage),
+            talos::coverage::Status::Ok);
+  ASSERT_EQ(talos::coverage::serialize(reverse, reverseImage),
+            talos::coverage::Status::Ok);
   EXPECT_EQ(forwardImage, reverseImage);
 }
 

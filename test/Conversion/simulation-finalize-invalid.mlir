@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics \
-// RUN:   --pass-pipeline='builtin.module(obelisk-sim-finalize)'
+// RUN: talos-opt %s --split-input-file --verify-diagnostics \
+// RUN:   --pass-pipeline='builtin.module(talos-sim-finalize)'
 
 module {
   // expected-error @+1 {{operation from dialect 'func' survived simulation finalization}}

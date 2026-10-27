@@ -1,10 +1,10 @@
 //===- SimulationProcessActivationLowering.h - Activation ABI -*- C++ -*-===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PROCESS_ACTIVATION_LOWERING_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PROCESS_ACTIVATION_LOWERING_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PROCESS_ACTIVATION_LOWERING_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PROCESS_ACTIVATION_LOWERING_H
 
-#include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/SimulationProcessFrameAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -16,7 +16,7 @@
 #include <optional>
 #include <utility>
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 struct NativeSchedulePlan {
   uint32_t initialRank = UINT32_MAX;
@@ -40,6 +40,6 @@ makeProcessSpawnBody(mlir::LLVM::LLVMFuncOp helper,
 
 void declareProcessSpawnRuntimeABI(mlir::ModuleOp module);
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PROCESS_ACTIVATION_LOWERING_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_PROCESS_ACTIVATION_LOWERING_H

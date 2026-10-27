@@ -1,11 +1,11 @@
 # RUN: %coverage-fixture %t.a.obcov 1 alpha 1
 # RUN: %coverage-fixture %t.b.obcov 2 beta 0
-# RUN: not obelisk-cov report --test=beta --fail-under line=1 %t.a.obcov %t.b.obcov 2>&1 | FileCheck %s --check-prefix=BAD-THRESHOLD
-# RUN: not obelisk-cov merge -o %t.duplicate.obcov %t.a.obcov %t.a.obcov 2>&1 | FileCheck %s --check-prefix=DUPLICATE
-# RUN: obelisk-cov merge --discard-test-detail -o %t.aggregate.obcov %t.a.obcov %t.b.obcov
-# RUN: obelisk-cov inspect %t.aggregate.obcov | FileCheck %s --check-prefix=AGGREGATE
-# RUN: obelisk-cov merge --discard-test-detail -o %t.single.obcov %t.a.obcov
-# RUN: obelisk-cov report --format=json %t.single.obcov | FileCheck %s --check-prefix=SINGLE
+# RUN: not talos-cov report --test=beta --fail-under line=1 %t.a.obcov %t.b.obcov 2>&1 | FileCheck %s --check-prefix=BAD-THRESHOLD
+# RUN: not talos-cov merge -o %t.duplicate.obcov %t.a.obcov %t.a.obcov 2>&1 | FileCheck %s --check-prefix=DUPLICATE
+# RUN: talos-cov merge --discard-test-detail -o %t.aggregate.obcov %t.a.obcov %t.b.obcov
+# RUN: talos-cov inspect %t.aggregate.obcov | FileCheck %s --check-prefix=AGGREGATE
+# RUN: talos-cov merge --discard-test-detail -o %t.single.obcov %t.a.obcov
+# RUN: talos-cov report --format=json %t.single.obcov | FileCheck %s --check-prefix=SINGLE
 
 # A threshold that the selected test misses fails the report and says so. The
 # same run cannot be merged twice. Merging with --discard-test-detail folds

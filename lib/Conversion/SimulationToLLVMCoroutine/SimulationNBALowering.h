@@ -1,11 +1,11 @@
 //===- SimulationNBALowering.h - Native NBA lowering support ----*- C++ -*-===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_NBA_LOWERING_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_NBA_LOWERING_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_NBA_LOWERING_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_NBA_LOWERING_H
 
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
@@ -21,15 +21,15 @@ namespace mlir {
 class TypeConverter;
 }
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 struct NativeStateLayout;
 
 struct NativeStaticNBAPlan {
-  llvm::SmallVector<obelisk_rt_static_nba_root> roots;
+  llvm::SmallVector<talos_rt_static_nba_root> roots;
   llvm::SmallVector<uint64_t> rootDescriptors;
   bool completeSourceWriters = false;
-  llvm::SmallVector<obelisk_rt_static_nba_site> sites;
+  llvm::SmallVector<talos_rt_static_nba_site> sites;
   llvm::DenseMap<uint64_t, uint32_t> siteRoots;
   // Graph rebuilding gives generated eval clones fresh site IDs. Preserve the
   // source semantic site so mutually exclusive compiler clones do not look
@@ -133,9 +133,9 @@ materializeGeneratedNBAAccumulators(mlir::ModuleOp module,
 mlir::LogicalResult markCleanStaticNBAsInGuardedBodies(
     mlir::ModuleOp module, bool enabled,
     const llvm::DenseMap<uint64_t, uint32_t> &staticNBASiteRoots,
-    mlir::ArrayRef<obelisk_rt_static_nba_root> staticNBARoots,
+    mlir::ArrayRef<talos_rt_static_nba_root> staticNBARoots,
     const NativeStateLayout &stateLayout);
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_NBA_LOWERING_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_NBA_LOWERING_H

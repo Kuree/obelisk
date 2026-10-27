@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics -o /dev/null
+// RUN: talos-opt %s --split-input-file --verify-diagnostics -o /dev/null
 
 // Only a projected declaration permits integer backing. Declared four-state
 // reflection cannot describe integer storage on its own.

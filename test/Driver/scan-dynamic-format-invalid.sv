@@ -1,4 +1,4 @@
-// RUN: obelisk -O0 --vpi=off %s -o %t.native
+// RUN: talos -O0 --vpi=off %s -o %t.native
 // RUN: not %t.native +CASE=malformed 2>&1 | FileCheck %s --check-prefix=MALFORMED
 // RUN: not %t.native +CASE=mismatch_count 2>&1 | FileCheck %s --check-prefix=COUNT
 // RUN: not %t.native +CASE=mismatch_type 2>&1 | FileCheck %s --check-prefix=TYPE

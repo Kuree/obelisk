@@ -6,7 +6,7 @@
 #include "ProcessShared.h"
 #include "RuntimeInternal.h"
 
-#include "obelisk/Runtime/StrengthResolution.h"
+#include "talos/Runtime/StrengthResolution.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -16,12 +16,12 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace obelisk::designbytecode {
+namespace talos::designbytecode {
 
-using obelisk::runtime::combineStrengthRanges;
-using obelisk::runtime::implicitNetStrength;
-using obelisk::runtime::strengthBit;
-using obelisk::runtime::strengthCount;
+using talos::runtime::combineStrengthRanges;
+using talos::runtime::implicitNetStrength;
+using talos::runtime::strengthBit;
+using talos::runtime::strengthCount;
 
 // IEEE 1800-2017 28.13 and 28.14: a nonresistive bidirectional pass switch
 // limits supply to strong, while a resistive switch applies Table 28-8. Apply
@@ -92,10 +92,10 @@ static uint8_t decodeChargeStrength(uint32_t flags) {
   return 2;
 }
 
-bool appendSignalEvent(obelisk_rt_context *context, uint64_t bitOffset,
+bool appendSignalEvent(talos_rt_context *context, uint64_t bitOffset,
                        bool oldValue, bool oldUnknown, bool newValue,
                        bool newUnknown, bool evaluateComputedObservers = true) {
-  return obelisk_rt_append_signal_event_unlocked(
+  return talos_rt_append_signal_event_unlocked(
       context, bitOffset, oldValue, oldUnknown, newValue, newUnknown,
       evaluateComputedObservers);
 }
@@ -161,7 +161,7 @@ static bool rebuildPassComponent(NetPassComponent &component) {
 }
 
 NetAliasCache *getNetAliasCache(const Image &image,
-                                obelisk_rt_context *context) {
+                                talos_rt_context *context) {
   if (context->netAliases.execution == context->execution)
     return &context->netAliases;
   NetAliasCache cache;
@@ -431,7 +431,7 @@ NetAliasCache *getNetAliasCache(const Image &image,
   return &context->netAliases;
 }
 
-bool isComplementaryDriverPair(const Image &image, obelisk_rt_context *context,
+bool isComplementaryDriverPair(const Image &image, talos_rt_context *context,
                                uint64_t lowOffset, uint64_t highOffset,
                                uint64_t width) {
   if (width == 0)
@@ -453,7 +453,7 @@ bool isComplementaryDriverPair(const Image &image, obelisk_rt_context *context,
   return width <= pair->width - local && highOffset == pair->highOffset + local;
 }
 
-bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
+bool publishNetBits(talos_rt_context *context, const NetAliasCache &cache,
                     std::vector<NetPublication> &publications, bool &changed) {
   std::sort(publications.begin(), publications.end(),
             [](const NetPublication &lhs, const NetPublication &rhs) {
@@ -464,7 +464,7 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
                publication.oldUnknown != publication.unknown;
     setBit(context->stateValue, publication.destination, publication.value);
     setBit(context->stateUnknown, publication.destination, publication.unknown);
-    obelisk_rt_sync_native_state_range_unlocked(context,
+    talos_rt_sync_native_state_range_unlocked(context,
                                                 publication.destination, 1);
     // A generated schedule reads its own state planes, so a net resolved here
     // has to reach those as well as the canonical image. Otherwise the value an
@@ -489,7 +489,7 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
   routed.reserve(publications.size());
   for (size_t index = 0; index != publications.size(); ++index) {
     const NetPublication &publication = publications[index];
-    uint64_t signalHandle = obelisk_rt_canonical_state_handle_unlocked(
+    uint64_t signalHandle = talos_rt_canonical_state_handle_unlocked(
         context, publication.destination, 1);
     if (signalHandle == UINT64_MAX)
       return false;
@@ -512,7 +512,7 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
           break;
         }
     }
-    obelisk_rt_invalidate_signal_snapshots_unlocked(context, signalHandle, 1);
+    talos_rt_invalidate_signal_snapshots_unlocked(context, signalHandle, 1);
     routed.push_back({publicationHandle, publicationWidth, signalHandle, index,
                       publication.oldValue != publication.value ||
                           publication.oldUnknown != publication.unknown});
@@ -545,7 +545,7 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
                              publication.unknown, false))
         return false;
     }
-    if (!obelisk_rt_notify_observer_signal_unlocked(
+    if (!talos_rt_notify_observer_signal_unlocked(
             context, routed[groupBegin].observerHandle,
             routed[groupBegin].observerWidth))
       return false;
@@ -554,7 +554,7 @@ bool publishNetBits(obelisk_rt_context *context, const NetAliasCache &cache,
   return true;
 }
 
-void cancelNetBit(obelisk_rt_context *context, uint64_t destination,
+void cancelNetBit(talos_rt_context *context, uint64_t destination,
                   bool preserveInitialProjection = false) {
   // Resolution can run while the scheduler is applying a propagation-
   // delayed driver from this same vector. Marking the superseded net event
@@ -580,7 +580,7 @@ void cancelNetBit(obelisk_rt_context *context, uint64_t destination,
   context->inertialNetPending.erase(destination);
 }
 
-void cancelNetGroup(obelisk_rt_context *context, uint64_t group) {
+void cancelNetGroup(talos_rt_context *context, uint64_t group) {
   std::vector<uint64_t> destinations;
   for (ScheduledNBA &update : context->scheduledNBAs) {
     if (update.inertialNetCancelGroup != group)
@@ -603,7 +603,7 @@ void cancelNetGroup(obelisk_rt_context *context, uint64_t group) {
     context->inertialNetPending.erase(destination);
 }
 
-bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
+bool scheduleNetBit(talos_rt_context *context, uint64_t root,
                     uint64_t cancelGroup, uint64_t destination, bool value,
                     bool unknown, const std::array<uint64_t, 3> &delays,
                     uint8_t resolution, bool chargeDecay) {
@@ -636,13 +636,13 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
   }
   if (context->nextSchedulerSequence == 0 ||
       context->nextSchedulerSequence == UINT64_MAX) {
-    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    context->schedulerStatus = TALOS_RT_OUT_OF_RESOURCES;
     return false;
   }
   uint64_t handle =
-      obelisk_rt_canonical_state_handle_unlocked(context, destination, 1);
+      talos_rt_canonical_state_handle_unlocked(context, destination, 1);
   if (handle == UINT64_MAX) {
-    context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+    context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
     return false;
   }
   uint64_t delay;
@@ -661,7 +661,7 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
   update.dueTime = delay > UINT64_MAX - context->schedulerTime
                        ? UINT64_MAX
                        : context->schedulerTime + delay;
-  update.execRegion = OBELISK_RT_REGION_ACTIVE;
+  update.execRegion = TALOS_RT_REGION_ACTIVE;
   // Native/generic execution binds compiler-emitted planes during startup.
   // Write those planes as the scheduled destination while applyNative also
   // maintains the canonical context image. Pure bytecode contexts have no
@@ -696,12 +696,12 @@ bool scheduleNetBit(obelisk_rt_context *context, uint64_t root,
 // canonical context state until their pending update is synchronized.
 class DriverStateReader {
 public:
-  DriverStateReader(obelisk_rt_context *context, bool useNativeState,
+  DriverStateReader(talos_rt_context *context, bool useNativeState,
                     bool useSchedulePlan)
       : context(context) {
     if (useSchedulePlan && context->nativeSchedulePlan && context->execution &&
         (context->nativeSchedulePlan->flags &
-         OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
+         TALOS_RT_NATIVE_SCHEDULE_DIRECT_STATE) != 0 &&
         !context->nativeScheduleDeoptimized &&
         context->nativeSchedulePlan->state_bit_count ==
             context->execution->state_bit_count &&
@@ -744,7 +744,7 @@ public:
   }
 
 private:
-  obelisk_rt_context *context;
+  talos_rt_context *context;
   const uint8_t *nativeValue = nullptr;
   const uint8_t *nativeUnknown = nullptr;
   uint64_t nativeBits = 0;
@@ -757,7 +757,7 @@ static uint16_t driverStrengths(bool value, bool unknown, uint8_t strength0,
 }
 
 static bool computeResolvedStrengths(const NetAliasCache &cache,
-                                     obelisk_rt_context *context, uint64_t root,
+                                     talos_rt_context *context, uint64_t root,
                                      bool useNativeState, bool useSchedulePlan,
                                      uint16_t &resolvedStrengths) {
   auto members = cache.members.find(root);
@@ -866,7 +866,7 @@ static uint16_t normalizeStrengthRange(uint16_t strengths) {
   return range;
 }
 
-static bool scheduleDelayedMosEdge(obelisk_rt_context *context,
+static bool scheduleDelayedMosEdge(talos_rt_context *context,
                                    const NetDelayedMosEdge &edge,
                                    uint16_t sourceStrengths,
                                    const DelayedMosControl &control) {
@@ -913,7 +913,7 @@ static bool scheduleDelayedMosEdge(obelisk_rt_context *context,
     delay = std::min({control.delays[0], control.delays[1], control.delays[2]});
   if (context->nextSchedulerSequence == 0 ||
       context->nextSchedulerSequence == UINT64_MAX) {
-    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    context->schedulerStatus = TALOS_RT_OUT_OF_RESOURCES;
     return false;
   }
   uint64_t sequence = context->nextSchedulerSequence++;
@@ -927,7 +927,7 @@ static bool scheduleDelayedMosEdge(obelisk_rt_context *context,
   auto scheduled = context->scheduledPassSwitchEvents.emplace(key, event);
   if (!scheduled.second)
     return false;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     if (!context->delayedMosPending
              .emplace(edge.key, DelayedMosPending{scheduled.first, target})
              .second) {
@@ -935,14 +935,14 @@ static bool scheduleDelayedMosEdge(obelisk_rt_context *context,
       return false;
     }
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     context->scheduledPassSwitchEvents.erase(scheduled.first);
-    OBELISK_RT_RETHROW;
+    TALOS_RT_RETHROW;
   }
   return true;
 }
 
-bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
+bool resolveNetRoots(const NetAliasCache &cache, talos_rt_context *context,
                      std::vector<uint64_t> affectedRoots, bool &changed,
                      bool useNativeState) {
   if (affectedRoots.empty())
@@ -1130,9 +1130,9 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
           if (inserted)
             for (uint64_t bit = 0; bit != net->width; ++bit)
               initial->second &=
-                  obelisk::designbytecode::bit(context->stateValue,
+                  talos::designbytecode::bit(context->stateValue,
                                                net->valueOffset + bit) &&
-                  obelisk::designbytecode::bit(context->stateUnknown,
+                  talos::designbytecode::bit(context->stateUnknown,
                                                net->valueOffset + bit);
           delayedPublications.push_back(
               {root, group, publication, *delays, resolution, initial->second});
@@ -1182,13 +1182,13 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
   return publishNetBits(context, cache, publications, changed);
 }
 
-bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
+bool resolveNetRoots(const NetAliasCache &cache, talos_rt_context *context,
                      std::vector<uint64_t> affectedRoots, bool &changed) {
   return resolveNetRoots(cache, context, std::move(affectedRoots), changed,
                          false);
 }
 
-bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
+bool resolveDrivenNets(const Image &image, talos_rt_context *context,
                        int64_t changedBegin, int64_t changedEnd, bool &changed,
                        bool useNativeState) {
   if (!context || changedBegin < 0 || changedEnd < changedBegin)
@@ -1230,7 +1230,7 @@ bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
                          useNativeState);
 }
 
-bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
+bool resolveDrivenNets(const Image &image, talos_rt_context *context,
                        int64_t changedBegin, int64_t changedEnd,
                        bool &changed) {
   return resolveDrivenNets(image, context, changedBegin, changedEnd, changed,
@@ -1238,7 +1238,7 @@ bool resolveDrivenNets(const Image &image, obelisk_rt_context *context,
 }
 
 static bool resolveInitialDriverNets(const Image &image,
-                                     obelisk_rt_context *context,
+                                     talos_rt_context *context,
                                      bool useNativeState, bool &changed) {
   NetAliasCache *cache = getNetAliasCache(image, context);
   if (!cache)
@@ -1248,7 +1248,7 @@ static bool resolveInitialDriverNets(const Image &image,
   for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
     CaptureRecord driver = captureAt(image, index);
     if (driver.function != kDriverStateDescriptor ||
-        (driver.argument & OBELISK_RT_DB_DRIVER_INITIAL_X) == 0)
+        (driver.argument & TALOS_RT_DB_DRIVER_INITIAL_X) == 0)
       continue;
     for (uint64_t bit = 0; bit != driver.planeSize; ++bit) {
       auto found = cache->rootByBit.find(driver.unknownOffset + bit);
@@ -1264,26 +1264,26 @@ static bool resolveInitialDriverNets(const Image &image,
                          useNativeState);
 }
 
-} // namespace obelisk::designbytecode
+} // namespace talos::designbytecode
 
-using namespace obelisk::designbytecode;
+using namespace talos::designbytecode;
 
-extern "C" uint16_t obelisk_rt_v1_strength_resolve(uint16_t lhs, uint16_t rhs) {
+extern "C" uint16_t talos_rt_v1_strength_resolve(uint16_t lhs, uint16_t rhs) {
   return combineStrengthRanges(lhs, rhs);
 }
 
-obelisk_rt_status obelisk_rt_design_net_strength(obelisk_rt_context *context,
+talos_rt_status talos_rt_design_net_strength(talos_rt_context *context,
                                                  uint64_t netHandle,
                                                  uint16_t *outStrengths,
                                                  bool useNativeState) noexcept {
   if (!context || !context->execution || !outStrengths)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outStrengths = 0;
-  OBELISK_RT_TRY {
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+  TALOS_RT_TRY {
+    talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     ContextTransaction transaction(context);
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
 
@@ -1294,43 +1294,43 @@ obelisk_rt_status obelisk_rt_design_net_strength(obelisk_rt_context *context,
       const NativeStaticState *state = findNativeStaticState(context, staticID);
       if (!state || coordinate < 0 ||
           static_cast<uint64_t>(coordinate) >= state->bitWidth)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       absolute = state->bitOffset + static_cast<uint64_t>(coordinate);
     } else if (decodeNativeGlobal(netHandle, coordinate)) {
       if (coordinate < 0)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       absolute = static_cast<uint64_t>(coordinate);
     } else {
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     }
 
     NetAliasCache *cache = getNetAliasCache(image, context);
     auto root = cache->rootByBit.find(absolute);
     if (root == cache->rootByBit.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (!computeResolvedStrengths(*cache, context, root->second, useNativeState,
                                   /*useSchedulePlan=*/useNativeState,
                                   *outStrengths))
-      return OBELISK_RT_INVALID_HANDLE;
-    return OBELISK_RT_OK;
+      return TALOS_RT_INVALID_HANDLE;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_BYTECODE; }
 }
 
-obelisk_rt_status obelisk_rt_design_driver_strength(
-    obelisk_rt_context *context, uint64_t lowOffset, uint64_t highOffset,
+talos_rt_status talos_rt_design_driver_strength(
+    talos_rt_context *context, uint64_t lowOffset, uint64_t highOffset,
     uint16_t *outStrengths, bool useNativeState) noexcept {
   if (!context || !context->execution || !outStrengths)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outStrengths = 0;
-  if ((context->execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
-    return OBELISK_RT_EOF;
-  OBELISK_RT_TRY {
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+  if ((context->execution->flags & TALOS_RT_EXECUTION_HAS_BYTECODE) == 0)
+    return TALOS_RT_EOF;
+  TALOS_RT_TRY {
+    talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     ContextTransaction transaction(context);
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
 
@@ -1347,25 +1347,25 @@ obelisk_rt_status obelisk_rt_design_driver_strength(
         last = middle;
     }
     if (first == 0)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t lowIndex = first - 1;
     CaptureRecord low = captureAt(image, lowIndex);
     constexpr uint32_t highBank = uint32_t{1} << 11;
     if (low.function != kDriverStateDescriptor ||
         (low.argument & highBank) != 0 || lowOffset < low.valueOffset ||
         lowOffset - low.valueOffset >= low.planeSize)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
 
     CaptureRecord high;
     bool paired =
         lowIndex + 1 < image.stateDescriptorCount &&
         ((high = captureAt(image, lowIndex + 1)).argument & highBank) != 0;
     if (paired != (highOffset != UINT64_MAX))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (paired &&
         (high.function != kDriverStateDescriptor ||
          highOffset != high.valueOffset + (lowOffset - low.valueOffset)))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
 
     DriverStateReader stateBit(context, useNativeState,
                                /*useSchedulePlan=*/useNativeState);
@@ -1379,25 +1379,25 @@ obelisk_rt_status obelisk_rt_design_driver_strength(
       strengths =
           combineStrengthRanges(strengths, readStrengths(high, highOffset));
     *outStrengths = strengths;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_BYTECODE; }
 }
 
-obelisk_rt_status obelisk_rt_count_design_drivers(
-    obelisk_rt_context *context, uint64_t netHandle, uint32_t *outForced,
+talos_rt_status talos_rt_count_design_drivers(
+    talos_rt_context *context, uint64_t netHandle, uint32_t *outForced,
     uint32_t *outTotal, uint32_t *outZero, uint32_t *outOne,
     uint32_t *outUnknown, bool useNativeState) noexcept {
   if (!context || !context->execution || !outForced || !outTotal || !outZero ||
       !outOne || !outUnknown)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outForced = *outTotal = *outZero = *outOne = *outUnknown = 0;
-  OBELISK_RT_TRY {
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+  TALOS_RT_TRY {
+    talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     ContextTransaction transaction(context);
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
 
@@ -1408,24 +1408,24 @@ obelisk_rt_status obelisk_rt_count_design_drivers(
       const NativeStaticState *state = findNativeStaticState(context, staticID);
       if (!state || coordinate < 0 ||
           static_cast<uint64_t>(coordinate) >= state->bitWidth)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       absolute = state->bitOffset + static_cast<uint64_t>(coordinate);
     } else if (decodeNativeGlobal(netHandle, coordinate)) {
       if (coordinate < 0)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       absolute = static_cast<uint64_t>(coordinate);
     } else {
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     }
 
     NetAliasCache *cache = getNetAliasCache(image, context);
     auto rootFound = cache->rootByBit.find(absolute);
     if (rootFound == cache->rootByBit.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t root = rootFound->second;
     auto members = cache->members.find(root);
     if (members == cache->members.end())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     for (uint64_t member : members->second)
       if (member / 64 < context->forceMask.size() &&
           (context->forceMask[member / 64] & (uint64_t{1} << (member % 64))) !=
@@ -1519,14 +1519,14 @@ obelisk_rt_status obelisk_rt_count_design_drivers(
         if (neighbor.controlled) {
           auto state = cache->controlledPassStates.find(neighbor.passSwitchId);
           if (state == cache->controlledPassStates.end())
-            return OBELISK_RT_INVALID_DESIGN;
+            return TALOS_RT_INVALID_DESIGN;
           if (state->second == 0)
             continue;
         }
         auto neighborMembers = cache->members.find(neighbor.root);
         if (neighborMembers == cache->members.end() ||
             neighborMembers->second.empty())
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         contribution(strengthsFor(neighborMembers->second.front(), 6, 6));
       }
     if (auto delayed = cache->delayedMosByDestination.find(root);
@@ -1534,57 +1534,57 @@ obelisk_rt_status obelisk_rt_count_design_drivers(
       for (uint64_t edge : delayed->second) {
         auto strengths = context->delayedMosContributions.find(edge);
         if (strengths == context->delayedMosContributions.end())
-          return OBELISK_RT_INVALID_DESIGN;
+          return TALOS_RT_INVALID_DESIGN;
         contribution(strengths->second);
       }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_BYTECODE; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_net_count_drivers(obelisk_rt_context *context, uint64_t netHandle,
+extern "C" talos_rt_status
+talos_rt_v1_net_count_drivers(talos_rt_context *context, uint64_t netHandle,
                                 uint32_t *outForced, uint32_t *outTotal,
                                 uint32_t *outZero, uint32_t *outOne,
                                 uint32_t *outUnknown) {
-  return obelisk_rt_count_design_drivers(context, netHandle, outForced,
+  return talos_rt_count_design_drivers(context, netHandle, outForced,
                                          outTotal, outZero, outOne, outUnknown,
                                          true);
 }
 
-namespace obelisk::designbytecode {
+namespace talos::designbytecode {
 
-obelisk_rt_status applyPassSwitchControl(obelisk_rt_context *context,
+talos_rt_status applyPassSwitchControl(talos_rt_context *context,
                                          uint32_t passSwitchId,
                                          uint8_t nextState, bool &changed) {
   if (!context || !context->designBytecodeImageValidated ||
       passSwitchId == UINT32_MAX || nextState > 2)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   NetAliasCache *cache =
       getNetAliasCache(context->designBytecodeImage, context);
   if (!cache)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   uint32_t encodedId = passSwitchId + 1;
   auto edges = cache->controlledPassEdges.find(encodedId);
   auto state = cache->controlledPassStates.find(encodedId);
   if (edges == cache->controlledPassEdges.end() ||
       state == cache->controlledPassStates.end())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   uint8_t previousState = state->second;
   if (previousState > 3)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   if (previousState == nextState)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   std::unordered_set<uint64_t> affectedComponents;
   for (const NetControlledPassEdge &edge : edges->second) {
     auto component = cache->passComponents.find(edge.component);
     if (component == cache->passComponents.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     NetPassComponent &pass = component->second;
     size_t count = pass.roots.size();
     if (edge.lhs >= count || edge.rhs >= count)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     size_t forward = static_cast<size_t>(edge.lhs) * count + edge.rhs;
     size_t reverse = static_cast<size_t>(edge.rhs) * count + edge.lhs;
     auto adjust = [&](std::vector<uint32_t> &counts, bool add) {
@@ -1620,103 +1620,103 @@ obelisk_rt_status applyPassSwitchControl(obelisk_rt_context *context,
   for (uint64_t componentId : affectedComponents) {
     NetPassComponent &component = cache->passComponents.at(componentId);
     if (!rebuildPassComponent(component))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     roots.insert(roots.end(), component.roots.begin(), component.roots.end());
   }
   if (!resolveNetRoots(*cache, context, std::move(roots), changed,
                        context->nativeStateValue != nullptr))
-    return context->schedulerStatus == OBELISK_RT_OK ? OBELISK_RT_INVALID_DESIGN
+    return context->schedulerStatus == TALOS_RT_OK ? TALOS_RT_INVALID_DESIGN
                                                      : context->schedulerStatus;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status applyDelayedMosEvent(obelisk_rt_context *context,
+talos_rt_status applyDelayedMosEvent(talos_rt_context *context,
                                        uint64_t edgeKey, uint16_t strengths,
                                        bool &changed) {
   if (!context || !context->designBytecodeImageValidated || strengths == 0 ||
       (strengths & ~uint16_t{0x7fff}) != 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   NetAliasCache *cache =
       getNetAliasCache(context->designBytecodeImage, context);
   if (!cache)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   auto edge = cache->delayedMosEdges.find(edgeKey);
   auto contribution = context->delayedMosContributions.find(edgeKey);
   if (edge == cache->delayedMosEdges.end() ||
       contribution == context->delayedMosContributions.end())
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   if (contribution->second == strengths)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   contribution->second = strengths;
   if (!resolveNetRoots(*cache, context, {edge->second.destinationRoot}, changed,
                        context->nativeStateValue != nullptr))
-    return context->schedulerStatus == OBELISK_RT_OK ? OBELISK_RT_INVALID_DESIGN
+    return context->schedulerStatus == TALOS_RT_OK ? TALOS_RT_INVALID_DESIGN
                                                      : context->schedulerStatus;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-} // namespace obelisk::designbytecode
+} // namespace talos::designbytecode
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_pass_switch_control(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_pass_switch_control(talos_rt_context *context,
                                   uint32_t passSwitchId, uint32_t value,
                                   uint32_t unknown) {
   if (!context || !context->execution || value > 1 || unknown > 1 ||
       passSwitchId == UINT32_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextTransaction transaction(context);
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
-    obelisk::designbytecode::Image image;
-    if (!obelisk::designbytecode::loadValidatedImage(entry, context, image,
+    talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    talos::designbytecode::Image image;
+    if (!talos::designbytecode::loadValidatedImage(entry, context, image,
                                                      /*inventoryOnly=*/true))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     bool changed = false;
-    obelisk_rt_status status = obelisk::designbytecode::applyPassSwitchControl(
+    talos_rt_status status = talos::designbytecode::applyPassSwitchControl(
         context, passSwitchId, unknown ? 2 : static_cast<uint8_t>(value),
         changed);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     if (changed && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_BYTECODE; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control_delayed(
-    obelisk_rt_context *context, uint32_t passSwitchId, uint32_t value,
+extern "C" talos_rt_status talos_rt_v1_pass_switch_control_delayed(
+    talos_rt_context *context, uint32_t passSwitchId, uint32_t value,
     uint32_t unknown, uint64_t turnOnDelay, uint64_t turnOffDelay,
     uint64_t unknownDelay) {
   if (!context || !context->execution || value > 1 || unknown > 1 ||
       passSwitchId == UINT32_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextTransaction transaction(context);
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
-    obelisk::designbytecode::Image image;
-    if (!obelisk::designbytecode::loadValidatedImage(entry, context, image,
+    talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    talos::designbytecode::Image image;
+    if (!talos::designbytecode::loadValidatedImage(entry, context, image,
                                                      /*inventoryOnly=*/true))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     NetAliasCache *cache =
-        obelisk::designbytecode::getNetAliasCache(image, context);
+        talos::designbytecode::getNetAliasCache(image, context);
     if (!cache)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     uint32_t encodedId = passSwitchId + 1;
     auto current = cache->controlledPassStates.find(encodedId);
     if (current == cache->controlledPassStates.end() ||
         cache->controlledPassEdges.find(encodedId) ==
             cache->controlledPassEdges.end())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     if (current->second == 3) {
       bool initialized = false;
-      obelisk_rt_status status =
-          obelisk::designbytecode::applyPassSwitchControl(context, passSwitchId,
+      talos_rt_status status =
+          talos::designbytecode::applyPassSwitchControl(context, passSwitchId,
                                                           2, initialized);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       if (initialized && ++context->schedulerEpoch == 0)
         context->schedulerEpoch = 1;
@@ -1725,34 +1725,34 @@ extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control_delayed(
     auto pending = context->delayedPassSwitchPending.find(passSwitchId);
     if (pending != context->delayedPassSwitchPending.end() &&
         pending->second.state == nextState)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     if (pending != context->delayedPassSwitchPending.end()) {
       auto scheduled = pending->second.event;
       if (scheduled == context->scheduledPassSwitchEvents.end() ||
           scheduled->second.passSwitchID != passSwitchId)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       context->scheduledPassSwitchEvents.erase(scheduled);
       context->delayedPassSwitchPending.erase(pending);
     }
     if (current->second == nextState)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     uint64_t delay = nextState == 1   ? turnOnDelay
                      : nextState == 0 ? turnOffDelay
                                       : unknownDelay;
     if (delay == 0) {
       bool changed = false;
-      obelisk_rt_status status =
-          obelisk::designbytecode::applyPassSwitchControl(context, passSwitchId,
+      talos_rt_status status =
+          talos::designbytecode::applyPassSwitchControl(context, passSwitchId,
                                                           nextState, changed);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       if (changed && ++context->schedulerEpoch == 0)
         context->schedulerEpoch = 1;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (context->nextSchedulerSequence == 0 ||
         context->nextSchedulerSequence == UINT64_MAX)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     uint64_t sequence = context->nextSchedulerSequence++;
     uint64_t dueTime = delay > UINT64_MAX - context->schedulerTime
                            ? UINT64_MAX
@@ -1761,48 +1761,48 @@ extern "C" obelisk_rt_status obelisk_rt_v1_pass_switch_control_delayed(
     auto scheduled = context->scheduledPassSwitchEvents.emplace(
         key, ScheduledPassSwitchEvent{passSwitchId, nextState});
     if (!scheduled.second)
-      return OBELISK_RT_INVALID_DESIGN;
-    OBELISK_RT_TRY {
+      return TALOS_RT_INVALID_DESIGN;
+    TALOS_RT_TRY {
       if (!context->delayedPassSwitchPending
                .emplace(passSwitchId,
                         DelayedPassSwitchPending{scheduled.first, nextState})
                .second) {
         context->scheduledPassSwitchEvents.erase(scheduled.first);
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       }
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       context->scheduledPassSwitchEvents.erase(scheduled.first);
-      OBELISK_RT_RETHROW;
+      TALOS_RT_RETHROW;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_BYTECODE; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_mos_drive_delayed(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_mos_drive_delayed(talos_rt_context *context,
                                 uint32_t passSwitchId, uint32_t value,
                                 uint32_t unknown, uint64_t riseDelay,
                                 uint64_t fallDelay, uint64_t turnoffDelay) {
   if (!context || !context->execution || value > 1 || unknown > 1 ||
       passSwitchId == UINT32_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextTransaction transaction(context);
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     NetAliasCache *cache = getNetAliasCache(image, context);
     if (!cache)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     uint32_t encodedId = passSwitchId + 1;
     auto edges = cache->delayedMosByControl.find(encodedId);
     if (edges == cache->delayedMosByControl.end() || edges->second.empty())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     DelayedMosControl control;
     control.state = unknown ? 2 : static_cast<uint8_t>(value);
     control.delays = {riseDelay, fallDelay, turnoffDelay};
@@ -1810,7 +1810,7 @@ obelisk_rt_v1_mos_drive_delayed(obelisk_rt_context *context,
     for (uint64_t edgeKey : edges->second) {
       auto edge = cache->delayedMosEdges.find(edgeKey);
       if (edge == cache->delayedMosEdges.end())
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       uint16_t sourceStrengths = 0;
       if (!computeResolvedStrengths(*cache, context, edge->second.sourceRoot,
                                     context->nativeStateValue != nullptr,
@@ -1818,37 +1818,37 @@ obelisk_rt_v1_mos_drive_delayed(obelisk_rt_context *context,
                                     sourceStrengths) ||
           !scheduleDelayedMosEdge(context, edge->second, sourceStrengths,
                                   control))
-        return context->schedulerStatus == OBELISK_RT_OK
-                   ? OBELISK_RT_INVALID_DESIGN
+        return context->schedulerStatus == TALOS_RT_OK
+                   ? TALOS_RT_INVALID_DESIGN
                    : context->schedulerStatus;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_BYTECODE; }
 }
 
-extern "C" uint16_t obelisk_rt_v1_strength_resolve_kind(uint16_t lhs,
+extern "C" uint16_t talos_rt_v1_strength_resolve_kind(uint16_t lhs,
                                                         uint16_t rhs,
                                                         uint32_t resolution) {
   return combineStrengthRanges(lhs, rhs, static_cast<uint8_t>(resolution));
 }
 
-obelisk_rt_status
-obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
+talos_rt_status
+talos_rt_initialize_design_state(talos_rt_context *context) noexcept {
   if (!context || !context->execution)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  if ((context->execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) == 0)
-    return OBELISK_RT_OK;
-  OBELISK_RT_TRY {
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    return TALOS_RT_INVALID_ARGUMENT;
+  if ((context->execution->flags & TALOS_RT_EXECUTION_HAS_BYTECODE) == 0)
+    return TALOS_RT_OK;
+  TALOS_RT_TRY {
+    talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     if (context->stateValue.size() !=
             static_cast<size_t>((image.stateBitCount + 63) / 64) ||
         context->stateUnknown.size() != context->stateValue.size())
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     for (uint64_t index = 0; index != image.stateDescriptorCount; ++index) {
       CaptureRecord driver = captureAt(image, index);
       if (driver.function == kNetStateDescriptor) {
@@ -1859,7 +1859,7 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
                  fourState);
         }
       } else if (driver.function == kDriverStateDescriptor) {
-        bool initialX = (driver.argument & OBELISK_RT_DB_DRIVER_INITIAL_X) != 0;
+        bool initialX = (driver.argument & TALOS_RT_DB_DRIVER_INITIAL_X) != 0;
         for (uint64_t bitIndex = 0; bitIndex != driver.planeSize; ++bitIndex) {
           setBit(context->stateValue, driver.valueOffset + bitIndex,
                  !context->twoState() && !initialX);
@@ -1869,7 +1869,7 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
     }
     NetAliasCache *cache = getNetAliasCache(image, context);
     if (!cache)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     for (const auto &[root, resolution] : cache->resolutionByRoot) {
       if (resolution < 5)
         continue;
@@ -1885,70 +1885,70 @@ obelisk_rt_initialize_design_state(obelisk_rt_context *context) noexcept {
     }
     bool changed = false;
     if (!resolveInitialDriverNets(image, context, false, changed))
-      return context->schedulerStatus == OBELISK_RT_OK
-                 ? OBELISK_RT_INVALID_DESIGN
+      return context->schedulerStatus == TALOS_RT_OK
+                 ? TALOS_RT_INVALID_DESIGN
                  : context->schedulerStatus;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_BYTECODE; }
 }
 
-obelisk_rt_status obelisk_rt_resolve_design_drivers(obelisk_rt_context *context,
+talos_rt_status talos_rt_resolve_design_drivers(talos_rt_context *context,
                                                     uint64_t begin,
                                                     uint64_t end) noexcept {
   if (!context || !context->execution || begin > end ||
       end > uint64_t{INT64_MAX})
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextTransaction transaction(context);
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     bool changed = false;
     if (!resolveDrivenNets(image, context, static_cast<int64_t>(begin),
                            static_cast<int64_t>(end), changed, true))
-      return context->schedulerStatus == OBELISK_RT_OK
-                 ? OBELISK_RT_INVALID_HANDLE
+      return context->schedulerStatus == TALOS_RT_OK
+                 ? TALOS_RT_INVALID_HANDLE
                  : context->schedulerStatus;
     if (changed && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_BYTECODE; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_resolve_drivers(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_resolve_drivers(talos_rt_context *context,
                                         uint64_t begin, uint64_t end) {
-  return obelisk_rt_resolve_design_drivers(context, begin, end);
+  return talos_rt_resolve_design_drivers(context, begin, end);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_resolve_initial_drivers(obelisk_rt_context *context) {
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_resolve_initial_drivers(talos_rt_context *context) {
   if (!context || !context->execution)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextTransaction transaction(context);
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     bool changed = false;
     bool useNativeState = context->nativeStateValue != nullptr &&
                           context->nativeStateUnknown != nullptr;
     if (!resolveInitialDriverNets(image, context, useNativeState, changed))
-      return context->schedulerStatus == OBELISK_RT_OK
-                 ? OBELISK_RT_INVALID_DESIGN
+      return context->schedulerStatus == TALOS_RT_OK
+                 ? TALOS_RT_INVALID_DESIGN
                  : context->schedulerStatus;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_BYTECODE; }
 }
 
 // A VPI mutation can arrive inside a native fragment, before a scheduler
@@ -1956,9 +1956,9 @@ obelisk_rt_v1_scheduler_resolve_initial_drivers(obelisk_rt_context *context) {
 // current contributions (IEEE 1800-2023 10.6.2), not the previous runtime
 // snapshot. Preserve already dirty roots before importing the clean planes.
 static bool
-synchronizeNativeNetOverrideStateUnlocked(obelisk_rt_context *context) {
+synchronizeNativeNetOverrideStateUnlocked(talos_rt_context *context) {
   const auto *plan = context->nativeSchedulePlan;
-  if (!plan || !(plan->flags & OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE) ||
+  if (!plan || !(plan->flags & TALOS_RT_NATIVE_SCHEDULE_DIRECT_STATE) ||
       context->nativeScheduleDeoptimized || !plan->state_bit_count)
     return true;
   return reconcileNativeDirtyRootsToPlanesUnlocked(context, plan) &&
@@ -1967,28 +1967,28 @@ synchronizeNativeNetOverrideStateUnlocked(obelisk_rt_context *context) {
                                          plan->state_bit_count);
 }
 
-obelisk_rt_status
-obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
+talos_rt_status
+talos_rt_force_design_nets(talos_rt_context *context, uint64_t begin,
                              uint64_t width, const uint8_t *value,
                              const uint8_t *unknown) noexcept {
   if (!context || !context->execution || !value || width == 0 ||
       begin > UINT64_MAX - width)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextTransaction transaction(context);
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (!synchronizeNativeNetOverrideStateUnlocked(context))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     NetAliasCache *cache = getNetAliasCache(image, context);
     std::map<uint64_t, std::pair<bool, bool>> forcedRoots;
     for (uint64_t index = 0; index != width; ++index) {
       auto found = cache->rootByBit.find(begin + index);
       if (found == cache->rootByBit.end())
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       bool nextValue =
           (value[index / 8] & static_cast<uint8_t>(1u << (index % 8))) != 0;
       bool nextUnknown =
@@ -2002,7 +2002,7 @@ obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
     for (const auto &[root, forced] : forcedRoots) {
       auto members = cache->members.find(root);
       if (members == cache->members.end())
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       for (uint64_t destination : members->second) {
         bool fourState = false;
         for (const NetAliasRange &net : cache->nets)
@@ -2022,7 +2022,7 @@ obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
                                                 << (destination % 64);
         // Every alias of a forced net must leave the clean native path, even
         // when forcing the value already present produces no transition.
-        obelisk_rt_aot_external_write_range_unlocked(context, destination, 1,
+        talos_rt_aot_external_write_range_unlocked(context, destination, 1,
                                                      true);
       }
     }
@@ -2040,45 +2040,45 @@ obelisk_rt_force_design_nets(obelisk_rt_context *context, uint64_t begin,
                          /*useNativeState=*/context->nativeStateValue !=
                                  nullptr ||
                              !cache->passComponents.empty()))
-      return context->schedulerStatus == OBELISK_RT_OK
-                 ? OBELISK_RT_INVALID_HANDLE
+      return context->schedulerStatus == TALOS_RT_OK
+                 ? TALOS_RT_INVALID_HANDLE
                  : context->schedulerStatus;
     if (changed && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_BYTECODE; }
 }
 
 uint64_t
-obelisk_rt_canonical_net_bit_unlocked(const obelisk_rt_context *context,
+talos_rt_canonical_net_bit_unlocked(const talos_rt_context *context,
                                       uint64_t bit) noexcept {
   auto found = context->netAliases.rootByBit.find(bit);
   return found == context->netAliases.rootByBit.end() ? bit : found->second;
 }
 
-obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
+talos_rt_status talos_rt_release_design_nets(talos_rt_context *context,
                                                  uint64_t begin,
                                                  uint64_t width) noexcept {
   if (!context || !context->execution || width == 0 ||
       begin > UINT64_MAX - width)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextTransaction transaction(context);
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     if (!synchronizeNativeNetOverrideStateUnlocked(context))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     NetAliasCache *cache = getNetAliasCache(image, context);
     std::vector<uint64_t> roots;
     for (uint64_t index = 0; index != width; ++index) {
       auto found = cache->rootByBit.find(begin + index);
       if (found == cache->rootByBit.end())
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       roots.push_back(found->second);
     }
     std::sort(roots.begin(), roots.end());
@@ -2087,7 +2087,7 @@ obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
     for (uint64_t root : roots) {
       auto members = cache->members.find(root);
       if (members == cache->members.end())
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       for (uint64_t destination : members->second)
         if (destination / 64 < context->forceMask.size()) {
           context->forceMask[destination / 64] &=
@@ -2100,31 +2100,31 @@ obelisk_rt_status obelisk_rt_release_design_nets(obelisk_rt_context *context,
                          /*useNativeState=*/context->nativeStateValue !=
                                  nullptr ||
                              !cache->passComponents.empty()))
-      return context->schedulerStatus == OBELISK_RT_OK
-                 ? OBELISK_RT_INVALID_HANDLE
+      return context->schedulerStatus == TALOS_RT_OK
+                 ? TALOS_RT_INVALID_HANDLE
                  : context->schedulerStatus;
     if (changed && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
     // Resolve first: re-promotion must see the released driver's value, not
     // the previous forced value. Clear all aliases before checking each root.
     for (uint64_t destination : releasedBits)
-      obelisk_rt_aot_release_range_unlocked(context, destination, 1);
-    return OBELISK_RT_OK;
+      talos_rt_aot_release_range_unlocked(context, destination, 1);
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_BYTECODE; }
 }
 
-obelisk_rt_status
-obelisk_rt_design_net_is_connected(obelisk_rt_context *context, uint64_t begin,
+talos_rt_status
+talos_rt_design_net_is_connected(talos_rt_context *context, uint64_t begin,
                                    uint64_t end, bool *outConnected) noexcept {
   if (!context || !context->execution || !outConnected || begin > end)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
-    obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
+    talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
     Image image;
     if (!loadValidatedImage(entry, context, image, /*inventoryOnly=*/true))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     NetAliasCache *cache = getNetAliasCache(image, context);
     *outConnected = false;
@@ -2145,8 +2145,8 @@ obelisk_rt_design_net_is_connected(obelisk_rt_context *context, uint64_t begin,
         break;
       }
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_BYTECODE; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_BYTECODE; }
 }

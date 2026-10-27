@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s --split-input-file '--test-obelisk-activation-regions=functions=overwrite reaching-values=true inputs=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=INPUT
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{grow-acyclic=false},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --split-input-file '--test-talos-activation-regions=functions=overwrite reaching-values=true inputs=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=INPUT
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{grow-acyclic=false},talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
 // A transient old-state publication is transparent only when all final outputs
 // are independent of it AND every output's observer belongs to the transitive
 // transition-insensitive closure (IEEE 1800-2023 4.3). Ordinary fusion admission
 // still includes intermediate dependencies; @overwrite remains a separate actor
 // (growth is off, so it is not absorbed as an acyclic neighbor).
 // CHECK-LABEL: simulation.design @final_overwrite
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK: simulation.spawn @__talos_region_kernel_0_0
 // CHECK: simulation.spawn @overwrite
 module {
   simulation.design @final_overwrite {
@@ -77,11 +77,11 @@ module {
 // -----
 
 // CHECK-LABEL: simulation.design @old_value_escapes
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 // CHECK: simulation.spawn @producer_and_consumer
 // CHECK: simulation.spawn @transform
 // CHECK: simulation.spawn @overwrite
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 module {
   simulation.design @old_value_escapes {
     simulation.scope.decl 0
@@ -150,11 +150,11 @@ module {
 // -----
 
 // CHECK-LABEL: simulation.design @transition_observed
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 // CHECK: simulation.spawn @producer_and_consumer
 // CHECK: simulation.spawn @transform
 // CHECK: simulation.spawn @overwrite
-// CHECK-NOT: __obelisk_region_kernel_
+// CHECK-NOT: __talos_region_kernel_
 module {
   simulation.design @transition_observed {
     simulation.scope.decl 0

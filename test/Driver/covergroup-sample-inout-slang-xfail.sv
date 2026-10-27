@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %s | FileCheck %s
+// RUN: %talos --std=1800-2023 -emit-talos %s | FileCheck %s
 
 // IEEE 1800-2023 19.8.1 prohibits output sample arguments, but permits inout.
 // Pinned Slang v11.0 rejects inout before producing an AST. Keep the legal
@@ -16,5 +16,5 @@ module sample_inout;
   end
 endmodule
 
-// CHECK: obelisk.sv.symbol.formal_argument
+// CHECK: talos.sv.symbol.formal_argument
 // CHECK-SAME: is_coverage_sample_formal

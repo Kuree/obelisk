@@ -1,8 +1,8 @@
 //===- ClassDispatchAnalysis.cpp - Managed class dispatch ---------------===//
 
-#include "obelisk/Analysis/ClassDispatchAnalysis.h"
-#include "obelisk/Analysis/DescriptorOrdering.h"
-#include "obelisk/Analysis/ParallelWalk.h"
+#include "talos/Analysis/ClassDispatchAnalysis.h"
+#include "talos/Analysis/DescriptorOrdering.h"
+#include "talos/Analysis/ParallelWalk.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
@@ -15,7 +15,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
 // Immutable Patricia maps share inherited tables. A lookup or update follows
@@ -375,4 +375,4 @@ size_t ClassDispatchAnalysis::getNumMethodTableNodes() const {
   return visited.size();
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

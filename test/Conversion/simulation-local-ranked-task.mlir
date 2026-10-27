@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' -o %t.group.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' -o %t.group.mlir
 // RUN: FileCheck %s --check-prefix=GROUP < %t.group.mlir
 // RUN: FileCheck %s --check-prefix=NO-SNAPSHOTS < %t.group.mlir
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | obelisk-translate --mlir-to-llvmir | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SEPARATE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion,simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | talos-translate --mlir-to-llvmir | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SEPARATE
 
 // Conditional computation and a reconvergent chain run in one ranked native
 // activation while a task supplies stimulus. Publications and timed task work
@@ -10,27 +10,27 @@
 // must all reach the output. No test relies on cross-process race ordering.
 // Full VPI access keeps the processes separate; other separating variants are
 // in simulation-local-ranked-task-separate.mlir.
-// GROUP: simulation.spawn @__obelisk_region_kernel_
+// GROUP: simulation.spawn @__talos_region_kernel_
 // GROUP-NOT: simulation.func @first(
 // GROUP-NOT: simulation.func @second(
-// GROUP: simulation.func private @__obelisk_region_kernel_
+// GROUP: simulation.func private @__talos_region_kernel_
 // GROUP-SAME: entry_kind = 4 : i32
 // GROUP-SAME: schedule.native.region_body
 // GROUP-DAG: cf.cond_br
 // GROUP-DAG: simulation.suspend.any
-// NO-SNAPSHOTS: simulation.func private @__obelisk_region_kernel_
+// NO-SNAPSHOTS: simulation.func private @__talos_region_kernel_
 // NO-SNAPSHOTS-NOT: simulation.logic.compare case_ne
 // NO-SNAPSHOTS-NOT: arith.andi
-// SEPARATE-NOT: __obelisk_region_kernel_
+// SEPARATE-NOT: __talos_region_kernel_
 // SEPARATE: simulation.func @first(
 // SEPARATE: simulation.func @second(
-// SEPARATE-NOT: __obelisk_region_kernel_
-// NATIVE: define void @driver.__obelisk_group_body(
+// SEPARATE-NOT: __talos_region_kernel_
+// NATIVE: define void @driver.__talos_group_body(
 // NATIVE-NOT: llvm.coro
-// NATIVE: call i64 @stimulus.__obelisk_activate
+// NATIVE: call i64 @stimulus.__talos_activate
 // NATIVE-NOT: llvm.coro
-// NATIVE: define i32 @driver.__obelisk_native_execute
-// NATIVE: define i32 @__obelisk_region_kernel_{{[0-9_]+}}.__obelisk_table_body(
+// NATIVE: define i32 @driver.__talos_native_execute
+// NATIVE: define i32 @__talos_region_kernel_{{[0-9_]+}}.__talos_table_body(
 // NATIVE-NOT: llvm.coro
 // NATIVE: ret i32
 

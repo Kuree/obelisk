@@ -1,11 +1,11 @@
 # RUN: %coverage-fixture %t.obcov 1 with 0 construction-with
-# RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=WITH
+# RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=WITH
 # RUN: %coverage-fixture %t.scalar.obcov 1 scalar 0 construction-with-scalar
-# RUN: obelisk-cov report --format=json %t.scalar.obcov | FileCheck %s --check-prefix=SCALAR
+# RUN: talos-cov report --format=json %t.scalar.obcov | FileCheck %s --check-prefix=SCALAR
 # RUN: %coverage-fixture %t.symbolic.obcov 1 symbolic 0 construction-symbolic
-# RUN: obelisk-cov report --format=json %t.symbolic.obcov | FileCheck %s --check-prefix=SYMBOLIC
+# RUN: talos-cov report --format=json %t.symbolic.obcov | FileCheck %s --check-prefix=SYMBOLIC
 # RUN: %coverage-fixture %t.wide.obcov 1 wide 0 construction-symbolic-wide
-# RUN: obelisk-cov report --format=json %t.wide.obcov | FileCheck %s --check-prefix=WIDE
+# RUN: talos-cov report --format=json %t.wide.obcov | FileCheck %s --check-prefix=WIDE
 
 # IEEE 1800-2023 19.6.1.4: a constructed with clause is one role-11 expression
 # per selector; its result is a tuple queue (kind 7), or a scalar (kind 1) for

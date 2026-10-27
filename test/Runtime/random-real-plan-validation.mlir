@@ -11,15 +11,15 @@
 // RUNTIME: real plan validation 1
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "aarch64-unknown-linux-gnu"} {
-  llvm.mlir.global @obelisk_final_time(0 : i64) : i64
-  llvm.mlir.global @obelisk_time_precision_fs(1 : i64) : i64
+  llvm.mlir.global @talos_final_time(0 : i64) : i64
+  llvm.mlir.global @talos_time_precision_fs(1 : i64) : i64
   llvm.mlir.global internal constant @ok("real plan validation 1\00")
   llvm.mlir.global internal constant @bad("real plan validation 0\00")
   llvm.func @puts(!llvm.ptr) -> i32
-  llvm.func @obelisk_rt_v1_context_create(!llvm.ptr) -> i32
-  llvm.func @obelisk_rt_v1_context_destroy(!llvm.ptr)
-  llvm.func @obelisk_rt_v1_random_solve_modes_state(!llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
-  llvm.func @obelisk_rt_v1_random_solve_wide_modes_state(!llvm.ptr, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
+  llvm.func @talos_rt_v1_context_create(!llvm.ptr) -> i32
+  llvm.func @talos_rt_v1_context_destroy(!llvm.ptr)
+  llvm.func @talos_rt_v1_random_solve_modes_state(!llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
+  llvm.func @talos_rt_v1_random_solve_wide_modes_state(!llvm.ptr, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
   // Base programs concatenated; a row selects one by byte offset and size.
   llvm.mlir.global internal constant @programs("ODR1\01\00\18\00\01\00\00\00\05\00\00\00\00\00\00\00 \06\00\00\01\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\03 \00\00\00\00\00\00\00\00\00\00\00\00\00\00/ \00\00\00\00\00\00\00\00\00\00\00\00\00\00\0D\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00 \01\00\00\FF\FF\FF\FF\00\00\00\00\00\00\00\00SAMP\01\00\00\00\02\00\00\00\01\00\00\00\01\00\00\00\00\00\00\00h\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\04\00\00\00\03\00\00\00PLAN\01\00\00\00H\00\00\00\00\00\00\00ODR1\01\00\18\00\01\00\00\00\05\00\00\00\00\00\00\00 \04\00\00\01\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\03 \00\00\00\00\00\00\00\00\00\00\00\00\00\00/ \00\00\00\00\00\00\00\00\00\00\00\00\00\00\0D\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00 \01\00\00\FF\FF\FF\FF\00\00\00\00\00\00\00\00ODR1\02\00 \00\01\00\00\00\05\00\00\00\00\00\00\00 \06\00\00\00\00\00\00\00\00\00\00\01\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\03\00\00\00 \00\00\00\00\00\00\00\00\00\00\00/\00\00\00 \00\00\00\00\00\00\00\00\00\00\00\0D\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00 \00\00\00\01\00\00\00\FF\FF\FF\FF\00\00\00\00SAMP\01\00\00\00\02\00\00\00\01\00\00\00\01\00\00\00\00\00\00\00p\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\04\00\00\00\03\00\00\00PLAN\01\00\00\00H\00\00\00\00\00\00\00ODR1\02\00 \00\01\00\00\00\05\00\00\00\00\00\00\00 \04\00\00\00\00\00\00\00\00\00\00\01\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\03\00\00\00 \00\00\00\00\00\00\00\00\00\00\00/\00\00\00 \00\00\00\00\00\00\00\00\00\00\00\0D\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00 \00\00\00\01\00\00\00\FF\FF\FF\FF\00\00\00\00ODR1\01\00\18\00\01\00\00\00\09\00\00\00\01\00\00\00 \06\00\00\01\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\03 \00\00\00\00\00\00\00\00\00\00\00\00\00\00/ \00\00\00\00\00\00\00\00\00\00\00\00\00\00\0D\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02 \00\00\00\00\00\00\00\00\00\00\00\00\00\00\02 \00\00\00\00\00\00\00\00\00\00\00\00\00\00\15\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\1B\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00 \01\00\00\FF\FF\FF\FF\00\00\00\00\00\00\00\00SAMP\01\00\00\00\03\00\00\00\01\00\00\00\01\00\00\00\01\00\00\00\A8\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\05\00\00\00\00\00\00\00\16\01\00\00\00\00\00\00\08\00\00\00\03\00\00\00PLAN\01\00\00\00X\00\00\00\00\00\00\00ODR1\02\00 \00\01\00\00\00\09\00\00\00\01\00\00\00 \06\00\00\00\00\00\00\00\00\00\00\01\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\03\00\00\00 \00\00\00\00\00\00\00\00\00\00\00/\00\00\00 \00\00\00\00\00\00\00\00\00\00\00\0D\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00 \00\00\00\00\00\00\00\00\00\00\00\02\00\00\00 \00\00\00\00\00\00\00\00\00\00\00\15\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\1B\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00 \00\00\00\01\00\00\00\FF\FF\FF\FF\00\00\00\00SAMP\01\00\00\00\03\00\00\00\01\00\00\00\01\00\00\00\01\00\00\00\B0\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\05\00\00\00\00\00\00\00\16\01\00\00\00\00\00\00\08\00\00\00\03\00\00\00PLAN\01\00\00\00X\00\00\00\00\00\00\00ODR1\01\00\18\00\01\00\00\00\06\00\00\00\00\00\00\00 \06\00\00\01\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\03 \00\00\00\00\00\00\00\00\00\00\00\00\00\00/ \00\00\00\00\00\00\00\00\00\00\00\00\00\006 \01\00\00\00\00\00\00\00\00\00\00\00\00\00\0D\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00 \01\00\00\FF\FF\FF\FF\00\00\00\00\00\00\00\00SAMP\01\00\00\00\02\00\00\00\01\00\00\00\01\00\00\00\00\00\00\00x\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\05\00\00\00\03\00\00\00PLAN\01\00\00\00H\00\00\00\00\00\00\00ODR1\02\00 \00\01\00\00\00\06\00\00\00\00\00\00\00 \06\00\00\00\00\00\00\00\00\00\00\01\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\03\00\00\00 \00\00\00\00\00\00\00\00\00\00\00/\00\00\00 \00\00\00\00\00\00\00\00\00\00\006\01\00\00 \00\00\00\00\00\00\00\00\00\00\00\0D\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00 \00\00\00\01\00\00\00\FF\FF\FF\FF\00\00\00\00SAMP\01\00\00\00\02\00\00\00\01\00\00\00\01\00\00\00\00\00\00\00\80\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\05\00\00\00\03\00\00\00PLAN\01\00\00\00H\00\00\00\00\00\00\00")
   // Single-byte (offset, value) edits that turn a base into each variant.
@@ -78,10 +78,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     %capture_count = llvm.select %captured, %one, %zero : i1, i64
     llvm.cond_br %wide, ^wide, ^narrow
   ^narrow:
-    %narrow_status = llvm.call @obelisk_rt_v1_random_solve_modes_state(%ctx, %program, %size, %start, %mask, %zero, %one, %seed, %increment, %capture_ptr, %capture_count, %assignment, %success, %state) : (!llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
+    %narrow_status = llvm.call @talos_rt_v1_random_solve_modes_state(%ctx, %program, %size, %start, %mask, %zero, %one, %seed, %increment, %capture_ptr, %capture_count, %assignment, %success, %state) : (!llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
     llvm.br ^check(%narrow_status : i32)
   ^wide:
-    %wide_status = llvm.call @obelisk_rt_v1_random_solve_wide_modes_state(%ctx, %program, %size, %start_words, %mask_words, %one, %zero, %one, %seed, %increment, %capture_ptr, %capture_count, %width_ptr, %capture_count, %assignment, %success, %state) : (!llvm.ptr, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
+    %wide_status = llvm.call @talos_rt_v1_random_solve_wide_modes_state(%ctx, %program, %size, %start_words, %mask_words, %one, %zero, %one, %seed, %increment, %capture_ptr, %capture_count, %width_ptr, %capture_count, %assignment, %success, %state) : (!llvm.ptr, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
     llvm.br ^check(%wide_status : i32)
   ^check(%status: i32):
     %actual_success = llvm.load %success : !llvm.ptr -> i32
@@ -179,7 +179,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     %one = llvm.mlir.constant(1 : i64) : i64
     %z32 = llvm.mlir.constant(0 : i32) : i32
     %ctx_ptr = llvm.alloca %one x !llvm.ptr : (i64) -> !llvm.ptr
-    %created = llvm.call @obelisk_rt_v1_context_create(%ctx_ptr) : (!llvm.ptr) -> i32
+    %created = llvm.call @talos_rt_v1_context_create(%ctx_ptr) : (!llvm.ptr) -> i32
     %ctx = llvm.load %ctx_ptr : !llvm.ptr -> !llvm.ptr
     %valid_0 = llvm.icmp "eq" %created, %z32 : i32
     %rows_narrow = llvm.mlir.addressof @rows_narrow : !llvm.ptr
@@ -214,7 +214,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     %count_integer_wide = llvm.mlir.constant(15 : i64) : i64
     %r_integer_wide = llvm.call @run_table(%ctx, %rows_integer_wide, %count_integer_wide) : (!llvm.ptr, !llvm.ptr, i64) -> i1
     %v_integer_wide = llvm.and %v_integer_narrow, %r_integer_wide : i1
-    llvm.call @obelisk_rt_v1_context_destroy(%ctx) : (!llvm.ptr) -> ()
+    llvm.call @talos_rt_v1_context_destroy(%ctx) : (!llvm.ptr) -> ()
     %ok = llvm.mlir.addressof @ok : !llvm.ptr
     %bad = llvm.mlir.addressof @bad : !llvm.ptr
     %message = llvm.select %v_integer_wide, %ok, %bad : i1, !llvm.ptr

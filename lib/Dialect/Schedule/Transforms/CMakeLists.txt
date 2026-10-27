@@ -1,4 +1,4 @@
-add_mlir_library(ObeliskScheduleTransforms
+add_mlir_library(TalosScheduleTransforms
   PARTIAL_SOURCES_INTENDED
   ComputeFusion.cpp
   FuseClockedKernels.cpp
@@ -14,12 +14,12 @@ add_mlir_library(ObeliskScheduleTransforms
   VerifyComputeGraph.cpp
 
   DEPENDS
-  ObeliskSchedulePassIncGen
+  TalosSchedulePassIncGen
   LINK_LIBS PUBLIC
-  ObeliskSimulationToSchedule
-  ObeliskSimulationAnalysis
-  ObeliskSimulationIR
-  ObeliskScheduleIR
+  TalosSimulationToSchedule
+  TalosSimulationAnalysis
+  TalosSimulationIR
+  TalosScheduleIR
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRSCFDialect
@@ -27,7 +27,7 @@ add_mlir_library(ObeliskScheduleTransforms
   MLIRTransforms
 )
 
-add_mlir_library(ObeliskScheduleNativeTransforms
+add_mlir_library(TalosScheduleNativeTransforms
   PARTIAL_SOURCES_INTENDED
   NativeSpecializationPasses.cpp
   NativeWords.cpp
@@ -43,11 +43,11 @@ add_mlir_library(ObeliskScheduleNativeTransforms
   VersionKnownRegions.cpp
   NativeGCCollections.cpp
   DEPENDS
-  ObeliskSchedulePassIncGen
+  TalosSchedulePassIncGen
   LINK_LIBS PUBLIC
-  ObeliskSimulationIR
-  ObeliskSimulationAnalysis
-  ObeliskRuntimeIR
+  TalosSimulationIR
+  TalosSimulationAnalysis
+  TalosRuntimeIR
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRLLVMDialect
@@ -55,5 +55,5 @@ add_mlir_library(ObeliskScheduleNativeTransforms
   MLIRUBDialect
   MLIRTransforms
 )
-target_include_directories(ObeliskScheduleNativeTransforms PRIVATE
+target_include_directories(TalosScheduleNativeTransforms PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include")

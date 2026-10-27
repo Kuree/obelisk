@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAIN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=RESUMED < %t.llvm.mlir
@@ -11,15 +11,15 @@
 // the root itself never creates a string that could accidentally supply one.
 // Fixed unpacked array references, packed driver handles, and named-block
 // tokens must not acquire a managed scope, unlike the plusarg strings below.
-// PLAN: __obelisk_aot_schedule_plan_v1
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_run_aot
-// PLAIN-LABEL: llvm.mlir.global external constant @initial.__obelisk_process_descriptor()
+// PLAN: __talos_aot_schedule_plan_v1
+// PLAN: llvm.call @talos_rt_v1_scheduler_run_aot
+// PLAIN-LABEL: llvm.mlir.global external constant @initial.__talos_process_descriptor()
 // PLAIN-NOT: llvm.insertvalue {{.*}}[2] : !llvm.struct<(struct
 // PLAIN: llvm.return
-// RESUMED-LABEL: llvm.mlir.global external constant @resumed.__obelisk_process_descriptor()
+// RESUMED-LABEL: llvm.mlir.global external constant @resumed.__talos_process_descriptor()
 // RESUMED-NOT: llvm.insertvalue {{.*}}[2] : !llvm.struct<(struct
 // RESUMED: llvm.return
-// SCALAR-LABEL: llvm.mlir.global external constant @scalar.__obelisk_process_descriptor()
+// SCALAR-LABEL: llvm.mlir.global external constant @scalar.__talos_process_descriptor()
 // SCALAR: llvm.insertvalue {{.*}}[1] : !llvm.struct<(struct
 // SCALAR: %[[FLAG:.*]] = llvm.mlir.constant(1 : i32)
 // SCALAR-NEXT: llvm.insertvalue %[[FLAG]], {{.*}}[2] : !llvm.struct<(struct

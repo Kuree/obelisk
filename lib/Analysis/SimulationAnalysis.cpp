@@ -1,11 +1,11 @@
 //===- SimulationAnalysis.cpp - Shared simulation optimization facts -----===//
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "llvm/Support/MathExtras.h"
 
@@ -14,7 +14,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 std::optional<unsigned> getSimulationStorageBitWidth(Type type) {
   if (sim::isSimulationHandleType(type) || sim::isManagedHandleType(type))
     return sim::simulationHandleBitWidth;
@@ -88,7 +88,7 @@ uint64_t getSimulationRegionCost(Region &region) {
 
 NBAMergeSafety::NBAMergeSafety(sim::SimDesignOp design) {
   auto observed = design
-                      ? ::obelisk::schedule::get<
+                      ? ::talos::schedule::get<
                             schedule::metadata::nbaTransientObservable>(design)
                       : DenseI64ArrayAttr{};
   schedule::ComputeGraphAttr graph =
@@ -102,7 +102,7 @@ NBAMergeSafety::NBAMergeSafety(sim::SimDesignOp design) {
   for (int64_t descriptor : observed.asArrayRef())
     observable.insert(static_cast<uint64_t>(descriptor));
   if (auto watched =
-          ::obelisk::schedule::get<schedule::metadata::nbaChangeWatched>(
+          ::talos::schedule::get<schedule::metadata::nbaChangeWatched>(
               design))
     for (int64_t descriptor : watched.asArrayRef())
       changeWatched.insert(static_cast<uint64_t>(descriptor));
@@ -118,4 +118,4 @@ NBAMergeSafety::NBAMergeSafety(sim::SimDesignOp design) {
   }
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

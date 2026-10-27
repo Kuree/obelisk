@@ -7,19 +7,19 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Conversion/SimulationToSchedule/ComputeGraph.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Conversion/SimulationToSchedule/ComputeGraph.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
-#include "obelisk/Analysis/ClassDispatchAnalysis.h"
-#include "obelisk/Analysis/NetConnectivityAnalysis.h"
-#include "obelisk/Analysis/SSAValueAnalysis.h"
-#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
-#include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/ClassDispatchAnalysis.h"
+#include "talos/Analysis/NetConnectivityAnalysis.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
+#include "talos/Analysis/SimulationScheduleAnalysis.h"
+#include "talos/Analysis/SimulationVPIAnalysis.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Threading.h"
@@ -44,7 +44,7 @@
 
 using namespace mlir;
 
-namespace obelisk::simlowering {
+namespace talos::simlowering {
 
 namespace {
 
@@ -558,9 +558,9 @@ struct ProgramAnalysis {
       : classDispatch(design), connectivity(design),
         descriptorProvenance(design) {}
 
-  ::obelisk::analysis::ClassDispatchAnalysis classDispatch;
-  ::obelisk::analysis::NetConnectivityAnalysis connectivity;
-  ::obelisk::analysis::HandleDataflowAnalysis descriptorProvenance;
+  ::talos::analysis::ClassDispatchAnalysis classDispatch;
+  ::talos::analysis::NetConnectivityAnalysis connectivity;
+  ::talos::analysis::HandleDataflowAnalysis descriptorProvenance;
   SmallVector<FunctionInfo, 0> functions;
   llvm::StringMap<unsigned> functionIndex;
   DenseMap<Operation *, unsigned> indexForFunction;
@@ -593,18 +593,18 @@ struct ProgramAnalysis {
       uint64_t width =
           effect.target.dynamic ? effect.target.rootWidth : effect.target.width;
       for (uint64_t bit = 0; bit != width; ++bit) {
-        ::obelisk::analysis::NetBit source{*effect.target.descriptor,
+        ::talos::analysis::NetBit source{*effect.target.descriptor,
                                            begin + bit};
-        ArrayRef<::obelisk::analysis::NetBit> component =
+        ArrayRef<::talos::analysis::NetBit> component =
             connectivity.getComponent(source);
-        ::obelisk::analysis::NetBit canonical =
+        ::talos::analysis::NetBit canonical =
             component.empty() ? source : component.front();
         auto &seen = expandedComponents[static_cast<unsigned>(effect.kind)];
         if (!seen.insert({canonical.net, canonical.offset}).second)
           continue;
         if (component.empty())
           component = ArrayRef(source);
-        for (::obelisk::analysis::NetBit member : component) {
+        for (::talos::analysis::NetBit member : component) {
           std::optional<uint64_t> rootWidth =
               connectivity.getNetWidth(member.net);
           if (!rootWidth)
@@ -1267,8 +1267,8 @@ bool isObserverCaptureBridge(Block *block) {
     return false;
   Operation *terminator = block->getTerminator();
   return isa<cf::BranchOp>(terminator) &&
-         ::obelisk::schedule::has<
-             ::obelisk::schedule::Field::ObserverCaptureBridge>(terminator) &&
+         ::talos::schedule::has<
+             ::talos::schedule::Field::ObserverCaptureBridge>(terminator) &&
          terminator->getNumSuccessors() == 1;
 }
 
@@ -1311,7 +1311,7 @@ LogicalResult ComputeGraphBuilder::buildFragments() {
       auto id = static_cast<uint32_t>(nextId++);
       uint64_t cost = 0;
       for (Operation &operation : block)
-        cost += ::obelisk::analysis::getSimulationOperationCost(operation);
+        cost += ::talos::analysis::getSimulationOperationCost(operation);
       fragmentForBlock[&block] = id;
       fragments.push_back({id, info.getFunction(), &block, ordinal++,
                            collectFragmentEffects(analysis, info, block), cost,
@@ -1383,7 +1383,7 @@ void ComputeGraphBuilder::orderStartupSpawns() {
   if (!root || root.getBody().empty())
     return;
   bool hasComputedEventStartup =
-      ::obelisk::schedule::has<sim::computedEventStartupAttrName>(design);
+      ::talos::schedule::has<sim::computedEventStartupAttrName>(design);
 
   // What each unit consumes and produces, keyed by the symbol a spawn names.
   struct Flow {
@@ -1407,7 +1407,7 @@ void ComputeGraphBuilder::orderStartupSpawns() {
     // regrouping, which would otherwise move them past an intervening wait.
     if (!isSettlingEntryKind(entryKind) || eventInput ||
         (hasComputedEventStartup &&
-         ::obelisk::schedule::has<sim::computedEventStartupAttrName>(
+         ::talos::schedule::has<sim::computedEventStartupAttrName>(
              fragment.function)))
       continue;
     Flow &flow = flows[fragment.function.getSymName()];
@@ -1555,7 +1555,7 @@ void ComputeGraphBuilder::buildControlEdges() {
               : schedule::ComputeEdgeKind::ProcessOrder;
       bool boundedLatch =
           controlKind == schedule::ComputeEdgeKind::ProcessOrder &&
-          ::obelisk::schedule::has<schedule::metadata::boundedLoopLatch>(
+          ::talos::schedule::has<schedule::metadata::boundedLoopLatch>(
               terminator);
       for (Block *successor : terminator->getSuccessors()) {
         uint32_t target = fragmentID(successor);
@@ -1616,11 +1616,11 @@ void ComputeGraphBuilder::buildDataEdges() {
         // An outer explicit always control repeats continuously, so an event
         // enabled by one iteration can enqueue the next iteration.
         if (producer.function == consumer.function &&
-            (::obelisk::schedule::has<schedule::metadata::topLevelWildcardWait>(
+            (::talos::schedule::has<schedule::metadata::topLevelWildcardWait>(
                  consumer.block->getTerminator()) ||
-             ::obelisk::schedule::has<schedule::metadata::proceduralEventWait>(
+             ::talos::schedule::has<schedule::metadata::proceduralEventWait>(
                  consumer.block->getTerminator())) &&
-            !::obelisk::schedule::has<schedule::metadata::repeatingAlwaysWait>(
+            !::talos::schedule::has<schedule::metadata::repeatingAlwaysWait>(
                 consumer.block->getTerminator()))
           return;
         if (provenancesAlias(produced.target, consumed.effect->target))
@@ -1962,7 +1962,7 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
     }
     if (!boundedBackedges.empty() &&
         native::has<native::DebugTiming>(design->getParentOfType<ModuleOp>()))
-      llvm::errs() << "obelisk bounded backedges in graph: "
+      llvm::errs() << "talos bounded backedges in graph: "
                    << boundedBackedges.size() << '\n';
     SmallVector<Attribute> groupAttributes;
     for (auto [index, group] : llvm::enumerate(groups)) {
@@ -2017,8 +2017,8 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
   SmallVector<uint32_t> postponedIds;
   SmallVector<SmallVector<uint32_t>> postponedGroups;
   for (Fragment &fragment : fragments) {
-    bool assertionEndOfSimulationCoordinator = ::obelisk::schedule::has<
-        ::obelisk::schedule::Field::ConcurrentEosCoordinator>(
+    bool assertionEndOfSimulationCoordinator = ::talos::schedule::has<
+        ::talos::schedule::Field::ConcurrentEosCoordinator>(
         fragment.function);
     if (fragment.function.getEntryKind() == sim::EntryKind::Final &&
         !assertionEndOfSimulationCoordinator)
@@ -2100,27 +2100,27 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
       llvm::count_if(analysis.functions, [](const FunctionInfo &info) {
         return info.getFunction().getEntryKind() ==
                    sim::EntryKind::Continuous &&
-               ::obelisk::schedule::has<
-                   ::obelisk::schedule::Field::PrimitiveName>(
+               ::talos::schedule::has<
+                   ::talos::schedule::Field::PrimitiveName>(
                    info.getFunction());
       });
   ModuleOp module = design->getParentOfType<ModuleOp>();
   auto scheduler =
-      module ? ::obelisk::schedule::get<
-                   ::obelisk::schedule::Field::NativeScheduler>(module)
+      module ? ::talos::schedule::get<
+                   ::talos::schedule::Field::NativeScheduler>(module)
              : schedule::NativeSchedulerModeAttr{};
   bool demotePrimitiveActors =
       primitiveActors >= primitiveBytecodeThreshold && scheduler &&
       scheduler.getValue() == schedule::NativeSchedulerMode::Eval && module &&
-      ::obelisk::schedule::has<
-          ::obelisk::schedule::Field::NativeSchedulerAutoRequested>(module);
+      ::talos::schedule::has<
+          ::talos::schedule::Field::NativeSchedulerAutoRequested>(module);
 
   SmallVector<Attribute> nodes;
   DenseMap<Operation *, SmallVector<int64_t>> functionFragments;
   for (Fragment &fragment : fragments) {
     schedule::ComputeRegionKind region = schedule::ComputeRegionKind::Active;
-    bool assertionEndOfSimulationCoordinator = ::obelisk::schedule::has<
-        ::obelisk::schedule::Field::ConcurrentEosCoordinator>(
+    bool assertionEndOfSimulationCoordinator = ::talos::schedule::has<
+        ::talos::schedule::Field::ConcurrentEosCoordinator>(
         fragment.function);
     if ((fragment.function.getEntryKind() == sim::EntryKind::Final &&
          !assertionEndOfSimulationCoordinator) ||
@@ -2131,8 +2131,8 @@ FailureOr<ComputeGraphResult> ComputeGraphBuilder::derive() {
     else if (fragment.function.getHomeRegion() == sim::EventRegion::Reactive)
       region = schedule::ComputeRegionKind::Reactive;
     schedule::ComputeTierKind tier =
-        demotePrimitiveActors && ::obelisk::schedule::has<
-                                     ::obelisk::schedule::Field::PrimitiveName>(
+        demotePrimitiveActors && ::talos::schedule::has<
+                                     ::talos::schedule::Field::PrimitiveName>(
                                      fragment.function)
             ? schedule::ComputeTierKind::Bytecode
             : schedule::ComputeTierKind::Native;
@@ -2385,4 +2385,4 @@ FailureOr<ComputeGraphResult> deriveComputeGraph(sim::SimDesignOp design,
   return builder.derive();
 }
 
-} // namespace obelisk::simlowering
+} // namespace talos::simlowering

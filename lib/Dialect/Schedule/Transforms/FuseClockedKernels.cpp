@@ -75,20 +75,20 @@
 //===----------------------------------------------------------------------===//
 
 #include "ComputeFusion.h"
-#include "obelisk/Analysis/ActivationMemoryAnalysis.h"
-#include "obelisk/Analysis/ActivationPhaseAnalysis.h"
-#include "obelisk/Analysis/ClockInferenceAnalysis.h"
-#include "obelisk/Analysis/DPIEffectAnalysis.h"
-#include "obelisk/Analysis/HandleDataflowAnalysis.h"
-#include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationTypes.h"
+#include "talos/Analysis/ActivationMemoryAnalysis.h"
+#include "talos/Analysis/ActivationPhaseAnalysis.h"
+#include "talos/Analysis/ClockInferenceAnalysis.h"
+#include "talos/Analysis/DPIEffectAnalysis.h"
+#include "talos/Analysis/HandleDataflowAnalysis.h"
+#include "talos/Analysis/NativeStateLayoutAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationTypes.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -111,18 +111,18 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMFUSECLOCKEDKERNELSPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMFUSECLOCKEDKERNELSPASS
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 
 namespace {
 
 using analysis::ActivationMemoryAnalysis;
 
-class ObeliskSimFuseClockedKernelsPass final
-    : public impl::ObeliskSimFuseClockedKernelsPassBase<
-          ObeliskSimFuseClockedKernelsPass> {
+class TalosSimFuseClockedKernelsPass final
+    : public impl::TalosSimFuseClockedKernelsPassBase<
+          TalosSimFuseClockedKernelsPass> {
 public:
   using Base::Base;
   void runOnOperation() override;
@@ -799,7 +799,7 @@ struct ClockClasses {
   }
 };
 
-void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
+void TalosSimFuseClockedKernelsPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   ModuleOp module = design->getParentOfType<ModuleOp>();
   bool report = module && native::has<native::DebugTiming>(module);
@@ -807,7 +807,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
   if (!graph || graph.getVpi() != schedule::ComputeVPIMode::Off ||
       graph.getWorkers() != 1) {
     if (report)
-      llvm::errs() << "obelisk clocked kernel: skipped design: graph\n";
+      llvm::errs() << "talos clocked kernel: skipped design: graph\n";
     return;
   }
   llvm::StringMap<uint64_t> rejections;
@@ -826,7 +826,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
   });
   auto bail = [&](StringRef reason) {
     if (report)
-      llvm::errs() << "obelisk clocked kernel: skipped design: " << reason
+      llvm::errs() << "talos clocked kernel: skipped design: " << reason
                    << '\n';
   };
   if (unsupportedDesign)
@@ -1959,7 +1959,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       attributes.emplace_back(first.function.getCodeUnitIdAttrName(), codeUnit);
     unsigned symbolCounter = 0;
     SmallString<48> base;
-    ("__obelisk_clocked_" + Twine(classRoot) + "_" + Twine(plan.key.second))
+    ("__talos_clocked_" + Twine(classRoot) + "_" + Twine(plan.key.second))
         .toVector(base);
     SmallString<48> name = SymbolTable::generateSymbolName<48>(
         base,
@@ -2537,7 +2537,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       }
     }
     if (report)
-      llvm::errs() << "obelisk clocked kernel: " << kernel.getSymName()
+      llvm::errs() << "talos clocked kernel: " << kernel.getSymName()
                    << " members=" << count << " eligible=" << rootList.size()
                    << " retained=" << unsupported.count()
                    << " snapshots=" << snapshots.size()
@@ -2547,7 +2547,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
   }
   if (report) {
     for (auto &[reason, total] : rejections)
-      llvm::errs() << "obelisk clocked kernel rejection: " << reason << " = "
+      llvm::errs() << "talos clocked kernel rejection: " << reason << " = "
                    << total << '\n';
     // The processes whose observation keeps the most roots on their NBAs.
     DenseMap<int64_t, StringRef> hierarchies;
@@ -2572,7 +2572,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
                                    &failure, /*finalValuesOnly=*/true))
           reason = failure.getMessage();
       }
-      llvm::errs() << "obelisk clocked kernel observed roots: observer="
+      llvm::errs() << "talos clocked kernel observed roots: observer="
                    << (observer ? observer.getValue() : "<unknown>")
                    << " hierarchy=\"" << hierarchy << "\" roots=" << total
                    << " reason=" << reason << '\n';
@@ -2583,4 +2583,4 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
 }
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

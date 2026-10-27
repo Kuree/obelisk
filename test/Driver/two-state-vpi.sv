@@ -1,12 +1,12 @@
 // REQUIRES: native-elf
 // RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/two_state_vpi.c -I%resource_dir/include -o %t.so
-// RUN: obelisk --two-state --vpi=full -O0 --native-scheduler=generic %s %t.so -o %t.generic
+// RUN: talos --two-state --vpi=full -O0 --native-scheduler=generic %s %t.so -o %t.generic
 // RUN: %t.generic | FileCheck %s
-// RUN: obelisk --two-state --vpi=full -O3 %s %t.so -o %t.native
+// RUN: talos --two-state --vpi=full -O3 %s %t.so -o %t.native
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk --two-state --vpi=full --execution-tier=bytecode -O3 %s %t.so -o %t.bytecode
+// RUN: talos --two-state --vpi=full --execution-tier=bytecode -O3 %s %t.so -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
-// RUN: obelisk --two-state --vpi=read -emit-sim %s | FileCheck %s --check-prefix=TYPE
+// RUN: talos --two-state --vpi=read -emit-sim %s | FileCheck %s --check-prefix=TYPE
 
 // VPI keeps source identities, including time and frozen parameter types,
 // while native and bytecode execution use only the value plane.

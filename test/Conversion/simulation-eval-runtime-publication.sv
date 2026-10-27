@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt --test-obelisk-native-backend='scheduler=eval timing=true' -o %t.mlir 2> %t.trace
+// RUN: talos -emit-slang %s | talos-opt --test-talos-native-backend='scheduler=eval timing=true' -o %t.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 // RUN: FileCheck %s < %t.mlir
 
@@ -11,16 +11,16 @@
 // `@(trips)` waiter but not the writer's own `@(posedge clk or trips)`.
 // unit_10 is the `clk` port copy, which publishes for the runtime waiters on
 // `clk`.
-// TRACE: obelisk eval owner: bit=1 actor=8 continuation=11
-// TRACE: obelisk eval boundary: owner=0 island=0 body=unit_10.__obelisk_eval_body_0
-// TRACE-NEXT: obelisk eval boundary: owner=1 island=0 body=unit_3.__obelisk_eval_body_0
-// CHECK-LABEL: llvm.func @unit_3.__obelisk_eval_body_0(
+// TRACE: talos eval owner: bit=1 actor=8 continuation=11
+// TRACE: talos eval boundary: owner=0 island=0 body=unit_10.__talos_eval_body_0
+// TRACE-NEXT: talos eval boundary: owner=1 island=0 body=unit_3.__talos_eval_body_0
+// CHECK-LABEL: llvm.func @unit_3.__talos_eval_body_0(
 // CHECK-DAG: %[[WIDTH:.*]] = llvm.mlir.constant(8 : i64) : i64
 // CHECK-DAG: %[[ACTOR:.*]] = llvm.mlir.constant(8 : i32) : i32
 // CHECK-DAG: %[[LOW:.*]] = llvm.mlir.constant(0 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition_owned(%{{.*}}, %[[ACTOR]], %{{.*}}, %[[LOW]], %[[WIDTH]],
-// CHECK-LABEL: llvm.func @unit_10.__obelisk_eval_body_0(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_static_transition_owned(
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition_owned(%{{.*}}, %[[ACTOR]], %{{.*}}, %[[LOW]], %[[WIDTH]],
+// CHECK-LABEL: llvm.func @unit_10.__talos_eval_body_0(
+// CHECK: llvm.call @talos_rt_v1_scheduler_static_transition_owned(
 
 module publication_clock_source(output logic clk = 0, output integer cycles);
   initial begin

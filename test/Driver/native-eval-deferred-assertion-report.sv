@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --mlir-timing %s -o %t.runtime-calendar 2> %t.timing
+// RUN: talos -O3 --mlir-timing %s -o %t.runtime-calendar 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
-// RUN: obelisk -O3 -DGENERATED_CALENDAR %s -o %t.generated-calendar
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
+// RUN: talos -O3 -DGENERATED_CALENDAR %s -o %t.generated-calendar
+// RUN: talos -O0 --native-scheduler=generic %s -o %t.reference
 // RUN: not %t.reference > %t.reference.out 2>&1
 // RUN: not %t.runtime-calendar > %t.runtime-calendar.out 2>&1 && diff -u %t.reference.out %t.runtime-calendar.out
 // RUN: not %t.generated-calendar > %t.generated-calendar.out 2>&1 && diff -u %t.reference.out %t.generated-calendar.out
@@ -43,7 +43,7 @@ module native_eval_deferred_assertion_report;
 endmodule
 
 // TIER: native eligibility: eligible=1
-// TIER: obelisk eval executor inventory: {{.*}} runtime_checkpoints=0
+// TIER: talos eval executor inventory: {{.*}} runtime_checkpoints=0
 // CHECK: simulation time 25: final ptr_n=4
 // CHECK: simulation time 35: final v=x100
 // CHECK: simulation time 45: observed ptr_n=6

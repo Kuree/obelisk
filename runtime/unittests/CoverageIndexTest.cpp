@@ -12,12 +12,12 @@
 #include <random>
 #include <stdexcept>
 
-using namespace obelisk::coverage::detail;
+using namespace talos::coverage::detail;
 
 namespace {
-using PredicateKind = obelisk::coverage::CrossPredicateKind;
-using PredicateNode = obelisk::coverage::CrossPredicateNode;
-using Signedness = obelisk::coverage::CoverageSignedness;
+using PredicateKind = talos::coverage::CrossPredicateKind;
+using PredicateNode = talos::coverage::CrossPredicateNode;
+using Signedness = talos::coverage::CoverageSignedness;
 
 // Observe the full four-state result through case equality, rather than only
 // checking whether it would select a bin. A=0,B=1 is Z; A=1,B=1 is X.
@@ -48,7 +48,7 @@ bool predicateResultIs(PredicateKind kind, uint64_t left, uint64_t right,
                                       : Signedness::Unsigned,
        1, 0},
       {3, 1, 0, unary ? 1u : 2u, 0, 0, kind, resultWidth, resultSign, 2,
-       twoState ? obelisk::coverage::CrossPredicateTwoState : 0u},
+       twoState ? talos::coverage::CrossPredicateTwoState : 0u},
       {4, 1, 0, 0, 0, 0, PredicateKind::Value, resultWidth, resultSign, 3, 0},
       {5, 1, unary ? 1u : 2u, 2, 0, 0, PredicateKind::CaseEqual, 1,
        Signedness::Unsigned, 4, 0}};
@@ -121,7 +121,7 @@ bool conditionalResultIs(uint64_t condition, uint64_t a, uint64_t b,
        bSigned ? Signedness::Signed : Signedness::Unsigned, 2, 0},
       {4, 1, 0, 3, 0, 0, PredicateKind::Conditional, resultWidth,
        Signedness::Unsigned, 3,
-       twoState ? obelisk::coverage::CrossPredicateTwoState : 0u},
+       twoState ? talos::coverage::CrossPredicateTwoState : 0u},
       {5, 1, 3, 0, 0, 0, PredicateKind::Value, resultWidth,
        Signedness::Unsigned, 4, 0},
       {6, 1, 3, 2, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned, 5,
@@ -435,7 +435,7 @@ TEST(CoveragePredicateIndexTest, WideWildcardMaskNeedsNoComparisonStates) {
 
 TEST(CoveragePredicateIndexTest,
      InsideRangesPreserveUnknownsAndToleranceTypes) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   auto resultIs = [&](uint32_t flags, uint64_t value, uint64_t low,
                       uint64_t high, uint32_t expected, bool isSigned = false,
                       bool centerTwoState = false, uint32_t highWidth = 2) {
@@ -887,7 +887,7 @@ TEST(CoveragePredicateIndexTest,
       EXPECT_TRUE(selectResultIs(PredicateKind::ElementSelect, source, 2,
                                  address, 2, expected));
     }
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   // The four source bits are respectively 0, 1, Z and X.
   EXPECT_TRUE(selectResultIs(PredicateKind::ElementSelect, 0xe4, 4, 21, 3, 0, 1,
                              1, -1, 0, true));
@@ -942,7 +942,7 @@ TEST(CoveragePredicateIndexTest,
 
 TEST(CoveragePredicateIndexTest,
      VariableWindowsPreserveFourStatePaddingAndIndices) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   for (uint32_t flags : {0u, CrossPredicateBaseNamesHigh}) {
     DecisionIndex graph(10, 4096);
     PredicateDecisionIndex index(graph);
@@ -1117,7 +1117,7 @@ TEST(CoveragePredicateIndexTest, WideSelectIndicesCannotWrapIntoTheSource) {
 }
 
 TEST(CoveragePredicateIndexTest, ConstructorWindowsPreservePartialPadding) {
-  using namespace obelisk::coverage;
+  using namespace talos::coverage;
   EXPECT_TRUE(selectResultIs(PredicateKind::RangeSelect, 0xe4, 4, 1, 3, 9, 2));
   EXPECT_TRUE(selectResultIs(PredicateKind::RangeSelect, 0xe4, 4, 21, 3, 3, 2,
                              1, 0, 0, true));
@@ -1189,7 +1189,7 @@ TEST(CoveragePredicateIndexTest,
 
 TEST(CoverageTransitionIndexTest,
      FixedLanguagesAgreeWithExhaustiveFiniteWordOracle) {
-  using obelisk::coverage::TransitionRepetitionKind;
+  using talos::coverage::TransitionRepetitionKind;
   std::mt19937 random(1947);
   for (uint32_t trial = 0; trial != 32; ++trial) {
     DecisionIndex values(2);
@@ -1240,7 +1240,7 @@ TEST(CoverageTransitionIndexTest,
 }
 
 TEST(CoverageTransitionIndexTest, NonconsecutiveGapsMayMatchTheFollowingStep) {
-  using obelisk::coverage::TransitionRepetitionKind;
+  using talos::coverage::TransitionRepetitionKind;
   for (auto repetition : {TransitionRepetitionKind::Goto,
                           TransitionRepetitionKind::Nonconsecutive}) {
     DecisionIndex values(2);
@@ -1263,7 +1263,7 @@ TEST(CoverageTransitionIndexTest, NonconsecutiveGapsMayMatchTheFollowingStep) {
 
 TEST(CoverageTransitionIndexTest,
      ManyDisjointExclusionsRespectLinearWorkBudget) {
-  using obelisk::coverage::TransitionRepetitionKind;
+  using talos::coverage::TransitionRepetitionKind;
   constexpr uint32_t width = 8, count = 64;
   DecisionIndex values(width);
   TransitionIndex index(values, width, 1, count * width * 8);
@@ -1285,7 +1285,7 @@ TEST(CoverageTransitionIndexTest,
 
 TEST(CoverageTransitionIndexTest,
      GapRepetitionsRespectExclusionsAndKnownSampleDomain) {
-  using obelisk::coverage::TransitionRepetitionKind;
+  using talos::coverage::TransitionRepetitionKind;
   for (bool fourState : {false, true}) {
     for (auto repetition : {TransitionRepetitionKind::Goto,
                             TransitionRepetitionKind::Nonconsecutive}) {

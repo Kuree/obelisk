@@ -1,15 +1,15 @@
 //===- SimulationToLLVMCoroutine.cpp - Native process coroutines ---------===//
 
-#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
+#include "talos/Conversion/SimulationToLLVMCoroutine.h"
 #include "../SimulationToSchedule/NativePipeline.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Runtime/RuntimeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Schedule/Transforms/NativeTransforms.h"
 
 #include "NativeSymbolUses.h"
 #include "SimulationAOTPlanning.h"
@@ -20,26 +20,26 @@
 #include "SimulationProcessFunctionLowering.h"
 #include "SimulationProcessWrapperLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Analysis/IntegerRangeIPO.h"
-#include "obelisk/Analysis/ManagedCollectionAnalysis.h"
+#include "talos/Analysis/IntegerRangeIPO.h"
+#include "talos/Analysis/ManagedCollectionAnalysis.h"
 
-#include "obelisk/Analysis/NativeAOTAnalysis.h"
-#include "obelisk/Analysis/NativeStorageLayout.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Analysis/SSAValueAnalysis.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/SimulationCopyProcessAnalysis.h"
-#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
-#include "obelisk/Analysis/SimulationVPIAnalysis.h"
-#include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Analysis/StaticSpecializationAnalysis.h"
-#include "obelisk/Conversion/FunctionalCoverageSchemaVerification.h"
-#include "obelisk/Conversion/RuntimeToLLVM.h"
-#include "obelisk/Conversion/SimulationRuntime.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Runtime/OutputItemFlags.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/NativeAOTAnalysis.h"
+#include "talos/Analysis/NativeStorageLayout.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/SimulationCopyProcessAnalysis.h"
+#include "talos/Analysis/SimulationScheduleAnalysis.h"
+#include "talos/Analysis/SimulationVPIAnalysis.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
+#include "talos/Analysis/StaticSpecializationAnalysis.h"
+#include "talos/Conversion/FunctionalCoverageSchemaVerification.h"
+#include "talos/Conversion/RuntimeToLLVM.h"
+#include "talos/Conversion/SimulationRuntime.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Runtime/OutputItemFlags.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
@@ -88,7 +88,7 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
 static void populateSimulationCoroutineBodyToLLVMPatterns(
     const LLVMTypeConverter &converter, RewritePatternSet &patterns,
@@ -98,7 +98,7 @@ static void populateSimulationCoroutineBodyToLLVMPatterns(
 #define GEN_PASS_DEF_PREPARENATIVELLVMFUNCTIONSPASS
 #define GEN_PASS_DEF_CONVERTNATIVEFUNCTIONBODYPASS
 #define GEN_PASS_DEF_FINALIZENATIVELLVMPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "talos/Conversion/Passes.h.inc"
 
 namespace {
 
@@ -216,69 +216,69 @@ bool isEvalClosureRuntimeCall(LLVM::CallOp call, LLVM::LLVMFuncOp function,
   // concurrent-disable observer runs; it cannot mutate or re-enter the
   // scheduler like the runtime calls rejected below.
   constexpr StringLiteral prioritySignalQuery =
-      "obelisk_rt_v1_scheduler_priority_signal_pending";
+      "talos_rt_v1_scheduler_priority_signal_pending";
   // Pure Table 28-8 strength combination takes only value arguments and has
   // no scheduler/context edge. Gate-region eval bodies may therefore retain
   // it just like an ordinary outlined arithmetic helper; ThinLTO can inline
   // the small resolver in production builds.
   constexpr StringLiteral strengthResolveQuery =
-      "obelisk_rt_v1_strength_resolve_kind";
+      "talos_rt_v1_strength_resolve_kind";
   // A line hit is a relaxed atomic increment through the context argument
   // already present on every generated eval body. It cannot allocate, lock,
   // re-enter the scheduler, or alter design state, so worker-lane eval bodies
   // may retain it as an explicit observable side effect.
-  constexpr StringLiteral coveragePointHit = "obelisk_rt_v1_coverage_point_hit";
+  constexpr StringLiteral coveragePointHit = "talos_rt_v1_coverage_point_hit";
   // This read-only dependency/override query cannot execute HDL or
   // mutate readiness. Only full VPI emits these scheduling guards;
   // off/read retain their original generated execution paths.
-  if (*callee == "obelisk_rt_v1_static_specialization_guard" &&
-      function.getSymName().starts_with("__obelisk_eval_write_guard_"))
+  if (*callee == "talos_rt_v1_static_specialization_guard" &&
+      function.getSymName().starts_with("__talos_eval_write_guard_"))
     return true;
   if (*callee == prioritySignalQuery || *callee == strengthResolveQuery ||
       *callee == coveragePointHit ||
       // A value helper's post-call termination poll only reads the
       // context's finish latch. It cannot execute actors, publish
       // state, advance time or request termination itself.
-      *callee == "obelisk_rt_v1_scheduler_termination_requested" ||
+      *callee == "talos_rt_v1_scheduler_termination_requested" ||
       // Generated run_until updates the canonical scheduler time
       // before dispatch. This query only reads that same timestamp.
-      *callee == "obelisk_rt_v1_scheduler_time" ||
-      *callee == "obelisk_rt_v1_eval_display" ||
+      *callee == "talos_rt_v1_scheduler_time" ||
+      *callee == "talos_rt_v1_eval_display" ||
       // $error only latches the final exit status and lets simulation
       // continue (IEEE 1800-2023 20.10). It never schedules or executes an
       // actor, so its report stays inline like the direct display above.
-      *callee == "obelisk_rt_v1_scheduler_error" ||
+      *callee == "talos_rt_v1_scheduler_error" ||
       // Assertion control (IEEE 1800-2023 20.11) only affects subsequent
       // attempts; an attempt reads the current state from the runtime's
       // table without scheduling, executing or suspending anything.
-      *callee == "obelisk_rt_v1_assertion_enabled" ||
-      *callee == "obelisk_rt_v1_assertion_action_state" ||
+      *callee == "talos_rt_v1_assertion_enabled" ||
+      *callee == "talos_rt_v1_assertion_action_state" ||
       // Cold allocation of private generated NBA storage. This never
       // executes actors, changes design state or re-enters scheduling.
-      *callee == "obelisk_rt_v1_eval_nba_reserve" ||
+      *callee == "talos_rt_v1_eval_nba_reserve" ||
       // The reserve failure block latches an error and returns from
       // the activation. It cannot schedule or execute an actor.
-      *callee == "obelisk_rt_v1_scheduler_fail" ||
+      *callee == "talos_rt_v1_scheduler_fail" ||
       // Exact proof-state publication over compiler-verified tables.
       // The helper cannot allocate, execute actors, access canonical
       // state, advance time, or re-enter the scheduler.
-      *callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
-      *callee == "obelisk_rt_v1_native_promotion_recheck_ranges" ||
-      *callee == "obelisk_rt_v1_native_promotion_invalidate_buckets" ||
-      *callee == "obelisk_rt_v1_native_promotion_recheck_buckets" ||
+      *callee == "talos_rt_v1_native_promotion_invalidate_ranges" ||
+      *callee == "talos_rt_v1_native_promotion_recheck_ranges" ||
+      *callee == "talos_rt_v1_native_promotion_invalidate_buckets" ||
+      *callee == "talos_rt_v1_native_promotion_recheck_buckets" ||
       // The unknown summary's rescan reads the generated unknown
       // plane and clears summary bits; marking only sets them.
       // Neither executes actors, publishes, or re-enters scheduling.
-      *callee == "obelisk_rt_v1_native_state_refresh_unknown_summary" ||
-      *callee == "obelisk_rt_v1_native_state_mark_unknown")
+      *callee == "talos_rt_v1_native_state_refresh_unknown_summary" ||
+      *callee == "talos_rt_v1_native_state_mark_unknown")
     return true;
   // LRM 4.6(a), 9.4.2: the hybrid calendar's bounded publication
   // bridge preserves the source actor identity and delivers waits
   // without executing actors or advancing time. Its actor/root are
   // fixed by the installed generated plan; scheduling stays outside
   // this non-suspending activation.
-  if (*callee == "obelisk_rt_v1_scheduler_static_transition_owned" &&
-      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+  if (*callee == "talos_rt_v1_scheduler_static_transition_owned" &&
+      ::talos::schedule::has<::talos::schedule::Field::EvalRuntimeCalendar>(
           module) &&
       call.getArgOperands().size() == 9 &&
       call.getArgOperands()[1].getDefiningOp<LLVM::ConstantOp>() &&
@@ -289,16 +289,16 @@ bool isEvalClosureRuntimeCall(LLVM::CallOp call, LLVM::LLVMFuncOp function,
   // any calendar. Periodic handoff declines while such a wait is
   // live and a shared calendar drains it in every slot, so a
   // delivered waiter always runs in this time slot.
-  if ((*callee == "obelisk_rt_v1_scheduler_static_transition_owned" ||
-       *callee == "obelisk_rt_v1_scheduler_static_transition") &&
-      ::obelisk::schedule::has<
-          ::obelisk::schedule::Field::EvalRuntimeRoutedPublication>(call))
+  if ((*callee == "talos_rt_v1_scheduler_static_transition_owned" ||
+       *callee == "talos_rt_v1_scheduler_static_transition") &&
+      ::talos::schedule::has<
+          ::talos::schedule::Field::EvalRuntimeRoutedPublication>(call))
     return true;
   return false;
 }
 
 LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
-  if (!::obelisk::schedule::has<::obelisk::schedule::Field::EvalGenerated>(
+  if (!::talos::schedule::has<::talos::schedule::Field::EvalGenerated>(
           module))
     return success();
   // Verification does not mutate symbols. Build the index once instead of
@@ -306,15 +306,15 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
   SymbolTable symbols(module);
   bool writableEval = llvm::any_of(
       module.getOps<LLVM::LLVMFuncOp>(), [](LLVM::LLVMFuncOp function) {
-        return function.getSymName().starts_with("__obelisk_eval_write_guard_");
+        return function.getSymName().starts_with("__talos_eval_write_guard_");
       });
   constexpr auto allowedCalleesAttr =
-      ::obelisk::schedule::Field::EvalAllowedCallees;
+      ::talos::schedule::Field::EvalAllowedCallees;
   SmallVector<LLVM::LLVMFuncOp> pending;
   llvm::SmallPtrSet<Operation *, 32> visited;
   bool verified = true;
   for (LLVM::LLVMFuncOp function : module.getOps<LLVM::LLVMFuncOp>()) {
-    if (!::obelisk::schedule::has<schedule::metadata::evalCallClosureRoot>(
+    if (!::talos::schedule::has<schedule::metadata::evalCallClosureRoot>(
             function))
       continue;
     pending.push_back(function);
@@ -329,7 +329,7 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
         // Owner code may sit in a coordinator segment function.
         if (function.getSymName().starts_with(detail::evalDispatchName) &&
             writableEval &&
-            *callee == "obelisk_rt_v1_scheduler_execute_aot_actor" &&
+            *callee == "talos_rt_v1_scheduler_execute_aot_actor" &&
             call.getArgOperands().size() == 2 &&
             call.getArgOperands()[1].getDefiningOp<LLVM::ConstantOp>())
           return WalkResult::advance();
@@ -340,19 +340,19 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
         // contract is distinct from the non-suspending Active call closure.
         if (function.getSymName() == detail::evalDispatchName &&
             schedule::has<schedule::Field::EvalRuntimeCalendar>(module)) {
-          if ((*callee == "obelisk_rt_v1_scheduler_prepare_eval_nba" &&
+          if ((*callee == "talos_rt_v1_scheduler_prepare_eval_nba" &&
                call.getArgOperands().size() == 2) ||
-              (*callee == "obelisk_rt_v1_scheduler_complete_eval_nba" &&
+              (*callee == "talos_rt_v1_scheduler_complete_eval_nba" &&
                call.getArgOperands().size() == 3))
             return WalkResult::advance();
-          if (*callee == "__obelisk_aot_runtime_nba_commit_v1" &&
+          if (*callee == "__talos_aot_runtime_nba_commit_v1" &&
               call.getArgOperands().size() == 4) {
             auto barrier = symbols.lookup<LLVM::LLVMFuncOp>(*callee);
             if (barrier && !barrier.isExternal())
               return WalkResult::advance();
           }
         }
-        if (callee->starts_with("obelisk_rt_")) {
+        if (callee->starts_with("talos_rt_")) {
           if (isEvalClosureRuntimeCall(call, function, module))
             return WalkResult::advance();
           call.emitError("generated eval hot closure calls runtime symbol ")
@@ -361,7 +361,7 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
         }
         targets.push_back(FlatSymbolRefAttr::get(module.getContext(), *callee));
       } else if (auto allowed =
-                     ::obelisk::schedule::get<allowedCalleesAttr>(call)) {
+                     ::talos::schedule::get<allowedCalleesAttr>(call)) {
         for (Attribute attribute : allowed) {
           auto target = dyn_cast<FlatSymbolRefAttr>(attribute);
           if (!target) {
@@ -378,7 +378,7 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
         return WalkResult::interrupt();
       }
       for (FlatSymbolRefAttr target : targets) {
-        if (target.getValue().starts_with("obelisk_rt_")) {
+        if (target.getValue().starts_with("talos_rt_")) {
           call.emitError("generated eval indirect route targets runtime "
                          "symbol ")
               << target.getValue();
@@ -605,7 +605,7 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
     return coverage;
   };
   SmallVector<sim::SimFuncOp> currentActors;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       design, [&](sim::SimFuncOp actor) {
         if (actorSlotFor(actor))
           currentActors.push_back(actor);
@@ -632,21 +632,21 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
         codeUnit && runtimeCheckpointCodeUnits.contains(codeUnit.getUInt());
     if (!actorSlot || analyzed == analyzedActors.end() ||
         (!isGeneratedRegionActor(actor) &&
-         !::obelisk::schedule::has<::obelisk::schedule::Field::EvalBody>(
+         !::talos::schedule::has<::talos::schedule::Field::EvalBody>(
              actor) &&
          !hasRuntimeCheckpointActivation))
       continue;
     const SimulationProcessFrameAnalysis &frameAnalysis =
         *analyzed->second.analysis;
     if (auto evalBodyRef =
-            ::obelisk::schedule::get<::obelisk::schedule::Field::EvalBody>(
+            ::talos::schedule::get<::talos::schedule::Field::EvalBody>(
                 actor)) {
       sim::SimFuncOp evalBody =
           designSymbols.lookup<sim::SimFuncOp>(evalBodyRef.getValue());
       if (!evalBody)
         return actor.emitOpError("references a missing eval body");
-      auto continuation = ::obelisk::schedule::get<
-          ::obelisk::schedule::Field::EvalContinuation>(evalBody);
+      auto continuation = ::talos::schedule::get<
+          ::talos::schedule::Field::EvalContinuation>(evalBody);
       uint32_t continuationID = 0;
       ArrayRef<ProcessSuspension> suspensions = frameAnalysis.getSuspensions();
       if (suspensions.size() == 1)
@@ -663,21 +663,21 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
       bool runtimeCheckpoint =
           codeUnit && runtimeCheckpointContinuations.contains(
                           {codeUnit.getUInt(), continuationID});
-      runtimeCheckpoint |= ::obelisk::schedule::has<
-          ::obelisk::schedule::Field::EvalCheckpointOnly>(evalBody);
+      runtimeCheckpoint |= ::talos::schedule::has<
+          ::talos::schedule::Field::EvalCheckpointOnly>(evalBody);
       // IEEE 1800-2023 4.6(b), 10.4.2 require observable NBA updates to
       // retain their enqueue order. Keep this activation on the runtime
       // queue through a checkpoint; unrelated generated executors can still
       // own the rest of the eval plan.
       runtimeCheckpoint |=
-          ::obelisk::schedule::has<evalRuntimeNBARequiredAttr>(evalBody);
+          ::talos::schedule::has<evalRuntimeNBARequiredAttr>(evalBody);
       if (runtimeCheckpoint ||
           (bytecode != bytecodeContinuations.end() &&
            llvm::is_contained(bytecode->second, continuationID))) {
         if (runtimeCheckpoint) {
           SmallString<96> wrapperName;
-          (Twine("__obelisk_direct_fragment_") + Twine(*actorSlot) + "_" +
-           Twine(continuationID) + ".__obelisk_execute")
+          (Twine("__talos_direct_fragment_") + Twine(*actorSlot) + "_" +
+           Twine(continuationID) + ".__talos_execute")
               .toVector(wrapperName);
           ContinuationFragmentCoverage coverage =
               fragmentCoverageFor(actor, continuationID);
@@ -697,7 +697,7 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
       }
       // Keep derived MLIR metadata coherent for the two-state/checkpoint
       // variants cloned from this body later in the conversion.
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalContinuation>(
+      ::talos::schedule::set<::talos::schedule::Field::EvalContinuation>(
           evalBody,
           IntegerAttr::get(IntegerType::get(context, 32), continuationID));
       // A direct body has no coroutine frame arguments.  Continuations with
@@ -734,14 +734,14 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
               evalBody))
         continue;
       SmallString<96> wrapperName;
-      (Twine("__obelisk_direct_fragment_") + Twine(*actorSlot) + "_" +
+      (Twine("__talos_direct_fragment_") + Twine(*actorSlot) + "_" +
        Twine(continuationID))
           .toVector(wrapperName);
-      std::string wrapper = (Twine(wrapperName) + ".__obelisk_execute").str();
+      std::string wrapper = (Twine(wrapperName) + ".__talos_execute").str();
       sim::SimFuncOp twoStateBody;
       std::string twoStateWrapper;
       if (auto variant =
-              ::obelisk::schedule::get<schedule::metadata::evalTwoStateVariant>(
+              ::talos::schedule::get<schedule::metadata::evalTwoStateVariant>(
                   evalBody)) {
         twoStateBody = designSymbols.lookup<sim::SimFuncOp>(variant.getValue());
         if (!twoStateBody)
@@ -804,8 +804,8 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
 
       if (runtimeCheckpoint) {
         SmallString<96> wrapperName;
-        (Twine("__obelisk_direct_fragment_") + Twine(*actorSlot) + "_" +
-         Twine(suspension.continuationID) + ".__obelisk_execute")
+        (Twine("__talos_direct_fragment_") + Twine(*actorSlot) + "_" +
+         Twine(suspension.continuationID) + ".__talos_execute")
             .toVector(wrapperName);
         ContinuationFragmentCoverage coverage =
             fragmentCoverageFor(actor, suspension.continuationID);
@@ -910,7 +910,7 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
         continue;
 
       SmallString<96> bodyName;
-      (Twine("__obelisk_direct_fragment_") + Twine(*actorSlot) + "_" +
+      (Twine("__talos_direct_fragment_") + Twine(*actorSlot) + "_" +
        Twine(suspension.continuationID))
           .toVector(bodyName);
       unsigned collision = 0;
@@ -947,18 +947,18 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
       ++nextCodeUnit;
       designSymbols.insert(body);
       detail::copyNativePartition(actor, body);
-      ::obelisk::schedule::set<
-          ::obelisk::schedule::Field::EvalBorrowedCaptures>(
+      ::talos::schedule::set<
+          ::talos::schedule::Field::EvalBorrowedCaptures>(
           body, UnitAttr::get(context));
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRawCaptures>(
+      ::talos::schedule::set<::talos::schedule::Field::EvalRawCaptures>(
           body, UnitAttr::get(context));
-      if (auto owners = ::obelisk::schedule::get<
-              ::obelisk::schedule::Field::EvalSourceOwners>(actor))
-        ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSourceOwners>(
+      if (auto owners = ::talos::schedule::get<
+              ::talos::schedule::Field::EvalSourceOwners>(actor))
+        ::talos::schedule::set<::talos::schedule::Field::EvalSourceOwners>(
             body, owners);
-      if (auto group = ::obelisk::schedule::get<
-              ::obelisk::schedule::Field::EvalFusionGroup>(actor))
-        ::obelisk::schedule::set<::obelisk::schedule::Field::EvalFusionGroup>(
+      if (auto group = ::talos::schedule::get<
+              ::talos::schedule::Field::EvalFusionGroup>(actor))
+        ::talos::schedule::set<::talos::schedule::Field::EvalFusionGroup>(
             body, group);
       SymbolTable::setSymbolVisibility(body, SymbolTable::Visibility::Private);
       IRMapping mapping;
@@ -999,7 +999,7 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
       // just as for eval bodies extracted before schedule conversion.
       analysis::propagateActivationValueRoots(body);
 
-      std::string wrapper = (Twine(bodyName) + ".__obelisk_execute").str();
+      std::string wrapper = (Twine(bodyName) + ".__talos_execute").str();
       ContinuationFragmentCoverage coverage =
           fragmentCoverageFor(actor, suspension.continuationID);
       pendingEvalWrappers.push_back({body,
@@ -1031,13 +1031,13 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
       for (sim::SimFuncOp body : {pending.body, pending.twoStateBody}) {
         if (!body)
           continue;
-        if (auto previous = ::obelisk::schedule::get<
-                ::obelisk::schedule::Field::EvalDirectFragment>(body);
+        if (auto previous = ::talos::schedule::get<
+                ::talos::schedule::Field::EvalDirectFragment>(body);
             previous && previous != directFragmentAttr)
           return body.emitOpError(
               "is shared by multiple typed direct fragments");
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalDirectFragment>(body,
+        ::talos::schedule::set<
+            ::talos::schedule::Field::EvalDirectFragment>(body,
                                                             directFragmentAttr);
       }
     }
@@ -1063,8 +1063,8 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
                                     pending.actor, pending.actorSlot,
                                     pending.continuation, pending.analysis});
     }
-    if (::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalInheritedTwoStateCheckpoint>(
+    if (::talos::schedule::has<
+            ::talos::schedule::Field::EvalInheritedTwoStateCheckpoint>(
             pending.body)) {
       Builder builder(context);
       checkpointRoutes.push_back(schedule::CheckpointRouteAttr::get(
@@ -1076,8 +1076,8 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
     bool initialActivation = pending.initialActivation.value_or(false);
     SmallVector<NativePromotionRange> localPromotionRanges;
     if (pending.twoStateBody) {
-      auto encoded = ::obelisk::schedule::get<
-          ::obelisk::schedule::Field::EvalLocalPromotionRanges>(
+      auto encoded = ::talos::schedule::get<
+          ::talos::schedule::Field::EvalLocalPromotionRanges>(
           pending.twoStateBody);
       if (!encoded || (encoded.size() & 1) != 0)
         return pending.twoStateBody.emitOpError(
@@ -1097,9 +1097,9 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
       // known state on every activation. A known-preserving guarded body keeps
       // the complete range union above, allowing its owner bit to graduate
       // once without weakening the checkpoint-path guard.
-      if (::obelisk::schedule::has<schedule::metadata::evalPathGuardedTwoState>(
+      if (::talos::schedule::has<schedule::metadata::evalPathGuardedTwoState>(
               pending.twoStateBody) &&
-          !::obelisk::schedule::has<
+          !::talos::schedule::has<
               schedule::metadata::evalPathGuardedKnownPreserving>(
               pending.twoStateBody))
         localPromotionRanges.clear();
@@ -1119,8 +1119,8 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
       });
     }
     auto collectSourceOwners = [&](sim::SimFuncOp function) -> LogicalResult {
-      ArrayAttr owners = ::obelisk::schedule::get<
-          ::obelisk::schedule::Field::EvalSourceOwners>(function);
+      ArrayAttr owners = ::talos::schedule::get<
+          ::talos::schedule::Field::EvalSourceOwners>(function);
       if (!owners)
         return success();
       for (Attribute attribute : owners) {
@@ -1162,7 +1162,7 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
     uint32_t fusionGroup = UINT32_MAX;
     auto collectFusionGroup = [&](sim::SimFuncOp function) -> LogicalResult {
       auto group =
-          ::obelisk::schedule::get<::obelisk::schedule::Field::EvalFusionGroup>(
+          ::talos::schedule::get<::talos::schedule::Field::EvalFusionGroup>(
               function);
       if (!group)
         return success();
@@ -1190,15 +1190,15 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
          std::move(sourceOwners), std::move(sourceCodeUnits),
          std::move(pending.fragmentIDs), std::move(localPromotionRanges),
          fusionGroup,
-         ::obelisk::schedule::has<
-             ::obelisk::schedule::Field::EvalInstanceCoordinator>(pending.body),
+         ::talos::schedule::has<
+             ::talos::schedule::Field::EvalInstanceCoordinator>(pending.body),
          initialActivation, /*tier2Convergence=*/false,
          pending.runtimeCheckpoint,
          inactiveResumptions.contains(
              {pending.actor.getOperation(), pending.continuation})});
   }
   if (!checkpointRoutes.empty())
-    ::obelisk::schedule::set<schedule::metadata::evalCheckpointRoutes>(
+    ::talos::schedule::set<schedule::metadata::evalCheckpointRoutes>(
         module, ArrayAttr::get(context, checkpointRoutes));
   return result;
 }
@@ -1254,7 +1254,7 @@ void NativePipelineAnalysis::markTiming(StringRef name) {
     return;
   auto now = std::chrono::steady_clock::now();
   double seconds = std::chrono::duration<double>(now - lastTiming).count();
-  llvm::errs() << "obelisk native preparation timing: " << name << ": "
+  llvm::errs() << "talos native preparation timing: " << name << ": "
                << seconds << " s\n";
   lastTiming = now;
 }
@@ -1341,7 +1341,7 @@ LogicalResult NativePipelineAnalysis::initialize() {
   module.walk([&](sim::SimDesignOp design) {
     metadataDesign = design;
     staticSuperstep =
-        ::obelisk::schedule::get<schedule::metadata::staticSuperstep>(design);
+        ::talos::schedule::get<schedule::metadata::staticSuperstep>(design);
   });
   bytecodeOnly =
       runtime::bitEnumContainsAll(runtime::getExecutionFlags(module),
@@ -1399,9 +1399,9 @@ LogicalResult NativePipelineAnalysis::initialize() {
                                       **rootAnalysis, rootSchedule)))
       return failure();
     std::string rootSpawnName = root.getSymName().str();
-    rootSpawnName += ".__obelisk_spawn";
+    rootSpawnName += ".__talos_spawn";
     LLVM::LLVMFuncOp rootSpawn;
-    ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
+    ::talos::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
         metadataDesign, [&](LLVM::LLVMFuncOp function) {
           if (function.getSymName() == rootSpawnName)
             rootSpawn = function;
@@ -1463,7 +1463,7 @@ LogicalResult NativePipelineAnalysis::prepareFrameInputs() {
   declareNativeRuntimeABI(module);
   declareProcessSpawnRuntimeABI(module);
   // Freeze this source-shape proof before any function worker threads state.
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         if (auto copy = analysis::getCaptureCopyProcess(function))
           copyActivations.try_emplace(function, *copy);
@@ -1505,10 +1505,10 @@ LogicalResult NativePipelineAnalysis::collectFrames() {
   }
   markTiming("frame analysis and state threading");
   if (detailedTiming)
-    llvm::errs() << "obelisk native copy activations: "
+    llvm::errs() << "talos native copy activations: "
                  << copyActivations.size() << '\n';
   if (detailedTiming)
-    llvm::errs() << "obelisk native table candidates: " << tableProcesses.size()
+    llvm::errs() << "talos native table candidates: " << tableProcesses.size()
                  << '\n';
   return success();
 }
@@ -1575,7 +1575,7 @@ LogicalResult NativePipelineAnalysis::prepareRoots(
   // ABI calls and pointers. Those implementation details are not managed heap
   // use. Generated bodies added later conservatively retain a managed scope.
   detail::UnmanagedNativeCache unmanaged;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         native::remove<native::Unmanaged>(function);
         if (detail::isUnmanagedNativeProcess(function, unmanaged))
@@ -1624,15 +1624,15 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
   bool invalidPreLowerFusion = false;
   SmallVector<sim::SimFuncOp> currentActors;
   if (metadataDesign)
-    ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+    ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
         metadataDesign, [&](sim::SimFuncOp actor) {
           if (aotActorSlotFor(actor))
             currentActors.push_back(actor);
         });
   for (sim::SimFuncOp actor : currentActors) {
     uint32_t actorSlot = *aotActorSlotFor(actor);
-    if (::obelisk::schedule::has<schedule::metadata::nativeRegionBody>(actor) &&
-        ::obelisk::schedule::has<
+    if (::talos::schedule::has<schedule::metadata::nativeRegionBody>(actor) &&
+        ::talos::schedule::has<
             schedule::metadata::evalReconstructsContinuationArgs>(actor)) {
       IntegerAttr codeUnit = actor.getCodeUnitIdAttr();
       if (!codeUnit)
@@ -1642,7 +1642,7 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
       preLowerGeneratedRegionCodeUnits.insert(codeUnit.getUInt());
     }
     auto group =
-        ::obelisk::schedule::get<::obelisk::schedule::Field::EvalFusionGroup>(
+        ::talos::schedule::get<::talos::schedule::Field::EvalFusionGroup>(
             actor);
     if (!group)
       continue;
@@ -1650,8 +1650,8 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
         static_cast<uint64_t>(group.getInt()) > UINT32_MAX)
       return actor.emitOpError("has an invalid eval fusion group"), failure();
     uint32_t groupID = static_cast<uint32_t>(group.getUInt());
-    if (ArrayAttr owners = ::obelisk::schedule::get<
-            ::obelisk::schedule::Field::EvalSourceOwners>(actor))
+    if (ArrayAttr owners = ::talos::schedule::get<
+            ::talos::schedule::Field::EvalSourceOwners>(actor))
       for (Attribute attribute : owners) {
         auto owner = dyn_cast<schedule::SourceOwnerAttr>(attribute);
         auto codeUnit = owner ? owner.getCodeUnit() : IntegerAttr{};
@@ -1701,12 +1701,12 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
       if (!cov::has<cov::ToggleObservable>(storage))
         return;
       auto handle = stateLayout->storage.find(storage.getId());
-      obelisk_rt_stable_handle_v1 decoded{};
+      talos_rt_stable_handle_v1 decoded{};
       if (handle != stateLayout->storage.end() &&
-          obelisk_rt_stable_handle_decode(handle->second, &decoded))
+          talos_rt_stable_handle_decode(handle->second, &decoded))
         observedRoots.insert(decoded.id);
     });
-    DenseMap<uint32_t, SmallVector<const obelisk_rt_static_fanout_entry *>>
+    DenseMap<uint32_t, SmallVector<const talos_rt_static_fanout_entry *>>
         observers;
     for (const auto &entry : staticFanoutPlan.entries)
       observers[entry.static_state].push_back(&entry);
@@ -1714,12 +1714,12 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
     // (slot, continuation) belongs to that continuation alone.
     DenseMap<std::pair<uint32_t, uint64_t>, SmallVector<int32_t>> soleRoots;
     for (const auto &[root, entries] : observers) {
-      const obelisk_rt_static_fanout_entry *first = entries.front();
+      const talos_rt_static_fanout_entry *first = entries.front();
       if (observedRoots.contains(root) ||
           !llvm::all_of(entries, [&](const auto *entry) {
             return entry->actor_slot == first->actor_slot &&
                    entry->continuation == first->continuation &&
-                   (entry->reserved & OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF) !=
+                   (entry->reserved & TALOS_RT_FANOUT_SUPPRESS_ACTIVE_SELF) !=
                        0;
           }))
         continue;
@@ -1779,7 +1779,7 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
   // An observer's scalar semantic result can expand to two native planes.
   // Complete its ordinary-function conversion at this representation boundary.
   SmallVector<sim::SimFuncOp> observers;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         if (function.getEntryKind() == sim::EntryKind::Observer)
           observers.push_back(function);
@@ -1931,7 +1931,7 @@ LogicalResult NativePipelineAnalysis::materialize() {
         // declined proof therefore takes the same certified legacy handoff
         // as a source-level ordered-NBA owner: the ordinary coroutine keeps
         // the runtime NBA call, and unused Eval route shells are ignored.
-        ::obelisk::schedule::set<evalRuntimeNBAFallbackAttr>(
+        ::talos::schedule::set<evalRuntimeNBAFallbackAttr>(
             module, UnitAttr::get(context));
         evalScheduler = false;
       }
@@ -1986,7 +1986,7 @@ LogicalResult NativePipelineAnalysis::materialize() {
             })))
       return failure();
     if (detailedTiming)
-      llvm::errs() << "obelisk two-state executor bodies: emitted="
+      llvm::errs() << "talos two-state executor bodies: emitted="
                    << deferredDirectWrappers.size() << " omitted=" << omitted
                    << '\n';
     deferredDirectWrappers.clear();
@@ -1994,7 +1994,7 @@ LogicalResult NativePipelineAnalysis::materialize() {
   markTiming("two-state executor body materialization");
 
   SmallVector<sim::SimFuncOp> ordinary;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         if (function.getEntryKind() == sim::EntryKind::Function ||
             function.getEntryKind() == sim::EntryKind::Observer)
@@ -2152,7 +2152,7 @@ LogicalResult NativePipelineAnalysis::materialize() {
   }
   markTiming("process body preparation");
   if (detailedTiming)
-    llvm::errs() << "obelisk native table processes: "
+    llvm::errs() << "talos native table processes: "
                  << llvm::count_if(suspendableProcesses,
                                    [](const auto &process) {
                                      return process.tableProcess.has_value();
@@ -2193,7 +2193,7 @@ LogicalResult NativePipelineAnalysis::materialize() {
           })))
     return failure();
   if (detailedTiming)
-    llvm::errs() << "obelisk scheduled transfer kernels: "
+    llvm::errs() << "talos scheduled transfer kernels: "
                  << transferKernels.size() << " for "
                  << transferProcesses.size() << " activations\n";
   markTiming("scheduled transfer kernel materialization");
@@ -2311,7 +2311,7 @@ LogicalResult NativePipelineAnalysis::materialize() {
             })))
       return failure();
     if (detailedTiming)
-      llvm::errs() << "obelisk native spawn bodies: emitted="
+      llvm::errs() << "talos native spawn bodies: emitted="
                    << spawnHelpers.size() << " omitted=" << omitted << '\n';
   }
   markTiming("scalar spawn body materialization");
@@ -2366,11 +2366,11 @@ DenseI64ArrayAttr canonicalPromotionCoverage(DenseI64ArrayAttr ranges) {
 LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   // Variants are prepared before the final coordinator eligibility proof.
   // A declined plan has no generated callers or same-slot resume target.
-  if (!::obelisk::schedule::has<::obelisk::schedule::Field::EvalGenerated>(
+  if (!::talos::schedule::has<::talos::schedule::Field::EvalGenerated>(
           module)) {
-    ::obelisk::schedule::remove<
-        ::obelisk::schedule::Field::EvalPathProbeRoutes>(module);
-    ::obelisk::schedule::remove<schedule::metadata::evalCheckpointRoutes>(
+    ::talos::schedule::remove<
+        ::talos::schedule::Field::EvalPathProbeRoutes>(module);
+    ::talos::schedule::remove<schedule::metadata::evalCheckpointRoutes>(
         module);
     return success();
   }
@@ -2380,8 +2380,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   llvm::StringMap<std::string> pathKnownProbes;
   llvm::StringMap<std::string> checkpointPathProbes;
   llvm::StringMap<std::pair<uint32_t, uint32_t>> checkpointOwners;
-  if (ArrayAttr mappings = ::obelisk::schedule::get<
-          ::obelisk::schedule::Field::EvalPathProbeRoutes>(module)) {
+  if (ArrayAttr mappings = ::talos::schedule::get<
+          ::talos::schedule::Field::EvalPathProbeRoutes>(module)) {
     for (Attribute mappingAttr : mappings) {
       auto mapping = dyn_cast<schedule::PathProbeRouteAttr>(mappingAttr);
       auto twoState = mapping ? mapping.getTwoState() : FlatSymbolRefAttr{};
@@ -2395,11 +2395,11 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       checkpointPathProbes[twoState.getValue()] =
           checkpointProbe.getValue().str();
     }
-    ::obelisk::schedule::remove<
-        ::obelisk::schedule::Field::EvalPathProbeRoutes>(module);
+    ::talos::schedule::remove<
+        ::talos::schedule::Field::EvalPathProbeRoutes>(module);
   }
   if (ArrayAttr mappings =
-          ::obelisk::schedule::get<schedule::metadata::evalCheckpointRoutes>(
+          ::talos::schedule::get<schedule::metadata::evalCheckpointRoutes>(
               module)) {
     for (Attribute mappingAttr : mappings) {
       auto mapping = dyn_cast<schedule::CheckpointRouteAttr>(mappingAttr);
@@ -2419,7 +2419,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         return module.emitError("eval checkpoint route has multiple owners"),
                failure();
     }
-    ::obelisk::schedule::remove<schedule::metadata::evalCheckpointRoutes>(
+    ::talos::schedule::remove<schedule::metadata::evalCheckpointRoutes>(
         module);
   }
   struct Route {
@@ -2444,16 +2444,16 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   };
   SmallVector<Route, 0> routes;
   bool routeError = false;
-  ::obelisk::detail::walkNativeFunctions<
+  ::talos::detail::walkNativeFunctions<
       LLVM::LLVMFuncOp>(module, [&](LLVM::LLVMFuncOp function) {
-    auto source = ::obelisk::schedule::get<
-        ::obelisk::schedule::Field::EvalFourStateSource>(function);
-    auto ranges = ::obelisk::schedule::get<
-        ::obelisk::schedule::Field::EvalLocalPromotionRanges>(function);
+    auto source = ::talos::schedule::get<
+        ::talos::schedule::Field::EvalFourStateSource>(function);
+    auto ranges = ::talos::schedule::get<
+        ::talos::schedule::Field::EvalLocalPromotionRanges>(function);
     if (!source || !ranges)
       return;
-    if (!::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalSelectedTwoState>(function))
+    if (!::talos::schedule::has<
+            ::talos::schedule::Field::EvalSelectedTwoState>(function))
       return;
     LLVM::LLVMFuncOp fourState =
         inputSymbols.lookup<LLVM::LLVMFuncOp>(source.getValue());
@@ -2484,7 +2484,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     std::optional<uint32_t> checkpointActor;
     std::optional<uint32_t> checkpointContinuation;
     if (pathKnownProbe &&
-        !::obelisk::schedule::has<schedule::Field::EvalInfallible>(function)) {
+        !::talos::schedule::has<schedule::Field::EvalInfallible>(function)) {
       auto owner = checkpointOwners.find(fourState.getSymName());
       if (owner == checkpointOwners.end()) {
         function.emitError("path-sensitive checkpoint route ")
@@ -2505,16 +2505,16 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
          {},
          {},
          ranges,
-         ::obelisk::schedule::has<
-             ::obelisk::schedule::Field::EvalConditionallyTwoState>(function),
+         ::talos::schedule::has<
+             ::talos::schedule::Field::EvalConditionallyTwoState>(function),
          checkpointActor,
          checkpointContinuation,
-         (Twine("__obelisk_eval_selected_variant_v1_") + Twine(routeIndex))
+         (Twine("__talos_eval_selected_variant_v1_") + Twine(routeIndex))
              .str(),
-         (Twine("__obelisk_eval_path_dispatch_v1_") + Twine(routeIndex)).str(),
-         (Twine("__obelisk_eval_four_state_fallback_v1_") + Twine(routeIndex))
+         (Twine("__talos_eval_path_dispatch_v1_") + Twine(routeIndex)).str(),
+         (Twine("__talos_eval_four_state_fallback_v1_") + Twine(routeIndex))
              .str(),
-         (Twine("__obelisk_eval_checkpoint_body_v1_") + Twine(routeIndex))
+         (Twine("__talos_eval_checkpoint_body_v1_") + Twine(routeIndex))
              .str(),
          {}});
   });
@@ -2524,7 +2524,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     return success();
 
   LLVM::LLVMFuncOp run =
-      inputSymbols.lookup<LLVM::LLVMFuncOp>("__obelisk_aot_schedule_run_v1");
+      inputSymbols.lookup<LLVM::LLVMFuncOp>("__talos_aot_schedule_run_v1");
   if (!run || run.empty())
     return module.emitError("eval function routes have no AOT run wrapper");
   LLVM::CallOp prepare;
@@ -2532,19 +2532,19 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   run.walk([&](LLVM::CallOp call) {
     if (!call.getCallee())
       return;
-    if (*call.getCallee() == "obelisk_rt_v1_scheduler_prepare_periodic_aot")
+    if (*call.getCallee() == "talos_rt_v1_scheduler_prepare_periodic_aot")
       prepare = call;
-    else if (*call.getCallee() == "obelisk_rt_v1_scheduler_run_aot_nodes")
+    else if (*call.getCallee() == "talos_rt_v1_scheduler_run_aot_nodes")
       eventDrivenRun = call;
   });
   if (!prepare && !eventDrivenRun) {
     auto scheduler =
-        ::obelisk::schedule::get<::obelisk::schedule::Field::NativeScheduler>(
+        ::talos::schedule::get<::talos::schedule::Field::NativeScheduler>(
             module);
     if ((scheduler &&
          scheduler.getValue() == schedule::NativeSchedulerMode::Auto) ||
-        ::obelisk::schedule::has<evalRuntimeNBAFallbackAttr>(module)) {
-      ::obelisk::schedule::remove<evalRuntimeNBAFallbackAttr>(module);
+        ::talos::schedule::has<evalRuntimeNBAFallbackAttr>(module)) {
+      ::talos::schedule::remove<evalRuntimeNBAFallbackAttr>(module);
       return success();
     }
     return run.emitError("eval function routes have no Tier-2 handoff");
@@ -2559,17 +2559,17 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   Type i8 = builder.getI8Type();
   Type i64 = builder.getI64Type();
   constexpr StringLiteral routePromotionPendingName =
-      "__obelisk_eval_route_promotion_pending_v1";
+      "__talos_eval_route_promotion_pending_v1";
   constexpr StringLiteral routePromotionDirtyName =
-      "__obelisk_eval_route_promotion_dirty_v1";
+      "__talos_eval_route_promotion_dirty_v1";
   constexpr StringLiteral routePromotionScanName =
-      "__obelisk_eval_route_promotion_scan_v1";
+      "__talos_eval_route_promotion_scan_v1";
   constexpr StringLiteral routePromotionBoundaryName =
-      "__obelisk_eval_route_promotion_boundary_v1";
+      "__talos_eval_route_promotion_boundary_v1";
   auto hasPersistentSelector = [](const Route &route) {
     return !route.pathKnownProbe ||
            (route.independentEntry &&
-            ::obelisk::schedule::has<schedule::Field::EvalInfallible>(
+            ::talos::schedule::has<schedule::Field::EvalInfallible>(
                 route.twoState));
   };
   // IEEE 1800-2023 6.3.1, 6.8: knownness depends on these exact physical
@@ -2581,9 +2581,9 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   // proof before the corresponding scheduled owner has ever executed.
   DenseMap<Attribute, uint64_t> kernelProofs;
   if (auto latches = inputSymbols.lookup<LLVM::GlobalOp>(
-          "__obelisk_eval_kernel_promotion_latched_v1"))
-    if (auto dependencies = ::obelisk::schedule::get<
-            ::obelisk::schedule::Field::EvalKernelProofDependencies>(latches))
+          "__talos_eval_kernel_promotion_latched_v1"))
+    if (auto dependencies = ::talos::schedule::get<
+            ::talos::schedule::Field::EvalKernelProofDependencies>(latches))
       for (Attribute attr : dependencies) {
         auto dependency = cast<schedule::KernelProofDependencyAttr>(attr);
         if (auto coverage = canonicalPromotionCoverage(dependency.getRanges()))
@@ -2608,7 +2608,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     return hasPersistentSelector(route) && !route.sharedKernel;
   };
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk eval proof sharing: shared=" << sharedCount
+    llvm::errs() << "talos eval proof sharing: shared=" << sharedCount
                  << " independent=" << independentRoutes.size() << '\n';
   const uint64_t routeWordCount =
       std::max<uint64_t>(1, (independentRoutes.size() + 63) / 64);
@@ -2671,11 +2671,11 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   // X/Z stores still invalidate it.
   builder.setInsertionPointToStart(module.getBody());
   auto terminationRequested = inputSymbols.lookup<LLVM::LLVMFuncOp>(
-      "obelisk_rt_v1_scheduler_termination_requested");
+      "talos_rt_v1_scheduler_termination_requested");
   if (!terminationRequested)
     terminationRequested = LLVM::LLVMFuncOp::create(
         builder, module.getLoc(),
-        "obelisk_rt_v1_scheduler_termination_requested",
+        "talos_rt_v1_scheduler_termination_requested",
         LLVM::LLVMFunctionType::get(builder.getI32Type(), {pointer}));
   LLVM::LLVMFuncOp syncCheckpointStateFunction;
   auto fractureCheckpoints = [&](LLVM::LLVMFuncOp function) {
@@ -2685,7 +2685,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       // summary refresh of a gated known-activation copy. Only the
       // remaining runtime calls are checkpoint leaves.
       if (std::optional<StringRef> callee = call.getCallee();
-          callee && callee->starts_with("obelisk_rt_") &&
+          callee && callee->starts_with("talos_rt_") &&
           !isEvalClosureRuntimeCall(call, function, module))
         checkpointBlocks.try_emplace(call->getBlock(), call.getOperation());
     });
@@ -2711,7 +2711,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       LLVM::ReturnOp::create(builder, function.getLoc(),
                              detail::llvmConstant(builder, function.getLoc(),
                                                   builder.getI32Type(),
-                                                  OBELISK_RT_INVALID_DESIGN));
+                                                  TALOS_RT_INVALID_DESIGN));
     }
     IRRewriter rewriter(context);
     (void)eraseUnreachableBlocks(rewriter, function.getBody());
@@ -2744,7 +2744,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       if (!isProbeType(probeType))
         return route.pathKnownProbe.emitError(
             "path-known probe ABI does not match its eval body");
-      if (!::obelisk::schedule::has<schedule::Field::EvalInfallible>(
+      if (!::talos::schedule::has<schedule::Field::EvalInfallible>(
               route.twoState)) {
         if (!route.checkpointPathProbe ||
             !isProbeType(route.checkpointPathProbe.getFunctionType()))
@@ -2769,7 +2769,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
             declareHelper(route.fourState, route.fourStateFallbackName);
         if (!syncCheckpointStateFunction)
           syncCheckpointStateFunction = detail::getOrDeclareLLVMFunction(
-              module, "obelisk_rt_v1_native_state_sync", builder.getI32Type(),
+              module, "talos_rt_v1_native_state_sync", builder.getI32Type(),
               {pointer, pointer, pointer, builder.getI64Type()});
       }
       route.dispatcher = declareHelper(route.twoState, route.dispatcherName);
@@ -2788,8 +2788,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       // IEEE 1800-2023 6.3.1, 6.8: select two-state execution only after its
       // exact proof succeeds; actual X/Z writes revoke that selection.
       if (!route.ranges.empty())
-        ::obelisk::schedule::set<
-            ::obelisk::schedule::Field::EvalRouteProofDependencies>(
+        ::talos::schedule::set<
+            ::talos::schedule::Field::EvalRouteProofDependencies>(
             global, schedule::RouteProofDependencyAttr::get(
                         context, route.ranges,
                         builder.getI64IntegerAttr(route.pendingBit)));
@@ -2812,7 +2812,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       Value ok = LLVM::ICmpOp::create(
           builder, loc, LLVM::ICmpPredicate::eq, status,
           detail::llvmConstant(builder, loc, builder.getI32Type(),
-                               OBELISK_RT_OK));
+                               TALOS_RT_OK));
       // Aggregate probes may need temporary runtime storage. Their failures
       // establish no proof. Replay the canonical activation, which handles
       // its own status and effects, rather than selecting an unchecked domain.
@@ -2820,7 +2820,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                                     detail::llvmConstant(builder, loc, i8, 0));
     };
     if (route.pathKnownProbe &&
-        ::obelisk::schedule::has<schedule::Field::EvalInfallible>(
+        ::talos::schedule::has<schedule::Field::EvalInfallible>(
             route.twoState)) {
       // This predicate chooses only the value domain. A pure activation has
       // no runtime checkpoint and retains its ordinary body signature.
@@ -2854,7 +2854,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                              knownCall.getResults());
       builder.setInsertionPointToStart(unknown);
       if (auto fallback = inputSymbols.lookup<LLVM::GlobalOp>(
-              "__obelisk_eval_step_four_state_fallback_v1"))
+              "__talos_eval_step_four_state_fallback_v1"))
         LLVM::StoreOp::create(
             builder, route.fourState.getLoc(),
             detail::llvmConstant(builder, route.fourState.getLoc(), i8, 1),
@@ -2900,7 +2900,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       // closure. Preserve the same NBA provenance as an ordinary four-state
       // route before it can stage X/Z or publish downstream work.
       if (auto fallback = inputSymbols.lookup<LLVM::GlobalOp>(
-              "__obelisk_eval_step_four_state_fallback_v1"))
+              "__talos_eval_step_four_state_fallback_v1"))
         LLVM::StoreOp::create(
             builder, route.fourState.getLoc(),
             detail::llvmConstant(builder, route.fourState.getLoc(), i8, 1),
@@ -2908,7 +2908,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                                       pointer, fallback.getSymName()),
             1);
       if (auto fastRoots = inputSymbols.lookup<LLVM::GlobalOp>(
-              "__obelisk_eval_fast_nba_roots_v1"))
+              "__talos_eval_fast_nba_roots_v1"))
         LLVM::StoreOp::create(
             builder, route.fourState.getLoc(),
             LLVM::ZeroOp::create(builder, route.fourState.getLoc(),
@@ -2928,7 +2928,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
           builder, route.fourState.getLoc(), LLVM::ICmpPredicate::eq,
           bodyStatus,
           detail::llvmConstant(builder, route.fourState.getLoc(),
-                               builder.getI32Type(), OBELISK_RT_OK));
+                               builder.getI32Type(), TALOS_RT_OK));
       // A taken $finish/$fatal (or batch-mode $stop) has already ended the
       // active phase. Re-entering the generated same-slot coordinator here
       // can execute another ready activation before its post-body termination
@@ -2966,7 +2966,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
           resumeStatus,
           detail::llvmConstant(builder, route.fourState.getLoc(),
                                builder.getI32Type(),
-                               OBELISK_RT_AOT_GENERATED_CHECKPOINT));
+                               TALOS_RT_AOT_GENERATED_CHECKPOINT));
       LLVM::CondBrOp::create(builder, route.fourState.getLoc(),
                              resumedAtCheckpoint, publishNextCheckpoint,
                              ValueRange{}, returnResumeStatus,
@@ -2992,7 +2992,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
               builder, route.fourState.getLoc(),
               TypeRange{builder.getI32Type()},
               SymbolRefAttr::get(
-                  context, "obelisk_rt_v1_scheduler_queue_aot_checkpoint"),
+                  context, "talos_rt_v1_scheduler_queue_aot_checkpoint"),
               ValueRange{callbackEntry->getArgument(0), nextActor,
                          nextContinuation, nextCallback})
               .getResult();
@@ -3000,7 +3000,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
           builder, route.fourState.getLoc(), LLVM::ICmpPredicate::eq,
           queueStatus,
           detail::llvmConstant(builder, route.fourState.getLoc(),
-                               builder.getI32Type(), OBELISK_RT_OK));
+                               builder.getI32Type(), TALOS_RT_OK));
       Value publishedStatus = LLVM::SelectOp::create(
           builder, route.fourState.getLoc(), queued, resumeStatus, queueStatus);
       LLVM::ReturnOp::create(builder, route.fourState.getLoc(),
@@ -3016,14 +3016,14 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                    builder, route.fourState.getLoc(),
                    TypeRange{builder.getI32Type()},
                    SymbolRefAttr::get(context,
-                                      "obelisk_rt_v1_native_state_sync"),
+                                      "talos_rt_v1_native_state_sync"),
                    ValueRange{callbackEntry->getArgument(0),
                               LLVM::AddressOfOp::create(
                                   builder, route.fourState.getLoc(), pointer,
-                                  "__obelisk_state_value"),
+                                  "__talos_state_value"),
                               LLVM::AddressOfOp::create(
                                   builder, route.fourState.getLoc(), pointer,
-                                  "__obelisk_state_unknown"),
+                                  "__talos_state_unknown"),
                               detail::llvmConstant(
                                   builder, route.fourState.getLoc(),
                                   builder.getI64Type(), stateBits.getUInt())})
@@ -3034,7 +3034,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
           builder, route.fourState.getLoc(), LLVM::ICmpPredicate::eq,
           returnResumeStatus->getArgument(0),
           detail::llvmConstant(builder, route.fourState.getLoc(),
-                               builder.getI32Type(), OBELISK_RT_OK));
+                               builder.getI32Type(), TALOS_RT_OK));
       LLVM::ReturnOp::create(
           builder, route.fourState.getLoc(),
           LLVM::SelectOp::create(builder, route.fourState.getLoc(), resumeOK,
@@ -3075,7 +3075,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
             LLVM::LoadOp::create(builder, route.twoState.getLoc(), i8,
                                  LLVM::AddressOfOp::create(
                                      builder, route.twoState.getLoc(), pointer,
-                                     "__obelisk_eval_promotion_latched_v1"),
+                                     "__talos_eval_promotion_latched_v1"),
                                  1),
             detail::llvmConstant(builder, route.twoState.getLoc(), i8, 0));
       LLVM::CondBrOp::create(builder, route.twoState.getLoc(), promoted,
@@ -3112,7 +3112,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
                              checkpointClearUnknown, checkpointPublish);
       builder.setInsertionPointToStart(checkpointClearUnknown);
       Value checkpointUnknown = LLVM::AddressOfOp::create(
-          builder, route.twoState.getLoc(), pointer, "__obelisk_state_unknown");
+          builder, route.twoState.getLoc(), pointer, "__talos_state_unknown");
       ArrayRef<int64_t> checkpointRanges = route.ranges.asArrayRef();
       if ((checkpointRanges.size() & 1) != 0)
         return route.twoState.emitError("malformed local promotion ranges");
@@ -3179,7 +3179,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
           builder, route.twoState.getLoc(),
           detail::llvmConstant(builder, route.twoState.getLoc(),
                                builder.getI32Type(),
-                               OBELISK_RT_AOT_GENERATED_CHECKPOINT));
+                               TALOS_RT_AOT_GENERATED_CHECKPOINT));
       auto emitTailCall = [&](Block *block, LLVM::LLVMFuncOp callee,
                               bool fourStateFallback) {
         builder.setInsertionPointToStart(block);
@@ -3188,7 +3188,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
           // publication. Record the local four-state route before executing
           // it so the shared NBA barrier preserves its staged unknown plane.
           if (auto fallback = inputSymbols.lookup<LLVM::GlobalOp>(
-                  "__obelisk_eval_step_four_state_fallback_v1"))
+                  "__talos_eval_step_four_state_fallback_v1"))
             LLVM::StoreOp::create(
                 builder, route.fourState.getLoc(),
                 detail::llvmConstant(builder, route.fourState.getLoc(), i8, 1),
@@ -3215,7 +3215,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       Block *entry = route.fourStateFallback.addEntryBlock(builder);
       builder.setInsertionPointToStart(entry);
       if (auto fallback = inputSymbols.lookup<LLVM::GlobalOp>(
-              "__obelisk_eval_step_four_state_fallback_v1"))
+              "__talos_eval_step_four_state_fallback_v1"))
         LLVM::StoreOp::create(
             builder, route.fourState.getLoc(),
             detail::llvmConstant(builder, route.fourState.getLoc(), i8, 1),
@@ -3360,7 +3360,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
         builder.setInsertionPointToStart(scan);
         Location location = route.twoState.getLoc();
         Value unknown = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                  "__obelisk_state_unknown");
+                                                  "__talos_state_unknown");
         Value anyUnknown = detail::llvmConstant(builder, location, i8, 0);
         ArrayRef<int64_t> encoded = route.ranges.asArrayRef();
         for (size_t index = 0; index != encoded.size(); index += 2) {
@@ -3436,7 +3436,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   Value statusOK = LLVM::ICmpOp::create(
       builder, module.getLoc(), LLVM::ICmpPredicate::eq,
       boundaryEntry->getArgument(0),
-      detail::llvmConstant(builder, module.getLoc(), i32, OBELISK_RT_OK));
+      detail::llvmConstant(builder, module.getLoc(), i32, TALOS_RT_OK));
   Type summaryType = needsRouteSummary ? i8 : i64;
   StringRef summaryName =
       needsRouteSummary ? routePromotionDirtyName : routePromotionPendingName;
@@ -3497,7 +3497,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   // every non-vacuous local route in the same generated invalidator so the
   // four-state coordinator cannot retain a stale two-state leaf selection.
   if (LLVM::LLVMFuncOp invalidate = inputSymbols.lookup<LLVM::LLVMFuncOp>(
-          "__obelisk_eval_promotion_invalidate_v1")) {
+          "__talos_eval_promotion_invalidate_v1")) {
     SmallVector<LLVM::ReturnOp> returns;
     invalidate.walk(
         [&](LLVM::ReturnOp returnOp) { returns.push_back(returnOp); });
@@ -3528,7 +3528,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   // promotable. At this quiescent query, consume the same pending local
   // proofs used by other boundaries; a global latch is not their evidence.
   if (LLVM::LLVMFuncOp promotion = inputSymbols.lookup<LLVM::LLVMFuncOp>(
-          "__obelisk_eval_promotion_ready_v1")) {
+          "__talos_eval_promotion_ready_v1")) {
     SmallVector<LLVM::ReturnOp> promotionReturns;
     promotion.walk([&](LLVM::ReturnOp returnOp) {
       if (returnOp.getNumOperands() == 1 &&
@@ -3541,7 +3541,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       LLVM::CallOp::create(
           builder, returnOp.getLoc(), routePromotionBoundary,
           ValueRange{detail::llvmConstant(builder, returnOp.getLoc(), i32,
-                                          OBELISK_RT_OK)});
+                                          TALOS_RT_OK)});
     }
   }
 
@@ -3554,13 +3554,13 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   SymbolTable wrapperSymbols(module);
   llvm::MapVector<Operation *, SmallVector<LLVM::CallOp>> trustedWrapperCalls;
   auto trustedWrapperOf = [&](LLVM::CallOp call) -> LLVM::LLVMFuncOp {
-    if (!::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalProvenTwoStateCall>(call) ||
+    if (!::talos::schedule::has<
+            ::talos::schedule::Field::EvalProvenTwoStateCall>(call) ||
         !call.getCallee())
       return {};
     auto callee = wrapperSymbols.lookup<LLVM::LLVMFuncOp>(*call.getCallee());
     if (callee &&
-        ::obelisk::schedule::has<schedule::Field::EvalTwoStateWrapper>(callee))
+        ::talos::schedule::has<schedule::Field::EvalTwoStateWrapper>(callee))
       return callee;
     return {};
   };
@@ -3605,7 +3605,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       return wrapper.emitError(
           "cannot specialize a recursive trusted eval wrapper");
     SmallString<128> base(wrapper.getSymName());
-    base.append(".__obelisk_trusted");
+    base.append(".__talos_trusted");
     unsigned suffix = 0;
     SmallString<128> name(base);
     while (wrapperSymbols.lookup<LLVM::LLVMFuncOp>(name)) {
@@ -3624,8 +3624,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       clone = cast<LLVM::LLVMFuncOp>(wrapper->clone());
     }
     clone.setSymName(name);
-    ::obelisk::schedule::set<
-        ::obelisk::schedule::Field::EvalTrustedTwoStateClosure>(
+    ::talos::schedule::set<
+        ::talos::schedule::Field::EvalTrustedTwoStateClosure>(
         clone, builder.getUnitAttr());
     wrapperSymbols.insert(clone);
     for (LLVM::CallOp call : calls)
@@ -3633,7 +3633,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     trustedClones.emplace_back(clone, calls);
   }
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk trusted executor wrappers: reused=" << reused
+    llvm::errs() << "talos trusted executor wrappers: reused=" << reused
                  << " cloned=" << trustedWrapperCalls.size() - reused << '\n';
 
   SmallVector<LLVM::CallOp> calls = analysis::collectInWalkOrder<LLVM::CallOp>(
@@ -3645,8 +3645,8 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     // Certified ranked groups already selected this exact value-domain
     // branch. Replacing it with a mutable route would undo the boundary proof
     // and reintroduce an indirect dispatch for each internal computation.
-    if (::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalGroupDomainSelected>(call))
+    if (::talos::schedule::has<
+            ::talos::schedule::Field::EvalGroupDomainSelected>(call))
       continue;
     LLVM::LLVMFuncOp caller = call->getParentOfType<LLVM::LLVMFuncOp>();
     if (caller &&
@@ -3662,10 +3662,10 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     }
     bool selectedTwoStateClosure =
         caller &&
-        (::obelisk::schedule::has<
-             ::obelisk::schedule::Field::EvalFourStateSource>(caller) ||
-         ::obelisk::schedule::has<
-             ::obelisk::schedule::Field::EvalTrustedTwoStateClosure>(caller));
+        (::talos::schedule::has<
+             ::talos::schedule::Field::EvalFourStateSource>(caller) ||
+         ::talos::schedule::has<
+             ::talos::schedule::Field::EvalTrustedTwoStateClosure>(caller));
     if (selectedTwoStateClosure && !route.dispatcher) {
       // The selected call has already established the owner proof
       // at its execution boundary. Preserve a direct edge so LLVM can inline
@@ -3744,11 +3744,11 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
 }
 
 LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
-  constexpr StringLiteral fourStateName = "__obelisk_aot_static_nba_commit_v1";
+  constexpr StringLiteral fourStateName = "__talos_aot_static_nba_commit_v1";
   constexpr StringLiteral twoStateName =
-      "__obelisk_aot_static_nba_commit_two_state_v1";
+      "__talos_aot_static_nba_commit_two_state_v1";
   constexpr StringLiteral fastTwoStateName =
-      "__obelisk_aot_static_nba_commit_two_state_fast_v1";
+      "__talos_aot_static_nba_commit_two_state_fast_v1";
   LLVM::LLVMFuncOp source =
       module.lookupSymbol<LLVM::LLVMFuncOp>(fourStateName);
   if (!source)
@@ -3775,8 +3775,8 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
     variant.walk([&](Operation *operation) {
       if (auto load = dyn_cast<LLVM::LoadOp>(operation);
           load &&
-          ::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalTwoStateZeroUnknown>(load))
+          ::talos::schedule::has<
+              ::talos::schedule::Field::EvalTwoStateZeroUnknown>(load))
         stagedUnknownLoads.push_back(load);
     });
   for (LLVM::LoadOp load : stagedUnknownLoads) {
@@ -3813,7 +3813,7 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
   auto isUnknownPlaneAddress = [](Value address) {
     while (address) {
       if (auto global = address.getDefiningOp<LLVM::AddressOfOp>())
-        return global.getGlobalName() == "__obelisk_state_unknown";
+        return global.getGlobalName() == "__talos_state_unknown";
       if (auto gep = address.getDefiningOp<LLVM::GEPOp>()) {
         address = gep.getBase();
         continue;
@@ -3828,8 +3828,8 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
     // when its new value is known and the fixed dirty bitmap is empty. Keep
     // both planes for these publications until a separate destination proof
     // exists; preserving only the value would leave stale canonical X bits.
-    if (::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalPreserveNbaUnknown>(operation))
+    if (::talos::schedule::has<
+            ::talos::schedule::Field::EvalPreserveNbaUnknown>(operation))
       return;
     if (auto load = dyn_cast<LLVM::LoadOp>(operation);
         load && isUnknownPlaneAddress(load.getAddr()))
@@ -3849,28 +3849,28 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
     store.erase();
   for (LLVM::LLVMFuncOp function : {source, clone, fastClone})
     function.walk([](Operation *operation) {
-      ::obelisk::schedule::remove<
-          ::obelisk::schedule::Field::EvalPreserveNbaUnknown>(operation);
+      ::talos::schedule::remove<
+          ::talos::schedule::Field::EvalPreserveNbaUnknown>(operation);
     });
 
   // Specialization is carried entirely by call-site intent.  Validate and
   // consume the phase-local markers so a renamed or newly outlined
   // coordinator cannot silently retain the wrong NBA implementation.
   auto hasIntent = [](LLVM::CallOp call) {
-    return ::obelisk::schedule::has<
-               ::obelisk::schedule::Field::EvalUseFastTwoStateNba>(call) ||
-           ::obelisk::schedule::has<
-               ::obelisk::schedule::Field::EvalUseCanonicalTwoStateNba>(call) ||
-           ::obelisk::schedule::has<
-               ::obelisk::schedule::Field::EvalKeepFourStateNba>(call);
+    return ::talos::schedule::has<
+               ::talos::schedule::Field::EvalUseFastTwoStateNba>(call) ||
+           ::talos::schedule::has<
+               ::talos::schedule::Field::EvalUseCanonicalTwoStateNba>(call) ||
+           ::talos::schedule::has<
+               ::talos::schedule::Field::EvalKeepFourStateNba>(call);
   };
   auto rewriteIntent = [&](LLVM::CallOp call) {
-    bool useFast = ::obelisk::schedule::has<
-        ::obelisk::schedule::Field::EvalUseFastTwoStateNba>(call);
-    bool useCanonical = ::obelisk::schedule::has<
-        ::obelisk::schedule::Field::EvalUseCanonicalTwoStateNba>(call);
-    bool keepFourState = ::obelisk::schedule::has<
-        ::obelisk::schedule::Field::EvalKeepFourStateNba>(call);
+    bool useFast = ::talos::schedule::has<
+        ::talos::schedule::Field::EvalUseFastTwoStateNba>(call);
+    bool useCanonical = ::talos::schedule::has<
+        ::talos::schedule::Field::EvalUseCanonicalTwoStateNba>(call);
+    bool keepFourState = ::talos::schedule::has<
+        ::talos::schedule::Field::EvalKeepFourStateNba>(call);
     unsigned intents = useFast + useCanonical + keepFourState;
     if (intents == 0)
       return WalkResult::advance();
@@ -3897,8 +3897,8 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
                               "execution region"),
                WalkResult::interrupt();
       call.setCallee(fastTwoStateName);
-      ::obelisk::schedule::remove<
-          ::obelisk::schedule::Field::EvalUseFastTwoStateNba>(call);
+      ::talos::schedule::remove<
+          ::talos::schedule::Field::EvalUseFastTwoStateNba>(call);
       return WalkResult::advance();
     }
     if (useCanonical) {
@@ -3907,16 +3907,16 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
                               "an unrelated callee"),
                WalkResult::interrupt();
       call.setCallee(twoStateName);
-      ::obelisk::schedule::remove<
-          ::obelisk::schedule::Field::EvalUseCanonicalTwoStateNba>(call);
+      ::talos::schedule::remove<
+          ::talos::schedule::Field::EvalUseCanonicalTwoStateNba>(call);
       return WalkResult::advance();
     }
     if (!expectedSource)
       return call.emitError("four-state NBA intent is attached to an "
                             "unrelated callee"),
              WalkResult::interrupt();
-    ::obelisk::schedule::remove<
-        ::obelisk::schedule::Field::EvalKeepFourStateNba>(call);
+    ::talos::schedule::remove<
+        ::talos::schedule::Field::EvalKeepFourStateNba>(call);
     return WalkResult::advance();
   };
   for (LLVM::CallOp call :
@@ -3924,8 +3924,8 @@ LogicalResult materializeEvalTwoStateNBACommit(ModuleOp module) {
     if (rewriteIntent(call).wasInterrupted())
       return failure();
   source.walk([](LLVM::LoadOp load) {
-    ::obelisk::schedule::remove<
-        ::obelisk::schedule::Field::EvalTwoStateZeroUnknown>(load);
+    ::talos::schedule::remove<
+        ::talos::schedule::Field::EvalTwoStateZeroUnknown>(load);
   });
   return success();
 }
@@ -4071,7 +4071,7 @@ public:
       if (!detailedTiming)
         return;
       auto now = std::chrono::steady_clock::now();
-      llvm::errs() << "obelisk native preparation timing: " << name << ": "
+      llvm::errs() << "talos native preparation timing: " << name << ": "
                    << std::chrono::duration<double>(now - lastTiming).count()
                    << " s\n";
       lastTiming = now;
@@ -4104,7 +4104,7 @@ public:
       ConversionTarget runtimeTarget(getContext());
       runtimeTarget.addLegalDialect<LLVM::LLVMDialect>();
       runtimeTarget.addLegalOp<ModuleOp>();
-      runtimeTarget.addIllegalDialect<runtime::ObeliskRuntimeDialect>();
+      runtimeTarget.addIllegalDialect<runtime::TalosRuntimeDialect>();
       runtimeTarget.addIllegalOp<schedule::NativeScratchOp,
                                  schedule::NativeManagedRootPushOp,
                                  schedule::NativeManagedRootPopOp>();
@@ -4114,7 +4114,7 @@ public:
       // children holding illegal operations visits those in the same order.
       SmallVector<Operation *> runtimeRoots =
           analysis::childrenContaining(module, [](Operation *operation) {
-            return isa_and_nonnull<runtime::ObeliskRuntimeDialect>(
+            return isa_and_nonnull<runtime::TalosRuntimeDialect>(
                        operation->getDialect()) ||
                    isa<schedule::NativeScratchOp,
                        schedule::NativeManagedRootPushOp,
@@ -4206,7 +4206,7 @@ public:
       if (!detailedTiming)
         return;
       auto now = std::chrono::steady_clock::now();
-      llvm::errs() << "obelisk native preparation timing: " << name << ": "
+      llvm::errs() << "talos native preparation timing: " << name << ": "
                    << std::chrono::duration<double>(now - lastTiming).count()
                    << " s\n";
       lastTiming = now;
@@ -4348,7 +4348,7 @@ public:
                                    module, **partitionInventory)))
       return signalPassFailure();
     native::remove<native::OptimizationLevel>(module);
-    ::obelisk::schedule::remove<::obelisk::schedule::Field::MaxInlineOps>(
+    ::talos::schedule::remove<::talos::schedule::Field::MaxInlineOps>(
         module);
     native::remove<native::MaxStateDomainFunctions>(module);
     native::remove<native::DisableTwoStateSpecialization>(module);
@@ -4403,15 +4403,15 @@ static void populateSimulationCoroutineBodyToLLVMPatterns(
   populateFuncToLLVMConversionPatterns(converter, patterns, symbolTables);
 }
 
-} // namespace obelisk
+} // namespace talos
 
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_PREPARENATIVESCHEDULEINPUTSPASS
 #define GEN_PASS_DEF_PREPARENATIVEPROCESSFRAMESPASS
 #define GEN_PASS_DEF_PREPARENATIVEMANAGEDROOTSPASS
 #define GEN_PASS_DEF_PREPARENATIVEFRAGMENTSPASS
 #define GEN_PASS_DEF_MATERIALIZENATIVEPROCESSESPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "talos/Conversion/Passes.h.inc"
 namespace {
 class PrepareNativeScheduleInputsPass final
     : public impl::PrepareNativeScheduleInputsPassBase<
@@ -4524,7 +4524,7 @@ public:
 };
 
 void addNativeFunctionFramePasses(OpPassManager &functions) {
-  functions.addPass(createObeliskSimInstrumentReferenceLifetimesPass());
+  functions.addPass(createTalosSimInstrumentReferenceLifetimesPass());
   functions.addPass(std::make_unique<ThreadNativeProcessCFGPass>());
   functions.addPass(std::make_unique<PrepareNativeFunctionFramePass>());
   functions.addPass(std::make_unique<PublishNativeFunctionFramePass>());
@@ -4584,18 +4584,18 @@ public:
                                "pipeline phase Schedule");
       return signalPassFailure();
     }
-    ObeliskSimInstrumentManagedRootsPassOptions rootOptions;
+    TalosSimInstrumentManagedRootsPassOptions rootOptions;
     rootOptions.polled = sim::has<sim::metadata::GCPolled>(getOperation());
     auto instrumentFunctions = [&]() -> LogicalResult {
       OpPassManager pipeline(sim::SimDesignOp::getOperationName());
       pipeline.nest<sim::SimFuncOp>().addPass(
-          createObeliskSimInstrumentManagedRootsPass(rootOptions));
+          createTalosSimInstrumentManagedRootsPass(rootOptions));
       for (auto design : getOperation().getOps<sim::SimDesignOp>())
         if (failed(runPipeline(pipeline, design)))
           return failure();
       OpPassManager directFunctions(sim::SimFuncOp::getOperationName());
       directFunctions.addPass(
-          createObeliskSimInstrumentManagedRootsPass(rootOptions));
+          createTalosSimInstrumentManagedRootsPass(rootOptions));
       for (auto function : getOperation().getOps<sim::SimFuncOp>())
         if (failed(runPipeline(directFunctions, function)))
           return failure();
@@ -4677,4 +4677,4 @@ class MaterializeNativeProcessesPass final
 };
 } // namespace
 
-} // namespace obelisk
+} // namespace talos

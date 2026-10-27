@@ -1,14 +1,14 @@
 //===- UnrollBoundedLoops.cpp - Expose bounded combinational CFGs --------===//
 
-#include "obelisk/Analysis/BoundedLoopAnalysis.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Analysis/BoundedLoopAnalysis.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Analysis/CFGLoopInfo.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
@@ -32,10 +32,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
-#define GEN_PASS_DEF_OBELISKSIMUNROLLBOUNDEDLOOPSPASS
-#define GEN_PASS_DEF_OBELISKSIMMARKBOUNDEDLOOPSPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+namespace talos {
+#define GEN_PASS_DEF_TALOSSIMUNROLLBOUNDEDLOOPSPASS
+#define GEN_PASS_DEF_TALOSSIMMARKBOUNDEDLOOPSPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 
@@ -454,9 +454,9 @@ LogicalResult simplifyCandidate(sim::SimFuncOp function,
   return success();
 }
 
-class ObeliskSimUnrollBoundedLoopsPass
-    : public impl::ObeliskSimUnrollBoundedLoopsPassBase<
-          ObeliskSimUnrollBoundedLoopsPass> {
+class TalosSimUnrollBoundedLoopsPass
+    : public impl::TalosSimUnrollBoundedLoopsPassBase<
+          TalosSimUnrollBoundedLoopsPass> {
   using Base::Base;
   Statistic unrolledNests{this, "unrolled-nests", "Complete nests replicated"};
   Statistic simplifiedCost{this, "simplified-cost",
@@ -613,26 +613,26 @@ class ObeliskSimUnrollBoundedLoopsPass
 // Record the termination proof for every bounded induction loop, including the
 // ones replication refused. This changes no IR: it only stops the compute graph
 // from having to assume that a remaining CFG backedge might never exit.
-class ObeliskSimMarkBoundedLoopsPass
-    : public impl::ObeliskSimMarkBoundedLoopsPassBase<
-          ObeliskSimMarkBoundedLoopsPass> {
+class TalosSimMarkBoundedLoopsPass
+    : public impl::TalosSimMarkBoundedLoopsPassBase<
+          TalosSimMarkBoundedLoopsPass> {
   void runOnOperation() override {
     sim::SimFuncOp function = getOperation();
     if (function.getBody().empty())
       return;
     // A repeated run must not retain proofs invalidated by intervening edits.
     function.walk([&](Operation *operation) {
-      ::obelisk::schedule::remove<schedule::metadata::boundedLoopLatch>(
+      ::talos::schedule::remove<schedule::metadata::boundedLoopLatch>(
           operation);
-      ::obelisk::schedule::remove<schedule::metadata::boundedLoopHeader>(
+      ::talos::schedule::remove<schedule::metadata::boundedLoopHeader>(
           operation);
     });
     UnitAttr marker = UnitAttr::get(&getContext());
     auto loops = analysis::analyzeBoundedLoops(function.getBody());
     for (const auto &loop : loops) {
-      ::obelisk::schedule::set<schedule::metadata::boundedLoopLatch>(loop.latch,
+      ::talos::schedule::set<schedule::metadata::boundedLoopLatch>(loop.latch,
                                                                      marker);
-      ::obelisk::schedule::set<schedule::metadata::boundedLoopHeader>(
+      ::talos::schedule::set<schedule::metadata::boundedLoopHeader>(
           loop.condition, marker);
     }
     if (!loops.empty() && native::has<native::DebugTiming>(
@@ -640,10 +640,10 @@ class ObeliskSimMarkBoundedLoopsPass
       // The diagnostic engine serializes output from concurrent function
       // passes.
       emitRemark(function.getLoc())
-          << "obelisk bounded loops: proven=" << loops.size()
+          << "talos bounded loops: proven=" << loops.size()
           << " actor=" << function.getSymName();
     }
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

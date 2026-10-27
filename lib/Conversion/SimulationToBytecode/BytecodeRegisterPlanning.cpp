@@ -2,7 +2,7 @@
 
 #include "BytecodeRegisterPlanning.h"
 
-#include "obelisk/Analysis/StateDomainAnalysis.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -12,7 +12,7 @@
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 /// Use the whole-design X/Z proof for local bytecode scratch values. Exact ABI
 /// boundaries deliberately remain four-state: process frames, CFG maps, calls,
@@ -173,4 +173,4 @@ planTwoStateRegisters(sim::SimDesignOp design) {
   return candidates;
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

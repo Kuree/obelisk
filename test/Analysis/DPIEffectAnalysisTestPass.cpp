@@ -3,8 +3,8 @@
 #include "AnalysisTestPasses.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
-#include "obelisk/Analysis/DPIEffectAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/DPIEffectAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
 
@@ -13,18 +13,18 @@ class DPIEffectAnalysisTestPass
     : public PassWrapper<DPIEffectAnalysisTestPass, OperationPass<ModuleOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(DPIEffectAnalysisTestPass)
-  StringRef getArgument() const final { return "test-obelisk-dpi-effects"; }
+  StringRef getArgument() const final { return "test-talos-dpi-effects"; }
   StringRef getDescription() const final {
     return "print whether DPI calls can reach design state";
   }
   void runOnOperation() final {
-    getOperation().walk([](obelisk::sim::SimDesignOp design) {
-      obelisk::analysis::DPIEffectAnalysis analysis(design);
+    getOperation().walk([](talos::sim::SimDesignOp design) {
+      talos::analysis::DPIEffectAnalysis analysis(design);
       llvm::errs() << "design @" << design.getSymName() << " exports "
                    << (analysis.exportsAreTransparent() ? "transparent"
                                                         : "opaque")
                    << '\n';
-      design.walk([&](obelisk::sim::SimDPICallOp call) {
+      design.walk([&](talos::sim::SimDPICallOp call) {
         llvm::errs() << "  call " << call.getCIdentifier() << ": "
                      << (analysis.mayAccessDesign(call) ? "may access design"
                                                         : "transparent")
@@ -36,6 +36,6 @@ public:
 };
 } // namespace
 
-void obelisk::registerDPIEffectAnalysisTestPass() {
+void talos::registerDPIEffectAnalysisTestPass() {
   PassRegistration<DPIEffectAnalysisTestPass>();
 }

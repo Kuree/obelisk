@@ -1,6 +1,6 @@
-// RUN: obelisk -O0 --vpi=off %s -o %t.o0.native
+// RUN: talos -O0 --vpi=off %s -o %t.o0.native
 // RUN: %t.o0.native | FileCheck %s
-// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode
+// RUN: talos -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: %t.o0.bytecode | FileCheck %s
 
 `timescale 1ns / 1ns

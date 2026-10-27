@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // Operations reachable only after a cold checkpoint are not part of its
 // dry-run predicate. A local temporary there cannot alias the hot publication.
 // Its sliced read also has a native_handle_offset, but is still an automatic
 // reference, not a dynamic selection from a statically certified design root.
 // CHECK: module attributes {{.*}}schedule.eval.generated
-// CHECK: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path
+// CHECK: llvm.func @work.__talos_eval_body_0.__talos_checkpoint_path
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",

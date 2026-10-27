@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not talos -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
 
 // IEEE 1800-2023 17.7.2 randomizes a free checker variable under the
 // checker's assumptions. Until that lands, the source pipeline must reject it

@@ -1,17 +1,17 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s --check-prefix=ROUNDTRIP
+// RUN: talos-opt %s | talos-opt | FileCheck %s --check-prefix=ROUNDTRIP
 // RUN: %coverage-fixture %t.obcov 1 preparation 0 construction-with
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=bytes-attr=runtime.coverage_schema_blob bytes-file=%t.obcov' \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=bytes-attr=runtime.coverage_schema_blob bytes-file=%t.obcov' \
-// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
-// RUN: not obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines 2>&1 \
+// RUN: talos-opt %s '--test-talos-set-module-attributes=bytes-attr=runtime.coverage_schema_blob bytes-file=%t.obcov' \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s '--test-talos-set-module-attributes=bytes-attr=runtime.coverage_schema_blob bytes-file=%t.obcov' \
+// RUN:   '--encode-talos-sim-to-bytecode=vpi=off' --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: not talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=MISSING
-// RUN: not obelisk-opt %s '--test-obelisk-set-module-attributes=bytes-attr=runtime.coverage_schema_blob bytes-file=%t.obcov' \
-// RUN:   '--test-obelisk-edit-attributes=op=simulation.covergroup.prepare set={expression_ids = array<i64: 101, 100>}' \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines 2>&1 | FileCheck %s --check-prefix=BAD-BATCH
-// RUN: not obelisk-opt %s '--test-obelisk-set-module-attributes=bytes-attr=runtime.coverage_schema_blob bytes-file=%t.obcov' \
-// RUN:   '--test-obelisk-edit-attributes=op=simulation.covergroup.candidates match={selector = 71 : i64} set={selector = 999 : i64}' \
-// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' 2>&1 | FileCheck %s --check-prefix=BAD-SELECTOR
+// RUN: not talos-opt %s '--test-talos-set-module-attributes=bytes-attr=runtime.coverage_schema_blob bytes-file=%t.obcov' \
+// RUN:   '--test-talos-edit-attributes=op=simulation.covergroup.prepare set={expression_ids = array<i64: 101, 100>}' \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines 2>&1 | FileCheck %s --check-prefix=BAD-BATCH
+// RUN: not talos-opt %s '--test-talos-set-module-attributes=bytes-attr=runtime.coverage_schema_blob bytes-file=%t.obcov' \
+// RUN:   '--test-talos-edit-attributes=op=simulation.covergroup.candidates match={selector = 71 : i64} set={selector = 999 : i64}' \
+// RUN:   '--encode-talos-sim-to-bytecode=vpi=off' 2>&1 | FileCheck %s --check-prefix=BAD-SELECTOR
 
 !tuple = !simulation.unpacked_struct<[
   #simulation.field<name = "point", type = i65, ordinal = 0, packedOffset = 0>,
@@ -55,12 +55,12 @@ module attributes {
 // ROUNDTRIP: simulation.covergroup.bind_with
 // ROUNDTRIP: simulation.covergroup.release_preparation
 // NATIVE-LABEL: llvm.func @select
-// NATIVE: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
-// NATIVE: llvm.call @obelisk_rt_v1_covergroup_prepare
-// NATIVE: llvm.call @obelisk_rt_v1_covergroup_candidates
-// NATIVE: llvm.call @obelisk_rt_v1_covergroup_bind_with
-// NATIVE: llvm.call @obelisk_rt_v1_covergroup_release_preparation
-// NATIVE: llvm.call @obelisk_rt_v1_gc_managed_root_range_pop
+// NATIVE: llvm.call @talos_rt_v1_gc_managed_root_range_push
+// NATIVE: llvm.call @talos_rt_v1_covergroup_prepare
+// NATIVE: llvm.call @talos_rt_v1_covergroup_candidates
+// NATIVE: llvm.call @talos_rt_v1_covergroup_bind_with
+// NATIVE: llvm.call @talos_rt_v1_covergroup_release_preparation
+// NATIVE: llvm.call @talos_rt_v1_gc_managed_root_range_pop
 // NATIVE-NOT: simulation.covergroup.
 // BYTECODE-DAG: intrinsic {{[0-9]+}}: id=0x0001047e {{.*}}outputs=1
 // BYTECODE-DAG: intrinsic {{[0-9]+}}: id=0x0001047f {{.*}}outputs=0

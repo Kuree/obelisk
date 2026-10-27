@@ -1,6 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: not %t --coverage-output=%t.obcov | FileCheck %s --check-prefix=OUT
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 
 // IEEE 1800-2023 19.5 stops a bin's count when its iff is false, while
 // 19.5.5-19.5.6 remove excluded values from every bin whatever the iff says.

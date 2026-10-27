@@ -2,16 +2,16 @@
 
 #include "SimulationLocalStorageLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Analysis/NativeStorageLayout.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Analysis/NativeStorageLayout.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -23,7 +23,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 // Canonical padding is not a language value. Invalid aggregate reads also
@@ -44,7 +44,7 @@ Value loadCurrentRuntimeContext(ConversionPatternRewriter &rewriter,
                                 Location location) {
   Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
   Value address = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                            "__obelisk_current_context");
+                                            "__talos_current_context");
   return LLVM::LoadOp::create(rewriter, location, pointer, address, 8);
 }
 
@@ -53,22 +53,22 @@ void reportRuntimeControlStatus(ConversionPatternRewriter &rewriter,
                                 Value status) {
   LLVM::CallOp::create(
       rewriter, location, TypeRange{},
-      SymbolRefAttr::get(rewriter.getContext(), "obelisk_rt_v1_scheduler_fail"),
+      SymbolRefAttr::get(rewriter.getContext(), "talos_rt_v1_scheduler_fail"),
       ValueRange{context, status});
 }
 
 bool useTwoStateSpecialization(Operation *operation, bool moduleWide) {
   if (moduleWide)
     return true;
-  return ::obelisk::schedule::has<
-      ::obelisk::schedule::Field::EvalInductiveTwoStateAccess>(operation);
+  return ::talos::schedule::has<
+      ::talos::schedule::Field::EvalInductiveTwoStateAccess>(operation);
 }
 
 /// A read whose location is known on its executing path observes a zero
 /// unknown plane; only its value plane needs to be loaded.
 bool readsKnownLocation(Operation *operation, bool moduleWide) {
   return useTwoStateSpecialization(operation, moduleWide) ||
-         ::obelisk::schedule::has<::obelisk::schedule::Field::NativeKnownRead>(
+         ::talos::schedule::has<::talos::schedule::Field::NativeKnownRead>(
              operation);
 }
 
@@ -104,12 +104,12 @@ Value loadBulkStatePlane(ConversionPatternRewriter &rewriter, Location location,
   LLVM::CallOp::create(
       rewriter, location, TypeRange{i32},
       SymbolRefAttr::get(rewriter.getContext(),
-                         "obelisk_rt_v1_native_state_load_plane"),
+                         "talos_rt_v1_native_state_load_plane"),
       ValueRange{context, base,
                  llvmConstant(rewriter, location, i64, stateBitCount), handle,
                  llvmConstant(rewriter, location, i64, width),
                  llvmConstant(rewriter, location, i32,
-                              globalName == "__obelisk_state_unknown" ? 1 : 0),
+                              globalName == "__talos_state_unknown" ? 1 : 0),
                  llvmConstant(rewriter, location, i32, unknownFallback ? 1 : 0),
                  output});
   return output;
@@ -129,13 +129,13 @@ void storeBulkStatePlane(ConversionPatternRewriter &rewriter, Location location,
       rewriter, location, TypeRange{i32},
       SymbolRefAttr::get(
           rewriter.getContext(),
-          continuous ? "obelisk_rt_v1_native_state_store_continuous_plane"
-                     : "obelisk_rt_v1_native_state_store_plane"),
+          continuous ? "talos_rt_v1_native_state_store_continuous_plane"
+                     : "talos_rt_v1_native_state_store_plane"),
       ValueRange{context, base,
                  llvmConstant(rewriter, location, i64, stateBitCount), handle,
                  llvmConstant(rewriter, location, i64, width),
                  llvmConstant(rewriter, location, i32,
-                              globalName == "__obelisk_state_unknown" ? 1 : 0),
+                              globalName == "__talos_state_unknown" ? 1 : 0),
                  input, changed});
 }
 
@@ -153,7 +153,7 @@ bool tryStoreBulkDirect(ConversionPatternRewriter &rewriter, Location location,
   Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
   auto copy = [&](StringRef name, bool mask = false) {
     Value base = LLVM::AddressOfOp::create(rewriter, location, pointer, name);
-    if (name.starts_with("__obelisk_continuous_"))
+    if (name.starts_with("__talos_continuous_"))
       base = LLVM::LoadOp::create(rewriter, location, pointer, base, 8);
     Value destination = byteGEP(rewriter, location, base, range->offset / 8);
     Value bytes =
@@ -183,11 +183,11 @@ bool tryStoreBulkDirect(ConversionPatternRewriter &rewriter, Location location,
     }
   };
   if (continuous && layout->directContinuous) {
-    copy(globalName == "__obelisk_state_unknown"
-             ? "__obelisk_continuous_unknown"
-             : "__obelisk_continuous_value");
-    if (globalName == "__obelisk_state_value")
-      copy("__obelisk_continuous_mask", true);
+    copy(globalName == "__talos_state_unknown"
+             ? "__talos_continuous_unknown"
+             : "__talos_continuous_value");
+    if (globalName == "__talos_state_value")
+      copy("__talos_continuous_mask", true);
   }
   copy(globalName);
   return true;
@@ -206,13 +206,13 @@ void notifyBulkSignal(ConversionPatternRewriter &rewriter, Location location,
   auto call = LLVM::CallOp::create(
       rewriter, location, TypeRange{},
       SymbolRefAttr::get(rewriter.getContext(),
-                         "obelisk_rt_v1_scheduler_signal_transition"),
+                         "talos_rt_v1_scheduler_signal_transition"),
       ValueRange{loadCurrentRuntimeContext(rewriter, location), handle,
                  llvmConstant(rewriter, location, rewriter.getI64Type(), width),
                  oldValue, pointerOrNull(oldUnknown), newValue,
                  pointerOrNull(newUnknown)});
   if (sourceOwner)
-    ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(call,
+    ::talos::schedule::set<schedule::metadata::evalSourceOwner>(call,
                                                                   sourceOwner);
 }
 
@@ -252,41 +252,41 @@ public:
     bool sourceAssumeClean = native::has<native::BulkCopySourceAssumeClean>(op);
 
     Value sourceValue = loadBulkStatePlane(
-        rewriter, location, source, *width, "__obelisk_state_value", false,
+        rewriter, location, source, *width, "__talos_state_value", false,
         stateBitCount, directLayout, sourceAssumeClean);
     Value sourceUnknown;
     if (fourState)
       sourceUnknown = loadBulkStatePlane(
-          rewriter, location, source, *width, "__obelisk_state_unknown", true,
+          rewriter, location, source, *width, "__talos_state_unknown", true,
           stateBitCount, directLayout, sourceAssumeClean);
     Value oldValue = loadBulkStatePlane(rewriter, location, destination, *width,
-                                        "__obelisk_state_value", false,
+                                        "__talos_state_value", false,
                                         stateBitCount, directLayout, false);
     Value oldUnknown;
     if (fourState)
       oldUnknown = loadBulkStatePlane(rewriter, location, destination, *width,
-                                      "__obelisk_state_unknown", true,
+                                      "__talos_state_unknown", true,
                                       stateBitCount, directLayout, false);
 
     Value changed = entryAlloca(rewriter, location, rewriter.getI8Type(), 1, 1);
     storeBulkStatePlane(rewriter, location, destination, sourceValue, *width,
-                        "__obelisk_state_value", stateBitCount, changed,
+                        "__talos_state_value", stateBitCount, changed,
                         continuous);
     if (fourState)
       storeBulkStatePlane(rewriter, location, destination, sourceUnknown,
-                          *width, "__obelisk_state_unknown", stateBitCount,
+                          *width, "__talos_state_unknown", stateBitCount,
                           changed, continuous);
 
     // A generic packed store may be partially masked by a force or procedural
     // assign. Reload the visible destination planes before publication, just
     // like the scalar lowering required by IEEE 1800-2017 10.6.1-10.6.2.
     Value newValue = loadBulkStatePlane(rewriter, location, destination, *width,
-                                        "__obelisk_state_value", false,
+                                        "__talos_state_value", false,
                                         stateBitCount, directLayout, false);
     Value newUnknown;
     if (fourState)
       newUnknown = loadBulkStatePlane(rewriter, location, destination, *width,
-                                      "__obelisk_state_unknown", true,
+                                      "__talos_state_unknown", true,
                                       stateBitCount, directLayout, false);
     notifyBulkSignal(rewriter, location, destination, *width, oldValue,
                      oldUnknown, newValue, newUnknown);
@@ -357,10 +357,10 @@ public:
     for (ValueRange handles : adaptor.getReferences()) {
       std::optional<uint64_t> handle =
           resolveCFGConstantInteger(handles.front());
-      obelisk_rt_stable_handle_v1 decoded{};
+      talos_rt_stable_handle_v1 decoded{};
       auto bit = layout.unknownSummaryBits.end();
-      if (handle && obelisk_rt_stable_handle_decode(*handle, &decoded) &&
-          decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+      if (handle && talos_rt_stable_handle_decode(*handle, &decoded) &&
+          decoded.kind == TALOS_RT_STABLE_HANDLE_STATIC &&
           decoded.offset == 0)
         bit = layout.unknownSummaryBits.find(decoded.id);
       if (bit != layout.unknownSummaryBits.end() &&
@@ -450,7 +450,7 @@ public:
     Value refreshed =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
-            "obelisk_rt_v1_native_state_refresh_unknown_summary",
+            "talos_rt_v1_native_state_refresh_unknown_summary",
             ValueRange{loadCurrentRuntimeContext(rewriter, location), pairs,
                        llvmConstant(rewriter, location, i64, words.size()),
                        backoff})
@@ -486,13 +486,13 @@ public:
                          unsigned width) const {
     APInt unknown(width, 0);
     if (!layout ||
-        !::obelisk::schedule::has<::obelisk::schedule::Field::NativeKnownRead>(
+        !::talos::schedule::has<::talos::schedule::Field::NativeKnownRead>(
             op))
       return unknown;
     std::optional<uint64_t> value = resolveCFGConstantInteger(handle);
-    obelisk_rt_stable_handle_v1 decoded{};
-    if (!value || !obelisk_rt_stable_handle_decode(*value, &decoded) ||
-        decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset < 0)
+    talos_rt_stable_handle_v1 decoded{};
+    if (!value || !talos_rt_stable_handle_decode(*value, &decoded) ||
+        decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC || decoded.offset < 0)
       return unknown;
     return layout->getSteadyUnknown(decoded.id, uint64_t(decoded.offset),
                                     width);
@@ -511,7 +511,7 @@ public:
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
     bool assumeClean =
-        ::obelisk::schedule::has<assumeCleanSpecializationAttr>(op);
+        ::talos::schedule::has<assumeCleanSpecializationAttr>(op);
     if (locals && locals->isMemoryValue(op.getResult())) {
       auto range = resolveDirectStaticStateRange(adaptor.getReference().front(),
                                                  *width, directLayout);
@@ -528,7 +528,7 @@ public:
             rewriter, op.getLoc(), adaptor.getReference().front(), *width, name,
             unknown, stateBitCount, directLayout, assumeClean);
       };
-      SmallVector<Value> buffers{read("__obelisk_state_value", false)};
+      SmallVector<Value> buffers{read("__talos_state_value", false)};
       if (containsLogic(resultType)) {
         if (twoState) {
           Value buffer = allocateBulkPlane(rewriter, op.getLoc(), *width);
@@ -550,7 +550,7 @@ public:
                   byteGEP(rewriter, op.getLoc(), buffer, byte), 1);
           buffers.push_back(buffer);
         } else {
-          buffers.push_back(read("__obelisk_state_unknown", true));
+          buffers.push_back(read("__talos_state_unknown", true));
         }
       }
       rewriter.replaceOpWithMultiple(op, {ValueRange(buffers)});
@@ -561,10 +561,10 @@ public:
             adaptor.getReference().front(), *width, directLayout);
         range && range->guarded && !assumeClean)
       guardedPermission = staticSpecializationGuard(
-          rewriter, op.getLoc(), range->staticID, OBELISK_RT_STATIC_ROOT_READ);
+          rewriter, op.getLoc(), range->staticID, TALOS_RT_STATIC_ROOT_READ);
     Value value =
         loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                       plane, "__obelisk_state_value", false, stateBitCount,
+                       plane, "__talos_state_value", false, stateBitCount,
                        directLayout, guardedPermission, assumeClean, access);
     value = maskStoragePlane(rewriter, op.getLoc(), value, resultType, false);
     if (isa<FloatType>(resultType))
@@ -582,7 +582,7 @@ public:
                     .getResult()
               : loadStatePlane(
                     rewriter, op.getLoc(), adaptor.getReference().front(),
-                    plane, "__obelisk_state_unknown", true, stateBitCount,
+                    plane, "__talos_state_unknown", true, stateBitCount,
                     directLayout, guardedPermission, assumeClean, access);
       converted.push_back(
           maskStoragePlane(rewriter, op.getLoc(), unknown, resultType, true));
@@ -625,7 +625,7 @@ public:
     // A known store leaves the destination's zero unknown bits in place.
     bool twoState =
         useTwoStateSpecialization(op, experimentalTwoState) ||
-        ::obelisk::schedule::has<::obelisk::schedule::Field::NativeKnownStore>(
+        ::talos::schedule::has<::talos::schedule::Field::NativeKnownStore>(
             op);
     auto proof = stateAccesses.find(op);
     const NativeStateAccessInfo *access =
@@ -635,7 +635,7 @@ public:
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
     bool assumeClean =
-        ::obelisk::schedule::has<assumeCleanSpecializationAttr>(op);
+        ::talos::schedule::has<assumeCleanSpecializationAttr>(op);
     sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
     sim::EntryKind entryKind = function.getEntryKind();
     bool runtimePublication =
@@ -670,7 +670,7 @@ public:
         Operation *clone = rewriter.clone(*op);
         native::mark<native::GuardedRefStore>(clone);
         if (clean)
-          ::obelisk::schedule::set<assumeCleanSpecializationAttr>(
+          ::talos::schedule::set<assumeCleanSpecializationAttr>(
               clone, rewriter.getUnitAttr());
         cf::BranchOp::create(rewriter, op.getLoc(), tail);
       }
@@ -678,7 +678,7 @@ public:
       Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
       Value address =
           LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
-                                    "__obelisk_state_specialization_fast_v1");
+                                    "__talos_state_specialization_fast_v1");
       Value flag = LLVM::LoadOp::create(rewriter, op.getLoc(),
                                         rewriter.getI32Type(), address, 4);
       Value allowed = arith::CmpIOp::create(
@@ -713,9 +713,9 @@ public:
       };
       Value oldValue, oldUnknown;
       if (needsNotification) {
-        oldValue = snapshot("__obelisk_state_value", false);
+        oldValue = snapshot("__talos_state_value", false);
         if (fourState)
-          oldUnknown = snapshot("__obelisk_state_unknown", true);
+          oldUnknown = snapshot("__talos_state_unknown", true);
       }
       auto store = [&](Value input, StringRef plane) {
         if (tryStoreBulkDirect(rewriter, location, handle, input, *width, plane,
@@ -728,24 +728,24 @@ public:
         return false;
       };
       Value newValue = adaptor.getValue().front();
-      bool direct = store(newValue, "__obelisk_state_value");
+      bool direct = store(newValue, "__talos_state_value");
       Value newUnknown;
       if (fourState) {
         newUnknown = adaptor.getValue()[1];
-        direct &= store(newUnknown, "__obelisk_state_unknown");
+        direct &= store(newUnknown, "__talos_state_unknown");
       }
       if (needsNotification) {
         // Runtime stores may be partially suppressed by an override. Publish
         // the actual visible value, with the same semantics as scalar stores.
         if (!direct) {
-          newValue = snapshot("__obelisk_state_value", false);
+          newValue = snapshot("__talos_state_value", false);
           if (fourState)
-            newUnknown = snapshot("__obelisk_state_unknown", true);
+            newUnknown = snapshot("__talos_state_unknown", true);
         }
         notifyBulkSignal(
             rewriter, location, handle, *width, oldValue, oldUnknown, newValue,
             newUnknown,
-            ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op));
+            ::talos::schedule::get<schedule::metadata::evalSourceOwner>(op));
       }
       rewriter.eraseOp(op);
       return success();
@@ -754,7 +754,7 @@ public:
     if (directRange && directRange->guarded && !assumeClean)
       guardedPermission = staticSpecializationGuard(
           rewriter, op.getLoc(), directRange->staticID,
-          OBELISK_RT_STATIC_ROOT_READ | OBELISK_RT_STATIC_ROOT_WRITE);
+          TALOS_RT_STATIC_ROOT_READ | TALOS_RT_STATIC_ROOT_WRITE);
     Value storedValue = adaptor.getValue().front();
     if (isa<FloatType>(valueType))
       storedValue =
@@ -766,7 +766,7 @@ public:
             rewriter, op.getLoc(), adaptor.getReference().front(), storedValue,
             adaptor.getValue().size() == 2 ? adaptor.getValue()[1] : Value{},
             directLayout, assumeClean, continuous, twoState,
-            ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op),
+            ::talos::schedule::get<schedule::metadata::evalSourceOwner>(op),
             access)) {
       rewriter.eraseOp(op);
       return success();
@@ -774,7 +774,7 @@ public:
     if (!needsNotification) {
       (void)storeStatePlane(
           rewriter, op.getLoc(), adaptor.getReference().front(), storedValue,
-          "__obelisk_state_value", stateBitCount, directLayout,
+          "__talos_state_value", stateBitCount, directLayout,
           guardedPermission, assumeClean, /*trackChange=*/false, continuous);
       if (containsLogic(valueType) && !twoState)
         (void)storeStatePlane(
@@ -782,7 +782,7 @@ public:
             adaptor.getValue().size() == 2
                 ? adaptor.getValue()[1]
                 : llvmConstant(rewriter, op.getLoc(), plane, 0),
-            "__obelisk_state_unknown", stateBitCount, directLayout,
+            "__talos_state_unknown", stateBitCount, directLayout,
             guardedPermission, assumeClean,
             /*trackChange=*/false, continuous);
       rewriter.eraseOp(op);
@@ -790,7 +790,7 @@ public:
     }
     Value oldValue =
         loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                       plane, "__obelisk_state_value", false, stateBitCount,
+                       plane, "__talos_state_value", false, stateBitCount,
                        directLayout, guardedPermission, assumeClean, access);
     Value oldUnknown;
     if (containsLogic(valueType))
@@ -798,7 +798,7 @@ public:
                        ? llvmConstant(rewriter, op.getLoc(), plane, 0)
                        : loadStatePlane(rewriter, op.getLoc(),
                                         adaptor.getReference().front(), plane,
-                                        "__obelisk_state_unknown", true,
+                                        "__talos_state_unknown", true,
                                         stateBitCount, directLayout,
                                         guardedPermission, assumeClean, access);
     Value notificationValue = storedValue;
@@ -810,7 +810,7 @@ public:
           LLVM::CallOp::create(
               rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
               SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v1_string_compare"),
+                                 "talos_rt_v1_string_compare"),
               ValueRange{oldValue, storedValue})
               .getResult();
       Value equal = arith::CmpIOp::create(
@@ -821,7 +821,7 @@ public:
     }
     Value valueChanged =
         storeStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                        storedValue, "__obelisk_state_value", stateBitCount,
+                        storedValue, "__talos_state_value", stateBitCount,
                         directLayout, guardedPermission, assumeClean,
                         /*trackChange=*/true, continuous);
     // Runtime plane stores can suppress a write while force or procedural
@@ -837,7 +837,7 @@ public:
                                 : llvmConstant(rewriter, op.getLoc(), plane, 0);
       Value unknownChanged = storeStatePlane(
           rewriter, op.getLoc(), adaptor.getReference().front(), storedUnknown,
-          "__obelisk_state_unknown", stateBitCount, directLayout,
+          "__talos_state_unknown", stateBitCount, directLayout,
           guardedPermission, assumeClean,
           /*trackChange=*/true, continuous);
       notificationUnknown = arith::SelectOp::create(
@@ -857,14 +857,14 @@ public:
     if (needsVisibleReload) {
       notificationValue =
           loadStatePlane(rewriter, op.getLoc(), adaptor.getReference().front(),
-                         plane, "__obelisk_state_value", false, stateBitCount,
+                         plane, "__talos_state_value", false, stateBitCount,
                          directLayout, guardedPermission, assumeClean, access);
       if (containsLogic(valueType))
         notificationUnknown =
             twoState ? llvmConstant(rewriter, op.getLoc(), plane, 0)
                      : loadStatePlane(rewriter, op.getLoc(),
                                       adaptor.getReference().front(), plane,
-                                      "__obelisk_state_unknown", true,
+                                      "__talos_state_unknown", true,
                                       stateBitCount, directLayout,
                                       guardedPermission, assumeClean, access);
     }
@@ -877,13 +877,13 @@ public:
         return storage;
       };
       Value contextAddress = LLVM::AddressOfOp::create(
-          rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+          rewriter, op.getLoc(), pointer, "__talos_current_context");
       Value runtimeContext = LLVM::LoadOp::create(rewriter, op.getLoc(),
                                                   pointer, contextAddress, 8);
       LLVM::CallOp::create(
           rewriter, op.getLoc(), TypeRange{},
           SymbolRefAttr::get(rewriter.getContext(),
-                             "obelisk_rt_v1_scheduler_real_transition"),
+                             "talos_rt_v1_scheduler_real_transition"),
           ValueRange{runtimeContext, adaptor.getReference().front(),
                      llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
                                   *width),
@@ -901,7 +901,7 @@ public:
                   directLayout->transitionHandlesExact
               ? directRange
               : std::nullopt,
-          ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op));
+          ::talos::schedule::get<schedule::metadata::evalSourceOwner>(op));
     }
     rewriter.eraseOp(op);
     return success();
@@ -935,7 +935,7 @@ public:
     IntegerType plane = rewriter.getIntegerType(*width);
     Value value = loadStatePlane(
         rewriter, op.getLoc(), adaptor.getNet().front(), plane,
-        "__obelisk_state_value", false, stateBitCount, directLayout);
+        "__talos_state_value", false, stateBitCount, directLayout);
     value = maskStoragePlane(rewriter, op.getLoc(), value, resultType, false);
     if (isa<FloatType>(resultType))
       value =
@@ -945,7 +945,7 @@ public:
       Value unknown = twoState ? llvmConstant(rewriter, op.getLoc(), plane, 0)
                                : loadStatePlane(rewriter, op.getLoc(),
                                                 adaptor.getNet().front(), plane,
-                                                "__obelisk_state_unknown", true,
+                                                "__talos_state_unknown", true,
                                                 stateBitCount, directLayout);
       converted.push_back(
           maskStoragePlane(rewriter, op.getLoc(), unknown, resultType, true));
@@ -983,7 +983,7 @@ public:
     IntegerType plane = rewriter.getIntegerType(*width);
     Value value = loadStatePlane(
         rewriter, op.getLoc(), adaptor.getDriver().front(), plane,
-        "__obelisk_state_value", false, stateBitCount, directLayout);
+        "__talos_state_value", false, stateBitCount, directLayout);
     value = maskStoragePlane(rewriter, op.getLoc(), value, resultType, false);
     if (isa<FloatType>(resultType))
       value =
@@ -994,7 +994,7 @@ public:
                           ? llvmConstant(rewriter, op.getLoc(), plane, 0)
                           : loadStatePlane(rewriter, op.getLoc(),
                                            adaptor.getDriver().front(), plane,
-                                           "__obelisk_state_unknown", true,
+                                           "__talos_state_unknown", true,
                                            stateBitCount, directLayout);
       converted.push_back(
           maskStoragePlane(rewriter, op.getLoc(), unknown, resultType, true));
@@ -1032,13 +1032,13 @@ public:
     IntegerType plane = rewriter.getIntegerType(*width);
     Value handle = adaptor.getNet().front();
     Value oldValue = loadStatePlane(rewriter, op.getLoc(), handle, plane,
-                                    "__obelisk_state_value", false,
+                                    "__talos_state_value", false,
                                     stateBitCount, directLayout);
     Value oldUnknown;
     if (containsLogic(valueType))
       oldUnknown = twoState ? llvmConstant(rewriter, op.getLoc(), plane, 0)
                             : loadStatePlane(rewriter, op.getLoc(), handle,
-                                             plane, "__obelisk_state_unknown",
+                                             plane, "__talos_state_unknown",
                                              true, stateBitCount, directLayout);
     Value newValue = adaptor.getValue().front();
     if (isa<FloatType>(valueType))
@@ -1048,10 +1048,10 @@ public:
                            ? adaptor.getValue()[1]
                            : Value{};
     (void)storeStatePlane(rewriter, op.getLoc(), handle, newValue,
-                          "__obelisk_state_value", stateBitCount, directLayout);
+                          "__talos_state_value", stateBitCount, directLayout);
     if (containsLogic(valueType) && !twoState)
       (void)storeStatePlane(rewriter, op.getLoc(), handle, newUnknown,
-                            "__obelisk_state_unknown", stateBitCount,
+                            "__talos_state_unknown", stateBitCount,
                             directLayout);
 
     if (isa<FloatType>(valueType)) {
@@ -1063,13 +1063,13 @@ public:
         return storage;
       };
       Value contextAddress = LLVM::AddressOfOp::create(
-          rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+          rewriter, op.getLoc(), pointer, "__talos_current_context");
       Value runtimeContext = LLVM::LoadOp::create(rewriter, op.getLoc(),
                                                   pointer, contextAddress, 8);
       LLVM::CallOp::create(
           rewriter, op.getLoc(), TypeRange{},
           SymbolRefAttr::get(rewriter.getContext(),
-                             "obelisk_rt_v1_scheduler_real_transition"),
+                             "talos_rt_v1_scheduler_real_transition"),
           ValueRange{runtimeContext, handle,
                      llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(),
                                   *width),
@@ -1079,7 +1079,7 @@ public:
           rewriter, op.getLoc(), handle, *width, oldValue, oldUnknown, newValue,
           containsLogic(valueType) ? newUnknown : Value{},
           resolveDirectStaticStateRange(handle, *width, directLayout),
-          ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op));
+          ::talos::schedule::get<schedule::metadata::evalSourceOwner>(op));
     }
     rewriter.eraseOp(op);
     return success();
@@ -1118,7 +1118,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, location, TypeRange{i32},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_net_count_drivers"),
+                                          "talos_rt_v1_net_count_drivers"),
                        arguments)
                        .getResult();
     reportRuntimeControlStatus(rewriter, location, context, status);
@@ -1155,7 +1155,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_pass_switch_control"),
+                               "talos_rt_v1_pass_switch_control"),
             ValueRange{
                 context,
                 llvmConstant(rewriter, location, i32, op.getPassSwitchId()),
@@ -1185,7 +1185,7 @@ public:
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     Type i32 = rewriter.getI32Type();
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value context =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     auto extend = [&](Value value) -> Value {
@@ -1198,7 +1198,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_pass_switch_control_delayed"),
+                               "talos_rt_v1_pass_switch_control_delayed"),
             ValueRange{
                 context,
                 llvmConstant(rewriter, location, i32, op.getPassSwitchId()),
@@ -1239,7 +1239,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_mos_drive_delayed"),
+                               "talos_rt_v1_mos_drive_delayed"),
             ValueRange{
                 context,
                 llvmConstant(rewriter, location, i32, op.getPassSwitchId()),
@@ -1282,4 +1282,4 @@ void populateStateReadWriteToLLVMConversionPatterns(
                MosDriveDelayedConversion>(converter, patterns.getContext());
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

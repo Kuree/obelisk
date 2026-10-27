@@ -14,17 +14,17 @@
 // RUNTIME: program temporaries valid 1
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "aarch64-unknown-linux-gnu"} {
-  llvm.mlir.global @obelisk_final_time(0 : i64) : i64
-  llvm.mlir.global @obelisk_time_precision_fs(1 : i64) : i64
+  llvm.mlir.global @talos_final_time(0 : i64) : i64
+  llvm.mlir.global @talos_time_precision_fs(1 : i64) : i64
   llvm.mlir.global internal constant @ok("program temporaries valid 1\00")
   llvm.mlir.global internal constant @bad("program temporaries valid 0\00")
   llvm.mlir.global internal @narrow("\4F\44\52\31\01\00\18\00\04\00\00\00\11\00\00\00\00\00\00\00\01\00\00\00\01\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\22\04\00\00\00\00\00\00\01\00\00\00\00\00\00\00\0E\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\2D\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\2E\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\13\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\22\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\15\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\20\01\00\00\FF\FF\FF\FF\00\00\00\00\00\00\00\00\2E\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\22\04\00\00\00\00\00\00\04\00\00\00\00\00\00\00\15\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\20\01\00\00\FF\FF\FF\FF\00\00\00\00\00\00\00\00\2E\04\00\00\00\00\00\00\00\00\00\00\00\00\00\00\22\04\00\00\00\00\00\00\04\00\00\00\00\00\00\00\15\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\21\01\00\00\FF\FF\FF\FF\00\00\00\00\00\00\00\00")
   llvm.mlir.global internal @wide("\4F\44\52\31\02\00\20\00\82\00\00\00\11\00\00\00\00\00\00\00\01\00\00\00\0C\00\00\00\00\00\00\00\01\00\00\00\82\00\00\00\00\00\00\00\00\00\00\00\22\00\00\00\82\00\00\00\00\00\00\00\00\00\00\00\0E\00\00\00\82\00\00\00\00\00\00\00\00\00\00\00\2D\00\00\00\82\00\00\00\00\00\00\00\00\00\00\00\2E\00\00\00\82\00\00\00\00\00\00\00\00\00\00\00\13\00\00\00\82\00\00\00\00\00\00\00\00\00\00\00\22\00\00\00\82\00\00\00\00\00\00\00\03\00\00\00\15\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\20\00\00\00\01\00\00\00\FF\FF\FF\FF\00\00\00\00\2E\00\00\00\82\00\00\00\00\00\00\00\00\00\00\00\22\00\00\00\82\00\00\00\00\00\00\00\06\00\00\00\15\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\20\00\00\00\01\00\00\00\FF\FF\FF\FF\00\00\00\00\2E\00\00\00\82\00\00\00\00\00\00\00\00\00\00\00\22\00\00\00\82\00\00\00\00\00\00\00\09\00\00\00\15\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\21\00\00\00\01\00\00\00\FF\FF\FF\FF\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\03\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\03\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00")
   llvm.func @puts(!llvm.ptr) -> i32
-  llvm.func @obelisk_rt_v1_context_create(!llvm.ptr) -> i32
-  llvm.func @obelisk_rt_v1_context_destroy(!llvm.ptr)
-  llvm.func @obelisk_rt_v1_random_solve_modes_state(!llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
-  llvm.func @obelisk_rt_v1_random_solve_wide_modes_state(!llvm.ptr, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
+  llvm.func @talos_rt_v1_context_create(!llvm.ptr) -> i32
+  llvm.func @talos_rt_v1_context_destroy(!llvm.ptr)
+  llvm.func @talos_rt_v1_random_solve_modes_state(!llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
+  llvm.func @talos_rt_v1_random_solve_wide_modes_state(!llvm.ptr, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
 
   llvm.func internal @check_narrow(%ctx: !llvm.ptr, %program: !llvm.ptr, %expected_status: i32, %expected_success: i32, %expected_assignment: i64) -> i1 {
     %zero = llvm.mlir.constant(0 : i64) : i64
@@ -39,7 +39,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     %state = llvm.alloca %one x i64 : (i64) -> !llvm.ptr
     %null = llvm.mlir.zero : !llvm.ptr
     llvm.store %zero, %assignment : i64, !llvm.ptr
-    %status = llvm.call @obelisk_rt_v1_random_solve_modes_state(%ctx, %program, %size, %zero, %mask, %zero, %attempts, %seed, %increment, %null, %zero, %assignment, %success, %state) : (!llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
+    %status = llvm.call @talos_rt_v1_random_solve_modes_state(%ctx, %program, %size, %zero, %mask, %zero, %attempts, %seed, %increment, %null, %zero, %assignment, %success, %state) : (!llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
     %actual_success = llvm.load %success : !llvm.ptr -> i32
     %actual_assignment = llvm.load %assignment : !llvm.ptr -> i64
     %actual_state = llvm.load %state : !llvm.ptr -> i64
@@ -83,7 +83,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.store %mask_low, %mask : i64, !llvm.ptr
     llvm.store %zero, %m_middle : i64, !llvm.ptr
     llvm.store %zero, %m_high : i64, !llvm.ptr
-    %status = llvm.call @obelisk_rt_v1_random_solve_wide_modes_state(%ctx, %program, %size, %start, %mask, %three, %zero, %attempts, %seed, %increment, %null, %zero, %null, %zero, %assignment, %success, %state) : (!llvm.ptr, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
+    %status = llvm.call @talos_rt_v1_random_solve_wide_modes_state(%ctx, %program, %size, %start, %mask, %three, %zero, %attempts, %seed, %increment, %null, %zero, %null, %zero, %assignment, %success, %state) : (!llvm.ptr, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, i64, i64, i64, i64, i64, !llvm.ptr, i64, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32
     %actual_success = llvm.load %success : !llvm.ptr -> i32
     %actual_low = llvm.load %assignment : !llvm.ptr -> i64
     %actual_middle = llvm.load %a_middle : !llvm.ptr -> i64
@@ -111,7 +111,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     %o32 = llvm.mlir.constant(1 : i32) : i32
     %invalid = llvm.mlir.constant(2 : i32) : i32
     %ctx_slot = llvm.alloca %one x !llvm.ptr : (i64) -> !llvm.ptr
-    %created = llvm.call @obelisk_rt_v1_context_create(%ctx_slot) : (!llvm.ptr) -> i32
+    %created = llvm.call @talos_rt_v1_context_create(%ctx_slot) : (!llvm.ptr) -> i32
     %ctx = llvm.load %ctx_slot : !llvm.ptr -> !llvm.ptr
     %narrow = llvm.mlir.addressof @narrow : !llvm.ptr
     %wide = llvm.mlir.addressof @wide : !llvm.ptr
@@ -348,7 +348,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     %bad_text = llvm.mlir.addressof @bad : !llvm.ptr
     %text = llvm.select %valid_30, %ok_text, %bad_text : i1, !llvm.ptr
     %printed = llvm.call @puts(%text) : (!llvm.ptr) -> i32
-    llvm.call @obelisk_rt_v1_context_destroy(%ctx) : (!llvm.ptr) -> ()
+    llvm.call @talos_rt_v1_context_destroy(%ctx) : (!llvm.ptr) -> ()
     llvm.return %z32 : i32
   }
 }

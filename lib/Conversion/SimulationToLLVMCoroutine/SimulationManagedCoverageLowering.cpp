@@ -1,10 +1,10 @@
 //===- SimulationManagedCoverageLowering.cpp - Covergroup patterns ---===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -15,7 +15,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 namespace {
 
@@ -116,7 +116,7 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
       return failure();
     width = *packedWidth;
     size = (width + 7) / 8;
-    kind = OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF;
+    kind = TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF;
     Value packed = converted.front();
     Value ownerWord = LLVM::TruncOp::create(rewriter, location, i64, packed);
     ownerPointer = managedObjectPointer(rewriter, location, ownerWord);
@@ -132,62 +132,62 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
     kind = isa<sim::MailboxType>(sourceType)
-               ? OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX
-               : OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE;
+               ? TALOS_RT_FUNCTIONAL_VALUE_MAILBOX
+               : TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE;
     ownerPointer = managedObjectPointer(rewriter, location, converted.front());
   } else if (isa<sim::VirtualInterfaceType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
-    kind = OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE;
+    kind = TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE;
     payload = converted.front();
   } else if (isa<sim::ProcessType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
-    kind = OBELISK_RT_FUNCTIONAL_VALUE_PROCESS;
+    kind = TALOS_RT_FUNCTIONAL_VALUE_PROCESS;
     payload = converted.front();
   } else if (isa<sim::CovergroupHandleType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
-    kind = OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP;
+    kind = TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP;
     payload = converted.front();
   } else if (isa<sim::EventType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
-    kind = OBELISK_RT_FUNCTIONAL_VALUE_EVENT;
+    kind = TALOS_RT_FUNCTIONAL_VALUE_EVENT;
     payload = converted.front();
   } else if (isa<sim::ChandleType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
-    kind = OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE;
+    kind = TALOS_RT_FUNCTIONAL_VALUE_CHANDLE;
     payload = converted.front();
   } else if (isa<sim::ClassHandleType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
-    kind = OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE;
+    kind = TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE;
     ownerPointer = managedObjectPointer(rewriter, location, converted.front());
   } else if (isa<sim::ReferencePathType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
-    kind = OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE;
+    kind = TALOS_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE;
     ownerPointer = managedObjectPointer(rewriter, location, converted.front());
   } else if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
                  sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
-    kind = OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
+    kind = TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
     ownerPointer = managedObjectPointer(rewriter, location, converted.front());
   } else if (isa<sim::StringType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
-    kind = OBELISK_RT_FUNCTIONAL_VALUE_STRING;
+    kind = TALOS_RT_FUNCTIONAL_VALUE_STRING;
     payload = converted.front();
   } else if (isa<Float32Type, Float64Type>(sourceType)) {
     if (converted.size() != 1)
       return failure();
     width = cast<FloatType>(sourceType).getWidth();
     size = width / 8;
-    kind = sourceType.isF32() ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
-                              : OBELISK_RT_FUNCTIONAL_VALUE_REAL;
+    kind = sourceType.isF32() ? TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL
+                              : TALOS_RT_FUNCTIONAL_VALUE_REAL;
     valuePointer =
         entryAlloca(rewriter, location, converted.front().getType(), 1, 8);
     LLVM::StoreOp::create(rewriter, location, converted.front(), valuePointer,
@@ -198,8 +198,8 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
       return failure();
     width = *packedWidth;
     size = (width + 7) / 8;
-    kind = converted.size() == 2 ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
-                                 : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
+    kind = converted.size() == 2 ? TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE
+                                 : TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL;
     valuePointer =
         entryAlloca(rewriter, location, converted.front().getType(), 1, 8);
     LLVM::StoreOp::create(rewriter, location, converted.front(), valuePointer,
@@ -247,7 +247,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_coverage_point_hit"),
+                               "talos_rt_v1_coverage_point_hit"),
             ValueRange{context,
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), op.getPoint()),
@@ -261,7 +261,7 @@ public:
     // status check below.
     auto function = op->getParentOfType<sim::SimFuncOp>();
     if (!function ||
-        !::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+        !::talos::schedule::has<::talos::schedule::Field::EvalRawCaptures>(
             function))
       reportManagedStatus(rewriter, op.getLoc(), context, status);
     rewriter.eraseOp(op);
@@ -294,10 +294,10 @@ public:
                                  adaptor.getScope().front()};
     StringRef symbol;
     if constexpr (isDefinition) {
-      symbol = "obelisk_rt_v1_coverage_control_definition";
+      symbol = "talos_rt_v1_coverage_control_definition";
       arguments.push_back(adaptor.getDefinition().front());
     } else {
-      symbol = "obelisk_rt_v1_coverage_control_instance";
+      symbol = "talos_rt_v1_coverage_control_instance";
       arguments.push_back(llvmConstant(rewriter, op.getLoc(),
                                        rewriter.getI64Type(),
                                        op.getCoverageScopeId()));
@@ -338,10 +338,10 @@ public:
                                  adaptor.getScope().front()};
     StringRef symbol;
     if constexpr (isDefinition) {
-      symbol = "obelisk_rt_v1_coverage_query_definition";
+      symbol = "talos_rt_v1_coverage_query_definition";
       arguments.push_back(adaptor.getDefinition().front());
     } else {
-      symbol = "obelisk_rt_v1_coverage_query_instance";
+      symbol = "talos_rt_v1_coverage_query_instance";
       arguments.push_back(llvmConstant(rewriter, op.getLoc(),
                                        rewriter.getI64Type(),
                                        op.getCoverageScopeId()));
@@ -375,8 +375,8 @@ public:
     Value output = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
     Value context = managedContext(rewriter, op.getLoc());
     StringRef symbol = std::is_same_v<Op, sim::SimCoverageSaveOp>
-                           ? "obelisk_rt_v1_coverage_database_save"
-                           : "obelisk_rt_v1_coverage_database_merge";
+                           ? "talos_rt_v1_coverage_database_save"
+                           : "talos_rt_v1_coverage_database_merge";
     Value status =
         LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{i32},
                              SymbolRefAttr::get(rewriter.getContext(), symbol),
@@ -405,7 +405,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_functional_coverage_get"),
+                               "talos_rt_v1_functional_coverage_get"),
             ValueRange{context, output})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -430,9 +430,9 @@ public:
     (void)lane;
     StringRef symbol;
     if constexpr (std::is_same_v<Op, sim::SimFunctionalCoverageSetDbNameOp>)
-      symbol = "obelisk_rt_v1_functional_coverage_set_db_name";
+      symbol = "talos_rt_v1_functional_coverage_set_db_name";
     else
-      symbol = "obelisk_rt_v1_functional_coverage_load_db";
+      symbol = "talos_rt_v1_functional_coverage_load_db";
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(), symbol),
@@ -495,7 +495,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_prepare"),
+                               "talos_rt_v1_covergroup_prepare"),
             ValueRange{context,
                        llvmConstant(rewriter, op.getLoc(), i64,
                                     declaration.getSchemaType()),
@@ -525,7 +525,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_candidates"),
+                               "talos_rt_v1_covergroup_candidates"),
             ValueRange{context, adaptor.getToken().front(),
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), op.getSelector()),
@@ -553,7 +553,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_bind_with"),
+                               "talos_rt_v1_covergroup_bind_with"),
             ValueRange{context, adaptor.getToken().front(),
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), op.getSelector()),
@@ -580,7 +580,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_release_preparation"),
+                               "talos_rt_v1_covergroup_release_preparation"),
             ValueRange{context, adaptor.getToken().front()})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -640,7 +640,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_create"),
+                               "talos_rt_v1_covergroup_create"),
             ValueRange{
                 context,
                 llvmConstant(rewriter, op.getLoc(), i64,
@@ -676,7 +676,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_set_enabled"),
+                               "talos_rt_v1_covergroup_set_enabled"),
             ValueRange{context, adaptor.getHandle().front(),
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), op.getItem()),
@@ -706,7 +706,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_sample_enabled"),
+                               "talos_rt_v1_covergroup_sample_enabled"),
             ValueRange{context, adaptor.getHandle().front(), output})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -731,13 +731,13 @@ serializeCovergroupSamplerCaptures(Operation *operation,
   Type i64 = rewriter.getI64Type();
   Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
   Value null = LLVM::ZeroOp::create(rewriter, location, pointer);
-  constexpr uint64_t captureSize = sizeof(obelisk_rt_computed_capture_v1);
+  constexpr uint64_t captureSize = sizeof(talos_rt_computed_capture_v1);
   static_assert(captureSize % sizeof(uint64_t) == 0);
   Value records =
       captures.empty()
           ? null
           : entryAlloca(rewriter, location, i8, captures.size() * captureSize,
-                        alignof(obelisk_rt_computed_capture_v1));
+                        alignof(talos_rt_computed_capture_v1));
 
   for (auto [index, capture] : llvm::enumerate(captures)) {
     Value record = byteGEP(rewriter, location, records, index * captureSize);
@@ -784,8 +784,8 @@ public:
     Value convertedSampler = adaptor.getValues().back().front();
     Operation *binding = getConvertedObserverBinding(convertedSampler);
     auto observerID =
-        binding ? ::obelisk::schedule::get<
-                      ::obelisk::schedule::Field::NativeObserverId>(binding)
+        binding ? ::talos::schedule::get<
+                      ::talos::schedule::Field::NativeObserverId>(binding)
                 : IntegerAttr{};
     if (!binding || !observerID ||
         !getConvertedObserverDependencies(binding).empty())
@@ -839,8 +839,8 @@ public:
       eventCaptureCount += captures;
       dependencyCount += dependencies;
       if (index < primaryCount) {
-        auto width = ::obelisk::schedule::get<
-            ::obelisk::schedule::Field::NativeObserverWidth>(eventBinding);
+        auto width = ::talos::schedule::get<
+            ::talos::schedule::Field::NativeObserverWidth>(eventBinding);
         if (!width || width.getValue().isNegative() ||
             width.getValue().isZero() || width.getValue().getActiveBits() > 32)
           return eventBinding->emitOpError("missing converted observer width");
@@ -858,21 +858,21 @@ public:
       size += count * stride;
       return success();
     };
-    uint64_t recordSize = sizeof(obelisk_rt_computed_wait_record_v1);
+    uint64_t recordSize = sizeof(talos_rt_computed_wait_record_v1);
     if (failed(addProduct(recordSize, observerCount,
-                          sizeof(obelisk_rt_computed_observer_v1))) ||
+                          sizeof(talos_rt_computed_observer_v1))) ||
         failed(addProduct(recordSize, eventCaptureCount,
-                          sizeof(obelisk_rt_computed_capture_v1))) ||
+                          sizeof(talos_rt_computed_capture_v1))) ||
         failed(addProduct(recordSize, dependencyCount,
-                          sizeof(obelisk_rt_computed_dependency_v1))) ||
+                          sizeof(talos_rt_computed_dependency_v1))) ||
         failed(addProduct(recordSize, primaryCount,
-                          sizeof(obelisk_rt_computed_clause_v1))) ||
+                          sizeof(talos_rt_computed_clause_v1))) ||
         failed(addProduct(recordSize, previousLimbs, sizeof(uint64_t) * 2)))
       return failure();
     if (recordSize > UINT32_MAX)
       return op.emitOpError("computed event record exceeds v1 offset fields");
     Value record = entryAlloca(rewriter, location, i8, recordSize,
-                               alignof(obelisk_rt_computed_wait_record_v1));
+                               alignof(talos_rt_computed_wait_record_v1));
     SmallVector<Operation *> serializedBindings;
     if (failed(serializeComputedObserverRecord(
             op, eventBindings, initialPlanes, op.getEdges(),
@@ -886,7 +886,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_clock_event_register"),
+                               "talos_rt_v1_covergroup_clock_event_register"),
             ValueRange{
                 context, record,
                 llvmConstant(rewriter, location, i64, recordSize),
@@ -925,8 +925,8 @@ public:
     Operation *binding =
         getConvertedObserverBinding(adaptor.getSampler().front());
     auto observerID =
-        binding ? ::obelisk::schedule::get<
-                      ::obelisk::schedule::Field::NativeObserverId>(binding)
+        binding ? ::talos::schedule::get<
+                      ::talos::schedule::Field::NativeObserverId>(binding)
                 : IntegerAttr{};
     if (!binding || !observerID ||
         !getConvertedObserverDependencies(binding).empty())
@@ -977,7 +977,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_block_event_register"),
+                               "talos_rt_v1_covergroup_block_event_register"),
             ValueRange{context, adaptor.getHandle().front(), receiver,
                        llvmConstant(rewriter, location, i64,
                                     observerID.getValue().getZExtValue()),
@@ -1019,7 +1019,7 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_block_event_fire"),
+                               "talos_rt_v1_covergroup_block_event_fire"),
             ValueRange{context,
                        llvmConstant(rewriter, location, rewriter.getI64Type(),
                                     op.getTargetId()),
@@ -1047,7 +1047,7 @@ public:
     Value status = LLVM::CallOp::create(
                        rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
                        SymbolRefAttr::get(rewriter.getContext(),
-                                          "obelisk_rt_v1_covergroup_set_name"),
+                                          "talos_rt_v1_covergroup_set_name"),
                        ValueRange{context, adaptor.getHandle().front(),
                                   adaptor.getName().front()})
                        .getResult();
@@ -1073,7 +1073,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_set_integer_option"),
+                               "talos_rt_v1_covergroup_set_integer_option"),
             ValueRange{context, adaptor.getHandle().front(),
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), op.getItem()),
@@ -1106,7 +1106,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_get_integer_option"),
+                               "talos_rt_v1_covergroup_get_integer_option"),
             ValueRange{context, adaptor.getHandle().front(),
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), op.getItem()),
@@ -1140,7 +1140,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_get_string_option"),
+                               "talos_rt_v1_covergroup_get_string_option"),
             ValueRange{lane, adaptor.getHandle().front(),
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), op.getItem()),
@@ -1173,7 +1173,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_set_string_option"),
+                               "talos_rt_v1_covergroup_set_string_option"),
             ValueRange{context, adaptor.getHandle().front(),
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), op.getItem()),
@@ -1205,7 +1205,7 @@ public:
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(
                 rewriter.getContext(),
-                "obelisk_rt_v1_covergroup_set_type_integer_option"),
+                "talos_rt_v1_covergroup_set_type_integer_option"),
             ValueRange{context,
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), op.getTypeId()),
@@ -1239,7 +1239,7 @@ public:
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(
                 rewriter.getContext(),
-                "obelisk_rt_v1_covergroup_set_type_string_option"),
+                "talos_rt_v1_covergroup_set_type_string_option"),
             ValueRange{context,
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), op.getTypeId()),
@@ -1287,7 +1287,7 @@ public:
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_sample"),
+                               "talos_rt_v1_covergroup_sample"),
             ValueRange{context, adaptor.getHandle().front(), descriptors,
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), count)})
@@ -1350,29 +1350,29 @@ public:
     if (convertedTypes.size() == 2)
       unknown = entryAlloca(rewriter, op.getLoc(), convertedTypes[1], 1, 8);
     uint64_t kind =
-        reference          ? OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
-        : virtualInterface ? OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
-        : classHandle      ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
-        : semaphore        ? OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE
-        : mailbox          ? OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX
-        : chandle          ? OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE
-        : process          ? OBELISK_RT_FUNCTIONAL_VALUE_PROCESS
-        : event            ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
-        : covergroup       ? OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP
-        : string           ? OBELISK_RT_FUNCTIONAL_VALUE_STRING
-        : container        ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
+        reference          ? TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
+        : virtualInterface ? TALOS_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
+        : classHandle      ? TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
+        : semaphore        ? TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE
+        : mailbox          ? TALOS_RT_FUNCTIONAL_VALUE_MAILBOX
+        : chandle          ? TALOS_RT_FUNCTIONAL_VALUE_CHANDLE
+        : process          ? TALOS_RT_FUNCTIONAL_VALUE_PROCESS
+        : event            ? TALOS_RT_FUNCTIONAL_VALUE_EVENT
+        : covergroup       ? TALOS_RT_FUNCTIONAL_VALUE_COVERGROUP
+        : string           ? TALOS_RT_FUNCTIONAL_VALUE_STRING
+        : container        ? TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
         : op.getResult().getType().isF32()
-            ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
-        : op.getResult().getType().isF64() ? OBELISK_RT_FUNCTIONAL_VALUE_REAL
-        : convertedTypes.size() == 2 ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
-                                     : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
+            ? TALOS_RT_FUNCTIONAL_VALUE_SHORTREAL
+        : op.getResult().getType().isF64() ? TALOS_RT_FUNCTIONAL_VALUE_REAL
+        : convertedTypes.size() == 2 ? TALOS_RT_FUNCTIONAL_VALUE_FOUR_STATE
+                                     : TALOS_RT_FUNCTIONAL_VALUE_INTEGRAL;
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
     (void)lane;
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_covergroup_formal_read"),
+                               "talos_rt_v1_covergroup_formal_read"),
             ValueRange{context, adaptor.getHandle().front(),
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), op.getFormalId()),
@@ -1383,9 +1383,9 @@ public:
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), size),
                        LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
-                                                 "__obelisk_state_value"),
+                                                 "__talos_state_value"),
                        LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
-                                                 "__obelisk_state_unknown"),
+                                                 "__talos_state_unknown"),
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), stateBitCount),
                        value, unknown})
@@ -1433,13 +1433,13 @@ public:
         return failure();
       key = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
                          declaration.getSchemaType());
-      symbol = "obelisk_rt_v1_covergroup_type_query";
+      symbol = "talos_rt_v1_covergroup_type_query";
       arguments.push_back(key);
     } else {
       if (adaptor.getHandle().size() != 1)
         return failure();
       key = adaptor.getHandle().front();
-      symbol = "obelisk_rt_v1_covergroup_instance_query";
+      symbol = "talos_rt_v1_covergroup_instance_query";
       arguments.push_back(key);
     }
     arguments.push_back(llvmConstant(rewriter, op.getLoc(),
@@ -1501,4 +1501,4 @@ void populateManagedCoverageToLLVMConversionPatterns(
                                                                       context);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

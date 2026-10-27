@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(llvm.func(obelisk-native-share-scoped-temporaries))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(llvm.func(talos-native-share-scoped-temporaries))' | FileCheck %s
 
 llvm.func @consume(!llvm.ptr, !llvm.ptr)
 

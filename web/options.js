@@ -99,12 +99,12 @@ export function buildArgs(options) {
 
 /** The command as a user would type it, for display only. */
 export function formatCommand(options) {
-  return ['obelisk', ...buildArgs(options).map(quoteForDisplay), INPUT_FILE].join(' ');
+  return ['talos', ...buildArgs(options).map(quoteForDisplay), INPUT_FILE].join(' ');
 }
 
 /* ------------------------------------------------------------ persistence */
 
-const STORAGE_KEY = 'obelisk.playground';
+const STORAGE_KEY = 'talos.playground';
 
 // btoa is byte-oriented, so round-trip through UTF-8 explicitly.
 function encode(value) {

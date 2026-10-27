@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=ALIAS
 
 module attributes {
@@ -118,6 +118,6 @@ module attributes {
 }
 
 // Ordinary strengths preserve the forwarded four-state bit exactly.
-// ALIAS: llvm.mlir.global internal constant @__obelisk_periodic_alias_plan_v1
+// ALIAS: llvm.mlir.global internal constant @__talos_periodic_alias_plan_v1
 
 // highz1 maps a source 1 to Z, so copying the source planes is unsound.

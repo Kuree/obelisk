@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -canonicalize | FileCheck %s
+// RUN: talos-opt %s -canonicalize | FileCheck %s
 
 module {
   func.func @literal_length() -> i64 {

@@ -5,9 +5,9 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallBitVector.h"
@@ -16,11 +16,11 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
-constexpr StringLiteral dirtyName = "__obelisk_aot_nba_dirty_roots_v1";
-constexpr StringLiteral summaryName = "__obelisk_aot_nba_dirty_summary_v1";
+constexpr StringLiteral dirtyName = "__talos_aot_nba_dirty_roots_v1";
+constexpr StringLiteral summaryName = "__talos_aot_nba_dirty_summary_v1";
 
 struct PendingRoot {
   uint32_t root, ordinal;
@@ -209,15 +209,15 @@ void transfer(OpBuilder &builder, Location loc, Value frame,
       if (!exporting) {
         Value contextAddress = LLVM::AddressOfOp::create(
             builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
-            "__obelisk_current_context");
+            "__talos_current_context");
         Value runtimeContext = LLVM::LoadOp::create(
             builder, loc, LLVM::LLVMPointerType::get(builder.getContext()),
             contextAddress, 8);
         Value allowed =
             LLVM::CallOp::create(
                 builder, loc, TypeRange{builder.getI32Type()},
-                writable ? "obelisk_rt_v1_static_nba_specialization_guard_write"
-                         : "obelisk_rt_v1_static_nba_specialization_guard",
+                writable ? "talos_rt_v1_static_nba_specialization_guard_write"
+                         : "talos_rt_v1_static_nba_specialization_guard",
                 ValueRange{runtimeContext,
                            llvmConstant(builder, loc, builder.getI32Type(),
                                         root.root)})
@@ -226,7 +226,7 @@ void transfer(OpBuilder &builder, Location loc, Value frame,
             builder, loc, builder.getI32Type(),
             nbaFieldGEP(
                 builder, loc, accumulator,
-                offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+                offsetof(talos_rt_generated_nba_accumulator_256, valid)),
             4);
         Value generated = LLVM::ICmpOp::create(
             builder, loc, LLVM::ICmpPredicate::ne,
@@ -235,14 +235,14 @@ void transfer(OpBuilder &builder, Location loc, Value frame,
         Value region = LLVM::LoadOp::create(
             builder, loc, builder.getI32Type(),
             nbaFieldGEP(builder, loc, accumulator,
-                        offsetof(obelisk_rt_generated_nba_accumulator_256,
+                        offsetof(talos_rt_generated_nba_accumulator_256,
                                  exec_region)),
             4);
         Value capturedMask = LLVM::LoadOp::create(
             builder, loc, builder.getI64Type(),
             nbaFieldGEP(
                 builder, loc, accumulator,
-                offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
+                offsetof(talos_rt_generated_nba_accumulator_256, write_mask)),
             8);
         generated = LLVM::AndOp::create(
             builder, loc, generated,
@@ -265,9 +265,9 @@ void transfer(OpBuilder &builder, Location loc, Value frame,
         builder.setInsertionPointToStart(adopt);
       }
       constexpr uint64_t offsets[] = {
-          offsetof(obelisk_rt_generated_nba_accumulator_256, value),
-          offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
-          offsetof(obelisk_rt_generated_nba_accumulator_256, transient)};
+          offsetof(talos_rt_generated_nba_accumulator_256, value),
+          offsetof(talos_rt_generated_nba_accumulator_256, unknown),
+          offsetof(talos_rt_generated_nba_accumulator_256, transient)};
       for (unsigned lane = 0; lane != 3; ++lane) {
         if ((lane == 1 && root.twoState) || (lane == 2 && !root.transient))
           continue;
@@ -286,19 +286,19 @@ void transfer(OpBuilder &builder, Location loc, Value frame,
             builder, loc, constant(builder, loc, root.mask),
             nbaFieldGEP(
                 builder, loc, accumulator,
-                offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
+                offsetof(talos_rt_generated_nba_accumulator_256, write_mask)),
             8);
         LLVM::StoreOp::create(
             builder, loc, llvmConstant(builder, loc, builder.getI32Type(), 1),
             nbaFieldGEP(
                 builder, loc, accumulator,
-                offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+                offsetof(talos_rt_generated_nba_accumulator_256, valid)),
             4);
         LLVM::StoreOp::create(
             builder, loc,
             llvmConstant(builder, loc, builder.getI32Type(), root.region),
             nbaFieldGEP(builder, loc, accumulator,
-                        offsetof(obelisk_rt_generated_nba_accumulator_256,
+                        offsetof(talos_rt_generated_nba_accumulator_256,
                                  exec_region)),
             4);
         Value old =
@@ -337,19 +337,19 @@ void transfer(OpBuilder &builder, Location loc, Value frame,
             builder, loc, llvmConstant(builder, loc, builder.getI32Type(), 0),
             nbaFieldGEP(
                 builder, loc, accumulator,
-                offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+                offsetof(talos_rt_generated_nba_accumulator_256, valid)),
             4);
         LLVM::StoreOp::create(
             builder, loc, constant(builder, loc, 0),
             nbaFieldGEP(
                 builder, loc, accumulator,
-                offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
+                offsetof(talos_rt_generated_nba_accumulator_256, write_mask)),
             8);
         if (root.transient)
           LLVM::StoreOp::create(
               builder, loc, constant(builder, loc, 0),
               nbaFieldGEP(builder, loc, accumulator,
-                          offsetof(obelisk_rt_generated_nba_accumulator_256,
+                          offsetof(talos_rt_generated_nba_accumulator_256,
                                    transient)),
               8);
         LLVM::StoreOp::create(
@@ -398,49 +398,49 @@ bool pendingRuntimeTransparent(LLVM::CallOp call,
   auto callee = call.getCallee();
   if (!callee)
     return false;
-  if (*callee == "obelisk_rt_v1_scheduler_prepare_eval_nba_local" ||
-      *callee == "obelisk_rt_v1_scheduler_prepare_eval_nba_local_write" ||
-      *callee == "obelisk_rt_v1_scheduler_complete_eval_nba" ||
-      *callee == "obelisk_rt_v1_static_nba_direct_commit_guard" ||
-      *callee == "obelisk_rt_v1_static_nba_account_generated_commits" ||
-      *callee == "obelisk_rt_v1_static_nba_batch_guard" ||
-      *callee == "obelisk_rt_v1_static_nba_batch_knownness" ||
-      *callee == "obelisk_rt_v1_static_nba_batch_finish" ||
-      *callee == "obelisk_rt_v1_scheduler_priority_signal_pending" ||
-      *callee == "obelisk_rt_v1_scheduler_handoff_pending" ||
-      *callee == "obelisk_rt_v1_scheduler_termination_requested" ||
-      *callee == "obelisk_rt_v1_scheduler_time" ||
-      *callee == "obelisk_rt_v1_scheduler_fail" ||
+  if (*callee == "talos_rt_v1_scheduler_prepare_eval_nba_local" ||
+      *callee == "talos_rt_v1_scheduler_prepare_eval_nba_local_write" ||
+      *callee == "talos_rt_v1_scheduler_complete_eval_nba" ||
+      *callee == "talos_rt_v1_static_nba_direct_commit_guard" ||
+      *callee == "talos_rt_v1_static_nba_account_generated_commits" ||
+      *callee == "talos_rt_v1_static_nba_batch_guard" ||
+      *callee == "talos_rt_v1_static_nba_batch_knownness" ||
+      *callee == "talos_rt_v1_static_nba_batch_finish" ||
+      *callee == "talos_rt_v1_scheduler_priority_signal_pending" ||
+      *callee == "talos_rt_v1_scheduler_handoff_pending" ||
+      *callee == "talos_rt_v1_scheduler_termination_requested" ||
+      *callee == "talos_rt_v1_scheduler_time" ||
+      *callee == "talos_rt_v1_scheduler_fail" ||
       // These leaves allocate only the separate ordered queue or update
       // proof/coverage metadata. None consumes generated NBA accumulators,
       // executes an actor or invokes foreign code (LRM 4.9.4, 10.4.2).
-      *callee == "obelisk_rt_v1_eval_nba_reserve" ||
-      *callee == "obelisk_rt_v1_native_promotion_invalidate_ranges" ||
-      *callee == "obelisk_rt_v1_native_promotion_recheck_ranges" ||
-      *callee == "obelisk_rt_v1_native_promotion_invalidate_buckets" ||
-      *callee == "obelisk_rt_v1_native_promotion_recheck_buckets" ||
+      *callee == "talos_rt_v1_eval_nba_reserve" ||
+      *callee == "talos_rt_v1_native_promotion_invalidate_ranges" ||
+      *callee == "talos_rt_v1_native_promotion_recheck_ranges" ||
+      *callee == "talos_rt_v1_native_promotion_invalidate_buckets" ||
+      *callee == "talos_rt_v1_native_promotion_recheck_buckets" ||
       // The unknown summary's rescan reads CURRENT unknown planes, which
       // pending NBAs do not touch, and only changes summary bits.
-      *callee == "obelisk_rt_v1_native_state_refresh_unknown_summary" ||
-      *callee == "obelisk_rt_v1_native_state_mark_unknown" ||
-      *callee == "obelisk_rt_v1_coverage_point_hit" ||
-      *callee == "obelisk_rt_v1_strength_resolve_kind" ||
+      *callee == "talos_rt_v1_native_state_refresh_unknown_summary" ||
+      *callee == "talos_rt_v1_native_state_mark_unknown" ||
+      *callee == "talos_rt_v1_coverage_point_hit" ||
+      *callee == "talos_rt_v1_strength_resolve_kind" ||
       // eval_display formats its already captured arguments and writes to
       // runtime-owned FILE streams. It neither reads pending accumulators nor
       // calls the scheduler/VPI. Source CURRENT reads stay at their original
       // evaluation position; no NBA is committed for display (LRM 4.9.4).
-      *callee == "obelisk_rt_v1_eval_display" ||
+      *callee == "talos_rt_v1_eval_display" ||
       // An ordered prefix applies its explicit captured operands to CURRENT.
       // It does not consume the separate pending generated accumulators.
       // Keep its source-order publications, without exporting unrelated next
       // values before each prefix update (LRM 4.6(b), 10.4.2).
-      *callee == "obelisk_rt_v1_static_nba_commit_ordered" ||
-      *callee == "obelisk_rt_v1_static_specialization_guard" ||
-      *callee == "obelisk_rt_v1_static_nba_specialization_guard" ||
-      *callee == "obelisk_rt_v1_static_nba_specialization_guard_write" ||
+      *callee == "talos_rt_v1_static_nba_commit_ordered" ||
+      *callee == "talos_rt_v1_static_specialization_guard" ||
+      *callee == "talos_rt_v1_static_nba_specialization_guard" ||
+      *callee == "talos_rt_v1_static_nba_specialization_guard_write" ||
       callee->starts_with("llvm."))
     return true;
-  if (*callee == "obelisk_rt_v1_scheduler_static_transition_owned" &&
+  if (*callee == "talos_rt_v1_scheduler_static_transition_owned" &&
       call.getArgOperands().size() == 9 &&
       call.getArgOperands()[1].getDefiningOp<LLVM::ConstantOp>() &&
       call.getArgOperands()[2].getDefiningOp<LLVM::ConstantOp>())
@@ -448,8 +448,8 @@ bool pendingRuntimeTransparent(LLVM::CallOp call,
     // waiting actor or consume pending captures. CURRENT publication still
     // occurs at this call (LRM 4.6(a), 9.4.2).
     return true;
-  if ((*callee == "obelisk_rt_v1_static_nba_claim" ||
-       *callee == "obelisk_rt_v1_static_nba_stage_wide") &&
+  if ((*callee == "talos_rt_v1_static_nba_claim" ||
+       *callee == "talos_rt_v1_static_nba_stage_wide") &&
       call.getArgOperands().size() >= 2) {
     APInt index;
     // These ABIs validate and stage only the explicit root. Staging an
@@ -458,7 +458,7 @@ bool pendingRuntimeTransparent(LLVM::CallOp call,
            index.getActiveBits() <= 32 &&
            !byRoot.contains(index.getZExtValue());
   }
-  if (*callee == "obelisk_rt_v1_scheduler_static_nba")
+  if (*callee == "talos_rt_v1_scheduler_static_nba")
     if (auto root =
             schedule::get<schedule::Field::EvalPendingRuntimeRoot>(call))
       return !byRoot.contains(root.getValue().getZExtValue());
@@ -481,7 +481,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
   for (auto function : module.getOps<LLVM::LLVMFuncOp>()) {
     functions.try_emplace(function.getSymName(), function);
     writable |=
-        function.getSymName().starts_with("__obelisk_eval_write_guard_");
+        function.getSymName().starts_with("__talos_eval_write_guard_");
     if (schedule::has<schedule::metadata::evalCallClosureRoot>(function))
       work.push_back(function);
   }
@@ -554,7 +554,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
           if (auto at = address(read.getAddr());
               at &&
               at->offset ==
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid))
+                  offsetof(talos_rt_generated_nba_accumulator_256, valid))
             commitConsumers.try_emplace(root.getValue().getZExtValue(),
                                         at->global.str());
       if (read || write) {
@@ -579,22 +579,22 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
         bool word =
             index ? at->offset % 8 == 0
                   : at->offset ==
-                            offsetof(obelisk_rt_generated_nba_accumulator_256,
+                            offsetof(talos_rt_generated_nba_accumulator_256,
                                      value) ||
                         at->offset ==
-                            offsetof(obelisk_rt_generated_nba_accumulator_256,
+                            offsetof(talos_rt_generated_nba_accumulator_256,
                                      unknown) ||
                         at->offset ==
-                            offsetof(obelisk_rt_generated_nba_accumulator_256,
+                            offsetof(talos_rt_generated_nba_accumulator_256,
                                      write_mask) ||
                         at->offset ==
-                            offsetof(obelisk_rt_generated_nba_accumulator_256,
+                            offsetof(talos_rt_generated_nba_accumulator_256,
                                      transient);
         bool flag =
             !index &&
             (at->offset ==
-                 offsetof(obelisk_rt_generated_nba_accumulator_256, valid) ||
-             at->offset == offsetof(obelisk_rt_generated_nba_accumulator_256,
+                 offsetof(talos_rt_generated_nba_accumulator_256, valid) ||
+             at->offset == offsetof(talos_rt_generated_nba_accumulator_256,
                                     exec_region));
         memory.exact &=
             (word && type.isInteger(64)) || (flag && type.isInteger(32));
@@ -628,7 +628,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
       return module.emitError("invalid source eval transaction certificate");
     auto data = info.asArrayRef();
     if (data[1] < 0 || data[1] > UINT32_MAX || data[4] <= 0 || data[4] > 64 ||
-        data[6] != OBELISK_RT_REGION_NBA)
+        data[6] != TALOS_RT_REGION_NBA)
       return module.emitError("unsupported source eval transaction interval");
     auto capture = captures.find(data[1]);
     auto memory = memoryInventory.find(name.getValue());
@@ -723,7 +723,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
       names.push_back(entry.getKey());
     llvm::sort(names);
     for (StringRef name : names)
-      llvm::errs() << "obelisk eval pending external cut: " << name
+      llvm::errs() << "talos eval pending external cut: " << name
                    << " sites=" << externalCuts.lookup(name) << '\n';
   }
 
@@ -792,7 +792,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
       return a.first != b.first ? a.first > b.first : a.second < b.second;
     });
     for (auto [count, name] : ArrayRef(scopes).take_front(8))
-      llvm::errs() << "obelisk eval pending direct scope: roots=" << count
+      llvm::errs() << "talos eval pending direct scope: roots=" << count
                    << " function=" << name << '\n';
   }
   SmallVector<Operation *> pending;
@@ -841,7 +841,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
     args.push_back(LLVM::LLVMPointerType::get(context));
     auto core = LLVM::LLVMFuncOp::create(
         builder, original.getLoc(),
-        (original.getSymName() + ".__obelisk_pending").str(),
+        (original.getSymName() + ".__talos_pending").str(),
         LLVM::LLVMFunctionType::get(original.getFunctionType().getReturnType(),
                                     args));
     symbols.insert(core);
@@ -911,13 +911,13 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
           const auto &root = roots[mapped->second];
           std::optional<unsigned> lane;
           if (at->offset ==
-              offsetof(obelisk_rt_generated_nba_accumulator_256, value))
+              offsetof(talos_rt_generated_nba_accumulator_256, value))
             lane = 0;
           else if (at->offset ==
-                   offsetof(obelisk_rt_generated_nba_accumulator_256, unknown))
+                   offsetof(talos_rt_generated_nba_accumulator_256, unknown))
             lane = 1;
           else if (at->offset ==
-                   offsetof(obelisk_rt_generated_nba_accumulator_256,
+                   offsetof(talos_rt_generated_nba_accumulator_256,
                             transient))
             lane = 2;
           if (lane) {
@@ -955,7 +955,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
             }
           } else if (write) {
             if (at->offset ==
-                    offsetof(obelisk_rt_generated_nba_accumulator_256, valid) &&
+                    offsetof(talos_rt_generated_nba_accumulator_256, valid) &&
                 zero(write.getValue())) {
               // Clearing captured validity consumes this local NBA, even
               // when a private batch clears its leaf word only afterward.
@@ -971,7 +971,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
             write.erase();
           } else {
             Value replacement;
-            if (at->offset == offsetof(obelisk_rt_generated_nba_accumulator_256,
+            if (at->offset == offsetof(talos_rt_generated_nba_accumulator_256,
                                        write_mask)) {
               if (schedule::has<schedule::Field::EvalPendingMaskAtCommit>(
                       read)) {
@@ -988,7 +988,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
                     constant(builder, loc, 0));
               }
             } else if (at->offset ==
-                       offsetof(obelisk_rt_generated_nba_accumulator_256,
+                       offsetof(talos_rt_generated_nba_accumulator_256,
                                 valid)) {
               // A caller can inspect validity outside the commit's selected
               // root branch (for example a knownness predicate). Preserve
@@ -1007,7 +1007,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
               replacement = llvmConstant(
                   builder, loc, read.getType(),
                   at->offset ==
-                          offsetof(obelisk_rt_generated_nba_accumulator_256,
+                          offsetof(talos_rt_generated_nba_accumulator_256,
                                    exec_region)
                       ? root.region
                       : 1);
@@ -1128,18 +1128,18 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
         call.erase();
       } else if (call.getCallee() &&
                  *call.getCallee() ==
-                     "obelisk_rt_v1_scheduler_prepare_eval_nba") {
+                     "talos_rt_v1_scheduler_prepare_eval_nba") {
         Value bits = pendingBits(builder, loc, frame, words);
         Value localRegion = LLVM::SelectOp::create(
             builder, loc,
             LLVM::ICmpOp::create(builder, loc, LLVM::ICmpPredicate::ne, bits,
                                  constant(builder, loc, 0)),
             llvmConstant(builder, loc, builder.getI32Type(),
-                         OBELISK_RT_REGION_NBA),
+                         TALOS_RT_REGION_NBA),
             llvmConstant(builder, loc, builder.getI32Type(), UINT32_MAX));
         StringRef service =
-            writable ? "obelisk_rt_v1_scheduler_prepare_eval_nba_local_write"
-                     : "obelisk_rt_v1_scheduler_prepare_eval_nba_local";
+            writable ? "talos_rt_v1_scheduler_prepare_eval_nba_local_write"
+                     : "talos_rt_v1_scheduler_prepare_eval_nba_local";
         auto replacement = LLVM::CallOp::create(
             builder, loc, call.getResultTypes(), service,
             ValueRange{call.getArgOperands()[0], localRegion,
@@ -1152,7 +1152,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
         builder.setInsertionPointAfter(replacement);
         Value ok = LLVM::ICmpOp::create(
             builder, loc, LLVM::ICmpPredicate::eq, replacement.getResult(),
-            llvmConstant(builder, loc, builder.getI32Type(), OBELISK_RT_OK));
+            llvmConstant(builder, loc, builder.getI32Type(), TALOS_RT_OK));
         Block *head = builder.getInsertionBlock();
         Block *tail = head->splitBlock(builder.getInsertionPoint());
         Block *prepared = new Block;
@@ -1220,19 +1220,19 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
   }
   getOrDeclareLLVMFunction(
       module,
-      writable ? "obelisk_rt_v1_scheduler_prepare_eval_nba_local_write"
-               : "obelisk_rt_v1_scheduler_prepare_eval_nba_local",
+      writable ? "talos_rt_v1_scheduler_prepare_eval_nba_local_write"
+               : "talos_rt_v1_scheduler_prepare_eval_nba_local",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32),
        LLVM::LLVMPointerType::get(context)});
   getOrDeclareLLVMFunction(
       module,
-      writable ? "obelisk_rt_v1_static_nba_specialization_guard_write"
-               : "obelisk_rt_v1_static_nba_specialization_guard",
+      writable ? "talos_rt_v1_static_nba_specialization_guard_write"
+               : "talos_rt_v1_static_nba_specialization_guard",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32)});
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk eval local pending roots: " << roots.size()
+    llvm::errs() << "talos eval local pending roots: " << roots.size()
                  << " cores=" << cores.size()
                  << " fixed-candidates=" << candidates.size()
                  << " bitmap-words=" << words.size()
@@ -1240,4 +1240,4 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

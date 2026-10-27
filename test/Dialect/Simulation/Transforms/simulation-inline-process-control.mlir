@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=0}))' | FileCheck %s --check-prefix=O0
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3}))' | FileCheck %s --check-prefix=O3
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=0}))' | FileCheck %s --check-prefix=O0
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=3}))' | FileCheck %s --check-prefix=O3
 
 module {
   simulation.design @inline_process_control {

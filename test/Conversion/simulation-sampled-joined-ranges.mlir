@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode | FileCheck %s
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode | FileCheck %s
 // A CFG join preserves one descriptor with a union of possible static lanes.
 // Snapshot all of that union, rather than only the width of the read result.
 // CHECK: runtime.sampled_ranges = array<i64: 0, 12>

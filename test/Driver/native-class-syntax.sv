@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --std=1800-2023 %s -o %t.native
+// RUN: talos -O3 --std=1800-2023 %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --std=1800-2023 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --std=1800-2023 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
 
 interface class readable;

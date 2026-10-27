@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
-// PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
+// PLAN-LABEL: llvm.func @__talos_eval_ranked_group_0(
 // PLAN-SAME: schedule.eval.ranked_members = array<i32: 0, 1, 2, 3, 4>
 // Members compare both planes before waking a consumer, so the transition to
 // X and the later recovery from X both publish.
@@ -15,8 +15,8 @@
 // PLAN-NEXT: %[[DELTA:.*]] = llvm.or %[[VALUE_DELTA]], %[[UNKNOWN_DELTA]] : i64
 // PLAN: llvm.icmp "eq" %[[DELTA]], %{{.*}} : i64
 // PLAN-NOT: llvm.call %
-// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// PLAN: llvm.call @__obelisk_eval_ranked_group_0
+// PLAN-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// PLAN: llvm.call @__talos_eval_ranked_group_0
 
 !ref = !simulation.ref<i1>
 !word = !simulation.logic<8>

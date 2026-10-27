@@ -1,4 +1,4 @@
-// RUN: obelisk -O3 --vpi=off -emit-sim %s -o - | FileCheck %s
+// RUN: talos -O3 --vpi=off -emit-sim %s -o - | FileCheck %s
 
 module primitive_slice_sensitivity;
   logic [3:0] data;

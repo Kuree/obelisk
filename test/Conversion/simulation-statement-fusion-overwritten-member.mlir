@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
 // A whole cohort may include an old-state intermediate publication only when
 // the final values are independent and its transition observers are transparent.
 // This admission requires the data-dependence path and must be rechecked when
@@ -6,10 +6,10 @@
 // CHECK-LABEL: simulation.design @overwritten_member
 // CHECK: simulation.func @root
 // CHECK-NOT: simulation.spawn
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn
 // CHECK: simulation.return
-// CHECK: simulation.func private @__obelisk_region_kernel_0_0
+// CHECK: simulation.func private @__talos_region_kernel_0_0
 module {
   simulation.design @overwritten_member {
     simulation.scope.decl 0

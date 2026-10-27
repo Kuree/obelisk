@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --top=native_timeunit_hierarchy %s -o %t.native
+// RUN: talos -O3 --top=native_timeunit_hierarchy %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --top=native_timeunit_hierarchy --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --top=native_timeunit_hierarchy --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
 
 // IEEE 1800-2017 3.14.2-3.14.3: compilation-unit declarations supply the

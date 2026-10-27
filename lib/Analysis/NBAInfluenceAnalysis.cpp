@@ -1,9 +1,9 @@
-#include "obelisk/Analysis/NBAInfluenceAnalysis.h"
+#include "talos/Analysis/NBAInfluenceAnalysis.h"
 #include "mlir/Analysis/DataFlowFramework.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 class InfluenceState final : public AnalysisState {
 public:
@@ -171,4 +171,4 @@ NBAInfluenceAnalysis::NBAInfluenceAnalysis(sim::SimDesignOp design,
   }
   complete = true;
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

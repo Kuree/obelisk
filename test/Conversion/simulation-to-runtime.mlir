@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --convert-obelisk-sim-to-runtime %s | FileCheck %s
+// RUN: talos-opt --convert-talos-sim-to-runtime %s | FileCheck %s
 
 module {
   func.func @io(%ctx: !simulation.context, %fd_bits: i32,

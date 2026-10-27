@@ -1,7 +1,7 @@
 //===- CanonicalPlane.h - Owned or generated state storage -------*- C++ -*-===//
 
-#ifndef OBELISK_RUNTIME_LIB_CANONICALPLANE_H
-#define OBELISK_RUNTIME_LIB_CANONICALPLANE_H
+#ifndef TALOS_RUNTIME_LIB_CANONICALPLANE_H
+#define TALOS_RUNTIME_LIB_CANONICALPLANE_H
 
 #include <algorithm>
 #include <cstddef>

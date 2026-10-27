@@ -1,11 +1,11 @@
 //===- SimulationFunctionBodyLowering.cpp - Native body rewrites ----------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -19,7 +19,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 void foldNativeSpawnInitializationScopes(ModuleOp module) {
   SmallVector<sim::SimRandomInitializationLeaveOp> leaves;
@@ -90,7 +90,7 @@ void materializeNativeSpawnBatches(Operation *root,
         spawn ? symbols.lookupNearestSymbolFrom<LLVM::LLVMFuncOp>(
                     spawn, StringAttr::get(
                                context,
-                               (spawn.getCallee() + ".__obelisk_spawn").str()))
+                               (spawn.getCallee() + ".__talos_spawn").str()))
               : LLVM::LLVMFuncOp{};
     auto offsets = helper ? native::get<native::SpawnCaptureOffsets>(helper)
                           : DenseI64ArrayAttr{};
@@ -156,7 +156,7 @@ void materializeNativeSpawnBatches(Operation *root,
   for (auto &batch : batches) {
     Location location = batch.front().operation.getLoc();
     std::string base = (SymbolTable::getSymbolName(root).getValue() +
-                        ".__obelisk_spawn_batch_" + Twine(batchID++))
+                        ".__talos_spawn_batch_" + Twine(batchID++))
                            .str();
     // Rows with equal captures share one blob slice.
     SmallVector<uint64_t> words;
@@ -187,7 +187,7 @@ void materializeNativeSpawnBatches(Operation *root,
                 builder, location, row,
                 LLVM::AddressOfOp::create(
                     builder, location, pointer,
-                    (spawn.operation.getCallee() + ".__obelisk_spawn_plan")
+                    (spawn.operation.getCallee() + ".__talos_spawn_plan")
                         .str()),
                 0);
             row = insertValue(
@@ -212,7 +212,7 @@ void materializeNativeSpawnBatches(Operation *root,
     Value status =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_process_spawn_batch"),
+            SymbolRefAttr::get(context, "talos_rt_v1_process_spawn_batch"),
             ValueRange{spawnContext, address, captures,
                        llvmConstant(builder, location, i32, batch.size())})
             .getResult();
@@ -264,7 +264,7 @@ public:
     auto call = LLVM::CallOp::create(
         rewriter, operation.getLoc(), TypeRange{rewriter.getI64Type()},
         SymbolRefAttr::get(rewriter.getContext(),
-                           (operation.getCallee() + ".__obelisk_spawn").str()),
+                           (operation.getCallee() + ".__talos_spawn").str()),
         operation.getOperands());
     rewriter.replaceOp(operation, call.getResults());
     return success();
@@ -308,8 +308,8 @@ lowerNativeFunctionBody(Operation *root, NativeReturnLowering returnLowering,
   if (returnLowering != NativeReturnLowering::None)
     patterns.add<NativeReturnPattern>(root->getContext(), returnLowering);
   FrozenRewritePatternSet frozenPatterns(std::move(patterns));
-  if (::obelisk::schedule::has<
-          ::obelisk::schedule::Field::EvalPathKnownPredicate>(root)) {
+  if (::talos::schedule::has<
+          ::talos::schedule::Field::EvalPathKnownPredicate>(root)) {
     // Region simplification of a long chain of case-item tests can need more
     // rounds than the driver allows. That only leaves a less simplified
     // predicate; the rewrites above are what lowering requires.
@@ -345,4 +345,4 @@ lowerNativeFunctionBody(Operation *root, NativeReturnLowering returnLowering,
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

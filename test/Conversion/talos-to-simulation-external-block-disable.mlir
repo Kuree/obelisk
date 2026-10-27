@@ -1,0 +1,88 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' 2>&1 | FileCheck %s
+
+// A named block reached from another process registers its exact exit
+// continuation. The disable process targets every live activation while the
+// repeating owner resumes at the block exit and starts its next iteration.
+// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: %[[ACTIVATION:.*]] = simulation.control.enter [[ID:[0-9]+]]
+// CHECK-NEXT: simulation.control.boundary %[[ACTIVATION]] resume ^[[EXIT:.*]] body ^[[BODY:.*]]
+// CHECK: ^[[EXIT]]:
+// CHECK: cf.br
+// CHECK: ^[[BODY]]:
+// CHECK: simulation.control.leave %[[ACTIVATION]]
+// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: simulation.control.disable [[ID]] {hierarchical = true}
+
+module {
+  talos.sv.symbol.definition @s0.external_block_disable attributes {
+    definition_kind = 0 : i32,
+    hierarchical_name = "external_block_disable",
+    name = "external_block_disable",
+    node_id = 0 : i64
+  } {
+  }
+  talos.sv.symbol.root @s1.$root attributes {
+    hierarchical_name = "\\$root ",
+    name = "$root",
+    node_id = 1 : i64
+  } {
+    talos.sv.symbol.compilation_unit @s2 attributes {
+      hierarchical_name = "$unit",
+      node_id = 2 : i64
+    } {
+    }
+    talos.sv.symbol.instance @s3.external_block_disable attributes {
+      hierarchical_name = "external_block_disable",
+      is_uninstantiated = false,
+      name = "external_block_disable",
+      node_id = 3 : i64,
+      referenced_path = "external_block_disable",
+      referenced_symbol = @s0.external_block_disable
+    } {
+      talos.sv.symbol.instance_body @s4.external_block_disable attributes {
+        hierarchical_name = "external_block_disable",
+        name = "external_block_disable",
+        node_id = 4 : i64
+      } {
+        talos.sv.symbol.statement_block @s5.target attributes {
+          block_kind = 0 : i32,
+          hierarchical_name = "external_block_disable.target",
+          name = "target",
+          node_id = 5 : i64
+        } {
+        }
+        talos.sv.symbol.procedural_block @s6 attributes {
+          hierarchical_name = "external_block_disable",
+          node_id = 6 : i64,
+          procedure_kind = 2 : i32,
+          time_precision_fs = 1000000 : i64,
+          time_unit_fs = 1000000 : i64
+        } {
+          talos.sv.statement.block attributes {
+            block_path = "external_block_disable.target",
+            block_symbol = @s1.$root::@s3.external_block_disable::@s4.external_block_disable::@s5.target,
+            node_id = 7 : i64
+          } {
+            talos.sv.statement.empty attributes {node_id = 8 : i64} {
+            }
+          }
+        }
+        talos.sv.symbol.procedural_block @s7 attributes {
+          hierarchical_name = "external_block_disable",
+          node_id = 9 : i64,
+          procedure_kind = 0 : i32,
+          time_precision_fs = 1000000 : i64,
+          time_unit_fs = 1000000 : i64
+        } {
+          talos.sv.statement.disable attributes {
+            is_hierarchical = true,
+            node_id = 10 : i64,
+            target_path = "external_block_disable.target",
+            target_symbol = @s1.$root::@s3.external_block_disable::@s4.external_block_disable::@s5.target
+          } {
+          }
+        }
+      }
+    }
+  }
+}

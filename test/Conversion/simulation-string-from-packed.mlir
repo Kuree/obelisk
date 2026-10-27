@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // Keep the packed-to-string operation on the managed runtime path. The runtime
 // interprets this value as "BA" by enumerating bytes from most to least
@@ -29,6 +29,6 @@ module attributes {
 // CHECK: %[[PACKED:.*]] = llvm.mlir.constant(1107312896 : i32) : i32
 // CHECK: llvm.store %[[PACKED]], {{.*}} {alignment = 8 : i64}
 // CHECK: %[[WIDTH:.*]] = llvm.mlir.constant(32 : i64) : i64
-// CHECK: llvm.call @obelisk_rt_v1_string_from_packed({{.*}}, {{.*}}, {{.*}}, %[[WIDTH]], {{.*}})
-// CHECK: llvm.call @obelisk_rt_v1_string_length
+// CHECK: llvm.call @talos_rt_v1_string_from_packed({{.*}}, {{.*}}, {{.*}}, %[[WIDTH]], {{.*}})
+// CHECK: llvm.call @talos_rt_v1_string_length
 // CHECK: llvm.return

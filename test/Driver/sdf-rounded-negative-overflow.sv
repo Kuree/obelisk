@@ -1,4 +1,4 @@
-// RUN: cd %S && not obelisk -emit-slang %s -o %t.mlir 2> %t.err
+// RUN: cd %S && not talos -emit-slang %s -o %t.mlir 2> %t.err
 // RUN: FileCheck %s < %t.err
 // RUN: test ! -e %t.mlir
 

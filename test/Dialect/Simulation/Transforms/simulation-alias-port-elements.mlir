@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-alias-port-connections{vpi=off elements=true}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-alias-port-connections{vpi=off elements=true}))' | FileCheck %s
 
 module {
 // Distinct child outputs may not claim the same parent element.

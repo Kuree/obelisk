@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir 2> %t.trace
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
-// RUN: obelisk-opt %t.mlir --canonicalize --cse | FileCheck %s --check-prefix=GROUP
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | diff %t.mlir -
+// RUN: talos-opt %t.mlir --canonicalize --cse | FileCheck %s --check-prefix=GROUP
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | diff %t.mlir -
 
 // Eight repeatable continuous members (complete sensitivity, exclusive complete
 // outputs, one publication each) share a certified group with one member that
@@ -13,19 +13,19 @@
 // The member with an intermediate transition keeps its predicate and receives
 // its publication; the observer outside the group receives link7's publication;
 // the four-state fallback keeps every predicate and publication (4.6, 9.4.2).
-// TRACE: obelisk repeatable ranked members: 8 unconditional=8
-// TRACE: obelisk eval dependency: owner=3 island=0 body=link2.__obelisk_eval_body_0 successors=4, 9
-// TRACE: obelisk eval dependency: owner=8 island=0 body=link7.__obelisk_eval_body_0 successors=10
-// TRACE: obelisk group dataflow: __obelisk_eval_ranked_group_0.dataflow accepted=1
-// TRACE: obelisk unconditional member publications elided: 7
-// GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
+// TRACE: talos repeatable ranked members: 8 unconditional=8
+// TRACE: talos eval dependency: owner=3 island=0 body=link2.__talos_eval_body_0 successors=4, 9
+// TRACE: talos eval dependency: owner=8 island=0 body=link7.__talos_eval_body_0 successors=10
+// TRACE: talos group dataflow: __talos_eval_ranked_group_0.dataflow accepted=1
+// TRACE: talos unconditional member publications elided: 7
+// GROUP-LABEL: llvm.func @__talos_eval_ranked_group_0(
 // GROUP-SAME: schedule.eval.control_flow_dataflow
 // GROUP-SAME: schedule.eval.ranked_members = array<i32: 1, 2, 3, 4, 5, 6, 7, 8, 9>
 // GROUP-SAME: schedule.eval.unconditional_members = array<i32: 1, 2, 3, 4, 5, 6, 7, 8>
 // GROUP-DAG: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64) : i64
 // GROUP-DAG: %[[TWICE:.*]] = llvm.mlir.constant(512 : i64) : i64
 // GROUP-DAG: %[[TAP:.*]] = llvm.mlir.constant(1024 : i64) : i64
-// GROUP: llvm.call @__obelisk_eval_group_promotion_ready_v1
+// GROUP: llvm.call @__talos_eval_group_promotion_ready_v1
 // GROUP: llvm.cond_br
 // Only the two publications that leave the unconditional members remain:
 // link2 -> twice (bit 9, predicated member) and link7 -> tap (bit 10, outside).
@@ -37,8 +37,8 @@
 // The predicated member is the only one that still reads its pending bit.
 // GROUP: schedule.eval.activation_entry = 9 : i32
 // GROUP-NOT: schedule.eval.activation_entry
-// GROUP: llvm.call @__obelisk_eval_ranked_group_0.fallback
-// GROUP-LABEL: llvm.func @__obelisk_eval_ranked_group_0.fallback(
+// GROUP: llvm.call @__talos_eval_ranked_group_0.fallback
+// GROUP-LABEL: llvm.func @__talos_eval_ranked_group_0.fallback(
 // GROUP-SAME: schedule.eval.ssa_ready_words = 1 : i64
 // GROUP-DAG: %[[FZERO:.*]] = llvm.mlir.constant(0 : i64) : i64
 // GROUP-DAG: %[[LINK1:.*]] = llvm.mlir.constant(4 : i64) : i64

@@ -2,11 +2,11 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -24,7 +24,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 LLVM::LLVMStructType getNativeSchedulePlanLLVMType(MLIRContext *context) {
   OpBuilder builder(context);
@@ -444,38 +444,38 @@ void emitNativeStateRetain(OpBuilder &builder, Location location,
   APInt constant;
   if (matchPattern(handle, m_ConstantInt(&constant)) &&
       constant.getBitWidth() == 64) {
-    obelisk_rt_stable_handle_v1 decoded;
-    if (obelisk_rt_stable_handle_decode(constant.getZExtValue(), &decoded) &&
-        (decoded.kind == OBELISK_RT_STABLE_HANDLE_GLOBAL ||
-         decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC))
+    talos_rt_stable_handle_v1 decoded;
+    if (talos_rt_stable_handle_decode(constant.getZExtValue(), &decoded) &&
+        (decoded.kind == TALOS_RT_STABLE_HANDLE_GLOBAL ||
+         decoded.kind == TALOS_RT_STABLE_HANDLE_STATIC))
       return;
   }
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
   Type i32 = builder.getI32Type();
   Value contextAddress = LLVM::AddressOfOp::create(builder, location, pointer,
-                                                   "__obelisk_current_context");
+                                                   "__talos_current_context");
   Value context =
       LLVM::LoadOp::create(builder, location, pointer, contextAddress, 8);
   Value status = LLVM::CallOp::create(
                      builder, location, TypeRange{i32},
                      SymbolRefAttr::get(builder.getContext(),
-                                        "obelisk_rt_v1_native_state_retain"),
+                                        "talos_rt_v1_native_state_retain"),
                      ValueRange{context, handle})
                      .getResult();
   LLVM::CallOp::create(
       builder, location, TypeRange{},
-      SymbolRefAttr::get(builder.getContext(), "obelisk_rt_v1_scheduler_fail"),
+      SymbolRefAttr::get(builder.getContext(), "talos_rt_v1_scheduler_fail"),
       ValueRange{context, status});
 }
 
 std::string managedClassDescriptorName(SymbolRefAttr className) {
   return (className.getRootReference().getValue() +
-          ".__obelisk_class_descriptor")
+          ".__talos_class_descriptor")
       .str();
 }
 
 std::string managedMethodThunkName(StringRef methodName) {
-  return (methodName + ".__obelisk_native_thunk").str();
+  return (methodName + ".__talos_native_thunk").str();
 }
 
 LLVM::GlobalOp makeByteArrayGlobal(ModuleOp module, Location location,
@@ -556,7 +556,7 @@ LLVM::LLVMFuncOp getOrDeclareLLVMFunction(ModuleOp module, StringRef name,
   // Generated code reaches queue growth only from a capacity test, so the
   // optimizer lays that arm out of line. (The failure latch is not cold: it
   // is called unconditionally with a status and tests it itself.)
-  if (name == "obelisk_rt_v1_eval_nba_reserve")
+  if (name == "talos_rt_v1_eval_nba_reserve")
     function.setPassthroughAttr(
         builder.getArrayAttr({builder.getStringAttr("cold")}));
   return function;
@@ -567,4 +567,4 @@ void copyNativePartition(Operation *source, Operation *target) {
     native::set<native::Partition>(target, partition);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

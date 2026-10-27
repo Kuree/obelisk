@@ -12,7 +12,7 @@
 #include <malloc.h>
 #endif
 
-namespace obelisk::process {
+namespace talos::process {
 namespace {
 
 void *allocateAlignedProcessBlock(size_t size, size_t alignment) noexcept {
@@ -203,4 +203,4 @@ void releaseProcessMemory(void *allocation, size_t size,
     freeAlignedProcessBlock(allocation);
 }
 
-} // namespace obelisk::process
+} // namespace talos::process

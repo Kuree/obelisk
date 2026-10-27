@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
+// RUN: talos-opt %s | talos-opt | FileCheck %s
 
 // CHECK: module attributes {
 // CHECK-SAME: native.debug_timing

@@ -19,12 +19,12 @@ endmodule
 // counts its own statements, while the enclosing scope merges them per line,
 // so a line that one instance missed is partial, as in the line metric.
 // Sources are named relative to the directory they were compiled from.
-// RUN: cd %S && %obelisk --std=1800-2023 -O0 --target=native --coverage=line \
+// RUN: cd %S && %talos --std=1800-2023 -O0 --target=native --coverage=line \
 // RUN:   -o %t.sim html-report.sv
 // RUN: %t.sim --coverage-output=%t.obcov --coverage-test=instances
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=TEXT
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=TEXT
 // TEXT: line: 60.00% (3/5), partial 2
-// RUN: obelisk-cov report --format=html --source-root=%S -o %t.html %t.obcov
+// RUN: talos-cov report --format=html --source-root=%S -o %t.html %t.obcov
 // RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html \
 // RUN:   'row:top|top|60.0% 3/5|—|—' 'row:u0|blk|66.7% 2/3|—' 'row:u1|blk|66.7% 2/3|—' \
 // RUN:   'row:html-report.sv:3:15|if (FAST) y <= 3;|1|covered|instances' \

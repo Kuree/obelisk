@@ -1,11 +1,11 @@
 //===- ClassBitstreamPlan.cpp - Canonical object cast metadata -----------===//
 
-#include "obelisk/Analysis/ClassBitstreamPlan.h"
+#include "talos/Analysis/ClassBitstreamPlan.h"
 
-#include "obelisk/Analysis/ClassBitstreamAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/ClassBitstreamAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -24,18 +24,18 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
-constexpr uint32_t kBlobMagic = OBELISK_RT_CLASS_BITSTREAM_BLOB_MAGIC;
-constexpr uint32_t kBlobVersion = OBELISK_RT_CLASS_BITSTREAM_BLOB_VERSION;
-constexpr uint64_t kHeaderSize = sizeof(obelisk_rt_class_bitstream_header_v1);
-constexpr uint64_t kSiteSize = sizeof(obelisk_rt_class_bitstream_site_v1);
-constexpr uint64_t kGroupSize = sizeof(obelisk_rt_class_bitstream_group_v1);
+constexpr uint32_t kBlobMagic = TALOS_RT_CLASS_BITSTREAM_BLOB_MAGIC;
+constexpr uint32_t kBlobVersion = TALOS_RT_CLASS_BITSTREAM_BLOB_VERSION;
+constexpr uint64_t kHeaderSize = sizeof(talos_rt_class_bitstream_header_v1);
+constexpr uint64_t kSiteSize = sizeof(talos_rt_class_bitstream_site_v1);
+constexpr uint64_t kGroupSize = sizeof(talos_rt_class_bitstream_group_v1);
 constexpr uint64_t kMemberSize = 8;
-constexpr uint64_t kSchemaSize = sizeof(obelisk_rt_class_bitstream_schema_v1);
-constexpr uint64_t kFieldSize = sizeof(obelisk_rt_class_bitstream_field_v1);
-constexpr uint32_t kNoBytecode = OBELISK_RT_CLASS_BITSTREAM_NO_BYTECODE;
+constexpr uint64_t kSchemaSize = sizeof(talos_rt_class_bitstream_schema_v1);
+constexpr uint64_t kFieldSize = sizeof(talos_rt_class_bitstream_field_v1);
+constexpr uint32_t kNoBytecode = TALOS_RT_CLASS_BITSTREAM_NO_BYTECODE;
 
 void append32(SmallVectorImpl<uint8_t> &bytes, uint32_t value) {
   for (unsigned index = 0; index != 4; ++index)
@@ -73,13 +73,13 @@ SmallVector<uint8_t> encodePlan(ArrayRef<uint64_t> plan) {
 }
 
 bool isObjectPlan(ArrayRef<int64_t> plan) {
-  if (plan.size() < OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_HEADER_WORDS)
+  if (plan.size() < TALOS_RT_RECURSIVE_BITSTREAM_PLAN_HEADER_WORDS)
     return false;
   uint64_t identity = static_cast<uint64_t>(plan[0]);
   return static_cast<uint32_t>(identity) ==
-             OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC &&
+             TALOS_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC &&
          static_cast<uint32_t>(identity >> 32) ==
-             OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION;
+             TALOS_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION;
 }
 
 struct Site {
@@ -246,7 +246,7 @@ materializeClassBitstreamPlan(sim::SimDesignOp design,
         field.offset = sourceField->offset;
         field.planeSize = sourceField->storage.size;
         field.flags = sourceField->storage.fourState
-                          ? OBELISK_RT_CLASS_BITSTREAM_FIELD_FOUR_STATE
+                          ? TALOS_RT_CLASS_BITSTREAM_FIELD_FOUR_STATE
                           : 0u;
         field.alignment = sourceField->storage.alignment;
         bool failedNestedGroup = false;
@@ -546,4 +546,4 @@ LogicalResult bindClassBitstreamBytecodeSites(sim::SimDesignOp design) {
   return success();
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

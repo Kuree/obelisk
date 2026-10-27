@@ -6,10 +6,10 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Runtime/Runtime.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -21,24 +21,24 @@
 
 namespace {
 TEST(GeneratedDesignDatabase, SharedParameterDefaults) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  obelisk::SimulationBytecodeOptions options;
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  auto encoded = obelisk::encodeSimulationDesign(
-      *module->getOps<obelisk::sim::SimDesignOp>().begin(), options);
+  auto encoded = talos::encodeSimulationDesign(
+      *module->getOps<talos::sim::SimDesignOp>().begin(), options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -55,13 +55,13 @@ TEST(GeneratedDesignDatabase, SharedParameterDefaults) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
   std::vector<vpiHandle> handles;
   auto keep = [&](vpiHandle handle) {
     if (handle)
@@ -166,10 +166,10 @@ TEST(GeneratedDesignDatabase, SharedParameterDefaults) {
   }
   for (auto handle : handles)
     vpi_free_object(handle);
-  EXPECT_EQ(obelisk_rt_v1_vpi_end_simulation(runtime), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(runtime);
+  EXPECT_EQ(talos_rt_v1_vpi_end_simulation(runtime), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(runtime);
 
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   HeaderView header(encoded->designDatabase.data());
   SemanticDirectoryView directory(encoded->designDatabase.data() +
                                   header.getReserved());
@@ -194,8 +194,8 @@ TEST(GeneratedDesignDatabase, SharedParameterDefaults) {
     auto malformed = execution;
     malformed.design_database = bytes.data();
     malformed.design_database_size = bytes.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&malformed),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&malformed),
+              TALOS_RT_INVALID_DESIGN);
   };
   uint64_t roots = directory.getExpressionRootBindingOffset();
   uint64_t nodes = directory.getExpressionNodeOffset();
@@ -279,16 +279,16 @@ TEST(GeneratedDesignDatabase, SharedParameterDefaults) {
     descriptor.checksum = 0;
     for (unsigned byte = 0; byte != 8; ++byte)
       descriptor.checksum |= uint64_t{design.bytecode[32 + byte]} << (byte * 8);
-    return obelisk_rt_v1_design_validate(&descriptor);
+    return talos_rt_v1_design_validate(&descriptor);
   };
   uint64_t recipeBytes = 0, extraImageBytes = 0;
   for (uint32_t count : {1u, 32u, 128u}) {
     mlir::OwningOpRef<mlir::ModuleOp> clone(
         mlir::cast<mlir::ModuleOp>(module->clone()));
-    auto design = *clone->getOps<obelisk::sim::SimDesignOp>().begin();
-    obelisk::sim::SimScopeDeclOp prototype;
+    auto design = *clone->getOps<talos::sim::SimDesignOp>().begin();
+    talos::sim::SimScopeDeclOp prototype;
     for (auto scope : llvm::make_early_inc_range(
-             design.getOps<obelisk::sim::SimScopeDeclOp>())) {
+             design.getOps<talos::sim::SimScopeDeclOp>())) {
       if (scope.getId() == 1)
         prototype = scope;
       else if (scope.getId())
@@ -298,16 +298,16 @@ TEST(GeneratedDesignDatabase, SharedParameterDefaults) {
     auto specialization = prototype.getVpiSpecializationAttr();
     for (auto binding : llvm::make_early_inc_range(
              design.getOps<
-                 obelisk::sim::SimVPIDefinitionMemberSpecializationOp>()))
+                 talos::sim::SimVPIDefinitionMemberSpecializationOp>()))
       if (binding.getSpecializationAttr() != specialization)
         binding.erase();
     for (auto type : llvm::make_early_inc_range(
              design
-                 .getOps<obelisk::sim::SimVPIDefinitionSpecializationDeclOp>()))
+                 .getOps<talos::sim::SimVPIDefinitionSpecializationDeclOp>()))
       if (mlir::FlatSymbolRefAttr::get(type) != specialization)
         type.erase();
     for (auto anchor : llvm::make_early_inc_range(
-             design.getOps<obelisk::sim::SimVPIObjectAnchorOp>())) {
+             design.getOps<talos::sim::SimVPIObjectAnchorOp>())) {
       ASSERT_EQ(anchor.getVpiKind(), uint32_t(vpiModule));
       anchor.erase();
     }
@@ -315,15 +315,15 @@ TEST(GeneratedDesignDatabase, SharedParameterDefaults) {
     builder.setInsertionPointAfter(prototype);
     for (uint32_t instance = 1; instance != count; ++instance) {
       auto scope =
-          mlir::cast<obelisk::sim::SimScopeDeclOp>(builder.clone(*prototype));
+          mlir::cast<talos::sim::SimScopeDeclOp>(builder.clone(*prototype));
       scope.setIdAttr(builder.getI64IntegerAttr(instance + 1));
       scope.setHierarchicalNameAttr(
           builder.getStringAttr("copy" + std::to_string(instance)));
     }
     ASSERT_TRUE(mlir::succeeded(mlir::verify(*clone)));
-    auto shared = obelisk::encodeSimulationDesign(design, options);
+    auto shared = talos::encodeSimulationDesign(design, options);
     ASSERT_TRUE(mlir::succeeded(shared));
-    ASSERT_EQ(validateEncoded(*shared), OBELISK_RT_OK);
+    ASSERT_EQ(validateEncoded(*shared), TALOS_RT_OK);
     HeaderView sharedHeader(shared->designDatabase.data());
     SemanticDirectoryView sharedDirectory(shared->designDatabase.data() +
                                           sharedHeader.getReserved());
@@ -345,21 +345,21 @@ TEST(GeneratedDesignDatabase, SharedParameterDefaults) {
       recipeBytes = rows;
     EXPECT_EQ(rows, recipeBytes);
     for (auto expression : llvm::make_early_inc_range(
-             design.getOps<obelisk::sim::SimVPIExpressionDeclOp>()))
+             design.getOps<talos::sim::SimVPIExpressionDeclOp>()))
       expression.erase();
     for (auto relation : llvm::make_early_inc_range(
-             design.getOps<obelisk::sim::SimVPIRelationDeclOp>()))
+             design.getOps<talos::sim::SimVPIRelationDeclOp>()))
       relation.erase();
     for (auto member :
-         design.getOps<obelisk::sim::SimVPIDefinitionMemberDeclOp>())
+         design.getOps<talos::sim::SimVPIDefinitionMemberDeclOp>())
       if (member.getHasOriginalDefaultAttr()) {
         member.removeHasOriginalDefaultAttr();
         member.setUnavailableDefaultAttr(builder.getUnitAttr());
       }
     ASSERT_TRUE(mlir::succeeded(mlir::verify(*clone)));
-    auto baseline = obelisk::encodeSimulationDesign(design, options);
+    auto baseline = talos::encodeSimulationDesign(design, options);
     ASSERT_TRUE(mlir::succeeded(baseline));
-    ASSERT_EQ(validateEncoded(*baseline), OBELISK_RT_OK);
+    ASSERT_EQ(validateEncoded(*baseline), TALOS_RT_OK);
     ASSERT_GT(shared->designDatabase.size(), baseline->designDatabase.size());
     uint64_t growth =
         shared->designDatabase.size() - baseline->designDatabase.size();

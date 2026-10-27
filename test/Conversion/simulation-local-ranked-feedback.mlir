@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' -o %t.group.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' -o %t.group.mlir
 // RUN: FileCheck %s --check-prefix=GROUP < %t.group.mlir
 
 // A static sensitivity SCC is not a reason to exclude all of its actors.
 // Forward segments remain native groups and the shared loop handles their
 // backward publication. The OR gate breaks the value-level loop at runtime.
-// GROUP: simulation.spawn @__obelisk_region_kernel_
-// GROUP: simulation.func private @__obelisk_region_kernel_
+// GROUP: simulation.spawn @__talos_region_kernel_
+// GROUP: simulation.func private @__talos_region_kernel_
 // GROUP-SAME: schedule.native.region_body
 
 !bit = !simulation.logic<1>

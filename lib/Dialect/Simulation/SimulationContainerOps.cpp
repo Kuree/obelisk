@@ -7,10 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "SimulationVerifiers.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -42,7 +42,7 @@
 
 using namespace mlir;
 
-namespace obelisk::sim {
+namespace talos::sim {
 
 bool containsFourStateLeaf(Type type) {
   if (isa<LogicType>(type))
@@ -365,15 +365,15 @@ getFixedBitStreamPlanImpl(Type type, bool importing, bool provenanceLayout) {
     return std::nullopt;
 
   constexpr unsigned maximumDepth =
-      OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH;
+      TALOS_RT_AGGREGATE_BITSTREAM_PLAN_MAX_DEPTH;
   constexpr uint64_t maximumRecords =
-      OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAX_RECORDS;
+      TALOS_RT_AGGREGATE_BITSTREAM_PLAN_MAX_RECORDS;
   SmallVector<uint64_t> records;
   std::function<std::optional<uint64_t>(Type, uint64_t, unsigned)> append =
       [&](Type current, uint64_t offset,
           unsigned depth) -> std::optional<uint64_t> {
     if (depth > maximumDepth ||
-        records.size() / OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS >=
+        records.size() / TALOS_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS >=
             maximumRecords)
       return std::nullopt;
     if (Type scalar = getPackedScalarType(current)) {
@@ -381,8 +381,8 @@ getFixedBitStreamPlanImpl(Type type, bool importing, bool provenanceLayout) {
       if (!width || *width == 0)
         return std::nullopt;
       uint64_t opcode = importing && isa<LogicType>(scalar)
-                            ? OBELISK_RT_AGGREGATE_BITSTREAM_COPY_LOGIC
-                            : OBELISK_RT_AGGREGATE_BITSTREAM_COPY;
+                            ? TALOS_RT_AGGREGATE_BITSTREAM_COPY_LOGIC
+                            : TALOS_RT_AGGREGATE_BITSTREAM_COPY;
       records.append({opcode, offset, *width, 0, 0, *width});
       return *width;
     }
@@ -394,7 +394,7 @@ getFixedBitStreamPlanImpl(Type type, bool importing, bool provenanceLayout) {
       std::optional<uint64_t> width = getProvenanceSpan(current);
       if (!width || *width == 0)
         return std::nullopt;
-      records.append({uint64_t{OBELISK_RT_AGGREGATE_BITSTREAM_COPY}, offset,
+      records.append({uint64_t{TALOS_RT_AGGREGATE_BITSTREAM_COPY}, offset,
                       *width, 0, 0, *width});
       return *width;
     }
@@ -408,14 +408,14 @@ getFixedBitStreamPlanImpl(Type type, bool importing, bool provenanceLayout) {
       if (!first || !stride)
         return std::nullopt;
       size_t record = records.size();
-      records.append({uint64_t{OBELISK_RT_AGGREGATE_BITSTREAM_REPEAT},
+      records.append({uint64_t{TALOS_RT_AGGREGATE_BITSTREAM_REPEAT},
                       offset + first->first, count, *stride, first->second, 0});
       size_t bodyStart = records.size();
       std::optional<uint64_t> childWidth = append(element, 0, depth + 1);
       if (!childWidth)
         return std::nullopt;
       uint64_t bodyRecords = (records.size() - bodyStart) /
-                             OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS;
+                             TALOS_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS;
       if (bodyRecords == 0 || bodyRecords > UINT32_MAX ||
           *childWidth > std::numeric_limits<uint64_t>::max() / count)
         return std::nullopt;
@@ -449,13 +449,13 @@ getFixedBitStreamPlanImpl(Type type, bool importing, bool provenanceLayout) {
     return std::nullopt;
   std::optional<uint64_t> sourceSpan = getProvenanceSpan(type);
   if (!sourceSpan || records.empty() ||
-      records.size() % OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS != 0)
+      records.size() % TALOS_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS != 0)
     return std::nullopt;
   uint64_t recordCount =
-      records.size() / OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS;
+      records.size() / TALOS_RT_AGGREGATE_BITSTREAM_PLAN_RECORD_WORDS;
   SmallVector<uint64_t> plan{
-      uint64_t{OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_MAGIC} |
-          (uint64_t{OBELISK_RT_AGGREGATE_BITSTREAM_PLAN_VERSION} << 32),
+      uint64_t{TALOS_RT_AGGREGATE_BITSTREAM_PLAN_MAGIC} |
+          (uint64_t{TALOS_RT_AGGREGATE_BITSTREAM_PLAN_VERSION} << 32),
       recordCount, *sourceSpan, *outputWidth};
   llvm::append_range(plan, records);
   return plan;
@@ -500,13 +500,13 @@ std::optional<SmallVector<uint64_t>> getFixedArrayPatternPlan(Type type) {
   uint64_t valueSize = 0;
   uint64_t bitWidth = 0;
   if (auto integer = dyn_cast<IntegerType>(leaf)) {
-    kind = OBELISK_RT_ELEMENT_BITS;
-    flags = integer.isSigned() ? OBELISK_RT_ELEMENT_SIGNED : 0;
+    kind = TALOS_RT_ELEMENT_BITS;
+    flags = integer.isSigned() ? TALOS_RT_ELEMENT_SIGNED : 0;
     valueSize = (integer.getWidth() + 7) / 8;
     bitWidth = integer.getWidth();
   } else if (auto logic = dyn_cast<LogicType>(leaf)) {
-    kind = OBELISK_RT_ELEMENT_LOGIC;
-    flags = OBELISK_RT_ELEMENT_FOUR_STATE;
+    kind = TALOS_RT_ELEMENT_LOGIC;
+    flags = TALOS_RT_ELEMENT_FOUR_STATE;
     valueSize = (logic.getWidth() + 7) / 8;
     bitWidth = logic.getWidth();
   } else if (Type scalar = getPackedScalarType(leaf)) {
@@ -514,8 +514,8 @@ std::optional<SmallVector<uint64_t>> getFixedArrayPatternPlan(Type type) {
     if (!width || *width == 0)
       return std::nullopt;
     bool fourState = isa<LogicType>(scalar);
-    kind = fourState ? OBELISK_RT_ELEMENT_LOGIC : OBELISK_RT_ELEMENT_BITS;
-    flags = fourState ? OBELISK_RT_ELEMENT_FOUR_STATE : 0;
+    kind = fourState ? TALOS_RT_ELEMENT_LOGIC : TALOS_RT_ELEMENT_BITS;
+    flags = fourState ? TALOS_RT_ELEMENT_FOUR_STATE : 0;
     valueSize = (*width + 7) / 8;
     bitWidth = *width;
   } else {
@@ -524,7 +524,7 @@ std::optional<SmallVector<uint64_t>> getFixedArrayPatternPlan(Type type) {
     return SmallVector<uint64_t>{};
   }
 
-  SmallVector<uint64_t> plan{OBELISK_RT_CONTAINER_PATTERN_PLAN_VERSION,
+  SmallVector<uint64_t> plan{TALOS_RT_CONTAINER_PATTERN_PLAN_VERSION,
                              dimensions.size(),
                              kind,
                              flags,
@@ -551,7 +551,7 @@ uint64_t getClassBitStreamGroupID(ClassHandleType type, bool allowHiddenRoot) {
   llvm::raw_string_ostream stream(spelling);
   type.getClassName().print(stream);
   stream << (allowHiddenRoot ? "#this" : "#public");
-  uint64_t id = obelisk_stable_hash(spelling.data(), spelling.size());
+  uint64_t id = talos_stable_hash(spelling.data(), spelling.size());
   return id == 0 ? 1 : id;
 }
 
@@ -559,9 +559,9 @@ std::optional<SmallVector<uint64_t>>
 getRecursiveBitStreamPlan(Type type, ClassBitStreamGroupResolver objectGroup,
                           bool requireDynamic) {
   constexpr uint64_t maximumRecords =
-      OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAX_RECORDS;
+      TALOS_RT_RECURSIVE_BITSTREAM_PLAN_MAX_RECORDS;
   constexpr uint64_t recordWords =
-      OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_RECORD_WORDS;
+      TALOS_RT_RECURSIVE_BITSTREAM_PLAN_RECORD_WORDS;
   SmallVector<uint64_t> records;
   bool hasDynamic = false;
   bool hasObject = false;
@@ -785,14 +785,14 @@ getRecursiveBitStreamPlan(Type type, ClassBitStreamGroupResolver objectGroup,
       continue;
     }
     if (layout.packedWidth) {
-      valid = appendRecord({OBELISK_RT_RECURSIVE_BITSTREAM_COPY, frame.offset,
+      valid = appendRecord({TALOS_RT_RECURSIVE_BITSTREAM_COPY, frame.offset,
                             *layout.packedWidth, 0, 0, *layout.packedWidth})
                   .has_value();
       continue;
     }
     if (isa<StringType>(frame.type)) {
       hasDynamic = true;
-      valid = appendRecord({OBELISK_RT_RECURSIVE_BITSTREAM_STRING, frame.offset,
+      valid = appendRecord({TALOS_RT_RECURSIVE_BITSTREAM_STRING, frame.offset,
                             0, 0, managedHandleBitWidth, 0})
                   .has_value();
       continue;
@@ -801,7 +801,7 @@ getRecursiveBitStreamPlan(Type type, ClassBitStreamGroupResolver objectGroup,
       std::optional<uint64_t> group = objectGroup(handle, frame.directRoot);
       if (!group || *group == 0)
         return std::nullopt;
-      valid = appendRecord({OBELISK_RT_RECURSIVE_BITSTREAM_OBJECT, frame.offset,
+      valid = appendRecord({TALOS_RT_RECURSIVE_BITSTREAM_OBJECT, frame.offset,
                             *group, 0, managedHandleBitWidth, 0})
                   .has_value();
       hasDynamic = true;
@@ -812,13 +812,13 @@ getRecursiveBitStreamPlan(Type type, ClassBitStreamGroupResolver objectGroup,
     uint64_t containerKind = 0;
     if (auto array = dyn_cast<DynamicArrayType>(frame.type)) {
       element = array.getElementType();
-      containerKind = OBELISK_RT_CONTAINER_DYNAMIC_ARRAY;
+      containerKind = TALOS_RT_CONTAINER_DYNAMIC_ARRAY;
     } else if (auto queue = dyn_cast<QueueType>(frame.type)) {
       element = queue.getElementType();
-      containerKind = OBELISK_RT_CONTAINER_QUEUE;
+      containerKind = TALOS_RT_CONTAINER_QUEUE;
     } else if (auto associative = dyn_cast<AssocArrayType>(frame.type)) {
       element = associative.getElementType();
-      containerKind = OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY;
+      containerKind = TALOS_RT_CONTAINER_ASSOCIATIVE_ARRAY;
     }
     if (element) {
       uint64_t childSpan = layouts.find(element)->second.span;
@@ -829,7 +829,7 @@ getRecursiveBitStreamPlan(Type type, ClassBitStreamGroupResolver objectGroup,
       }
       std::optional<size_t> record =
           childSpan
-              ? appendRecord({OBELISK_RT_RECURSIVE_BITSTREAM_CONTAINER,
+              ? appendRecord({TALOS_RT_RECURSIVE_BITSTREAM_CONTAINER,
                               frame.offset, containerKind, 0, childSpan, 0})
               : std::nullopt;
       if (!record)
@@ -844,7 +844,7 @@ getRecursiveBitStreamPlan(Type type, ClassBitStreamGroupResolver objectGroup,
       Type child = array.getElementType();
       const Layout &childLayout = layouts.find(child)->second;
       std::optional<size_t> record = appendRecord(
-          {OBELISK_RT_RECURSIVE_BITSTREAM_REPEAT, frame.offset,
+          {TALOS_RT_RECURSIVE_BITSTREAM_REPEAT, frame.offset,
            getAggregateNumElements(array), layout.stride, childLayout.span, 0});
       if (!record)
         return std::nullopt;
@@ -866,10 +866,10 @@ getRecursiveBitStreamPlan(Type type, ClassBitStreamGroupResolver objectGroup,
     return std::nullopt;
   uint64_t recordCount = records.size() / recordWords;
   SmallVector<uint64_t> plan{
-      uint64_t{OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC} |
+      uint64_t{TALOS_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC} |
           (static_cast<uint64_t>(
-               hasObject ? OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION
-                         : OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_VERSION)
+               hasObject ? TALOS_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION
+                         : TALOS_RT_RECURSIVE_BITSTREAM_PLAN_VERSION)
            << 32),
       recordCount, root->second.span, 0};
   llvm::append_range(plan, records);
@@ -1255,38 +1255,38 @@ std::optional<SmallVector<uint64_t>> getAssocKeyPlan(Type type) {
   auto record = [&](uint32_t opcode, uint64_t offset, uint64_t operand0 = 0,
                     uint64_t operand1 = 0) {
     records.append({opcode, offset, operand0, operand1});
-    return records.size() / OBELISK_RT_ASSOC_KEY_PLAN_RECORD_WORDS - 1;
+    return records.size() / TALOS_RT_ASSOC_KEY_PLAN_RECORD_WORDS - 1;
   };
   auto closeBody = [&](uint64_t index) {
     uint64_t body =
-        records.size() / OBELISK_RT_ASSOC_KEY_PLAN_RECORD_WORDS - index - 1;
-    records[index * OBELISK_RT_ASSOC_KEY_PLAN_RECORD_WORDS] |= body << 32;
+        records.size() / TALOS_RT_ASSOC_KEY_PLAN_RECORD_WORDS - index - 1;
+    records[index * TALOS_RT_ASSOC_KEY_PLAN_RECORD_WORDS] |= body << 32;
   };
   std::function<bool(Type, uint64_t, unsigned)> append =
       [&](Type current, uint64_t offset, unsigned depth) -> bool {
-    if (depth > OBELISK_RT_ASSOC_KEY_PLAN_MAX_DEPTH)
+    if (depth > TALOS_RT_ASSOC_KEY_PLAN_MAX_DEPTH)
       return false;
     if (Type scalar = getPackedScalarType(current)) {
       std::optional<unsigned> width = getPackedWidth(current);
       if (!width || *width == 0)
         return false;
-      record(OBELISK_RT_ASSOC_KEY_PLAN_BITS, offset, *width,
+      record(TALOS_RT_ASSOC_KEY_PLAN_BITS, offset, *width,
              isa<LogicType>(scalar) ? 1 : 0);
       return true;
     }
     if (isa<StringType>(current)) {
-      record(OBELISK_RT_ASSOC_KEY_PLAN_STRING, offset);
+      record(TALOS_RT_ASSOC_KEY_PLAN_STRING, offset);
       return true;
     }
     // Class handles and the built-in mailbox and semaphore classes compare by
     // identity.
     if (isa<ClassHandleType, MailboxType, SemaphoreType>(current)) {
-      record(OBELISK_RT_ASSOC_KEY_PLAN_OBJECT, offset);
+      record(TALOS_RT_ASSOC_KEY_PLAN_OBJECT, offset);
       return true;
     }
     if (isa<EventType, ProcessType, CovergroupHandleType, VirtualInterfaceType,
             ChandleType>(current)) {
-      record(OBELISK_RT_ASSOC_KEY_PLAN_BITS, offset, simulationHandleBitWidth);
+      record(TALOS_RT_ASSOC_KEY_PLAN_BITS, offset, simulationHandleBitWidth);
       return true;
     }
     if (isa<DynamicArrayType, QueueType, AssocArrayType>(current)) {
@@ -1297,8 +1297,8 @@ std::optional<SmallVector<uint64_t>> getAssocKeyPlan(Type type) {
       if (!descriptor)
         return false;
       uint64_t index =
-          record(associative ? OBELISK_RT_ASSOC_KEY_PLAN_ASSOCIATIVE
-                             : OBELISK_RT_ASSOC_KEY_PLAN_SEQUENCE,
+          record(associative ? TALOS_RT_ASSOC_KEY_PLAN_ASSOCIATIVE
+                             : TALOS_RT_ASSOC_KEY_PLAN_SEQUENCE,
                  offset, descriptor->valueSize);
       if (!append(element, 0, depth + 1))
         return false;
@@ -1312,7 +1312,7 @@ std::optional<SmallVector<uint64_t>> getAssocKeyPlan(Type type) {
       std::optional<uint64_t> stride = getArrayElementStorageStride(array);
       if (!element || !first || !stride || *stride == 0)
         return false;
-      uint64_t index = record(OBELISK_RT_ASSOC_KEY_PLAN_REPEAT,
+      uint64_t index = record(TALOS_RT_ASSOC_KEY_PLAN_REPEAT,
                               offset + first->first, count, *stride);
       if (!append(element, 0, depth + 1))
         return false;
@@ -1332,7 +1332,7 @@ std::optional<SmallVector<uint64_t>> getAssocKeyPlan(Type type) {
       return false;
     unsigned count = getAggregateNumElements(current);
     uint64_t taggedIndex =
-        tagged ? record(OBELISK_RT_ASSOC_KEY_PLAN_TAGGED, offset, *payload,
+        tagged ? record(TALOS_RT_ASSOC_KEY_PLAN_TAGGED, offset, *payload,
                         llvm::Log2_64_Ceil(uint64_t{count} + 1))
                : 0;
     // A structure compares every member. So does an untagged union, whose
@@ -1347,7 +1347,7 @@ std::optional<SmallVector<uint64_t>> getAssocKeyPlan(Type type) {
           return false;
         continue;
       }
-      uint64_t alternative = record(OBELISK_RT_ASSOC_KEY_PLAN_ALTERNATIVE,
+      uint64_t alternative = record(TALOS_RT_ASSOC_KEY_PLAN_ALTERNATIVE,
                                     subelement->first, ordinal + 1);
       // A void member has no value to compare.
       if (subelement->second != 0 && !append(member, 0, depth + 1))
@@ -1360,12 +1360,12 @@ std::optional<SmallVector<uint64_t>> getAssocKeyPlan(Type type) {
   };
   if (!append(type, 0, 0) || records.empty())
     return std::nullopt;
-  uint64_t count = records.size() / OBELISK_RT_ASSOC_KEY_PLAN_RECORD_WORDS;
-  if (count > OBELISK_RT_ASSOC_KEY_PLAN_MAX_RECORDS)
+  uint64_t count = records.size() / TALOS_RT_ASSOC_KEY_PLAN_RECORD_WORDS;
+  if (count > TALOS_RT_ASSOC_KEY_PLAN_MAX_RECORDS)
     return std::nullopt;
   SmallVector<uint64_t> plan{
-      uint64_t{OBELISK_RT_ASSOC_KEY_PLAN_MAGIC} |
-          (uint64_t{OBELISK_RT_ASSOC_KEY_PLAN_VERSION} << 32),
+      uint64_t{TALOS_RT_ASSOC_KEY_PLAN_MAGIC} |
+          (uint64_t{TALOS_RT_ASSOC_KEY_PLAN_VERSION} << 32),
       count};
   llvm::append_range(plan, records);
   return plan;
@@ -1438,8 +1438,8 @@ static LogicalResult verifyRealRank(Operation *op, Type real, Type rank) {
   auto integer = dyn_cast<IntegerType>(rank);
   if (!floating || (!floating.isF32() && !floating.isF64()))
     return op->emitOpError("requires IEEE binary32 or binary64");
-  unsigned width = floating.isF32() ? OBELISK_RT_REAL32_RANK_BITS
-                                    : OBELISK_RT_REAL64_RANK_BITS;
+  unsigned width = floating.isF32() ? TALOS_RT_REAL32_RANK_BITS
+                                    : TALOS_RT_REAL64_RANK_BITS;
   if (!integer || !integer.isSignless() || integer.getWidth() != width)
     return op->emitOpError()
            << "requires a " << width << "-bit signed numeric coordinate";
@@ -1609,7 +1609,7 @@ LogicalResult SimRecursiveExportBitstreamOp::verify() {
              << "type";
   uint64_t identity = (*expected)[0];
   bool objectPlan = static_cast<uint32_t>(identity >> 32) ==
-                    OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION;
+                    TALOS_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION;
   if (objectPlan) {
     ModuleOp module = (*this)->getParentOfType<ModuleOp>();
     if (!module || !sim::has<sim::metadata::ClassBitstreamSource>(module))
@@ -1845,4 +1845,4 @@ LogicalResult SimStringFormatIntegerOp::verify() {
   return verifyStringRadix(getOperation(), getRadix());
 }
 
-} // namespace obelisk::sim
+} // namespace talos::sim

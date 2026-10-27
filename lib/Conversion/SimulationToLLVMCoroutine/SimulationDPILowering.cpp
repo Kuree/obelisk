@@ -3,10 +3,10 @@
 #include "SimulationDPILowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/PatternMatch.h"
@@ -20,7 +20,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 Value makeDPIPlaneStorage(OpBuilder &builder, Location location, Value value,
                           unsigned alignment) {
@@ -32,7 +32,7 @@ Value makeDPIPlaneStorage(OpBuilder &builder, Location location, Value value,
 namespace {
 
 uint64_t appendHash(uint64_t hash, uint64_t value, unsigned bytes) {
-  return obelisk_stable_hash_append_uint_le(hash, value, bytes);
+  return talos_stable_hash_append_uint_le(hash, value, bytes);
 }
 
 bool isDPIReal(const DPIOperandABI &abi) {
@@ -281,7 +281,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
             LLVM::CallOp::create(
                 rewriter, location, TypeRange{i32},
                 SymbolRefAttr::get(
-                    context, "obelisk_rt_v1_dpi_open_array_prepare_recursive"),
+                    context, "talos_rt_v1_dpi_open_array_prepare_recursive"),
                 ValueRange{
                     valueStorage, unknownStorage,
                     c64((layout.getTransportWidth() + 7) / 8),
@@ -340,7 +340,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
         elementCountValue =
             LLVM::CallOp::create(
                 rewriter, location, TypeRange{i64},
-                SymbolRefAttr::get(context, "obelisk_rt_v1_container_size"),
+                SymbolRefAttr::get(context, "talos_rt_v1_container_size"),
                 container)
                 .getResult();
         totalWidthValue =
@@ -387,7 +387,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
               LLVM::CallOp::create(
                   rewriter, location, TypeRange{i32},
                   SymbolRefAttr::get(context,
-                                     "obelisk_rt_v1_container_export_fixed"),
+                                     "talos_rt_v1_container_export_fixed"),
                   ValueRange{container, valueStorage, unknownStorage,
                              planeSizeValue, totalWidthValue,
                              c32(layout.getFourState()),
@@ -399,7 +399,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
             LLVM::CallOp::create(
                 rewriter, location, TypeRange{i32},
                 SymbolRefAttr::get(
-                    context, "obelisk_rt_v1_dpi_open_array_aggregate_pack"),
+                    context, "talos_rt_v1_dpi_open_array_aggregate_pack"),
                 ValueRange{valueStorage, unknownStorage, planeSizeValue,
                            totalWidthValue, c32(layout.getFourState()),
                            c32(layout.getElementWidth()), elementCountValue,
@@ -450,9 +450,9 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
                                               elementCountValue, c64(0));
           dimensionFlags =
               arith::SelectOp::create(rewriter, location, empty,
-                                      c32(OBELISK_RT_DPI_DIMENSION_RUNTIME |
-                                          OBELISK_RT_DPI_DIMENSION_EMPTY),
-                                      c32(OBELISK_RT_DPI_DIMENSION_RUNTIME));
+                                      c32(TALOS_RT_DPI_DIMENSION_RUNTIME |
+                                          TALOS_RT_DPI_DIMENSION_EMPTY),
+                                      c32(TALOS_RT_DPI_DIMENSION_RUNTIME));
         }
         LLVM::StoreOp::create(
             rewriter, location, dimensionFlags,
@@ -485,12 +485,12 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
           elementKind <= static_cast<uint32_t>(dpi::ABIKind::LogicVector);
       bool cLayout = true;
       uint32_t flags =
-          (abi[index].direction != 0 ? OBELISK_RT_DPI_OPEN_ARRAY_WRITABLE : 0) |
-          (cLayout ? OBELISK_RT_DPI_OPEN_ARRAY_C_LAYOUT : 0) |
-          (packed ? OBELISK_RT_DPI_OPEN_ARRAY_PACKED : 0) |
+          (abi[index].direction != 0 ? TALOS_RT_DPI_OPEN_ARRAY_WRITABLE : 0) |
+          (cLayout ? TALOS_RT_DPI_OPEN_ARRAY_C_LAYOUT : 0) |
+          (packed ? TALOS_RT_DPI_OPEN_ARRAY_PACKED : 0) |
           (layout.getElementKind() == dpi::ABIKind::Logic ||
                    layout.getElementKind() == dpi::ABIKind::LogicVector
-               ? OBELISK_RT_DPI_OPEN_ARRAY_FOUR_STATE
+               ? TALOS_RT_DPI_OPEN_ARRAY_FOUR_STATE
                : 0);
       Value flagValue = c32(flags);
       if (dynamic) {
@@ -499,9 +499,9 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
                                   elementCountValue, c64(0));
         flagValue = arith::SelectOp::create(
             rewriter, location, empty,
-            c32(flags | OBELISK_RT_DPI_OPEN_ARRAY_EMPTY), flagValue);
+            c32(flags | TALOS_RT_DPI_OPEN_ARRAY_EMPTY), flagValue);
       }
-      storeOpen(0, c32(OBELISK_RT_DPI_OPEN_ARRAY_MAGIC), 4);
+      storeOpen(0, c32(TALOS_RT_DPI_OPEN_ARRAY_MAGIC), 4);
       storeOpen(1, flagValue, 4);
       storeOpen(2, c32(dimensions), 4);
       storeOpen(3, c32(layout.getElementWidth()), 4);
@@ -586,7 +586,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
         Value packStatus =
             LLVM::CallOp::create(
                 rewriter, location, TypeRange{i32},
-                SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_aggregate_pack"),
+                SymbolRefAttr::get(context, "talos_rt_v1_dpi_aggregate_pack"),
                 ValueRange{valueStorage, unknownStorage,
                            c64((uint64_t{abi[index].width} + 7) / 8),
                            c64(abi[index].width), c32(abi[index].fourState),
@@ -704,20 +704,20 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
           alignment);
     };
     uint32_t kind =
-        isDPIOpenArray(entry)   ? OBELISK_RT_DBREG_OPEN_ARRAY
-        : isDPIAggregate(entry) ? OBELISK_RT_DBREG_AGGREGATE
+        isDPIOpenArray(entry)   ? TALOS_RT_DBREG_OPEN_ARRAY
+        : isDPIAggregate(entry) ? TALOS_RT_DBREG_AGGREGATE
         : entry.category == static_cast<uint32_t>(dpi::ABIKind::String)
-            ? OBELISK_RT_DBREG_STRING
+            ? TALOS_RT_DBREG_STRING
         : entry.category == static_cast<uint32_t>(dpi::ABIKind::ShortReal)
-            ? OBELISK_RT_DBREG_REAL32
+            ? TALOS_RT_DBREG_REAL32
         : entry.category == static_cast<uint32_t>(dpi::ABIKind::Real)
-            ? OBELISK_RT_DBREG_REAL64
-        : entry.fourState ? OBELISK_RT_DBREG_LOGIC
-                          : OBELISK_RT_DBREG_BITS;
+            ? TALOS_RT_DBREG_REAL64
+        : entry.fourState ? TALOS_RT_DBREG_LOGIC
+                          : TALOS_RT_DBREG_BITS;
     storeField(0, llvmConstant(rewriter, location, i8, kind), 1);
     storeField(1,
                llvmConstant(rewriter, location, i8,
-                            entry.isSigned ? OBELISK_RT_DBREG_SIGNED : 0),
+                            entry.isSigned ? TALOS_RT_DBREG_SIGNED : 0),
                1);
     storeField(2, llvmConstant(rewriter, location, i16, 0), 2);
     uint32_t descriptorWidth =
@@ -739,16 +739,16 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
   Type siteType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i32, i32, i64, pointer, i64, i32, i32, i64});
   Value site = entryAlloca(rewriter, location, siteType, 1, 8);
-  uint32_t flags = (operation.getIsPure() ? OBELISK_RT_IMPORT_PURE : 0u) |
-                   (operation.getIsContext() ? OBELISK_RT_IMPORT_CONTEXT : 0u) |
-                   (operation.getIsTask() ? OBELISK_RT_IMPORT_TASK : 0u);
+  uint32_t flags = (operation.getIsPure() ? TALOS_RT_IMPORT_PURE : 0u) |
+                   (operation.getIsContext() ? TALOS_RT_IMPORT_CONTEXT : 0u) |
+                   (operation.getIsTask() ? TALOS_RT_IMPORT_TASK : 0u);
   Value source = null;
   if (operation.getIsContext() && !operation.getSourceFile().empty()) {
-    uint64_t fileHash = OBELISK_STABLE_HASH_OFFSET_BASIS;
+    uint64_t fileHash = TALOS_STABLE_HASH_OFFSET_BASIS;
     for (unsigned char byte : operation.getSourceFile().bytes())
       fileHash = appendHash(fileHash, byte, 1);
     std::string base =
-        ("__obelisk_dpi_source_" + Twine(operation.getImportId()) + "_" +
+        ("__talos_dpi_source_" + Twine(operation.getImportId()) + "_" +
          Twine(operation.getSourceLine()) + "_" +
          Twine(operation.getSourceColumn()) + "_" + Twine(fileHash))
             .str();
@@ -760,7 +760,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
                           fieldGEP(rewriter, location, site, siteType, field),
                           alignment);
   };
-  storeSiteField(0, llvmConstant(rewriter, location, i32, OBELISK_RT_VERSION),
+  storeSiteField(0, llvmConstant(rewriter, location, i32, TALOS_RT_VERSION),
                  4);
   storeSiteField(1, llvmConstant(rewriter, location, i32, flags), 4);
   storeSiteField(
@@ -801,8 +801,8 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
           rewriter, location, TypeRange{i32},
           SymbolRefAttr::get(
               context, operation.getIsContext()
-                           ? "obelisk_rt_v1_import_call_guarded"
-                           : "obelisk_rt_v1_import_call_noncontext_guarded"),
+                           ? "talos_rt_v1_import_call_guarded"
+                           : "talos_rt_v1_import_call_noncontext_guarded"),
           ValueRange{
               marshallingStatus, operation.getRuntimeContext(), site, inputs,
               llvmConstant(rewriter, location, i32, logicalInputs), outputs,
@@ -829,7 +829,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
             LLVM::CallOp::create(
                 rewriter, location, TypeRange{i32},
                 SymbolRefAttr::get(
-                    context, "obelisk_rt_v1_dpi_open_array_finish_recursive"),
+                    context, "talos_rt_v1_dpi_open_array_finish_recursive"),
                 ValueRange{marshallingStatus, operation.getRuntimeContext(),
                            storage.recursiveStorage, storage.flatValue,
                            storage.flatUnknown,
@@ -868,7 +868,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
             LLVM::CallOp::create(
                 rewriter, location, TypeRange{i32},
                 SymbolRefAttr::get(
-                    context, "obelisk_rt_v1_dpi_open_array_aggregate_unpack"),
+                    context, "talos_rt_v1_dpi_open_array_aggregate_unpack"),
                 ValueRange{
                     operation.getRuntimeContext(), storage.data,
                     storage.dataSizeValue,
@@ -895,7 +895,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
                   rewriter, location, TypeRange{i32},
                   SymbolRefAttr::get(
                       context,
-                      "obelisk_rt_v1_dpi_open_array_aggregate_roots_push"),
+                      "talos_rt_v1_dpi_open_array_aggregate_roots_push"),
                   ValueRange{
                       guardedContext, storage.flatValue, storage.planeSizeValue,
                       storage.totalWidthValue,
@@ -918,7 +918,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
             LLVM::CallOp::create(
                 rewriter, location, TypeRange{i32},
                 SymbolRefAttr::get(context,
-                                   "obelisk_rt_v1_container_import_fixed"),
+                                   "talos_rt_v1_container_import_fixed"),
                 ValueRange{lane, guardedContainer, storage.flatValue,
                            storage.flatUnknown, storage.planeSizeValue,
                            storage.totalWidthValue,
@@ -934,7 +934,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
               LLVM::CallOp::create(
                   rewriter, location, TypeRange{i32},
                   SymbolRefAttr::get(context,
-                                     "obelisk_rt_v1_dpi_aggregate_roots_pop"),
+                                     "talos_rt_v1_dpi_aggregate_roots_pop"),
                   ValueRange{operation.getRuntimeContext(), rootHandle})
                   .getResult();
           preserveFirstStatus(popStatus);
@@ -956,7 +956,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
           LLVM::CallOp::create(
               rewriter, location, TypeRange{i32},
               SymbolRefAttr::get(
-                  context, "obelisk_rt_v1_dpi_open_array_aggregate_unpack"),
+                  context, "talos_rt_v1_dpi_open_array_aggregate_unpack"),
               ValueRange{
                   operation.getRuntimeContext(), storage.data,
                   c64(storage.dataSize), c64(storage.layout.getElementCSize()),
@@ -1008,7 +1008,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       Value unpackStatus =
           LLVM::CallOp::create(
               rewriter, location, TypeRange{i32},
-              SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_aggregate_unpack"),
+              SymbolRefAttr::get(context, "talos_rt_v1_dpi_aggregate_unpack"),
               ValueRange{operation.getRuntimeContext(), storage.data,
                          c64(storage.layout.getCSize()), storage.plan,
                          c64(storage.layout.getLeaves().size()), valueStorage,
@@ -1057,7 +1057,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       LLVM::CallOp::create(
           rewriter, location, TypeRange{},
           SymbolRefAttr::get(context,
-                             "obelisk_rt_v1_dpi_open_array_release_recursive"),
+                             "talos_rt_v1_dpi_open_array_release_recursive"),
           storage->recursiveStorage);
   Value status = runtime::RTStatusFromBitsOp::create(
       rewriter, location, runtime::StatusType::get(context), marshallingStatus);
@@ -1083,4 +1083,4 @@ LogicalResult lowerNativeDPICalls(Operation *root) {
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

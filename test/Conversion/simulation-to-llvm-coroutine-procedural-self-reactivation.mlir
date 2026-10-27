@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s
 
 // A procedural event loop is intentionally not a graph-level settling SCC.
@@ -155,12 +155,12 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_{{[0-9]+}}_1.__obelisk_execute(
+// CHECK-LABEL: llvm.func @__talos_direct_fragment_{{[0-9]+}}_1.__talos_execute(
 // CHECK-SAME: schedule.eval.tier2_convergence
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1
 // CHECK: llvm.switch
-// CHECK: %[[INGRESS:.*]] = llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// CHECK: %[[INGRESS:.*]] = llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // CHECK: %[[QUEUED:.*]] = llvm.load %[[INGRESS]]
 // CHECK: %[[CLEARED:.*]] = llvm.and %[[QUEUED]],
 // CHECK: llvm.store %[[CLEARED]], %[[INGRESS]]
-// CHECK: llvm.call @__obelisk_direct_fragment_{{[0-9]+}}_1.__obelisk_execute
+// CHECK: llvm.call @__talos_direct_fragment_{{[0-9]+}}_1.__talos_execute

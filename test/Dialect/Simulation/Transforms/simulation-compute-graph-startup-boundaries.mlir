@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -o /dev/null --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-simulation-schedule-analysis)' 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o /dev/null --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),test-talos-simulation-schedule-analysis)' 2>&1 | FileCheck %s
 
 // Keep distinct root blocks and event regions separate. An always process
 // marked starts_without_waiting does not precede initial0; always1 is spawned

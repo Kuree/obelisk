@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %s -o %t.mlir
+// RUN: %talos --std=1800-2023 -emit-talos %s -o %t.mlir
 
 // LRM 19.8.1 permits default sample arguments. Pristine Slang 11.0 loses the
 // enclosing scope when resolving process in a defaulted sample formal.

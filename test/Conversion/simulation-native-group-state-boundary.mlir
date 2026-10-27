@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
+// RUN: talos-opt %s --talos-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk-opt %s --mlir-disable-threading --obelisk-materialize-native-eval-groups -o %t.serial
+// RUN: talos-opt %s --mlir-disable-threading --talos-materialize-native-eval-groups -o %t.serial
 // RUN: diff %t.mlir %t.serial
 
 // Runtime behavior is checked in ../Runtime/simulation-native-group-state-boundary.test.
@@ -10,12 +10,12 @@
 // must be reacquired after its mutation. The executable checks its observations
 // and the later actor's result, including an unknown-to-known transition.
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
-  llvm.mlir.global internal @__obelisk_state_value(dense<[7, 0, 0]> : tensor<3xi8>) : !llvm.array<3 x i8>
-  llvm.mlir.global internal @__obelisk_state_unknown(dense<[0, 0, 0]> : tensor<3xi8>) : !llvm.array<3 x i8>
+  llvm.mlir.global internal @__talos_state_value(dense<[7, 0, 0]> : tensor<3xi8>) : !llvm.array<3 x i8>
+  llvm.mlir.global internal @__talos_state_unknown(dense<[0, 0, 0]> : tensor<3xi8>) : !llvm.array<3 x i8>
 
   llvm.func @writer() attributes {schedule.eval.infallible} {
-    %v = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %x = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %v = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %x = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     %one = llvm.mlir.constant(1 : i8) : i8
     %all = llvm.mlir.constant(-1 : i8) : i8
     %oldv = llvm.load %v : !llvm.ptr -> i8
@@ -27,8 +27,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.return
   }
   llvm.func @reader() attributes {schedule.eval.infallible} {
-    %v = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %x = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %v = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %x = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     %outv = llvm.getelementptr %v[1] : (!llvm.ptr) -> !llvm.ptr, i8
     %outx = llvm.getelementptr %x[1] : (!llvm.ptr) -> !llvm.ptr, i8
     %value = llvm.load %v : !llvm.ptr -> i8
@@ -38,8 +38,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.return
   }
   llvm.func @after_mutation() attributes {schedule.eval.infallible} {
-    %v = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %x = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %v = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %x = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     %outv = llvm.getelementptr %v[2] : (!llvm.ptr) -> !llvm.ptr, i8
     %outx = llvm.getelementptr %x[2] : (!llvm.ptr) -> !llvm.ptr, i8
     %value = llvm.load %v : !llvm.ptr -> i8
@@ -50,8 +50,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
   // This unmarked function is an opaque boundary to group materialization.
   llvm.func @mutate() -> i1 attributes {passthrough = ["noinline"]} {
-    %v = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %x = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %v = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %x = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     %value = llvm.load %v : !llvm.ptr -> i8
     %unknown = llvm.load %x : !llvm.ptr -> i8
     %eight = llvm.mlir.constant(8 : i8) : i8
@@ -70,9 +70,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   // CHECK-SAME: schedule.eval.ssa_unknown_ranges = 1 : i64
   // CHECK-SAME: schedule.eval.ssa_value_ranges = 1 : i64
   // Acquire at the first access, while addresses remain hoisted.
-  // CHECK-DAG: %[[X:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
+  // CHECK-DAG: %[[X:.*]] = llvm.mlir.addressof @__talos_state_unknown
   // CHECK-DAG: %[[XP:.*]] = llvm.getelementptr %[[X]][0]
-  // CHECK-DAG: %[[V:.*]] = llvm.mlir.addressof @__obelisk_state_value
+  // CHECK-DAG: %[[V:.*]] = llvm.mlir.addressof @__talos_state_value
   // CHECK-DAG: %[[VP:.*]] = llvm.getelementptr %[[V]][0]
   // CHECK: llvm.load %[[VP]]{{[ {]}}
   // CHECK: llvm.load %[[XP]]{{[ {]}}
@@ -106,8 +106,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
   llvm.func @main() -> i32 {
     %observed = llvm.call @group() : () -> i1
-    %v = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %x = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %v = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %x = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     %outv = llvm.getelementptr %v[2] : (!llvm.ptr) -> !llvm.ptr, i8
     %outx = llvm.getelementptr %x[2] : (!llvm.ptr) -> !llvm.ptr, i8
     %value = llvm.load %outv : !llvm.ptr -> i8

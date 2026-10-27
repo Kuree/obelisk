@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
+// RUN: talos-opt %s --talos-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s --implicit-check-not=group_children --implicit-check-not=group_parent --implicit-check-not=dataflow_executor --implicit-check-not=dataflow_candidate < %t.mlir
 
 // An unsuccessful refinement must retain the exact original executor. Entry
@@ -9,12 +9,12 @@
 // CHECK: llvm.func @foreign()
 module attributes {schedule.native.max_inline_ops = 5000 : i64} {
   llvm.mlir.global internal @ready(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
-  llvm.mlir.global internal @__obelisk_state_value(dense<0> : tensor<1xi8>) : !llvm.array<1 x i8>
-  llvm.mlir.global internal @__obelisk_eval_promotion_pending_mask_v1(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
+  llvm.mlir.global internal @__talos_state_value(dense<0> : tensor<1xi8>) : !llvm.array<1 x i8>
+  llvm.mlir.global internal @__talos_eval_promotion_pending_mask_v1(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
   llvm.func @foreign()
   llvm.func @frozen_capture() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready} {
     %ready = llvm.mlir.addressof @ready : !llvm.ptr
-    %state = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %state = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %r0 = llvm.load %ready {schedule.eval.activation_entry = 0 : i32} : !llvm.ptr -> i64
     llvm.store %r0, %ready : i64, !llvm.ptr
     llvm.call @foreign() : () -> ()
@@ -28,7 +28,7 @@ module attributes {schedule.native.max_inline_ops = 5000 : i64} {
   }
   llvm.func @frozen_capture_candidate() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @frozen_capture} {
     %ready = llvm.mlir.addressof @ready : !llvm.ptr
-    %state = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %state = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %r0 = llvm.load %ready {schedule.eval.activation_entry = 0 : i32} : !llvm.ptr -> i64
     llvm.store %r0, %ready : i64, !llvm.ptr
     llvm.call @foreign() : () -> ()
@@ -179,7 +179,7 @@ module attributes {schedule.native.max_inline_ops = 5000 : i64} {
     %r0 = llvm.load %ready {schedule.eval.activation_entry = 0 : i32} : !llvm.ptr -> i64
     llvm.store %r0, %ready : i64, !llvm.ptr
     llvm.call @foreign() : () -> ()
-    %state = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %state = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %captured = llvm.load %state : !llvm.ptr -> i8
     %r1 = llvm.load %ready {schedule.eval.activation_entry = 1 : i32} : !llvm.ptr -> i64
     llvm.store %r1, %ready : i64, !llvm.ptr
@@ -191,7 +191,7 @@ module attributes {schedule.native.max_inline_ops = 5000 : i64} {
     %r0 = llvm.load %ready {schedule.eval.activation_entry = 0 : i32} : !llvm.ptr -> i64
     llvm.store %r0, %ready : i64, !llvm.ptr
     llvm.call @foreign() : () -> ()
-    %state = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %state = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %captured = llvm.load %state : !llvm.ptr -> i8
     %r1 = llvm.load %ready {schedule.eval.activation_entry = 1 : i32} : !llvm.ptr -> i64
     llvm.store %r1, %ready : i64, !llvm.ptr

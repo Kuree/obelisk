@@ -1,10 +1,10 @@
 //===- SimulationAggregateLowering.cpp - Aggregate rewrite patterns --===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Analysis/NativeStorageLayout.h"
+#include "talos/Analysis/NativeStorageLayout.h"
 
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/PatternMatch.h"
@@ -19,7 +19,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 namespace {
 
@@ -820,4 +820,4 @@ void populateAggregateToLLVMConversionPatterns(RewritePatternSet &patterns,
            UnionExtractConversion, UnionIsActiveConversion>(converter, context);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

@@ -1,17 +1,17 @@
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 #include "vpi_user.h"
 #include <stdio.h>
 #include <stdlib.h>
 
-extern obelisk_rt_status
-__real_obelisk_rt_v1_scheduler_run(obelisk_rt_context *context);
-extern obelisk_rt_status
-__real_obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context);
+extern talos_rt_status
+__real_talos_rt_v1_scheduler_run(talos_rt_context *context);
+extern talos_rt_status
+__real_talos_rt_v1_scheduler_run_aot(talos_rt_context *context);
 static int driving;
 
 static vpiHandle timerClock, timerCount;
 static int timerEdges, timerFailed;
-static obelisk_rt_context *timerSimulation;
+static talos_rt_context *timerSimulation;
 static PLI_INT32 clockTimer(p_cb_data callback);
 
 static void scheduleClockTimer(void) {
@@ -61,52 +61,52 @@ static PLI_INT32 clockTimer(p_cb_data callback) {
     return 0;
   }
   ++timerEdges;
-  if (getenv("OBELISK_TEST_FINISH_ON_EDGE")) {
-    obelisk_rt_v1_scheduler_finish(timerSimulation, 0);
+  if (getenv("TALOS_TEST_FINISH_ON_EDGE")) {
+    talos_rt_v1_scheduler_finish(timerSimulation, 0);
     return 0;
   }
   scheduleClockTimer();
   return 0;
 }
 
-static obelisk_rt_status driveClock(
-    obelisk_rt_context *context,
-    obelisk_rt_status (*run)(obelisk_rt_context *)) {
+static talos_rt_status driveClock(
+    talos_rt_context *context,
+    talos_rt_status (*run)(talos_rt_context *)) {
   if (driving)
     return run(context);
   driving = 1;
-  int timed = getenv("OBELISK_TEST_TIMED_CLOCK") != 0;
-  obelisk_rt_status status = obelisk_rt_v1_vpi_startup(context, 0, 0);
-  if (status == OBELISK_RT_OK)
-    status = obelisk_rt_v1_vpi_end_compile(context);
-  if (status == OBELISK_RT_OK)
-    status = obelisk_rt_v1_vpi_start_simulation(context);
-  if (!timed && status == OBELISK_RT_OK)
+  int timed = getenv("TALOS_TEST_TIMED_CLOCK") != 0;
+  talos_rt_status status = talos_rt_v1_vpi_startup(context, 0, 0);
+  if (status == TALOS_RT_OK)
+    status = talos_rt_v1_vpi_end_compile(context);
+  if (status == TALOS_RT_OK)
+    status = talos_rt_v1_vpi_start_simulation(context);
+  if (!timed && status == TALOS_RT_OK)
     status = run(context);
   vpiHandle clock = vpi_handle_by_name("external_clock.clk", 0);
   vpiHandle count = vpi_handle_by_name("external_clock.count", 0);
   if (!clock || !count)
-    status = OBELISK_RT_INVALID_HANDLE;
-  if (timed && status == OBELISK_RT_OK) {
+    status = TALOS_RT_INVALID_HANDLE;
+  if (timed && status == TALOS_RT_OK) {
     timerClock = clock;
     timerCount = count;
     timerSimulation = context;
     scheduleClockTimer();
     status = run(context);
-    int finish = getenv("OBELISK_TEST_FINISH_ON_EDGE") != 0;
+    int finish = getenv("TALOS_TEST_FINISH_ON_EDGE") != 0;
     if (timerFailed || timerEdges != (finish ? 1 : 2000))
-      status = OBELISK_RT_INVALID_DESIGN;
+      status = TALOS_RT_INVALID_DESIGN;
     if (finish) {
       s_vpi_value value = {0};
       value.format = vpiIntVal;
       vpi_get_value(count, &value);
       if (value.value.integer != 0)
-        status = OBELISK_RT_INVALID_DESIGN;
+        status = TALOS_RT_INVALID_DESIGN;
       else
         puts("timed external finish count=0 time=5");
     }
   }
-  for (int cycle = 1; !timed && cycle <= 1000 && status == OBELISK_RT_OK;
+  for (int cycle = 1; !timed && cycle <= 1000 && status == TALOS_RT_OK;
        ++cycle) {
     // No HDL oscillator exists. The foreign driver supplies every edge and
     // returns to the simulator at the same boundary as a cocotb VPI write.
@@ -117,11 +117,11 @@ static obelisk_rt_status driveClock(
       vpi_put_value(clock, &value, 0, vpiNoDelay);
       s_vpi_error_info error = {0};
       if (vpi_chk_error(&error)) {
-        status = OBELISK_RT_INVALID_ARGUMENT;
+        status = TALOS_RT_INVALID_ARGUMENT;
         break;
       }
-      status = __real_obelisk_rt_v1_scheduler_run(context);
-      if (status != OBELISK_RT_OK)
+      status = __real_talos_rt_v1_scheduler_run(context);
+      if (status != TALOS_RT_OK)
         break;
     }
     s_vpi_value value = {0};
@@ -130,26 +130,26 @@ static obelisk_rt_status driveClock(
     if (value.value.integer != cycle) {
       fprintf(stderr, "external clock cycle=%d count=%d\n", cycle,
               value.value.integer);
-      status = OBELISK_RT_INVALID_DESIGN;
+      status = TALOS_RT_INVALID_DESIGN;
     }
   }
-  if (!timed && status == OBELISK_RT_OK)
+  if (!timed && status == TALOS_RT_OK)
     puts("external clock count=1000");
   if (clock)
     vpi_release_handle(clock);
   if (count)
     vpi_release_handle(count);
-  obelisk_rt_v1_vpi_end_simulation(context);
-  obelisk_rt_v1_vpi_shutdown(context);
+  talos_rt_v1_vpi_end_simulation(context);
+  talos_rt_v1_vpi_shutdown(context);
   driving = 0;
   return status;
 }
 
-obelisk_rt_status
-__wrap_obelisk_rt_v1_scheduler_run(obelisk_rt_context *context) {
-  return driveClock(context, __real_obelisk_rt_v1_scheduler_run);
+talos_rt_status
+__wrap_talos_rt_v1_scheduler_run(talos_rt_context *context) {
+  return driveClock(context, __real_talos_rt_v1_scheduler_run);
 }
-obelisk_rt_status
-__wrap_obelisk_rt_v1_scheduler_run_aot(obelisk_rt_context *context) {
-  return driveClock(context, __real_obelisk_rt_v1_scheduler_run_aot);
+talos_rt_status
+__wrap_talos_rt_v1_scheduler_run_aot(talos_rt_context *context) {
+  return driveClock(context, __real_talos_rt_v1_scheduler_run_aot);
 }

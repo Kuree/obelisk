@@ -1,9 +1,9 @@
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
+// RUN: talos -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: %t.auto | FileCheck %s
-// RUN: obelisk --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
-// RUN: obelisk -O3 --compile-threads=1 -emit-llvm %s -o %t.serial.ll
-// RUN: obelisk -O3 --compile-threads=8 -emit-llvm %s -o - | diff -u %t.serial.ll -
+// RUN: talos -O3 --compile-threads=1 -emit-llvm %s -o %t.serial.ll
+// RUN: talos -O3 --compile-threads=8 -emit-llvm %s -o - | diff -u %t.serial.ll -
 
 // Dynamic child captures include padding and separate wide value/XZ planes.
 // The child must retain the automatic values until its first delayed use.

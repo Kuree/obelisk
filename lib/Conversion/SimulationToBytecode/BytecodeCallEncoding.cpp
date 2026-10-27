@@ -5,7 +5,7 @@
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 namespace {
 
 uint32_t stableImportID(StringRef text) {
@@ -123,10 +123,10 @@ LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
            << "import ID collision between '" << inserted.first->second
            << "' and '" << call.getCIdentifier() << "'";
   SmallVector<uint8_t> metadata;
-  append32(metadata, OBELISK_RT_VERSION);
-  uint32_t flags = (call.getIsPure() ? OBELISK_RT_IMPORT_PURE : 0) |
-                   (call.getIsContext() ? OBELISK_RT_IMPORT_CONTEXT : 0) |
-                   (call.getIsTask() ? OBELISK_RT_IMPORT_TASK : 0);
+  append32(metadata, TALOS_RT_VERSION);
+  uint32_t flags = (call.getIsPure() ? TALOS_RT_IMPORT_PURE : 0) |
+                   (call.getIsContext() ? TALOS_RT_IMPORT_CONTEXT : 0) |
+                   (call.getIsTask() ? TALOS_RT_IMPORT_TASK : 0);
   append32(metadata, flags);
   append32(metadata, importID);
   append32(metadata, 0);
@@ -288,4 +288,4 @@ LogicalResult Encoder::encodeReturn(FunctionPlan &plan, sim::SimReturnOp op) {
   return success();
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

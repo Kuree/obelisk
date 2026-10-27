@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -19,7 +19,7 @@ module attributes {
   // CHECK-SAME: #schedule.group<fragments = {{\[}}[[WAIT]]{{\]}}
   // CHECK-SAME: #schedule.group<fragments = {{\[}}[[BODY]]{{\]}}
   // Startup infrastructure carries bit 5 in the native scheduler flags.
-  // NATIVE-LABEL: llvm.mlir.global internal constant @z_producer.__obelisk_spawn_plan
+  // NATIVE-LABEL: llvm.mlir.global internal constant @z_producer.__talos_spawn_plan
   // NATIVE: %[[STARTUP:.*]] = llvm.mlir.constant(32 : i32)
   // NATIVE-NEXT: llvm.insertvalue %[[STARTUP]], {{.*}}[6]
   // The bytecode SPAWN signature stores the same classification in bit 31 of

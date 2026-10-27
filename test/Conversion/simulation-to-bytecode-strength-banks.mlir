@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --test-obelisk-print-bytecode=state=true -o /dev/null 2>&1 \
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --test-talos-print-bytecode=state=true -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
 
 module attributes {

@@ -1,6 +1,6 @@
-// RUN: obelisk -O3 --mlir-timing %s -o %t.eval 2> %t.timing
+// RUN: talos -O3 --mlir-timing %s -o %t.eval 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
+// RUN: talos -O0 --native-scheduler=generic %s -o %t.reference
 // RUN: %t.reference > %t.reference.out 2>&1
 // RUN: %t.eval > %t.eval.out 2>&1 && diff -u %t.reference.out %t.eval.out
 // RUN: FileCheck %s < %t.reference.out
@@ -34,7 +34,7 @@ module native_eval_path_guarded_write_target;
   end
 endmodule
 
-// TIER: obelisk eval executor inventory: {{.*}} runtime_checkpoints=0
+// TIER: talos eval executor inventory: {{.*}} runtime_checkpoints=0
 // CHECK: :21:5: warning: unique case violation: no match
 // CHECK: t6 s=000101 y=000001
 // CHECK: t16 s=100001 y=000010

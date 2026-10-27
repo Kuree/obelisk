@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // IEEE 1800-2023 8.12: a shallow copy sets an embedded covergroup handle to
 // null in the new object. Each class descriptor lists its own embedded group
@@ -37,22 +37,22 @@ module attributes {
 
 // Base: header word, i8 flag at byte 8, embedded group at byte 16, shared
 // group at byte 24. Derived's own group follows the 32-byte base instance.
-// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_class_descriptor
-// CHECK: llvm.mlir.addressof @Derived.__obelisk_copy_resets
+// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__talos_class_descriptor
+// CHECK: llvm.mlir.addressof @Derived.__talos_copy_resets
 // CHECK-NEXT: llvm.insertvalue {{.*}}[14]
 // CHECK-NEXT: llvm.mlir.constant(1 : i64)
 // CHECK-NEXT: llvm.insertvalue {{.*}}[15]
-// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_copy_resets
+// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__talos_copy_resets
 // CHECK-SAME: !llvm.array<1 x struct<(i64, i64)>>
 // CHECK: llvm.mlir.constant(32 : i64)
 // CHECK-NEXT: llvm.insertvalue
 // CHECK-NEXT: llvm.mlir.constant(8 : i64)
-// CHECK-LABEL: llvm.mlir.global internal constant @Base.__obelisk_class_descriptor
-// CHECK: llvm.mlir.addressof @Base.__obelisk_copy_resets
+// CHECK-LABEL: llvm.mlir.global internal constant @Base.__talos_class_descriptor
+// CHECK: llvm.mlir.addressof @Base.__talos_copy_resets
 // CHECK-NEXT: llvm.insertvalue {{.*}}[14]
 // CHECK-NEXT: llvm.mlir.constant(1 : i64)
 // CHECK-NEXT: llvm.insertvalue {{.*}}[15]
-// CHECK-LABEL: llvm.mlir.global internal constant @Base.__obelisk_copy_resets
+// CHECK-LABEL: llvm.mlir.global internal constant @Base.__talos_copy_resets
 // CHECK-SAME: !llvm.array<1 x struct<(i64, i64)>>
 // CHECK: llvm.mlir.constant(16 : i64)
 // CHECK-NEXT: llvm.insertvalue

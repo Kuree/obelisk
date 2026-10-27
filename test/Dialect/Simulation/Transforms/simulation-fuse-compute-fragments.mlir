@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments))' | FileCheck %s --check-prefix=FUSED
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=BLOCK-ARGS
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments))' | FileCheck %s --check-prefix=FUSED
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=BLOCK-ARGS
 
 // FUSED: simulation.design @fusion attributes {
 // FUSED-SAME: schedule.static_fusion = [#schedule.fusion<id = 0, fragments = [{{[0-9]+}}, {{[0-9]+}}]>]
-// BLOCK-ARGS: simulation.func private @__obelisk_fused_
+// BLOCK-ARGS: simulation.func private @__talos_fused_
 // BLOCK-ARGS: ^bb{{[0-9]+}}(%[[VALUE:.*]]: i32):
 // BLOCK-ARGS: arith.addi %[[VALUE]],
 // BLOCK-ARGS-NOT: simulation.func private @a

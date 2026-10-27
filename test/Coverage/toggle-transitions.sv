@@ -18,8 +18,8 @@ endmodule
 // transition recorder: each bit sees both a 0->1 and a 1->0 transition, so all
 // four toggle bins are covered. The initial X->0 of the four-state variable is
 // diagnostic only and is not a bin.
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=toggle %s -o %t
+// RUN: %talos --std=1800-2023 -O0 --coverage=toggle %s -o %t
 // RUN: %t --coverage-output=%t.obcov
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s
 
 // CHECK: toggle: 100.00% (4/4)

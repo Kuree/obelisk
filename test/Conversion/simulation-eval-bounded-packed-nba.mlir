@@ -1,20 +1,20 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.byte_stride operand=1 constant="9 : i64"},simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=CLIPPED
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-edit-attributes{has=test.byte_stride operand=1 constant="9 : i64"},simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=CLIPPED
 
 // Each byte select fits its immediate 64-bit parent, even though the selected
 // array element remains dynamic and can be invalid. The loop revisits one NBA
 // site, so preserve every captured payload/target in the generated queue
 // (IEEE 1800-2023 4.6(b), 4.9.4, 7.4.5, 11.5.1). See the paired Runtime test.
-// CHECK-LABEL: llvm.func @write.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_packed_slice_nba
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_nba
-// CHECK: llvm.mlir.addressof @__obelisk_eval_ordered_nba_queue_v1
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_packed_slice_nba
+// CHECK-LABEL: llvm.func @write.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_packed_slice_nba
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_nba
+// CHECK: llvm.mlir.addressof @__talos_eval_ordered_nba_queue_v1
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_packed_slice_nba
 // CHECK: llvm.return
 // With a stride of nine, the last byte starts at bit 63 and must be clipped
 // to this word rather than overwriting its neighbor (LRM 11.5.1).
-// CLIPPED: llvm.call @obelisk_rt_v1_scheduler_packed_slice_nba
+// CLIPPED: llvm.call @talos_rt_v1_scheduler_packed_slice_nba
 
 !bitref = !simulation.ref<i1>
 !byte = !simulation.logic<8>

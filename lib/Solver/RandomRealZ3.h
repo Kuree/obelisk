@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <z3.h>
 
-namespace obelisk::solver::detail {
+namespace talos::solver::detail {
 
 /// IEEE 1800-2023 6.12.1 rounds integral casts halfway away from zero;
 /// 20.5 truncates $rtoi. Finite results retain their destination's low bits,
@@ -79,4 +79,4 @@ inline Z3_ast realIntegerBits(Z3_context context, Z3_ast payload,
                    magnitude);
 }
 
-} // namespace obelisk::solver::detail
+} // namespace talos::solver::detail

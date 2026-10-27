@@ -1,0 +1,6 @@
+// Runtime semantics for ../Conversion/talos-to-simulation-program-final-region.mlir.
+
+// RUN: talos-opt %S/../Conversion/talos-to-simulation-program-final-region.mlir '--lower-talos-to-sim=opt-level=0' --encode-talos-sim-to-bytecode='vpi=off' --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
+// RUN: %t.exe
+// RUN: %t.exe --execution-tier=bytecode

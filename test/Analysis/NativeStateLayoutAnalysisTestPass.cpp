@@ -2,7 +2,7 @@
 
 #include "AnalysisTestPasses.h"
 
-#include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
+#include "talos/Analysis/NativeStateLayoutAnalysis.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -22,15 +22,15 @@ public:
       NativeStateLayoutAnalysisTestPass)
 
   StringRef getArgument() const final {
-    return "test-obelisk-native-state-layout-analysis";
+    return "test-talos-native-state-layout-analysis";
   }
   StringRef getDescription() const final {
     return "print stable native state layout facts";
   }
 
   void runOnOperation() final {
-    FailureOr<obelisk::analysis::NativeStateLayoutAnalysis> layout =
-        obelisk::analysis::NativeStateLayoutAnalysis::compute(getOperation());
+    FailureOr<talos::analysis::NativeStateLayoutAnalysis> layout =
+        talos::analysis::NativeStateLayoutAnalysis::compute(getOperation());
     if (failed(layout)) {
       signalPassFailure();
       return;
@@ -45,7 +45,7 @@ public:
         llvm::errs() << " roots=";
         llvm::interleaveComma(bound.managedRootOffsets, llvm::errs());
         bool firstCandidate = true;
-        for (const obelisk::sim::ManagedHandleSlot &slot :
+        for (const talos::sim::ManagedHandleSlot &slot :
              bound.managedRootSlots) {
           if (!slot.conditional)
             continue;
@@ -89,10 +89,10 @@ public:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 
 void registerNativeStateLayoutAnalysisTestPass() {
   PassRegistration<NativeStateLayoutAnalysisTestPass>();
 }
 
-} // namespace obelisk
+} // namespace talos

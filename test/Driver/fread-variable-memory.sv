@@ -1,6 +1,6 @@
-// RUN: obelisk -O0 --vpi=off %s -o %t.native
+// RUN: talos -O0 --vpi=off %s -o %t.native
 // RUN: %t.native +OUT=%t.data | FileCheck %s
-// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode +OUT=%t.data | FileCheck %s
 
 // IEEE 1800-2017 21.3.4.3: the unpacked-memory form of $fread uses the

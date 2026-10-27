@@ -1,8 +1,8 @@
-// RUN: obelisk --two-state --clocked-kernels=immediate -O3 --native-scheduler=eval %S/native-tier1-shared-fixed-nba.sv -o %t.two
+// RUN: talos --two-state --clocked-kernels=immediate -O3 --native-scheduler=eval %S/native-tier1-shared-fixed-nba.sv -o %t.two
 // RUN: %t.two | FileCheck %S/native-tier1-shared-fixed-nba.sv --check-prefix=OUTPUT
-// RUN: obelisk --two-state -emit-slang %S/two-state.sv | FileCheck %s --check-prefix=IMPORT
-// RUN: obelisk --two-state -O3 -emit-sim %S/two-state.sv | FileCheck %s --check-prefix=SIM --implicit-check-not='!simulation.logic<'
-// RUN: obelisk --two-state -O3 -emit-llvm %S/two-state.sv | FileCheck %s --check-prefix=LLVM --implicit-check-not='__obelisk_two_state' --implicit-check-not='__obelisk_eval_kernel_promotion_scan' --implicit-check-not='__obelisk_state_unknown'
+// RUN: talos --two-state -emit-slang %S/two-state.sv | FileCheck %s --check-prefix=IMPORT
+// RUN: talos --two-state -O3 -emit-sim %S/two-state.sv | FileCheck %s --check-prefix=SIM --implicit-check-not='!simulation.logic<'
+// RUN: talos --two-state -O3 -emit-llvm %S/two-state.sv | FileCheck %s --check-prefix=LLVM --implicit-check-not='__talos_two_state' --implicit-check-not='__talos_eval_kernel_promotion_scan' --implicit-check-not='__talos_state_unknown'
 
 // Frontend two-state types must survive through native code generation without
 // guarded copies of already-integer bodies or unknown-plane promotion scans.

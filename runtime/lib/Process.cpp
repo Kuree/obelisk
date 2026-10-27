@@ -12,9 +12,9 @@
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
 #include "SignalSemantics.h"
-#include "obelisk/Runtime/ClockKernelReadySet.h"
-#include "obelisk/Runtime/StableHandle.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Runtime/ClockKernelReadySet.h"
+#include "talos/Runtime/StableHandle.h"
+#include "talos/Runtime/StableHash.h"
 
 #include <algorithm>
 #include <atomic>
@@ -33,14 +33,14 @@
 #include <immintrin.h>
 #endif
 
-using namespace obelisk::process;
-using namespace obelisk::runtime;
+using namespace talos::process;
+using namespace talos::runtime;
 
 // Definitions for the AOT context state declared in ProcessShared.h.
 std::mutex nativeScheduleRegistryMutex;
 std::unordered_set<const void *> installedNativeScheduleStates;
-thread_local obelisk_rt_context *activeNativeAOTContext = nullptr;
-thread_local obelisk_rt_context *lockedNativeAOTContext = nullptr;
+thread_local talos_rt_context *activeNativeAOTContext = nullptr;
+thread_local talos_rt_context *lockedNativeAOTContext = nullptr;
 
 namespace {
 
@@ -49,7 +49,7 @@ namespace {
 // This also handles native updates transferred from a delayed path calendar,
 // whose sequence can precede the vector's last element.
 struct DueUpdateCursor {
-  using Index = obelisk::coverage::detail::IndexMap<uint64_t, size_t>;
+  using Index = talos::coverage::detail::IndexMap<uint64_t, size_t>;
   Index ordered;
   Index::iterator next = ordered.end();
   std::vector<uint8_t> consumed;
@@ -93,9 +93,9 @@ struct DueUpdateCursor {
 };
 
 struct MixedNBABarrierQueues {
-  obelisk_rt_context *context;
+  talos_rt_context *context;
   DueUpdateCursor native, design, events;
-  explicit MixedNBABarrierQueues(obelisk_rt_context *context)
+  explicit MixedNBABarrierQueues(talos_rt_context *context)
       : context(context) {
     assert(!context->schedulerDrainingNBAQueues);
     context->schedulerDrainingNBAQueues = true;
@@ -114,59 +114,59 @@ struct ProcessAllocationMetadata {
   uint64_t magic;
   size_t size;
   size_t alignment;
-  obelisk_rt_context *managedRootContext = nullptr;
+  talos_rt_context *managedRootContext = nullptr;
   uint64_t vpiSourceCallID = 0;
 };
 
 constexpr size_t kProcessAllocationMetadataOffset =
-    (sizeof(obelisk_rt_process_instance_v1) +
+    (sizeof(talos_rt_process_instance_v1) +
      alignof(ProcessAllocationMetadata) - 1) &
     ~(alignof(ProcessAllocationMetadata) - 1);
 
 ProcessAllocationMetadata *
-processMetadata(obelisk_rt_process_instance_v1 *instance) {
+processMetadata(talos_rt_process_instance_v1 *instance) {
   return reinterpret_cast<ProcessAllocationMetadata *>(
       reinterpret_cast<uint8_t *>(instance) + kProcessAllocationMetadataOffset);
 }
-obelisk_rt_status
-registerManagedFrameRoots(obelisk_rt_process_instance_v1 *instance,
-                          obelisk_rt_context *context) {
+talos_rt_status
+registerManagedFrameRoots(talos_rt_process_instance_v1 *instance,
+                          talos_rt_context *context) {
   if (!context)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   ProcessAllocationMetadata *metadata = processMetadata(instance);
   if (metadata->managedRootContext)
     return metadata->managedRootContext == context
-               ? OBELISK_RT_OK
-               : OBELISK_RT_INVALID_LIFECYCLE;
+               ? TALOS_RT_OK
+               : TALOS_RT_INVALID_LIFECYCLE;
 
-  const obelisk_rt_frame_layout_v1 &layout =
+  const talos_rt_frame_layout_v1 &layout =
       *instance->descriptor->frame_layout;
   bool hasManagedRoots = false;
   for (uint32_t index = 0; index != layout.field_count; ++index)
     hasManagedRoots |=
-        layout.fields[index].flags == OBELISK_RT_FRAME_MANAGED_ROOT ||
-        layout.fields[index].flags == OBELISK_RT_FRAME_CANDIDATE_ROOT;
+        layout.fields[index].flags == TALOS_RT_FRAME_MANAGED_ROOT ||
+        layout.fields[index].flags == TALOS_RT_FRAME_CANDIDATE_ROOT;
   if (!hasManagedRoots) {
     metadata->managedRootContext = context;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   ContextMutexLock lock(context);
   if (std::find(context->managedRootProcesses.begin(),
                 context->managedRootProcesses.end(),
                 instance) != context->managedRootProcesses.end())
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   context->managedRootProcesses.push_back(instance);
   metadata->managedRootContext = context;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 } // namespace
 
-void unregisterManagedFrameRoots(obelisk_rt_process_instance_v1 *instance) {
+void unregisterManagedFrameRoots(talos_rt_process_instance_v1 *instance) {
   ProcessAllocationMetadata *metadata = processMetadata(instance);
   if (!metadata->managedRootContext)
     return;
-  obelisk_rt_context *context = metadata->managedRootContext;
+  talos_rt_context *context = metadata->managedRootContext;
   ContextMutexLock lock(context);
   auto found = std::find(context->managedRootProcesses.begin(),
                          context->managedRootProcesses.end(), instance);
@@ -176,166 +176,166 @@ void unregisterManagedFrameRoots(obelisk_rt_process_instance_v1 *instance) {
 }
 
 void initializeProcessContextLock(
-    obelisk_rt_context *context, std::unique_lock<std::recursive_mutex> &lock) {
+    talos_rt_context *context, std::unique_lock<std::recursive_mutex> &lock) {
   if (lockedNativeAOTContext != context)
     lock = std::unique_lock<std::recursive_mutex>(context->mutex);
 }
 
-static bool semaphoreWaitTargets(const obelisk_rt_wait_record_v1 *wait,
-                                 obelisk_rt_object_v1 *semaphore) {
+static bool semaphoreWaitTargets(const talos_rt_wait_record_v1 *wait,
+                                 talos_rt_object_v1 *semaphore) {
   if (!wait || wait->count != 1)
     return false;
-  const obelisk_rt_wait_entry_v1 *entry = waitEntries(wait);
-  return obelisk_rt_object_from_managed_word(entry[0].stable_id) == semaphore;
+  const talos_rt_wait_entry_v1 *entry = waitEntries(wait);
+  return talos_rt_object_from_managed_word(entry[0].stable_id) == semaphore;
 }
 
-static const obelisk_rt_wait_record_v1 *
+static const talos_rt_wait_record_v1 *
 designTaskWait(const ScheduledDesignTask &task) {
-  if (task.waitSize < sizeof(obelisk_rt_wait_record_v1) ||
+  if (task.waitSize < sizeof(talos_rt_wait_record_v1) ||
       task.waitOffset > task.scratchOffset ||
       task.waitSize > task.scratchOffset - task.waitOffset)
     return nullptr;
-  return reinterpret_cast<const obelisk_rt_wait_record_v1 *>(task.frame.data() +
+  return reinterpret_cast<const talos_rt_wait_record_v1 *>(task.frame.data() +
                                                              task.waitOffset);
 }
 
-obelisk_rt_status
-obelisk_rt_builtin_class_waiters(obelisk_rt_gc_lane_v1 *lane,
-                                 obelisk_rt_object_v1 *object,
+talos_rt_status
+talos_rt_builtin_class_waiters(talos_rt_gc_lane_v1 *lane,
+                                 talos_rt_object_v1 *object,
                                  std::vector<uint64_t> &outProcesses) {
   outProcesses.clear();
   if (!lane || !object)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_context *context = talos_rt_managed_lane_context(lane);
   BuiltinClassKind kind = BuiltinClassKind::None;
   {
     ManagedObjectLease lease;
-    obelisk_rt_status status = obelisk_rt_managed_object_acquire(
-        lane, object, OBELISK_RT_MANAGED_INVALID, &lease);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = talos_rt_managed_object_acquire(
+        lane, object, TALOS_RT_MANAGED_INVALID, &lease);
+    if (status != TALOS_RT_OK)
       return status;
-    kind = obelisk_rt_builtin_class_kind(lease);
+    kind = talos_rt_builtin_class_kind(lease);
   }
   uint32_t suspendKind =
-      kind == BuiltinClassKind::Mailbox     ? OBELISK_RT_SUSPEND_MAILBOX
-      : kind == BuiltinClassKind::Semaphore ? OBELISK_RT_SUSPEND_SEMAPHORE
-                                            : OBELISK_RT_SUSPEND_NONE;
-  if (suspendKind == OBELISK_RT_SUSPEND_NONE)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+      kind == BuiltinClassKind::Mailbox     ? TALOS_RT_SUSPEND_MAILBOX
+      : kind == BuiltinClassKind::Semaphore ? TALOS_RT_SUSPEND_SEMAPHORE
+                                            : TALOS_RT_SUSPEND_NONE;
+  if (suspendKind == TALOS_RT_SUSPEND_NONE)
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     std::vector<uint64_t> processes;
     auto append = [&](uint64_t token, uint64_t waitSize,
-                      const obelisk_rt_wait_record_v1 *wait) {
+                      const talos_rt_wait_record_v1 *wait) {
       if (!wait ||
-          waitSize < sizeof(*wait) + sizeof(obelisk_rt_wait_entry_v1) ||
-          wait->version != OBELISK_RT_VERSION || wait->kind != suspendKind ||
+          waitSize < sizeof(*wait) + sizeof(talos_rt_wait_entry_v1) ||
+          wait->version != TALOS_RT_VERSION || wait->kind != suspendKind ||
           wait->count != 1)
         return false;
-      const obelisk_rt_wait_entry_v1 *entry = waitEntries(wait);
-      if (obelisk_rt_object_from_managed_word(entry->stable_id) == object)
+      const talos_rt_wait_entry_v1 *entry = waitEntries(wait);
+      if (talos_rt_object_from_managed_word(entry->stable_id) == object)
         processes.push_back(token);
       return true;
     };
     for (const ScheduledProcess &process : context->scheduledProcesses) {
       if (!process.instance ||
           process.instance == context->activeNativeProcess ||
-          (OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token) ==
+          (TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token) ==
               context->activeLogicalProcessToken ||
           process.suspendKind != suspendKind)
         continue;
-      if (!append(OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token,
+      if (!append(TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token,
                   process.waitSize, currentWait(process)))
-        return OBELISK_RT_INVALID_FRAME;
+        return TALOS_RT_INVALID_FRAME;
     }
     for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
       if (task.terminated || task.id == context->activeLogicalProcessToken ||
           task.suspendKind != suspendKind)
         continue;
       if (!append(task.id, task.waitSize, designTaskWait(task)))
-        return OBELISK_RT_INVALID_FRAME;
+        return TALOS_RT_INVALID_FRAME;
     }
     outProcesses = std::move(processes);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-obelisk_rt_status
-obelisk_rt_vpi_bind_native_callsite(obelisk_rt_context *context,
-                                    obelisk_rt_process_instance_v1 *callee,
+talos_rt_status
+talos_rt_vpi_bind_native_callsite(talos_rt_context *context,
+                                    talos_rt_process_instance_v1 *callee,
                                     uint64_t callID, uint64_t preparedCallID) {
   if (!context || !callee || !callee->descriptor || callID > INT64_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   auto *metadata = processMetadata(callee);
   if (metadata->magic != kProcessAllocationMagic ||
-      callee->lifecycle != OBELISK_RT_PROCESS_READY)
-    return OBELISK_RT_INVALID_FRAME;
+      callee->lifecycle != TALOS_RT_PROCESS_READY)
+    return TALOS_RT_INVALID_FRAME;
   if (context->vpiState) {
     if (callID != preparedCallID)
-      return OBELISK_RT_INVALID_FRAME;
+      return TALOS_RT_INVALID_FRAME;
     if (callID) {
-      auto status = obelisk_rt_cached_vpi_call_target(
+      auto status = talos_rt_cached_vpi_call_target(
           context, callID, callee->descriptor->handle.id);
-      if (status != OBELISK_RT_OK)
-        return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+      if (status != TALOS_RT_OK)
+        return status == TALOS_RT_EOF ? TALOS_RT_INVALID_ARGUMENT : status;
     }
   }
   metadata->vpiSourceCallID = callID;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-obelisk_rt_vpi_activation_callsite(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_vpi_activation_callsite(talos_rt_context *context,
                                    uint64_t *outCallID) {
   if (outCallID)
     *outCallID = 0;
   if (!context || !outCallID)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   if (context->activeNativeProcess) {
     auto *metadata = processMetadata(context->activeNativeProcess);
     if (metadata->magic != kProcessAllocationMagic)
-      return OBELISK_RT_INVALID_FRAME;
+      return TALOS_RT_INVALID_FRAME;
     *outCallID = metadata->vpiSourceCallID;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (context->activeDesignTask) {
     *outCallID = context->activeDesignTask->vpiSourceCallID;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  return OBELISK_RT_INVALID_LIFECYCLE;
+  return TALOS_RT_INVALID_LIFECYCLE;
 }
 
-obelisk_rt_status
-obelisk_rt_logical_process_origin(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_logical_process_origin(talos_rt_context *context,
                                   uint64_t logicalProcess,
                                   uint64_t *outCodeUnit) noexcept {
   if (!context || !logicalProcess || !outCodeUnit)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outCodeUnit = UINT64_MAX;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
-    if (logicalProcess & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) {
+    if (logicalProcess & TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG) {
       const uint64_t token =
-          logicalProcess & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+          logicalProcess & ~TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG;
       auto found = context->scheduledProcessIndices.find(token);
       if (found == context->scheduledProcessIndices.end() ||
           found->second >= context->scheduledProcesses.size())
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       const auto &process = context->scheduledProcesses[found->second];
       if (process.token != token || !process.instance ||
           context->killedNativeProcesses.count(token) ||
           context->terminatedNativeProcesses.count(token))
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       const auto *origin =
           process.callers.empty() ? process.instance : process.callers.front();
       if (!origin || !origin->descriptor)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       *outCodeUnit = origin->descriptor->handle.id;
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     // Executing bytecode tasks are temporarily removed from the scheduler
     // vector. Their active record retains the same outermost activation.
@@ -351,31 +351,31 @@ obelisk_rt_logical_process_origin(obelisk_rt_context *context,
         task = &context->scheduledDesignTasks[found->second];
     }
     if (!task || task->id != logicalProcess || task->terminated)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     const uint32_t function =
         task->callers.empty() ? task->function : task->callers.front().function;
     const auto &image = context->designBytecodeImage;
     if (function >= image.functionCount)
-      return OBELISK_RT_INVALID_DESIGN;
-    *outCodeUnit = obelisk::designbytecode::functionAt(image, function).id;
-    return OBELISK_RT_OK;
+      return TALOS_RT_INVALID_DESIGN;
+    *outCodeUnit = talos::designbytecode::functionAt(image, function).id;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_OUT_OF_RESOURCES; }
 }
 
 // Query only the blocked portion of a wait. A process whose event occurrence
 // is already latched may still be queued (or explicitly suspended), but it is
 // no longer waiting on that event. This inspection does not evaluate observers
 // or mutate scheduler readiness, subscriptions, or event generations.
-obelisk_rt_status
-obelisk_rt_named_event_waiters(obelisk_rt_context *context, uint64_t eventID,
+talos_rt_status
+talos_rt_named_event_waiters(talos_rt_context *context, uint64_t eventID,
                                std::vector<uint64_t> &outProcesses) {
   outProcesses.clear();
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (eventID == UINT64_MAX)
-    return OBELISK_RT_OK;
-  OBELISK_RT_TRY {
+    return TALOS_RT_OK;
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     std::vector<uint64_t> processes;
     auto inspect = [&](uint64_t token, uint32_t suspendKind,
@@ -384,34 +384,34 @@ obelisk_rt_named_event_waiters(obelisk_rt_context *context, uint64_t eventID,
                        const std::vector<uint64_t> &generations,
                        uint32_t orderIndex, bool orderReady,
                        bool signalTriggered,
-                       const obelisk_rt_execution_descriptor_v1 *execution) {
-      if (suspendKind != OBELISK_RT_SUSPEND_EVENT &&
-          suspendKind != OBELISK_RT_SUSPEND_EVENT_ORDER &&
-          suspendKind != OBELISK_RT_SUSPEND_OBSERVER)
+                       const talos_rt_execution_descriptor_v1 *execution) {
+      if (suspendKind != TALOS_RT_SUSPEND_EVENT &&
+          suspendKind != TALOS_RT_SUSPEND_EVENT_ORDER &&
+          suspendKind != TALOS_RT_SUSPEND_OBSERVER)
         return true;
       if (!frame || waitOffset > frameSize ||
           waitSize > frameSize - waitOffset ||
-          waitOffset % alignof(obelisk_rt_wait_record_v1) != 0)
+          waitOffset % alignof(talos_rt_wait_record_v1) != 0)
         return false;
       const uint8_t *bytes = frame + waitOffset;
       bool matches = false;
-      if (suspendKind == OBELISK_RT_SUSPEND_OBSERVER) {
-        if (waitSize < sizeof(obelisk_rt_computed_wait_record_v1))
+      if (suspendKind == TALOS_RT_SUSPEND_OBSERVER) {
+        if (waitSize < sizeof(talos_rt_computed_wait_record_v1))
           return false;
         const auto *wait =
-            reinterpret_cast<const obelisk_rt_computed_wait_record_v1 *>(bytes);
-        if (!obelisk_rt_validate_computed_wait_record(execution, wait,
+            reinterpret_cast<const talos_rt_computed_wait_record_v1 *>(bytes);
+        if (!talos_rt_validate_computed_wait_record(execution, wait,
                                                       waitSize))
           return false;
         if (signalTriggered)
           return true;
         const auto *observers =
-            computedWaitSpan<obelisk_rt_computed_observer_v1>(
+            computedWaitSpan<talos_rt_computed_observer_v1>(
                 wait, wait->observers_offset, wait->observer_count);
         const auto *dependencies =
-            computedWaitSpan<obelisk_rt_computed_dependency_v1>(
+            computedWaitSpan<talos_rt_computed_dependency_v1>(
                 wait, wait->dependencies_offset, wait->dependency_count);
-        const auto *clauses = computedWaitSpan<obelisk_rt_computed_clause_v1>(
+        const auto *clauses = computedWaitSpan<talos_rt_computed_clause_v1>(
             wait, wait->clauses_offset, wait->clause_count);
         // An iff condition is evaluated when its primary occurs; events
         // mentioned only by that condition do not awaken the process.
@@ -422,28 +422,28 @@ obelisk_rt_named_event_waiters(obelisk_rt_context *context, uint64_t eventID,
             const auto &dependency =
                 dependencies[primary.dependency_begin + offset];
             matches |=
-                dependency.kind == OBELISK_RT_OBSERVER_DEPENDENCY_EVENT &&
+                dependency.kind == TALOS_RT_OBSERVER_DEPENDENCY_EVENT &&
                 dependency.stable_id == eventID;
           }
         }
       } else {
-        if (waitSize < sizeof(obelisk_rt_wait_record_v1))
+        if (waitSize < sizeof(talos_rt_wait_record_v1))
           return false;
         const auto *wait =
-            reinterpret_cast<const obelisk_rt_wait_record_v1 *>(bytes);
-        if (wait->version != OBELISK_RT_VERSION || wait->kind != suspendKind ||
+            reinterpret_cast<const talos_rt_wait_record_v1 *>(bytes);
+        if (wait->version != TALOS_RT_VERSION || wait->kind != suspendKind ||
             wait->flags != 0 || wait->payload != 0 || wait->auxiliary != 0 ||
             wait->count == 0 ||
             wait->count >
-                (waitSize - sizeof(*wait)) / sizeof(obelisk_rt_wait_entry_v1))
+                (waitSize - sizeof(*wait)) / sizeof(talos_rt_wait_entry_v1))
           return false;
         const auto *entries = waitEntries(wait);
         for (uint32_t index = 0; index != wait->count; ++index)
-          if (entries[index].edge != OBELISK_RT_WAIT_EDGE_NONE ||
+          if (entries[index].edge != TALOS_RT_WAIT_EDGE_NONE ||
               entries[index].reserved != 0)
             return false;
         uint32_t first = 0;
-        if (suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER) {
+        if (suspendKind == TALOS_RT_SUSPEND_EVENT_ORDER) {
           if (orderIndex > wait->count)
             return false;
           if (orderReady)
@@ -473,7 +473,7 @@ obelisk_rt_named_event_waiters(obelisk_rt_context *context, uint64_t eventID,
     };
     for (const ScheduledProcess &process : context->scheduledProcesses) {
       const uint64_t token =
-          OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token;
+          TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG | process.token;
       if (!process.instance || !process.started ||
           process.instance == context->activeNativeProcess ||
           token == context->activeLogicalProcessToken)
@@ -485,7 +485,7 @@ obelisk_rt_named_event_waiters(obelisk_rt_context *context, uint64_t eventID,
               process.waitSize, process.waitGenerations, process.waitOrderIndex,
               process.waitOrderReady || process.waitOrderFailed,
               process.signalTriggered, process.instance->descriptor->execution))
-        return OBELISK_RT_INVALID_FRAME;
+        return TALOS_RT_INVALID_FRAME;
     }
     for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
       if (task.terminated || !task.started ||
@@ -497,25 +497,25 @@ obelisk_rt_named_event_waiters(obelisk_rt_context *context, uint64_t eventID,
                    task.waitGenerations, task.waitOrderIndex,
                    task.waitOrderReady || task.waitOrderFailed,
                    task.signalTriggered, context->execution))
-        return OBELISK_RT_INVALID_FRAME;
+        return TALOS_RT_INVALID_FRAME;
     }
     outProcesses = std::move(processes);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-bool obelisk_rt_initialize_event_order_wait_unlocked(
-    obelisk_rt_context *context, const obelisk_rt_wait_record_v1 *wait,
+bool talos_rt_initialize_event_order_wait_unlocked(
+    talos_rt_context *context, const talos_rt_wait_record_v1 *wait,
     uint32_t &index, bool &ready, bool &failed) {
   index = 0;
   ready = false;
   failed = false;
-  if (!context || !wait || wait->kind != OBELISK_RT_SUSPEND_EVENT_ORDER ||
+  if (!context || !wait || wait->kind != TALOS_RT_SUSPEND_EVENT_ORDER ||
       wait->count == 0)
     return false;
-  const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
+  const talos_rt_wait_entry_v1 *entries = waitEntries(wait);
   auto triggeredThisSlot = [&](uint64_t stableID) {
     auto found = context->events.find(stableID);
     return found != context->events.end() && found->second.generation != 0 &&
@@ -539,15 +539,15 @@ bool obelisk_rt_initialize_event_order_wait_unlocked(
   return true;
 }
 
-static bool updateEventOrderWait(const obelisk_rt_wait_record_v1 *wait,
+static bool updateEventOrderWait(const talos_rt_wait_record_v1 *wait,
                                  uint64_t stableID, uint32_t &index,
                                  bool &ready, bool &failed) {
-  if (!wait || wait->kind != OBELISK_RT_SUSPEND_EVENT_ORDER ||
+  if (!wait || wait->kind != TALOS_RT_SUSPEND_EVENT_ORDER ||
       wait->count == 0 || index >= wait->count)
     return false;
   if (ready)
     return true;
-  const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
+  const talos_rt_wait_entry_v1 *entries = waitEntries(wait);
 
   if (entries[index].stable_id == stableID) {
     ++index;
@@ -579,45 +579,45 @@ static bool updateEventOrderWait(const obelisk_rt_wait_record_v1 *wait,
   return true;
 }
 
-bool obelisk_rt_notify_event_order_waiters_unlocked(obelisk_rt_context *context,
+bool talos_rt_notify_event_order_waiters_unlocked(talos_rt_context *context,
                                                     uint64_t stableID) {
   if (!context)
     return false;
   for (ScheduledProcess &process : context->scheduledProcesses) {
     if (!process.instance ||
-        process.suspendKind != OBELISK_RT_SUSPEND_EVENT_ORDER ||
+        process.suspendKind != TALOS_RT_SUSPEND_EVENT_ORDER ||
         process.waitOrderReady)
       continue;
     if (!updateEventOrderWait(currentWait(process), stableID,
                               process.waitOrderIndex, process.waitOrderReady,
                               process.waitOrderFailed)) {
-      context->schedulerStatus = OBELISK_RT_INVALID_FRAME;
+      context->schedulerStatus = TALOS_RT_INVALID_FRAME;
       return false;
     }
   }
   for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
-    if (task.terminated || task.suspendKind != OBELISK_RT_SUSPEND_EVENT_ORDER ||
+    if (task.terminated || task.suspendKind != TALOS_RT_SUSPEND_EVENT_ORDER ||
         task.waitOrderReady)
       continue;
     if (!updateEventOrderWait(designTaskWait(task), stableID,
                               task.waitOrderIndex, task.waitOrderReady,
                               task.waitOrderFailed)) {
-      context->schedulerStatus = OBELISK_RT_INVALID_FRAME;
+      context->schedulerStatus = TALOS_RT_INVALID_FRAME;
       return false;
     }
   }
   return true;
 }
 
-static obelisk_rt_status
-semaphoreQueuedAcquisitionReady(obelisk_rt_context *context,
-                                obelisk_rt_object_v1 *semaphore, bool &ready) {
+static talos_rt_status
+semaphoreQueuedAcquisitionReady(talos_rt_context *context,
+                                talos_rt_object_v1 *semaphore, bool &ready) {
   ready = false;
   uint64_t firstSequence = UINT64_MAX;
-  const obelisk_rt_wait_record_v1 *first = nullptr;
+  const talos_rt_wait_record_v1 *first = nullptr;
   auto consider = [&](bool live, uint32_t suspendKind, uint64_t sequence,
-                      const obelisk_rt_wait_record_v1 *wait) {
-    if (live && suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE && sequence != 0 &&
+                      const talos_rt_wait_record_v1 *wait) {
+    if (live && suspendKind == TALOS_RT_SUSPEND_SEMAPHORE && sequence != 0 &&
         sequence < firstSequence && semaphoreWaitTargets(wait, semaphore)) {
       firstSequence = sequence;
       first = wait;
@@ -631,75 +631,75 @@ semaphoreQueuedAcquisitionReady(obelisk_rt_context *context,
     consider(!task.terminated, task.suspendKind, task.waitSequence,
              designTaskWait(task));
   if (!first)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (first->flags != 0 || first->payload > UINT32_MAX ||
       static_cast<int32_t>(first->payload) < 0 || first->auxiliary != 0)
-    return OBELISK_RT_INVALID_FRAME;
-  return obelisk_rt_semaphore_keys_ready(
+    return TALOS_RT_INVALID_FRAME;
+  return talos_rt_semaphore_keys_ready(
       semaphore, static_cast<int32_t>(first->payload), ready);
 }
 
-obelisk_rt_status
-obelisk_rt_semaphore_wait_ready(obelisk_rt_context *context,
-                                obelisk_rt_object_v1 *semaphore, int32_t keys,
+talos_rt_status
+talos_rt_semaphore_wait_ready(talos_rt_context *context,
+                                talos_rt_object_v1 *semaphore, int32_t keys,
                                 uint64_t waitSequence, bool &ready) {
   ready = false;
   if (!context || !semaphore || waitSequence == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   auto isEarlier = [&](uint32_t suspendKind, uint64_t sequence,
-                       const obelisk_rt_wait_record_v1 *wait) {
-    if (suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE || sequence == 0 ||
+                       const talos_rt_wait_record_v1 *wait) {
+    if (suspendKind != TALOS_RT_SUSPEND_SEMAPHORE || sequence == 0 ||
         sequence >= waitSequence || !wait || wait->count != 1)
       return false;
-    const obelisk_rt_wait_entry_v1 *entry = waitEntries(wait);
-    return obelisk_rt_object_from_managed_word(entry[0].stable_id) == semaphore;
+    const talos_rt_wait_entry_v1 *entry = waitEntries(wait);
+    return talos_rt_object_from_managed_word(entry[0].stable_id) == semaphore;
   };
   for (const ScheduledProcess &process : context->scheduledProcesses)
     if (process.instance && isEarlier(process.suspendKind, process.waitSequence,
                                       currentWait(process)))
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
   for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
     if (!task.terminated &&
         isEarlier(task.suspendKind, task.waitSequence, designTaskWait(task)))
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
   }
-  return obelisk_rt_semaphore_keys_ready(semaphore, keys, ready);
+  return talos_rt_semaphore_keys_ready(semaphore, keys, ready);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_semaphore_try_get(obelisk_rt_object_v1 *semaphore, int32_t keys,
+extern "C" talos_rt_status
+talos_rt_v1_semaphore_try_get(talos_rt_object_v1 *semaphore, int32_t keys,
                                 uint32_t *outSuccess) {
   if (!semaphore || !outSuccess)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outSuccess = 0;
   if (keys < 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_context *context = obelisk_rt_managed_object_context(semaphore);
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_context *context = talos_rt_managed_object_context(semaphore);
   if (!context)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   ContextMutexLock lock(context);
   if (keys != 0) {
     bool queuedAcquisitionReady = false;
-    obelisk_rt_status status = semaphoreQueuedAcquisitionReady(
+    talos_rt_status status = semaphoreQueuedAcquisitionReady(
         context, semaphore, queuedAcquisitionReady);
-    if (status != OBELISK_RT_OK || queuedAcquisitionReady)
+    if (status != TALOS_RT_OK || queuedAcquisitionReady)
       return status;
   }
-  return obelisk_rt_semaphore_try_get_raw(semaphore, keys, outSuccess);
+  return talos_rt_semaphore_try_get_raw(semaphore, keys, outSuccess);
 }
 
-obelisk_rt_status
-obelisk_rt_semaphore_wait_acquire(const obelisk_rt_wait_record_v1 *wait,
+talos_rt_status
+talos_rt_semaphore_wait_acquire(const talos_rt_wait_record_v1 *wait,
                                   bool &acquired) {
   acquired = false;
   if (!wait || wait->flags != 0 || wait->count != 1 ||
       wait->payload > UINT32_MAX || static_cast<int32_t>(wait->payload) < 0 ||
       wait->auxiliary != 0)
-    return OBELISK_RT_INVALID_FRAME;
-  const obelisk_rt_wait_entry_v1 *entry = waitEntries(wait);
+    return TALOS_RT_INVALID_FRAME;
+  const talos_rt_wait_entry_v1 *entry = waitEntries(wait);
   uint32_t success = 0;
-  obelisk_rt_status status = obelisk_rt_semaphore_try_get_raw(
-      obelisk_rt_object_from_managed_word(entry[0].stable_id),
+  talos_rt_status status = talos_rt_semaphore_try_get_raw(
+      talos_rt_object_from_managed_word(entry[0].stable_id),
       static_cast<int32_t>(wait->payload), &success);
   acquired = success != 0;
   return status;
@@ -707,19 +707,19 @@ obelisk_rt_semaphore_wait_acquire(const obelisk_rt_wait_record_v1 *wait,
 
 template <bool RecordSchedulerEffects>
 __attribute__((always_inline)) static inline bool
-nativeWaitReadyImpl(obelisk_rt_context &context,
+nativeWaitReadyImpl(talos_rt_context &context,
                     const ScheduledProcess &process) {
   if constexpr (RecordSchedulerEffects)
     if (context.signalDiagnosticsEnabled)
       ++context.signalDiagnostics.readinessCalls;
-  const obelisk_rt_wait_record_v1 *wait = currentWait(process);
+  const talos_rt_wait_record_v1 *wait = currentWait(process);
   if (!wait)
     return false;
-  const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
+  const talos_rt_wait_entry_v1 *entries = waitEntries(wait);
   switch (process.suspendKind) {
-  case OBELISK_RT_SUSPEND_OBSERVER:
+  case TALOS_RT_SUSPEND_OBSERVER:
     return process.signalTriggered;
-  case OBELISK_RT_SUSPEND_EVENT:
+  case TALOS_RT_SUSPEND_EVENT:
     if (process.waitGenerations.size() != wait->count)
       return false;
     for (uint32_t index = 0; index != wait->count; ++index) {
@@ -730,39 +730,39 @@ nativeWaitReadyImpl(obelisk_rt_context &context,
         return true;
     }
     return false;
-  case OBELISK_RT_SUSPEND_EVENT_ORDER:
+  case TALOS_RT_SUSPEND_EVENT_ORDER:
     return process.waitOrderReady;
-  case OBELISK_RT_SUSPEND_MAILBOX: {
+  case TALOS_RT_SUSPEND_MAILBOX: {
     if (wait->count != 1)
       return false;
     bool ready = false;
-    obelisk_rt_status status = obelisk_rt_mailbox_wait_ready(
-        obelisk_rt_object_from_managed_word(entries[0].stable_id), wait->flags,
+    talos_rt_status status = talos_rt_mailbox_wait_ready(
+        talos_rt_object_from_managed_word(entries[0].stable_id), wait->flags,
         ready);
     if constexpr (RecordSchedulerEffects)
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         context.schedulerStatus = status;
-    return status == OBELISK_RT_OK && ready;
+    return status == TALOS_RT_OK && ready;
   }
-  case OBELISK_RT_SUSPEND_SEMAPHORE: {
+  case TALOS_RT_SUSPEND_SEMAPHORE: {
     if (wait->count != 1 || wait->payload > UINT32_MAX)
       return false;
     bool ready = false;
-    obelisk_rt_status status = obelisk_rt_semaphore_wait_ready(
-        &context, obelisk_rt_object_from_managed_word(entries[0].stable_id),
+    talos_rt_status status = talos_rt_semaphore_wait_ready(
+        &context, talos_rt_object_from_managed_word(entries[0].stable_id),
         static_cast<int32_t>(wait->payload), process.waitSequence, ready);
     if constexpr (RecordSchedulerEffects)
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         context.schedulerStatus = status;
-    return status == OBELISK_RT_OK && ready;
+    return status == TALOS_RT_OK && ready;
   }
-  case OBELISK_RT_SUSPEND_AWAIT:
-    return wait->count == 1 && obelisk_rt_logical_process_terminated(
+  case TALOS_RT_SUSPEND_AWAIT:
+    return wait->count == 1 && talos_rt_logical_process_terminated(
                                    &context, entries[0].stable_id);
-  case OBELISK_RT_SUSPEND_JOIN: {
+  case TALOS_RT_SUSPEND_JOIN: {
     bool ready = wait->flags == 0;
     for (uint32_t index = 0; index != wait->count; ++index) {
-      bool terminated = obelisk_rt_logical_process_terminated(
+      bool terminated = talos_rt_logical_process_terminated(
           &context, entries[index].stable_id);
       if (wait->flags == 0)
         ready &= terminated;
@@ -771,9 +771,9 @@ nativeWaitReadyImpl(obelisk_rt_context &context,
     }
     return ready;
   }
-  case OBELISK_RT_SUSPEND_FRONTIER:
+  case TALOS_RT_SUSPEND_FRONTIER:
     return process.observedEpoch != context.schedulerEpoch;
-  case OBELISK_RT_SUSPEND_CHILDREN: {
+  case TALOS_RT_SUSPEND_CHILDREN: {
     uint64_t parent = kNativeLogicalProcessTag | process.token;
     for (const ScheduledProcess &child : context.scheduledProcesses)
       if (child.instance && child.parent == parent)
@@ -783,7 +783,7 @@ nativeWaitReadyImpl(obelisk_rt_context &context,
         return false;
     return true;
   }
-  case OBELISK_RT_SUSPEND_FOREVER:
+  case TALOS_RT_SUSPEND_FOREVER:
     return false;
   default:
     return false;
@@ -792,38 +792,38 @@ nativeWaitReadyImpl(obelisk_rt_context &context,
 
 template <bool RecordSchedulerEffects>
 __attribute__((always_inline)) static inline bool
-nativeProcessReadyImpl(obelisk_rt_context &context,
+nativeProcessReadyImpl(talos_rt_context &context,
                        const ScheduledProcess &process) {
   if (!schedulerRegionEligible(&context, process.queuedRegion))
     return false;
   if (process.explicitlySuspended)
     return false;
-  if (!process.started || process.suspendKind == OBELISK_RT_SUSPEND_NONE)
+  if (!process.started || process.suspendKind == TALOS_RT_SUSPEND_NONE)
     return true;
-  if (process.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+  if (process.suspendKind == TALOS_RT_SUSPEND_DELAY)
     return process.wakeTime <= context.schedulerTime;
   // Signal subscriptions are installed only after action/wait validation.
   // Publications latch their readiness; the serialized wait is needed again
   // when adopting a new suspension, not on every ready-queue comparison.
   // Keep this path ahead of wait-probe diagnostics, as installed nodes were
   // before unification. All executors now use the same constant-time check.
-  if (process.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
-      process.suspendKind == OBELISK_RT_SUSPEND_EDGE)
+  if (process.suspendKind == TALOS_RT_SUSPEND_CHANGE ||
+      process.suspendKind == TALOS_RT_SUSPEND_EDGE)
     return process.signalTriggered ||
            (process.signalLatch && process.signalLatch->triggered);
   return nativeWaitReadyImpl<RecordSchedulerEffects>(context, process);
 }
 
-bool nativeProcessReady(obelisk_rt_context &context,
+bool nativeProcessReady(talos_rt_context &context,
                         const ScheduledProcess &process) {
   return nativeProcessReadyImpl<true>(context, process);
 }
 
 static PostObservedPromotion
-promotePostObservedProcess(obelisk_rt_context &context, uint64_t token) {
+promotePostObservedProcess(talos_rt_context &context, uint64_t token) {
   ScheduledProcess *process = findScheduledProcess(&context, token);
   if (!process || !process->instance || !process->postObserved ||
-      process->queuedRegion != OBELISK_RT_REGION_OBSERVED)
+      process->queuedRegion != TALOS_RT_REGION_OBSERVED)
     return PostObservedPromotion::Stale;
   if (!nativeProcessReadyImpl<false>(context, *process))
     return PostObservedPromotion::Waiting;
@@ -833,8 +833,8 @@ promotePostObservedProcess(obelisk_rt_context &context, uint64_t token) {
   return PostObservedPromotion::Promoted;
 }
 
-void obelisk_rt_promote_post_observed_resumptions_unlocked(
-    obelisk_rt_context *context) {
+void talos_rt_promote_post_observed_resumptions_unlocked(
+    talos_rt_context *context) {
   std::vector<uint64_t> &pending = context->postObservedResumptions;
   size_t kept = 0;
   bool promoted = false;
@@ -843,7 +843,7 @@ void obelisk_rt_promote_post_observed_resumptions_unlocked(
         (logical & kNativeLogicalProcessTag) != 0
             ? promotePostObservedProcess(*context,
                                          logical & ~kNativeLogicalProcessTag)
-            : obelisk_rt_promote_post_observed_design_task_unlocked(context,
+            : talos_rt_promote_post_observed_design_task_unlocked(context,
                                                                     logical);
     if (result == PostObservedPromotion::Waiting)
       pending[kept++] = logical;
@@ -859,17 +859,17 @@ void obelisk_rt_promote_post_observed_resumptions_unlocked(
 /// the delay calendar admits a future delay when that time slot begins (see
 /// admitDueProcessDelaysUnlocked). Readiness never depends on visiting such a
 /// process earlier (IEEE 1800-2023 4.4-4.5).
-static bool indexedBlocked(const obelisk_rt_context &context,
+static bool indexedBlocked(const talos_rt_context &context,
                            const ScheduledProcess &process) {
   if (!process.instance || !process.started || process.signalTriggered)
     return false;
   // Only Active-phase delays are kept in the calendar heap.
-  if (process.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+  if (process.suspendKind == TALOS_RT_SUSPEND_DELAY)
     return process.phase == 0 && process.wakeTime > context.schedulerTime;
-  bool signalSuspend = process.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
-                       process.suspendKind == OBELISK_RT_SUSPEND_EDGE;
+  bool signalSuspend = process.suspendKind == TALOS_RT_SUSPEND_CHANGE ||
+                       process.suspendKind == TALOS_RT_SUSPEND_EDGE;
   return (signalSuspend ||
-          process.suspendKind == OBELISK_RT_SUSPEND_OBSERVER) &&
+          process.suspendKind == TALOS_RT_SUSPEND_OBSERVER) &&
          (!process.signalLatch || !process.signalLatch->triggered);
 }
 
@@ -877,7 +877,7 @@ static bool indexedBlocked(const obelisk_rt_context &context,
 // and NBA barrier at the current numeric time, but before true Postponed work.
 // The stored queued/home region remains Observed so notifier publication is
 // legal and no process ABI or event-region ordinal changes.
-static uint32_t schedulerOrderingRegion(const obelisk_rt_context &context,
+static uint32_t schedulerOrderingRegion(const talos_rt_context &context,
                                         const ScheduledProcess &process,
                                         bool signalResume) {
   // Registering a clock-occurrence wait creates this optional feature state
@@ -886,16 +886,16 @@ static uint32_t schedulerOrderingRegion(const obelisk_rt_context &context,
   // the check for installed plans, which can own waits without subscriptions.
   if (signalResume &&
       (context.clockOccurrences || context.nativeSchedulePlan) &&
-      obelisk_rt_is_slot_final_clock_occurrence_wait(currentWait(process)))
-    return OBELISK_RT_REGION_POSTPONED;
-  return process.queuedRegion == OBELISK_RT_REGION_POSTPONED
-             ? OBELISK_RT_REGION_POSTPONED + 1
+      talos_rt_is_slot_final_clock_occurrence_wait(currentWait(process)))
+    return TALOS_RT_REGION_POSTPONED;
+  return process.queuedRegion == TALOS_RT_REGION_POSTPONED
+             ? TALOS_RT_REGION_POSTPONED + 1
              : process.queuedRegion;
 }
 
-void indexScheduledProcessDelayUnlocked(obelisk_rt_context *context,
+void indexScheduledProcessDelayUnlocked(talos_rt_context *context,
                                         const ScheduledProcess &process) {
-  if (process.suspendKind != OBELISK_RT_SUSPEND_DELAY || process.phase != 0)
+  if (process.suspendKind != TALOS_RT_SUSPEND_DELAY || process.phase != 0)
     return;
   // AOT advances its own calendar and need not query the generic heap, so
   // lazy deletion on nextScheduledProcessDelayUnlocked alone is unbounded.
@@ -908,7 +908,7 @@ void indexScheduledProcessDelayUnlocked(obelisk_rt_context *context,
     heap.clear();
     for (const ScheduledProcess &live : context->scheduledProcesses)
       if (live.instance && live.started && live.phase == 0 &&
-          live.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+          live.suspendKind == TALOS_RT_SUSPEND_DELAY)
         heap.emplace_back(live.wakeTime, live.token);
     std::make_heap(heap.begin(), heap.end(), std::greater<>());
     return;
@@ -923,8 +923,8 @@ void indexScheduledProcessDelayUnlocked(obelisk_rt_context *context,
 /// candidate again. Called whenever a time slot begins, before any candidate
 /// scan of that slot; delays that expire within a slot (#0) never leave the
 /// candidates.
-static obelisk_rt_status
-admitDueProcessDelaysUnlocked(obelisk_rt_context *context) {
+static talos_rt_status
+admitDueProcessDelaysUnlocked(talos_rt_context *context) {
   auto &heap = context->scheduledProcessDelayHeap;
   bool admitted = false;
   while (!heap.empty() && heap.front().first <= context->schedulerTime) {
@@ -938,11 +938,11 @@ admitDueProcessDelaysUnlocked(obelisk_rt_context *context) {
     const ScheduledProcess &process =
         context->scheduledProcesses[indexed->second];
     if (process.instance && process.token == token && process.phase == 0 &&
-        process.started && process.suspendKind == OBELISK_RT_SUSPEND_DELAY &&
+        process.started && process.suspendKind == TALOS_RT_SUSPEND_DELAY &&
         process.wakeTime == wakeTime) {
-      OBELISK_RT_TRY { context->nativePollCandidates.insert(token); }
-      OBELISK_RT_CATCH(const std::bad_alloc &) {
-        context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+      TALOS_RT_TRY { context->nativePollCandidates.insert(token); }
+      TALOS_RT_CATCH(const std::bad_alloc &) {
+        context->schedulerStatus = TALOS_RT_OUT_OF_MEMORY;
         return context->schedulerStatus;
       }
       admitted = true;
@@ -950,11 +950,11 @@ admitDueProcessDelaysUnlocked(obelisk_rt_context *context) {
   }
   if (admitted && ++context->schedulerSelectionGeneration == 0)
     context->schedulerSelectionGeneration = 1;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 std::optional<uint64_t>
-nextScheduledProcessDelayUnlocked(obelisk_rt_context *context) {
+nextScheduledProcessDelayUnlocked(talos_rt_context *context) {
   auto &heap = context->scheduledProcessDelayHeap;
   while (!heap.empty()) {
     auto [wakeTime, token] = heap.front();
@@ -966,7 +966,7 @@ nextScheduledProcessDelayUnlocked(obelisk_rt_context *context) {
           context->scheduledProcesses[indexed->second];
       current = process.instance && process.token == token &&
                 process.phase == 0 && process.started &&
-                process.suspendKind == OBELISK_RT_SUSPEND_DELAY &&
+                process.suspendKind == TALOS_RT_SUSPEND_DELAY &&
                 process.wakeTime == wakeTime;
     }
     if (current)
@@ -977,24 +977,24 @@ nextScheduledProcessDelayUnlocked(obelisk_rt_context *context) {
   return std::nullopt;
 }
 
-obelisk_rt_status obelisk_rt_snapshot_future_time_queues_unlocked(
-    const obelisk_rt_context *context, std::vector<uint64_t> &times) {
+talos_rt_status talos_rt_snapshot_future_time_queues_unlocked(
+    const talos_rt_context *context, std::vector<uint64_t> &times) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   times.clear();
   const uint64_t now = context->schedulerTime;
   auto append = [&](uint64_t time) {
     if (time > now)
       times.push_back(time);
   };
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     for (const ScheduledProcess &process : context->scheduledProcesses)
       if (process.instance && process.phase == 0 && process.started &&
-          process.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+          process.suspendKind == TALOS_RT_SUSPEND_DELAY)
         append(process.wakeTime);
     for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
       if (!task.terminated && task.phase == 0 && task.started &&
-          task.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+          task.suspendKind == TALOS_RT_SUSPEND_DELAY)
         append(task.wakeTime);
     for (const ScheduledNBA &update : context->scheduledNBAs)
       if (!update.cancelled)
@@ -1008,7 +1008,7 @@ obelisk_rt_status obelisk_rt_snapshot_future_time_queues_unlocked(
     for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
       append(event.dueTime);
     if (const ReplaceableEventFeatureState *replaceable =
-            obelisk_rt_replaceable_events(context))
+            talos_rt_replaceable_events(context))
       for (const auto &entry : replaceable->calendar)
         append(entry.first.first);
     for (const auto &entry : context->scheduledPassSwitchEvents)
@@ -1016,32 +1016,32 @@ obelisk_rt_status obelisk_rt_snapshot_future_time_queues_unlocked(
 
     std::sort(times.begin(), times.end());
     times.erase(std::unique(times.begin(), times.end()), times.end());
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
+  TALOS_RT_CATCH(const std::bad_alloc &) {
     times.clear();
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     times.clear();
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   }
 }
 
-bool obelisk_rt_current_time_queue_pending_unlocked(
-    obelisk_rt_context *context) {
+bool talos_rt_current_time_queue_pending_unlocked(
+    talos_rt_context *context) {
   if (!context)
     return false;
   const uint64_t now = context->schedulerTime;
   // The VPI read-only synchronization point precedes Postponed. An event
   // currently executing there (or later) therefore cannot keep the current
   // time queue visible.
-  if (context->activeExecRegion < OBELISK_RT_REGION_POSTPONED)
+  if (context->activeExecRegion < TALOS_RT_REGION_POSTPONED)
     return true;
 
   uint32_t activePhase = context->schedulerRunningFinals ? 1u : 0u;
   uint32_t unstartedActorRegion =
-      obelisk_rt_peek_unstarted_actor_region(context, activePhase);
+      talos_rt_peek_unstarted_actor_region(context, activePhase);
   for (const ScheduledProcess &process : context->scheduledProcesses) {
     if (!process.instance || process.phase != activePhase)
       continue;
@@ -1055,15 +1055,15 @@ bool obelisk_rt_current_time_queue_pending_unlocked(
       continue;
     if (process.urgent ||
         schedulerOrderingRegion(*context, process, signalResume) <=
-            OBELISK_RT_REGION_POSTPONED)
+            TALOS_RT_REGION_POSTPONED)
       return true;
   }
-  if (obelisk_rt_design_task_pending_before_read_only_unlocked(context))
+  if (talos_rt_design_task_pending_before_read_only_unlocked(context))
     return true;
 
   for (const ScheduledNBA &update : context->scheduledNBAs)
     if (!update.cancelled && update.dueTime <= now &&
-        update.execRegion < OBELISK_RT_REGION_POSTPONED)
+        update.execRegion < TALOS_RT_REGION_POSTPONED)
       return true;
   if (!context->scheduledInertialPathNBAs.empty() &&
       context->scheduledInertialPathNBAs.begin()->first.first <= now)
@@ -1072,10 +1072,10 @@ bool obelisk_rt_current_time_queue_pending_unlocked(
     return std::any_of(entries.begin(), entries.end(),
                        [now](const auto &entry) {
                          return entry.dueTime <= now &&
-                                entry.execRegion < OBELISK_RT_REGION_POSTPONED;
+                                entry.execRegion < TALOS_RT_REGION_POSTPONED;
                        });
   };
-  for (uint32_t region : {OBELISK_RT_REGION_NBA, OBELISK_RT_REGION_RE_NBA})
+  for (uint32_t region : {TALOS_RT_REGION_NBA, TALOS_RT_REGION_RE_NBA})
     if (const ScheduledManagedNBA *update =
             context->scheduledManagedNBAs.front(region);
         update && update->dueTime <= now)
@@ -1084,13 +1084,13 @@ bool obelisk_rt_current_time_queue_pending_unlocked(
       hasDueBeforeReadOnly(context->scheduledDesignEvents))
     return true;
   if (const ReplaceableEventFeatureState *replaceable =
-          obelisk_rt_replaceable_events(context);
+          talos_rt_replaceable_events(context);
       replaceable &&
       std::any_of(replaceable->calendar.begin(), replaceable->calendar.end(),
                   [now](const auto &entry) {
                     return entry.first.first <= now &&
                            entry.second.execRegion <
-                               OBELISK_RT_REGION_POSTPONED;
+                               TALOS_RT_REGION_POSTPONED;
                   }))
     return true;
   if (!context->scheduledPassSwitchEvents.empty() &&
@@ -1099,7 +1099,7 @@ bool obelisk_rt_current_time_queue_pending_unlocked(
 
   for (const StaticNBAAccumulator &accumulator : context->staticNBAAccumulators)
     if (accumulator.valid &&
-        accumulator.execRegion < OBELISK_RT_REGION_POSTPONED)
+        accumulator.execRegion < TALOS_RT_REGION_POSTPONED)
       return true;
   if (context->nativeScheduleHasGeneratedNBAAccumulators)
     for (uint32_t root = 0; root != context->nativeScheduleNBARootCount;
@@ -1110,14 +1110,14 @@ bool obelisk_rt_current_time_queue_pending_unlocked(
           context->nativeScheduleNBARoots[root].generated_accumulator,
           context->twoState());
       if (generated && hasGeneratedNBAStages(*generated) &&
-          generated->exec_region < OBELISK_RT_REGION_POSTPONED)
+          generated->exec_region < TALOS_RT_REGION_POSTPONED)
         return true;
     }
   return false;
 }
 
 static void
-refreshNativeSchedulerReadinessUnlocked(obelisk_rt_context *context) {
+refreshNativeSchedulerReadinessUnlocked(talos_rt_context *context) {
   context->nativePollCandidates.clear();
   context->scheduledProcessDelayHeap.clear();
   for (const ScheduledProcess &process : context->scheduledProcesses) {
@@ -1127,7 +1127,7 @@ refreshNativeSchedulerReadinessUnlocked(obelisk_rt_context *context) {
     // generic calendar. Rebuild it from the restored actors at handoff too,
     // otherwise stale heap entries can hide every future clock edge.
     if (process.instance && process.started && process.phase == 0 &&
-        process.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+        process.suspendKind == TALOS_RT_SUSPEND_DELAY)
       context->scheduledProcessDelayHeap.emplace_back(process.wakeTime,
                                                       process.token);
   }
@@ -1135,7 +1135,7 @@ refreshNativeSchedulerReadinessUnlocked(obelisk_rt_context *context) {
                  context->scheduledProcessDelayHeap.end(), std::greater<>());
 }
 
-void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context) {
+void rebuildNativeSchedulerIndexUnlocked(talos_rt_context *context) {
   context->scheduledProcessIndices.clear();
   context->scheduledProcessTokens.clear();
   std::fill(context->nativeScheduleActorIndices.begin(),
@@ -1156,8 +1156,8 @@ void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context) {
   refreshNativeSchedulerReadinessUnlocked(context);
 }
 
-void obelisk_rt_erase_automatic_bookkeeping_unlocked(
-    obelisk_rt_context *context, uint32_t automaticID) {
+void talos_rt_erase_automatic_bookkeeping_unlocked(
+    talos_rt_context *context, uint32_t automaticID) {
   if (!context)
     return;
   if (auto state = context->nativeAutomaticStates.find(automaticID);
@@ -1180,8 +1180,8 @@ void obelisk_rt_erase_automatic_bookkeeping_unlocked(
       ++snapshot;
   }
 
-  uint64_t first = obelisk_rt_stable_handle_encode(
-      OBELISK_RT_STABLE_HANDLE_AUTOMATIC, automaticID, 0);
+  uint64_t first = talos_rt_stable_handle_encode(
+      TALOS_RT_STABLE_HANDLE_AUTOMATIC, automaticID, 0);
   if (first == UINT64_MAX)
     return;
   uint64_t last = first | UINT32_MAX;
@@ -1189,8 +1189,8 @@ void obelisk_rt_erase_automatic_bookkeeping_unlocked(
                         context->events.upper_bound(last));
 }
 
-void obelisk_rt_invalidate_signal_snapshots_unlocked(
-    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth) {
+void talos_rt_invalidate_signal_snapshots_unlocked(
+    talos_rt_context *context, uint64_t bitOffset, uint64_t bitWidth) {
   if (!context || bitWidth == 0)
     return;
   // Snapshots are stored per canonical stable bit handle. For the common
@@ -1217,15 +1217,15 @@ void obelisk_rt_invalidate_signal_snapshots_unlocked(
       ++snapshot;
 }
 
-static obelisk_rt_status
-createProcessInstance(obelisk_rt_context *context,
-                      const obelisk_rt_process_descriptor_v1 *descriptor,
-                      obelisk_rt_process_instance_v1 **outInstance) {
+static talos_rt_status
+createProcessInstance(talos_rt_context *context,
+                      const talos_rt_process_descriptor_v1 *descriptor,
+                      talos_rt_process_instance_v1 **outInstance) {
   if (!outInstance)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outInstance = nullptr;
   if (!descriptor)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
 
   uint64_t nativeSize;
   uint64_t nativeAlignment;
@@ -1233,11 +1233,11 @@ createProcessInstance(obelisk_rt_context *context,
   uint64_t scratchSize;
   if (context && descriptor->execution &&
       context->execution != descriptor->execution)
-    return OBELISK_RT_INVALID_DESIGN;
-  obelisk_rt_status status =
+    return TALOS_RT_INVALID_DESIGN;
+  talos_rt_status status =
       validateDescriptor(*descriptor, context, nativeSize, nativeAlignment,
                          scratchOffset, scratchSize);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
 
   uint64_t headerSize;
@@ -1247,7 +1247,7 @@ createProcessInstance(obelisk_rt_context *context,
   uint64_t frameAlignment = std::max<uint64_t>(
       descriptor->frame_layout->frame_alignment, nativeAlignment);
   uint64_t allocationAlignment = std::max<uint64_t>(
-      {alignof(obelisk_rt_process_instance_v1), frameAlignment, uint64_t{16}});
+      {alignof(talos_rt_process_instance_v1), frameAlignment, uint64_t{16}});
   if (addOverflow(kProcessAllocationMetadataOffset,
                   sizeof(ProcessAllocationMetadata), headerSize) ||
       alignUp(headerSize, frameAlignment, frameOffset) ||
@@ -1255,16 +1255,16 @@ createProcessInstance(obelisk_rt_context *context,
       addOverflow(frameOffset, tailSize, totalSize) ||
       alignUp(totalSize, allocationAlignment, totalSize) ||
       totalSize > std::numeric_limits<size_t>::max())
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
 
   void *allocation = allocateProcessMemory(
       static_cast<size_t>(totalSize), static_cast<size_t>(allocationAlignment));
   if (!allocation)
-    return OBELISK_RT_OUT_OF_MEMORY;
+    return TALOS_RT_OUT_OF_MEMORY;
   std::memset(allocation, 0, static_cast<size_t>(totalSize));
   void *frame = static_cast<uint8_t *>(allocation) + frameOffset;
   auto *instance = ::new (allocation)
-      obelisk_rt_process_instance_v1{descriptor,
+      talos_rt_process_instance_v1{descriptor,
                                      frame,
                                      frame,
                                      descriptor->frame_layout->frame_size,
@@ -1273,8 +1273,8 @@ createProcessInstance(obelisk_rt_context *context,
                                      nullptr,
                                      0,
                                      0,
-                                     OBELISK_RT_PROCESS_READY,
-                                     OBELISK_RT_OK,
+                                     TALOS_RT_PROCESS_READY,
+                                     TALOS_RT_OK,
                                      nullptr,
                                      nullptr,
                                      nullptr,
@@ -1285,84 +1285,84 @@ createProcessInstance(obelisk_rt_context *context,
           kProcessAllocationMagic, static_cast<size_t>(totalSize),
           static_cast<size_t>(allocationAlignment), nullptr};
   *outInstance = instance;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create(
-    const obelisk_rt_process_descriptor_v1 *descriptor,
-    obelisk_rt_process_instance_v1 **outInstance) {
+extern "C" talos_rt_status talos_rt_v1_process_instance_create(
+    const talos_rt_process_descriptor_v1 *descriptor,
+    talos_rt_process_instance_v1 **outInstance) {
   return createProcessInstance(nullptr, descriptor, outInstance);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_create_for_context(
-    obelisk_rt_context *context,
-    const obelisk_rt_process_descriptor_v1 *descriptor,
-    obelisk_rt_process_instance_v1 **outInstance) {
+extern "C" talos_rt_status talos_rt_v1_process_instance_create_for_context(
+    talos_rt_context *context,
+    const talos_rt_process_descriptor_v1 *descriptor,
+    talos_rt_process_instance_v1 **outInstance) {
   if (!context) {
     if (outInstance)
       *outInstance = nullptr;
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   }
   return createProcessInstance(context, descriptor, outInstance);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_process_instance_frame(obelisk_rt_process_instance_v1 *instance,
+extern "C" talos_rt_status
+talos_rt_v1_process_instance_frame(talos_rt_process_instance_v1 *instance,
                                      void **outFrame, uint64_t *outSize) {
   if (!outFrame || !outSize)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outFrame = nullptr;
   *outSize = 0;
   if (!instance)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  if (instance->lifecycle == OBELISK_RT_PROCESS_EXECUTING)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_ARGUMENT;
+  if (instance->lifecycle == TALOS_RT_PROCESS_EXECUTING)
+    return TALOS_RT_INVALID_LIFECYCLE;
   *outFrame = instance->frame;
   *outSize = instance->frame_size;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
-    obelisk_rt_process_instance_v1 *instance, obelisk_rt_context *context,
-    obelisk_rt_execution_tier requestedTier,
-    obelisk_rt_fragment_action_v1 *outAction) {
+extern "C" talos_rt_status talos_rt_v1_process_instance_execute(
+    talos_rt_process_instance_v1 *instance, talos_rt_context *context,
+    talos_rt_execution_tier requestedTier,
+    talos_rt_fragment_action_v1 *outAction) {
   if (!outAction)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outAction = {
-      OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
-  if (!instance || (requestedTier != OBELISK_RT_TIER_NATIVE &&
-                    requestedTier != OBELISK_RT_TIER_BYTECODE))
-    return OBELISK_RT_INVALID_ARGUMENT;
+      TALOS_RT_FRAGMENT_TERMINATE, TALOS_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  if (!instance || (requestedTier != TALOS_RT_TIER_NATIVE &&
+                    requestedTier != TALOS_RT_TIER_BYTECODE))
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  if (instance->lifecycle == OBELISK_RT_PROCESS_EXECUTING ||
-      instance->lifecycle == OBELISK_RT_PROCESS_TERMINATED)
-    return OBELISK_RT_INVALID_LIFECYCLE;
-  uint32_t mask = requestedTier == OBELISK_RT_TIER_NATIVE
-                      ? OBELISK_RT_TIER_MASK_NATIVE
-                      : OBELISK_RT_TIER_MASK_BYTECODE;
+  if (instance->lifecycle == TALOS_RT_PROCESS_EXECUTING ||
+      instance->lifecycle == TALOS_RT_PROCESS_TERMINATED)
+    return TALOS_RT_INVALID_LIFECYCLE;
+  uint32_t mask = requestedTier == TALOS_RT_TIER_NATIVE
+                      ? TALOS_RT_TIER_MASK_NATIVE
+                      : TALOS_RT_TIER_MASK_BYTECODE;
   if ((instance->descriptor->available_tiers & mask) == 0)
-    return OBELISK_RT_TIER_UNAVAILABLE;
+    return TALOS_RT_TIER_UNAVAILABLE;
   if (context && instance->descriptor->execution &&
       context->execution != instance->descriptor->execution)
-    return OBELISK_RT_INVALID_DESIGN;
-  if (requestedTier == OBELISK_RT_TIER_BYTECODE &&
+    return TALOS_RT_INVALID_DESIGN;
+  if (requestedTier == TALOS_RT_TIER_BYTECODE &&
       instance->descriptor->design_bytecode && !context)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   if (!validContinuation(*instance->descriptor->frame_layout,
                          instance->continuation))
-    return OBELISK_RT_INVALID_CONTINUATION;
-  if (requestedTier == OBELISK_RT_TIER_BYTECODE) {
+    return TALOS_RT_INVALID_CONTINUATION;
+  if (requestedTier == TALOS_RT_TIER_BYTECODE) {
     if (!instance->descriptor->bytecode &&
         !instance->descriptor->design_bytecode)
-      return OBELISK_RT_TIER_UNAVAILABLE;
-    obelisk_rt_status status =
+      return TALOS_RT_TIER_UNAVAILABLE;
+    talos_rt_status status =
         instance->descriptor->bytecode
-            ? obelisk_rt_validate_bytecode_program(
+            ? talos_rt_validate_bytecode_program(
                   *instance->descriptor->bytecode, instance->continuation)
-            : obelisk_rt_validate_design_bytecode(
+            : talos_rt_validate_design_bytecode(
                   *instance->descriptor->design_bytecode, context, nullptr,
                   nullptr);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
   }
 
@@ -1370,22 +1370,22 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
   // scheduling preference. Perform every transition here so native coroutine
   // state is destroyed before bytecode can reuse that storage.
   if (instance->tier != 0 && instance->tier != requestedTier &&
-      instance->tier == OBELISK_RT_TIER_NATIVE && instance->native_handle) {
+      instance->tier == TALOS_RT_TIER_NATIVE && instance->native_handle) {
     instance->descriptor->native_destroy(instance);
     if (instance->native_handle)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
   }
   // Unless this activation is nested in another one, nothing on this thread
   // holds an unregistered managed value before it starts, so pressure that
   // suspensions carried here without reaching a poll is reclaimable.
   if (context) {
-    obelisk_rt_status collected =
-        obelisk_rt_managed_heap_collect_between_activations(context);
-    if (collected != OBELISK_RT_OK)
+    talos_rt_status collected =
+        talos_rt_managed_heap_collect_between_activations(context);
+    if (collected != TALOS_RT_OK)
       return collected;
   }
   ManagedExecutionScope managedExecution(context);
-  if (managedExecution.getStatus() != OBELISK_RT_OK)
+  if (managedExecution.getStatus() != TALOS_RT_OK)
     return managedExecution.getStatus();
   bool installedActiveProcess = false;
   bool installedOwnership = false;
@@ -1393,9 +1393,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
     ContextMutexLock lock(context);
     if (context->activeNativeProcess &&
         context->activeNativeProcess != instance)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     if (instance->ownership_context && instance->ownership_context != context)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     if (!context->activeNativeProcess) {
       context->activeNativeProcess = instance;
       installedActiveProcess = true;
@@ -1403,9 +1403,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
     installedOwnership = !instance->ownership_context;
     instance->ownership_context = context;
   }
-  obelisk_rt_status rootStatus = guarded(
+  talos_rt_status rootStatus = guarded(
       context, [&] { return registerManagedFrameRoots(instance, context); });
-  if (rootStatus != OBELISK_RT_OK) {
+  if (rootStatus != TALOS_RT_OK) {
     if (installedActiveProcess) {
       ContextMutexLock lock(context);
       if (context->activeNativeProcess == instance)
@@ -1418,30 +1418,30 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
   instance->tier = requestedTier;
   instance->context = context;
   instance->action = outAction;
-  instance->status = OBELISK_RT_OK;
-  instance->lifecycle = OBELISK_RT_PROCESS_EXECUTING;
+  instance->status = TALOS_RT_OK;
+  instance->lifecycle = TALOS_RT_PROCESS_EXECUTING;
 
-  obelisk_rt_status status;
-  if (requestedTier == OBELISK_RT_TIER_NATIVE) {
-    OBELISK_RT_TRY { status = instance->descriptor->native_execute(instance); }
-    OBELISK_RT_CATCH(const std::bad_alloc &) {
-      status = OBELISK_RT_OUT_OF_MEMORY;
+  talos_rt_status status;
+  if (requestedTier == TALOS_RT_TIER_NATIVE) {
+    TALOS_RT_TRY { status = instance->descriptor->native_execute(instance); }
+    TALOS_RT_CATCH(const std::bad_alloc &) {
+      status = TALOS_RT_OUT_OF_MEMORY;
     }
-    OBELISK_RT_CATCH_ALL { status = OBELISK_RT_INVALID_ARGUMENT; }
+    TALOS_RT_CATCH_ALL { status = TALOS_RT_INVALID_ARGUMENT; }
   } else {
     if (instance->descriptor->design_bytecode) {
-      status = obelisk_rt_execute_design_bytecode(
+      status = talos_rt_execute_design_bytecode(
           *instance->descriptor->design_bytecode, context, instance->frame,
           instance->scratch_offset + instance->scratch_size,
           instance->scratch_offset, instance->scratch_size,
           instance->continuation, 0, outAction);
     } else {
-      obelisk_rt_fragment_descriptor_v1 descriptor{};
-      descriptor.handle = {OBELISK_RT_DESCRIPTOR_FRAGMENT, 0,
+      talos_rt_fragment_descriptor_v1 descriptor{};
+      descriptor.handle = {TALOS_RT_DESCRIPTOR_FRAGMENT, 0,
                            instance->descriptor->handle.id};
-      descriptor.code_kind = OBELISK_RT_FRAGMENT_BYTECODE;
+      descriptor.code_kind = TALOS_RT_FRAGMENT_BYTECODE;
       descriptor.code.bytecode = *instance->descriptor->bytecode;
-      status = obelisk_rt_v1_fragment_execute(
+      status = talos_rt_v1_fragment_execute(
           &descriptor, context, instance->frame,
           instance->scratch_offset + instance->scratch_size,
           instance->continuation, outAction);
@@ -1449,7 +1449,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
     // The interpreter writes shared planes in place without reporting its
     // footprint to the generated unknown summary.
     if (context && !(instance->descriptor->flags &
-                     OBELISK_RT_PROCESS_BYTECODE_READ_ONLY)) {
+                     TALOS_RT_PROCESS_BYTECODE_READ_ONLY)) {
       ContextMutexLock lock(context);
       markNativeUnknownAllUnlocked(context);
     }
@@ -1463,44 +1463,44 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
 
   instance->context = nullptr;
   instance->action = nullptr;
-  if (status == OBELISK_RT_OK)
+  if (status == TALOS_RT_OK)
     status = validateAction(*instance, *outAction,
-                            requestedTier == OBELISK_RT_TIER_BYTECODE);
+                            requestedTier == TALOS_RT_TIER_BYTECODE);
   instance->status = status;
-  if (status != OBELISK_RT_OK) {
-    if (requestedTier == OBELISK_RT_TIER_NATIVE && instance->native_handle) {
+  if (status != TALOS_RT_OK) {
+    if (requestedTier == TALOS_RT_TIER_NATIVE && instance->native_handle) {
       instance->descriptor->native_destroy(instance);
       if (instance->native_handle)
-        instance->status = status = OBELISK_RT_INVALID_LIFECYCLE;
+        instance->status = status = TALOS_RT_INVALID_LIFECYCLE;
     }
-    instance->lifecycle = OBELISK_RT_PROCESS_SUSPENDED;
+    instance->lifecycle = TALOS_RT_PROCESS_SUSPENDED;
     return status;
   }
   instance->continuation = outAction->continuation;
   instance->lifecycle =
-      outAction->kind == OBELISK_RT_FRAGMENT_TERMINATE
-          ? OBELISK_RT_PROCESS_TERMINATED
-      : outAction->kind == OBELISK_RT_FRAGMENT_SUSPEND ||
-              outAction->kind == OBELISK_RT_FRAGMENT_PROCESS_SUSPEND
-          ? OBELISK_RT_PROCESS_SUSPENDED
-          : OBELISK_RT_PROCESS_READY;
-  if (instance->lifecycle == OBELISK_RT_PROCESS_TERMINATED &&
+      outAction->kind == TALOS_RT_FRAGMENT_TERMINATE
+          ? TALOS_RT_PROCESS_TERMINATED
+      : outAction->kind == TALOS_RT_FRAGMENT_SUSPEND ||
+              outAction->kind == TALOS_RT_FRAGMENT_PROCESS_SUSPEND
+          ? TALOS_RT_PROCESS_SUSPENDED
+          : TALOS_RT_PROCESS_READY;
+  if (instance->lifecycle == TALOS_RT_PROCESS_TERMINATED &&
       instance->ownership_context) {
     unregisterManagedFrameRoots(instance);
     releaseOwnedNativeStates(instance->ownership_context, instance);
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_destroy(
-    obelisk_rt_process_instance_v1 *instance) {
+extern "C" talos_rt_status talos_rt_v1_process_instance_destroy(
+    talos_rt_process_instance_v1 *instance) {
   if (!instance)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  if (instance->lifecycle == OBELISK_RT_PROCESS_EXECUTING)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_ARGUMENT;
+  if (instance->lifecycle == TALOS_RT_PROCESS_EXECUTING)
+    return TALOS_RT_INVALID_LIFECYCLE;
   if (instance->observer_pin_count != 0) {
     instance->observer_destroy_pending = 1;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (instance->ownership_context)
     releaseOwnedNativeStates(instance->ownership_context, instance);
@@ -1508,11 +1508,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_destroy(
   if (instance->native_handle) {
     instance->descriptor->native_destroy(instance);
     if (instance->native_handle)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
   }
   auto *metadata = processMetadata(instance);
   if (metadata->magic != kProcessAllocationMagic)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   size_t allocationSize = metadata->size;
   size_t allocationAlignment = metadata->alignment;
   void *allocation = instance;
@@ -1520,10 +1520,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_destroy(
   std::destroy_at(metadata);
   std::destroy_at(instance);
   releaseProcessMemory(allocation, allocationSize, allocationAlignment);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-static void requestImplicitProgramFinishUnlocked(obelisk_rt_context *context) {
+static void requestImplicitProgramFinishUnlocked(talos_rt_context *context) {
   if (!context->programTrackingSeen || !context->programTrackingSealed ||
       context->liveProgramInstances != 0)
     return;
@@ -1532,7 +1532,7 @@ static void requestImplicitProgramFinishUnlocked(obelisk_rt_context *context) {
   context->schedulerFinishVerbosity = 0;
 }
 
-void obelisk_rt_program_register_unlocked(obelisk_rt_context *context,
+void talos_rt_program_register_unlocked(talos_rt_context *context,
                                           uint64_t logicalProcess,
                                           uint64_t programOwner) {
   if (!context || !logicalProcess || !programOwner)
@@ -1545,12 +1545,12 @@ void obelisk_rt_program_register_unlocked(obelisk_rt_context *context,
   context->programTrackingSeen = true;
 }
 
-void obelisk_rt_program_complete_unlocked(obelisk_rt_context *context,
+void talos_rt_program_complete_unlocked(talos_rt_context *context,
                                           uint64_t logicalProcess,
                                           uint64_t programOwner) {
   if (!context || !logicalProcess)
     return;
-  obelisk_rt_unregister_covergroup_clock_events_unlocked(context,
+  talos_rt_unregister_covergroup_clock_events_unlocked(context,
                                                          logicalProcess);
   if (!programOwner)
     return;
@@ -1566,68 +1566,68 @@ void obelisk_rt_program_complete_unlocked(obelisk_rt_context *context,
   requestImplicitProgramFinishUnlocked(context);
 }
 
-void obelisk_rt_program_seal_unlocked(obelisk_rt_context *context) {
+void talos_rt_program_seal_unlocked(talos_rt_context *context) {
   if (!context)
     return;
   context->programTrackingSealed = true;
   requestImplicitProgramFinishUnlocked(context);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_program_register(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_program_register(talos_rt_context *context,
                                          uint64_t logicalProcess,
                                          uint64_t programOwner) {
   if (!context || !logicalProcess || !programOwner)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
-    bool native = (logicalProcess & OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG) != 0;
+    bool native = (logicalProcess & TALOS_RT_LOGICAL_PROCESS_NATIVE_TAG) != 0;
     if (!native)
-      return OBELISK_RT_INVALID_HANDLE;
-    uint64_t token = logicalProcess & ~OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+      return TALOS_RT_INVALID_HANDLE;
+    uint64_t token = logicalProcess & ~TALOS_RT_LOGICAL_PROCESS_NATIVE_TAG;
     auto indexed = context->scheduledProcessIndices.find(token);
     if (indexed == context->scheduledProcessIndices.end() ||
         indexed->second >= context->scheduledProcesses.size())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     ScheduledProcess &process = context->scheduledProcesses[indexed->second];
     if (!process.instance || process.token != token)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     // A dynamically spawned program-domain helper already inherited its
     // caller's owner in scheduler_add. The generated root annotation is then
     // redundant and must not replace that dynamic ancestry.
     if (process.programOwner)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     process.programOwner = programOwner;
-    obelisk_rt_program_register_unlocked(context, logicalProcess, programOwner);
-    return OBELISK_RT_OK;
+    talos_rt_program_register_unlocked(context, logicalProcess, programOwner);
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_add(obelisk_rt_context *context,
-                            obelisk_rt_process_instance_v1 *instance,
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_add(talos_rt_context *context,
+                            talos_rt_process_instance_v1 *instance,
                             uint32_t flags) {
-  return obelisk_rt_v1_scheduler_add_ranked(context, instance, flags,
+  return talos_rt_v1_scheduler_add_ranked(context, instance, flags,
                                             UINT32_MAX);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_add_ranked(obelisk_rt_context *context,
-                                   obelisk_rt_process_instance_v1 *instance,
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_add_ranked(talos_rt_context *context,
+                                   talos_rt_process_instance_v1 *instance,
                                    uint32_t flags, uint32_t scheduleRank) {
-  return obelisk_rt_v1_scheduler_add_planned(context, instance, flags,
+  return talos_rt_v1_scheduler_add_planned(context, instance, flags,
                                              scheduleRank, nullptr, nullptr, 0);
 }
 
 extern "C" uint64_t
-obelisk_rt_v1_process_spawn(obelisk_rt_context *context,
-                            const obelisk_rt_process_spawn_plan_v1 *plan,
+talos_rt_v1_process_spawn(talos_rt_context *context,
+                            const talos_rt_process_spawn_plan_v1 *plan,
                             const void *captures) {
-  auto fail = [&](obelisk_rt_status status) -> uint64_t {
-    obelisk_rt_v1_scheduler_fail(context, status);
+  auto fail = [&](talos_rt_status status) -> uint64_t {
+    talos_rt_v1_scheduler_fail(context, status);
     return 0;
   };
   if (!context || !plan || !plan->descriptor ||
@@ -1635,96 +1635,96 @@ obelisk_rt_v1_process_spawn(obelisk_rt_context *context,
       plan->capture_size > plan->descriptor->frame_layout->frame_size ||
       (plan->capture_size && !captures) ||
       (plan->options &
-       ~(OBELISK_RT_SPAWN_PRIME | OBELISK_RT_SPAWN_PROGRAM_OWNER)))
-    return fail(OBELISK_RT_INVALID_ARGUMENT);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
-  obelisk_rt_status status = obelisk_rt_v1_process_instance_create_for_context(
+       ~(TALOS_RT_SPAWN_PRIME | TALOS_RT_SPAWN_PROGRAM_OWNER)))
+    return fail(TALOS_RT_INVALID_ARGUMENT);
+  talos_rt_process_instance_v1 *instance = nullptr;
+  talos_rt_status status = talos_rt_v1_process_instance_create_for_context(
       context, plan->descriptor, &instance);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return fail(status);
   if (plan->capture_size)
     std::memcpy(instance->frame, captures, plan->capture_size);
   if (plan->actor_slot == UINT32_MAX)
-    status = obelisk_rt_v1_scheduler_add_planned(
+    status = talos_rt_v1_scheduler_add_planned(
         context, instance, plan->schedule_flags, plan->initial_rank,
         plan->continuations, plan->ranks, plan->continuation_count);
   else
-    status = obelisk_rt_v1_scheduler_add_aot(
+    status = talos_rt_v1_scheduler_add_aot(
         context, instance, plan->schedule_flags, plan->actor_slot,
         plan->initial_rank, plan->continuations, plan->ranks,
         plan->continuation_count, plan->bytecode_continuations,
         plan->bytecode_continuation_count);
-  if (status != OBELISK_RT_OK) {
-    obelisk_rt_v1_process_instance_destroy(instance);
+  if (status != TALOS_RT_OK) {
+    talos_rt_v1_process_instance_destroy(instance);
     return fail(status);
   }
   // Once inserted, the scheduler owns the instance even if priming fails.
-  if (plan->options & OBELISK_RT_SPAWN_PRIME) {
-    status = obelisk_rt_v1_scheduler_prime(context, instance);
-    if (status != OBELISK_RT_OK)
+  if (plan->options & TALOS_RT_SPAWN_PRIME) {
+    status = talos_rt_v1_scheduler_prime(context, instance);
+    if (status != TALOS_RT_OK)
       return fail(status);
   }
-  uint64_t token = obelisk_rt_v1_scheduler_process_token(context, instance) |
-                   OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
-  if (plan->options & OBELISK_RT_SPAWN_PROGRAM_OWNER)
-    obelisk_rt_v1_scheduler_fail(
-        context, obelisk_rt_v1_scheduler_program_register(context, token,
+  uint64_t token = talos_rt_v1_scheduler_process_token(context, instance) |
+                   TALOS_RT_LOGICAL_PROCESS_NATIVE_TAG;
+  if (plan->options & TALOS_RT_SPAWN_PROGRAM_OWNER)
+    talos_rt_v1_scheduler_fail(
+        context, talos_rt_v1_scheduler_program_register(context, token,
                                                           plan->program_owner));
   return token;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_process_spawn_batch(
-    obelisk_rt_context *context,
-    const obelisk_rt_process_spawn_entry_v1 *entries, const void *captures,
+extern "C" talos_rt_status talos_rt_v1_process_spawn_batch(
+    talos_rt_context *context,
+    const talos_rt_process_spawn_entry_v1 *entries, const void *captures,
     uint32_t count) {
   if (!context || (count && !entries)) {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
-    return OBELISK_RT_INVALID_ARGUMENT;
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_INVALID_ARGUMENT);
+    return TALOS_RT_INVALID_ARGUMENT;
   }
   // Match the original sequence of calls, including after a failed spawn.
   // scheduler_fail retains the first error; later calls retain their ownership
   // and process-token effects until normal scheduler cleanup.
   for (uint32_t index = 0; index != count; ++index) {
-    const obelisk_rt_process_spawn_entry_v1 &entry = entries[index];
+    const talos_rt_process_spawn_entry_v1 &entry = entries[index];
     uint64_t activation = 0;
     if (entry.initialization_scope) {
-      obelisk_rt_status status = obelisk_rt_v1_random_initialization_enter(
+      talos_rt_status status = talos_rt_v1_random_initialization_enter(
           context, entry.initialization_scope, &activation);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
     }
-    obelisk_rt_v1_process_spawn(
+    talos_rt_v1_process_spawn(
         context, entry.plan,
         captures ? static_cast<const uint8_t *>(captures) +
                        entry.capture_offset
                  : nullptr);
     if (entry.initialization_scope) {
-      obelisk_rt_status status =
-          obelisk_rt_v1_random_initialization_leave(context, activation);
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status =
+          talos_rt_v1_random_initialization_leave(context, activation);
+      if (status != TALOS_RT_OK)
         return status;
     }
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
-    obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance,
+extern "C" talos_rt_status talos_rt_v1_scheduler_add_planned(
+    talos_rt_context *context, talos_rt_process_instance_v1 *instance,
     uint32_t flags, uint32_t initialRank, const uint32_t *continuations,
     const uint32_t *ranks, uint32_t continuationCount) {
   uint32_t phase = 0;
-  uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
+  uint32_t homeRegion = TALOS_RT_REGION_ACTIVE;
   if (!context || !instance ||
-      !obelisk_rt_decode_schedule_flags(flags, phase, homeRegion))
-    return OBELISK_RT_INVALID_ARGUMENT;
+      !talos_rt_decode_schedule_flags(flags, phase, homeRegion))
+    return TALOS_RT_INVALID_ARGUMENT;
   if (continuationCount != 0 && (!continuations || !ranks))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   for (uint32_t index = 0; index != continuationCount; ++index)
     if (continuations[index] == 0 ||
         (index != 0 && continuations[index - 1] >= continuations[index]))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     // A child spawned while a Final process is executing belongs to the same
     // Final phase unless its own entry kind already selected that phase. This
@@ -1752,45 +1752,45 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     if (context->nextNativeProcessToken == 0 ||
         context->nextProcessInsertionSequence == 0 ||
         context->nextProcessInsertionSequence == UINT64_MAX) {
-      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      context->schedulerStatus = TALOS_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
     if (context->nextNativeProcessToken >= kNativeLogicalProcessTag) {
-      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      context->schedulerStatus = TALOS_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
     process.token = context->nextNativeProcessToken++;
-    process.parent = (flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0
+    process.parent = (flags & TALOS_RT_SCHEDULE_DETACHED_CONTROLS) == 0
                          ? context->activeLogicalProcessToken
                          : 0;
     if (process.parent != 0)
       context->logicalProcessParentsWithChildren.insert(process.parent);
     process.programOwner = context->activeProgramOwner;
     process.initializationRandomScope =
-        obelisk_rt_random_initialization_scope_unlocked(context);
-    obelisk_rt_random_split_unlocked(context, process.random);
-    if ((flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
+        talos_rt_random_initialization_scope_unlocked(context);
+    talos_rt_random_split_unlocked(context, process.random);
+    if ((flags & TALOS_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
       process.controls = context->activeControls;
     process.insertionSequence = context->nextProcessInsertionSequence++;
     process.observedEpoch = context->schedulerEpoch;
     process.phase = phase;
-    process.initialProcess = (flags & OBELISK_RT_SCHEDULE_INITIAL) != 0;
-    process.startupProcess = (flags & OBELISK_RT_SCHEDULE_STARTUP) != 0;
-    process.rootProcess = (flags & OBELISK_RT_SCHEDULE_ROOT) != 0;
+    process.initialProcess = (flags & TALOS_RT_SCHEDULE_INITIAL) != 0;
+    process.startupProcess = (flags & TALOS_RT_SCHEDULE_STARTUP) != 0;
+    process.rootProcess = (flags & TALOS_RT_SCHEDULE_ROOT) != 0;
     process.urgent = process.startupProcess;
-    process.prioritySignal = (flags & OBELISK_RT_SCHEDULE_PRIORITY_SIGNAL) != 0;
+    process.prioritySignal = (flags & TALOS_RT_SCHEDULE_PRIORITY_SIGNAL) != 0;
     context->scheduledFinalProcessPresent |= phase == 1;
     process.homeRegion = homeRegion;
     process.queuedRegion = homeRegion;
     process.scheduleRank = initialRank;
     if (context->execution && (context->execution->flags &
-                               OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0) {
+                               TALOS_RT_EXECUTION_REQUIRE_BYTECODE) != 0) {
       if ((instance->descriptor->available_tiers &
-           OBELISK_RT_TIER_MASK_BYTECODE) == 0) {
-        context->schedulerStatus = OBELISK_RT_TIER_UNAVAILABLE;
-        return OBELISK_RT_TIER_UNAVAILABLE;
+           TALOS_RT_TIER_MASK_BYTECODE) == 0) {
+        context->schedulerStatus = TALOS_RT_TIER_UNAVAILABLE;
+        return TALOS_RT_TIER_UNAVAILABLE;
       }
-      instance->tier = OBELISK_RT_TIER_BYTECODE;
+      instance->tier = TALOS_RT_TIER_BYTECODE;
     }
     process.continuationRanks.reserve(continuationCount);
     for (uint32_t index = 0; index != continuationCount; ++index)
@@ -1798,22 +1798,22 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
                                              ranks[index]);
     context->scheduledProcesses.push_back(std::move(process));
     uint64_t token = context->scheduledProcesses.back().token;
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       context->scheduledProcessIndices[token] =
           context->scheduledProcesses.size() - 1;
       context->scheduledProcessTokens.emplace(instance, token);
       context->nativePollCandidates.insert(token);
-      if ((flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
-        obelisk_rt_register_unstarted_actor(context, phase,
+      if ((flags & TALOS_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
+        talos_rt_register_unstarted_actor(context, phase,
                                             kNativeLogicalProcessTag | token);
       if (context->scheduledProcesses.back().programOwner)
-        obelisk_rt_program_register_unlocked(
+        talos_rt_program_register_unlocked(
             context, kNativeLogicalProcessTag | token,
             context->scheduledProcesses.back().programOwner);
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       if (context->scheduledProcesses.back().programOwner)
-        obelisk_rt_program_complete_unlocked(
+        talos_rt_program_complete_unlocked(
             context, kNativeLogicalProcessTag | token,
             context->scheduledProcesses.back().programOwner);
       context->scheduledProcessIndices.erase(token);
@@ -1824,21 +1824,21 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
           break;
         }
       context->nativePollCandidates.erase(token);
-      obelisk_rt_unregister_unstarted_actor(context, phase,
+      talos_rt_unregister_unstarted_actor(context, phase,
                                             kNativeLogicalProcessTag | token);
       context->scheduledProcesses.pop_back();
-      OBELISK_RT_RETHROW;
+      TALOS_RT_RETHROW;
     }
-    obelisk_rt_retain_controls_unlocked(
+    talos_rt_retain_controls_unlocked(
         context, context->scheduledProcesses.back().controls);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" uint32_t
-obelisk_rt_v1_scheduler_priority_signal_pending(obelisk_rt_context *context) {
+talos_rt_v1_scheduler_priority_signal_pending(talos_rt_context *context) {
   if (!context || !context->prioritySignalPending)
     return 0;
   ContextMutexLock lock(context);
@@ -1855,13 +1855,13 @@ obelisk_rt_v1_scheduler_priority_signal_pending(obelisk_rt_context *context) {
 }
 
 extern "C" uint32_t
-obelisk_rt_v1_scheduler_handoff_pending(obelisk_rt_context *context) {
+talos_rt_v1_scheduler_handoff_pending(talos_rt_context *context) {
   if (!context)
     return 1;
   ContextMutexLock lock(context);
-  return context->schedulerStatus != OBELISK_RT_OK ||
-                 obelisk_rt_covergroup_strobes_pending_unlocked(context) ||
-                 obelisk_rt_generated_deferred_reports_pending(context)
+  return context->schedulerStatus != TALOS_RT_OK ||
+                 talos_rt_covergroup_strobes_pending_unlocked(context) ||
+                 talos_rt_generated_deferred_reports_pending(context)
              ? 1
              : 0;
 }
@@ -1872,11 +1872,11 @@ template <typename Key> static bool hasDuplicateKey(std::vector<Key> keys) {
   return std::adjacent_find(keys.begin(), keys.end()) != keys.end();
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
-    obelisk_rt_context *context, const obelisk_rt_native_schedule_plan *plan) {
+extern "C" talos_rt_status talos_rt_v1_scheduler_install_aot(
+    talos_rt_context *context, const talos_rt_native_schedule_plan *plan) {
   if (!context || !plan ||
-      plan->size != sizeof(obelisk_rt_native_schedule_plan))
-    return OBELISK_RT_INVALID_ARGUMENT;
+      plan->size != sizeof(talos_rt_native_schedule_plan))
+    return TALOS_RT_INVALID_ARGUMENT;
   bool actorStorageFits = plan->mutable_state_size >=
                           uint64_t{plan->actor_capacity} * sizeof(void *);
   bool nbaTablesValid =
@@ -1903,7 +1903,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         plan->timeslot_coordinator != nullptr)) &&
       plan->merged_fragment_count <= std::numeric_limits<size_t>::max();
   bool nbaCommitValid =
-      ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA) != 0) ==
+      ((plan->flags & TALOS_RT_NATIVE_SCHEDULE_STATIC_NBA) != 0) ==
       (plan->nba_commit != nullptr);
   uint32_t expectedNBADirtyWords = (plan->nba_root_count + 63) / 64;
   uint32_t expectedNBADirtySummaryWords = (expectedNBADirtyWords + 63) / 64;
@@ -1917,48 +1917,48 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
         plan->nba_dirty_summary_word_count == expectedNBADirtySummaryWords &&
         plan->nba_dirty_summary != nullptr));
   bool specializationFastValid =
-      ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION) !=
+      ((plan->flags & TALOS_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION) !=
        0) == (plan->specialization_fast != nullptr) &&
-      ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION) == 0 ||
-       (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE |
-                       OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA)) != 0);
+      ((plan->flags & TALOS_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION) == 0 ||
+       (plan->flags & (TALOS_RT_NATIVE_SCHEDULE_DIRECT_STATE |
+                       TALOS_RT_NATIVE_SCHEDULE_STATIC_NBA)) != 0);
   constexpr uint32_t staticExecutionRequirements =
-      OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
-      OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS;
+      TALOS_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+      TALOS_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS;
   bool exactFanout =
-      (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
-                      OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT)) != 0;
+      (plan->flags & (TALOS_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
+                      TALOS_RT_NATIVE_SCHEDULE_GUARDED_FANOUT)) != 0;
   bool cleanSuperstep =
-      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0;
+      (plan->flags & TALOS_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP) != 0;
   bool staticEvalIsland =
-      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND) != 0;
+      (plan->flags & TALOS_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND) != 0;
   bool cleanSuperstepValid =
       !cleanSuperstep ||
-      ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC) != 0 &&
+      ((plan->flags & TALOS_RT_NATIVE_SCHEDULE_FULLY_STATIC) != 0 &&
        (plan->flags & staticExecutionRequirements) ==
            staticExecutionRequirements &&
        exactFanout && !staticEvalIsland);
   bool staticEvalIslandValid =
       !staticEvalIsland ||
-      ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC) == 0 &&
-       (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) != 0 &&
+      ((plan->flags & TALOS_RT_NATIVE_SCHEDULE_FULLY_STATIC) == 0 &&
+       (plan->flags & TALOS_RT_NATIVE_SCHEDULE_EVAL) != 0 &&
        (plan->flags & staticExecutionRequirements) ==
            staticExecutionRequirements &&
        exactFanout && !cleanSuperstep);
   bool evalSchedulerValid =
-      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) == 0 ||
+      (plan->flags & TALOS_RT_NATIVE_SCHEDULE_EVAL) == 0 ||
       ((cleanSuperstep || staticEvalIsland) && plan->clock_kernel_count != 0 &&
        plan->timeslot_coordinator && plan->promotion_invalidate &&
        plan->promotion_ready);
   bool runtimeCalendarEvalValid =
-      !(plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) ||
+      !(plan->flags & TALOS_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) ||
       (staticEvalIsland && context->execution &&
        context->execution->observer_count == 0 &&
-       !(context->execution->flags & (OBELISK_RT_EXECUTION_DPI_EXPORTS |
-                                      OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)));
+       !(context->execution->flags & (TALOS_RT_EXECUTION_DPI_EXPORTS |
+                                      TALOS_RT_EXECUTION_COVERAGE_SCHEMA)));
   runtimeCalendarEvalValid &=
-      !(plan->flags & OBELISK_RT_NATIVE_SCHEDULE_SHARED_PERIODIC) ||
-      (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL);
+      !(plan->flags & TALOS_RT_NATIVE_SCHEDULE_SHARED_PERIODIC) ||
+      (plan->flags & TALOS_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL);
   bool statePlanesValid =
       plan->state_bit_count == 0
           ? plan->state_value == nullptr && plan->state_unknown == nullptr
@@ -1973,77 +1973,77 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
        !plan->promotion_invalidate) ||
       !cleanSuperstepValid || !staticEvalIslandValid || !evalSchedulerValid ||
       !runtimeCalendarEvalValid ||
-      (plan->flags & ~(OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC |
-                       OBELISK_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO |
-                       OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
-                       OBELISK_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
-                       OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE |
-                       OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA |
-                       OBELISK_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
-                       OBELISK_RT_NATIVE_SCHEDULE_GUARDED_FANOUT |
-                       OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION |
-                       OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
-                       OBELISK_RT_NATIVE_SCHEDULE_EVAL |
-                       OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND |
-                       OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL |
-                       OBELISK_RT_NATIVE_SCHEDULE_SHARED_PERIODIC)) != 0 ||
+      (plan->flags & ~(TALOS_RT_NATIVE_SCHEDULE_FULLY_STATIC |
+                       TALOS_RT_NATIVE_SCHEDULE_ROOT_SLOT_ZERO |
+                       TALOS_RT_NATIVE_SCHEDULE_STATIC_CONTROL |
+                       TALOS_RT_NATIVE_SCHEDULE_STATIC_FANOUT |
+                       TALOS_RT_NATIVE_SCHEDULE_DIRECT_STATE |
+                       TALOS_RT_NATIVE_SCHEDULE_STATIC_NBA |
+                       TALOS_RT_NATIVE_SCHEDULE_GENERATED_ACTIONS |
+                       TALOS_RT_NATIVE_SCHEDULE_GUARDED_FANOUT |
+                       TALOS_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION |
+                       TALOS_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+                       TALOS_RT_NATIVE_SCHEDULE_EVAL |
+                       TALOS_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND |
+                       TALOS_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL |
+                       TALOS_RT_NATIVE_SCHEDULE_SHARED_PERIODIC)) != 0 ||
       !plan->bind || !plan->run || !plan->fallback_snapshot)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  const obelisk_rt_static_nba_root *nbaRoots = plan->nba_roots;
+    return TALOS_RT_INVALID_ARGUMENT;
+  const talos_rt_static_nba_root *nbaRoots = plan->nba_roots;
   uint32_t nbaRootCount = plan->nba_root_count;
-  const obelisk_rt_static_nba_site *nbaSites = plan->nba_sites;
+  const talos_rt_static_nba_site *nbaSites = plan->nba_sites;
   uint64_t nbaSiteCount = plan->nba_site_count;
-  const obelisk_rt_static_fanout_entry *fanoutEntries = plan->fanout_entries;
+  const talos_rt_static_fanout_entry *fanoutEntries = plan->fanout_entries;
   uint64_t fanoutEntryCount = plan->fanout_entry_count;
-  const obelisk_rt_static_actor_root *actorRoots = plan->actor_roots;
+  const talos_rt_static_actor_root *actorRoots = plan->actor_roots;
   uint64_t actorRootCount = plan->actor_root_count;
-  const obelisk_rt_native_clock_kernel *clockKernels = plan->clock_kernels;
+  const talos_rt_native_clock_kernel *clockKernels = plan->clock_kernels;
   uint32_t clockKernelCount = plan->clock_kernel_count;
-  const obelisk_rt_native_merged_fragment *mergedFragments =
+  const talos_rt_native_merged_fragment *mergedFragments =
       plan->merged_fragments;
   uint64_t mergedFragmentCount = plan->merged_fragment_count;
   for (uint32_t index = 0; index != nbaRootCount; ++index) {
-    const obelisk_rt_static_nba_root &root = nbaRoots[index];
+    const talos_rt_static_nba_root &root = nbaRoots[index];
     if (root.static_state == 0 || root.bit_width == 0 ||
         root.bit_width > UINT64_MAX - 63 ||
         (root.bit_width + 7) / 8 > std::numeric_limits<size_t>::max() ||
         (root.generated_accumulator &&
-         root.bit_width > OBELISK_RT_GENERATED_NBA_MAX_BITS))
-      return OBELISK_RT_INVALID_ARGUMENT;
+         root.bit_width > TALOS_RT_GENERATED_NBA_MAX_BITS))
+      return TALOS_RT_INVALID_ARGUMENT;
     if (root.generated_slot_count && !root.generated_slots)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     for (uint64_t slot = 0; slot != root.generated_slot_count; ++slot) {
       const auto &entry = root.generated_slots[slot];
       if (!entry.offset || !entry.value ||
           (!entry.unknown && !context->twoState()) || !entry.valid ||
           !entry.transition || !entry.bit_width || entry.bit_width > 64 ||
           entry.bit_width > root.bit_width)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
     }
   }
   for (uint64_t index = 0; index != nbaSiteCount; ++index) {
-    const obelisk_rt_static_nba_site &site = nbaSites[index];
+    const talos_rt_static_nba_site &site = nbaSites[index];
     if (site.site == UINT64_MAX || site.root >= nbaRootCount ||
-        (site.storage != OBELISK_RT_STATIC_NBA_FIXED_SLOT &&
-         site.storage != OBELISK_RT_STATIC_NBA_ROOT_ACCUMULATOR) ||
+        (site.storage != TALOS_RT_STATIC_NBA_FIXED_SLOT &&
+         site.storage != TALOS_RT_STATIC_NBA_ROOT_ACCUMULATOR) ||
         (index != 0 && nbaSites[index - 1].site >= site.site))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
   }
   for (uint64_t index = 0; index != fanoutEntryCount; ++index) {
-    const obelisk_rt_static_fanout_entry &entry = fanoutEntries[index];
-    uint32_t route = entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK;
+    const talos_rt_static_fanout_entry &entry = fanoutEntries[index];
+    uint32_t route = entry.reserved & TALOS_RT_FANOUT_ROUTE_MASK;
     uint32_t unknownFlags =
-        entry.reserved & ~(OBELISK_RT_FANOUT_ROUTE_MASK |
-                           OBELISK_RT_FANOUT_SUPPRESS_ACTIVE_SELF);
+        entry.reserved & ~(TALOS_RT_FANOUT_ROUTE_MASK |
+                           TALOS_RT_FANOUT_SUPPRESS_ACTIVE_SELF);
     if (entry.static_state == 0 || entry.actor_slot >= plan->actor_capacity ||
         entry.continuation == 0 || entry.bit_width == 0 ||
         entry.compute_node == UINT32_MAX || unknownFlags != 0 ||
-        (route != OBELISK_RT_FANOUT_RUNTIME &&
-         (((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) == 0) ||
-          route > OBELISK_RT_FANOUT_PERIODIC_ALIAS)) ||
+        (route != TALOS_RT_FANOUT_RUNTIME &&
+         (((plan->flags & TALOS_RT_NATIVE_SCHEDULE_EVAL) == 0) ||
+          route > TALOS_RT_FANOUT_PERIODIC_ALIAS)) ||
         entry.low_bit > UINT64_MAX - entry.bit_width ||
-        entry.edge < OBELISK_RT_WAIT_EDGE_CHANGE ||
-        entry.edge > OBELISK_RT_WAIT_EDGE_BOTH ||
+        entry.edge < TALOS_RT_WAIT_EDGE_CHANGE ||
+        entry.edge > TALOS_RT_WAIT_EDGE_BOTH ||
         (clockKernelCount != 0 &&
          (entry.kernel >= clockKernelCount ||
           entry.merged_bit / 64 >=
@@ -2057,52 +2057,52 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
                     fanoutEntries[index - 1].continuation} >=
              std::tuple{entry.static_state, entry.low_bit, entry.bit_width,
                         entry.edge, entry.actor_slot, entry.continuation}))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
   }
   for (uint32_t index = 0; index != clockKernelCount; ++index) {
-    const obelisk_rt_native_clock_kernel &kernel = clockKernels[index];
+    const talos_rt_native_clock_kernel &kernel = clockKernels[index];
     if (kernel.static_state == 0 || kernel.bit_width == 0 ||
         kernel.low_bit > UINT64_MAX - kernel.bit_width ||
-        kernel.edge < OBELISK_RT_WAIT_EDGE_CHANGE ||
-        kernel.edge > OBELISK_RT_WAIT_EDGE_BOTH || !kernel.ingress_mask ||
+        kernel.edge < TALOS_RT_WAIT_EDGE_CHANGE ||
+        kernel.edge > TALOS_RT_WAIT_EDGE_BOTH || !kernel.ingress_mask ||
         kernel.ingress_word_count == 0 ||
         kernel.ingress_word_count > (uint64_t{UINT32_MAX} + 63) / 64 ||
-        (kernel.reserved & ~obelisk::runtime::indexedClockKernelReadySet) !=
+        (kernel.reserved & ~talos::runtime::indexedClockKernelReadySet) !=
             0 ||
-        (((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) != 0) &&
+        (((plan->flags & TALOS_RT_NATIVE_SCHEDULE_EVAL) != 0) &&
          !kernel.active_mask))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     // Kernels are strictly increasing; the order is transitive, so each
     // kernel need only follow its predecessor.
     if (index != 0) {
-      const obelisk_rt_native_clock_kernel &other = clockKernels[index - 1];
+      const talos_rt_native_clock_kernel &other = clockKernels[index - 1];
       if (std::tuple{other.static_state, other.low_bit, other.bit_width,
                      other.edge} >= std::tuple{kernel.static_state,
                                                kernel.low_bit, kernel.bit_width,
                                                kernel.edge})
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
     }
   }
   for (uint64_t index = 0; index != mergedFragmentCount; ++index) {
-    const obelisk_rt_native_merged_fragment &merged = mergedFragments[index];
+    const talos_rt_native_merged_fragment &merged = mergedFragments[index];
     bool directFragmentValid =
         !merged.execute ||
         (merged.kernel < clockKernelCount && merged.continuation != 0 &&
-         (merged.flags & OBELISK_RT_MERGED_FRAGMENT_FALLBACK) == 0 &&
-         (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
-                         OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND)) != 0);
+         (merged.flags & TALOS_RT_MERGED_FRAGMENT_FALLBACK) == 0 &&
+         (plan->flags & (TALOS_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+                         TALOS_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND)) != 0);
     if (merged.actor_slot >= plan->actor_capacity ||
         merged.compute_node == UINT32_MAX || !directFragmentValid ||
-        (merged.flags & ~(OBELISK_RT_MERGED_FRAGMENT_SHARED |
-                          OBELISK_RT_MERGED_FRAGMENT_FALLBACK)) != 0 ||
+        (merged.flags & ~(TALOS_RT_MERGED_FRAGMENT_SHARED |
+                          TALOS_RT_MERGED_FRAGMENT_FALLBACK)) != 0 ||
         (merged.kernel < clockKernelCount &&
          merged.bit / 64 >= clockKernels[merged.kernel].ingress_word_count))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
   }
   // Each static state has one NBA root, and each kernel bit one merged
   // fragment. Sorting keeps installation linearithmic for plans with tens of
   // thousands of entries.
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::vector<uint32_t> rootStates(nbaRootCount);
     for (uint32_t index = 0; index != nbaRootCount; ++index)
       rootStates[index] = nbaRoots[index].static_state;
@@ -2113,20 +2113,20 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
                            mergedFragments[index].bit};
     if (hasDuplicateKey(std::move(rootStates)) ||
         hasDuplicateKey(std::move(mergedBits)))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
   uint64_t scopedActorCount = 0;
   for (uint64_t index = 0; index != actorRootCount; ++index) {
-    const obelisk_rt_static_actor_root &entry = actorRoots[index];
+    const talos_rt_static_actor_root &entry = actorRoots[index];
     bool scopeRecord = entry.static_state == 0 &&
-                       (entry.flags == OBELISK_RT_STATIC_ROOT_COMPLETE ||
-                        entry.flags == OBELISK_RT_STATIC_ROOT_UNSCOPED);
+                       (entry.flags == TALOS_RT_STATIC_ROOT_COMPLETE ||
+                        entry.flags == TALOS_RT_STATIC_ROOT_UNSCOPED);
     if (entry.actor_slot >= plan->actor_capacity || entry.reserved != 0 ||
         entry.flags == 0 ||
         (!scopeRecord &&
-         ((entry.flags & ~(OBELISK_RT_STATIC_ROOT_READ |
-                           OBELISK_RT_STATIC_ROOT_WRITE)) != 0 ||
+         ((entry.flags & ~(TALOS_RT_STATIC_ROOT_READ |
+                           TALOS_RT_STATIC_ROOT_WRITE)) != 0 ||
           !findNativeStaticState(context, entry.static_state))) ||
         (scopeRecord && index != 0 &&
          actorRoots[index - 1].actor_slot == entry.actor_slot &&
@@ -2136,70 +2136,70 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
                     actorRoots[index - 1].static_state,
                     actorRoots[index - 1].flags} >=
              std::tuple{entry.actor_slot, entry.static_state, entry.flags}))
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     scopedActorCount += scopeRecord;
   }
   if (scopedActorCount && scopedActorCount != plan->actor_capacity)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     if (context->nativeSchedulePlan || !context->scheduledProcesses.empty() ||
         !context->scheduledDesignTasks.empty() ||
         context->activeNativeProcess || context->designTaskExecuting) {
       if (context->signalDiagnosticsEnabled)
         std::fprintf(stderr,
-                     "obelisk-aot-install-reject plan=%u processes=%zu "
+                     "talos-aot-install-reject plan=%u processes=%zu "
                      "tasks=%zu active=%u design=%u\n",
                      context->nativeSchedulePlan != nullptr,
                      context->scheduledProcesses.size(),
                      context->scheduledDesignTasks.size(),
                      context->activeNativeProcess != nullptr,
                      context->designTaskExecuting);
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     }
     if (context->execution && context->execution->checksum != 0 &&
         plan->graph_layout_checksum != context->execution->checksum)
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
     if (plan->state_bit_count != 0 &&
         !validNativeStatePlanesUnlocked(context, plan->state_value,
                                         plan->state_unknown,
                                         plan->state_bit_count))
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
     for (uint32_t index = 0; index != nbaRootCount; ++index) {
-      const obelisk_rt_static_nba_root &root = nbaRoots[index];
+      const talos_rt_static_nba_root &root = nbaRoots[index];
       const NativeStaticState *state =
           findNativeStaticState(context, root.static_state);
       if (!state || state->bitWidth != root.bit_width)
-        return OBELISK_RT_LAYOUT_MISMATCH;
+        return TALOS_RT_LAYOUT_MISMATCH;
     }
     for (uint64_t index = 0; index != fanoutEntryCount; ++index) {
-      const obelisk_rt_static_fanout_entry &entry = fanoutEntries[index];
+      const talos_rt_static_fanout_entry &entry = fanoutEntries[index];
       const NativeStaticState *state =
           findNativeStaticState(context, entry.static_state);
       if (!state || entry.low_bit > state->bitWidth ||
           entry.bit_width > state->bitWidth - entry.low_bit)
-        return OBELISK_RT_LAYOUT_MISMATCH;
+        return TALOS_RT_LAYOUT_MISMATCH;
       if (clockKernelCount != 0 && entry.kernel != UINT32_MAX &&
           (entry.kernel >= clockKernelCount ||
            entry.merged_bit / 64 >=
                clockKernels[entry.kernel].ingress_word_count))
-        return OBELISK_RT_LAYOUT_MISMATCH;
+        return TALOS_RT_LAYOUT_MISMATCH;
     }
     for (uint32_t index = 0; index != clockKernelCount; ++index) {
-      const obelisk_rt_native_clock_kernel &kernel = clockKernels[index];
+      const talos_rt_native_clock_kernel &kernel = clockKernels[index];
       const NativeStaticState *state =
           findNativeStaticState(context, kernel.static_state);
       if (!state || kernel.low_bit > state->bitWidth ||
           kernel.bit_width > state->bitWidth - kernel.low_bit)
-        return OBELISK_RT_LAYOUT_MISMATCH;
+        return TALOS_RT_LAYOUT_MISMATCH;
     }
     {
       std::lock_guard<std::mutex> registryLock(nativeScheduleRegistryMutex);
       if (!installedNativeScheduleStates.insert(plan->mutable_state).second) {
         if (context->signalDiagnosticsEnabled)
-          std::fprintf(stderr, "obelisk-aot-install-reject duplicate-state\n");
-        return OBELISK_RT_INVALID_LIFECYCLE;
+          std::fprintf(stderr, "talos-aot-install-reject duplicate-state\n");
+        return TALOS_RT_INVALID_LIFECYCLE;
       }
     }
     if (plan->state_bit_count != 0 &&
@@ -2208,9 +2208,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
                                          plan->state_bit_count)) {
       std::lock_guard<std::mutex> registryLock(nativeScheduleRegistryMutex);
       installedNativeScheduleStates.erase(plan->mutable_state);
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
     }
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
 #if defined(__x86_64__) || defined(_M_X64)
       __builtin_cpu_init();
       // TODO: the AVX2 batch commits load the unknown plane unconditionally.
@@ -2238,13 +2238,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       // the complete actor inventory needed for this inverse dependency map.
       context->nativeScopedWrite.reset();
       if (scopedActorCount == plan->actor_capacity &&
-          (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_EVAL) &&
-          (plan->flags & OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION)) {
+          (plan->flags & TALOS_RT_NATIVE_SCHEDULE_EVAL) &&
+          (plan->flags & TALOS_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION)) {
         context->nativeScopedWrite = std::make_unique<NativeScopedWriteState>();
         for (uint64_t index = 0; index != actorRootCount; ++index) {
           const auto &root = actorRoots[index];
           if (!root.static_state) {
-            if (root.flags == OBELISK_RT_STATIC_ROOT_UNSCOPED)
+            if (root.flags == TALOS_RT_STATIC_ROOT_UNSCOPED)
               context->nativeScopedWrite->unscopedActors.push_back(
                   root.actor_slot);
             continue;
@@ -2266,7 +2266,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
           generatedActors[mergedFragments[index].actor_slot] = 1;
       for (uint64_t index = 0; index != actorRootCount; ++index) {
         const auto &root = actorRoots[index];
-        if ((root.flags & OBELISK_RT_STATIC_ROOT_WRITE) != 0 &&
+        if ((root.flags & TALOS_RT_STATIC_ROOT_WRITE) != 0 &&
             generatedActors[root.actor_slot])
           generatedWrites.insert(root.static_state);
       }
@@ -2302,7 +2302,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
           context->nativeScheduleStaticStateIndex.size(),
           {fanoutEntryCount, fanoutEntryCount});
       for (uint64_t index = 0; index != fanoutEntryCount; ++index) {
-        const obelisk_rt_static_fanout_entry &entry = fanoutEntries[index];
+        const talos_rt_static_fanout_entry &entry = fanoutEntries[index];
         if (entry.static_state < context->nativeScheduleFanoutRanges.size()) {
           auto &range = context->nativeScheduleFanoutRanges[entry.static_state];
           if (range.first == fanoutEntryCount)
@@ -2313,8 +2313,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
             context->nativeScheduleStaticStateFanoutEdges.size())
           context->nativeScheduleStaticStateFanoutEdges[entry.static_state] |=
               static_cast<uint8_t>(uint32_t{1} << entry.edge);
-        if ((entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK) ==
-            OBELISK_RT_FANOUT_RUNTIME)
+        if ((entry.reserved & TALOS_RT_FANOUT_ROUTE_MASK) ==
+            TALOS_RT_FANOUT_RUNTIME)
           context->nativeScheduleRuntimeFanoutIndices.push_back(index);
       }
       size_t dirtyWords =
@@ -2338,10 +2338,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
       context->nativeScheduleGeneratedBatchEligible = nbaRootCount != 0;
       context->nativeScheduleHasGeneratedNBAAccumulators = false;
       for (uint32_t index = 0; index != nbaRootCount; ++index) {
-        const obelisk_rt_static_nba_root &root = nbaRoots[index];
+        const talos_rt_static_nba_root &root = nbaRoots[index];
         context->nativeScheduleHasGeneratedNBAAccumulators |=
             root.generated_accumulator != nullptr || root.generated_slot_count;
-        const obelisk_rt_static_fanout_entry *fanout = std::lower_bound(
+        const talos_rt_static_fanout_entry *fanout = std::lower_bound(
             fanoutEntries, fanoutEntries + fanoutEntryCount, root.static_state,
             [](const auto &entry, uint32_t staticState) {
               return entry.static_state < staticState;
@@ -2414,10 +2414,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
               nbaSites[index].root;
       }
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       std::lock_guard<std::mutex> registryLock(nativeScheduleRegistryMutex);
       installedNativeScheduleStates.erase(plan->mutable_state);
-      OBELISK_RT_RETHROW;
+      TALOS_RT_RETHROW;
     }
     // Generated promotion state is storage owned by the plan image, not by a
     // runtime context.  A plan may therefore be installed again after the
@@ -2432,7 +2432,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     context->nativeScheduleExecutableFragments =
         std::any_of(plan->merged_fragments,
                     plan->merged_fragments + plan->merged_fragment_count,
-                    [](const obelisk_rt_native_merged_fragment &fragment) {
+                    [](const talos_rt_native_merged_fragment &fragment) {
                       return fragment.execute != nullptr;
                     });
     if (plan->specialization_fast)
@@ -2448,50 +2448,50 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_install_aot(
     context->nativeScheduleClockIngressPending = false;
     context->nativeScheduleDirectActorSlot = UINT32_MAX;
     context->nativeScheduleDeoptimized = false;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_activate_clock_kernel(
-    obelisk_rt_context *context, uint32_t kernel, uint32_t mergedBit) {
+extern "C" talos_rt_status talos_rt_v1_scheduler_activate_clock_kernel(
+    talos_rt_context *context, uint32_t kernel, uint32_t mergedBit) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
-    const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+    const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
     if (!plan)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     if (kernel >= plan->clock_kernel_count)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    const obelisk_rt_native_clock_kernel &record = plan->clock_kernels[kernel];
+      return TALOS_RT_INVALID_ARGUMENT;
+    const talos_rt_native_clock_kernel &record = plan->clock_kernels[kernel];
     uint32_t word = mergedBit / 64;
     if (word >= record.ingress_word_count)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     // The scheduler mutex serializes both leaf and derived-index updates.
     // Parallel producers must merge private sets at this boundary.
-    obelisk::runtime::publishClockKernelReady(record, mergedBit);
+    talos::runtime::publishClockKernelReady(record, mergedBit);
     context->nativeScheduleClockIngressPending = true;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_run_clock_coordinator(obelisk_rt_context *context) {
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_run_clock_coordinator(talos_rt_context *context) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_native_schedule_run run = nullptr;
-  obelisk_rt_native_timeslot_coordinator coordinator = nullptr;
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_native_schedule_run run = nullptr;
+  talos_rt_native_timeslot_coordinator coordinator = nullptr;
   void *mutableState = nullptr;
   bool hasDirectFragments = false;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     {
       ContextMutexLock lock(context);
-      const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+      const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
       if (!plan || !plan->timeslot_coordinator || !plan->run)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
       // A deposit from an executing runtime checkpoint has already published
       // its ingress. The enclosing scheduler must settle it after the actor
       // returns; recursively entering run_until here can replay that actor or
@@ -2499,7 +2499,7 @@ obelisk_rt_v1_scheduler_run_clock_coordinator(obelisk_rt_context *context) {
       // for multiple writes in one VPI callback.
       if (context->nativeScheduleRunning || context->activeNativeProcess ||
           context->vpiTimeCallbackActive)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       run = plan->run;
       coordinator = plan->timeslot_coordinator;
       mutableState = plan->mutable_state;
@@ -2519,41 +2519,41 @@ obelisk_rt_v1_scheduler_run_clock_coordinator(obelisk_rt_context *context) {
     return hasDirectFragments ? run(mutableState, context)
                               : coordinator(mutableState, context);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_enter(
-    obelisk_rt_context *context, uint32_t actorSlot, uint32_t continuation,
-    obelisk_rt_process_instance_v1 **outInstance) {
+extern "C" talos_rt_status talos_rt_v1_scheduler_direct_fragment_enter(
+    talos_rt_context *context, uint32_t actorSlot, uint32_t continuation,
+    talos_rt_process_instance_v1 **outInstance) {
   if (!context || !outInstance)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outInstance = nullptr;
   if (activeNativeAOTContext != context || lockedNativeAOTContext != context ||
       context->nativeScheduleDirectActorSlot != UINT32_MAX ||
       context->activeNativeProcess ||
       actorSlot >= context->nativeScheduleActors.size())
-    return OBELISK_RT_INVALID_LIFECYCLE;
-  obelisk_rt_process_instance_v1 *actor =
+    return TALOS_RT_INVALID_LIFECYCLE;
+  talos_rt_process_instance_v1 *actor =
       context->nativeScheduleActors[actorSlot];
   size_t index = context->nativeScheduleActorIndices[actorSlot];
   if (!actor || actor->continuation != continuation ||
       index >= context->scheduledProcesses.size())
-    return OBELISK_RT_INVALID_CONTINUATION;
+    return TALOS_RT_INVALID_CONTINUATION;
   ScheduledProcess &scheduled = context->scheduledProcesses[index];
   if (scheduled.instance != actor || !scheduled.started ||
       scheduled.aotActorSlot != actorSlot || scheduled.signalTriggered ||
       !scheduled.controls.empty() ||
-      (scheduled.suspendKind != OBELISK_RT_SUSPEND_CHANGE &&
-       scheduled.suspendKind != OBELISK_RT_SUSPEND_EDGE &&
-       scheduled.suspendKind != OBELISK_RT_SUSPEND_OBSERVER))
-    return OBELISK_RT_INVALID_LIFECYCLE;
+      (scheduled.suspendKind != TALOS_RT_SUSPEND_CHANGE &&
+       scheduled.suspendKind != TALOS_RT_SUSPEND_EDGE &&
+       scheduled.suspendKind != TALOS_RT_SUSPEND_OBSERVER))
+    return TALOS_RT_INVALID_LIFECYCLE;
   // The generated ready bit selected this activation and was consumed before
   // entering the wrapper. Keep the runtime occurrence bit clear while the
   // body runs so a transition published by the body can represent a distinct
   // activation of the same wait.
   actor->context = context;
-  actor->lifecycle = OBELISK_RT_PROCESS_EXECUTING;
+  actor->lifecycle = TALOS_RT_PROCESS_EXECUTING;
   context->nativeScheduleDirectActorSlot = actorSlot;
   context->activeNativeProcess = actor;
   context->activeHomeRegion = scheduled.homeRegion;
@@ -2564,28 +2564,28 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_direct_fragment_enter(
   context->controlEscapePending = false;
   context->activeLogicalProcessParent = scheduled.parent;
   context->activeWaitOrderFailed = false;
-  obelisk_rt_flush_deferred_immediate_reports_unlocked(
+  talos_rt_flush_deferred_immediate_reports_unlocked(
       context, context->activeLogicalProcessToken);
   *outInstance = actor;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_direct_fragment_leave(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_direct_fragment_leave(talos_rt_context *context,
                                               uint32_t actorSlot) {
   if (!context || activeNativeAOTContext != context ||
       lockedNativeAOTContext != context ||
       context->nativeScheduleDirectActorSlot != actorSlot ||
       actorSlot >= context->nativeScheduleActors.size())
-    return OBELISK_RT_INVALID_LIFECYCLE;
-  obelisk_rt_process_instance_v1 *actor =
+    return TALOS_RT_INVALID_LIFECYCLE;
+  talos_rt_process_instance_v1 *actor =
       context->nativeScheduleActors[actorSlot];
   size_t index = context->nativeScheduleActorIndices[actorSlot];
   if (!actor || context->activeNativeProcess != actor ||
       index >= context->scheduledProcesses.size())
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   actor->context = nullptr;
-  actor->lifecycle = OBELISK_RT_PROCESS_SUSPENDED;
+  actor->lifecycle = TALOS_RT_PROCESS_SUSPENDED;
   // Do not clear signalTriggered here: the direct body can update a signal in
   // its own event expression before suspending on the same wait again. Such a
   // publication is the next activation, not the one consumed on entry.
@@ -2599,59 +2599,59 @@ obelisk_rt_v1_scheduler_direct_fragment_leave(obelisk_rt_context *context,
   context->activeLogicalProcessParent = 0;
   context->activeWaitOrderFailed = false;
   if (context->schedulerSlotProgress == UINT64_MAX) {
-    context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+    context->schedulerStatus = TALOS_RT_OUT_OF_RESOURCES;
     return context->schedulerStatus;
   }
   ++context->schedulerSlotProgress;
   ++context->signalDiagnostics.aotNodeExecutions;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
-    obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance,
+extern "C" talos_rt_status talos_rt_v1_scheduler_add_aot(
+    talos_rt_context *context, talos_rt_process_instance_v1 *instance,
     uint32_t flags, uint32_t actorSlot, uint32_t initialRank,
     const uint32_t *continuations, const uint32_t *ranks,
     uint32_t continuationCount, const uint32_t *bytecodeContinuations,
     uint32_t bytecodeContinuationCount) {
   if (!context || !instance)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (bytecodeContinuationCount != 0 && !bytecodeContinuations)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (bytecodeContinuationCount != 0 && (instance->descriptor->available_tiers &
-                                         OBELISK_RT_TIER_MASK_BYTECODE) == 0)
-    return OBELISK_RT_TIER_UNAVAILABLE;
+                                         TALOS_RT_TIER_MASK_BYTECODE) == 0)
+    return TALOS_RT_TIER_UNAVAILABLE;
   for (uint32_t index = 0; index != bytecodeContinuationCount; ++index)
     if (!validContinuation(*instance->descriptor->frame_layout,
                            bytecodeContinuations[index]) ||
         (index != 0 &&
          bytecodeContinuations[index - 1] >= bytecodeContinuations[index]))
-      return OBELISK_RT_INVALID_CONTINUATION;
+      return TALOS_RT_INVALID_CONTINUATION;
   ContextTransaction transaction(context);
-  const obelisk_rt_native_schedule_plan *plan = nullptr;
+  const talos_rt_native_schedule_plan *plan = nullptr;
   {
     ContextMutexLock lock(context);
     plan = context->nativeSchedulePlan;
     if (!plan || context->nativeScheduleDeoptimized ||
         actorSlot >= context->nativeScheduleActors.size())
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     if (context->nativeScheduleActors[actorSlot])
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     if (uint64_t token = context->nativeScheduleActorTokens[actorSlot])
       if (ScheduledProcess *owner = findScheduledProcess(context, token);
           owner && owner->instance)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
   }
-  obelisk_rt_status status = obelisk_rt_v1_scheduler_add_planned(
+  talos_rt_status status = talos_rt_v1_scheduler_add_planned(
       context, instance, flags, initialRank, continuations, ranks,
       continuationCount);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   auto rollback = [&] {
     ContextMutexLock lock(context);
     auto *found = findScheduledProcessByInstance(context, instance);
     if (!found)
       return;
-    obelisk_rt_release_controls_unlocked(context, found->controls);
+    talos_rt_release_controls_unlocked(context, found->controls);
     context->nativePollCandidates.erase(found->token);
     context->scheduledProcessIndices.erase(found->token);
     context->scheduledProcesses.erase(
@@ -2660,11 +2660,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
     rebuildNativeSchedulerIndexUnlocked(context);
   };
   uint64_t actorToken = 0;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     auto *found = findScheduledProcessByInstance(context, instance);
     if (!found)
-      status = OBELISK_RT_INVALID_LIFECYCLE;
+      status = TALOS_RT_INVALID_LIFECYCLE;
     else {
       if (bytecodeContinuationCount == 0)
         found->bytecodeContinuations.clear();
@@ -2676,42 +2676,42 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
       actorToken = found->token;
     }
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    status = OBELISK_RT_OUT_OF_MEMORY;
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    status = TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL { status = OBELISK_RT_INVALID_ARGUMENT; }
-  if (status != OBELISK_RT_OK) {
+  TALOS_RT_CATCH_ALL { status = TALOS_RT_INVALID_ARGUMENT; }
+  if (status != TALOS_RT_OK) {
     rollback();
     return status;
   }
   status = plan->bind(plan->mutable_state, context, actorSlot, instance);
-  bool bound = status == OBELISK_RT_OK;
+  bool bound = status == TALOS_RT_OK;
   if (bound) {
     ContextMutexLock lock(context);
     ScheduledProcess *scheduled = findScheduledProcess(context, actorToken);
     if (context->nativeSchedulePlan != plan ||
         context->nativeScheduleActors[actorSlot] || !scheduled ||
         scheduled->instance != instance) {
-      status = OBELISK_RT_INVALID_LIFECYCLE;
+      status = TALOS_RT_INVALID_LIFECYCLE;
     } else {
       auto index = context->scheduledProcessIndices.find(actorToken);
       if (index == context->scheduledProcessIndices.end()) {
-        status = OBELISK_RT_INVALID_LIFECYCLE;
+        status = TALOS_RT_INVALID_LIFECYCLE;
       } else {
         context->nativeScheduleActors[actorSlot] = instance;
         context->nativeScheduleActorTokens[actorSlot] = actorToken;
         context->nativeScheduleActorIndices[actorSlot] = index->second;
         if (!markNativeAOTActorReadyUnlocked(context, actorSlot))
-          status = OBELISK_RT_INVALID_CONTINUATION;
+          status = TALOS_RT_INVALID_CONTINUATION;
         else
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
       }
     }
   }
   if (bound) {
-    obelisk_rt_status clearStatus =
+    talos_rt_status clearStatus =
         plan->bind(plan->mutable_state, context, actorSlot, nullptr);
-    if (clearStatus != OBELISK_RT_OK)
+    if (clearStatus != TALOS_RT_OK)
       status = clearStatus;
     ContextMutexLock lock(context);
     context->nativeScheduleActors[actorSlot] = nullptr;
@@ -2725,137 +2725,137 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_aot(
   return status;
 }
 
-extern "C" uint64_t obelisk_rt_v1_scheduler_process_token(
-    obelisk_rt_context *context, obelisk_rt_process_instance_v1 *instance) {
+extern "C" uint64_t talos_rt_v1_scheduler_process_token(
+    talos_rt_context *context, talos_rt_process_instance_v1 *instance) {
   if (!context || !instance)
     return 0;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     if (auto *process = findScheduledProcessByInstance(context, instance))
-      return OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | process->token;
+      return TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG | process->token;
   }
-  OBELISK_RT_CATCH_ALL {}
+  TALOS_RT_CATCH_ALL {}
   return 0;
 }
 
-extern "C" uint64_t obelisk_rt_v1_process_current(obelisk_rt_context *context) {
+extern "C" uint64_t talos_rt_v1_process_current(talos_rt_context *context) {
   if (!context)
     return 0;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     return context->activeLogicalProcessToken;
   }
-  OBELISK_RT_CATCH_ALL { return 0; }
+  TALOS_RT_CATCH_ALL { return 0; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_process_status(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_process_status(talos_rt_context *context,
                              uint64_t logicalProcess,
-                             obelisk_rt_process_state *outState) {
+                             talos_rt_process_state *outState) {
   if (!context || logicalProcess == 0 || !outState)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  *outState = OBELISK_RT_PROCESS_FINISHED;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  *outState = TALOS_RT_PROCESS_FINISHED;
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
-    if ((logicalProcess & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
-      uint64_t token = logicalProcess & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+    if ((logicalProcess & TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0) {
+      uint64_t token = logicalProcess & ~TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG;
       if (context->killedNativeProcesses.count(token) != 0) {
-        *outState = OBELISK_RT_PROCESS_KILLED;
-        return OBELISK_RT_OK;
+        *outState = TALOS_RT_PROCESS_KILLED;
+        return TALOS_RT_OK;
       }
       if (context->terminatedNativeProcesses.count(token) != 0)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       if (context->activeLogicalProcessToken == logicalProcess) {
-        *outState = OBELISK_RT_PROCESS_RUNNING;
-        return OBELISK_RT_OK;
+        *outState = TALOS_RT_PROCESS_RUNNING;
+        return TALOS_RT_OK;
       }
       auto indexed = context->scheduledProcessIndices.find(token);
       if (indexed == context->scheduledProcessIndices.end() ||
           indexed->second >= context->scheduledProcesses.size())
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       const ScheduledProcess *process =
           &context->scheduledProcesses[indexed->second];
       if (process->token != token || !process->instance)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       *outState = process->explicitlySuspended
-                      ? OBELISK_RT_PROCESS_EXPLICITLY_SUSPENDED
-                  : process->suspendKind != OBELISK_RT_SUSPEND_NONE
-                      ? OBELISK_RT_PROCESS_WAITING
-                      : OBELISK_RT_PROCESS_RUNNING;
-      return OBELISK_RT_OK;
+                      ? TALOS_RT_PROCESS_EXPLICITLY_SUSPENDED
+                  : process->suspendKind != TALOS_RT_SUSPEND_NONE
+                      ? TALOS_RT_PROCESS_WAITING
+                      : TALOS_RT_PROCESS_RUNNING;
+      return TALOS_RT_OK;
     }
     if (context->killedDesignTasks.count(logicalProcess) != 0) {
-      *outState = OBELISK_RT_PROCESS_KILLED;
-      return OBELISK_RT_OK;
+      *outState = TALOS_RT_PROCESS_KILLED;
+      return TALOS_RT_OK;
     }
     if (context->terminatedDesignTasks.count(logicalProcess) != 0)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     if (context->activeLogicalProcessToken == logicalProcess) {
-      *outState = OBELISK_RT_PROCESS_RUNNING;
-      return OBELISK_RT_OK;
+      *outState = TALOS_RT_PROCESS_RUNNING;
+      return TALOS_RT_OK;
     }
     auto indexed = context->scheduledDesignTaskIndices.find(logicalProcess);
     if (indexed == context->scheduledDesignTaskIndices.end() ||
         indexed->second >= context->scheduledDesignTasks.size())
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     const ScheduledDesignTask &task =
         context->scheduledDesignTasks[indexed->second];
     if (task.id != logicalProcess)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (task.terminated)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     *outState = task.explicitlySuspended
-                    ? OBELISK_RT_PROCESS_EXPLICITLY_SUSPENDED
-                : task.suspendKind != OBELISK_RT_SUSPEND_NONE
-                    ? OBELISK_RT_PROCESS_WAITING
-                    : OBELISK_RT_PROCESS_RUNNING;
-    return OBELISK_RT_OK;
+                    ? TALOS_RT_PROCESS_EXPLICITLY_SUSPENDED
+                : task.suspendKind != TALOS_RT_SUSPEND_NONE
+                    ? TALOS_RT_PROCESS_WAITING
+                    : TALOS_RT_PROCESS_RUNNING;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-obelisk_rt_status obelisk_rt_process_object_identity(
-    obelisk_rt_context *context, uint64_t logicalProcess,
+talos_rt_status talos_rt_process_object_identity(
+    talos_rt_context *context, uint64_t logicalProcess,
     uint64_t *outIdentity) noexcept {
   if (!outIdentity)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outIdentity = 0;
   if (!context || logicalProcess == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
-    obelisk_rt_process_state state{};
-    obelisk_rt_status status =
-        obelisk_rt_v1_process_status(context, logicalProcess, &state);
-    if (status != OBELISK_RT_OK)
+    talos_rt_process_state state{};
+    talos_rt_status status =
+        talos_rt_v1_process_status(context, logicalProcess, &state);
+    if (status != TALOS_RT_OK)
       return status;
     auto [entry, inserted] =
         context->processObjectIdentities.try_emplace(logicalProcess, 0);
     if (inserted) {
-      status = obelisk_rt_managed_identity_reserve(context, &entry->second);
-      if (status != OBELISK_RT_OK) {
+      status = talos_rt_managed_identity_reserve(context, &entry->second);
+      if (status != TALOS_RT_OK) {
         context->processObjectIdentities.erase(entry);
         return status;
       }
     }
     *outIdentity = entry->second;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_monitor_register(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_monitor_register(talos_rt_context *context,
                                uint64_t processToken, uint32_t designProcess) {
   if (!context || processToken == 0 || designProcess > 1)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     uint64_t replacement =
         designProcess ? processToken
-                      : OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG | processToken;
+                      : TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG | processToken;
     uint64_t previous = context->monitorLogicalProcessToken;
     context->monitorLogicalProcessToken = replacement;
     context->monitorEnabled = true;
@@ -2864,41 +2864,41 @@ obelisk_rt_v1_monitor_register(obelisk_rt_context *context,
     context->monitorReport.clear();
     if (previous != replacement)
       wakeMonitorProcessUnlocked(context, previous);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_monitor_register_logical(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_monitor_register_logical(talos_rt_context *context,
                                        uint64_t logicalProcess) {
   if (logicalProcess == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  bool native = (logicalProcess & OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0;
+    return TALOS_RT_INVALID_ARGUMENT;
+  bool native = (logicalProcess & TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG) != 0;
   uint64_t token = native
-                       ? logicalProcess & ~OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG
+                       ? logicalProcess & ~TALOS_RT_NATIVE_LOGICAL_PROCESS_TAG
                        : logicalProcess;
-  return obelisk_rt_v1_monitor_register(context, token, native ? 0 : 1);
+  return talos_rt_v1_monitor_register(context, token, native ? 0 : 1);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_monitor_control(obelisk_rt_context *context, uint32_t enabled) {
+extern "C" talos_rt_status
+talos_rt_v1_monitor_control(talos_rt_context *context, uint32_t enabled) {
   if (!context || enabled > 1)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     context->monitorEnabled = enabled != 0;
     if (enabled)
       wakeMonitorProcessUnlocked(context, context->monitorLogicalProcessToken);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" uint32_t obelisk_rt_v1_monitor_current(obelisk_rt_context *context) {
+extern "C" uint32_t talos_rt_v1_monitor_current(talos_rt_context *context) {
   if (!context)
     return 0;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     return context->activeLogicalProcessToken != 0 &&
                    context->activeLogicalProcessToken ==
@@ -2906,74 +2906,74 @@ extern "C" uint32_t obelisk_rt_v1_monitor_current(obelisk_rt_context *context) {
                ? 1
                : 0;
   }
-  OBELISK_RT_CATCH_ALL { return 0; }
+  TALOS_RT_CATCH_ALL { return 0; }
 }
 
-extern "C" void obelisk_rt_v1_scheduler_fail(obelisk_rt_context *context,
-                                             obelisk_rt_status status) {
-  if (!context || status == OBELISK_RT_OK)
+extern "C" void talos_rt_v1_scheduler_fail(talos_rt_context *context,
+                                             talos_rt_status status) {
+  if (!context || status == TALOS_RT_OK)
     return;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
-    if (context->schedulerStatus == OBELISK_RT_OK)
+    if (context->schedulerStatus == TALOS_RT_OK)
       context->schedulerStatus = status;
   }
-  OBELISK_RT_CATCH_ALL {}
+  TALOS_RT_CATCH_ALL {}
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_native_state_register_static(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_native_state_register_static(talos_rt_context *context,
                                            uint32_t id, uint64_t bitOffset,
                                            uint64_t bitWidth) {
-  if (!context || id == 0 || id > OBELISK_RT_STABLE_HANDLE_MAX_STATIC_ID ||
+  if (!context || id == 0 || id > TALOS_RT_STABLE_HANDLE_MAX_STATIC_ID ||
       bitWidth == 0 || bitOffset > UINT64_MAX - bitWidth)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     NativeStaticState state{bitOffset, bitWidth};
     auto [entry, inserted] = context->nativeStaticStates.emplace(id, state);
     if (!inserted && (entry->second.bitOffset != bitOffset ||
                       entry->second.bitWidth != bitWidth)) {
-      context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
-      return OBELISK_RT_INVALID_ARGUMENT;
+      context->schedulerStatus = TALOS_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     }
     if (inserted) {
       context->nativeStaticStateRangesValid = false;
       context->nativeStaticStatesWithinPlanes = false;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
-    return OBELISK_RT_OUT_OF_MEMORY;
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_OUT_OF_MEMORY);
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
-    return OBELISK_RT_INVALID_ARGUMENT;
+  TALOS_RT_CATCH_ALL {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_INVALID_ARGUMENT);
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_native_state_bind_shared(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_native_state_bind_shared(talos_rt_context *context,
                                        uint8_t *value, uint8_t *unknown,
                                        uint64_t bitCount) {
   if (!context || !value || (!unknown && !context->twoState()) ||
       value == unknown ||
       (reinterpret_cast<uintptr_t>(value) % alignof(uint64_t)) ||
       (reinterpret_cast<uintptr_t>(unknown) % alignof(uint64_t)))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
   ContextMutexLock lock(context);
   if (!context->execution || context->execution->observer_count ||
       context->vpiObservationDemand ||
-      (context->execution->flags & OBELISK_RT_EXECUTION_COVERAGE_SCHEMA) ||
+      (context->execution->flags & TALOS_RT_EXECUTION_COVERAGE_SCHEMA) ||
       context->nativeStateValue || context->nativeSchedulePlan ||
       !context->nativeStaticStates.empty() ||
       !context->scheduledProcesses.empty())
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   if (!validNativeStatePlanesUnlocked(context, value, unknown, bitCount))
-    return OBELISK_RT_LAYOUT_MISMATCH;
+    return TALOS_RT_LAYOUT_MISMATCH;
 #if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) ||  \
     defined(_WIN32)
   context->stateValue.bind(value, (bitCount + 63) / 64);
@@ -2987,25 +2987,25 @@ obelisk_rt_v1_native_state_bind_shared(obelisk_rt_context *context,
   context->nativeStateValue = value;
   context->nativeStateUnknown = unknown;
   context->nativeStateBitCount = bitCount;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 #else
-  return OBELISK_RT_TIER_UNAVAILABLE;
+  return TALOS_RT_TIER_UNAVAILABLE;
 #endif
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_native_state_sync(obelisk_rt_context *context, uint8_t *value,
+extern "C" talos_rt_status
+talos_rt_v1_native_state_sync(talos_rt_context *context, uint8_t *value,
                                 uint8_t *unknown, uint64_t bitCount) {
   if (!context || !value || (!unknown && !context->twoState()))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     if (!context->execution || context->execution->state_bit_count > bitCount ||
         (context->execution->state_bit_count + 7) / 8 != (bitCount + 7) / 8 ||
         !validNativeStatePlanesUnlocked(context, value, unknown,
                                         context->execution->state_bit_count))
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
     // Checkpoint callbacks sync on every entry and exit. Bound-check the
     // immutable layout once instead of rescanning every static root.
     if (!context->nativeStaticStatesWithinPlanes) {
@@ -3013,51 +3013,51 @@ obelisk_rt_v1_native_state_sync(obelisk_rt_context *context, uint8_t *value,
         if (state.bitOffset > context->execution->state_bit_count ||
             state.bitWidth >
                 context->execution->state_bit_count - state.bitOffset)
-          return OBELISK_RT_LAYOUT_MISMATCH;
+          return TALOS_RT_LAYOUT_MISMATCH;
       context->nativeStaticStatesWithinPlanes = true;
     }
     if (!importNativeStatePlanesUnlocked(context, value, unknown,
                                          context->execution->state_bit_count))
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
     context->nativeStateValue = value;
     context->nativeStateUnknown = unknown;
     context->nativeStateBitCount = bitCount;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_native_state_bind_specialization(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_native_state_bind_specialization(talos_rt_context *context,
                                                uint32_t *fast) {
   if (!context || !fast)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextMutexLock lock(context);
   if (context->nativeSchedulePlan || !context->nativeStateValue ||
       (!context->nativeStateUnknown && !context->twoState()) ||
       !context->nativeStateBitCount ||
       (context->nativeStateSpecializationFast &&
        context->nativeStateSpecializationFast != fast))
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   *fast = 0;
   context->nativeStateSpecializationFast = fast;
   refreshNativeStaticSpecializationFastUnlocked(context);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_native_state_bind_continuous(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_native_state_bind_continuous(talos_rt_context *context,
                                            uint8_t **value, uint8_t **unknown,
                                            uint8_t **mask) {
   if (!context || !value || !unknown || !mask)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *value = *unknown = *mask = nullptr;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     if (!context->nativeStateValue ||
         (!context->nativeStateUnknown && !context->twoState()) ||
         !context->nativeStateBitCount)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     size_t limbs = context->stateValue.size();
     if (context->continuousValue.empty())
       context->continuousValue.assign(limbs, 0);
@@ -3071,79 +3071,79 @@ obelisk_rt_v1_native_state_bind_continuous(obelisk_rt_context *context,
     *value = reinterpret_cast<uint8_t *>(context->continuousValue.data());
     *unknown = reinterpret_cast<uint8_t *>(context->continuousUnknown.data());
     *mask = reinterpret_cast<uint8_t *>(context->continuousMask.data());
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-extern "C" void obelisk_rt_v1_scheduler_notify(obelisk_rt_context *context) {
+extern "C" void talos_rt_v1_scheduler_notify(talos_rt_context *context) {
   if (!context)
     return;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     if (++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
   }
-  OBELISK_RT_CATCH_ALL {}
+  TALOS_RT_CATCH_ALL {}
 }
 
-void latchSchedulerErrorUnlocked(obelisk_rt_context *context) noexcept {
-  context->schedulerFinishStatus = OBELISK_RT_FATAL;
+void latchSchedulerErrorUnlocked(talos_rt_context *context) noexcept {
+  context->schedulerFinishStatus = TALOS_RT_FATAL;
 }
 
 /// The status of a scheduler step that returns before the simulation ends.
 /// An error latched by $error (IEEE 1800-2023 20.10) is only the final exit
 /// status and does not stop the simulation, so a step reports it once a
 /// finish has been requested and is otherwise OK.
-static obelisk_rt_status
-midSimulationStatusUnlocked(const obelisk_rt_context *context) noexcept {
+static talos_rt_status
+midSimulationStatusUnlocked(const talos_rt_context *context) noexcept {
   return context->schedulerFinishRequested.load(std::memory_order_relaxed)
              ? context->schedulerFinishStatus
-             : OBELISK_RT_OK;
+             : TALOS_RT_OK;
 }
 
-void enterFinalPhaseUnlocked(obelisk_rt_context *context) noexcept {
+void enterFinalPhaseUnlocked(talos_rt_context *context) noexcept {
   context->schedulerRunningFinals = true;
   uint32_t pending = 1;
   context->schedulerFinishRequested.compare_exchange_strong(
       pending, kSchedulerFinishConsumedByFinals, std::memory_order_relaxed);
 }
 
-static void requestExplicitFinishUnlocked(obelisk_rt_context *context,
+static void requestExplicitFinishUnlocked(talos_rt_context *context,
                                           uint32_t verbosity,
-                                          obelisk_rt_status status) {
+                                          talos_rt_status status) {
   if (context->schedulerRunningFinals)
     context->schedulerFinalsAborted = true;
   context->schedulerFinishRequested.store(1, std::memory_order_relaxed);
   context->nativePeriodicTerminationRequested = 1;
   context->schedulerFinishVerbosity = verbosity;
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     context->schedulerFinishStatus = status;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_finish(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_finish(talos_rt_context *context,
                                uint32_t verbosity) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
-    requestExplicitFinishUnlocked(context, verbosity, OBELISK_RT_OK);
-    return OBELISK_RT_OK;
+    requestExplicitFinishUnlocked(context, verbosity, TALOS_RT_OK);
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" uint32_t
-obelisk_rt_v1_scheduler_program_owned(obelisk_rt_context *context) {
+talos_rt_v1_scheduler_program_owned(talos_rt_context *context) {
   if (!context)
     return 0;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     uint64_t owner = context->activeProgramOwner;
     uint64_t current = context->activeLogicalProcessToken;
@@ -3153,15 +3153,15 @@ obelisk_rt_v1_scheduler_program_owned(obelisk_rt_context *context) {
     return found != context->programProcesses.end() &&
            found->second.count(current) != 0;
   }
-  OBELISK_RT_CATCH_ALL { return 0; }
+  TALOS_RT_CATCH_ALL { return 0; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_program_exit(obelisk_rt_context *context) {
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_program_exit(talos_rt_context *context) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     uint64_t owner = 0;
     uint64_t current = 0;
     std::vector<uint64_t> members;
@@ -3173,12 +3173,12 @@ obelisk_rt_v1_scheduler_program_exit(obelisk_rt_context *context) {
         setLastErrorUnlocked(
             context,
             "$exit is only valid in a thread owned by a program instance");
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
       }
       auto found = context->programProcesses.find(owner);
       if (found == context->programProcesses.end() ||
           found->second.count(current) == 0)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
       members.reserve(found->second.size());
       for (uint64_t member : found->second)
         if (member != current)
@@ -3186,57 +3186,57 @@ obelisk_rt_v1_scheduler_program_exit(obelisk_rt_context *context) {
       members.push_back(current);
     }
     for (uint64_t member : members) {
-      obelisk_rt_process_control_disposition disposition =
-          OBELISK_RT_PROCESS_CONTROL_CONTINUE;
-      obelisk_rt_status status = obelisk_rt_v1_process_control(
-          context, member, OBELISK_RT_PROCESS_CONTROL_KILL, &disposition);
-      if (status != OBELISK_RT_OK)
+      talos_rt_process_control_disposition disposition =
+          TALOS_RT_PROCESS_CONTROL_CONTINUE;
+      talos_rt_status status = talos_rt_v1_process_control(
+          context, member, TALOS_RT_PROCESS_CONTROL_KILL, &disposition);
+      if (status != TALOS_RT_OK)
         return status;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_stop(obelisk_rt_context *context, uint32_t verbosity) {
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_stop(talos_rt_context *context, uint32_t verbosity) {
   // Standalone executables have no interactive command loop in which a
   // stopped design can remain suspended. Keep the request distinct at the ABI
   // boundary, but use the documented batch-mode termination policy.
-  return obelisk_rt_v1_scheduler_finish(context, verbosity);
+  return talos_rt_v1_scheduler_finish(context, verbosity);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_fatal(obelisk_rt_context *context, uint32_t verbosity) {
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_fatal(talos_rt_context *context, uint32_t verbosity) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
-    requestExplicitFinishUnlocked(context, verbosity, OBELISK_RT_FATAL);
-    return OBELISK_RT_OK;
+    requestExplicitFinishUnlocked(context, verbosity, TALOS_RT_FATAL);
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_error(obelisk_rt_context *context) {
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_error(talos_rt_context *context) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     latchSchedulerErrorUnlocked(context);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
 extern "C" uint32_t
-obelisk_rt_v1_scheduler_termination_requested(obelisk_rt_context *context) {
+talos_rt_v1_scheduler_termination_requested(talos_rt_context *context) {
   // IEEE 1800-2023 20.2/20.10/24.7: observe the finish/stop/fatal/program
   // completion latch without changing when callers test it. This query does
   // not access finish status or any other mutex-protected context state.
@@ -3248,59 +3248,59 @@ obelisk_rt_v1_scheduler_termination_requested(obelisk_rt_context *context) {
          1;
 }
 
-extern "C" uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context) {
+extern "C" uint64_t talos_rt_v1_scheduler_time(talos_rt_context *context) {
   if (!context)
     return 0;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     return context->schedulerTime;
   }
-  OBELISK_RT_CATCH_ALL { return 0; }
+  TALOS_RT_CATCH_ALL { return 0; }
 }
 
 // Capture the canonical sampled plane before any executable region, then
 // publish one private event to sampled computed observers. The event is
 // enabled lazily by observer registration, so designs without asynchronous
 // sampled conditions pay no per-slot observer-scan cost.
-obelisk_rt_status runPreponedHooks(obelisk_rt_context *context) {
-  obelisk_rt_status status = obelisk_rt_capture_preponed_unlocked(context);
-  if (status != OBELISK_RT_OK || !context->preponedObserverPresent)
+talos_rt_status runPreponedHooks(talos_rt_context *context) {
+  talos_rt_status status = talos_rt_capture_preponed_unlocked(context);
+  if (status != TALOS_RT_OK || !context->preponedObserverPresent)
     return status;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     EventState &event =
-        context->events[OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT];
+        context->events[TALOS_RT_STABLE_HANDLE_PREPONED_EVENT];
     if (++event.generation == 0)
       event.generation = 1;
     event.lastTriggeredTime = context->schedulerTime;
-    if (!obelisk_rt_notify_event_order_waiters_unlocked(
-            context, OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT))
+    if (!talos_rt_notify_event_order_waiters_unlocked(
+            context, TALOS_RT_STABLE_HANDLE_PREPONED_EVENT))
       return context->schedulerStatus;
-    if (!obelisk_rt_notify_observer_event_unlocked(
-            context, OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT))
+    if (!talos_rt_notify_observer_event_unlocked(
+            context, TALOS_RT_STABLE_HANDLE_PREPONED_EVENT))
       return context->schedulerStatus;
     if (++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-obelisk_rt_status enterSchedulerTimeSlotUnlocked(obelisk_rt_context *context) {
+talos_rt_status enterSchedulerTimeSlotUnlocked(talos_rt_context *context) {
   if (context->schedulerPreponedTime == context->schedulerTime)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   // IEEE 1800-2023 4.4-4.5, 16.5.1: sample before executable regions and
   // retain that sample through all Active/NBA iterations and tier changes.
-  obelisk_rt_status status = runPreponedHooks(context);
-  if (status != OBELISK_RT_OK) {
+  talos_rt_status status = runPreponedHooks(context);
+  if (status != TALOS_RT_OK) {
     context->schedulerStatus = status;
     return status;
   }
   context->schedulerPreponedTime = context->schedulerTime;
   context->schedulerSlotProgress = 0;
   status = admitDueProcessDelaysUnlocked(context);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   if (context->staticNBASlowRootsPresent) {
     std::fill(context->staticNBASlowRoots.begin(),
@@ -3308,10 +3308,10 @@ obelisk_rt_status enterSchedulerTimeSlotUnlocked(obelisk_rt_context *context) {
     context->staticNBASlowRootsPresent = false;
   }
   refreshNativeStaticSpecializationFastUnlocked(context);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
+uint32_t nextDueNBABarrierRegionUnlocked(const talos_rt_context *context,
                                          bool includeGenerated) {
   uint32_t barrierRegion = UINT32_MAX;
   auto considerBarrier = [&](const auto &entries) {
@@ -3329,8 +3329,8 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
       context->scheduledInertialPathNBAs.begin()->first.first <=
           context->schedulerTime)
     barrierRegion = std::min(barrierRegion,
-                             static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE));
-  for (uint32_t region : {OBELISK_RT_REGION_NBA, OBELISK_RT_REGION_RE_NBA})
+                             static_cast<uint32_t>(TALOS_RT_REGION_ACTIVE));
+  for (uint32_t region : {TALOS_RT_REGION_NBA, TALOS_RT_REGION_RE_NBA})
     if (const ScheduledManagedNBA *entry =
             context->scheduledManagedNBAs.front(region);
         entry && entry->dueTime <= context->schedulerTime &&
@@ -3339,7 +3339,7 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
   considerBarrier(context->scheduledDesignNBAs);
   considerBarrier(context->scheduledDesignEvents);
   if (const ReplaceableEventFeatureState *replaceable =
-          obelisk_rt_replaceable_events(context);
+          talos_rt_replaceable_events(context);
       replaceable && !replaceable->calendar.empty()) {
     // An ineligible Active event at the front must not hide a due Re-NBA
     // event later in the calendar (IEEE 1800-2023 4.5).
@@ -3355,7 +3355,7 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
       context->scheduledPassSwitchEvents.begin()->first.first <=
           context->schedulerTime)
     barrierRegion = std::min(barrierRegion,
-                             static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE));
+                             static_cast<uint32_t>(TALOS_RT_REGION_ACTIVE));
   // IEEE 1800-2023 4.4.2.4, 4.4.2.8, 4.5: generated/static NBA roots
   // cannot precede an already selected NBA (or eligible Re-NBA) barrier.
   // Checkpoints within a large Active batch must not rescan every staged
@@ -3398,19 +3398,19 @@ void updateNativeAOTContinuationRank(ScheduledProcess &scheduled,
   scheduled.scheduleRank = nativeAOTContinuationRank(scheduled, continuation);
 }
 
-obelisk_rt_status
-suspendNativeAOTTaskCallerUnlocked(obelisk_rt_context *context,
+talos_rt_status
+suspendNativeAOTTaskCallerUnlocked(talos_rt_context *context,
                                    ScheduledProcess &scheduled) {
   uint32_t slot = scheduled.aotActorSlot;
   if (slot == UINT32_MAX)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   const auto *plan = context->nativeSchedulePlan;
   if (!plan || slot >= context->nativeScheduleActors.size() ||
       context->nativeScheduleActors[slot] != scheduled.instance ||
       scheduled.suspendedAOTActorSlot != UINT32_MAX)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   auto status = plan->bind(plan->mutable_state, context, slot, nullptr);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   // IEEE 1800-2023 13.3: the caller resumes after its task completes. Keep
   // its generated frame layout and continuation inventory out of the task's
@@ -3427,17 +3427,17 @@ suspendNativeAOTTaskCallerUnlocked(obelisk_rt_context *context,
       clearNativeAOTNodeReadyUnlocked(context, node);
     }
   removeNativeAOTDeadlineUnlocked(context, slot);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
-                             const obelisk_rt_wait_record_v1 *wait) {
+                             const talos_rt_wait_record_v1 *wait) {
   if (!wait || !scheduled.signalLatch ||
       scheduled.signalSubscriptions.size() != wait->count)
     return false;
-  const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
+  const talos_rt_wait_entry_v1 *entries = waitEntries(wait);
   bool suppressActiveSelf =
-      (wait->flags & OBELISK_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
+      (wait->flags & TALOS_RT_WAIT_SUPPRESS_ACTIVE_SELF) != 0;
   for (uint32_t index = 0; index != wait->count; ++index) {
     const SignalSubscription *subscription =
         scheduled.signalSubscriptions[index].get();
@@ -3457,25 +3457,25 @@ bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
 }
 
 template <typename Scheduled>
-static void resensitizeWait(obelisk_rt_context *context, Scheduled &scheduled,
-                            const obelisk_rt_wait_record_v1 *wait) {
+static void resensitizeWait(talos_rt_context *context, Scheduled &scheduled,
+                            const talos_rt_wait_record_v1 *wait) {
   if (!scheduled.started || !wait)
     return;
-  const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
+  const talos_rt_wait_entry_v1 *entries = waitEntries(wait);
   switch (scheduled.suspendKind) {
-  case OBELISK_RT_SUSPEND_CHANGE:
-  case OBELISK_RT_SUSPEND_EDGE:
-    if ((wait->flags & OBELISK_RT_WAIT_LEVEL_TRUE) != 0) {
+  case TALOS_RT_SUSPEND_CHANGE:
+  case TALOS_RT_SUSPEND_EDGE:
+    if ((wait->flags & TALOS_RT_WAIT_LEVEL_TRUE) != 0) {
       scheduled.signalTriggered =
           wait->count == 1 &&
-          obelisk_rt_level_wait_entry_true_unlocked(context, entries[0]);
+          talos_rt_level_wait_entry_true_unlocked(context, entries[0]);
       return;
     }
     scheduled.signalTriggered = false;
     if (scheduled.signalLatch)
       scheduled.signalLatch->triggered = false;
     return;
-  case OBELISK_RT_SUSPEND_EVENT:
+  case TALOS_RT_SUSPEND_EVENT:
     scheduled.waitGenerations.clear();
     for (uint32_t index = 0; index != wait->count; ++index) {
       auto event = context->events.find(entries[index].stable_id);
@@ -3488,18 +3488,18 @@ static void resensitizeWait(obelisk_rt_context *context, Scheduled &scheduled,
   }
 }
 
-void obelisk_rt_resensitize_process_unlocked(obelisk_rt_context *context,
+void talos_rt_resensitize_process_unlocked(talos_rt_context *context,
                                              ScheduledProcess &process) {
   resensitizeWait(context, process, currentWait(process));
 }
 
-void obelisk_rt_resensitize_design_task_unlocked(obelisk_rt_context *context,
+void talos_rt_resensitize_design_task_unlocked(talos_rt_context *context,
                                                  ScheduledDesignTask &task) {
   resensitizeWait(context, task, designTaskWait(task));
 }
 
-void obelisk_rt_prune_finished_process_parents_unlocked(
-    obelisk_rt_context *context) {
+void talos_rt_prune_finished_process_parents_unlocked(
+    talos_rt_context *context) {
   auto &links = context->finishedProcessParents;
   if (links.empty())
     return;
@@ -3521,7 +3521,7 @@ void obelisk_rt_prune_finished_process_parents_unlocked(
 }
 
 std::unordered_set<uint64_t>
-obelisk_rt_collect_process_tree_unlocked(const obelisk_rt_context *context,
+talos_rt_collect_process_tree_unlocked(const talos_rt_context *context,
                                          uint64_t root, bool &rootLive) {
   const auto &links = context->finishedProcessParents;
   const auto &parentMarks = context->logicalProcessParentsWithChildren;
@@ -3598,16 +3598,16 @@ obelisk_rt_collect_process_tree_unlocked(const obelisk_rt_context *context,
   return tree;
 }
 
-obelisk_rt_status
-adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
+talos_rt_status
+adoptScheduledSuspendUnlocked(talos_rt_context *context,
                               ScheduledProcess &scheduled,
-                              const obelisk_rt_fragment_action_v1 &action) {
+                              const talos_rt_fragment_action_v1 &action) {
   scheduled.suspendKind = action.suspend_kind;
   scheduled.waitOffset = action.payload;
   scheduled.waitSize = action.auxiliary;
-  if (action.suspend_kind == OBELISK_RT_SUSPEND_SEMAPHORE) {
+  if (action.suspend_kind == TALOS_RT_SUSPEND_SEMAPHORE) {
     if (context->nextWaitSequence == 0)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     scheduled.waitSequence = context->nextWaitSequence++;
   } else {
     scheduled.waitSequence = 0;
@@ -3621,26 +3621,26 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
   scheduled.signalTriggered = false;
   scheduled.startupProcess = false;
   scheduled.urgent = false;
-  const obelisk_rt_wait_record_v1 *wait = currentWait(scheduled);
-  if (!wait && action.suspend_kind != OBELISK_RT_SUSPEND_OBSERVER)
-    return OBELISK_RT_INVALID_FRAME;
-  bool directSignalSuspend = action.suspend_kind == OBELISK_RT_SUSPEND_CHANGE ||
-                             action.suspend_kind == OBELISK_RT_SUSPEND_EDGE;
+  const talos_rt_wait_record_v1 *wait = currentWait(scheduled);
+  if (!wait && action.suspend_kind != TALOS_RT_SUSPEND_OBSERVER)
+    return TALOS_RT_INVALID_FRAME;
+  bool directSignalSuspend = action.suspend_kind == TALOS_RT_SUSPEND_CHANGE ||
+                             action.suspend_kind == TALOS_RT_SUSPEND_EDGE;
   if (scheduled.computedObserverWaitRegistered ||
       (!directSignalSuspend && !scheduled.signalSubscriptions.empty()))
-    obelisk_rt_unregister_signal_wait_unlocked(
+    talos_rt_unregister_signal_wait_unlocked(
         context, scheduled.signalSubscriptions, scheduled.token, false);
   uint64_t delayPayload =
-      action.suspend_kind == OBELISK_RT_SUSPEND_DELAY ? wait->payload : 1;
-  if (!obelisk_rt_next_queued_region(
+      action.suspend_kind == TALOS_RT_SUSPEND_DELAY ? wait->payload : 1;
+  if (!talos_rt_next_queued_region(
           scheduled.homeRegion, action.suspend_kind, delayPayload, action.flags,
           scheduled.queuedRegion, scheduled.postObserved))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (scheduled.postObserved)
     context->postObservedResumptions.push_back(kNativeLogicalProcessTag |
                                                scheduled.token);
-  if (action.suspend_kind == OBELISK_RT_SUSPEND_EVENT) {
-    const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
+  if (action.suspend_kind == TALOS_RT_SUSPEND_EVENT) {
+    const talos_rt_wait_entry_v1 *entries = waitEntries(wait);
     scheduled.waitGenerations.reserve(wait->count);
     for (uint32_t index = 0; index != wait->count; ++index) {
       auto event = context->events.find(entries[index].stable_id);
@@ -3648,33 +3648,33 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
           event == context->events.end() ? 0 : event->second.generation);
     }
   }
-  if (action.suspend_kind == OBELISK_RT_SUSPEND_EVENT_ORDER &&
-      !obelisk_rt_initialize_event_order_wait_unlocked(
+  if (action.suspend_kind == TALOS_RT_SUSPEND_EVENT_ORDER &&
+      !talos_rt_initialize_event_order_wait_unlocked(
           context, wait, scheduled.waitOrderIndex, scheduled.waitOrderReady,
           scheduled.waitOrderFailed))
-    return OBELISK_RT_INVALID_FRAME;
-  if (action.suspend_kind == OBELISK_RT_SUSPEND_DELAY)
+    return TALOS_RT_INVALID_FRAME;
+  if (action.suspend_kind == TALOS_RT_SUSPEND_DELAY)
     scheduled.wakeTime = wait->payload > UINT64_MAX - context->schedulerTime
                              ? UINT64_MAX
                              : context->schedulerTime + wait->payload;
-  if (action.suspend_kind == OBELISK_RT_SUSPEND_DELAY)
+  if (action.suspend_kind == TALOS_RT_SUSPEND_DELAY)
     indexScheduledProcessDelayUnlocked(context, scheduled);
-  if (action.suspend_kind == OBELISK_RT_SUSPEND_OBSERVER &&
-      !obelisk_rt_register_computed_signal_wait_unlocked(
+  if (action.suspend_kind == TALOS_RT_SUSPEND_OBSERVER &&
+      !talos_rt_register_computed_signal_wait_unlocked(
           context, computedWait(scheduled), scheduled.token, false,
           scheduled.signalSubscriptions, scheduled.signalLatch))
     return context->schedulerStatus;
   bool sameSignalWait =
-      wait && obelisk_rt_is_clock_occurrence_wait_flags(wait->flags)
-          ? obelisk_rt_same_clock_occurrence_wait_unlocked(
+      wait && talos_rt_is_clock_occurrence_wait_flags(wait->flags)
+          ? talos_rt_same_clock_occurrence_wait_unlocked(
                 context, wait, scheduled.token, false)
           : hasSameDirectSignalWait(scheduled, wait);
   if (directSignalSuspend && !sameSignalWait &&
-      !obelisk_rt_register_signal_wait_unlocked(
+      !talos_rt_register_signal_wait_unlocked(
           context, wait, scheduled.signalSubscriptions, scheduled.signalLatch,
           scheduled.token, false))
     return context->schedulerStatus;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 namespace {
@@ -3682,10 +3682,10 @@ namespace {
 /// loop in runScheduler must perform: every queue, latch and pending flag it
 /// consults before it selects an activation, region or barrier. A new source
 /// of runtime work must be listed here too.
-bool runtimeSlotWorkPendingUnlocked(const obelisk_rt_context *context) {
+bool runtimeSlotWorkPendingUnlocked(const talos_rt_context *context) {
   const ReplaceableEventFeatureState *replaceable =
-      obelisk_rt_replaceable_events(context);
-  return context->destroyPending || context->schedulerStatus != OBELISK_RT_OK ||
+      talos_rt_replaceable_events(context);
+  return context->destroyPending || context->schedulerStatus != TALOS_RT_OK ||
          context->schedulerPreponedTime != context->schedulerTime ||
          context->schedulerRunningFinals ||
          context->schedulerDrainingReactive ||
@@ -3715,8 +3715,8 @@ bool runtimeSlotWorkPendingUnlocked(const obelisk_rt_context *context) {
          context->nativeScheduleExternalWritePending ||
          !context->nativeScheduleTransientDirtyRoots.empty() ||
          !context->nativeSchedulePersistentDirtyRoots.empty() ||
-         obelisk_rt_covergroup_strobes_pending_unlocked(context) ||
-         obelisk_rt_generated_deferred_reports_pending(context);
+         talos_rt_covergroup_strobes_pending_unlocked(context) ||
+         talos_rt_generated_deferred_reports_pending(context);
 }
 
 // IEEE 1800-2023 4.5: execute_region runs a region only while it holds
@@ -3728,14 +3728,14 @@ bool runtimeSlotWorkPendingUnlocked(const obelisk_rt_context *context) {
 // candidate set (see the index rebuild below), so an empty set proves that no
 // process can be selected. Lazy erasure of stale unstarted actor entries is
 // left to the next full pass.
-std::optional<obelisk_rt_status>
-idleCurrentSlotResult(obelisk_rt_context *context,
+std::optional<talos_rt_status>
+idleCurrentSlotResult(talos_rt_context *context,
                       const SchedulerRunOptions &options) {
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   bool complete = options.completeNBABarrier != UINT32_MAX;
   if (!options.nativePlan || !options.currentSlotOnly ||
       (complete && options.stopBeforeNBA) ||
-      !(plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) ||
+      !(plan->flags & TALOS_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) ||
       context->nativeStaticEvalIslandCertified)
     return std::nullopt;
   ContextMutexLock lock(context);
@@ -3775,33 +3775,33 @@ idleCurrentSlotResult(obelisk_rt_context *context,
     if (options.generatedNBAChanged && ++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
     ++context->schedulerSlotProgress;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   // Before the barrier, the loop stops at the NBA cut once Active and
   // Inactive are empty, with any ingress or generated NBA still pending.
   if (options.stopBeforeNBA)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   refreshNativeStaticSpecializationFastUnlocked(context);
   return midSimulationStatusUnlocked(context);
 }
 } // namespace
 
-obelisk_rt_status runScheduler(obelisk_rt_context *context,
+talos_rt_status runScheduler(talos_rt_context *context,
                                SchedulerRunOptions options) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (options.nativePlan &&
       (!context->nativeSchedulePlan || activeNativeAOTContext != context ||
        lockedNativeAOTContext != context))
-    return OBELISK_RT_INVALID_LIFECYCLE;
-  if (std::optional<obelisk_rt_status> idle =
+    return TALOS_RT_INVALID_LIFECYCLE;
+  if (std::optional<talos_rt_status> idle =
           idleCurrentSlotResult(context, options))
     return *idle;
   NativeReadyPublicationBatch publications;
   struct PublicationBatchScope {
-    obelisk_rt_context *context;
+    talos_rt_context *context;
     NativeReadyPublicationBatch *previous;
-    explicit PublicationBatchScope(obelisk_rt_context *context)
+    explicit PublicationBatchScope(talos_rt_context *context)
         : context(context), previous(nullptr) {
       ContextMutexLock lock(context);
       previous = context->nativeReadyPublicationBatch;
@@ -3815,14 +3815,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
     }
   } publicationScope(context);
   constexpr uint64_t maxSlotProgress = UINT64_MAX;
-  auto recordSlotProgress = [&]() -> obelisk_rt_status {
+  auto recordSlotProgress = [&]() -> talos_rt_status {
     ContextMutexLock lock(context);
     if (context->schedulerSlotProgress == maxSlotProgress) {
-      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+      context->schedulerStatus = TALOS_RT_OUT_OF_RESOURCES;
       return context->schedulerStatus;
     }
     ++context->schedulerSlotProgress;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   };
   // A signal publication commonly makes a large cohort ready at once. The
   // generic scheduler used to rescan the remaining unordered candidate set
@@ -3956,7 +3956,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       if (!cacheShapeStable) {
         clearCachedNativeReady();
       } else if (!scheduled.explicitlySuspended &&
-                 scheduled.suspendKind == OBELISK_RT_SUSPEND_NONE) {
+                 scheduled.suspendKind == TALOS_RT_SUSPEND_NONE) {
         // Urgent distances are relative to the cursor at cache creation.
         // A requeued urgent token uses the post-selection cursor, so it is
         // comparable only after every old-cursor urgent entry is gone.
@@ -3981,7 +3981,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             ready.rank = 0;
             ready.insertionSequence = 0;
           } else {
-            ready.rank = obelisk_rt_scheduler_rank(scheduled);
+            ready.rank = talos_rt_scheduler_rank(scheduled);
             ready.insertionSequence = scheduled.insertionSequence;
           }
           pushCachedNativeReady(ready);
@@ -4004,7 +4004,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
   bool indexedRuntimeCalendar =
       options.nativePlan &&
       (context->nativeSchedulePlan->flags &
-       OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
+       TALOS_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
       !context->nativeStaticEvalIslandCertified;
   // Process creation, rollback and compaction maintain the token maps, and
   // every wake-time change (actions and periodic restore) indexes the delay
@@ -4016,8 +4016,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         context->scheduledProcesses.size()) {
       rebuildNativeSchedulerIndexUnlocked(context);
     } else if (context->schedulerPreponedTime == context->schedulerTime) {
-      obelisk_rt_status admitted = admitDueProcessDelaysUnlocked(context);
-      if (admitted != OBELISK_RT_OK)
+      talos_rt_status admitted = admitDueProcessDelaysUnlocked(context);
+      if (admitted != TALOS_RT_OK)
         return admitted;
     }
   }
@@ -4026,15 +4026,15 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
     {
       ContextMutexLock lock(context);
       if (context->destroyPending)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       if (context->signalDiagnosticsEnabled)
         ++context->signalDiagnostics.schedulerIterations;
       verifyNativeUnknownSummaryUnlocked(context);
-      if (context->schedulerStatus != OBELISK_RT_OK)
+      if (context->schedulerStatus != TALOS_RT_OK)
         return context->schedulerStatus;
       if (context->schedulerPreponedTime != context->schedulerTime) {
-        obelisk_rt_status status = enterSchedulerTimeSlotUnlocked(context);
-        if (status != OBELISK_RT_OK)
+        talos_rt_status status = enterSchedulerTimeSlotUnlocked(context);
+        if (status != TALOS_RT_OK)
           return status;
       }
       if (!context->schedulerRunningFinals &&
@@ -4046,10 +4046,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         // exports captured NBAs before invoking foreign code; never advance
         // the NBA or recapture its RHS here (4.9.4/10.4.2).
         if (options.stopBeforeNBA)
-          return OBELISK_RT_TIER_UNAVAILABLE;
-        obelisk_rt_status status =
-            obelisk_rt_vpi_dispatch_time_callbacks_unlocked(context);
-        if (status != OBELISK_RT_OK)
+          return TALOS_RT_TIER_UNAVAILABLE;
+        talos_rt_status status =
+            talos_rt_vpi_dispatch_time_callbacks_unlocked(context);
+        if (status != TALOS_RT_OK)
           return status;
         continue;
       }
@@ -4106,7 +4106,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           for (size_t index = 0; index != tasks.size(); ++index) {
             const ScheduledDesignTask &task = tasks[index];
             context->scheduledDesignTaskIndices[task.id] = index;
-            if (!obelisk_rt_design_signal_wait_blocked(task))
+            if (!talos_rt_design_signal_wait_blocked(task))
               context->designPollCandidates.insert(task.id);
           }
         }
@@ -4114,7 +4114,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         // one such scan after a quarter of the vector died; below that, a
         // pending compaction persists across iterations and must stay O(1).
         if (compactProcesses)
-          obelisk_rt_prune_finished_process_parents_unlocked(context);
+          talos_rt_prune_finished_process_parents_unlocked(context);
         context->schedulerCompactionPending =
             context->schedulerDeadProcessCount != 0;
       }
@@ -4134,7 +4134,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
              !importNativeStatePlanesUnlocked(context, plan->state_value,
                                               plan->state_unknown,
                                               plan->state_bit_count)))
-          return OBELISK_RT_LAYOUT_MISMATCH;
+          return TALOS_RT_LAYOUT_MISMATCH;
       }
       if ((context->nativeScheduleClockIngressPending ||
            options.stopBeforeNBA) &&
@@ -4143,7 +4143,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           !context->schedulerDrainingReactive) {
         const auto *plan = context->nativeSchedulePlan;
         if (!plan)
-          return OBELISK_RT_INVALID_LIFECYCLE;
+          return TALOS_RT_INVALID_LIFECYCLE;
         // A periodic checkpoint can leave other coincident owners pending,
         // too. Its drain must return to the generated checkpoint trampoline
         // before executing those owners, regardless of calendar ownership.
@@ -4154,20 +4154,20 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         // activation (a legal Active order) before the coordinator runs.
         deferredEvalIngress =
             options.returnGeneratedIngress || options.stopBeforeNBA ||
-            ((plan->flags & OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
+            ((plan->flags & TALOS_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL) &&
              !context->nativeStaticEvalIslandCertified) ||
-            obelisk_rt_unstarted_actor_pending(context, 0);
+            talos_rt_unstarted_actor_pending(context, 0);
         if (!deferredEvalIngress) {
           auto coordinator = plan->timeslot_coordinator;
           if (!coordinator)
-            return OBELISK_RT_INVALID_LIFECYCLE;
+            return TALOS_RT_INVALID_LIFECYCLE;
           context->nativeScheduleClockIngressPending = false;
           NativeAOTContextScope aotScope(context);
           NativeAOTMutexScope mutexScope(context);
           if (context->signalDiagnosticsEnabled)
             ++context->signalDiagnostics.evalDispatches;
-          obelisk_rt_status status = coordinator(plan->mutable_state, context);
-          if (status != OBELISK_RT_OK)
+          talos_rt_status status = coordinator(plan->mutable_state, context);
+          if (status != TALOS_RT_OK)
             return status;
           continue;
         }
@@ -4198,7 +4198,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       nativeScanInsertionSequence = context->nextProcessInsertionSequence;
       uint32_t activePhase = context->schedulerRunningFinals ? 1u : 0u;
       uint32_t unstartedActorRegion =
-          obelisk_rt_unstarted_actor_region(context, activePhase);
+          talos_rt_unstarted_actor_region(context, activePhase);
       size_t nativeUrgentDistance = SIZE_MAX;
       bool forcedNativeNode = context->nativeScheduleForcedSlot != UINT32_MAX;
       auto classifyNativeToken =
@@ -4241,7 +4241,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         } else {
           ready.region =
               schedulerOrderingRegion(*context, candidate, signalResume);
-          ready.rank = obelisk_rt_scheduler_rank(candidate);
+          ready.rank = talos_rt_scheduler_rank(candidate);
           ready.insertionSequence = candidate.insertionSequence;
         }
         return ready;
@@ -4283,7 +4283,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         uint32_t slot = context->nativeScheduleForcedSlot;
         if (slot >= context->nativeScheduleActorTokens.size() ||
             context->nativeScheduleActorTokens[slot] == 0)
-          return OBELISK_RT_INVALID_LIFECYCLE;
+          return TALOS_RT_INVALID_LIFECYCLE;
         considerNativeToken(context->nativeScheduleActorTokens[slot]);
       } else if (context->nativeScheduleProcessFilterActive) {
         clearCachedNativeReady();
@@ -4299,7 +4299,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           size_t index = SIZE_MAX;
           auto ready = classifyNativeToken(token, signalResume, index);
           if (ready && signalResume &&
-              obelisk_rt_is_slot_final_clock_occurrence_wait(
+              talos_rt_is_slot_final_clock_occurrence_wait(
                   currentWait(context->scheduledProcesses[index])))
             considerNativeReady(*ready, index);
         }
@@ -4542,14 +4542,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           !context->schedulerDrainingReactive)
         barrierRegion = std::min(barrierRegion, options.localPendingNBARegion);
       covergroupStrobePending =
-          obelisk_rt_covergroup_strobes_pending_unlocked(context);
+          talos_rt_covergroup_strobes_pending_unlocked(context);
       if (context->nextVPISyncCallback &&
           *context->nextVPISyncCallback <= context->schedulerTime &&
           !context->vpiTimeCallbackActive && !context->schedulerRunningFinals) {
-        vpiPreNBASyncPending = obelisk_rt_vpi_sync_due_unlocked(
-            context, OBELISK_RT_VPI_SYNC_PRE_NBA);
-        vpiReadOnlySyncPending = obelisk_rt_vpi_sync_due_unlocked(
-            context, OBELISK_RT_VPI_SYNC_READ_ONLY);
+        vpiPreNBASyncPending = talos_rt_vpi_sync_due_unlocked(
+            context, TALOS_RT_VPI_SYNC_PRE_NBA);
+        vpiReadOnlySyncPending = talos_rt_vpi_sync_due_unlocked(
+            context, TALOS_RT_VPI_SYNC_READ_ONLY);
       }
     }
     if (options.completeNBABarrier != UINT32_MAX) {
@@ -4598,11 +4598,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       maximumInsertionSequence = 0;
     }
     const auto covergroupStrobeKey = std::tuple{
-        uint32_t{OBELISK_RT_REGION_POSTPONED}, uint32_t{0}, uint64_t{0}};
+        uint32_t{TALOS_RT_REGION_POSTPONED}, uint32_t{0}, uint64_t{0}};
     // IEEE 1800-2023 4.10: Pre-NBA follows Active and Inactive and precedes
     // every NBA update; the read-only synchronization point is Postponed.
     const auto vpiPreNBASyncKey =
-        std::tuple{uint32_t{OBELISK_RT_REGION_NBA}, uint32_t{0}, uint64_t{0}};
+        std::tuple{uint32_t{TALOS_RT_REGION_NBA}, uint32_t{0}, uint64_t{0}};
     auto limitToKey = [&](bool pending, auto key) {
       if (pending && key < std::tuple{maximumRegion, maximumRank,
                                       maximumInsertionSequence})
@@ -4612,37 +4612,37 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
     limitToKey(vpiPreNBASyncPending, vpiPreNBASyncKey);
     limitToKey(vpiReadOnlySyncPending, covergroupStrobeKey);
     bool designProgress = false;
-    if (deferredEvalIngress && maximumRegion > OBELISK_RT_REGION_ACTIVE) {
-      maximumRegion = options.stopBeforeNBA ? OBELISK_RT_REGION_NBA
-                                            : OBELISK_RT_REGION_INACTIVE;
+    if (deferredEvalIngress && maximumRegion > TALOS_RT_REGION_ACTIVE) {
+      maximumRegion = options.stopBeforeNBA ? TALOS_RT_REGION_NBA
+                                            : TALOS_RT_REGION_INACTIVE;
       maximumRank = 0;
       maximumInsertionSequence = 0;
     }
     if (options.stopBeforeNBA && !context->schedulerRunningFinals &&
-        maximumRegion >= OBELISK_RT_REGION_NBA) {
-      maximumRegion = OBELISK_RT_REGION_NBA;
+        maximumRegion >= TALOS_RT_REGION_NBA) {
+      maximumRegion = TALOS_RT_REGION_NBA;
       maximumRank = 0;
       maximumInsertionSequence = 0;
     }
-    obelisk_rt_status designStatus = OBELISK_RT_OK;
+    talos_rt_status designStatus = TALOS_RT_OK;
     if (options.completeNBABarrier == UINT32_MAX)
-      designStatus = obelisk_rt_run_one_design_task(
+      designStatus = talos_rt_run_one_design_task(
           context, maximumRegion, maximumRank, maximumInsertionSequence,
           &designProgress,
           options.stopBeforeUnscopedActors &&
               options.localPendingNBARegion != UINT32_MAX);
-    if (designStatus != OBELISK_RT_OK)
+    if (designStatus != TALOS_RT_OK)
       return designStatus;
     if (designProgress) {
       if (cachedNativeSelection && cachedNativeReadyValid) {
         pushCachedNativeReady(*cachedNativeSelection);
         cachedNativeUrgentCount += cachedNativeSelection->urgent;
       }
-      obelisk_rt_status status = recordSlotProgress();
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status = recordSlotProgress();
+      if (status != TALOS_RT_OK)
         return status;
       if (context->nativeScheduleSingleStep)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       continue;
     }
     if (context->schedulerDrainingReactive && nativeRegion == UINT32_MAX &&
@@ -4653,8 +4653,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       setSchedulerDrainingReactive(context, false);
       continue;
     }
-    uint32_t evalCutRegion = options.stopBeforeNBA ? OBELISK_RT_REGION_NBA
-                                                   : OBELISK_RT_REGION_INACTIVE;
+    uint32_t evalCutRegion = options.stopBeforeNBA ? TALOS_RT_REGION_NBA
+                                                   : TALOS_RT_REGION_INACTIVE;
     if ((deferredEvalIngress ||
          (options.stopBeforeNBA && !context->schedulerRunningFinals)) &&
         nativeRegion >= evalCutRegion && barrierRegion >= evalCutRegion) {
@@ -4670,7 +4670,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       // can queue the next exact checkpoint before resuming the closure.
       // Do not cross the NBA barrier in between (LRM 4.4-4.5, 10.4.2).
       if (options.returnGeneratedIngress || options.stopBeforeNBA)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       ContextMutexLock lock(context);
       const auto *plan = context->nativeSchedulePlan;
       context->nativeScheduleClockIngressPending = false;
@@ -4678,9 +4678,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       NativeAOTMutexScope mutexScope(context);
       if (context->signalDiagnosticsEnabled)
         ++context->signalDiagnostics.evalDispatches;
-      obelisk_rt_status status =
+      talos_rt_status status =
           plan->timeslot_coordinator(plan->mutable_state, context);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       continue;
     }
@@ -4692,9 +4692,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
     };
     std::optional<uint32_t> vpiSyncStage;
     if (vpiSyncStageReady(vpiPreNBASyncPending, vpiPreNBASyncKey))
-      vpiSyncStage = OBELISK_RT_VPI_SYNC_PRE_NBA;
+      vpiSyncStage = TALOS_RT_VPI_SYNC_PRE_NBA;
     else if (vpiSyncStageReady(vpiReadOnlySyncPending, covergroupStrobeKey))
-      vpiSyncStage = OBELISK_RT_VPI_SYNC_READ_ONLY;
+      vpiSyncStage = TALOS_RT_VPI_SYNC_READ_ONLY;
     if (vpiSyncStage) {
       if (cachedNativeSelection && cachedNativeReadyValid) {
         pushCachedNativeReady(*cachedNativeSelection);
@@ -4702,17 +4702,17 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       }
       {
         ContextMutexLock lock(context);
-        obelisk_rt_status status =
-            obelisk_rt_vpi_dispatch_sync_callbacks_unlocked(context,
+        talos_rt_status status =
+            talos_rt_vpi_dispatch_sync_callbacks_unlocked(context,
                                                             *vpiSyncStage);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       }
-      obelisk_rt_status status = recordSlotProgress();
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status = recordSlotProgress();
+      if (status != TALOS_RT_OK)
         return status;
       if (context->nativeScheduleSingleStep)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       continue;
     }
     if (covergroupStrobePending &&
@@ -4726,19 +4726,19 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       }
       {
         ContextMutexLock lock(context);
-        obelisk_rt_status status =
-            obelisk_rt_drain_covergroup_strobes_unlocked(context);
-        if (status != OBELISK_RT_OK)
+        talos_rt_status status =
+            talos_rt_drain_covergroup_strobes_unlocked(context);
+        if (status != TALOS_RT_OK)
           return status;
       }
-      obelisk_rt_status status = recordSlotProgress();
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status = recordSlotProgress();
+      if (status != TALOS_RT_OK)
         return status;
       if (context->nativeScheduleSingleStep)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       continue;
     }
-    obelisk_rt_process_instance_v1 *selected = nullptr;
+    talos_rt_process_instance_v1 *selected = nullptr;
     size_t selectedIndex = 0;
     bool selectedResuming = false;
     {
@@ -4775,7 +4775,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         auto key = candidate.prioritySignal && signalResume
                        ? std::tuple{orderingRegion, uint32_t{0}, uint64_t{0}}
                        : std::tuple{orderingRegion,
-                                    obelisk_rt_scheduler_rank(candidate),
+                                    talos_rt_scheduler_rank(candidate),
                                     candidate.insertionSequence};
         if (runnable &&
             (candidate.urgent ||
@@ -4820,7 +4820,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           auto key = candidate.prioritySignal && signalResume
                          ? std::tuple{orderingRegion, uint32_t{0}, uint64_t{0}}
                          : std::tuple{orderingRegion,
-                                      obelisk_rt_scheduler_rank(candidate),
+                                      talos_rt_scheduler_rank(candidate),
                                       candidate.insertionSequence};
           if (!(key < std::tuple{barrierRegion, uint32_t{0}, uint64_t{0}}))
             continue;
@@ -4847,7 +4847,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             // LRM 38.34/4.9.4: export pending captures before unknown foreign
             // effects. Return before consuming a wait, ready bit or source
             // continuation, including the compiled-node execution below.
-            return OBELISK_RT_TIER_UNAVAILABLE;
+            return TALOS_RT_TIER_UNAVAILABLE;
         }
         if (candidate.suspendedAOTActorSlot != UINT32_MAX &&
             candidate.callers.empty()) {
@@ -4858,15 +4858,15 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           if (!plan || slot >= context->nativeScheduleActors.size() ||
               context->nativeScheduleActors[slot] != nullptr ||
               context->nativeScheduleActorTokens[slot] != candidate.token)
-            return OBELISK_RT_INVALID_LIFECYCLE;
+            return TALOS_RT_INVALID_LIFECYCLE;
           if (options.nativePlan &&
               findNativeAOTNodeUnlocked(context, slot,
                                         candidate.instance->continuation) ==
                   UINT32_MAX)
-            return OBELISK_RT_INVALID_CONTINUATION;
-          obelisk_rt_status status = plan->bind(plan->mutable_state, context,
+            return TALOS_RT_INVALID_CONTINUATION;
+          talos_rt_status status = plan->bind(plan->mutable_state, context,
                                                 slot, candidate.instance);
-          if (status != OBELISK_RT_OK)
+          if (status != TALOS_RT_OK)
             return status;
           candidate.aotActorSlot = slot;
           candidate.suspendedAOTActorSlot = UINT32_MAX;
@@ -4876,11 +4876,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           updateNativeAOTContinuationRank(candidate,
                                           candidate.instance->continuation);
         }
-        if (candidate.suspendKind == OBELISK_RT_SUSPEND_SEMAPHORE) {
+        if (candidate.suspendKind == TALOS_RT_SUSPEND_SEMAPHORE) {
           bool acquired = false;
-          obelisk_rt_status status = obelisk_rt_semaphore_wait_acquire(
+          talos_rt_status status = talos_rt_semaphore_wait_acquire(
               currentWait(candidate), acquired);
-          if (status != OBELISK_RT_OK) {
+          if (status != TALOS_RT_OK) {
             context->schedulerStatus = status;
             return status;
           }
@@ -4893,8 +4893,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             candidate.token != cachedNativeSelection->token)
           clearCachedNativeReady();
         if (candidate.postObserved &&
-            candidate.queuedRegion == OBELISK_RT_REGION_OBSERVED) {
-          obelisk_rt_promote_post_observed_resumptions_unlocked(context);
+            candidate.queuedRegion == TALOS_RT_REGION_OBSERVED) {
+          talos_rt_promote_post_observed_resumptions_unlocked(context);
           clearCachedNativeReady();
         }
         if (!context->schedulerRunningFinals &&
@@ -4908,15 +4908,15 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           uint32_t node = findNativeAOTNodeUnlocked(
               context, slot, candidate.instance->continuation);
           if (node == UINT32_MAX)
-            return OBELISK_RT_INVALID_CONTINUATION;
+            return TALOS_RT_INVALID_CONTINUATION;
           context->schedulerCursor = (selectedIndex + 1) % processCount;
           clearNativeAOTNodeReadyUnlocked(context, node);
           context->nativeScheduleMinimumActivatedNode = UINT32_MAX;
           if (context->nativeScheduleForcedSlot != UINT32_MAX)
             context->nativeScheduleForcedExecuted = true;
-          obelisk_rt_status status =
+          talos_rt_status status =
               executeNativeAOTNodeUnlocked(context, slot);
-          if (status != OBELISK_RT_OK)
+          if (status != TALOS_RT_OK)
             return status;
           auto indexed = context->scheduledProcessIndices.find(selectedToken);
           if (indexed != context->scheduledProcessIndices.end() &&
@@ -4931,11 +4931,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                                    cachedNativeSelection.has_value());
           }
           if (context->nativeScheduleSingleStep)
-            return OBELISK_RT_OK;
+            return TALOS_RT_OK;
           continue;
         }
         selectedResuming = candidate.started &&
-                           candidate.suspendKind != OBELISK_RT_SUSPEND_NONE;
+                           candidate.suspendKind != TALOS_RT_SUSPEND_NONE;
         context->schedulerCursor = (selectedIndex + 1) % processCount;
         if (candidate.aotActorSlot != UINT32_MAX) {
           uint32_t node =
@@ -4956,7 +4956,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         candidate.signalTriggered = false;
         context->nativePollCandidates.erase(candidate.token);
         if (!candidate.started)
-          obelisk_rt_unregister_unstarted_actor(context, candidate.phase,
+          talos_rt_unregister_unstarted_actor(context, candidate.phase,
                                                 kNativeLogicalProcessTag |
                                                     candidate.token);
         candidate.started = true;
@@ -4970,11 +4970,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           setSchedulerDrainingReactive(context, true);
         bool changed = options.generatedNBAChanged;
         bool eventTriggered = false;
-        obelisk_rt_status clockingStatus =
+        talos_rt_status clockingStatus =
             resolveClockingDriveConflictsUnlocked(context, barrierRegion);
-        if (clockingStatus != OBELISK_RT_OK)
+        if (clockingStatus != TALOS_RT_OK)
           return clockingStatus;
-        std::vector<obelisk::designbytecode::NetPublication>
+        std::vector<talos::designbytecode::NetPublication>
             delayedNetPublications;
         uint64_t delayedNetGroup = UINT64_MAX;
         uint64_t delayedNetDueTime = UINT64_MAX;
@@ -4984,12 +4984,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             delayedNetDueTime = UINT64_MAX;
             return true;
           }
-          auto *cache = obelisk::designbytecode::getNetAliasCache(
+          auto *cache = talos::designbytecode::getNetAliasCache(
               context->designBytecodeImage, context);
-          if (!cache || !obelisk::designbytecode::publishNetBits(
+          if (!cache || !talos::designbytecode::publishNetBits(
                             context, *cache, delayedNetPublications, changed)) {
-            if (context->schedulerStatus == OBELISK_RT_OK)
-              context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+            if (context->schedulerStatus == TALOS_RT_OK)
+              context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
             return false;
           }
           delayedNetPublications.clear();
@@ -5039,7 +5039,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           if (automatic) {
             auto found = context->nativeAutomaticStates.find(automaticID);
             if (found == context->nativeAutomaticStates.end()) {
-              context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+              context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
               return;
             }
             automaticState = &found->second;
@@ -5049,12 +5049,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                 findNativeStaticState(context, staticID);
             if (!state || state->bitOffset > update.planeBitCount ||
                 state->bitWidth > update.planeBitCount - state->bitOffset) {
-              context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+              context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
               return;
             }
             staticState = state;
           } else if (!decodeNativeGlobal(update.bitOffset, baseOffset)) {
-            context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+            context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
             return;
           }
           bool canonical =
@@ -5064,61 +5064,61 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               (automatic || update.managedValue || update.stringValue ||
                ((!canonical || !staticState) &&
                 !update.deferDriverResolution))) {
-            context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+            context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
             return;
           }
           if (canonical &&
               (context->stateValue.size() < (update.planeBitCount + 63) / 64 ||
                context->stateUnknown.size() <
                    (update.planeBitCount + 63) / 64)) {
-            context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+            context->schedulerStatus = TALOS_RT_INVALID_DESIGN;
             return;
           }
           if (update.managedValue) {
             if (update.bitWidth != 64 || baseOffset < 0 ||
                 (static_cast<uint64_t>(baseOffset) & 63) != 0 ||
-                update.value.size() != sizeof(obelisk_rt_managed_word_v1) ||
+                update.value.size() != sizeof(talos_rt_managed_word_v1) ||
                 update.unknown.size() != 0 ||
                 (update.rootedManaged &&
-                 obelisk_rt_managed_object_context(update.rootedManaged) !=
+                 talos_rt_managed_object_context(update.rootedManaged) !=
                      context)) {
-              context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+              context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
               return;
             }
-            obelisk_rt_object_v1 *previous = nullptr;
+            talos_rt_object_v1 *previous = nullptr;
             uint64_t byteOffset = static_cast<uint64_t>(baseOffset) / 8;
             if (automatic) {
               if (automaticState->managedRootRegistered) {
                 if (baseOffset != 0) {
-                  context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                  context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
                   return;
                 }
                 previous = automaticState->managedValue;
                 automaticState->managedValue = update.rootedManaged;
               } else {
                 if (byteOffset > automaticState->value.size() ||
-                    sizeof(obelisk_rt_managed_word_v1) >
+                    sizeof(talos_rt_managed_word_v1) >
                         automaticState->value.size() - byteOffset ||
                     std::find(automaticState->managedRootByteOffsets.begin(),
                               automaticState->managedRootByteOffsets.end(),
                               byteOffset) ==
                         automaticState->managedRootByteOffsets.end()) {
-                  context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                  context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
                   return;
                 }
-                obelisk_rt_managed_word_v1 previousWord = 0;
+                talos_rt_managed_word_v1 previousWord = 0;
                 std::memcpy(&previousWord,
                             automaticState->value.data() + byteOffset,
                             sizeof(previousWord));
-                previous = obelisk_rt_object_from_managed_word(previousWord);
-                obelisk_rt_managed_word_v1 replacementWord =
-                    obelisk_rt_managed_word_from_object(update.rootedManaged);
+                previous = talos_rt_object_from_managed_word(previousWord);
+                talos_rt_managed_word_v1 replacementWord =
+                    talos_rt_managed_word_from_object(update.rootedManaged);
                 std::memcpy(automaticState->value.data() + byteOffset,
                             &replacementWord, sizeof(replacementWord));
               }
             } else {
               if (!canonical) {
-                context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+                context->schedulerStatus = TALOS_RT_INVALID_DESIGN;
                 return;
               }
               uint64_t planeBit = staticState
@@ -5127,35 +5127,35 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                                       : static_cast<uint64_t>(baseOffset);
               if ((planeBit & 63) != 0 ||
                   planeBit / 64 >= context->stateValue.size()) {
-                context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
                 return;
               }
-              obelisk_rt_managed_word_v1 previousWord =
+              talos_rt_managed_word_v1 previousWord =
                   context->stateValue[planeBit / 64];
-              previous = obelisk_rt_object_from_managed_word(previousWord);
+              previous = talos_rt_object_from_managed_word(previousWord);
               context->stateValue[planeBit / 64] =
-                  obelisk_rt_managed_word_from_object(update.rootedManaged);
+                  talos_rt_managed_word_from_object(update.rootedManaged);
               if (!storeNativeScheduleStateUnlocked(
                       context, planeBit, 64,
                       static_cast<uint64_t>(
                           reinterpret_cast<uintptr_t>(update.rootedManaged)),
                       0)) {
-                context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
+                context->schedulerStatus = TALOS_RT_LAYOUT_MISMATCH;
                 return;
               }
             }
             if (previous != update.rootedManaged) {
               changed = true;
               publicationChanged = true;
-              if (!obelisk_rt_publish_signal_occurrence_unlocked(
-                      context, update.bitOffset, 64, OBELISK_RT_SIGNAL_CHANGE))
+              if (!talos_rt_publish_signal_occurrence_unlocked(
+                      context, update.bitOffset, 64, TALOS_RT_SIGNAL_CHANGE))
                 return;
-              obelisk_rt_invalidate_signal_snapshots_unlocked(
+              talos_rt_invalidate_signal_snapshots_unlocked(
                   context, update.bitOffset, 64);
-              if (!obelisk_rt_latch_conditional_signal_range_unlocked(
-                      context, update.bitOffset, 64, OBELISK_RT_SIGNAL_CHANGE))
+              if (!talos_rt_latch_conditional_signal_range_unlocked(
+                      context, update.bitOffset, 64, TALOS_RT_SIGNAL_CHANGE))
                 return;
-              if (!obelisk_rt_notify_observer_signal_unlocked(
+              if (!talos_rt_notify_observer_signal_unlocked(
                       context, update.bitOffset, 64))
                 return;
             }
@@ -5165,25 +5165,25 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           if (update.stringValue) {
             if (update.bitWidth != 64 || baseOffset < 0 ||
                 (static_cast<uint64_t>(baseOffset) & 63) != 0 ||
-                obelisk_rt_validate_string(context, update.rootedString) !=
-                    OBELISK_RT_OK) {
-              context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                talos_rt_validate_string(context, update.rootedString) !=
+                    TALOS_RT_OK) {
+              context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
               return;
             }
-            obelisk_rt_string_v1 previous = 0;
+            talos_rt_string_v1 previous = 0;
             uint64_t byteOffset = static_cast<uint64_t>(baseOffset) / 8;
             if (automatic) {
               if (automaticState->managedRootRegistered) {
                 if (baseOffset != 0) {
-                  context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                  context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
                   return;
                 }
-                previous = obelisk_rt_managed_word_from_object(
+                previous = talos_rt_managed_word_from_object(
                     automaticState->managedValue);
               } else if (byteOffset > automaticState->value.size() ||
                          sizeof(previous) >
                              automaticState->value.size() - byteOffset) {
-                context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
                 return;
               } else {
                 std::memcpy(&previous,
@@ -5196,12 +5196,12 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                                             static_cast<uint64_t>(baseOffset)
                                       : static_cast<uint64_t>(baseOffset);
               if ((planeBit & 63) != 0) {
-                context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
                 return;
               }
               if (canonical) {
                 if (planeBit / 64 >= context->stateValue.size()) {
-                  context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                  context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
                   return;
                 }
                 previous = context->stateValue[planeBit / 64];
@@ -5210,19 +5210,19 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                 uint64_t globalBytes = (update.planeBitCount + 7) / 8;
                 if (!update.valuePlane || globalByte > globalBytes ||
                     sizeof(previous) > globalBytes - globalByte) {
-                  context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                  context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
                   return;
                 }
                 std::memcpy(&previous, update.valuePlane + globalByte,
                             sizeof(previous));
               }
             }
-            if (obelisk_rt_validate_string(context, previous) !=
-                OBELISK_RT_OK) {
-              context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+            if (talos_rt_validate_string(context, previous) !=
+                TALOS_RT_OK) {
+              context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
               return;
             }
-            equalStringContents = obelisk_rt_v1_string_compare(
+            equalStringContents = talos_rt_v1_string_compare(
                                       previous, update.rootedString) == 0;
           }
           PackedSignalTransitionBuffer transitions(update.bitWidth);
@@ -5326,7 +5326,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                                                   update.bitWidth, newValue,
                                                   newUnknown,
                                                   nativeOldUnknown)) {
-              context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
+              context->schedulerStatus = TALOS_RT_LAYOUT_MISMATCH;
               return;
             }
             publicationChanged = update.realWidth != 0
@@ -5352,7 +5352,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                   (sourceByte >= update.value.size() ||
                    (!update.unknown.empty() &&
                     sourceByte >= update.unknown.size()))) {
-                context->schedulerStatus = OBELISK_RT_INVALID_ARGUMENT;
+                context->schedulerStatus = TALOS_RT_INVALID_ARGUMENT;
                 return;
               }
               int64_t coordinate = 0;
@@ -5451,7 +5451,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               if (canonical && !storeNativeScheduleStateUnlocked(
                                    context, planeBit, 1, newValue ? 1 : 0,
                                    newUnknown ? 1 : 0, nativeOldUnknown)) {
-                context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
+                context->schedulerStatus = TALOS_RT_LAYOUT_MISMATCH;
                 return;
               }
               uint32_t edges =
@@ -5477,17 +5477,17 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             if (update.inertialNetBit != UINT64_MAX)
               return;
             if (update.realWidth != 0) {
-              if (!obelisk_rt_publish_signal_occurrence_unlocked(
+              if (!talos_rt_publish_signal_occurrence_unlocked(
                       context, update.bitOffset, update.bitWidth,
-                      OBELISK_RT_SIGNAL_CHANGE))
+                      TALOS_RT_SIGNAL_CHANGE))
                 return;
-              obelisk_rt_invalidate_signal_snapshots_unlocked(
+              talos_rt_invalidate_signal_snapshots_unlocked(
                   context, update.bitOffset, update.bitWidth);
-              if (!obelisk_rt_latch_conditional_signal_range_unlocked(
+              if (!talos_rt_latch_conditional_signal_range_unlocked(
                       context, update.bitOffset, update.bitWidth,
-                      OBELISK_RT_SIGNAL_CHANGE))
+                      TALOS_RT_SIGNAL_CHANGE))
                 return;
-              if (!obelisk_rt_notify_observer_signal_unlocked(
+              if (!talos_rt_notify_observer_signal_unlocked(
                       context, update.bitOffset, update.bitWidth))
                 return;
               if (++context->schedulerEpoch == 0)
@@ -5504,15 +5504,15 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                     ? reinterpret_cast<const uint8_t *>(&update.inlineUnknown)
                 : update.unknown.empty() ? nullptr
                                          : update.unknown.data();
-            if (!obelisk_rt_publish_signal_transition_batch_unlocked(
+            if (!talos_rt_publish_signal_transition_batch_unlocked(
                     context, update.bitOffset, update.bitWidth,
                     transitions.changed(), transitions.posedge(),
                     transitions.negedge(), 0, &sequence, nullptr, nullptr,
                     publishedValue, publishedUnknown))
               return;
-            obelisk_rt_invalidate_signal_snapshots_unlocked(
+            talos_rt_invalidate_signal_snapshots_unlocked(
                 context, update.bitOffset, update.bitWidth);
-            if (obelisk_rt_has_conditional_signal_waiters(context)) {
+            if (talos_rt_has_conditional_signal_waiters(context)) {
               for (uint64_t bit = 0; bit != update.bitWidth; ++bit) {
                 if (!byteBit(transitions.changed(), bit) ||
                     bit > static_cast<uint64_t>(INT64_MAX))
@@ -5541,17 +5541,17 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                     update.bitOffset, static_cast<int64_t>(bit));
                 if (eventHandle == UINT64_MAX)
                   continue;
-                uint32_t edges = OBELISK_RT_SIGNAL_CHANGE;
+                uint32_t edges = TALOS_RT_SIGNAL_CHANGE;
                 if (byteBit(transitions.posedge(), bit))
-                  edges |= OBELISK_RT_SIGNAL_POSEDGE;
+                  edges |= TALOS_RT_SIGNAL_POSEDGE;
                 if (byteBit(transitions.negedge(), bit))
-                  edges |= OBELISK_RT_SIGNAL_NEGEDGE;
-                if (!obelisk_rt_latch_conditional_signal_waiters_unlocked(
+                  edges |= TALOS_RT_SIGNAL_NEGEDGE;
+                if (!talos_rt_latch_conditional_signal_waiters_unlocked(
                         context, eventHandle, edges))
                   return;
               }
             }
-            if (!obelisk_rt_notify_observer_signal_unlocked(
+            if (!talos_rt_notify_observer_signal_unlocked(
                     context, update.bitOffset, update.bitWidth))
               return;
           }
@@ -5567,11 +5567,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               uint64_t end =
                   staticState->bitOffset + static_cast<uint64_t>(last);
               bool resolvedChanged = false;
-              if (!obelisk::designbytecode::resolveDrivenNets(
+              if (!talos::designbytecode::resolveDrivenNets(
                       context->designBytecodeImage, context,
                       static_cast<int64_t>(begin), static_cast<int64_t>(end),
                       resolvedChanged)) {
-                context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
+                context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
                 return;
               }
               changed |= resolvedChanged;
@@ -5692,7 +5692,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                  ((plane[bit / 64] >> (bit % 64)) & 1) != 0;
         };
         auto applyDesign = [&](const ScheduledDesignNBA &update) {
-          if (update.handleKind != OBELISK_RT_DESCRIPTOR_STORAGE)
+          if (update.handleKind != TALOS_RT_DESCRIPTOR_STORAGE)
             return false;
           bool publicationChanged = false;
           uint64_t publicationBegin = UINT64_MAX;
@@ -5707,14 +5707,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                 update.end < update.start || update.end - update.start < 64 ||
                 static_cast<uint64_t>(update.start) > available ||
                 64 > available - static_cast<uint64_t>(update.start) ||
-                obelisk_rt_validate_string(context, update.rootedString) !=
-                    OBELISK_RT_OK)
+                talos_rt_validate_string(context, update.rootedString) !=
+                    TALOS_RT_OK)
               return false;
-            obelisk_rt_string_v1 previous =
+            talos_rt_string_v1 previous =
                 context->stateValue[static_cast<uint64_t>(update.start) / 64];
-            if (obelisk_rt_validate_string(context, previous) != OBELISK_RT_OK)
+            if (talos_rt_validate_string(context, previous) != TALOS_RT_OK)
               return false;
-            equalStringContents = obelisk_rt_v1_string_compare(
+            equalStringContents = talos_rt_v1_string_compare(
                                       previous, update.rootedString) == 0;
           }
           for (uint64_t bit = 0; bit != update.bitWidth; ++bit) {
@@ -5768,14 +5768,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             uint64_t edgeBitOffset = static_cast<uint64_t>(
                 static_cast<__int128>(publicationBegin) - update.start);
             uint64_t sequence = 0;
-            if (!obelisk_rt_publish_signal_transition_batch_unlocked(
+            if (!talos_rt_publish_signal_transition_batch_unlocked(
                     context, publicationBegin, publicationWidth,
                     transitions.changed(), transitions.posedge(),
                     transitions.negedge(), edgeBitOffset, &sequence))
               return false;
-            obelisk_rt_invalidate_signal_snapshots_unlocked(
+            talos_rt_invalidate_signal_snapshots_unlocked(
                 context, publicationBegin, publicationWidth);
-            if (obelisk_rt_has_conditional_signal_waiters(context)) {
+            if (talos_rt_has_conditional_signal_waiters(context)) {
               for (uint64_t bit = 0; bit != publicationWidth; ++bit) {
                 uint64_t sourceBit = edgeBitOffset + bit;
                 if (!byteBit(transitions.changed(), sourceBit))
@@ -5791,17 +5791,17 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                 uint64_t sourceBit = edgeBitOffset + bit;
                 if (!byteBit(transitions.changed(), sourceBit))
                   continue;
-                uint32_t edges = OBELISK_RT_SIGNAL_CHANGE;
+                uint32_t edges = TALOS_RT_SIGNAL_CHANGE;
                 if (byteBit(transitions.posedge(), sourceBit))
-                  edges |= OBELISK_RT_SIGNAL_POSEDGE;
+                  edges |= TALOS_RT_SIGNAL_POSEDGE;
                 if (byteBit(transitions.negedge(), sourceBit))
-                  edges |= OBELISK_RT_SIGNAL_NEGEDGE;
-                if (!obelisk_rt_latch_conditional_signal_waiters_unlocked(
+                  edges |= TALOS_RT_SIGNAL_NEGEDGE;
+                if (!talos_rt_latch_conditional_signal_waiters_unlocked(
                         context, publicationBegin + bit, edges))
                   return false;
               }
             }
-            if (!obelisk_rt_notify_observer_signal_unlocked(
+            if (!talos_rt_notify_observer_signal_unlocked(
                     context, publicationBegin, publicationWidth))
               return false;
           }
@@ -5812,17 +5812,17 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         // four-queue merge nor one vector erase per committed assignment.
         // Compact future/other-region entries once after draining this
         // barrier; this changes the common case from quadratic to linear work.
-        obelisk_rt_status staticNBAStatus = OBELISK_RT_OK;
+        talos_rt_status staticNBAStatus = TALOS_RT_OK;
         if (options.completeNBABarrier == UINT32_MAX)
           staticNBAStatus = commitStaticNBAAccumulatorsUnlocked(
               context, barrierRegion, changed);
-        if (staticNBAStatus != OBELISK_RT_OK)
+        if (staticNBAStatus != TALOS_RT_OK)
           return staticNBAStatus;
         if (context->scheduledManagedNBAs.empty() &&
             context->scheduledDesignNBAs.empty() &&
             context->scheduledDesignEvents.empty() &&
-            (!obelisk_rt_replaceable_events(context) ||
-             obelisk_rt_replaceable_events(context)->calendar.empty()) &&
+            (!talos_rt_replaceable_events(context) ||
+             talos_rt_replaceable_events(context)->calendar.empty()) &&
             context->scheduledPassSwitchEvents.empty() &&
             context->scheduledInertialPathNBAs.empty()) {
           size_t retained = 0;
@@ -5855,7 +5855,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               if (pathCurrent)
                 applyNative(current);
               context->schedulerApplyingNativeUpdate = false;
-              if (context->schedulerStatus != OBELISK_RT_OK)
+              if (context->schedulerStatus != TALOS_RT_OK)
                 return context->schedulerStatus;
             }
             if (retainedAutomaticID != 0) {
@@ -5863,9 +5863,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                   context->nativeAutomaticStates.find(retainedAutomaticID);
               if (found == context->nativeAutomaticStates.end() ||
                   found->second.referenceCount == 0)
-                return OBELISK_RT_INVALID_HANDLE;
+                return TALOS_RT_INVALID_HANDLE;
               if (--found->second.referenceCount == 0) {
-                obelisk_rt_erase_automatic_bookkeeping_unlocked(
+                talos_rt_erase_automatic_bookkeeping_unlocked(
                     context, retainedAutomaticID);
                 context->nativeAutomaticStates.erase(found);
               }
@@ -5893,7 +5893,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             }
             uint64_t replaceableSequence = UINT64_MAX;
             ReplaceableEventFeatureState *replaceable =
-                obelisk_rt_replaceable_events(context);
+                talos_rt_replaceable_events(context);
             ReplaceableEventCalendar::iterator replaceableEvent;
             if (replaceable) {
               replaceableEvent = replaceable->calendar.end();
@@ -5909,7 +5909,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               }
             }
             uint64_t passSequence = UINT64_MAX;
-            if (barrierRegion == OBELISK_RT_REGION_ACTIVE &&
+            if (barrierRegion == TALOS_RT_REGION_ACTIVE &&
                 !context->scheduledPassSwitchEvents.empty()) {
               const auto &next = *context->scheduledPassSwitchEvents.begin();
               if (next.first.first <= context->schedulerTime)
@@ -5930,7 +5930,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               managedSequence = update->sequence;
             uint64_t pathSequence = UINT64_MAX;
             auto pathUpdate = context->scheduledInertialPathNBAs.end();
-            if (barrierRegion == OBELISK_RT_REGION_ACTIVE &&
+            if (barrierRegion == TALOS_RT_REGION_ACTIVE &&
                 !context->scheduledInertialPathNBAs.empty()) {
               auto candidate = context->scheduledInertialPathNBAs.begin();
               if (candidate->first.first <= context->schedulerTime) {
@@ -5972,16 +5972,16 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               if (pathCurrent)
                 applyNative(context->scheduledNBAs[nativeIndex]);
               context->schedulerApplyingNativeUpdate = false;
-              if (context->schedulerStatus != OBELISK_RT_OK)
+              if (context->schedulerStatus != TALOS_RT_OK)
                 return context->schedulerStatus;
               if (retainedAutomaticID != 0) {
                 auto found =
                     context->nativeAutomaticStates.find(retainedAutomaticID);
                 if (found == context->nativeAutomaticStates.end() ||
                     found->second.referenceCount == 0)
-                  return OBELISK_RT_INVALID_HANDLE;
+                  return TALOS_RT_INVALID_HANDLE;
                 if (--found->second.referenceCount == 0) {
-                  obelisk_rt_erase_automatic_bookkeeping_unlocked(
+                  talos_rt_erase_automatic_bookkeeping_unlocked(
                       context, retainedAutomaticID);
                   context->nativeAutomaticStates.erase(found);
                 }
@@ -5990,7 +5990,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             } else if (sequence == pathSequence) {
               ScheduledNBA update = std::move(pathUpdate->second);
               context->scheduledInertialPathNBAs.erase(pathUpdate);
-              if (update.execRegion != OBELISK_RT_REGION_ACTIVE) {
+              if (update.execRegion != TALOS_RT_REGION_ACTIVE) {
                 context->scheduledNBAs.push_back(std::move(update));
                 continue;
               }
@@ -6001,30 +6001,30 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               if (pathCurrent)
                 applyNative(update);
               context->schedulerApplyingNativeUpdate = false;
-              if (context->schedulerStatus != OBELISK_RT_OK)
+              if (context->schedulerStatus != TALOS_RT_OK)
                 return context->schedulerStatus;
             } else if (sequence == managedSequence) {
               ScheduledManagedNBA update =
                   context->scheduledManagedNBAs.pop(barrierRegion);
-              obelisk_rt_status status =
-                  obelisk_rt_apply_managed_nba(context, update);
-              if (status != OBELISK_RT_OK)
+              talos_rt_status status =
+                  talos_rt_apply_managed_nba(context, update);
+              if (status != TALOS_RT_OK)
                 return status;
             } else if (sequence == passSequence) {
               auto scheduled = context->scheduledPassSwitchEvents.begin();
               ScheduledPassSwitchEvent event = scheduled->second;
               bool switchChanged = false;
-              obelisk_rt_status status = OBELISK_RT_INVALID_DESIGN;
+              talos_rt_status status = TALOS_RT_INVALID_DESIGN;
               if (event.delayedMosEdge != UINT64_MAX) {
                 auto pending =
                     context->delayedMosPending.find(event.delayedMosEdge);
                 if (pending == context->delayedMosPending.end() ||
                     pending->second.event != scheduled ||
                     pending->second.strengths != event.strengths)
-                  return OBELISK_RT_INVALID_DESIGN;
+                  return TALOS_RT_INVALID_DESIGN;
                 context->scheduledPassSwitchEvents.erase(scheduled);
                 context->delayedMosPending.erase(pending);
-                status = obelisk::designbytecode::applyDelayedMosEvent(
+                status = talos::designbytecode::applyDelayedMosEvent(
                     context, event.delayedMosEdge, event.strengths,
                     switchChanged);
               } else {
@@ -6033,13 +6033,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                 if (pending == context->delayedPassSwitchPending.end() ||
                     pending->second.event != scheduled ||
                     pending->second.state != event.state)
-                  return OBELISK_RT_INVALID_DESIGN;
+                  return TALOS_RT_INVALID_DESIGN;
                 context->scheduledPassSwitchEvents.erase(scheduled);
                 context->delayedPassSwitchPending.erase(pending);
-                status = obelisk::designbytecode::applyPassSwitchControl(
+                status = talos::designbytecode::applyPassSwitchControl(
                     context, event.passSwitchID, event.state, switchChanged);
               }
-              if (status != OBELISK_RT_OK)
+              if (status != TALOS_RT_OK)
                 return status;
               changed |= switchChanged;
             } else if (sequence == eventSequence) {
@@ -6054,17 +6054,17 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                 event.generation = 1;
               event.lastTriggeredTime = context->schedulerTime;
               bool notified =
-                  obelisk_rt_notify_event_order_waiters_unlocked(context,
+                  talos_rt_notify_event_order_waiters_unlocked(context,
                                                                  stableID) &&
-                  obelisk_rt_notify_observer_event_unlocked(context, stableID);
+                  talos_rt_notify_observer_event_unlocked(context, stableID);
               if (retainedAutomaticID != 0) {
                 auto found =
                     context->nativeAutomaticStates.find(retainedAutomaticID);
                 if (found == context->nativeAutomaticStates.end() ||
                     found->second.referenceCount == 0)
-                  return OBELISK_RT_INVALID_HANDLE;
+                  return TALOS_RT_INVALID_HANDLE;
                 if (--found->second.referenceCount == 0) {
-                  obelisk_rt_erase_automatic_bookkeeping_unlocked(
+                  talos_rt_erase_automatic_bookkeeping_unlocked(
                       context, retainedAutomaticID);
                   context->nativeAutomaticStates.erase(found);
                 }
@@ -6075,28 +6075,28 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             } else if (sequence == replaceableSequence) {
               if (!replaceable ||
                   replaceableEvent == replaceable->calendar.end())
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               ScheduledDesignEvent scheduled = replaceableEvent->second;
               auto pending = replaceable->pending.find(scheduled.stableID);
               if (pending == replaceable->pending.end() ||
                   !pending->second.scheduled ||
                   pending->second.event != replaceableEvent)
-                return OBELISK_RT_INVALID_DESIGN;
+                return TALOS_RT_INVALID_DESIGN;
               pending->second.scheduled = false;
               replaceable->calendar.erase(replaceableEvent);
               EventState &event = context->events[scheduled.stableID];
               if (++event.generation == 0)
                 event.generation = 1;
               event.lastTriggeredTime = context->schedulerTime;
-              if (!obelisk_rt_notify_event_order_waiters_unlocked(
+              if (!talos_rt_notify_event_order_waiters_unlocked(
                       context, scheduled.stableID) ||
-                  !obelisk_rt_notify_observer_event_unlocked(
+                  !talos_rt_notify_observer_event_unlocked(
                       context, scheduled.stableID))
                 return context->schedulerStatus;
               eventTriggered = true;
             } else {
               if (!applyDesign(context->scheduledDesignNBAs[designIndex]))
-                return OBELISK_RT_INVALID_HANDLE;
+                return TALOS_RT_INVALID_HANDLE;
               queues.design.consume();
             }
           }
@@ -6104,13 +6104,13 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         if ((changed || eventTriggered) && ++context->schedulerEpoch == 0)
           context->schedulerEpoch = 1;
         if (context->schedulerSlotProgress == maxSlotProgress) {
-          context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+          context->schedulerStatus = TALOS_RT_OUT_OF_RESOURCES;
           return context->schedulerStatus;
         }
         ++context->schedulerSlotProgress;
         if (context->nativeScheduleSingleStep ||
             options.completeNBABarrier != UINT32_MAX)
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
         continue;
       }
       if (!selected && !context->schedulerRunningFinals) {
@@ -6123,7 +6123,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           if (context->nativeSchedulePlan->state_bit_count != 0 &&
               !reconcileNativeDirtyRootsToPlanesUnlocked(
                   context, context->nativeSchedulePlan)) {
-            context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
+            context->schedulerStatus = TALOS_RT_LAYOUT_MISMATCH;
             return context->schedulerStatus;
           }
           context->nativeScheduleExternalWritePending = false;
@@ -6171,7 +6171,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
              context->scheduledDesignTasks)
           if (!candidate.terminated && candidate.phase == 0 &&
               candidate.started &&
-              candidate.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+              candidate.suspendKind == TALOS_RT_SUSPEND_DELAY)
             considerTime(candidate.wakeTime);
         for (const ScheduledDesignNBA &update : context->scheduledDesignNBAs)
           if (update.dueTime > context->schedulerTime)
@@ -6182,7 +6182,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         if (!context->scheduledInertialPathNBAs.empty())
           considerTime(context->scheduledInertialPathNBAs.begin()->first.first);
         for (uint32_t region :
-             {OBELISK_RT_REGION_NBA, OBELISK_RT_REGION_RE_NBA})
+             {TALOS_RT_REGION_NBA, TALOS_RT_REGION_RE_NBA})
           if (const ScheduledManagedNBA *update =
                   context->scheduledManagedNBAs.front(region))
             considerTime(update->dueTime);
@@ -6190,29 +6190,29 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           if (event.dueTime > context->schedulerTime)
             considerTime(event.dueTime);
         if (const ReplaceableEventFeatureState *replaceable =
-                obelisk_rt_replaceable_events(context);
+                talos_rt_replaceable_events(context);
             replaceable && !replaceable->calendar.empty())
           considerTime(replaceable->calendar.begin()->first.first);
         if (!context->scheduledPassSwitchEvents.empty())
           considerTime(context->scheduledPassSwitchEvents.begin()->first.first);
         if (nextTime) {
-          obelisk_rt_dump_slot_unlocked(context);
+          talos_rt_dump_slot_unlocked(context);
           // Between time slots of a runtime-driven schedule no activation
           // runs: a designated collection point for stretches that no
           // generated periodic loop drives, and the point where polled
           // collection reclaims pressure that no poll reached.
-          if (obelisk_rt_managed_heap_collections_designated(
+          if (talos_rt_managed_heap_collections_designated(
                   context->managedHeap) ||
-              obelisk_rt_managed_heap_collections_polled(
+              talos_rt_managed_heap_collections_polled(
                   context->managedHeap)) {
-            obelisk_rt_status collected =
-                obelisk_rt_v1_gc_collect_pending(context);
-            if (collected != OBELISK_RT_OK)
+            talos_rt_status collected =
+                talos_rt_v1_gc_collect_pending(context);
+            if (collected != TALOS_RT_OK)
               return collected;
           }
           context->schedulerTime = *nextTime;
           if (context->nativeScheduleSingleStep)
-            return OBELISK_RT_OK;
+            return TALOS_RT_OK;
           continue;
         }
         bool hasFinal = false;
@@ -6226,7 +6226,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         if (hasFinal) {
           enterFinalPhaseUnlocked(context);
           if (context->nativeScheduleSingleStep)
-            return OBELISK_RT_OK;
+            return TALOS_RT_OK;
           continue;
         }
       }
@@ -6241,7 +6241,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
     {
       ContextMutexLock lock(context);
       if (context->activeNativeProcess)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
       context->activeNativeProcess = selected;
       context->activeHomeRegion =
           context->scheduledProcesses[selectedIndex].homeRegion;
@@ -6258,50 +6258,50 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       context->activeWaitOrderFailed =
           selectedResuming &&
           context->scheduledProcesses[selectedIndex].suspendKind ==
-              OBELISK_RT_SUSPEND_EVENT_ORDER &&
+              TALOS_RT_SUSPEND_EVENT_ORDER &&
           context->scheduledProcesses[selectedIndex].waitOrderReady &&
           context->scheduledProcesses[selectedIndex].waitOrderFailed;
       if (selectedResuming &&
-          obelisk_rt_resume_flushes_deferred_reports(
+          talos_rt_resume_flushes_deferred_reports(
               context->scheduledProcesses[selectedIndex].suspendKind))
-        obelisk_rt_flush_deferred_immediate_reports_unlocked(
+        talos_rt_flush_deferred_immediate_reports_unlocked(
             context, context->activeLogicalProcessToken);
       context->activeControls =
           std::move(context->scheduledProcesses[selectedIndex].controls);
     }
-    obelisk_rt_fragment_action_v1 action{};
-    obelisk_rt_execution_tier tier = selected->tier;
+    talos_rt_fragment_action_v1 action{};
+    talos_rt_execution_tier tier = selected->tier;
     const ScheduledProcess &scheduled =
         context->scheduledProcesses[selectedIndex];
     const uint64_t selectedToken = scheduled.token;
     bool requireBytecode =
         context->execution && (context->execution->flags &
-                               OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+                               TALOS_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
     if (requireBytecode) {
-      tier = OBELISK_RT_TIER_BYTECODE;
+      tier = TALOS_RT_TIER_BYTECODE;
     } else if (scheduled.aotActorSlot != UINT32_MAX) {
       bool bytecodeFragment = std::binary_search(
           scheduled.bytecodeContinuations.begin(),
           scheduled.bytecodeContinuations.end(), selected->continuation);
       tier =
-          bytecodeFragment ? OBELISK_RT_TIER_BYTECODE : OBELISK_RT_TIER_NATIVE;
+          bytecodeFragment ? TALOS_RT_TIER_BYTECODE : TALOS_RT_TIER_NATIVE;
       // External writes fracture the fused Tier-1 schedule, but supported
       // fragments remain native while the fine scheduler converges them.
       // Only an explicitly bytecode-only continuation enters Tier 3.
     }
-    if (tier != OBELISK_RT_TIER_NATIVE && tier != OBELISK_RT_TIER_BYTECODE)
+    if (tier != TALOS_RT_TIER_NATIVE && tier != TALOS_RT_TIER_BYTECODE)
       tier =
-          (selected->descriptor->available_tiers & OBELISK_RT_TIER_MASK_NATIVE)
-              ? OBELISK_RT_TIER_NATIVE
-              : OBELISK_RT_TIER_BYTECODE;
-    obelisk_rt_status status = obelisk_rt_v1_process_instance_execute(
+          (selected->descriptor->available_tiers & TALOS_RT_TIER_MASK_NATIVE)
+              ? TALOS_RT_TIER_NATIVE
+              : TALOS_RT_TIER_BYTECODE;
+    talos_rt_status status = talos_rt_v1_process_instance_execute(
         selected, context, tier, &action);
     uint64_t preparedCallID = 0;
-    obelisk_rt_status preparedCallStatus = OBELISK_RT_OK;
-    if (status == OBELISK_RT_OK && context->vpiState &&
-        action.kind == OBELISK_RT_FRAGMENT_TASK_CALL)
+    talos_rt_status preparedCallStatus = TALOS_RT_OK;
+    if (status == TALOS_RT_OK && context->vpiState &&
+        action.kind == TALOS_RT_FRAGMENT_TASK_CALL)
       preparedCallStatus =
-          obelisk_rt_vpi_pending_call(context, &preparedCallID);
+          talos_rt_vpi_pending_call(context, &preparedCallID);
     bool terminationRequested = false;
     bool killRequested = false;
     auto clearActiveProcess = [&](bool dpiDisabled) {
@@ -6337,14 +6337,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       terminationRequested =
           context->schedulerFinishRequested.load(std::memory_order_relaxed);
     };
-    if (status != OBELISK_RT_OK) [[unlikely]] {
-      bool dpiDisabled = status == OBELISK_RT_DPI_DISABLE_UNSUPPORTED;
+    if (status != TALOS_RT_OK) [[unlikely]] {
+      bool dpiDisabled = status == TALOS_RT_DPI_DISABLE_UNSUPPORTED;
       clearActiveProcess(dpiDisabled);
       if (dpiDisabled) {
         killRequested = true;
-        status = OBELISK_RT_OK;
+        status = TALOS_RT_OK;
         action = {
-            OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+            TALOS_RT_FRAGMENT_TERMINATE, TALOS_RT_SUSPEND_NONE, 0, 0, 0, 0};
       } else if (!terminationRequested) {
         return status;
       }
@@ -6352,69 +6352,69 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       clearActiveProcess(false);
     }
     auto destroyPendingCallee =
-        [](obelisk_rt_process_instance_v1 *instance) noexcept {
+        [](talos_rt_process_instance_v1 *instance) noexcept {
           if (instance)
-            (void)obelisk_rt_v1_process_instance_destroy(instance);
+            (void)talos_rt_v1_process_instance_destroy(instance);
         };
-    std::unique_ptr<obelisk_rt_process_instance_v1,
+    std::unique_ptr<talos_rt_process_instance_v1,
                     decltype(destroyPendingCallee)>
         pendingCallee(nullptr, destroyPendingCallee);
-    if (status == OBELISK_RT_OK &&
-        action.kind == OBELISK_RT_FRAGMENT_TASK_CALL) {
-      auto *callee = reinterpret_cast<obelisk_rt_process_instance_v1 *>(
+    if (status == TALOS_RT_OK &&
+        action.kind == TALOS_RT_FRAGMENT_TASK_CALL) {
+      auto *callee = reinterpret_cast<talos_rt_process_instance_v1 *>(
           static_cast<uintptr_t>(action.payload));
       if (!callee || callee == selected)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
       pendingCallee.reset(callee);
-      if (callee->lifecycle != OBELISK_RT_PROCESS_READY ||
+      if (callee->lifecycle != TALOS_RT_PROCESS_READY ||
           !callee->descriptor ||
           callee->descriptor->execution != selected->descriptor->execution ||
           (callee->ownership_context && callee->ownership_context != context))
-        return OBELISK_RT_INVALID_LIFECYCLE;
-      const uint64_t callID = (action.flags & OBELISK_RT_ACTION_VPI_CALL_SITE)
+        return TALOS_RT_INVALID_LIFECYCLE;
+      const uint64_t callID = (action.flags & TALOS_RT_ACTION_VPI_CALL_SITE)
                                   ? action.auxiliary
                                   : 0;
-      if (preparedCallStatus != OBELISK_RT_OK)
+      if (preparedCallStatus != TALOS_RT_OK)
         return preparedCallStatus;
-      auto callStatus = obelisk_rt_vpi_bind_native_callsite(
+      auto callStatus = talos_rt_vpi_bind_native_callsite(
           context, callee, callID, preparedCallID);
-      if (callStatus != OBELISK_RT_OK)
+      if (callStatus != TALOS_RT_OK)
         return callStatus;
     }
     if (terminationRequested)
       action = {
-          OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+          TALOS_RT_FRAGMENT_TERMINATE, TALOS_RT_SUSPEND_NONE, 0, 0, 0, 0};
     bool destroy = false;
-    std::vector<obelisk_rt_process_instance_v1 *> terminatedCallers;
+    std::vector<talos_rt_process_instance_v1 *> terminatedCallers;
     {
       ContextMutexLock lock(context);
       if (selectedIndex >= context->scheduledProcesses.size() ||
           context->scheduledProcesses[selectedIndex].instance != selected)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
       ScheduledProcess &scheduled = context->scheduledProcesses[selectedIndex];
-      if (action.kind == OBELISK_RT_FRAGMENT_TERMINATE) {
+      if (action.kind == TALOS_RT_FRAGMENT_TERMINATE) {
         if (!scheduled.signalSubscriptions.empty() ||
             scheduled.computedObserverWaitRegistered)
-          obelisk_rt_unregister_signal_wait_unlocked(
+          talos_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
         if (!scheduled.callers.empty() &&
             !context->schedulerFinishRequested.load(
                 std::memory_order_relaxed) &&
             !killRequested) {
           if (scheduled.callerDepths.size() != scheduled.callers.size())
-            return OBELISK_RT_INVALID_LIFECYCLE;
+            return TALOS_RT_INVALID_LIFECYCLE;
           if (context->vpiState) {
-            status = obelisk_rt_vpi_frame_unwind_process(
+            status = talos_rt_vpi_frame_unwind_process(
                 context, kNativeLogicalProcessTag | scheduled.token,
                 scheduled.callerDepths.back().vpiFrameDepth);
-            if (status != OBELISK_RT_OK)
+            if (status != TALOS_RT_OK)
               return status;
           }
           updateScheduledProcessInstance(context, scheduled,
                                          scheduled.callers.back());
           scheduled.callers.pop_back();
           scheduled.callerDepths.pop_back();
-          scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
+          scheduled.suspendKind = TALOS_RT_SUSPEND_NONE;
           scheduled.waitOffset = 0;
           scheduled.waitSize = 0;
           scheduled.waitGenerations.clear();
@@ -6424,23 +6424,23 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           destroy = true;
         } else {
           if (context->vpiState)
-            (void)obelisk_rt_vpi_frame_unwind_process(
+            (void)talos_rt_vpi_frame_unwind_process(
                 context, kNativeLogicalProcessTag | scheduled.token, 0);
           uint64_t token = scheduled.token;
-          obelisk_rt_program_complete_unlocked(context,
+          talos_rt_program_complete_unlocked(context,
                                                kNativeLogicalProcessTag | token,
                                                scheduled.programOwner);
           if (scheduled.rootProcess) {
-            if (tier == OBELISK_RT_TIER_NATIVE &&
+            if (tier == TALOS_RT_TIER_NATIVE &&
                 !importNativeRootInitializerPlanesUnlocked(context))
-              return OBELISK_RT_LAYOUT_MISMATCH;
-            obelisk_rt_program_seal_unlocked(context);
-            if (obelisk_rt_status status =
-                    obelisk_rt_recapture_initialized_preponed_unlocked(context);
-                status != OBELISK_RT_OK)
+              return TALOS_RT_LAYOUT_MISMATCH;
+            talos_rt_program_seal_unlocked(context);
+            if (talos_rt_status status =
+                    talos_rt_recapture_initialized_preponed_unlocked(context);
+                status != TALOS_RT_OK)
               return status;
           }
-          obelisk_rt_retire_process_parent_unlocked(
+          talos_rt_retire_process_parent_unlocked(
               context, kNativeLogicalProcessTag | token, scheduled.parent);
           context->terminatedNativeProcesses.insert(token, scheduled.random);
           updateScheduledProcessInstance(context, scheduled, nullptr);
@@ -6449,7 +6449,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           if (terminationRequested || killRequested)
             terminatedCallers.swap(scheduled.callers);
           scheduled.callerDepths.clear();
-          obelisk_rt_release_controls_unlocked(context, scheduled.controls);
+          talos_rt_release_controls_unlocked(context, scheduled.controls);
           scheduled.controls.clear();
           destroy = true;
           scheduled.signalTriggered = false;
@@ -6457,16 +6457,16 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           if (++context->schedulerEpoch == 0)
             context->schedulerEpoch = 1;
         }
-      } else if (action.kind == OBELISK_RT_FRAGMENT_SUSPEND) {
+      } else if (action.kind == TALOS_RT_FRAGMENT_SUSPEND) {
         status = adoptScheduledSuspendUnlocked(context, scheduled, action);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
-      } else if (action.kind == OBELISK_RT_FRAGMENT_PROCESS_SUSPEND) {
+      } else if (action.kind == TALOS_RT_FRAGMENT_PROCESS_SUSPEND) {
         if (!scheduled.signalSubscriptions.empty() ||
             scheduled.computedObserverWaitRegistered)
-          obelisk_rt_unregister_signal_wait_unlocked(
+          talos_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
-        scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
+        scheduled.suspendKind = TALOS_RT_SUSPEND_NONE;
         scheduled.waitOffset = 0;
         scheduled.waitSize = 0;
         scheduled.waitGenerations.clear();
@@ -6474,33 +6474,33 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         scheduled.explicitlySuspended = true;
         scheduled.urgent = false;
         scheduled.queuedRegion = scheduled.homeRegion;
-      } else if (action.kind == OBELISK_RT_FRAGMENT_TASK_CALL) {
+      } else if (action.kind == TALOS_RT_FRAGMENT_TASK_CALL) {
         auto *callee = pendingCallee.get();
         if (!callee)
-          return OBELISK_RT_INVALID_LIFECYCLE;
+          return TALOS_RT_INVALID_LIFECYCLE;
         if (scheduled.callers.size() == std::numeric_limits<size_t>::max())
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         uint64_t frameDepth = 0;
         if (context->vpiState) {
-          status = obelisk_rt_vpi_frame_depth_process(
+          status = talos_rt_vpi_frame_depth_process(
               context, kNativeLogicalProcessTag | scheduled.token, &frameDepth);
-          if (status != OBELISK_RT_OK)
+          if (status != TALOS_RT_OK)
             return status;
         }
         scheduled.callers.reserve(scheduled.callers.size() + 1);
         scheduled.callerDepths.reserve(scheduled.callerDepths.size() + 1);
         if (!scheduled.signalSubscriptions.empty() ||
             scheduled.computedObserverWaitRegistered)
-          obelisk_rt_unregister_signal_wait_unlocked(
+          talos_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
         status = suspendNativeAOTTaskCallerUnlocked(context, scheduled);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
         scheduled.callers.push_back(selected);
         scheduled.callerDepths.push_back(
             {scheduled.controls.size(), frameDepth});
         updateScheduledProcessInstance(context, scheduled, callee);
-        scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
+        scheduled.suspendKind = TALOS_RT_SUSPEND_NONE;
         scheduled.waitOffset = 0;
         scheduled.waitSize = 0;
         scheduled.waitGenerations.clear();
@@ -6511,9 +6511,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       } else {
         if (!scheduled.signalSubscriptions.empty() ||
             scheduled.computedObserverWaitRegistered)
-          obelisk_rt_unregister_signal_wait_unlocked(
+          talos_rt_unregister_signal_wait_unlocked(
               context, scheduled.signalSubscriptions, scheduled.token, false);
-        scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
+        scheduled.suspendKind = TALOS_RT_SUSPEND_NONE;
         scheduled.waitOffset = 0;
         scheduled.waitSize = 0;
         scheduled.waitGenerations.clear();
@@ -6532,14 +6532,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         uint32_t slot = scheduled.aotActorSlot;
         if (!context->nativeSchedulePlan ||
             slot >= context->nativeScheduleActors.size())
-          return OBELISK_RT_INVALID_LIFECYCLE;
+          return TALOS_RT_INVALID_LIFECYCLE;
         if (context->nativeScheduleActors[slot] != scheduled.instance) {
           if (context->nativeScheduleActors[slot] != selected)
-            return OBELISK_RT_INVALID_LIFECYCLE;
+            return TALOS_RT_INVALID_LIFECYCLE;
           status = context->nativeSchedulePlan->bind(
               context->nativeSchedulePlan->mutable_state, context, slot,
               scheduled.instance);
-          if (status != OBELISK_RT_OK)
+          if (status != TALOS_RT_OK)
             return status;
           context->nativeScheduleActors[slot] = scheduled.instance;
           context->nativeScheduleActorTokens[slot] =
@@ -6556,33 +6556,33 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                              cachedNativeSelection.has_value());
     }
     if (destroy) {
-      status = obelisk_rt_v1_process_instance_destroy(selected);
-      if (status != OBELISK_RT_OK)
+      status = talos_rt_v1_process_instance_destroy(selected);
+      if (status != TALOS_RT_OK)
         return status;
     }
     for (auto caller = terminatedCallers.rbegin();
          caller != terminatedCallers.rend(); ++caller) {
-      status = obelisk_rt_v1_process_instance_destroy(*caller);
-      if (status != OBELISK_RT_OK)
+      status = talos_rt_v1_process_instance_destroy(*caller);
+      if (status != TALOS_RT_OK)
         return status;
     }
     status = recordSlotProgress();
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     if (context->nativeScheduleSingleStep)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
-                              obelisk_rt_process_instance_v1 *instance) {
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_prime(talos_rt_context *context,
+                              talos_rt_process_instance_v1 *instance) {
   if (!context || !instance)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
   struct ActiveStateGuard {
-    obelisk_rt_context *context;
-    obelisk_rt_process_instance_v1 *native = context->activeNativeProcess;
+    talos_rt_context *context;
+    talos_rt_process_instance_v1 *native = context->activeNativeProcess;
     uint64_t logical = context->activeLogicalProcessToken;
     uint64_t logicalParent = context->activeLogicalProcessParent;
     uint64_t design = context->activeDesignTaskID;
@@ -6593,7 +6593,7 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
     bool waitOrderFailed = context->activeWaitOrderFailed;
     bool designExecuting = context->designTaskExecuting;
     bool escapePending = context->controlEscapePending;
-    obelisk_rt_random_state_v1 *random = context->activeRandom;
+    talos_rt_random_state_v1 *random = context->activeRandom;
     bool designFilter = context->nativeScheduleDesignTaskFilterActive;
     uint64_t forcedDesignTask = context->nativeScheduleForcedDesignTask;
     std::vector<uint64_t> controls = std::move(context->activeControls);
@@ -6612,11 +6612,11 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
       context->designTaskExecuting = designExecuting;
       context->controlEscapePending = escapePending;
       context->activeRandom = random;
-      obelisk_rt_set_design_task_filter_unlocked(context, designFilter,
+      talos_rt_set_design_task_filter_unlocked(context, designFilter,
                                                  forcedDesignTask);
     }
   } activeState{context};
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     uint64_t token = 0;
     {
       ContextMutexLock lock(context);
@@ -6634,7 +6634,7 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
                                return entry.instance == instance;
                              });
       if (found == context->scheduledProcesses.end() || found->started) {
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
       }
       token = found->token;
       found->started = true;
@@ -6649,17 +6649,17 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
 
     for (uint32_t step = 0; step != 1024; ++step) {
       size_t index = 0;
-      obelisk_rt_execution_tier tier = OBELISK_RT_TIER_NATIVE;
+      talos_rt_execution_tier tier = TALOS_RT_TIER_NATIVE;
       {
         ContextMutexLock lock(context);
         auto indexed = context->scheduledProcessIndices.find(token);
         if (indexed == context->scheduledProcessIndices.end() ||
             indexed->second >= context->scheduledProcesses.size())
-          return OBELISK_RT_INVALID_LIFECYCLE;
+          return TALOS_RT_INVALID_LIFECYCLE;
         index = indexed->second;
         ScheduledProcess &scheduled = context->scheduledProcesses[index];
         if (scheduled.instance != instance)
-          return OBELISK_RT_INVALID_LIFECYCLE;
+          return TALOS_RT_INVALID_LIFECYCLE;
         context->activeNativeProcess = nullptr;
         context->activeLogicalProcessToken = kNativeLogicalProcessTag | token;
         context->controlEscapePending = false;
@@ -6670,25 +6670,25 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
         context->activeControls = std::move(scheduled.controls);
         bool requireBytecode =
             context->execution && (context->execution->flags &
-                                   OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+                                   TALOS_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
         if (requireBytecode)
-          tier = OBELISK_RT_TIER_BYTECODE;
+          tier = TALOS_RT_TIER_BYTECODE;
         else if (scheduled.aotActorSlot != UINT32_MAX) {
           bool bytecodeFragment = std::binary_search(
               scheduled.bytecodeContinuations.begin(),
               scheduled.bytecodeContinuations.end(), instance->continuation);
-          tier = bytecodeFragment ? OBELISK_RT_TIER_BYTECODE
-                                  : OBELISK_RT_TIER_NATIVE;
-        } else if (instance->tier == OBELISK_RT_TIER_NATIVE ||
-                   instance->tier == OBELISK_RT_TIER_BYTECODE)
-          tier = static_cast<obelisk_rt_execution_tier>(instance->tier);
+          tier = bytecodeFragment ? TALOS_RT_TIER_BYTECODE
+                                  : TALOS_RT_TIER_NATIVE;
+        } else if (instance->tier == TALOS_RT_TIER_NATIVE ||
+                   instance->tier == TALOS_RT_TIER_BYTECODE)
+          tier = static_cast<talos_rt_execution_tier>(instance->tier);
         else if ((instance->descriptor->available_tiers &
-                  OBELISK_RT_TIER_MASK_NATIVE) == 0)
-          tier = OBELISK_RT_TIER_BYTECODE;
+                  TALOS_RT_TIER_MASK_NATIVE) == 0)
+          tier = TALOS_RT_TIER_BYTECODE;
       }
 
-      obelisk_rt_fragment_action_v1 action{};
-      obelisk_rt_status status = obelisk_rt_v1_process_instance_execute(
+      talos_rt_fragment_action_v1 action{};
+      talos_rt_status status = talos_rt_v1_process_instance_execute(
           instance, context, tier, &action);
       {
         ContextMutexLock lock(context);
@@ -6696,16 +6696,16 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
         if (indexed == context->scheduledProcessIndices.end() ||
             indexed->second >= context->scheduledProcesses.size() ||
             context->scheduledProcesses[indexed->second].instance != instance)
-          return OBELISK_RT_INVALID_LIFECYCLE;
+          return TALOS_RT_INVALID_LIFECYCLE;
         ScheduledProcess &scheduled =
             context->scheduledProcesses[indexed->second];
         scheduled.controls = std::move(context->activeControls);
-        if (status == OBELISK_RT_OK &&
-            action.kind == OBELISK_RT_FRAGMENT_SUSPEND)
+        if (status == TALOS_RT_OK &&
+            action.kind == TALOS_RT_FRAGMENT_SUSPEND)
           status = adoptScheduledSuspendUnlocked(context, scheduled, action);
-        else if (status == OBELISK_RT_OK &&
-                 action.kind == OBELISK_RT_FRAGMENT_CONTINUE) {
-          scheduled.suspendKind = OBELISK_RT_SUSPEND_NONE;
+        else if (status == TALOS_RT_OK &&
+                 action.kind == TALOS_RT_FRAGMENT_CONTINUE) {
+          scheduled.suspendKind = TALOS_RT_SUSPEND_NONE;
           scheduled.waitOffset = 0;
           scheduled.waitSize = 0;
           scheduled.waitGenerations.clear();
@@ -6713,33 +6713,33 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
           scheduled.urgent = false;
           scheduled.queuedRegion = scheduled.homeRegion;
           updateNativeAOTContinuationRank(scheduled, action.continuation);
-        } else if (status == OBELISK_RT_OK) {
-          status = OBELISK_RT_INVALID_LIFECYCLE;
+        } else if (status == TALOS_RT_OK) {
+          status = TALOS_RT_INVALID_LIFECYCLE;
         }
-        if (status == OBELISK_RT_OK &&
-            action.kind == OBELISK_RT_FRAGMENT_SUSPEND) {
+        if (status == TALOS_RT_OK &&
+            action.kind == TALOS_RT_FRAGMENT_SUSPEND) {
           if (indexedBlocked(*context, scheduled))
             context->nativePollCandidates.erase(token);
           else
             context->nativePollCandidates.insert(token);
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
         }
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       }
     }
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_run(obelisk_rt_context *context) {
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_run(talos_rt_context *context) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     // One scheduler invocation is one serialized runtime transaction.  Hold
     // the context mutex across the generated/native execution scope so nested
     // state, fanout, and NBA helpers do not repeatedly acquire the recursive
@@ -6748,30 +6748,30 @@ obelisk_rt_v1_scheduler_run(obelisk_rt_context *context) {
     NativeAOTMutexScope schedulerLock(context);
     return runScheduler(context);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
-    return OBELISK_RT_OUT_OF_MEMORY;
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_OUT_OF_MEMORY);
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
-    return OBELISK_RT_INVALID_ARGUMENT;
+  TALOS_RT_CATCH_ALL {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_INVALID_ARGUMENT);
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
-obelisk_rt_status
-obelisk_rt_run_dpi_export_task_logical(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_run_dpi_export_task_logical(talos_rt_context *context,
                                        uint64_t logical) noexcept {
   if (!context || logical == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  auto frameStatus = obelisk_rt_vpi_export_task_enter(context, logical);
-  if (frameStatus != OBELISK_RT_OK)
+    return TALOS_RT_INVALID_ARGUMENT;
+  auto frameStatus = talos_rt_vpi_export_task_enter(context, logical);
+  if (frameStatus != TALOS_RT_OK)
     return frameStatus;
   // Re-entry originates while the importing logical process is executing C.
   // Detach that host activation temporarily, leaving its canonical frame and
   // C stack intact while the exported task advances in its selected tier.
   struct ActiveStateGuard {
-    obelisk_rt_context *context;
-    obelisk_rt_process_instance_v1 *native = context->activeNativeProcess;
+    talos_rt_context *context;
+    talos_rt_process_instance_v1 *native = context->activeNativeProcess;
     uint64_t logical = context->activeLogicalProcessToken;
     uint64_t logicalParent = context->activeLogicalProcessParent;
     uint64_t design = context->activeDesignTaskID;
@@ -6782,7 +6782,7 @@ obelisk_rt_run_dpi_export_task_logical(obelisk_rt_context *context,
     bool waitOrderFailed = context->activeWaitOrderFailed;
     bool designExecuting = context->designTaskExecuting;
     bool escapePending = context->controlEscapePending;
-    obelisk_rt_random_state_v1 *random = context->activeRandom;
+    talos_rt_random_state_v1 *random = context->activeRandom;
     uint64_t programOwner = context->activeProgramOwner;
     uint64_t dpiLogical = context->activeDpiExportTaskLogical;
     bool dpiDisabled = context->activeDpiExportTaskDisabled;
@@ -6848,17 +6848,17 @@ obelisk_rt_run_dpi_export_task_logical(obelisk_rt_context *context,
   // exact outer selection when it returns, including through an error path.
   NativeScheduleStepScope exportSelection(context, UINT32_MAX, false);
   for (;;) {
-    obelisk_rt_process_state state = OBELISK_RT_PROCESS_WAITING;
-    obelisk_rt_status status =
-        obelisk_rt_v1_process_status(context, logical, &state);
-    if (status != OBELISK_RT_OK)
+    talos_rt_process_state state = TALOS_RT_PROCESS_WAITING;
+    talos_rt_status status =
+        talos_rt_v1_process_status(context, logical, &state);
+    if (status != TALOS_RT_OK)
       return status;
     if (context->activeDpiExportTaskDisabled)
-      return OBELISK_RT_DPI_DISABLE_UNSUPPORTED;
-    if (state == OBELISK_RT_PROCESS_FINISHED)
-      return OBELISK_RT_OK;
-    if (state == OBELISK_RT_PROCESS_KILLED)
-      return OBELISK_RT_OK;
+      return TALOS_RT_DPI_DISABLE_UNSUPPORTED;
+    if (state == TALOS_RT_PROCESS_FINISHED)
+      return TALOS_RT_OK;
+    if (state == TALOS_RT_PROCESS_KILLED)
+      return TALOS_RT_OK;
     uint64_t progress = 0, time = 0, epoch = 0, selectionGeneration = 0;
     bool runningFinals = false;
     {
@@ -6870,7 +6870,7 @@ obelisk_rt_run_dpi_export_task_logical(obelisk_rt_context *context,
       runningFinals = context->schedulerRunningFinals;
     }
     status = runScheduler(context);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     {
       ContextMutexLock lock(context);
@@ -6878,35 +6878,35 @@ obelisk_rt_run_dpi_export_task_logical(obelisk_rt_context *context,
           context->schedulerTime == time && context->schedulerEpoch == epoch &&
           context->schedulerSelectionGeneration == selectionGeneration &&
           context->schedulerRunningFinals == runningFinals)
-        return OBELISK_RT_INVALID_LIFECYCLE;
+        return TALOS_RT_INVALID_LIFECYCLE;
     }
   }
 }
 
-extern "C" OBELISK_RT_FEATURE_TEXT obelisk_rt_status
-obelisk_rt_v1_dpi_export_task_run(obelisk_rt_context *context,
-                                  obelisk_rt_process_instance_v1 *instance) {
+extern "C" TALOS_RT_FEATURE_TEXT talos_rt_status
+talos_rt_v1_dpi_export_task_run(talos_rt_context *context,
+                                  talos_rt_process_instance_v1 *instance) {
   if (!context || !instance)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
-    uint32_t home = OBELISK_RT_REGION_ACTIVE;
+  TALOS_RT_TRY {
+    uint32_t home = TALOS_RT_REGION_ACTIVE;
     {
       ContextMutexLock lock(context);
-      if (context->activeHomeRegion <= OBELISK_RT_REGION_POSTPONED)
+      if (context->activeHomeRegion <= TALOS_RT_REGION_POSTPONED)
         home = context->activeHomeRegion;
     }
-    obelisk_rt_status status = obelisk_rt_v1_scheduler_add(
-        context, instance, OBELISK_RT_SCHEDULE_HOME(home));
-    if (status != OBELISK_RT_OK) {
-      (void)obelisk_rt_v1_process_instance_destroy(instance);
+    talos_rt_status status = talos_rt_v1_scheduler_add(
+        context, instance, TALOS_RT_SCHEDULE_HOME(home));
+    if (status != TALOS_RT_OK) {
+      (void)talos_rt_v1_process_instance_destroy(instance);
       return status;
     }
-    uint64_t logical = obelisk_rt_v1_scheduler_process_token(context, instance);
+    uint64_t logical = talos_rt_v1_scheduler_process_token(context, instance);
     if (logical == 0)
-      return OBELISK_RT_INVALID_LIFECYCLE;
-    return obelisk_rt_run_dpi_export_task_logical(context, logical);
+      return TALOS_RT_INVALID_LIFECYCLE;
+    return talos_rt_run_dpi_export_task_logical(context, logical);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }

@@ -1,10 +1,10 @@
 //===- GeneratedDesignDatabaseDumpTest.cpp - Dump encoded design database -===//
 
-#include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/ManagedClassLayoutAnalysis.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "../lib/RuntimeInternal.h"
 
@@ -37,7 +37,7 @@
 
 namespace {
 
-using namespace obelisk::reflection;
+using namespace talos::reflection;
 
 bool validRange(uint64_t offset, uint64_t count, uint64_t stride,
                 uint64_t imageSize) {
@@ -114,33 +114,33 @@ uint64_t imageChecksum(const std::vector<uint8_t> &bytes) {
 } // namespace
 
 TEST(GeneratedDesignDatabase, Dump) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
-  const char *outputPath = std::getenv("OBELISK_TEST_OUTPUT");
-  const char *vpiProfile = std::getenv("OBELISK_TEST_VPI");
-  ASSERT_NE(inputPath, nullptr) << "OBELISK_TEST_INPUT is required";
-  ASSERT_NE(outputPath, nullptr) << "OBELISK_TEST_OUTPUT is required";
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
+  const char *outputPath = std::getenv("TALOS_TEST_OUTPUT");
+  const char *vpiProfile = std::getenv("TALOS_TEST_VPI");
+  ASSERT_NE(inputPath, nullptr) << "TALOS_TEST_INPUT is required";
+  ASSERT_NE(outputPath, nullptr) << "TALOS_TEST_OUTPUT is required";
 
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   mlir::OwningOpRef<mlir::ModuleOp> module =
       mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module) << "failed to parse " << inputPath;
 
-  llvm::SmallVector<obelisk::sim::SimDesignOp> designs;
+  llvm::SmallVector<talos::sim::SimDesignOp> designs;
   module->walk(
-      [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+      [&](talos::sim::SimDesignOp design) { designs.push_back(design); });
   ASSERT_EQ(designs.size(), 1u);
-  obelisk::SimulationBytecodeOptions options;
+  talos::SimulationBytecodeOptions options;
   options.vpi = vpiProfile ? vpiProfile : "read";
-  mlir::FailureOr<obelisk::EncodedSimulationDesign> encoded =
-      obelisk::encodeSimulationDesign(designs.front(), options);
+  mlir::FailureOr<talos::EncodedSimulationDesign> encoded =
+      talos::encodeSimulationDesign(designs.front(), options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   ASSERT_FALSE(encoded->designDatabase.empty());
 
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -157,7 +157,7 @@ TEST(GeneratedDesignDatabase, Dump) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
   ASSERT_NE(execution.design_database, nullptr);
   ASSERT_GE(execution.design_database_size,
             static_cast<uint64_t>(HeaderLayout.size));
@@ -405,8 +405,8 @@ TEST(GeneratedDesignDatabase, Dump) {
     const std::string_view ownerName =
         owner == scopeNames.end() ? std::string_view("?") : owner->second;
     const uint32_t ordinal =
-        (object.getCaps() & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
-        OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT;
+        (object.getCaps() & TALOS_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
+        TALOS_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT;
     output << "object name=" << name << " kind="
            << static_cast<uint32_t>(
                   unpackRecordKind(object.getKindAndVPIKind()))
@@ -444,11 +444,11 @@ TEST(GeneratedDesignDatabase, Dump) {
   }
 
   constexpr uint32_t semanticFlagsMask =
-      OBELISK_RT_DESIGN_SEMANTIC_SIGNED |
-      OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
-      OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE | OBELISK_RT_DESIGN_SEMANTIC_TAGGED |
-      OBELISK_RT_DESIGN_SEMANTIC_SOFT |
-      OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX;
+      TALOS_RT_DESIGN_SEMANTIC_SIGNED |
+      TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE |
+      TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE | TALOS_RT_DESIGN_SEMANTIC_TAGGED |
+      TALOS_RT_DESIGN_SEMANTIC_SOFT |
+      TALOS_RT_DESIGN_SEMANTIC_WILDCARD_INDEX;
   for (uint64_t index = 0; index != semanticTypeCount; ++index) {
     const SemanticTypeView type(image + semanticTypeOffset +
                                 index * SemanticTypeLayout.size);
@@ -468,8 +468,8 @@ TEST(GeneratedDesignDatabase, Dump) {
            << " flags=0x" << hex(type.getKindAndFlags() & semanticFlagsMask)
            << " public_vpi_kind="
            << ((type.getKindAndFlags() &
-                OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
-               OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT)
+                TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
+               TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT)
            << " first_edge=" << type.getFirstEdge()
            << " edge_count=" << type.getEdgeCount()
            << " alias=" << type.getAliasObjectIndexAndTable()
@@ -1009,25 +1009,25 @@ TEST(GeneratedDesignDatabase, Dump) {
 }
 
 TEST(GeneratedDesignDatabase, CompactStaticQueries) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
-  ASSERT_NE(inputPath, nullptr) << "OBELISK_TEST_INPUT is required";
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr) << "TALOS_TEST_INPUT is required";
 
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   mlir::OwningOpRef<mlir::ModuleOp> module =
       mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module) << "failed to parse " << inputPath;
-  llvm::SmallVector<obelisk::sim::SimDesignOp> designs;
+  llvm::SmallVector<talos::sim::SimDesignOp> designs;
   module->walk(
-      [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+      [&](talos::sim::SimDesignOp design) { designs.push_back(design); });
   ASSERT_EQ(designs.size(), 1u);
 
-  obelisk::SimulationBytecodeOptions options;
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  mlir::FailureOr<obelisk::EncodedSimulationDesign> encoded =
-      obelisk::encodeSimulationDesign(designs.front(), options);
+  mlir::FailureOr<talos::EncodedSimulationDesign> encoded =
+      talos::encodeSimulationDesign(designs.front(), options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   const HeaderView imageHeader(encoded->designDatabase.data());
   ASSERT_NE(imageHeader.getReserved(), 0u);
@@ -1039,8 +1039,8 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -1057,14 +1057,14 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
 
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
 
   PLI_BYTE8 packageName[] = "pkg";
   PLI_BYTE8 topName[] = "top";
@@ -1248,29 +1248,29 @@ TEST(GeneratedDesignDatabase, CompactStaticQueries) {
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_FALSE(runtime->nativeScheduleDeoptimized);
   EXPECT_FALSE(runtime->vpiObservationDemand);
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 }
 
 TEST(GeneratedDesignDatabase, RejectsMalformedFrozenParameterImage) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
-  ASSERT_NE(inputPath, nullptr) << "OBELISK_TEST_INPUT is required";
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr) << "TALOS_TEST_INPUT is required";
 
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   mlir::OwningOpRef<mlir::ModuleOp> module =
       mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module) << "failed to parse " << inputPath;
-  llvm::SmallVector<obelisk::sim::SimDesignOp> designs;
+  llvm::SmallVector<talos::sim::SimDesignOp> designs;
   module->walk(
-      [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+      [&](talos::sim::SimDesignOp design) { designs.push_back(design); });
   ASSERT_EQ(designs.size(), 1u);
 
-  obelisk::SimulationBytecodeOptions options;
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  mlir::FailureOr<obelisk::EncodedSimulationDesign> encoded =
-      obelisk::encodeSimulationDesign(designs.front(), options);
+  mlir::FailureOr<talos::EncodedSimulationDesign> encoded =
+      talos::encodeSimulationDesign(designs.front(), options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   ASSERT_GE(encoded->bytecode.size(), 40u);
   uint64_t bytecodeChecksum = 0;
@@ -1294,7 +1294,7 @@ TEST(GeneratedDesignDatabase, RejectsMalformedFrozenParameterImage) {
 
   auto expectRejected = [&](std::vector<uint8_t> image) {
     put64(image, field::HeaderChecksum, imageChecksum(image));
-    const obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+    const talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                        encoded->executionFlags,
                                                        0,
                                                        encoded->bytecode.data(),
@@ -1311,8 +1311,8 @@ TEST(GeneratedDesignDatabase, RejectsMalformedFrozenParameterImage) {
                                                        0,
                                                        nullptr,
                                                        0};
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&execution),
+              TALOS_RT_INVALID_DESIGN);
   };
 
   std::vector<uint8_t> malformed(encoded->designDatabase.begin(),
@@ -1361,7 +1361,7 @@ TEST(GeneratedDesignDatabase, RejectsMalformedFrozenParameterImage) {
   // The first compact record is the package, so the parameter-only explicit
   // range flag is invalid even though the bit itself is known.
   put16(malformed, staticObjectOffset + field::StaticObjectFlags,
-        OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE);
+        TALOS_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE);
   expectRejected(malformed);
 
   uint64_t parameterOffset = 0;
@@ -1379,7 +1379,7 @@ TEST(GeneratedDesignDatabase, RejectsMalformedFrozenParameterImage) {
                    encoded->designDatabase.end());
   // A known explicit-range bit is still invalid on a scalar parameter root.
   put16(malformed, parameterOffset + field::StaticObjectFlags,
-        OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE);
+        TALOS_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE);
   expectRejected(malformed);
 
   malformed.assign(encoded->designDatabase.begin(),
@@ -1403,37 +1403,37 @@ TEST(GeneratedDesignDatabase, RejectsMalformedFrozenParameterImage) {
   malformed.assign(encoded->designDatabase.begin(),
                    encoded->designDatabase.end());
   put32(malformed, fullParameterOffset + field::ObjectCaps,
-        OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE);
+        TALOS_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE);
   expectRejected(malformed);
 }
 
 TEST(GeneratedDesignDatabase, InterModPathQueries) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
-  ASSERT_NE(inputPath, nullptr) << "OBELISK_TEST_INPUT is required";
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr) << "TALOS_TEST_INPUT is required";
 
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   mlir::OwningOpRef<mlir::ModuleOp> module =
       mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module) << "failed to parse " << inputPath;
-  llvm::SmallVector<obelisk::sim::SimDesignOp> designs;
+  llvm::SmallVector<talos::sim::SimDesignOp> designs;
   module->walk(
-      [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+      [&](talos::sim::SimDesignOp design) { designs.push_back(design); });
   ASSERT_EQ(designs.size(), 1u);
 
-  obelisk::SimulationBytecodeOptions options;
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  mlir::FailureOr<obelisk::EncodedSimulationDesign> encoded =
-      obelisk::encodeSimulationDesign(designs.front(), options);
+  mlir::FailureOr<talos::EncodedSimulationDesign> encoded =
+      talos::encodeSimulationDesign(designs.front(), options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   ASSERT_GE(encoded->bytecode.size(), 40u);
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -1450,13 +1450,13 @@ TEST(GeneratedDesignDatabase, InterModPathQueries) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
 
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
 
   PLI_BYTE8 outputName[] = "top.output";
   PLI_BYTE8 inputName[] = "top.child.input";
@@ -1577,36 +1577,36 @@ TEST(GeneratedDesignDatabase, InterModPathQueries) {
   EXPECT_EQ(vpi_release_handle(other), 1);
   EXPECT_EQ(vpi_release_handle(input), 1);
   EXPECT_EQ(vpi_release_handle(output), 1);
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 }
 
 TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
-  ASSERT_NE(inputPath, nullptr) << "OBELISK_TEST_INPUT is required";
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr) << "TALOS_TEST_INPUT is required";
 
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   mlir::OwningOpRef<mlir::ModuleOp> module =
       mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module) << "failed to parse " << inputPath;
-  llvm::SmallVector<obelisk::sim::SimDesignOp> designs;
+  llvm::SmallVector<talos::sim::SimDesignOp> designs;
   module->walk(
-      [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+      [&](talos::sim::SimDesignOp design) { designs.push_back(design); });
   ASSERT_EQ(designs.size(), 1u);
 
-  obelisk::SimulationBytecodeOptions options;
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  mlir::FailureOr<obelisk::EncodedSimulationDesign> encoded =
-      obelisk::encodeSimulationDesign(designs.front(), options);
+  mlir::FailureOr<talos::EncodedSimulationDesign> encoded =
+      talos::encodeSimulationDesign(designs.front(), options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   ASSERT_GE(encoded->bytecode.size(), 40u);
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -1623,14 +1623,14 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
 
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
 
   PLI_BYTE8 topName[] = "top";
   PLI_BYTE8 generateName[] = "top.g";
@@ -1915,37 +1915,37 @@ TEST(GeneratedDesignDatabase, ScopeOwnedStatementQueries) {
   EXPECT_EQ(vpi_release_handle(program), 1);
   EXPECT_EQ(vpi_release_handle(interface), 1);
   EXPECT_EQ(vpi_release_handle(top), 1);
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 }
 
 TEST(GeneratedDesignDatabase, NetIdentityQueries) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
-  ASSERT_NE(inputPath, nullptr) << "OBELISK_TEST_INPUT is required";
-  const bool aliasShape = std::getenv("OBELISK_TEST_ALIAS_SHAPE") != nullptr;
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr) << "TALOS_TEST_INPUT is required";
+  const bool aliasShape = std::getenv("TALOS_TEST_ALIAS_SHAPE") != nullptr;
 
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   mlir::OwningOpRef<mlir::ModuleOp> module =
       mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module) << "failed to parse " << inputPath;
-  llvm::SmallVector<obelisk::sim::SimDesignOp> designs;
+  llvm::SmallVector<talos::sim::SimDesignOp> designs;
   module->walk(
-      [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+      [&](talos::sim::SimDesignOp design) { designs.push_back(design); });
   ASSERT_EQ(designs.size(), 1u);
 
-  obelisk::SimulationBytecodeOptions options;
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  mlir::FailureOr<obelisk::EncodedSimulationDesign> encoded =
-      obelisk::encodeSimulationDesign(designs.front(), options);
+  mlir::FailureOr<talos::EncodedSimulationDesign> encoded =
+      talos::encodeSimulationDesign(designs.front(), options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   ASSERT_GE(encoded->bytecode.size(), 40u);
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -1962,14 +1962,14 @@ TEST(GeneratedDesignDatabase, NetIdentityQueries) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
 
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
 
   std::string physicalName = aliasShape ? "top.a" : "top.uniform";
   std::string aliasName = aliasShape ? "top.b" : "top.uniform_alias";
@@ -1986,16 +1986,16 @@ TEST(GeneratedDesignDatabase, NetIdentityQueries) {
   EXPECT_EQ(vpi_get(vpiResolvedNetType, physical), vpiWire);
   EXPECT_EQ(vpi_get(vpiResolvedNetType, alias), vpiWire);
 
-  obelisk_rt_design_cursor_v1 physicalCursor{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+  talos_rt_design_cursor_v1 physicalCursor{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &execution,
                 reinterpret_cast<const uint8_t *>(physicalName.data()),
                 physicalName.size(), &physicalCursor),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint64_t stateOffset = 0;
   ASSERT_EQ(
-      obelisk_rt_design_state_offset(runtime, physicalCursor, 0, &stateOffset),
-      OBELISK_RT_OK);
+      talos_rt_design_state_offset(runtime, physicalCursor, 0, &stateOffset),
+      TALOS_RT_OK);
   for (uint64_t bit = 0; bit != 4; ++bit) {
     const uint64_t absolute = stateOffset + bit;
     const uint64_t mask = uint64_t{1} << (absolute % 64);
@@ -2166,27 +2166,27 @@ TEST(GeneratedDesignDatabase, NetIdentityQueries) {
   EXPECT_EQ(vpi_release_handle(physicalSimNet), 1);
   EXPECT_EQ(vpi_release_handle(alias), 1);
   EXPECT_EQ(vpi_release_handle(physical), 1);
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 }
 
 TEST(GeneratedDesignDatabase, ClassSpecializationBindings) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -2203,66 +2203,66 @@ TEST(GeneratedDesignDatabase, ClassSpecializationBindings) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
   auto lookup = [&](const char *name) {
-    obelisk_rt_design_cursor_v1 cursor{};
-    EXPECT_EQ(obelisk_rt_cached_design_lookup(
+    talos_rt_design_cursor_v1 cursor{};
+    EXPECT_EQ(talos_rt_cached_design_lookup(
                   runtime, reinterpret_cast<const uint8_t *>(name),
                   std::strlen(name), &cursor),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     return cursor;
   };
-  obelisk_rt_design_cursor_v1 one{}, two{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 1, &one),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 2, &two),
-            OBELISK_RT_OK);
+  talos_rt_design_cursor_v1 one{}, two{};
+  ASSERT_EQ(talos_rt_cached_vpi_class_typespec(runtime, 1, &one),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_cached_vpi_class_typespec(runtime, 2, &two),
+            TALOS_RT_OK);
   auto lexical = lookup("top.Generic");
   EXPECT_NE(one.offset, two.offset);
-  obelisk_rt_design_cursor_v1 result{};
-  EXPECT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 1, &result),
-            OBELISK_RT_OK);
+  talos_rt_design_cursor_v1 result{};
+  EXPECT_EQ(talos_rt_cached_vpi_class_typespec(runtime, 1, &result),
+            TALOS_RT_OK);
   EXPECT_EQ(result.offset, one.offset);
-  EXPECT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 2, &result),
-            OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_cached_vpi_class_typespec(runtime, 2, &result),
+            TALOS_RT_OK);
   EXPECT_EQ(result.offset, two.offset);
-  EXPECT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 3, &result),
-            OBELISK_RT_EOF);
+  EXPECT_EQ(talos_rt_cached_vpi_class_typespec(runtime, 3, &result),
+            TALOS_RT_EOF);
   EXPECT_EQ(result.offset, 0u);
-  EXPECT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 1, nullptr),
-            OBELISK_RT_INVALID_ARGUMENT);
-  const obelisk_rt_design_cursor_v1 sources[] = {lookup("top.obj"),
+  EXPECT_EQ(talos_rt_cached_vpi_class_typespec(runtime, 1, nullptr),
+            TALOS_RT_INVALID_ARGUMENT);
+  const talos_rt_design_cursor_v1 sources[] = {lookup("top.obj"),
                                                  lookup("top.Alias"), one, two};
   for (unsigned index = 0; index != 4; ++index) {
-    obelisk_rt_design_cursor_v1 semantic{};
-    ASSERT_EQ(obelisk_rt_cached_design_semantic_root(runtime, sources[index],
+    talos_rt_design_cursor_v1 semantic{};
+    ASSERT_EQ(talos_rt_cached_design_semantic_root(runtime, sources[index],
                                                      &semantic),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_cached_vpi_semantic_class_typespec(runtime, semantic,
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_cached_vpi_semantic_class_typespec(runtime, semantic,
                                                             &result),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(result.offset, index == 3 ? two.offset : one.offset);
-    obelisk_rt_design_semantic_type_info_v1 info{};
+    talos_rt_design_semantic_type_info_v1 info{};
     ASSERT_EQ(
-        obelisk_rt_cached_design_semantic_type_info(runtime, semantic, &info),
-        OBELISK_RT_OK);
+        talos_rt_cached_design_semantic_type_info(runtime, semantic, &info),
+        TALOS_RT_OK);
     EXPECT_EQ(info.identity_target.offset, lexical.offset);
   }
   for (unsigned index = 0; index != 2; ++index) {
     const uint8_t *name = nullptr;
     uint64_t size = 0;
     ASSERT_EQ(
-        obelisk_rt_cached_design_name(runtime, index ? two : one, &name, &size),
-        OBELISK_RT_OK);
+        talos_rt_cached_design_name(runtime, index ? two : one, &name, &size),
+        TALOS_RT_OK);
     EXPECT_EQ(std::string(reinterpret_cast<const char *>(name), size),
               index ? "top.Generic$two" : "top.Generic$one");
   }
-  EXPECT_EQ(obelisk_rt_cached_vpi_semantic_class_typespec(runtime, {}, &result),
-            OBELISK_RT_INVALID_HANDLE);
-  obelisk_rt_v1_context_destroy(runtime);
+  EXPECT_EQ(talos_rt_cached_vpi_semantic_class_typespec(runtime, {}, &result),
+            TALOS_RT_INVALID_HANDLE);
+  talos_rt_v1_context_destroy(runtime);
 
   HeaderView header(encoded->designDatabase.data());
   SemanticDirectoryView directory(encoded->designDatabase.data() +
@@ -2291,8 +2291,8 @@ TEST(GeneratedDesignDatabase, ClassSpecializationBindings) {
     put64(image, field::HeaderChecksum, imageChecksum(image));
     execution.design_database = image.data();
     execution.design_database_size = image.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&execution),
+              TALOS_RT_INVALID_DESIGN);
   };
   auto original = [&] {
     return std::vector<uint8_t>(encoded->designDatabase.begin(),
@@ -2347,24 +2347,24 @@ TEST(GeneratedDesignDatabase, ClassSpecializationBindings) {
 }
 
 TEST(GeneratedDesignDatabase, LiveClassObjectTypes) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -2381,16 +2381,16 @@ TEST(GeneratedDesignDatabase, LiveClassObjectTypes) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(runtime, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
 
   char variableName[] = "top.obj";
   char baseName[] = "top.Base";
@@ -2429,40 +2429,40 @@ TEST(GeneratedDesignDatabase, LiveClassObjectTypes) {
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
   const char debugName[] = "same_display_name";
-  obelisk_rt_class_descriptor_v1 baseDescriptor{};
-  baseDescriptor.version = OBELISK_RT_VERSION;
+  talos_rt_class_descriptor_v1 baseDescriptor{};
+  baseDescriptor.version = TALOS_RT_VERSION;
   baseDescriptor.class_id = 1;
   baseDescriptor.instance_size = sizeof(void *);
   baseDescriptor.instance_alignment = alignof(void *);
   baseDescriptor.debug_name = debugName;
   baseDescriptor.debug_name_size = sizeof(debugName) - 1;
-  obelisk_rt_class_descriptor_v1 derivedDescriptor = baseDescriptor;
+  talos_rt_class_descriptor_v1 derivedDescriptor = baseDescriptor;
   derivedDescriptor.class_id = 2;
   derivedDescriptor.base = &baseDescriptor;
-  obelisk_rt_class_descriptor_v1 hiddenDescriptor = derivedDescriptor;
+  talos_rt_class_descriptor_v1 hiddenDescriptor = derivedDescriptor;
   hiddenDescriptor.class_id = 3;
-  ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &baseDescriptor),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &derivedDescriptor),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &hiddenDescriptor),
-            OBELISK_RT_OK);
-  obelisk_rt_design_cursor_v1 variableCursor{};
-  ASSERT_EQ(obelisk_rt_cached_design_lookup(
+  ASSERT_EQ(talos_rt_v1_class_register(runtime, &baseDescriptor),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_class_register(runtime, &derivedDescriptor),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_class_register(runtime, &hiddenDescriptor),
+            TALOS_RT_OK);
+  talos_rt_design_cursor_v1 variableCursor{};
+  ASSERT_EQ(talos_rt_cached_design_lookup(
                 runtime, reinterpret_cast<const uint8_t *>(variableName),
                 std::strlen(variableName), &variableCursor),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   for (unsigned index = 0; index != 2; ++index) {
     const auto *descriptor = index ? &hiddenDescriptor : &derivedDescriptor;
-    obelisk_rt_object_v1 *object = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, descriptor, &object),
-              OBELISK_RT_OK);
-    obelisk_rt_gc_root_v1 root{};
-    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &object), OBELISK_RT_OK);
-    uint64_t word = obelisk_rt_managed_word_from_object(object);
+    talos_rt_object_v1 *object = nullptr;
+    ASSERT_EQ(talos_rt_v1_object_allocate(lane, descriptor, &object),
+              TALOS_RT_OK);
+    talos_rt_gc_root_v1 root{};
+    ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &root, &object), TALOS_RT_OK);
+    uint64_t word = talos_rt_managed_word_from_object(object);
     ASSERT_EQ(
-        obelisk_rt_v1_design_write(runtime, variableCursor, &word, nullptr, 64),
-        OBELISK_RT_OK);
+        talos_rt_v1_design_write(runtime, variableCursor, &word, nullptr, 64),
+        TALOS_RT_OK);
     vpiHandle objectHandle = vpi_handle(vpiClassObj, variable);
     vpiHandle aliasHandle = vpi_handle(vpiClassObj, variable);
     ASSERT_NE(objectHandle, nullptr);
@@ -2475,7 +2475,7 @@ TEST(GeneratedDesignDatabase, LiveClassObjectTypes) {
     ASSERT_NE(stillDeclaredType, nullptr);
     EXPECT_EQ(vpi_compare_objects(stillDeclaredType, baseType), 1);
     EXPECT_EQ(vpi_get64(vpiObjId, variable),
-              static_cast<PLI_INT64>(obelisk_rt_v1_object_id(object)));
+              static_cast<PLI_INT64>(talos_rt_v1_object_id(object)));
     vpiHandle actualType = nullptr;
     vpiHandle definition = nullptr;
     vpiHandle extends = nullptr;
@@ -2486,7 +2486,7 @@ TEST(GeneratedDesignDatabase, LiveClassObjectTypes) {
       EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
     } else {
       EXPECT_EQ(vpi_get64(vpiObjId, objectHandle),
-                static_cast<PLI_INT64>(obelisk_rt_v1_object_id(object)));
+                static_cast<PLI_INT64>(talos_rt_v1_object_id(object)));
       actualType = vpi_handle(vpiClassTypespec, objectHandle);
       ASSERT_NE(actualType, nullptr);
       EXPECT_EQ(vpi_compare_objects(actualType, derivedType), 1);
@@ -2501,10 +2501,10 @@ TEST(GeneratedDesignDatabase, LiveClassObjectTypes) {
     EXPECT_EQ(vpi_release_handle(objectHandle), 1);
     word = 0;
     ASSERT_EQ(
-        obelisk_rt_v1_design_write(runtime, variableCursor, &word, nullptr, 64),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+        talos_rt_v1_design_write(runtime, variableCursor, &word, nullptr, 64),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &root), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
     EXPECT_EQ(vpi_get(vpiType, aliasHandle), vpiUndefined);
     EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
     if (actualType) {
@@ -2522,29 +2522,29 @@ TEST(GeneratedDesignDatabase, LiveClassObjectTypes) {
        {variable, baseDefinition, derivedDefinition, hiddenDefinition, baseType,
         derivedType, declaredType})
     EXPECT_EQ(vpi_release_handle(handle), 1);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(runtime);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(runtime);
 }
 
 TEST(GeneratedDesignDatabase, ClassConstraints) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -2561,13 +2561,13 @@ TEST(GeneratedDesignDatabase, ClassConstraints) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
   struct ExpectedConstraint {
     const char *name;
     bool automatic;
@@ -2633,27 +2633,27 @@ TEST(GeneratedDesignDatabase, ClassConstraints) {
     EXPECT_EQ(vpi_free_object(definition), 1);
   }
   EXPECT_EQ(vpi_free_object(baseTypespec), 1);
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 }
 
 TEST(GeneratedDesignDatabase, ClassParameters) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -2670,13 +2670,13 @@ TEST(GeneratedDesignDatabase, ClassParameters) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
   char className[] = "C";
   char aliasName[] = "$unit::word";
   vpiHandle definition = vpi_handle_by_name(className, nullptr);
@@ -2759,27 +2759,27 @@ TEST(GeneratedDesignDatabase, ClassParameters) {
   EXPECT_EQ(vpi_free_object(alias), 1);
   EXPECT_EQ(vpi_free_object(canonical), 1);
   EXPECT_EQ(vpi_free_object(definition), 1);
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 }
 
 TEST(GeneratedDesignDatabase, LiveClassMembers) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -2796,45 +2796,45 @@ TEST(GeneratedDesignDatabase, LiveClassMembers) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(runtime, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
 
-  obelisk_rt_design_cursor_v1 canonicalCursor{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 1, &canonicalCursor),
-            OBELISK_RT_OK);
+  talos_rt_design_cursor_v1 canonicalCursor{};
+  ASSERT_EQ(talos_rt_cached_vpi_class_typespec(runtime, 1, &canonicalCursor),
+            TALOS_RT_OK);
   VPIClassMemberBinding noBinding{};
   EXPECT_EQ(
-      obelisk_rt_cached_vpi_class_member(runtime, canonicalCursor, &noBinding),
-      OBELISK_RT_EOF);
+      talos_rt_cached_vpi_class_member(runtime, canonicalCursor, &noBinding),
+      TALOS_RT_EOF);
   VPIRelationRange memberRange{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_relation_range(
+  ASSERT_EQ(talos_rt_cached_vpi_relation_range(
                 runtime, canonicalCursor, vpiVariables, true, &memberRange),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_EQ(memberRange.count, 5u);
   std::unordered_map<std::string, VPIClassMemberBinding> bindings;
   for (uint64_t index = 0; index != memberRange.count; ++index) {
-    obelisk_rt_design_cursor_v1 cursor{};
+    talos_rt_design_cursor_v1 cursor{};
     uint32_t kind = 0;
     bool statement = false;
-    ASSERT_EQ(obelisk_rt_cached_vpi_relation_target(runtime,
+    ASSERT_EQ(talos_rt_cached_vpi_relation_target(runtime,
                                                     memberRange.first + index,
                                                     &cursor, &kind, &statement),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     VPIClassMemberBinding binding{};
-    ASSERT_EQ(obelisk_rt_cached_vpi_class_member(runtime, cursor, &binding),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_cached_vpi_class_member(runtime, cursor, &binding),
+              TALOS_RT_OK);
     const uint8_t *name = nullptr;
     uint64_t nameSize = 0;
-    ASSERT_EQ(obelisk_rt_cached_design_name(runtime, cursor, &name, &nameSize),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_cached_design_name(runtime, cursor, &name, &nameSize),
+              TALOS_RT_OK);
     std::string fullName(reinterpret_cast<const char *>(name), nameSize);
     bindings.emplace(fullName.substr(fullName.rfind('.') + 1), binding);
     EXPECT_EQ(binding.classID, 1u);
@@ -2852,66 +2852,66 @@ TEST(GeneratedDesignDatabase, LiveClassMembers) {
   EXPECT_NE(bindings.at("number").byteOffset, UINT64_MAX);
 
   const uint64_t instanceSize = bindings.at("next").byteOffset + sizeof(void *);
-  const obelisk_rt_trace_entry_v1 traceEntry{
-      bindings.at("next").byteOffset, 0,      1, OBELISK_RT_TRACE_STRONG,
-      OBELISK_RT_MANAGED_SLOT_CLASS,  nullptr};
-  const obelisk_rt_trace_layout_v1 traceLayout{
-      OBELISK_RT_VERSION, 0, instanceSize, alignof(void *), &traceEntry, 1};
-  obelisk_rt_class_descriptor_v1 descriptor{};
-  descriptor.version = OBELISK_RT_VERSION;
+  const talos_rt_trace_entry_v1 traceEntry{
+      bindings.at("next").byteOffset, 0,      1, TALOS_RT_TRACE_STRONG,
+      TALOS_RT_MANAGED_SLOT_CLASS,  nullptr};
+  const talos_rt_trace_layout_v1 traceLayout{
+      TALOS_RT_VERSION, 0, instanceSize, alignof(void *), &traceEntry, 1};
+  talos_rt_class_descriptor_v1 descriptor{};
+  descriptor.version = TALOS_RT_VERSION;
   descriptor.class_id = 1;
   descriptor.instance_size = instanceSize;
   descriptor.instance_alignment = alignof(void *);
   descriptor.layout = &traceLayout;
-  ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &descriptor), OBELISK_RT_OK);
-  std::array<obelisk_rt_object_v1 *, 2> objects{};
-  std::array<obelisk_rt_gc_root_v1, 2> roots{};
+  ASSERT_EQ(talos_rt_v1_class_register(runtime, &descriptor), TALOS_RT_OK);
+  std::array<talos_rt_object_v1 *, 2> objects{};
+  std::array<talos_rt_gc_root_v1, 2> roots{};
   for (size_t index = 0; index != objects.size(); ++index) {
-    ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptor, &objects[index]),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &roots[index], &objects[index]),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_object_allocate(lane, &descriptor, &objects[index]),
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &roots[index], &objects[index]),
+              TALOS_RT_OK);
     int32_t number = index ? 29 : 17;
     uint8_t bits = index ? 0xc3 : 0x5a;
     uint8_t flags = 0xa9, unknown = 0x0c;
-    ASSERT_EQ(obelisk_rt_v1_object_write(objects[index],
+    ASSERT_EQ(talos_rt_v1_object_write(objects[index],
                                          bindings.at("number").byteOffset,
                                          &number, sizeof(number)),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_object_write(objects[index],
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_object_write(objects[index],
                                          bindings.at("bits").byteOffset, &bits,
                                          sizeof(bits)),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_object_write_planes(
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_object_write_planes(
                   objects[index], bindings.at("flags").byteOffset, &flags,
                   &unknown, sizeof(flags)),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
   }
-  ASSERT_EQ(obelisk_rt_v1_object_field_store(
+  ASSERT_EQ(talos_rt_v1_object_field_store(
                 objects[0], bindings.at("next").byteOffset, objects[1]),
-            OBELISK_RT_OK);
-  std::array<obelisk_rt_design_cursor_v1, 2> variables{};
+            TALOS_RT_OK);
+  std::array<talos_rt_design_cursor_v1, 2> variables{};
   std::array<vpiHandle, 2> variableHandles{}, objectHandles{};
   for (size_t index = 0; index != objects.size(); ++index) {
     std::string name = index ? "top.second" : "top.first";
-    ASSERT_EQ(obelisk_rt_cached_design_lookup(
+    ASSERT_EQ(talos_rt_cached_design_lookup(
                   runtime, reinterpret_cast<const uint8_t *>(name.data()),
                   name.size(), &variables[index]),
-              OBELISK_RT_OK);
-    uint64_t word = obelisk_rt_managed_word_from_object(objects[index]);
-    ASSERT_EQ(obelisk_rt_v1_design_write(runtime, variables[index], &word,
+              TALOS_RT_OK);
+    uint64_t word = talos_rt_managed_word_from_object(objects[index]);
+    ASSERT_EQ(talos_rt_v1_design_write(runtime, variables[index], &word,
                                          nullptr, 64),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     variableHandles[index] = vpi_handle_by_name(name.data(), nullptr);
     ASSERT_NE(variableHandles[index], nullptr);
     objectHandles[index] = vpi_handle(vpiClassObj, variableHandles[index]);
     ASSERT_NE(objectHandles[index], nullptr);
   }
   uint64_t sharedValue = 41;
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime,
+  ASSERT_EQ(talos_rt_v1_design_write(runtime,
                                        bindings.at("shared").backingStorage,
                                        &sharedValue, nullptr, 32),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   auto members = [](vpiHandle owner) {
     std::unordered_map<std::string, vpiHandle> result;
     vpiHandle iterator = vpi_iterate(vpiVariables, owner);
@@ -2998,7 +2998,7 @@ TEST(GeneratedDesignDatabase, LiveClassMembers) {
   ASSERT_NE(childObject, nullptr);
   EXPECT_EQ(vpi_compare_objects(childObject, objectHandles[1]), 1);
   EXPECT_EQ(vpi_get64(vpiObjId, first.at("next")),
-            static_cast<PLI_INT64>(obelisk_rt_v1_object_id(objects[1])));
+            static_cast<PLI_INT64>(talos_rt_v1_object_id(objects[1])));
   vpiHandle childType = vpi_handle(vpiClassTypespec, first.at("next"));
   ASSERT_NE(childType, nullptr);
   EXPECT_EQ(vpi_compare_objects(childType, canonicalType), 1);
@@ -3030,16 +3030,16 @@ TEST(GeneratedDesignDatabase, LiveClassMembers) {
   vpiHandle pendingUse = vpi_handle(vpiUse, pending);
   ASSERT_NE(pendingUse, nullptr);
   EXPECT_EQ(vpi_get64(vpiObjId, pendingUse),
-            static_cast<PLI_INT64>(obelisk_rt_v1_object_id(objects[0])));
+            static_cast<PLI_INT64>(talos_rt_v1_object_id(objects[0])));
   for (auto variable : variables) {
     uint64_t nullWord = 0;
     ASSERT_EQ(
-        obelisk_rt_v1_design_write(runtime, variable, &nullWord, nullptr, 64),
-        OBELISK_RT_OK);
+        talos_rt_v1_design_write(runtime, variable, &nullWord, nullptr, 64),
+        TALOS_RT_OK);
   }
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &roots[1]), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &roots[0]), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &roots[1]), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &roots[0]), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (vpiHandle stale : {first.at("number"), second.at("next"), childObject,
                           pendingUse, bit, flagX, flagZ}) {
     EXPECT_EQ(vpi_get(vpiType, stale), vpiUndefined);
@@ -3058,9 +3058,9 @@ TEST(GeneratedDesignDatabase, LiveClassMembers) {
        {first.at("shared"), second.at("shared"), directStatic, canonicalType,
         childType, definition, variableHandles[0], variableHandles[1]})
     EXPECT_EQ(vpi_release_handle(handle), 1);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(runtime);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(runtime);
 
   HeaderView header(encoded->designDatabase.data());
   SemanticDirectoryView directory(encoded->designDatabase.data() +
@@ -3089,8 +3089,8 @@ TEST(GeneratedDesignDatabase, LiveClassMembers) {
     put64(image, field::HeaderChecksum, imageChecksum(image));
     execution.design_database = image.data();
     execution.design_database_size = image.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&execution),
+              TALOS_RT_INVALID_DESIGN);
   };
   for (uint64_t badClass : {UINT64_C(0), UINT64_C(42)}) {
     auto image = original();
@@ -3116,30 +3116,30 @@ TEST(GeneratedDesignDatabase, LiveClassMembers) {
 }
 
 TEST(GeneratedDesignDatabase, InheritedClassMembers) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  auto layouts = obelisk::analysis::ManagedClassLayoutAnalysis::compute(
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  auto layouts = talos::analysis::ManagedClassLayoutAnalysis::compute(
       design,
       llvm::DataLayout((*module)
                            ->getAttrOfType<mlir::StringAttr>("llvm.data_layout")
                            .getValue()));
   ASSERT_TRUE(mlir::succeeded(layouts));
   ASSERT_EQ(layouts->classes.size(), 2u);
-  obelisk::SimulationBytecodeOptions options;
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -3156,54 +3156,54 @@ TEST(GeneratedDesignDatabase, InheritedClassMembers) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(runtime, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
 
   // Use the compiler's target layout and real descriptor inheritance. The
   // VPI field binding must point at the same byte as executable field access.
-  std::array<obelisk_rt_class_descriptor_v1, 2> descriptors{};
+  std::array<talos_rt_class_descriptor_v1, 2> descriptors{};
   std::unordered_map<std::string, uint64_t> offsets;
   for (uint64_t id = 1; id != 3; ++id) {
     const auto *layout = layouts->lookup(id);
     ASSERT_NE(layout, nullptr);
     auto &descriptor = descriptors[id - 1];
-    descriptor.version = OBELISK_RT_VERSION;
+    descriptor.version = TALOS_RT_VERSION;
     descriptor.class_id = id;
     descriptor.instance_size = layout->size;
     descriptor.instance_alignment = layout->alignment;
     descriptor.base = id == 2 ? &descriptors[0] : nullptr;
-    ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &descriptor),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_class_register(runtime, &descriptor),
+              TALOS_RT_OK);
     for (const auto &field : layout->fields) {
       auto declaration = field.declaration;
       offsets.emplace(declaration.getSymName().str(), field.offset);
     }
-    obelisk_rt_design_cursor_v1 type{};
-    ASSERT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, id, &type),
-              OBELISK_RT_OK);
+    talos_rt_design_cursor_v1 type{};
+    ASSERT_EQ(talos_rt_cached_vpi_class_typespec(runtime, id, &type),
+              TALOS_RT_OK);
     VPIRelationRange range{};
-    ASSERT_EQ(obelisk_rt_cached_vpi_relation_range(runtime, type, vpiVariables,
+    ASSERT_EQ(talos_rt_cached_vpi_relation_range(runtime, type, vpiVariables,
                                                    true, &range),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(range.count, layout->fields.size());
     for (uint64_t index = 0; index != range.count; ++index) {
-      obelisk_rt_design_cursor_v1 member{};
+      talos_rt_design_cursor_v1 member{};
       uint32_t kind = 0;
       bool statement = false;
-      ASSERT_EQ(obelisk_rt_cached_vpi_relation_target(
+      ASSERT_EQ(talos_rt_cached_vpi_relation_target(
                     runtime, range.first + index, &member, &kind, &statement),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
       VPIClassMemberBinding binding{};
-      ASSERT_EQ(obelisk_rt_cached_vpi_class_member(runtime, member, &binding),
-                OBELISK_RT_OK);
+      ASSERT_EQ(talos_rt_cached_vpi_class_member(runtime, member, &binding),
+                TALOS_RT_OK);
       std::string name(reinterpret_cast<const char *>(binding.name),
                        binding.nameSize);
       EXPECT_EQ(binding.classID, id);
@@ -3213,40 +3213,40 @@ TEST(GeneratedDesignDatabase, InheritedClassMembers) {
     }
   }
   ASSERT_GE(offsets.at("own"), descriptors[0].instance_size);
-  obelisk_rt_object_v1 *object = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptors[1], &object),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_root_v1 root{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &object), OBELISK_RT_OK);
+  talos_rt_object_v1 *object = nullptr;
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &descriptors[1], &object),
+            TALOS_RT_OK);
+  talos_rt_gc_root_v1 root{};
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &root, &object), TALOS_RT_OK);
   for (auto [name, number] :
        {std::pair{"number", int32_t{17}}, std::pair{"escaped", int32_t{23}},
         std::pair{"record", int32_t{52}}, std::pair{"own", int32_t{41}}})
-    ASSERT_EQ(obelisk_rt_v1_object_write(object, offsets.at(name), &number,
+    ASSERT_EQ(talos_rt_v1_object_write(object, offsets.at(name), &number,
                                          sizeof(number)),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
   uint8_t flags = 0x55, unknown = 0;
-  ASSERT_EQ(obelisk_rt_v1_object_write_planes(object, offsets.at("flags"),
+  ASSERT_EQ(talos_rt_v1_object_write_planes(object, offsets.at("flags"),
                                               &flags, &unknown, sizeof(flags)),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   char variableName[] = "top.obj";
-  obelisk_rt_design_cursor_v1 variable{};
-  ASSERT_EQ(obelisk_rt_cached_design_lookup(
+  talos_rt_design_cursor_v1 variable{};
+  ASSERT_EQ(talos_rt_cached_design_lookup(
                 runtime, reinterpret_cast<const uint8_t *>(variableName),
                 sizeof(variableName) - 1, &variable),
-            OBELISK_RT_OK);
-  uint64_t word = obelisk_rt_managed_word_from_object(object);
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, variable, &word, nullptr, 64),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
+  uint64_t word = talos_rt_managed_word_from_object(object);
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, variable, &word, nullptr, 64),
+            TALOS_RT_OK);
   char arrayName[] = "top.objects";
-  obelisk_rt_design_cursor_v1 array{};
-  ASSERT_EQ(obelisk_rt_cached_design_lookup(
+  talos_rt_design_cursor_v1 array{};
+  ASSERT_EQ(talos_rt_cached_design_lookup(
                 runtime, reinterpret_cast<const uint8_t *>(arrayName),
                 sizeof(arrayName) - 1, &array),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint64_t, 2> arrayWords{word, word};
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, array, arrayWords.data(),
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, array, arrayWords.data(),
                                        nullptr, 128),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   vpiHandle variableHandle = vpi_handle_by_name(variableName, nullptr);
   ASSERT_NE(variableHandle, nullptr);
   vpiHandle objectHandle = vpi_handle(vpiClassObj, variableHandle);
@@ -3356,14 +3356,14 @@ TEST(GeneratedDesignDatabase, InheritedClassMembers) {
   ASSERT_NE(use, nullptr);
   EXPECT_EQ(vpi_compare_objects(use, objectHandle), 1);
   word = 0;
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, variable, &word, nullptr, 64),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, variable, &word, nullptr, 64),
+            TALOS_RT_OK);
   arrayWords.fill(0);
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, array, arrayWords.data(),
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, array, arrayWords.data(),
                                        nullptr, 128),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &root), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (vpiHandle stale : {methods.at("visit"), methods.at("other.visit"),
                           fields.at("number"), use}) {
     EXPECT_EQ(vpi_get(vpiType, stale), vpiUndefined);
@@ -3381,35 +3381,35 @@ TEST(GeneratedDesignDatabase, InheritedClassMembers) {
   for (vpiHandle handle :
        {methods.at("ping"), baseType, derivedType, variableHandle})
     EXPECT_EQ(vpi_release_handle(handle), 1);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(runtime);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(runtime);
 }
 
 TEST(GeneratedDesignDatabase, ClassMemberArrays) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  auto layouts = obelisk::analysis::ManagedClassLayoutAnalysis::compute(
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  auto layouts = talos::analysis::ManagedClassLayoutAnalysis::compute(
       design,
       llvm::DataLayout((*module)
                            ->getAttrOfType<mlir::StringAttr>("llvm.data_layout")
                            .getValue()));
   ASSERT_TRUE(mlir::succeeded(layouts));
-  obelisk::SimulationBytecodeOptions options;
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -3426,16 +3426,16 @@ TEST(GeneratedDesignDatabase, ClassMemberArrays) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(runtime, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
   const auto *layout = layouts->lookup(uint64_t{1});
   ASSERT_NE(layout, nullptr);
   std::unordered_map<std::string, uint64_t> offsets;
@@ -3443,49 +3443,49 @@ TEST(GeneratedDesignDatabase, ClassMemberArrays) {
     auto declaration = field.declaration;
     offsets.emplace(declaration.getSymName().str(), field.offset);
   }
-  obelisk_rt_class_descriptor_v1 descriptor{};
-  descriptor.version = OBELISK_RT_VERSION;
+  talos_rt_class_descriptor_v1 descriptor{};
+  descriptor.version = TALOS_RT_VERSION;
   descriptor.class_id = 1;
   descriptor.instance_size = layout->size;
   descriptor.instance_alignment = layout->alignment;
-  ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &descriptor), OBELISK_RT_OK);
-  obelisk_rt_object_v1 *object = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptor, &object),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_root_v1 root{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &object), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_class_register(runtime, &descriptor), TALOS_RT_OK);
+  talos_rt_object_v1 *object = nullptr;
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &descriptor, &object),
+            TALOS_RT_OK);
+  talos_rt_gc_root_v1 root{};
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &root, &object), TALOS_RT_OK);
   std::array<uint64_t, 9> eventIDs{};
   for (auto &id : eventIDs)
-    ASSERT_EQ(obelisk_rt_v1_scheduler_event_create(runtime, &id),
-              OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_object_write(object, offsets.at("ready"),
+    ASSERT_EQ(talos_rt_v1_scheduler_event_create(runtime, &id),
+              TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_object_write(object, offsets.at("ready"),
                                        eventIDs.data(), sizeof(uint64_t)),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_object_write(object, offsets.at("events"),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_object_write(object, offsets.at("events"),
                                        eventIDs.data() + 1,
                                        4 * sizeof(uint64_t)),
-            OBELISK_RT_OK);
-  obelisk_rt_design_cursor_v1 canonicalCursor{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 1, &canonicalCursor),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_design_cursor_v1 canonicalCursor{};
+  ASSERT_EQ(talos_rt_cached_vpi_class_typespec(runtime, 1, &canonicalCursor),
+            TALOS_RT_OK);
   VPIRelationRange arrayRange{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_relation_range(runtime, canonicalCursor,
+  ASSERT_EQ(talos_rt_cached_vpi_relation_range(runtime, canonicalCursor,
                                                  vpiNamedEventArray, true,
                                                  &arrayRange),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_EQ(arrayRange.count, 2u);
-  obelisk_rt_design_cursor_v1 staticStorage{};
+  talos_rt_design_cursor_v1 staticStorage{};
   for (uint64_t index = 0; index != arrayRange.count; ++index) {
-    obelisk_rt_design_cursor_v1 member{};
+    talos_rt_design_cursor_v1 member{};
     uint32_t kind = 0;
     bool statement = false;
-    ASSERT_EQ(obelisk_rt_cached_vpi_relation_target(runtime,
+    ASSERT_EQ(talos_rt_cached_vpi_relation_target(runtime,
                                                     arrayRange.first + index,
                                                     &member, &kind, &statement),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     VPIClassMemberBinding binding{};
-    ASSERT_EQ(obelisk_rt_cached_vpi_class_member(runtime, member, &binding),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_cached_vpi_class_member(runtime, member, &binding),
+              TALOS_RT_OK);
     if (binding.isStatic) {
       staticStorage = binding.backingStorage;
     } else {
@@ -3493,18 +3493,18 @@ TEST(GeneratedDesignDatabase, ClassMemberArrays) {
     }
   }
   ASSERT_NE(staticStorage.offset, 0u);
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, staticStorage,
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, staticStorage,
                                        eventIDs.data() + 5, nullptr, 256),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   char variableName[] = "top.obj";
-  obelisk_rt_design_cursor_v1 variable{};
-  ASSERT_EQ(obelisk_rt_cached_design_lookup(
+  talos_rt_design_cursor_v1 variable{};
+  ASSERT_EQ(talos_rt_cached_design_lookup(
                 runtime, reinterpret_cast<const uint8_t *>(variableName),
                 sizeof(variableName) - 1, &variable),
-            OBELISK_RT_OK);
-  uint64_t word = obelisk_rt_managed_word_from_object(object);
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, variable, &word, nullptr, 64),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
+  uint64_t word = talos_rt_managed_word_from_object(object);
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, variable, &word, nullptr, 64),
+            TALOS_RT_OK);
   vpiHandle variableHandle = vpi_handle_by_name(variableName, nullptr);
   ASSERT_NE(variableHandle, nullptr);
   vpiHandle objectHandle = vpi_handle(vpiClassObj, variableHandle);
@@ -3707,10 +3707,10 @@ TEST(GeneratedDesignDatabase, ClassMemberArrays) {
   ASSERT_NE(use, nullptr);
   EXPECT_EQ(vpi_compare_objects(use, objectHandle), 1);
   word = 0;
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, variable, &word, nullptr, 64),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, variable, &word, nullptr, 64),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &root), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (vpiHandle stale :
        {selectedEvent, arrays.at("events"), ports.at("ports[2][-1]"), use}) {
     EXPECT_EQ(vpi_get(vpiType, stale), vpiUndefined);
@@ -3738,35 +3738,35 @@ TEST(GeneratedDesignDatabase, ClassMemberArrays) {
        {arrays.at("shared_events"), staticEvent, staticType, lexicalEvent,
         definition, eventType, interfaceType, canonical, variableHandle})
     EXPECT_EQ(vpi_release_handle(handle), 1);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(runtime);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(runtime);
 }
 
 TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  auto layouts = obelisk::analysis::ManagedClassLayoutAnalysis::compute(
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  auto layouts = talos::analysis::ManagedClassLayoutAnalysis::compute(
       design,
       llvm::DataLayout((*module)
                            ->getAttrOfType<mlir::StringAttr>("llvm.data_layout")
                            .getValue()));
   ASSERT_TRUE(mlir::succeeded(layouts));
-  obelisk::SimulationBytecodeOptions options;
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -3783,22 +3783,22 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(runtime, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
   auto lookup = [&](std::string_view name) {
-    obelisk_rt_design_cursor_v1 cursor{};
-    EXPECT_EQ(obelisk_rt_cached_design_lookup(
+    talos_rt_design_cursor_v1 cursor{};
+    EXPECT_EQ(talos_rt_cached_design_lookup(
                   runtime, reinterpret_cast<const uint8_t *>(name.data()),
                   name.size(), &cursor),
-              OBELISK_RT_OK)
+              TALOS_RT_OK)
         << name;
     return cursor;
   };
@@ -3842,20 +3842,20 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
   for (auto [id, scopeHandle, scopeName, ports] :
        {std::tuple{UINT64_C(2), first, "top.first", &firstPorts},
         std::tuple{UINT64_C(3), second, "top.second", &secondPorts}}) {
-    obelisk_rt_design_cursor_v1 scope{};
-    ASSERT_EQ(obelisk_rt_cached_vpi_scope(runtime, id, &scope), OBELISK_RT_OK);
+    talos_rt_design_cursor_v1 scope{};
+    ASSERT_EQ(talos_rt_cached_vpi_scope(runtime, id, &scope), TALOS_RT_OK);
     EXPECT_EQ(scope.offset, lookup(scopeName).offset);
     for (auto &[name, handle] : *ports) {
-      obelisk_rt_design_cursor_v1 modport{};
-      ASSERT_EQ(obelisk_rt_cached_vpi_modport(
+      talos_rt_design_cursor_v1 modport{};
+      ASSERT_EQ(talos_rt_cached_vpi_modport(
                     runtime, scope,
                     reinterpret_cast<const uint8_t *>(name.data()), name.size(),
                     &modport),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
       VPIModportBinding binding{};
       ASSERT_EQ(
-          obelisk_rt_cached_vpi_modport_binding(runtime, modport, &binding),
-          OBELISK_RT_OK);
+          talos_rt_cached_vpi_modport_binding(runtime, modport, &binding),
+          TALOS_RT_OK);
       EXPECT_EQ(binding.scope.offset, scope.offset);
       EXPECT_EQ(std::string_view(reinterpret_cast<const char *>(binding.name),
                                  binding.nameSize),
@@ -3865,17 +3865,17 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
       EXPECT_EQ(vpi_compare_objects(owner, scopeHandle), 1);
       EXPECT_EQ(vpi_release_handle(owner), 1);
     }
-    obelisk_rt_design_cursor_v1 absent{};
+    talos_rt_design_cursor_v1 absent{};
     const uint8_t suffix[] = "dot";
-    EXPECT_EQ(obelisk_rt_cached_vpi_modport(runtime, scope, suffix, 3, &absent),
-              OBELISK_RT_EOF);
+    EXPECT_EQ(talos_rt_cached_vpi_modport(runtime, scope, suffix, 3, &absent),
+              TALOS_RT_EOF);
     VPIModportBinding absentBinding{};
     EXPECT_EQ(
-        obelisk_rt_cached_vpi_modport_binding(runtime, scope, &absentBinding),
-        OBELISK_RT_INVALID_HANDLE);
+        talos_rt_cached_vpi_modport_binding(runtime, scope, &absentBinding),
+        TALOS_RT_INVALID_HANDLE);
   }
-  obelisk_rt_design_cursor_v1 absent{};
-  EXPECT_EQ(obelisk_rt_cached_vpi_scope(runtime, 999, &absent), OBELISK_RT_EOF);
+  talos_rt_design_cursor_v1 absent{};
+  EXPECT_EQ(talos_rt_cached_vpi_scope(runtime, 999, &absent), TALOS_RT_EOF);
 
   const auto *layout = layouts->lookup(uint64_t{1});
   ASSERT_NE(layout, nullptr);
@@ -3886,30 +3886,30 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
   }
   const auto *baseLayout = layouts->lookup(uint64_t{2});
   ASSERT_NE(baseLayout, nullptr);
-  obelisk_rt_class_descriptor_v1 baseDescriptor{};
-  baseDescriptor.version = OBELISK_RT_VERSION;
+  talos_rt_class_descriptor_v1 baseDescriptor{};
+  baseDescriptor.version = TALOS_RT_VERSION;
   baseDescriptor.class_id = 2;
   baseDescriptor.instance_size = baseLayout->size;
   baseDescriptor.instance_alignment = baseLayout->alignment;
-  ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &baseDescriptor),
-            OBELISK_RT_OK);
-  obelisk_rt_class_descriptor_v1 descriptor{};
+  ASSERT_EQ(talos_rt_v1_class_register(runtime, &baseDescriptor),
+            TALOS_RT_OK);
+  talos_rt_class_descriptor_v1 descriptor{};
   descriptor.base = &baseDescriptor;
-  descriptor.version = OBELISK_RT_VERSION;
+  descriptor.version = TALOS_RT_VERSION;
   descriptor.class_id = 1;
   descriptor.instance_size = layout->size;
   descriptor.instance_alignment = layout->alignment;
-  ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &descriptor), OBELISK_RT_OK);
-  obelisk_rt_object_v1 *object = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptor, &object),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_root_v1 root{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &object), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_class_register(runtime, &descriptor), TALOS_RT_OK);
+  talos_rt_object_v1 *object = nullptr;
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &descriptor, &object),
+            TALOS_RT_OK);
+  talos_rt_gc_root_v1 root{};
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &root, &object), TALOS_RT_OK);
   auto objectStorage = lookup("top.obj");
-  uint64_t objectWord = obelisk_rt_managed_word_from_object(object);
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, objectStorage, &objectWord,
+  uint64_t objectWord = talos_rt_managed_word_from_object(object);
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, objectStorage, &objectWord,
                                        nullptr, 64),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   vpiHandle variable = named("top.obj");
   vpiHandle receiver = vpi_handle(vpiClassObj, variable);
   vpiHandle canonical = vpi_handle(vpiClassTypespec, variable);
@@ -3953,33 +3953,33 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
   EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
 
   auto writeGlobal = [&](std::string_view name, uint64_t scopeID) {
-    EXPECT_EQ(obelisk_rt_v1_design_write(runtime, lookup(name), &scopeID,
+    EXPECT_EQ(talos_rt_v1_design_write(runtime, lookup(name), &scopeID,
                                          nullptr, 64),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
   };
   auto writeField = [&](const char *name, uint64_t scopeID) {
-    EXPECT_EQ(obelisk_rt_v1_object_write(object, offsets.at(name), &scopeID,
+    EXPECT_EQ(talos_rt_v1_object_write(object, offsets.at(name), &scopeID,
                                          sizeof(scopeID)),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
   };
-  obelisk_rt_design_cursor_v1 canonicalCursor{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_class_typespec(runtime, 1, &canonicalCursor),
-            OBELISK_RT_OK);
+  talos_rt_design_cursor_v1 canonicalCursor{};
+  ASSERT_EQ(talos_rt_cached_vpi_class_typespec(runtime, 1, &canonicalCursor),
+            TALOS_RT_OK);
   VPIRelationRange members{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_relation_range(runtime, canonicalCursor,
+  ASSERT_EQ(talos_rt_cached_vpi_relation_range(runtime, canonicalCursor,
                                                  vpiVariables, true, &members),
-            OBELISK_RT_OK);
-  obelisk_rt_design_cursor_v1 staticStorage{};
+            TALOS_RT_OK);
+  talos_rt_design_cursor_v1 staticStorage{};
   for (uint64_t index = 0; index != members.count; ++index) {
-    obelisk_rt_design_cursor_v1 member{};
+    talos_rt_design_cursor_v1 member{};
     uint32_t kind = 0;
     bool statement = false;
-    ASSERT_EQ(obelisk_rt_cached_vpi_relation_target(
+    ASSERT_EQ(talos_rt_cached_vpi_relation_target(
                   runtime, members.first + index, &member, &kind, &statement),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     VPIClassMemberBinding binding{};
-    ASSERT_EQ(obelisk_rt_cached_vpi_class_member(runtime, member, &binding),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_cached_vpi_class_member(runtime, member, &binding),
+              TALOS_RT_OK);
     if (binding.isStatic)
       staticStorage = binding.backingStorage;
   }
@@ -3987,20 +3987,20 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
   writeGlobal("top.plain", 2);
   writeGlobal("top.port", 3);
   std::array<uint64_t, 3> globalValues{2, 3, 0};
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, lookup("top.ports"),
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, lookup("top.ports"),
                                        globalValues.data(), nullptr, 192),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   writeField("plain", 3);
   writeField("port", 2);
   std::array<uint64_t, 3> objectValues{0, 2, 3};
-  ASSERT_EQ(obelisk_rt_v1_object_write(object, offsets.at("ports"),
+  ASSERT_EQ(talos_rt_v1_object_write(object, offsets.at("ports"),
                                        objectValues.data(),
                                        sizeof(objectValues)),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   uint64_t sharedValue = 3;
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, staticStorage, &sharedValue,
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, staticStorage, &sharedValue,
                                        nullptr, 64),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   auto expectActual = [](vpiHandle source, vpiHandle expected) {
     vpiHandle actual = vpi_handle(vpiActual, source);
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
@@ -4051,18 +4051,18 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
   writeGlobal("top.plain", 3);
   writeField("port", 3);
   globalValues[0] = 3;
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, lookup("top.ports"),
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, lookup("top.ports"),
                                        globalValues.data(), nullptr, 192),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   objectValues[1] = 3;
-  ASSERT_EQ(obelisk_rt_v1_object_write(object, offsets.at("ports"),
+  ASSERT_EQ(talos_rt_v1_object_write(object, offsets.at("ports"),
                                        objectValues.data(),
                                        sizeof(objectValues)),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   sharedValue = 2;
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, staticStorage, &sharedValue,
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, staticStorage, &sharedValue,
                                        nullptr, 64),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   expectActual(globalPorts.at("plain"), second);
   expectActual(objectPorts.at("port"), secondPorts.at("m.dot"));
   expectActual(globalPorts.at("ports[-1]"), secondPorts.at("m.dot"));
@@ -4074,11 +4074,11 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
   EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
 
   objectWord = 0;
-  ASSERT_EQ(obelisk_rt_v1_design_write(runtime, objectStorage, &objectWord,
+  ASSERT_EQ(talos_rt_v1_design_write(runtime, objectStorage, &objectWord,
                                        nullptr, 64),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &root), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   EXPECT_EQ(vpi_handle(vpiActual, objectPorts.at("port")), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_get(vpiType, savedInterface), vpiInterface);
@@ -4096,9 +4096,9 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
         fields.at("shared"), objectPorts.at("shared"), declaredType, plainType,
         selectedType, savedInterface, savedModport})
     EXPECT_EQ(vpi_release_handle(handle), 1);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(runtime);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(runtime);
 
   HeaderView header(encoded->designDatabase.data());
   SemanticDirectoryView directory(encoded->designDatabase.data() +
@@ -4133,8 +4133,8 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
     put64(image, field::HeaderChecksum, imageChecksum(image));
     execution.design_database = image.data();
     execution.design_database_size = image.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&execution),
+              TALOS_RT_INVALID_DESIGN);
   };
   auto image = original();
   uint32_t packed = 0;
@@ -4177,33 +4177,33 @@ TEST(GeneratedDesignDatabase, VirtualInterfaceActual) {
   image = original();
   ObjectWriter(image.data() + staticStorage.offset)
       .setCaps(ObjectView(image.data() + staticStorage.offset).getCaps() &
-               ~OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR);
+               ~TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR);
   expectRejected(std::move(image));
   image = original();
   ObjectWriter(image.data() + plainStorage.offset)
       .setCaps(ObjectView(image.data() + plainStorage.offset).getCaps() |
-               OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR);
+               TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR);
   expectRejected(std::move(image));
 }
 
 TEST(GeneratedDesignDatabase, BuiltinClassInheritance) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -4220,13 +4220,13 @@ TEST(GeneratedDesignDatabase, BuiltinClassInheritance) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
 
   vpiHandle sharedBuiltinType = nullptr;
   for (const char *name : {"S", "E"}) {
@@ -4282,33 +4282,33 @@ TEST(GeneratedDesignDatabase, BuiltinClassInheritance) {
   }
   ASSERT_NE(sharedBuiltinType, nullptr);
   EXPECT_EQ(vpi_release_handle(sharedBuiltinType), 1);
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 }
 
 TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  auto layouts = obelisk::analysis::ManagedClassLayoutAnalysis::compute(
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  auto layouts = talos::analysis::ManagedClassLayoutAnalysis::compute(
       design,
       llvm::DataLayout((*module)
                            ->getAttrOfType<mlir::StringAttr>("llvm.data_layout")
                            .getValue()));
   ASSERT_TRUE(mlir::succeeded(layouts));
-  obelisk::SimulationBytecodeOptions options;
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -4325,16 +4325,16 @@ TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(runtime, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
 
   std::vector<vpiHandle> handles;
   auto keep = [&](vpiHandle handle) {
@@ -4397,89 +4397,89 @@ TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
   EXPECT_EQ(vpi_handle(vpiClassDefn, processType), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
-  std::array<obelisk_rt_class_descriptor_v1, 3> descriptors{};
-  std::array<obelisk_rt_trace_entry_v1, 3> traces{};
-  std::array<obelisk_rt_trace_layout_v1, 3> runtimeLayouts{};
+  std::array<talos_rt_class_descriptor_v1, 3> descriptors{};
+  std::array<talos_rt_trace_entry_v1, 3> traces{};
+  std::array<talos_rt_trace_layout_v1, 3> runtimeLayouts{};
   for (uint64_t id = 1; id <= descriptors.size(); ++id) {
     const auto *layout = layouts->lookup(id);
     ASSERT_NE(layout, nullptr);
     auto &descriptor = descriptors[id - 1];
     auto &trace = traces[id - 1];
     auto &runtimeLayout = runtimeLayouts[id - 1];
-    runtimeLayout = {OBELISK_RT_VERSION, 0,      layout->size,
+    runtimeLayout = {TALOS_RT_VERSION, 0,      layout->size,
                      layout->alignment,  &trace, 1};
     trace.count = 1;
-    descriptor.version = OBELISK_RT_VERSION;
+    descriptor.version = TALOS_RT_VERSION;
     descriptor.class_id = id;
     descriptor.instance_size = layout->size;
     descriptor.instance_alignment = layout->alignment;
     descriptor.layout = &runtimeLayout;
     if (id == 2) {
       descriptor.base = &descriptors[0];
-      trace.kind = OBELISK_RT_TRACE_EMBEDDED;
+      trace.kind = TALOS_RT_TRACE_EMBEDDED;
       trace.child_layout = &runtimeLayouts[0];
     } else {
       ASSERT_TRUE(layout->builtinBaseOffset);
       descriptor.builtin_base_offset = *layout->builtinBaseOffset;
       descriptor.builtin_base_kind = id == 1
-                                         ? OBELISK_RT_BUILTIN_CLASS_SEMAPHORE
-                                         : OBELISK_RT_BUILTIN_CLASS_MAILBOX;
+                                         ? TALOS_RT_BUILTIN_CLASS_SEMAPHORE
+                                         : TALOS_RT_BUILTIN_CLASS_MAILBOX;
       trace.offset = *layout->builtinBaseOffset;
-      trace.kind = OBELISK_RT_TRACE_STRONG;
-      trace.slot_kind = id == 1 ? OBELISK_RT_MANAGED_SLOT_SEMAPHORE
-                                : OBELISK_RT_MANAGED_SLOT_MAILBOX;
+      trace.kind = TALOS_RT_TRACE_STRONG;
+      trace.slot_kind = id == 1 ? TALOS_RT_MANAGED_SLOT_SEMAPHORE
+                                : TALOS_RT_MANAGED_SLOT_MAILBOX;
     }
-    ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &descriptor),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_class_register(runtime, &descriptor),
+              TALOS_RT_OK);
   }
-  std::array<obelisk_rt_object_v1 *, 4> objects{};
-  obelisk_rt_gc_root_range_v1 roots{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_range_push(lane, &roots, objects.data(),
+  std::array<talos_rt_object_v1 *, 4> objects{};
+  talos_rt_gc_root_range_v1 roots{};
+  ASSERT_EQ(talos_rt_v1_gc_root_range_push(lane, &roots, objects.data(),
                                              objects.size()),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 2, &objects[0]),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptors[1], &objects[1]),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
-                lane, 77, OBELISK_RT_ELEMENT_BITS, OBELISK_RT_ELEMENT_SIGNED, 4,
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_semaphore_create(lane, 2, &objects[0]),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &descriptors[1], &objects[1]),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_mailbox_create_typed(
+                lane, 77, TALOS_RT_ELEMENT_BITS, TALOS_RT_ELEMENT_SIGNED, 4,
                 4, 32, nullptr, 0, 0, &objects[2]),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptors[2], &objects[3]),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &descriptors[2], &objects[3]),
+            TALOS_RT_OK);
   for (size_t i = 0; i != 2; ++i) {
-    uint64_t payload = obelisk_rt_managed_word_from_object(objects[2 * i]);
+    uint64_t payload = talos_rt_managed_word_from_object(objects[2 * i]);
     ASSERT_EQ(
-        obelisk_rt_v1_object_write(objects[2 * i + 1],
+        talos_rt_v1_object_write(objects[2 * i + 1],
                                    descriptors[i ? 2 : 0].builtin_base_offset,
                                    &payload, sizeof(payload)),
-        OBELISK_RT_OK);
+        TALOS_RT_OK);
   }
-  std::array<obelisk_rt_design_cursor_v1, 8> storage{};
+  std::array<talos_rt_design_cursor_v1, 8> storage{};
   const std::array<const char *, 8> names{
       "top.semaphore",   "top.aliased",     "top.mailbox", "top.wide_mailbox",
       "top.mailbox_one", "top.mailbox_two", "top.process", "top.process_alias"};
   for (size_t i = 0; i != names.size(); ++i) {
-    ASSERT_EQ(obelisk_rt_cached_design_lookup(
+    ASSERT_EQ(talos_rt_cached_design_lookup(
                   runtime, reinterpret_cast<const uint8_t *>(names[i]),
                   std::strlen(names[i]), &storage[i]),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
   }
   // Match generated scheduler initialization: design state is rooted only
   // after its managed slots are registered with the runtime.
   for (size_t i = 0; i != 6; ++i) {
     ObjectView object(encoded->designDatabase.data() + storage[i].offset);
-    ASSERT_EQ(obelisk_rt_v1_gc_design_candidate_root_register(
+    ASSERT_EQ(talos_rt_v1_gc_design_candidate_root_register(
                   runtime, object.getStateOffset(),
-                  OBELISK_RT_MANAGED_ROOT_KIND_CLASS |
-                      OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER),
-              OBELISK_RT_OK);
+                  TALOS_RT_MANAGED_ROOT_KIND_CLASS |
+                      TALOS_RT_MANAGED_ROOT_KIND_CONTAINER),
+              TALOS_RT_OK);
   }
   for (size_t i = 0; i != 3; ++i) {
-    uint64_t word = obelisk_rt_managed_word_from_object(objects[i ? 3 : 1]);
+    uint64_t word = talos_rt_managed_word_from_object(objects[i ? 3 : 1]);
     ASSERT_EQ(
-        obelisk_rt_v1_design_write(runtime, storage[i], &word, nullptr, 64),
-        OBELISK_RT_OK);
+        talos_rt_v1_design_write(runtime, storage[i], &word, nullptr, 64),
+        TALOS_RT_OK);
   }
   vpiHandle semaphoreObject = vpi_handle(vpiClassObj, semaphoreVariable);
   vpiHandle mailboxObject = vpi_handle(vpiClassObj, aliasedVariable);
@@ -4489,9 +4489,9 @@ TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
   ASSERT_NE(mailboxAlias, nullptr);
   EXPECT_EQ(vpi_compare_objects(mailboxObject, mailboxAlias), 1);
   EXPECT_EQ(vpi_get64(vpiObjId, semaphoreObject),
-            static_cast<PLI_INT64>(obelisk_rt_v1_object_id(objects[1])));
+            static_cast<PLI_INT64>(talos_rt_v1_object_id(objects[1])));
   EXPECT_NE(vpi_get64(vpiObjId, semaphoreObject),
-            static_cast<PLI_INT64>(obelisk_rt_v1_object_id(objects[0])));
+            static_cast<PLI_INT64>(talos_rt_v1_object_id(objects[0])));
   vpiHandle actualSemaphore =
       keep(vpi_handle(vpiClassTypespec, semaphoreObject));
   vpiHandle actualMailbox = keep(vpi_handle(vpiClassTypespec, mailboxObject));
@@ -4500,19 +4500,19 @@ TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
   EXPECT_EQ(vpi_compare_objects(actualSemaphore, semaphoreType), 0);
   EXPECT_EQ(vpi_compare_objects(actualMailbox, mailboxType), 0);
   EXPECT_EQ(vpi_get(vpiClassType, actualSemaphore), vpiUserDefinedClass);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &roots), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_range_pop(lane, &roots), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   // Only the builtin-typed design roots retain these outer class objects.
   EXPECT_EQ(vpi_get(vpiType, semaphoreObject), vpiClassObj);
   EXPECT_EQ(vpi_get(vpiType, mailboxObject), vpiClassObj);
   uint32_t success = 0;
-  ASSERT_EQ(obelisk_rt_v1_semaphore_try_get(objects[1], 2, &success),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_semaphore_try_get(objects[1], 2, &success),
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   uint32_t message = 23;
-  ASSERT_EQ(obelisk_rt_v1_mailbox_try_put(lane, objects[3], &message, nullptr,
+  ASSERT_EQ(talos_rt_v1_mailbox_try_put(lane, objects[3], &message, nullptr,
                                           &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
 
   HeaderView header(encoded->designDatabase.data());
@@ -4522,10 +4522,10 @@ TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
   std::array<uint64_t, 8> bindingOffsets{};
   std::array<uint32_t, 8> targets{};
   for (size_t i = 0; i != storage.size(); ++i) {
-    obelisk_rt_design_cursor_v1 semantic{};
+    talos_rt_design_cursor_v1 semantic{};
     ASSERT_EQ(
-        obelisk_rt_cached_design_semantic_root(runtime, storage[i], &semantic),
-        OBELISK_RT_OK);
+        talos_rt_cached_design_semantic_root(runtime, storage[i], &semantic),
+        TALOS_RT_OK);
     ASSERT_GT(semantic.offset, 0u);
     ASSERT_LE(semantic.offset, directory.getSemanticTypeCount());
     const uint64_t semanticIndex = semantic.offset - 1;
@@ -4548,12 +4548,12 @@ TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
   EXPECT_NE(targets[4], targets[5]);
   EXPECT_EQ(targets[6], targets[7]);
   EXPECT_NE(bindingOffsets[6], bindingOffsets[7]);
-  obelisk_rt_design_cursor_v1 typedefCursor{};
+  talos_rt_design_cursor_v1 typedefCursor{};
   const char aliasName[] = "top.MailboxAlias";
-  ASSERT_EQ(obelisk_rt_cached_design_lookup(
+  ASSERT_EQ(talos_rt_cached_design_lookup(
                 runtime, reinterpret_cast<const uint8_t *>(aliasName),
                 sizeof(aliasName) - 1, &typedefCursor),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(isRecordOffset(typedefCursor.offset, header.getObjectOffset(),
                              header.getObjectCount(), ObjectLayout.size));
   const uint32_t aliasPacked =
@@ -4564,9 +4564,9 @@ TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
   const uint64_t zero = 0;
   for (size_t i = 0; i != 3; ++i)
     ASSERT_EQ(
-        obelisk_rt_v1_design_write(runtime, storage[i], &zero, nullptr, 64),
-        OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+        talos_rt_v1_design_write(runtime, storage[i], &zero, nullptr, 64),
+        TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   for (vpiHandle handle : {semaphoreObject, mailboxObject, mailboxAlias}) {
     EXPECT_EQ(vpi_get(vpiType, handle), vpiUndefined);
     EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
@@ -4575,9 +4575,9 @@ TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
   EXPECT_EQ(vpi_compare_objects(actualMailbox, mType), 1);
   for (vpiHandle handle : handles)
     EXPECT_EQ(vpi_release_handle(handle), 1);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(runtime);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(runtime);
 
   auto original = [&] {
     return std::vector<uint8_t>(encoded->designDatabase.begin(),
@@ -4587,8 +4587,8 @@ TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
     put64(bytes, field::HeaderChecksum, imageChecksum(bytes));
     execution.design_database = bytes.data();
     execution.design_database_size = bytes.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&execution),
+              TALOS_RT_INVALID_DESIGN);
   };
   auto bytes = original();
   SemanticClassBindingWriter(bytes.data() + bindingOffsets[1])
@@ -4628,7 +4628,7 @@ TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
   put64(bytes, field::HeaderChecksum, imageChecksum(bytes));
   execution.design_database = bytes.data();
   execution.design_database_size = bytes.size();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
   // The remaining aliased Process source still targets the canonical Process
   // typespec, so removing that target's own binding is inconsistent.
   bytes = original();
@@ -4637,24 +4637,24 @@ TEST(GeneratedDesignDatabase, LiveBuiltinClasses) {
 }
 
 TEST(GeneratedDesignDatabase, BuiltinClassAliases) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -4671,18 +4671,18 @@ TEST(GeneratedDesignDatabase, BuiltinClassAliases) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
   HeaderView header(encoded->designDatabase.data());
   SemanticDirectoryView directory(encoded->designDatabase.data() +
                                   header.getReserved());
   EXPECT_EQ(directory.getClassTypeBindingCount(), 0u);
   EXPECT_GE(directory.getSemanticClassBindingCount(), 3u);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
   const std::array<const char *, 3> names{"sem", "process", "mailbox"};
   const std::array<PLI_INT32, 3> kinds{vpiSemaphoreClass, vpiProcessClass,
                                        vpiMailboxClass};
@@ -4724,27 +4724,27 @@ TEST(GeneratedDesignDatabase, BuiltinClassAliases) {
       vpiHandle word = vpi_handle_by_name(wordName, nullptr);
       ASSERT_NE(word, nullptr);
       EXPECT_EQ(vpi_compare_objects(actual, word), 1);
-      obelisk_rt_gc_lane_v1 *lane = nullptr;
-      ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-      obelisk_rt_object_v1 *mailbox = nullptr;
+      talos_rt_gc_lane_v1 *lane = nullptr;
+      ASSERT_EQ(talos_rt_v1_gc_lane_create(runtime, &lane), TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+      talos_rt_object_v1 *mailbox = nullptr;
       ASSERT_EQ(
-          obelisk_rt_v1_mailbox_create_typed(lane, 77, OBELISK_RT_ELEMENT_BITS,
-                                             OBELISK_RT_ELEMENT_SIGNED, 4, 4,
+          talos_rt_v1_mailbox_create_typed(lane, 77, TALOS_RT_ELEMENT_BITS,
+                                             TALOS_RT_ELEMENT_SIGNED, 4, 4,
                                              32, nullptr, 0, 0, &mailbox),
-          OBELISK_RT_OK);
-      obelisk_rt_gc_root_v1 root{};
-      ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &mailbox),
-                OBELISK_RT_OK);
-      obelisk_rt_design_cursor_v1 cursor{};
-      ASSERT_EQ(obelisk_rt_cached_design_lookup(
+          TALOS_RT_OK);
+      talos_rt_gc_root_v1 root{};
+      ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &root, &mailbox),
+                TALOS_RT_OK);
+      talos_rt_design_cursor_v1 cursor{};
+      ASSERT_EQ(talos_rt_cached_design_lookup(
                     runtime, reinterpret_cast<const uint8_t *>(name.data()),
                     name.size(), &cursor),
-                OBELISK_RT_OK);
-      uint64_t value = obelisk_rt_managed_word_from_object(mailbox);
+                TALOS_RT_OK);
+      uint64_t value = talos_rt_managed_word_from_object(mailbox);
       ASSERT_EQ(
-          obelisk_rt_v1_design_write(runtime, cursor, &value, nullptr, 64),
-          OBELISK_RT_OK);
+          talos_rt_v1_design_write(runtime, cursor, &value, nullptr, 64),
+          TALOS_RT_OK);
       vpiHandle object = vpi_handle(vpiClassObj, variable);
       ASSERT_NE(object, nullptr);
       vpiHandle objectIterator = vpi_iterate(vpiParameter, object);
@@ -4759,44 +4759,44 @@ TEST(GeneratedDesignDatabase, BuiltinClassAliases) {
       EXPECT_EQ(vpi_compare_objects(objectParameter, parameter), 1);
       value = 0;
       ASSERT_EQ(
-          obelisk_rt_v1_design_write(runtime, cursor, &value, nullptr, 64),
-          OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+          talos_rt_v1_design_write(runtime, cursor, &value, nullptr, 64),
+          TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &root), TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
       EXPECT_EQ(vpi_get(vpiType, object), vpiUndefined);
       EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
       EXPECT_EQ(vpi_get(vpiType, objectParameter), vpiTypeParameter);
       EXPECT_STREQ(vpi_get_str(vpiName, objectParameter), "T");
       EXPECT_EQ(vpi_release_handle(objectParameter), 1);
-      ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+      ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
       for (vpiHandle handle : {word, actual, owner, parameter})
         EXPECT_EQ(vpi_release_handle(handle), 1);
     }
     for (vpiHandle handle : {type, aliasType, variable, alias})
       EXPECT_EQ(vpi_release_handle(handle), 1);
   }
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 }
 
 TEST(GeneratedDesignDatabase, SourceTypeParameters) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t bytecodeChecksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -4813,13 +4813,13 @@ TEST(GeneratedDesignDatabase, SourceTypeParameters) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
   char className[] = "G";
   vpiHandle definition = vpi_handle_by_name(className, nullptr);
   ASSERT_NE(definition, nullptr);
@@ -4864,7 +4864,7 @@ TEST(GeneratedDesignDatabase, SourceTypeParameters) {
   EXPECT_EQ(vpi_free_object(concrete), 1);
   EXPECT_EQ(vpi_free_object(reference), 1);
   EXPECT_EQ(vpi_free_object(definition), 1);
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 
   HeaderView header(encoded->designDatabase.data());
   SemanticDirectoryView directory(encoded->designDatabase.data() +
@@ -4899,8 +4899,8 @@ TEST(GeneratedDesignDatabase, SourceTypeParameters) {
     put64(image, field::HeaderChecksum, imageChecksum(image));
     execution.design_database = image.data();
     execution.design_database_size = image.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&execution),
+              TALOS_RT_INVALID_DESIGN);
   };
   // Rootless typespecs require the exact unresolved declaration proof.
   auto image = original();
@@ -4909,15 +4909,15 @@ TEST(GeneratedDesignDatabase, SourceTypeParameters) {
   // A present unsupported default cannot coexist with the existing Expr edge.
   image = original();
   StaticObjectWriter(image.data() + parameterRow)
-      .setFlags(OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER |
-                OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT);
+      .setFlags(TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER |
+                TALOS_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT);
   expectRejected(std::move(image));
   // The same capability bits are not legal on an arbitrary source object.
   image = original();
   const uint32_t packageIndex = unpackTableIndex(packageEndpoint);
   StaticObjectWriter(image.data() + directory.getStaticObjectOffset() +
                      uint64_t{packageIndex} * StaticObjectLayout.size)
-      .setFlags(OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER);
+      .setFlags(TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER);
   expectRejected(std::move(image));
   // A parameter's ordinary legal Scope edge must specifically identify its
   // lexical ClassDefn when the effective type is unresolved.

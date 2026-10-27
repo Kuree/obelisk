@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values)))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values)))' -o %t.threaded
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values)))' -o %t.serial
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values)))' -o %t.threaded
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values)))' -o %t.serial
 // RUN: diff %t.threaded %t.serial
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=PLANE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values,obelisk-sim-mark-bounded-loops)))' | FileCheck %s --check-prefix=LOOP
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=PLANE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values,talos-sim-mark-bounded-loops)))' | FileCheck %s --check-prefix=LOOP
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", native.max_state_domain_functions = 0 : i64} {
   simulation.design @folding {
@@ -124,9 +124,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     }
     // PLANE-LABEL: llvm.func @proven_handle
     // PLANE-NOT: llvm.icmp
-    // PLANE-NOT: llvm.call @obelisk_rt_v1_native_handle_offset
+    // PLANE-NOT: llvm.call @talos_rt_v1_native_handle_offset
     // PLANE: llvm.add
-    // PLANE-NOT: llvm.call @obelisk_rt_v1_native_handle_offset
+    // PLANE-NOT: llvm.call @talos_rt_v1_native_handle_offset
     // PLANE: llvm.return
 
     simulation.code_unit.decl 8 in 0 function hierarchy "unproven_handle"
@@ -138,7 +138,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     }
     // PLANE-LABEL: llvm.func @unproven_handle
     // PLANE: llvm.icmp
-    // PLANE: llvm.call @obelisk_rt_v1_native_handle_offset
+    // PLANE: llvm.call @talos_rt_v1_native_handle_offset
     // PLANE: llvm.select
     // PLANE: llvm.return
   }

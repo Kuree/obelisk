@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s 2>/dev/null | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-obelisk %s 2>/dev/null | FileCheck %s --check-prefix=OBELISK
+// RUN: talos -emit-slang %s 2>/dev/null | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-talos %s 2>/dev/null | FileCheck %s --check-prefix=TALOS
 
 primitive udp_nonansi (out, a, b);
   output out;
@@ -68,5 +68,5 @@ endmodule
 // while the declaration dictionary remains an interned attribute value.
 // SLANG-COUNT-4: slang.symbol.primitive_instance @{{[^ ]+}} attributes {delay_fs = array<i64: 2000000, 3000000>, drive_strength0 = 3 : i32, drive_strength1 = 1 : i32, {{.*}}primitive_name = "udp_nonansi"{{.*}}udp_metadata = {
 
-// OBELISK-DAG: obelisk.sv.symbol.primitive @{{[^ ]+}} attributes {{.*}}name = "udp_nonansi"{{.*}}udp_metadata = {{.*}}table_inputs = ["00", "0?", "1b", "x0"]
-// OBELISK-COUNT-4: obelisk.sv.symbol.primitive_instance @{{[^ ]+}} attributes {delay_fs = array<i64: 2000000, 3000000>, drive_strength0 = 3 : i32, drive_strength1 = 1 : i32, {{.*}}primitive_name = "udp_nonansi"{{.*}}udp_metadata = {
+// TALOS-DAG: talos.sv.symbol.primitive @{{[^ ]+}} attributes {{.*}}name = "udp_nonansi"{{.*}}udp_metadata = {{.*}}table_inputs = ["00", "0?", "1b", "x0"]
+// TALOS-COUNT-4: talos.sv.symbol.primitive_instance @{{[^ ]+}} attributes {delay_fs = array<i64: 2000000, 3000000>, drive_strength0 = 3 : i32, drive_strength1 = 1 : i32, {{.*}}primitive_name = "udp_nonansi"{{.*}}udp_metadata = {

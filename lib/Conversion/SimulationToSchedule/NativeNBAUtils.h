@@ -1,14 +1,14 @@
-#ifndef OBELISK_SIMULATION_TO_SCHEDULE_NATIVE_NBA_UTILS_H
-#define OBELISK_SIMULATION_TO_SCHEDULE_NATIVE_NBA_UTILS_H
+#ifndef TALOS_SIMULATION_TO_SCHEDULE_NATIVE_NBA_UTILS_H
+#define TALOS_SIMULATION_TO_SCHEDULE_NATIVE_NBA_UTILS_H
 //===- SimulationNBAPlanning.cpp - Native static NBA plan support -------===//
 
 #include "../SimulationToLLVMCoroutine/SimulationNBALowering.h"
 #include "../SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Conversion/SimulationRuntime.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Conversion/SimulationRuntime.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -22,7 +22,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 /// A fixed reference proven to lower to a constant stable handle.
 struct StaticNBADestination {
@@ -43,10 +43,10 @@ getStaticNBAReference(Value value, const NativeStateLayout &layout,
       !fact->second.descriptor)
     return std::nullopt;
   auto handle = layout.storage.find(*fact->second.descriptor);
-  obelisk_rt_stable_handle_v1 decoded{};
+  talos_rt_stable_handle_v1 decoded{};
   if (handle == layout.storage.end() ||
-      !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-      decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset < 0 ||
+      !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+      decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC || decoded.offset < 0 ||
       fact->second.low > UINT64_MAX - uint64_t(decoded.offset))
     return std::nullopt;
   return StaticNBADestination{decoded.id,
@@ -56,7 +56,7 @@ getStaticNBAReference(Value value, const NativeStateLayout &layout,
 inline bool isNonInvalidatingStaticNBA(
     sim::SimNBAEnqueueOp op,
     const DenseMap<uint64_t, uint32_t> &staticNBASiteRoots,
-    ArrayRef<obelisk_rt_static_nba_root> staticNBARoots,
+    ArrayRef<talos_rt_static_nba_root> staticNBARoots,
     const NativeStateLayout &stateLayout,
     const analysis::HandleDataflowResult &analysis) {
   schedule::NBASiteAttr site = op.getSiteAttr();
@@ -70,11 +70,11 @@ inline bool isNonInvalidatingStaticNBA(
     return false;
   std::optional<StaticNBADestination> destination =
       getStaticNBAReference(op.getDestination(), stateLayout, analysis);
-  const obelisk_rt_static_nba_root &root = staticNBARoots[planned->second];
+  const talos_rt_static_nba_root &root = staticNBARoots[planned->second];
   return destination && destination->staticID == root.static_state &&
          destination->offset <= root.bit_width &&
          *width <= root.bit_width - destination->offset;
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 #endif

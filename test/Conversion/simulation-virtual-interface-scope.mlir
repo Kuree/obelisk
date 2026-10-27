@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --test-talos-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
@@ -38,9 +38,9 @@ module attributes {
 // NATIVE: llvm.mlir.constant(1 : i64)
 // NATIVE: %[[VIF_KIND:.*]] = llvm.mlir.constant(8 : i32) : i32
 // NATIVE: llvm.insertvalue %[[VIF_KIND]], %{{.*}}[0]
-// NATIVE: llvm.call @obelisk_rt_v1_string_output_format
+// NATIVE: llvm.call @talos_rt_v1_string_output_format
 // NATIVE: llvm.mlir.constant(8 : i32) : i32
-// NATIVE: llvm.call @obelisk_rt_v1_display
+// NATIVE: llvm.call @talos_rt_v1_display
 // NATIVE-NOT: simulation.virtual_interface
 
 // The bind is a constant and scope projection is a representation-preserving

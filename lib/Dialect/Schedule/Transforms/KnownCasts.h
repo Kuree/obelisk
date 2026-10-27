@@ -1,14 +1,14 @@
 //===- KnownCasts.h - Two-state views of known values -----------*- C++ -*-===//
 
-#ifndef OBELISK_LIB_DIALECT_SCHEDULE_TRANSFORMS_KNOWNCASTS_H
-#define OBELISK_LIB_DIALECT_SCHEDULE_TRANSFORMS_KNOWNCASTS_H
+#ifndef TALOS_LIB_DIALECT_SCHEDULE_TRANSFORMS_KNOWNCASTS_H
+#define TALOS_LIB_DIALECT_SCHEDULE_TRANSFORMS_KNOWNCASTS_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationTypes.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationTypes.h"
 
 #include "mlir/IR/Builders.h"
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 /// The LRM two-state conversion, exact for a known value (IEEE 1800-2023
 /// 6.11.2 maps only X/Z bits to 0). `value` must be a four-state scalar or a
@@ -28,6 +28,6 @@ inline mlir::Value castKnown(mlir::OpBuilder &builder, mlir::Location loc,
                                            castKnown(builder, loc, flat));
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-#endif // OBELISK_LIB_DIALECT_SCHEDULE_TRANSFORMS_KNOWNCASTS_H
+#endif // TALOS_LIB_DIALECT_SCHEDULE_TRANSFORMS_KNOWNCASTS_H

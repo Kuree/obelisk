@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-instrument-vpi-frames))' -o %t
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-instrument-vpi-frames))' -o %t
 // RUN: FileCheck %s < %t
-// RUN: obelisk-opt %t --encode-obelisk-sim-to-bytecode='vpi=off' -o /dev/null
-// RUN: obelisk-opt %t --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
+// RUN: talos-opt %t --encode-talos-sim-to-bytecode='vpi=off' -o /dev/null
+// RUN: talos-opt %t --convert-talos-sim-processes-to-llvm-coroutines -o /dev/null
 // A control token is an internal physical result. Every implementation and
 // pure declaration of a virtual signature agrees, while retained source ABI
 // facts keep their original visible result exactly.

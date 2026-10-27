@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --split-input-file --verify-diagnostics
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines --split-input-file --verify-diagnostics
 
 // expected-error @+1 {{coroutine lowering requires an explicit llvm.data_layout}}
 module {
@@ -12,7 +12,7 @@ module attributes {llvm.data_layout = "E-p:64:64"} {
 
 // -----
 
-// expected-error @+1 {{LLVM data layout is incompatible with the Obelisk runtime ABI for i64}}
+// expected-error @+1 {{LLVM data layout is incompatible with the Talos runtime ABI for i64}}
 module attributes {llvm.data_layout = "e-p:64:64-i64:32"} {
 }
 
@@ -35,7 +35,7 @@ module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  llvm.mlir.global internal constant @__obelisk_element_trace_77("wrong") {alignment = 1 : i64}
+  llvm.mlir.global internal constant @__talos_element_trace_77("wrong") {alignment = 1 : i64}
   simulation.design @conflicting_native_trace {
     simulation.scope.decl 0
     simulation.code_unit.decl 77 in 0 function hierarchy "trace"
@@ -43,7 +43,7 @@ module attributes {
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 77 : i64, entry_kind = 8 : i32} {
       %one = arith.constant 1 : i64
-      // expected-error @+1 {{native byte global @__obelisk_element_trace_77 conflicts with a pre-existing symbol}}
+      // expected-error @+1 {{native byte global @__talos_element_trace_77 conflicts with a pre-existing symbol}}
       %values = simulation.container.create %one {
         type_id = 77 : i64, element_kind = #simulation.element_kind<aggregate>,
         element_flags = #simulation.element_flags<none>, value_size = 8 : i64,
@@ -84,7 +84,7 @@ module attributes {
 
 // The process structs are derived from the data layout, but the scalar runtime
 // ABI still requires the C ABI's i16 size and alignment.
-// expected-error @+1 {{LLVM data layout is incompatible with the Obelisk runtime ABI}}
+// expected-error @+1 {{LLVM data layout is incompatible with the Talos runtime ABI}}
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:32-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"

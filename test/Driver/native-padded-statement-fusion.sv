@@ -1,11 +1,11 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
+// RUN: talos -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.eval 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: talos -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.eval 2>&1 | FileCheck %s --check-prefix=PLAN
 // RUN: %t.eval | FileCheck %s
 // Each seven-bit element occupies a native byte. A fully assigned temporary
 // has no retained input in that byte's padding. Its source snapshot must still
 // survive slicing around the request/response cycle (IEEE 1800-2023 4.3, 4.6).
-// PLAN: obelisk statement scheduling: eligible=2 cohorts=1 plans=1 dataflow=1
+// PLAN: talos statement scheduling: eligible=2 cohorts=1 plans=1 dataflow=1
 // CHECK: result=00,04
 // CHECK-NEXT: result=1c,20
 // CHECK-NEXT: result=7c,00

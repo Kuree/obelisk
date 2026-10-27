@@ -1,7 +1,7 @@
 //===- NativeGlobalInitializers.h - Constant trees --------------*- C++ -*-===//
 
-#ifndef OBELISK_TOOLS_DRIVER_NATIVEGLOBALINITIALIZERS_H
-#define OBELISK_TOOLS_DRIVER_NATIVEGLOBALINITIALIZERS_H
+#ifndef TALOS_TOOLS_DRIVER_NATIVEGLOBALINITIALIZERS_H
+#define TALOS_TOOLS_DRIVER_NATIVEGLOBALINITIALIZERS_H
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <cstdint>
 
-namespace obelisk::driver::detail {
+namespace talos::driver::detail {
 
 /// LLVM folds each insertvalue in a global initializer into a new constant.
 /// A flat N-element table therefore repeatedly copies N elements. Construct
@@ -124,6 +124,6 @@ balanceNativeGlobalInitializers(mlir::ModuleOp module,
   return changed;
 }
 
-} // namespace obelisk::driver::detail
+} // namespace talos::driver::detail
 
 #endif

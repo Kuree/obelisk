@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.native
+// RUN: talos -O3 --native-scheduler=eval %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.native.out
-// RUN: obelisk -O3 --native-scheduler=eval --mlir-timing -emit-llvm %s -o %t.ll 2> %t.timing
+// RUN: talos -O3 --native-scheduler=eval --mlir-timing -emit-llvm %s -o %t.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 
@@ -37,9 +37,9 @@ endmodule
 
 // ADMISSION-NOT: reason=runtime-state-access
 // ADMISSION: eval executor inventory: {{.*}}runtime_checkpoints=0
-// LLVM-NOT: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
-// LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
-// LLVM-NOT: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
+// LLVM-NOT: call i32 @talos_rt_v1_scheduler_execute_aot_actor
+// LLVM: define {{.*}}i32 @__talos_eval_dispatch_v1
+// LLVM-NOT: call i32 @talos_rt_v1_scheduler_execute_aot_actor
 // OUTPUT: 1234567X 1234567a
 // OUTPUT-NEXT: 1234567a 1234567a
 // OUTPUT-NEXT: X2345678 92345678

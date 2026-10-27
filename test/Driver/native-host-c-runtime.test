@@ -1,5 +1,5 @@
 // REQUIRES: native-elf
 // Host C-runtime discovery for the native executables of native.sv.
-// RUN: obelisk --print-host-c-runtime | FileCheck %S/native.sv --check-prefix=HOST-RUNTIME
+// RUN: talos --print-host-c-runtime | FileCheck %S/native.sv --check-prefix=HOST-RUNTIME
 // RUN: %host-c-runtime-test 2>&1 | FileCheck %S/native.sv --check-prefix=HOST-DISCOVERY-ERROR
-// RUN: not obelisk --sysroot=%t.missing %S/native.sv -o %t.missing.exe 2>&1 | FileCheck %S/native.sv --check-prefix=SYSROOT
+// RUN: not talos --sysroot=%t.missing %S/native.sv -o %t.missing.exe 2>&1 | FileCheck %S/native.sv --check-prefix=SYSROOT

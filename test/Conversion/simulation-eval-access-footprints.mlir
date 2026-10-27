@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
-// RUN: FileCheck %s --implicit-check-not=__obelisk_eval_selected_variant_v1_ < %t.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: FileCheck %s --implicit-check-not=__talos_eval_selected_variant_v1_ < %t.mlir
 
 // The function route shares its exact owner certificate (LRM 6.3.1, 6.8);
 // it must not create another selector or reverse-index dependency.
 // Only off-diagonal matrix elements are reachable. The whole-array guard
 // must exclude the uninitialized diagonal while retaining the output root, so
 // an X/Z store to the diagonal does not unpromote the kernel. Stores publish
-// X/Z through __obelisk_eval_promotion_publish_unknown_v1
+// X/Z through __talos_eval_promotion_publish_unknown_v1
 // (simulation-eval-promotion-word-scan.mlir), and the runtime invalidates only
 // proofs whose ranges overlap (runtime/unittests/PromotionRangeIndexTest.cpp).
 !row = !simulation.unpacked_array<0 : 2 x !simulation.logic<3>>
@@ -93,9 +93,9 @@ module attributes {
     }
   }
 }
-// CHECK-DAG: llvm.func @lane.__obelisk_eval_body_0.__obelisk_two_state_0
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_eval_kernel_promotion_latched_v1
+// CHECK-DAG: llvm.func @lane.__talos_eval_body_0.__talos_two_state_0
+// CHECK-DAG: llvm.mlir.global internal @__talos_eval_kernel_promotion_latched_v1
 // Matrix is at bit 32. Its reached relative intervals are [3,12), [15,24).
 // Output [64,67) remains required, including its unknown-plane store contract.
 // CHECK-DAG: schedule.eval.local_promotion_ranges = array<i64: 35, 9, 47, 9, 64, 3>
-// CHECK-DAG: llvm.mlir.global internal constant @__obelisk_eval_kernel_promotion_ranges_v1(dense<[0, 1, -34359738368, 17592186044415, 0, 1, -140737488355328, 72057594037927935, 1, 2, -1, 7]>
+// CHECK-DAG: llvm.mlir.global internal constant @__talos_eval_kernel_promotion_ranges_v1(dense<[0, 1, -34359738368, 17592186044415, 0, 1, -140737488355328, 72057594037927935, 1, 2, -1, 7]>

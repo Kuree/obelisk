@@ -1,9 +1,9 @@
 # Native target and third-party runtime inputs
 
-Obelisk's local CMake build targets the Linux host architecture. CMake derives
+Talos's local CMake build targets the Linux host architecture. CMake derives
 the target triple from the matching compiler-rt and libc++ directories in the
 pinned LLVM distribution, compiles the runtime for that triple, and stages the
-static native-link inputs beside the compiler. At executable-link time Obelisk
+static native-link inputs beside the compiler. At executable-link time Talos
 uses clang's Driver library in-process to discover the host dynamic loader,
 startup objects, `libc.so`, and `libm.so`; no compiler or linker subprocess is
 run. The fixed support path is switched atomically to a content-hashed tree.
@@ -15,9 +15,9 @@ Musl development files do not provide a supported native target.
 Native executable generation is the default driver action:
 
 ```sh
-obelisk design.sv                 # writes a.out
-obelisk -c design.sv -o design.o # writes an ELF object
-obelisk -emit-llvm design.sv     # writes textual LLVM IR to stdout
+talos design.sv                 # writes a.out
+talos -c design.sv -o design.o # writes an ELF object
+talos -emit-llvm design.sv     # writes textual LLVM IR to stdout
 ```
 
 Integral state semantics can be selected independently of optimization level
@@ -59,7 +59,7 @@ The specialization-disable flag leaves explicit SystemVerilog two-state types
 optimizations enabled. Both flags may be combined to disable optional domain
 inference on a frontend two-state model.
 
-For comparison with Verilator, use `obelisk -O3 --two-state` and Verilator's
+For comparison with Verilator, use `talos -O3 --two-state` and Verilator's
 `-O3 -CFLAGS -O3 --x-assign 0 --x-initial 0`, with matching timing, tracing and
 foreign-interface settings. Use initialized/reset workloads and compare
 outputs before timing: X-dependent case equality, tri-state resolution and
@@ -696,7 +696,7 @@ They use only facts available at the access; phi nodes and unsupported
 producers remain free variables. Query results are cached with those facts.
 Unavailable Z3, exhausted budgets, and unknown answers retain the bounds check.
 
-At `-O3`, `obelisk-sim-unroll-bounded-loops` replicates small, finite loop
+At `-O3`, `talos-sim-unroll-bounded-loops` replicates small, finite loop
 nests before four-state expansion and compute-graph construction. Its
 `maximum-loop-size` option limits simplified weighted simulation cost per nest
 (default 16384); zero disables replication. Admission evaluates a disposable expansion with
@@ -888,7 +888,7 @@ slot (IEEE 1800-2023 4.3–4.6, 4.9.4, 9.4.2 and 10.4.2).
 
 ### Clocked kernels and direct NBA stores
 
-With VPI off, `obelisk-sim-fuse-clocked-kernels` runs after the first compute
+With VPI off, `talos-sim-fuse-clocked-kernels` runs after the first compute
 graph and fuses every root-started, single-edge `always`/`always_ff` process
 of one clock alias class and edge into a single activation, across instances.
 The Active events woken by one edge may be taken in any order (4.4.2.2, 4.7),
@@ -1034,10 +1034,10 @@ unchanged.
 `-c` always emits a conventional native ELF relocatable, independent of the
 optimization level. Executable links disable LTO by default:
 
-- All optimization levels emit native objects and link `libobelisk_rt.a`.
+- All optimization levels emit native objects and link `libtalos_rt.a`.
 - `-flto` enables LTO at `-O1`, `-O2`, and `-O3`. Small unified designs use
-  Full LTO with `libobelisk_rt_lto.a`; large partitioned designs use ThinLTO
-  with `libobelisk_rt_prelinked.a`.
+  Full LTO with `libtalos_rt_lto.a`; large partitioned designs use ThinLTO
+  with `libtalos_rt_prelinked.a`.
 - `-fno-lto` explicitly selects the default. The last of `-flto` and
   `-fno-lto` wins. `-O0` does not run LTO even with `-flto`.
 
@@ -1050,7 +1050,7 @@ internalization and elimination.
 
 `--compile-threads=<count>` controls the shared MLIR compilation pool, LLD
 threading and LTO code generation. When it is
-not specified, Obelisk uses LLVM's available-hardware count, clamped to at
+not specified, Talos uses LLVM's available-hardware count, clamped to at
 least one. This option does not change simulator worker-lane selection;
 `--threads` continues to control generated simulator lanes.
 
@@ -1058,16 +1058,16 @@ The native support tree contains three runtime archives. They are generated
 from the same source revision and target flags by the pinned Clang, then
 content-hashed and staged with the other link inputs:
 
-- `libobelisk_rt.a` contains native ELF members for default links and explicit
+- `libtalos_rt.a` contains native ELF members for default links and explicit
   `-fno-lto` links, as well as `-O0` even with `-flto`.
-- `libobelisk_rt_lto.a` contains unified LLVM bitcode members for Full LTO.
-- `libobelisk_rt_prelinked.a` contains the runtime preoptimized with Full LTO
+- `libtalos_rt_lto.a` contains unified LLVM bitcode members for Full LTO.
+- `libtalos_rt_prelinked.a` contains the runtime preoptimized with Full LTO
   for partitioned ThinLTO design links.
 
 These are revision-coupled build-internal artifacts, not stable SDK
 libraries. The LTO archive and generated bitcode are additionally coupled to
-Obelisk's pinned LLVM 22.1.6 bitcode format and unified LTO pipeline. A
-compiler, generated module, or runtime archive from another LLVM or Obelisk
+Talos's pinned LLVM 22.1.6 bitcode format and unified LTO pipeline. A
+compiler, generated module, or runtime archive from another LLVM or Talos
 build must not be mixed into a link.
 
 The stable split-object, ThinLTO, and incremental-cache architecture is
@@ -1075,15 +1075,15 @@ described in
 [Native partitioning and incremental builds](native-incremental-builds.md).
 
 The native compiler emits generic PIE executables for the configured host
-architecture. Obelisk's runtime, libc++, libc++abi, libunwind, and compiler-rt
+architecture. Talos's runtime, libc++, libc++abi, libunwind, and compiler-rt
 are linked statically. The host glibc, libm, and ELF loader remain dynamic
 dependencies. A generated executable therefore inherits the glibc symbol
 version floor of the machine that built it; build release artifacts on the
-oldest glibc system they must support. The same rule applies to Obelisk's own
+oldest glibc system they must support. The same rule applies to Talos's own
 Linux binary releases.
 
 The native-support tree contains no host C-runtime binaries or distribution
-package files. It retains Obelisk's license, the LLVM distribution notice, and
+package files. It retains Talos's license, the LLVM distribution notice, and
 the complete Apache 2.0 and LLVM exception texts. LLVM components use the
 Apache-2.0 license with LLVM exception; see the
 [LLVM license](https://llvm.org/LICENSE.txt).

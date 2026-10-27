@@ -1,20 +1,20 @@
-// RUN: obelisk-opt %s --address-native-state-through-bases -o %t.mlir
+// RUN: talos-opt %s --address-native-state-through-bases -o %t.mlir
 // RUN: FileCheck %s --check-prefix=IR < %t.mlir
-// RUN: obelisk-opt %s --address-native-state-through-bases --address-native-state-through-bases | diff %t.mlir -
-// RUN: obelisk-opt %s --mlir-disable-threading --address-native-state-through-bases | diff %t.mlir -
-// RUN: obelisk-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -S -passes='default<O3>' | FileCheck %s --check-prefix=OPT
+// RUN: talos-opt %s --address-native-state-through-bases --address-native-state-through-bases | diff %t.mlir -
+// RUN: talos-opt %s --mlir-disable-threading --address-native-state-through-bases | diff %t.mlir -
+// RUN: talos-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -S -passes='default<O3>' | FileCheck %s --check-prefix=OPT
 
 // Opaque bases must preserve separation of the physical value and X/Z arrays.
 // An arbitrary pointer or overlapping bytes in the same plane can still alias.
 // IEEE 1800-2023 4.3, 4.6 and 6.3.1 require
 // the same ordered state updates. The runtime companion checks aliasing with
 // a pointer argument and differently sized overlapping accesses at O0/O3.
-// IR: llvm.mlir.global internal constant @__obelisk_state_value_base()
-// IR: llvm.mlir.global internal constant @__obelisk_state_unknown_base()
+// IR: llvm.mlir.global internal constant @__talos_state_value_base()
+// IR: llvm.mlir.global internal constant @__talos_state_unknown_base()
 // IR-LABEL: llvm.func @load_across_unknown_store(
-// IR: %[[VSLOT:.*]] = llvm.mlir.addressof @__obelisk_state_value_base
+// IR: %[[VSLOT:.*]] = llvm.mlir.addressof @__talos_state_value_base
 // IR-NEXT: %[[V:.*]] = llvm.load %[[VSLOT]] invariant dereferenceable<bytes = 64>
-// IR-NEXT: %[[XSLOT:.*]] = llvm.mlir.addressof @__obelisk_state_unknown_base
+// IR-NEXT: %[[XSLOT:.*]] = llvm.mlir.addressof @__talos_state_unknown_base
 // IR-NEXT: %[[X:.*]] = llvm.load %[[XSLOT]] invariant dereferenceable<bytes = 64>
 // IR: llvm.intr.assume {{.*}} ["separate_storage"(%[[V]], %[[X]] : !llvm.ptr, !llvm.ptr), "dereferenceable"(%[[V]], {{.*}} : !llvm.ptr, i64), "dereferenceable"(%[[X]], {{.*}} : !llvm.ptr, i64)] : i1
 // IR-NOT: alias_scopes
@@ -68,12 +68,12 @@
 // IR-NOT: tbaa
 // IR: llvm.return
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n32:64-S128", llvm.target_triple = "aarch64-unknown-linux-gnu"} {
-  llvm.mlir.global internal @__obelisk_state_value(dense<0> : tensor<64xi8>) : !llvm.array<64 x i8>
-  llvm.mlir.global internal @__obelisk_state_unknown(dense<0> : tensor<64xi8>) : !llvm.array<64 x i8>
+  llvm.mlir.global internal @__talos_state_value(dense<0> : tensor<64xi8>) : !llvm.array<64 x i8>
+  llvm.mlir.global internal @__talos_state_unknown(dense<0> : tensor<64xi8>) : !llvm.array<64 x i8>
   llvm.mlir.global internal @ready(0 : i8) : i8
   llvm.func @seed(%v: i8, %x: i8) {
-    %vp = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %xp = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %vp = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %xp = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     llvm.store %v, %vp : i8, !llvm.ptr
     llvm.store %x, %xp : i8, !llvm.ptr
     llvm.return
@@ -84,8 +84,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n32:64-S128", llvm.t
     llvm.return %r : i8
   }
   llvm.func @load_across_unknown_store(%c: i1, %x: i8) -> i8 {
-    %vp = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %xp = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %vp = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %xp = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     %before = llvm.load %vp : !llvm.ptr -> i8
     llvm.cond_br %c, ^update, ^done
   ^update:
@@ -97,8 +97,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n32:64-S128", llvm.t
     llvm.return %result : i8
   }
   llvm.func @store_across_unknown_load(%c: i1, %v: i8, %next: i8) -> i8 {
-    %vp = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %xp = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %vp = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %xp = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     llvm.store %v, %vp : i8, !llvm.ptr
     llvm.cond_br %c, ^inspect, ^skip
   ^inspect:
@@ -111,7 +111,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n32:64-S128", llvm.t
     llvm.return %result : i8
   }
   llvm.func @load_across_ready_store(%c: i1, %x: i8) -> i8 {
-    %vp = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %vp = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %xp = llvm.mlir.addressof @ready : !llvm.ptr
     %before = llvm.load %vp : !llvm.ptr -> i8
     llvm.cond_br %c, ^update, ^done
@@ -124,8 +124,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n32:64-S128", llvm.t
     llvm.return %result : i8
   }
   llvm.func @unknown_pointer(%p: !llvm.ptr, %c: i1, %x: i8) -> i8 {
-    %vp = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %xp = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %vp = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %xp = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     llvm.store %x, %xp : i8, !llvm.ptr
     %before = llvm.load %vp : !llvm.ptr -> i8
     llvm.cond_br %c, ^update, ^done
@@ -138,8 +138,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n32:64-S128", llvm.t
     llvm.return %result : i8
   }
   llvm.func @overlap(%c: i1, %byte: i8) -> i16 {
-    %vp = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-    %xp = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+    %vp = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
+    %xp = llvm.mlir.addressof @__talos_state_unknown : !llvm.ptr
     llvm.store %byte, %xp : i8, !llvm.ptr
     %before = llvm.load %vp : !llvm.ptr -> i16
     llvm.cond_br %c, ^update, ^done
@@ -152,7 +152,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n32:64-S128", llvm.t
     llvm.return %result : i16
   }
   llvm.func @unproved_range(%index: i64, %c: i1) -> i8 {
-    %vp = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %vp = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %dynamic = llvm.getelementptr %vp[%index] : (!llvm.ptr, i64) -> !llvm.ptr, i8
     %negative = llvm.getelementptr %vp[-1] : (!llvm.ptr) -> !llvm.ptr, i8
     %past = llvm.getelementptr %vp[64] : (!llvm.ptr) -> !llvm.ptr, i8
@@ -182,7 +182,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n32:64-S128", llvm.t
     %a = llvm.icmp "eq" %reused, %ten : i8
     %x = llvm.call @store_across_unknown_load(%yes, %fiftyfive, %three) : (i1, i8, i8) -> i8
     %b = llvm.icmp "eq" %x, %nine : i8
-    %vp = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %vp = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %aliased = llvm.call @unknown_pointer(%vp, %yes, %eleven) : (!llvm.ptr, i1, i8) -> i8
     %c = llvm.icmp "eq" %aliased, %fourteen : i8
     %word = llvm.mlir.constant(4660 : i16) : i16

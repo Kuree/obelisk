@@ -1,4 +1,4 @@
-// RUN: not obelisk -O0 %s -o %t 2>&1 | FileCheck %s
+// RUN: not talos -O0 %s -o %t 2>&1 | FileCheck %s
 
 // IEEE 1800-2017 10.6 excludes automatic variables, nonconstant net selects,
 // and nets whose nettype is a user-defined nettype from force/release targets.

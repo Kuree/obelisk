@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --talos-sim-build-compute-graph='vpi=off' --talos-sim-specialize-static-state-nba --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // A whole 21-bit root uses i32 accesses, and reading the root still returns
 // only its 21 value bits.

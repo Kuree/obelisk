@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | obelisk-translate --mlir-to-llvmir \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' \
+// RUN:   | talos-translate --mlir-to-llvmir \
 // RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: not %t.exe | FileCheck %s
@@ -22,7 +22,7 @@ module attributes {
     simulation.code_unit.decl 9900101 in 0 initial
         hierarchy "error_status.initial"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9900100 : i64} {
       %initial = simulation.spawn @initial(%ctx) :

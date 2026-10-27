@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --test-obelisk-activation-regions -o %t.analyzed 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s --test-talos-activation-regions -o %t.analyzed 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
-// RUN: obelisk-opt %s --test-obelisk-activation-regions='functions=fresh_snapshot,initial_only_store publications=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=PUBLICATIONS
+// RUN: talos-opt %s --test-talos-activation-regions='functions=fresh_snapshot,initial_only_store publications=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=PUBLICATIONS
 // PUBLICATIONS: regions @initial_only_store valid=0 reason=initial/resume equivalence
 // PUBLICATIONS-NEXT: publication graph: unavailable
 

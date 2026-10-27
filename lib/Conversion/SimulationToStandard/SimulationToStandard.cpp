@@ -1,12 +1,12 @@
 //===- SimulationToStandard.cpp - Lower packed simulation values --------===//
 
-#include "obelisk/Conversion/SimulationToStandard.h"
+#include "talos/Conversion/SimulationToStandard.h"
 
-#include "obelisk/Analysis/NativeStorageLayout.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/NativeStorageLayout.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
@@ -30,10 +30,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_CONVERTOBELISKSIMVALUESTOSTANDARDPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#define GEN_PASS_DEF_CONVERTTALOSSIMVALUESTOSTANDARDPASS
+#include "talos/Conversion/Passes.h.inc"
 
 SimulationToStandardTypeConverter::SimulationToStandardTypeConverter() {
   // Keep every non-value/runtime type stable. Future runtime conversion can
@@ -1822,9 +1822,9 @@ static bool hasNoLogicTypesOrAttrs(Operation *op) {
   return true;
 }
 
-class ConvertObeliskSimValuesToStandardPass final
-    : public impl::ConvertObeliskSimValuesToStandardPassBase<
-          ConvertObeliskSimValuesToStandardPass> {
+class ConvertTalosSimValuesToStandardPass final
+    : public impl::ConvertTalosSimValuesToStandardPassBase<
+          ConvertTalosSimValuesToStandardPass> {
 public:
   void runOnOperation() override {
     MLIRContext &context = getContext();
@@ -1849,7 +1849,7 @@ public:
         sim::SimLogicInsertOp>();
     target.addDynamicallyLegalDialect<arith::ArithDialect, func::FuncDialect,
                                       cf::ControlFlowDialect, scf::SCFDialect,
-                                      sim::ObeliskSimulationDialect>(
+                                      sim::TalosSimulationDialect>(
         hasNoLogicTypesOrAttrs);
     target.addDynamicallyLegalOp<ModuleOp>(hasNoLogicTypesOrAttrs);
     target.markUnknownOpDynamicallyLegal(hasNoLogicTypesOrAttrs);
@@ -1901,4 +1901,4 @@ void populateSimulationToStandardPatterns(
                                            &provenTwoStateOperations);
 }
 
-} // namespace obelisk
+} // namespace talos

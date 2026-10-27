@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // Drives semantic-unit lowering directly from hand-authored MLIR. The right
 // operands are assignment expressions, making their side effects easy to
 // locate relative to the generated AND and OR short-circuit branches. The OR
 // input is wide so its truth value must first be reduced.
 
-!logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
-!logic4 = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
+!logic1 = !talos.integral<1, false, true, 0 : 0, logic>
+!logic4 = !talos.ranged_packed_array<3 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>
 
 module {
   simulation.design @short_circuit {
@@ -86,29 +86,29 @@ module {
           ],
           code_unit_id = 9100001 : i64
         } {
-      obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 1 : i64} {
+        talos.sv.expression.assignment attributes {
             node_id = 2 : i64, assignment_kind = 0 : i32,
             semantic_type = !logic1} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 3 : i64, referenced_path = "top.result",
               referenced_symbol = @result, semantic_type = !logic1} {
           }
-          obelisk.sv.expression.binary_op attributes {
+          talos.sv.expression.binary_op attributes {
               node_id = 4 : i64, operator_kind = 19 : i32,
               semantic_type = !logic1} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 5 : i64, referenced_path = "top.lhs",
                 referenced_symbol = @lhs, semantic_type = !logic1} {
             }
-            obelisk.sv.expression.assignment attributes {
+            talos.sv.expression.assignment attributes {
                 node_id = 6 : i64, assignment_kind = 0 : i32,
                 semantic_type = !logic1} {
-              obelisk.sv.expression.named_value attributes {
+              talos.sv.expression.named_value attributes {
                   node_id = 7 : i64, referenced_path = "top.rhs",
                   referenced_symbol = @rhs, semantic_type = !logic1} {
               }
-              obelisk.sv.expression.integer_literal attributes {
+              talos.sv.expression.integer_literal attributes {
                   node_id = 8 : i64, constant_value = "1'b1",
                   semantic_type = !logic1} {
               }
@@ -116,29 +116,29 @@ module {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 9 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 9 : i64} {
+        talos.sv.expression.assignment attributes {
             node_id = 10 : i64, assignment_kind = 0 : i32,
             semantic_type = !logic1} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 11 : i64, referenced_path = "top.or_result",
               referenced_symbol = @or_result, semantic_type = !logic1} {
           }
-          obelisk.sv.expression.binary_op attributes {
+          talos.sv.expression.binary_op attributes {
               node_id = 12 : i64, operator_kind = 20 : i32,
               semantic_type = !logic1} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 13 : i64, referenced_path = "top.vector",
                 referenced_symbol = @vector, semantic_type = !logic4} {
             }
-            obelisk.sv.expression.assignment attributes {
+            talos.sv.expression.assignment attributes {
                 node_id = 14 : i64, assignment_kind = 0 : i32,
                 semantic_type = !logic1} {
-              obelisk.sv.expression.named_value attributes {
+              talos.sv.expression.named_value attributes {
                   node_id = 15 : i64, referenced_path = "top.rhs",
                   referenced_symbol = @rhs, semantic_type = !logic1} {
               }
-              obelisk.sv.expression.integer_literal attributes {
+              talos.sv.expression.integer_literal attributes {
                   node_id = 16 : i64, constant_value = "1'b0",
                   semantic_type = !logic1} {
               }

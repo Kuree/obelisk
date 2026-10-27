@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-alias-port-connections{vpi=off elements=true},simulation.func(cse)))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-alias-port-connections{vpi=full}))' | FileCheck %s --check-prefix=VPI
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-alias-port-connections{vpi=read}))' | FileCheck %s --check-prefix=VPI
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-alias-port-connections{vpi=off}))' | FileCheck %s --check-prefix=DEFAULT
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-alias-port-connections{vpi=off elements=true},simulation.func(cse)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-alias-port-connections{vpi=full}))' | FileCheck %s --check-prefix=VPI
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-alias-port-connections{vpi=read}))' | FileCheck %s --check-prefix=VPI
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-alias-port-connections{vpi=off}))' | FileCheck %s --check-prefix=DEFAULT
 
 // IEEE 1800-2023 23.3.3/4.9.6: a port connection is an implied continuous
 // assignment. 4.9.1/4.7 allow its update immediately after the source write,

@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s -o /dev/null --pass-pipeline='builtin.module(test-obelisk-sim-state-domain)' 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s -o /dev/null --mlir-disable-threading --pass-pipeline='builtin.module(test-obelisk-sim-state-domain)' 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o /dev/null --pass-pipeline='builtin.module(test-talos-sim-state-domain)' 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o /dev/null --mlir-disable-threading --pass-pipeline='builtin.module(test-talos-sim-state-domain)' 2>&1 | FileCheck %s
 
 module {
   simulation.design @audit_writers {

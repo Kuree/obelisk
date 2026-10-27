@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3},obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=EARLY
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3},obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion,obelisk-sim-inline{opt-level=3 tiny-cost=64 specialization-cost=192 caller-growth-percent=100 caller-growth-constant=256 design-growth-percent=10 design-growth-constant=1024 max-iterations=2},obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s --check-prefix=LATE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=3},talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=EARLY
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=3},talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion,talos-sim-inline{opt-level=3 tiny-cost=64 specialization-cost=192 caller-growth-percent=100 caller-growth-constant=256 design-growth-percent=10 design-growth-constant=1024 max-iterations=2},talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s --check-prefix=LATE
 
 module {
   simulation.design @late_inline {
@@ -95,13 +95,13 @@ module {
 
 // EARLY: simulation.code_unit.decl 3 in 0 function hierarchy "top.work"
 // EARLY-LABEL: simulation.func @work
-// EARLY-LABEL: simulation.func private @__obelisk_fused_0
+// EARLY-LABEL: simulation.func private @__talos_fused_0
 // EARLY: simulation.call @work{{.*}} {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 1 : i64, continuation = 2 : i32>}
 // EARLY: simulation.call @work{{.*}} {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 2 : i64, continuation = 5 : i32>}
 
 // LATE: simulation.code_unit.decl 3 in 0 function hierarchy "top.work"
 // LATE-LABEL: simulation.func @work
-// LATE-LABEL: simulation.func private @__obelisk_fused_0
+// LATE-LABEL: simulation.func private @__talos_fused_0
 // LATE-NOT: simulation.call @work
 // LATE: arith.constant {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 1 : i64, continuation = 2 : i32>} 0 : i32
 // LATE: arith.constant {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 2 : i64, continuation = 5 : i32>} 0 : i32

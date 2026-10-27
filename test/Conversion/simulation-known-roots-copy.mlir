@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},schedule-version-known-activations{minimum-benefit=1},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},schedule-version-known-activations{minimum-benefit=1},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // A copy into the unknown plane of a summarized root reports the root when
 // what it copies differs from the root's steady pattern
@@ -7,7 +7,7 @@
 
 // CHECK-LABEL: llvm.func @step(
 // CHECK-DAG: %[[PATTERN:.*]] = llvm.mlir.constant(263882790666240 : i64) : i64
-// CHECK-DAG: %[[SUMMARY:.*]] = llvm.mlir.addressof @__obelisk_state_unknown_summary_v1 :
+// CHECK-DAG: %[[SUMMARY:.*]] = llvm.mlir.addressof @__talos_state_unknown_summary_v1 :
 // CHECK: %[[FIRST:.*]] = llvm.load %[[SOURCE:.*]] {alignment = 1 : i64} : !llvm.ptr -> i64
 // CHECK-NEXT: %[[DIFF:.*]] = llvm.xor %[[FIRST]], %[[PATTERN]] : i64
 // CHECK: %[[CHANGED:.*]] = llvm.icmp "ne" %{{.*}}, %{{.*}} : i64
@@ -34,7 +34,7 @@ module attributes {
     simulation.storage.decl 1 in 0 : !a design hierarchy "top.dst" {simulation.steady_unknown = array<i64: 44, 4>}
     simulation.storage.decl 2 in 0 : !l8 design hierarchy "top.out"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %process = simulation.spawn @initial(%ctx) :

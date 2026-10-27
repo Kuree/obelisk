@@ -1,9 +1,9 @@
 // REQUIRES: windows
 // RUN: %split-file %S/Inputs/windows-pi.defs %t.dir
-// RUN: %llvm_dist/bin/llvm-dlltool -m %dlltool_machine -D simulator.exe -d %native_support/obelisk-pi.def -l %t.dir/host.lib
+// RUN: %llvm_dist/bin/llvm-dlltool -m %dlltool_machine -D simulator.exe -d %native_support/talos-pi.def -l %t.dir/host.lib
 // RUN: %llvm_dist/bin/llvm-dlltool -m %dlltool_machine -D simulator.exe -d %t.dir/tasks.def -l %t.dir/tasks.lib
 // RUN: %target_clang -fuse-ld=lld -shared %S/Inputs/dpi_export_task_impl.c -I%resource_dir/include %t.dir/host.lib %t.dir/tasks.lib -Xlinker /export:drive -Xlinker /export:drive_cancel_self -Xlinker /export:drive_cancel_parent -o %t.dir/tasks.dll
-// RUN: obelisk %S/dpi-export-task.sv %t.dir/tasks.dll -o %t.dir/simulator.exe
+// RUN: talos %S/dpi-export-task.sv %t.dir/tasks.dll -o %t.dir/simulator.exe
 // RUN: %t.dir/simulator.exe | FileCheck %S/dpi-export-task.sv --check-prefix=OUTPUT
-// RUN: obelisk --execution-tier=bytecode %S/dpi-export-task.sv %t.dir/tasks.dll -o %t.dir/simulator.exe
+// RUN: talos --execution-tier=bytecode %S/dpi-export-task.sv %t.dir/tasks.dll -o %t.dir/simulator.exe
 // RUN: %t.dir/simulator.exe | FileCheck %S/dpi-export-task.sv --check-prefix=OUTPUT

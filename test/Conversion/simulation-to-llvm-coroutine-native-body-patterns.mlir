@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
@@ -45,7 +45,7 @@ module attributes {
 // CHECK: llvm.return %{{.*}} : i32
 // CHECK-LABEL: llvm.func @caller(
 // CHECK: llvm.call @identity
-// CHECK: llvm.call @child.__obelisk_spawn
+// CHECK: llvm.call @child.__talos_spawn
 // CHECK: llvm.return %{{.*}} : i32
 // CHECK-NOT: simulation.call
 // CHECK-NOT: simulation.spawn

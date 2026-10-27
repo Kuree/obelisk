@@ -1,6 +1,6 @@
-// RUN: obelisk -O0 %s -o %t.o0
+// RUN: talos -O0 %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk %s -o %t.o3
+// RUN: talos %s -o %t.o3
 // RUN: %t.o3 | FileCheck %s
 
 interface array_port_bus;

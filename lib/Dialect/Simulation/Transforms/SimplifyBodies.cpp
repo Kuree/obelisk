@@ -10,23 +10,23 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/RegionUtils.h"
-#include "obelisk/Analysis/ActivationRegionAnalysis.h"
-#include "obelisk/Conversion/SimulationToSchedule/Utils.h"
-#include "obelisk/Analysis/DemandedBitAnalysis.h"
-#include "obelisk/Analysis/HandleDataflowAnalysis.h"
-#include "obelisk/Analysis/LogicBitAnalysis.h"
-#include "obelisk/Analysis/PrivateStorageAnalysis.h"
-#include "obelisk/Analysis/SimulationEffectAnalysis.h"
-#include "obelisk/Analysis/SourceMemoryAnalysis.h"
-#include "obelisk/Analysis/StorageWriteAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Analysis/ActivationRegionAnalysis.h"
+#include "talos/Conversion/SimulationToSchedule/Utils.h"
+#include "talos/Analysis/DemandedBitAnalysis.h"
+#include "talos/Analysis/HandleDataflowAnalysis.h"
+#include "talos/Analysis/LogicBitAnalysis.h"
+#include "talos/Analysis/PrivateStorageAnalysis.h"
+#include "talos/Analysis/SimulationEffectAnalysis.h"
+#include "talos/Analysis/SourceMemoryAnalysis.h"
+#include "talos/Analysis/StorageWriteAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 
 using namespace mlir;
-namespace obelisk {
-#define GEN_PASS_DEF_OBELISKSIMSIMPLIFYBODIESPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+namespace talos {
+#define GEN_PASS_DEF_TALOSSIMSIMPLIFYBODIESPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 namespace {
 class TerminationLattice final : public dataflow::AbstractDenseLattice {
 public:
@@ -682,9 +682,9 @@ void promotePrivateAggregates(sim::SimDesignOp design) {
     }
   }
 }
-struct ObeliskSimSimplifyBodiesPass
-    : impl::ObeliskSimSimplifyBodiesPassBase<ObeliskSimSimplifyBodiesPass> {
-  using ObeliskSimSimplifyBodiesPassBase::ObeliskSimSimplifyBodiesPassBase;
+struct TalosSimSimplifyBodiesPass
+    : impl::TalosSimSimplifyBodiesPassBase<TalosSimSimplifyBodiesPass> {
+  using TalosSimSimplifyBodiesPassBase::TalosSimSimplifyBodiesPassBase;
   void runOnOperation() override {
     auto design = getOperation();
     if (vpi != "off" && vpi != "read" && vpi != "full") {
@@ -750,4 +750,4 @@ struct ObeliskSimSimplifyBodiesPass
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

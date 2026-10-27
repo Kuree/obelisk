@@ -1,5 +1,5 @@
 # RUN: %coverage-fixture %t.obcov 23 toggle-tree 1 toggle-tree
-# RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s
+# RUN: talos-cov report --format=json %t.obcov | FileCheck %s
 
 # A toggle object keeps its type tree: every dimension has an index, a parent
 # and a kind, so roots, scalars, enums, packed and unpacked arrays, structs

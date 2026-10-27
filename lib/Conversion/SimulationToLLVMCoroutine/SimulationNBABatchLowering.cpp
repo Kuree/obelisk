@@ -4,12 +4,12 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/Mem2Reg.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Runtime/Runtime.h"
 #include <map>
 
 using namespace mlir;
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 // Each generated commit uses constant storage offsets and consumer masks.
 // Dirty bits predicate bounded runs of roots; no actor runs inside this region.
@@ -25,17 +25,17 @@ public:
     Block *entry = op->getBlock();
     done = entry->splitBlock(Block::iterator(op));
     b.setInsertionPointToEnd(entry);
-    Value status = llvmConstant(b, loc, i32, OBELISK_RT_OK);
+    Value status = llvmConstant(b, loc, i32, TALOS_RT_OK);
     op.getStatus().replaceAllUsesWith(status);
     auto voidType = LLVM::LLVMVoidType::get(b.getContext());
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_batch_guard",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_static_nba_batch_guard",
                              i32, {ptr, ptr, i32});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_batch_knownness",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_static_nba_batch_knownness",
                              voidType, {ptr, i64, i64, i64, i64});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_static_nba_batch_finish",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_static_nba_batch_finish",
                              voidType, {ptr, i64, i64, i32});
     Value guard =
-        call("obelisk_rt_v1_static_nba_batch_guard", i32,
+        call("talos_rt_v1_static_nba_batch_guard", i32,
              {op.getContext(), address(layout.getPlan()), op.getBarrier()});
     Block *start = block();
     cf::CondBranchOp::create(b, loc, ne(guard, llvmConstant(b, loc, i32, 0)),
@@ -102,7 +102,7 @@ public:
           if (auto acc = root.getLayoutAttr().getAccumulator()) {
             Value stillPending = load32(nbaFieldGEP(
                 b, loc, address(acc),
-                offsetof(obelisk_rt_generated_nba_accumulator_256, valid)));
+                offsetof(talos_rt_generated_nba_accumulator_256, valid)));
             // This tests remaining captures after emitRoot, unlike the
             // entry validity test. LRM 4.9.4/10.4.2: consume each capture
             // exactly once, while retaining a later event-region form.
@@ -146,7 +146,7 @@ public:
     Value prior = load32(op.getChanged());
     LLVM::StoreOp::create(b, loc, bor(prior, resize(ne(wasChanged, c(0)), i32)),
                           op.getChanged(), 4);
-    call("obelisk_rt_v1_static_nba_batch_finish", {},
+    call("talos_rt_v1_static_nba_batch_finish", {},
          {op.getContext(), load(stages), load(commits),
           resize(ne(pending, c(0)), i32)});
     cf::BranchOp::create(b, loc, done);
@@ -281,7 +281,7 @@ private:
     Block *notify = block();
     cf::CondBranchOp::create(b, loc, ne(unknownChange, c(0)), notify, after);
     b.setInsertionPointToStart(notify);
-    call("obelisk_rt_v1_static_nba_batch_knownness", {},
+    call("talos_rt_v1_static_nba_batch_knownness", {},
          {op.getContext(), offset, width, oldUnknown, newUnknown});
     cf::BranchOp::create(b, loc, after);
     b.setInsertionPointToStart(after);
@@ -381,9 +381,9 @@ private:
         return nbaFieldGEP(b, loc, acc, offset);
       };
       Value valid = load32(
-          field(offsetof(obelisk_rt_generated_nba_accumulator_256, valid)));
+          field(offsetof(talos_rt_generated_nba_accumulator_256, valid)));
       Value region = load32(field(
-          offsetof(obelisk_rt_generated_nba_accumulator_256, exec_region)));
+          offsetof(talos_rt_generated_nba_accumulator_256, exec_region)));
       Value selected =
           band(ne(valid, llvmConstant(b, loc, i32, 0)),
                arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, region,
@@ -395,17 +395,17 @@ private:
         unsigned width = std::min<uint64_t>(64, root.getWidth() - local);
         uint64_t word = local / 64;
         Value maskAddr = field(
-            offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask) +
+            offsetof(talos_rt_generated_nba_accumulator_256, write_mask) +
             word * 8);
         Value transAddr = field(
-            offsetof(obelisk_rt_generated_nba_accumulator_256, transient) +
+            offsetof(talos_rt_generated_nba_accumulator_256, transient) +
             word * 8);
         Value writeMask = band(load(maskAddr), c(mask(width)));
         Value value = load(
-            field(offsetof(obelisk_rt_generated_nba_accumulator_256, value) +
+            field(offsetof(talos_rt_generated_nba_accumulator_256, value) +
                   word * 8));
         Value unknown = load(
-            field(offsetof(obelisk_rt_generated_nba_accumulator_256, unknown) +
+            field(offsetof(talos_rt_generated_nba_accumulator_256, unknown) +
                   word * 8));
         Value observed = commitChunk(
             c(root.getOffset() + local), root.getOffset() + local, width,
@@ -427,7 +427,7 @@ private:
       increment(commits, c(1));
       LLVM::StoreOp::create(
           b, loc, llvmConstant(b, loc, i32, 0),
-          field(offsetof(obelisk_rt_generated_nba_accumulator_256, valid)), 4);
+          field(offsetof(talos_rt_generated_nba_accumulator_256, valid)), 4);
       cf::BranchOp::create(b, loc, next);
       b.setInsertionPointToStart(next);
     }
@@ -448,4 +448,4 @@ private:
 void lowerSpecializedNBABatch(schedule::NativeNBABatchOp op) {
   BatchLowering(op).run();
 }
-} // namespace obelisk::detail
+} // namespace talos::detail

@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang --std=1800-2023 %s | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-obelisk --std=1800-2017 %s | FileCheck %s --check-prefix=OBELISK
+// RUN: talos -emit-slang --std=1800-2023 %s | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-talos --std=1800-2017 %s | FileCheck %s --check-prefix=TALOS
 
 module procedural_timing_import;
   event first_event;
@@ -33,9 +33,9 @@ endmodule
 // SLANG: slang.statement.event_trigger attributes {node_id
 // SLANG: slang.statement.event_trigger attributes {{.*}}has_timing_control = true{{.*}}is_nonblocking = true
 
-// OBELISK: obelisk.sv.statement.block attributes {{.*}}block_kind = 3 : i32
-// OBELISK: obelisk.sv.expression.assignment attributes {{.*}}assignment_kind = 0 : i32{{.*}}has_timing_control = true
-// OBELISK: obelisk.sv.expression.assignment attributes {{.*}}assignment_kind = 1 : i32{{.*}}has_timing_control = true
-// OBELISK: obelisk.sv.statement.wait_order attributes {{.*}}event_count = 2 : i64{{.*}}has_failure_action = true{{.*}}has_success_action = true
-// OBELISK: obelisk.sv.statement.event_trigger attributes {node_id
-// OBELISK: obelisk.sv.statement.event_trigger attributes {{.*}}has_timing_control = true{{.*}}is_nonblocking = true
+// TALOS: talos.sv.statement.block attributes {{.*}}block_kind = 3 : i32
+// TALOS: talos.sv.expression.assignment attributes {{.*}}assignment_kind = 0 : i32{{.*}}has_timing_control = true
+// TALOS: talos.sv.expression.assignment attributes {{.*}}assignment_kind = 1 : i32{{.*}}has_timing_control = true
+// TALOS: talos.sv.statement.wait_order attributes {{.*}}event_count = 2 : i64{{.*}}has_failure_action = true{{.*}}has_success_action = true
+// TALOS: talos.sv.statement.event_trigger attributes {node_id
+// TALOS: talos.sv.statement.event_trigger attributes {{.*}}has_timing_control = true{{.*}}is_nonblocking = true

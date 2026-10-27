@@ -1,4 +1,4 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t | FileCheck %s
 
 // IEEE 4.4.2.8-9 and 10.4.2: program NBAs commit in Re-NBA after Re-Inactive.

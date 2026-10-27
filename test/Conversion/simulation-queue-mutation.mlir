@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -23,11 +23,11 @@ module attributes {
   }
 }
 
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_queue_insert
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_queue_delete_index
+// NATIVE-DAG: llvm.func @talos_rt_v1_queue_insert
+// NATIVE-DAG: llvm.func @talos_rt_v1_queue_delete_index
 // NATIVE-LABEL: llvm.func @process(
-// NATIVE: llvm.call @obelisk_rt_v1_queue_insert
-// NATIVE: llvm.call @obelisk_rt_v1_queue_delete_index
+// NATIVE: llvm.call @talos_rt_v1_queue_insert
+// NATIVE: llvm.call @talos_rt_v1_queue_delete_index
 // NATIVE-NOT: simulation.queue
 
 // Queue insert (0x00010445) and queue delete (0x00010444) are encoded in

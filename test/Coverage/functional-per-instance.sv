@@ -1,7 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov --coverage-test=per-instance
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
 
 module top;
   bit sampled;
@@ -28,7 +28,7 @@ module top;
 endmodule
 
 // IEEE 19.7: option.per_instance is resolved per constructor configuration.
-// Obelisk retains per-test detail by default even when the LRM permits an
+// Talos retains per-test detail by default even when the LRM permits an
 // implementation to omit it, so both instances keep their own bins and the
 // option is reported independently for each.
 // REPORT: functional: 50.00% (2/4)

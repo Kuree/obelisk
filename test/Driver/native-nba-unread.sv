@@ -1,9 +1,9 @@
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=eval --mlir-timing %s -o %t.eval 2> %t.plan
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.diag
+// RUN: talos --clocked-kernels=immediate -O3 --native-scheduler=eval --mlir-timing %s -o %t.eval 2> %t.plan
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.diag
 // RUN: FileCheck %s < %t.eval.out
 // RUN: FileCheck %s --check-prefix=PLAN < %t.plan
 // RUN: FileCheck %s --check-prefix=DIAG < %t.diag
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=eval --mlir-timing -DTRACE %s -o %t.trace 2> %t.trace.plan
+// RUN: talos --clocked-kernels=immediate -O3 --native-scheduler=eval --mlir-timing -DTRACE %s -o %t.trace 2> %t.trace.plan
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace.plan
 
 // LRM 4.3: an entirely unread update may disappear. LRM 4.9.4: its
@@ -41,8 +41,8 @@ module native_nba_unread;
   end
 endmodule
 // CHECK: unread NBA complete 5000 5000
-// PLAN: obelisk native NBA batch:
+// PLAN: talos native NBA batch:
 // PLAN-SAME: unread=1
 // DIAG: aot_nba_stages=5000 aot_nba_commits=5000
-// TRACE: obelisk native NBA batch:
+// TRACE: talos native NBA batch:
 // TRACE-SAME: unread=0

@@ -1,11 +1,11 @@
 //===- SimulationProcessRuntimeABI.h - Native process ABI layout ------===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSRUNTIMEABI_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSRUNTIMEABI_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSRUNTIMEABI_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSRUNTIMEABI_H
 
 #include <cstdint>
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 // Field indices, not host byte offsets. Loads and stores turn these into typed
 // LLVM GEPs, leaving the selected target DataLayout to place each field.
@@ -58,6 +58,6 @@ inline constexpr auto kActionFlagsField = FragmentActionField::Flags;
 inline constexpr auto kActionPayloadField = FragmentActionField::Payload;
 inline constexpr auto kActionAuxiliaryField = FragmentActionField::Auxiliary;
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSRUNTIMEABI_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSRUNTIMEABI_H

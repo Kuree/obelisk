@@ -1,10 +1,10 @@
 // REQUIRES: native-elf
 // RUN: %split-file %s %t
 // RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -o %t/plugin.so
-// RUN: obelisk -O3 --vpi=full --native-scheduler=eval %t/design.sv %t/plugin.so -o %t/eval
+// RUN: talos -O3 --vpi=full --native-scheduler=eval %t/design.sv %t/plugin.so -o %t/eval
 // RUN: %t/eval > %t/eval.out
 // RUN: FileCheck %s < %t/eval.out
-// RUN: obelisk -O3 --vpi=full --native-scheduler=eval -emit-llvm %t/design.sv -o %t.ll
+// RUN: talos -O3 --vpi=full --native-scheduler=eval -emit-llvm %t/design.sv -o %t.ll
 // RUN: FileCheck %s --check-prefix=QUEUE < %t.ll
 
 // Force an entire wide register across clocked overlapping NBA updates.
@@ -46,8 +46,8 @@ endmodule
 // CHECK-NEXT: vpi forced=00000000000000000000000000000007
 // CHECK-NEXT: deposited=0000000000000000000000000000000x
 // CHECK-NEXT: recovered=00000000000000010000000000000002
-// QUEUE: @__obelisk_eval_ordered_nba_queue_v1
-// QUEUE: call i32 @obelisk_rt_v1_static_nba_commit_ordered
+// QUEUE: @__talos_eval_ordered_nba_queue_v1
+// QUEUE: call i32 @talos_rt_v1_static_nba_commit_ordered
 
 //--- plugin.c
 #include "vpi_user.h"

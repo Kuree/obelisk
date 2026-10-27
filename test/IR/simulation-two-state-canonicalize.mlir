@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --canonicalize --cse | FileCheck %s
-// RUN: obelisk-opt %s --canonicalize --cse -o %t.once
-// RUN: obelisk-opt %t.once --canonicalize --cse -o %t.twice
+// RUN: talos-opt %s --canonicalize --cse | FileCheck %s
+// RUN: talos-opt %s --canonicalize --cse -o %t.once
+// RUN: talos-opt %t.once --canonicalize --cse -o %t.twice
 // RUN: diff %t.once %t.twice
 
 // IEEE 1800-2023 11.4.3-8, 11.6, 11.8: explicit two-state operands

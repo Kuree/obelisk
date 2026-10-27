@@ -17,6 +17,7 @@ env:
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CMAKE_BUILD_PARALLEL_LEVEL: 4
   # This SDK image also supplies wasm's ordinary runtime libraries and tools.
+  # Preserve the published image name and its OBELISK_LLVM_WASM_* interface.
   WASM_IMAGE: ghcr.io/kuree/obelisk-llvm-wasm32:latest@sha256:7e679d82f15d0455379891c22ee43da20224951a3d36db3204d0b4d6ad493d9c
 
 jobs:
@@ -37,13 +38,13 @@ jobs:
         run: |
           cmake -S . -B build-generated -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DOBELISK_INCLUDE_TESTS=OFF \
-            -DOBELISK_ENABLE_Z3=OFF
-          cmake --build build-generated --target obelisk-generated-files
+            -DTALOS_INCLUDE_TESTS=OFF \
+            -DTALOS_ENABLE_Z3=OFF
+          cmake --build build-generated --target talos-generated-files
 
       - uses: actions/upload-artifact@v4
         with:
-          name: obelisk-generated-files
+          name: talos-generated-files
           path: build-generated/generated
           if-no-files-found: error
           retention-days: 1
@@ -127,13 +128,13 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew install ccache zstd
-          python3 -m venv "$RUNNER_TEMP/obelisk-venv"
-          "$RUNNER_TEMP/obelisk-venv/bin/python" -m pip install lit
+          python3 -m venv "$RUNNER_TEMP/talos-venv"
+          "$RUNNER_TEMP/talos-venv/bin/python" -m pip install lit
           # The runner's existing LLVM supplies split-file, omitted by our SDK.
           ln -s "$(brew --prefix llvm@18)/bin/split-file" \
-            "$RUNNER_TEMP/obelisk-venv/bin/split-file"
-          "$RUNNER_TEMP/obelisk-venv/bin/split-file" --version
-          echo "$RUNNER_TEMP/obelisk-venv/bin" >> "$GITHUB_PATH"
+            "$RUNNER_TEMP/talos-venv/bin/split-file"
+          "$RUNNER_TEMP/talos-venv/bin/split-file" --version
+          echo "$RUNNER_TEMP/talos-venv/bin" >> "$GITHUB_PATH"
 
       # Reserve cache space for compiled objects. Per-commit keys allow updates
       # to immutable entries; the prefix restores the latest compatible cache.
@@ -175,34 +176,34 @@ jobs:
               "-Dzstd_ROOT=$(brew --prefix zstd)"
               -DCMAKE_OSX_ARCHITECTURES=arm64
               -DLLVM_PARALLEL_LINK_JOBS=1
-              -DOBELISK_HOST_LTO_CACHE_POLICY=cache_size_bytes=2147483648:prune_interval=0s)
+              -DTALOS_HOST_LTO_CACHE_POLICY=cache_size_bytes=2147483648:prune_interval=0s)
           fi
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             "${host_args[@]}" \
-            -DOBELISK_ENABLE_PCH=ON \
+            -DTALOS_ENABLE_PCH=ON \
             "-DLLVM_LIT_ARGS=-sv;-j${{ matrix.lit_jobs || 4 }};--time-tests;--output=lit-results.json;--time-trace-output=lit-trace.json" \
-            -DOBELISK_INCLUDE_TESTS=ON \
-            -DOBELISK_ENABLE_REAL_UVM_TESTS=ON \
+            -DTALOS_INCLUDE_TESTS=ON \
+            -DTALOS_ENABLE_REAL_UVM_TESTS=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
         id: build
         # Compile excluded test helpers here so the test step only runs tests.
-        run: cmake --build build --target all obelisk-test-depends
+        run: cmake --build build --target all talos-test-depends
 
       - name: Run lit regression suite
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
             nproc
             free -h
-            /usr/bin/time -v cmake --build build --target check-obelisk
+            /usr/bin/time -v cmake --build build --target check-talos
           elif [ "$RUNNER_OS" = macOS ]; then
             sysctl hw.logicalcpu hw.memsize
-            /usr/bin/time -l cmake --build build --target check-obelisk
+            /usr/bin/time -l cmake --build build --target check-talos
           else
-            cmake --build build --target check-obelisk
+            cmake --build build --target check-talos
           fi
 
       - name: Upload timing reports
@@ -254,7 +255,7 @@ jobs:
       - name: Download generated files
         uses: actions/download-artifact@v4
         with:
-          name: obelisk-generated-files
+          name: talos-generated-files
           path: build-host-generated
 
       - name: Pull wasm32 SDK image
@@ -275,34 +276,34 @@ jobs:
             sh -c 'ccache --max-size=2G && ccache --set-config=sloppiness=pch_defines,time_macros && ccache --zero-stats'
 
       # Feed the SDK bundled in the image to CMake through a local file URL.
-      - name: Configure obelisk for wasm32
+      - name: Configure talos for wasm32
         run: |
           docker run --rm -v "$PWD:/src" -v "$CCACHE_DIR:/ccache" \
-            -v "$PWD/build-host-generated:/obelisk-generated:ro" \
+            -v "$PWD/build-host-generated:/talos-generated:ro" \
             -e CMAKE_BUILD_PARALLEL_LEVEL \
             -w /src -e CCACHE_DIR=/ccache "$WASM_IMAGE" bash -c '
               set -euo pipefail
               SHA=$(cat "$OBELISK_LLVM_WASM_SHA256_FILE")
               emcmake cmake -S . -B build-wasm -G Ninja \
                 -DCMAKE_BUILD_TYPE=MinSizeRel \
-                -DOBELISK_ENABLE_PCH=ON \
-                -DOBELISK_INCLUDE_TESTS=OFF \
-                -DOBELISK_LLVM_PREBUILT_URL="file://$OBELISK_LLVM_WASM_SDK" \
-                -DOBELISK_LLVM_PREBUILT_SHA256="$SHA" \
-                -DOBELISK_GENERATED_DIR=/obelisk-generated \
+                -DTALOS_ENABLE_PCH=ON \
+                -DTALOS_INCLUDE_TESTS=OFF \
+                -DTALOS_LLVM_PREBUILT_URL="file://$OBELISK_LLVM_WASM_SDK" \
+                -DTALOS_LLVM_PREBUILT_SHA256="$SHA" \
+                -DTALOS_GENERATED_DIR=/talos-generated \
                 -DCMAKE_C_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
             '
 
-      - name: Build obelisk for wasm32
+      - name: Build talos for wasm32
         id: build
         run: |
           docker run --rm -v "$PWD:/src" -v "$CCACHE_DIR:/ccache" \
-            -v "$PWD/build-host-generated:/obelisk-generated:ro" \
+            -v "$PWD/build-host-generated:/talos-generated:ro" \
             -e CMAKE_BUILD_PARALLEL_LEVEL \
             -w /src -e CCACHE_DIR=/ccache "$WASM_IMAGE" bash -c '
               set -euo pipefail
-              time cmake --build build-wasm --target obelisk obelisk-cov
+              time cmake --build build-wasm --target talos talos-cov
             '
 
       - name: Upload build timings
@@ -312,7 +313,7 @@ jobs:
           name: ci-timings-wasm
           path: |
             build-wasm/.ninja_log
-            build-wasm/obelisk_z3_project-prefix/src/obelisk_z3_project-build/.ninja_log
+            build-wasm/talos_z3_project-prefix/src/talos_z3_project-build/.ninja_log
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
@@ -336,11 +337,11 @@ jobs:
             set -euo pipefail
             mkdir -p site/toolchain
             cp -r web/* site/
-            cp build-wasm/tools/driver/obelisk.wasm site/
-            cp build-wasm/tools/driver/obelisk.js site/
-            cp build-wasm/tools/obelisk-cov/obelisk-cov.wasm site/
-            cp build-wasm/tools/obelisk-cov/obelisk-cov.js site/
-            cp build-wasm/target-runtime/libobelisk_rt.a site/toolchain/
+            cp build-wasm/tools/driver/talos.wasm site/
+            cp build-wasm/tools/driver/talos.js site/
+            cp build-wasm/tools/talos-cov/talos-cov.wasm site/
+            cp build-wasm/tools/talos-cov/talos-cov.js site/
+            cp build-wasm/target-runtime/libtalos_rt.a site/toolchain/
             # Populate Emscripten cache entries for the no-exception ABI, then
             # publish exactly those libc++ variants for simulation links.
             em++ /emsdk/upstream/emscripten/test/hello_world.cpp -O3 \
@@ -367,7 +368,7 @@ jobs:
             PATTERN="^[[:space:]]+[0-9a-f]+: .*\\b(try|try_table|catch|catch_all|delegate|rethrow|throw|throw_ref)\\b"
             DUMP=$(mktemp)
             trap "rm -f \"$DUMP\"" EXIT
-            for input in site/obelisk.wasm site/obelisk-cov.wasm site/toolchain/*.a; do
+            for input in site/talos.wasm site/talos-cov.wasm site/toolchain/*.a; do
               if ! "$OBJDUMP" -d "$input" >"$DUMP" 2>&1; then
                 echo "failed to disassemble $input" >&2
                 cat "$DUMP" >&2
@@ -389,15 +390,15 @@ jobs:
 
       - name: Run browser-toolchain smoke test
         run: |
-          docker run --rm -v "$PWD:/src" -w /src -e OBELISK_WEB_SITE=site \
+          docker run --rm -v "$PWD:/src" -w /src -e TALOS_WEB_SITE=site \
             "$WASM_IMAGE" node test/web/smoke-test.mjs
 
       # Cover every shipped design at both optimization levels.
       - name: Run every example design
         run: |
-          docker run --rm -v "$PWD:/src" -w /src -e OBELISK_WEB_SITE=site \
+          docker run --rm -v "$PWD:/src" -w /src -e TALOS_WEB_SITE=site \
             "$WASM_IMAGE" node test/web/examples-test.mjs -O3
-          docker run --rm -v "$PWD:/src" -w /src -e OBELISK_WEB_SITE=site \
+          docker run --rm -v "$PWD:/src" -w /src -e TALOS_WEB_SITE=site \
             "$WASM_IMAGE" node test/web/examples-test.mjs -O0
 
       - uses: actions/upload-pages-artifact@v3

@@ -1,12 +1,12 @@
-// RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
+// RUN: talos-opt %s --talos-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s --implicit-check-not=predicated_dataflow --implicit-check-not=refresh_group_proofs --implicit-check-not=cache_hint_words --implicit-check-not=coalesced_slots < %t.mlir
-// RUN: obelisk-opt %s --mlir-disable-threading --obelisk-materialize-native-eval-groups | diff %t.mlir -
-// RUN: obelisk-opt %t.mlir --obelisk-materialize-native-eval-groups | diff %t.mlir -
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{schedule.native.max_inline_ops = 60 : i64}"' --obelisk-materialize-native-eval-groups | FileCheck %s --check-prefix=BUDGET
+// RUN: talos-opt %s --mlir-disable-threading --talos-materialize-native-eval-groups | diff %t.mlir -
+// RUN: talos-opt %t.mlir --talos-materialize-native-eval-groups | diff %t.mlir -
+// RUN: talos-opt %s '--test-talos-set-module-attributes=attrs="{schedule.native.max_inline_ops = 60 : i64}"' --talos-materialize-native-eval-groups | FileCheck %s --check-prefix=BUDGET
 
 // CHECK-LABEL: llvm.func @group()
 // CHECK-SAME: schedule.eval.control_flow_dataflow
-// CHECK: llvm.call @__obelisk_eval_group_promotion_ready_v1
+// CHECK: llvm.call @__talos_eval_group_promotion_ready_v1
 // CHECK: llvm.cond_br
 // CHECK: %[[ACTIVE:.*]] = llvm.icmp "ne"
 // CHECK-NEXT: llvm.cond_br %[[ACTIVE]]
@@ -19,7 +19,7 @@
 // size is charged against the admission limit and the candidate is accepted.
 // BUDGET-LABEL: llvm.func @group()
 // BUDGET-SAME: schedule.eval.control_flow_dataflow
-// BUDGET: llvm.call @__obelisk_eval_group_promotion_ready_v1
+// BUDGET: llvm.call @__talos_eval_group_promotion_ready_v1
 // BUDGET: llvm.return
 
 #domain0 = #schedule.group_proof_dependency<domain = 0 : i64, members = [0, 1], ranges = [0, 24]>
@@ -34,14 +34,14 @@
 // For input 7 the inactive assignment's shift produces poison. Its branch
 // condition must not poison the enclosing reconvergence or retained state.
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
-  llvm.mlir.global internal @__obelisk_eval_group_promotion_latched_v1(dense<0> : tensor<2xi8>) : !llvm.array<2 x i8>
-  llvm.func @__obelisk_eval_group_promotion_ready_v1(%id: i64) -> i1 {
+  llvm.mlir.global internal @__talos_eval_group_promotion_latched_v1(dense<0> : tensor<2xi8>) : !llvm.array<2 x i8>
+  llvm.func @__talos_eval_group_promotion_ready_v1(%id: i64) -> i1 {
     %yes = llvm.mlir.constant(true) : i1
     llvm.return %yes : i1
   }
-  llvm.mlir.global internal @__obelisk_state_value(dense<[7, 99, 0]> : tensor<3xi8>) : !llvm.array<3 x i8>
+  llvm.mlir.global internal @__talos_state_value(dense<[7, 99, 0]> : tensor<3xi8>) : !llvm.array<3 x i8>
   llvm.mlir.global internal @ready(dense<[2, 1, 0]> : tensor<3xi64>) : !llvm.array<3 x i64>
-  llvm.mlir.global internal @__obelisk_eval_promotion_pending_mask_v1(dense<0> : tensor<2xi64>) : !llvm.array<2 x i64>
+  llvm.mlir.global internal @__talos_eval_promotion_pending_mask_v1(dense<0> : tensor<2xi64>) : !llvm.array<2 x i64>
   llvm.mlir.global internal @slow_count(0 : i32) : i32
   llvm.func @group() attributes {schedule.eval.group_proof_domain = #domain0, schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.ready_word_count = 2 : i64} {
     %p = llvm.mlir.addressof @slow_count : !llvm.ptr
@@ -50,7 +50,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.return
   }
   llvm.func @dataflow() attributes {schedule.eval.group_proof_domain = #domain0, schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group, schedule.eval.ready_word_count = 2 : i64} {
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %middle = llvm.getelementptr %base[1] : (!llvm.ptr) -> !llvm.ptr, i8
     %output = llvm.getelementptr %base[2] : (!llvm.ptr) -> !llvm.ptr, i8
     %ready = llvm.mlir.addressof @ready : !llvm.ptr
@@ -112,7 +112,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     llvm.return
   }
   llvm.func @main() -> i32 {
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %middle = llvm.getelementptr %base[1] : (!llvm.ptr) -> !llvm.ptr, i8
     %output = llvm.getelementptr %base[2] : (!llvm.ptr) -> !llvm.ptr, i8
     %ready = llvm.mlir.addressof @ready : !llvm.ptr

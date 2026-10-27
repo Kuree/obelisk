@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // Native and bytecode lowering emit the same sparse descriptors. Each class
 // declares one handle and one sparse virtual method; each interface adds one
@@ -7,29 +7,29 @@
 // their sizes do not grow with inheritance depth: C3 stores one method and
 // reaches C2's entries through its base descriptor. Declaration order is
 // reversed so emission must order bases first.
-// CHECK-LABEL: @C3.__obelisk_class_descriptor()
-// CHECK: llvm.mlir.addressof @C2.__obelisk_class_descriptor
-// CHECK: llvm.mlir.addressof @C3.__obelisk_methods
+// CHECK-LABEL: @C3.__talos_class_descriptor()
+// CHECK: llvm.mlir.addressof @C2.__talos_class_descriptor
+// CHECK: llvm.mlir.addressof @C3.__talos_methods
 // CHECK: llvm.return
-// CHECK-DAG: @C3.__obelisk_methods(){{.*}}: !llvm.array<1 x
-// CHECK-DAG: @C2.__obelisk_methods(){{.*}}: !llvm.array<1 x
-// CHECK-DAG: @C1.__obelisk_methods(){{.*}}: !llvm.array<1 x
-// CHECK-DAG: @C0.__obelisk_methods(){{.*}}: !llvm.array<1 x
-// CHECK-DAG: @C3.__obelisk_trace_entries(){{.*}}: !llvm.array<2 x
-// CHECK-DAG: @C2.__obelisk_trace_entries(){{.*}}: !llvm.array<2 x
-// CHECK-DAG: @C1.__obelisk_trace_entries(){{.*}}: !llvm.array<2 x
-// CHECK-DAG: @C0.__obelisk_trace_entries(){{.*}}: !llvm.array<1 x
-// CHECK-DAG: @C0.__obelisk_interfaces(){{.*}}: !llvm.array<1 x
-// CHECK-DAG: @I3.__obelisk_interfaces(){{.*}}: !llvm.array<1 x
-// CHECK-DAG: @I2.__obelisk_interfaces(){{.*}}: !llvm.array<1 x
-// CHECK-DAG: @I1.__obelisk_interfaces(){{.*}}: !llvm.array<1 x
-// CHECK-DAG: @I3.__obelisk_interface_bases(){{.*}}: !llvm.array<1 x ptr>
-// CHECK-DAG: @I2.__obelisk_interface_bases(){{.*}}: !llvm.array<1 x ptr>
-// CHECK-DAG: @I1.__obelisk_interface_bases(){{.*}}: !llvm.array<1 x ptr>
-// CHECK-DAG: @I3.__obelisk_interface_signatures(){{.*}}: !llvm.array<1 x i64>
-// CHECK-DAG: @I2.__obelisk_interface_signatures(){{.*}}: !llvm.array<1 x i64>
-// CHECK-DAG: @I1.__obelisk_interface_signatures(){{.*}}: !llvm.array<1 x i64>
-// CHECK-DAG: @I0.__obelisk_interface_signatures(){{.*}}: !llvm.array<1 x i64>
+// CHECK-DAG: @C3.__talos_methods(){{.*}}: !llvm.array<1 x
+// CHECK-DAG: @C2.__talos_methods(){{.*}}: !llvm.array<1 x
+// CHECK-DAG: @C1.__talos_methods(){{.*}}: !llvm.array<1 x
+// CHECK-DAG: @C0.__talos_methods(){{.*}}: !llvm.array<1 x
+// CHECK-DAG: @C3.__talos_trace_entries(){{.*}}: !llvm.array<2 x
+// CHECK-DAG: @C2.__talos_trace_entries(){{.*}}: !llvm.array<2 x
+// CHECK-DAG: @C1.__talos_trace_entries(){{.*}}: !llvm.array<2 x
+// CHECK-DAG: @C0.__talos_trace_entries(){{.*}}: !llvm.array<1 x
+// CHECK-DAG: @C0.__talos_interfaces(){{.*}}: !llvm.array<1 x
+// CHECK-DAG: @I3.__talos_interfaces(){{.*}}: !llvm.array<1 x
+// CHECK-DAG: @I2.__talos_interfaces(){{.*}}: !llvm.array<1 x
+// CHECK-DAG: @I1.__talos_interfaces(){{.*}}: !llvm.array<1 x
+// CHECK-DAG: @I3.__talos_interface_bases(){{.*}}: !llvm.array<1 x ptr>
+// CHECK-DAG: @I2.__talos_interface_bases(){{.*}}: !llvm.array<1 x ptr>
+// CHECK-DAG: @I1.__talos_interface_bases(){{.*}}: !llvm.array<1 x ptr>
+// CHECK-DAG: @I3.__talos_interface_signatures(){{.*}}: !llvm.array<1 x i64>
+// CHECK-DAG: @I2.__talos_interface_signatures(){{.*}}: !llvm.array<1 x i64>
+// CHECK-DAG: @I1.__talos_interface_signatures(){{.*}}: !llvm.array<1 x i64>
+// CHECK-DAG: @I0.__talos_interface_signatures(){{.*}}: !llvm.array<1 x i64>
 
 module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"} {
   simulation.design @linear {

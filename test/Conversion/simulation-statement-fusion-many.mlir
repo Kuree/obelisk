@@ -1,13 +1,13 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-replicate,simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion))' -o %t.fused
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-replicate,simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion))' -o %t.fused
 // RUN: FileCheck %s --check-prefix=FUSED --implicit-check-not='simulation.func @p' < %t.fused
-// RUN: obelisk-opt %t.fused --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o /dev/null
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-replicate,simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{max-members=64},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=LIMIT --implicit-check-not=__obelisk_region_kernel_
+// RUN: talos-opt %t.fused --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' -o /dev/null
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-replicate,simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{max-members=64},talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=LIMIT --implicit-check-not=__talos_region_kernel_
 
 // Sixty-six chained always_comb statements (p1 ... p65 expand from p#), with
 // the first also closing the chain's tail into a result. A statement DAG has
 // no per-member dirty mask and no 64-bit membership limit.
-// FUSED-COUNT-1: simulation.spawn @__obelisk_region_kernel_
-// FUSED: simulation.func private @__obelisk_region_kernel_
+// FUSED-COUNT-1: simulation.spawn @__talos_region_kernel_
+// FUSED: simulation.func private @__talos_region_kernel_
 // FUSED-COUNT-67: simulation.ref.store
 // FUSED: simulation.suspend.any %{{.*}} edges [0]
 // LIMIT: simulation.func @p0

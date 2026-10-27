@@ -12,8 +12,8 @@ from unittest import mock
 BENCHMARK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_DIR))
 
-from obelisk_bench import model, runner  # noqa: E402
-from obelisk_bench.suites import svtests  # noqa: E402
+from talos_bench import model, runner  # noqa: E402
+from talos_bench.suites import svtests  # noqa: E402
 
 
 class SvTestsHelpersTest(unittest.TestCase):
@@ -187,7 +187,7 @@ class SvTestsHelpersTest(unittest.TestCase):
                     return_value=runner.CompileResult(True, ""),
             ) as compile_frontend:
                 name, outcome = svtests._compile_design(
-                    "obelisk", root, "example", 60, 3)
+                    "talos", root, "example", 60, 3)
 
             self.assertEqual(name, "example")
             self.assertEqual(outcome.status, model.PASS)
@@ -202,7 +202,7 @@ class SvTestsHelpersTest(unittest.TestCase):
             test.write_text("module example; endmodule\n", encoding="utf-8")
             include = test.parent / "shared.svh"
             include.write_text("`define VALUE 1\n", encoding="utf-8")
-            compiler = root / "obelisk"
+            compiler = root / "talos"
             compiler.write_text("generation one", encoding="utf-8")
             args = SimpleNamespace(
                 jobs=1,
@@ -212,7 +212,7 @@ class SvTestsHelpersTest(unittest.TestCase):
                 tests=[],
                 vpi_code=[],
                 vpi=None,
-                obelisk_binary=str(compiler),
+                talos_binary=str(compiler),
                 result_cache=str(root / "results.json"),
                 no_resume=False,
             )
@@ -241,7 +241,7 @@ class SvTestsHelpersTest(unittest.TestCase):
             test = root / "tests" / "example.sv"
             test.parent.mkdir(parents=True)
             test.write_text("module example; endmodule\n", encoding="utf-8")
-            compiler = root / "obelisk"
+            compiler = root / "talos"
             compiler.touch()
             args = SimpleNamespace(
                 jobs=1,
@@ -251,7 +251,7 @@ class SvTestsHelpersTest(unittest.TestCase):
                 tests=[],
                 vpi_code=[],
                 vpi=None,
-                obelisk_binary=str(compiler),
+                talos_binary=str(compiler),
                 result_cache=str(root / "results.json"),
                 no_resume=False,
             )
@@ -308,7 +308,7 @@ class SvTestsHelpersTest(unittest.TestCase):
                 "module one; endmodule\n", encoding="utf-8")
             (tests / "two.sv").write_text(
                 "module two; endmodule\n", encoding="utf-8")
-            compiler = root / "obelisk"
+            compiler = root / "talos"
             compiler.touch()
             args = SimpleNamespace(
                 jobs=2,
@@ -318,7 +318,7 @@ class SvTestsHelpersTest(unittest.TestCase):
                 tests=[],
                 vpi_code=[],
                 vpi=None,
-                obelisk_binary=str(compiler),
+                talos_binary=str(compiler),
                 result_cache=str(root / "results.json"),
                 no_resume=False,
             )
@@ -380,7 +380,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             ))
         with build, compile_design, execute:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.RUN_FAIL)
         self.assertIn("failed :assert:", outcome.log)
@@ -394,7 +394,7 @@ class SvTestsJudgeTest(unittest.TestCase):
                 False, "", False, "assertion failed\n", returncode=19))
         with build, compile_design, execute:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.XFAIL_PASS)
 
@@ -406,7 +406,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             runner.ExecResult(False, "", True, ""))
         with build, compile_design, execute:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.RUN_FAIL)
         self.assertIn("timeout", outcome.log)
@@ -420,7 +420,7 @@ class SvTestsJudgeTest(unittest.TestCase):
                 False, ":assert: (False)\n", False, returncode=19))
         with build, compile_design, execute:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.XFAIL_PASS)
 
@@ -433,7 +433,7 @@ class SvTestsJudgeTest(unittest.TestCase):
                 False, "", False, "segmentation fault\n", returncode=-11))
         with build, compile_design, execute:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.RUN_FAIL)
         self.assertIn("segmentation fault", outcome.log)
@@ -446,7 +446,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             runner.ExecResult(False, "", False, returncode=0))
         with build, compile_design, execute:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.RUN_FAIL)
 
@@ -462,7 +462,7 @@ class SvTestsJudgeTest(unittest.TestCase):
                 True, ":assert: (False)\n", False, returncode=0))
         with build, compile_design, execute:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10,
+                "talos", self.root, self.test, 60, 10,
                 compile_threads=1)
 
         self.assertEqual(outcome.status, model.XFAIL_PASS)
@@ -479,7 +479,7 @@ class SvTestsJudgeTest(unittest.TestCase):
                 True, ":assert: (True)\n", False, returncode=0))
         with build, compile_design, execute:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10,
+                "talos", self.root, self.test, 60, 10,
                 compile_threads=1)
 
         self.assertEqual(outcome.status, model.RUN_FAIL)
@@ -497,7 +497,7 @@ class SvTestsJudgeTest(unittest.TestCase):
                 True, ":assert: __import__('os')\n", False, returncode=0))
         with build, compile_design, execute:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10,
+                "talos", self.root, self.test, 60, 10,
                 compile_threads=1)
 
         self.assertEqual(outcome.status, model.RUN_FAIL)
@@ -517,7 +517,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             execute,
         ):
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.PASS)
         flags = compile_mock.call_args.args[3]
@@ -537,7 +537,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             runner.ExecResult(True, "", False, returncode=0))
         with build, compile_design as compile_mock, execute:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.PASS)
         flags = compile_mock.call_args.args[3]
@@ -555,7 +555,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             runner.ExecResult(True, "", False, returncode=0))
         with build, compile_design as compile_mock, execute:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.PASS)
         flags = compile_mock.call_args.args[3]
@@ -569,7 +569,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             runner.ExecResult(True, "", False, returncode=0))
         with build, compile_design as compile_mock, execute:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10,
+                "talos", self.root, self.test, 60, 10,
                 compile_threads=3)
 
         self.assertEqual(outcome.status, model.PASS)
@@ -582,7 +582,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             runner.ExecResult(True, "", False, returncode=0))
         with build, compile_design as compile_mock, execute as execute_mock:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.PASS)
         flags = compile_mock.call_args.args[3]
@@ -605,7 +605,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             ) as compile_frontend,
         ):
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10,
+                "talos", self.root, self.test, 60, 10,
                 compile_threads=2)
 
         self.assertEqual(outcome.status, model.PASS)
@@ -627,7 +627,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             mock.patch.object(svtests.runner, "execute") as execute,
         ):
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.PASS)
         compile_frontend.assert_called_once()
@@ -648,7 +648,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             mock.patch.object(svtests.runner, "execute") as execute,
         ):
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.PASS)
         compile_preprocessor.assert_called_once()
@@ -666,7 +666,7 @@ class SvTestsJudgeTest(unittest.TestCase):
                 return_value=runner.CompileResult(
                     False, "bad directive", "compile")):
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.XFAIL_PASS)
 
@@ -676,7 +676,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             runner.ExecResult(True, "", False))
         with build, compile_design, execute as execute_mock:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.PASS)
         execute_mock.assert_not_called()
@@ -687,7 +687,7 @@ class SvTestsJudgeTest(unittest.TestCase):
             runner.ExecResult(True, ":assert: True\n", False))
         with build, compile_design as compile_mock, execute as execute_mock:
             _, outcome = svtests.judge_one(
-                "obelisk", self.root, self.test, 60, 10)
+                "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.PASS)
         self.assertEqual(compile_mock.call_args.kwargs["timeout"], 300)
@@ -696,7 +696,7 @@ class SvTestsJudgeTest(unittest.TestCase):
     def test_invalid_metadata_timeout_is_skipped_with_a_reason(self):
         self.write_test(":type: simulation\n:timeout: eventually")
         _, outcome = svtests.judge_one(
-            "obelisk", self.root, self.test, 60, 10)
+            "talos", self.root, self.test, 60, 10)
 
         self.assertEqual(outcome.status, model.SKIP)
         self.assertIn("invalid test timeout", outcome.log)
@@ -798,7 +798,7 @@ class BenchmarkRunnerTest(unittest.TestCase):
         with mock.patch.object(
                 runner, "_run_with_retry", return_value=completed) as run:
             result = runner.compile_frontend(
-                "obelisk",
+                "talos",
                 ["input.sv"],
                 "output.mlir",
                 ["-I", "include"],
@@ -819,7 +819,7 @@ class BenchmarkRunnerTest(unittest.TestCase):
         with mock.patch.object(
                 runner, "_run_with_retry", return_value=completed) as run:
             result = runner.compile_preprocessor(
-                "obelisk",
+                "talos",
                 ["input.sv"],
                 "output.sv",
                 ["-D", "VALUE=1"],

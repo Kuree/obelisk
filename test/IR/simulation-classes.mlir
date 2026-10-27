@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
+// RUN: talos-opt %s | talos-opt | FileCheck %s
 
 module {
   simulation.design @classes {
     simulation.scope.decl 0 hierarchy "top"
     simulation.storage.decl 0 in 0 : i64 design
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.code_unit.decl 2 in 0 function hierarchy "Base.get"
     simulation.code_unit.decl 3 in 0 task hierarchy "Base.run"
     simulation.code_unit.decl 4 in 0 task hierarchy "Derived.run"

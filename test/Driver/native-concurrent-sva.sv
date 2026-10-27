@@ -1,11 +1,11 @@
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.native
+// RUN: talos --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk --std=1800-2023 -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos --std=1800-2023 -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
-// RUN: obelisk --std=1800-2023 -emit-obelisk %s -o %t.obelisk.mlir
-// RUN: obelisk-opt %t.obelisk.mlir --pass-pipeline='builtin.module(obelisk-sim-prepare,obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=SIM --implicit-check-not=simulation.control.enter --implicit-check-not=schedule.detached_controls
-// RUN: obelisk --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=FINAL --implicit-check-not=simulation.control.enter --implicit-check-not=schedule.detached_controls
+// RUN: talos --std=1800-2023 -emit-talos %s -o %t.talos.mlir
+// RUN: talos-opt %t.talos.mlir --pass-pipeline='builtin.module(talos-sim-prepare,talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s --check-prefix=SIM --implicit-check-not=simulation.control.enter --implicit-check-not=schedule.detached_controls
+// RUN: talos --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=FINAL --implicit-check-not=simulation.control.enter --implicit-check-not=schedule.detached_controls
 
 module native_concurrent_sva;
   logic clk = 0;

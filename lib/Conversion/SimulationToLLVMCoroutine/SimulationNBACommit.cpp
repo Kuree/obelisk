@@ -2,7 +2,7 @@
 
 #include "SimulationAOTPlanning.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -11,13 +11,13 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
                              LLVM::LLVMFuncOp function, Block *exit,
                              Value region, const NativeStaticNBAPlan &plan,
                              ArrayRef<SmallVector<uint32_t>> rootsByWord,
-                             ArrayRef<obelisk_rt_static_fanout_entry> fanout,
+                             ArrayRef<talos_rt_static_fanout_entry> fanout,
                              Value activatedNodes, Value activatedDirect,
                              unsigned directWords) {
   auto loc = function.getLoc();
@@ -49,7 +49,7 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
       return {{}, data.front()};
     OpBuilder::InsertionGuard guard(b);
     b.setInsertionPointToStart(module.getBody());
-    std::string name = ("__obelisk_eval_nba_commit_" + suffix).str();
+    std::string name = ("__talos_eval_nba_commit_" + suffix).str();
     auto tensor = RankedTensorType::get({int64_t(data.size())}, i64);
     LLVM::GlobalOp::create(b, loc, LLVM::LLVMArrayType::get(i64, data.size()),
                            true, LLVM::Linkage::Internal, name,
@@ -123,8 +123,8 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
             (width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1)
             << entry.low_bit);
         edges.push_back(entry.edge);
-        bool isDirect = (entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK) ==
-                            OBELISK_RT_FANOUT_DIRECT &&
+        bool isDirect = (entry.reserved & TALOS_RT_FANOUT_ROUTE_MASK) ==
+                            TALOS_RT_FANOUT_DIRECT &&
                         entry.merged_bit < uint64_t(directWords) * 64;
         direct.push_back(isDirect);
         destinations.push_back(isDirect ? entry.merged_bit
@@ -149,7 +149,7 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
   auto directTable = table("direct_v1", direct);
   // Accumulators are also consumed by runtime handoffs. Keep their ABI storage
   // and use a constant pointer column instead of introducing a shadow payload.
-  std::string accumulatorTable = "__obelisk_eval_nba_commit_accumulators_v1";
+  std::string accumulatorTable = "__talos_eval_nba_commit_accumulators_v1";
   {
     OpBuilder::InsertionGuard guard(b);
     b.setInsertionPointToStart(module.getBody());
@@ -186,7 +186,7 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
       ValueRange{}, exit, ValueRange{});
   b.setInsertionPointToStart(wordLoad);
   Value dirtyAddress =
-      gep(address("__obelisk_aot_nba_dirty_roots_v1"), i64, word);
+      gep(address("__talos_aot_nba_dirty_roots_v1"), i64, word);
   Value dirty = LLVM::LoadOp::create(b, loc, i64, dirtyAddress, 8);
   Value selectedMask = load(maskTable, word);
   cf::BranchOp::create(b, loc, rootHead, ValueRange{band(dirty, selectedMask)});
@@ -217,11 +217,11 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
       LLVM::LoadOp::create(
           b, loc, i32,
           field(
-              offsetof(obelisk_rt_generated_nba_accumulator_256, exec_region)),
+              offsetof(talos_rt_generated_nba_accumulator_256, exec_region)),
           4));
   Value valid = LLVM::LoadOp::create(
       b, loc, i32,
-      field(offsetof(obelisk_rt_generated_nba_accumulator_256, valid)), 4);
+      field(offsetof(talos_rt_generated_nba_accumulator_256, valid)), 4);
   Value regionMatches = select(
       eq(fixedRegion, c(UINT32_MAX)),
       band(eq(storedRegion, region64),
@@ -243,22 +243,22 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
         fixedMask = load(fixedTable, index);
   Value writeMask =
       select(eq(fixedMask, c(0)),
-             band(field64(offsetof(obelisk_rt_generated_nba_accumulator_256,
+             band(field64(offsetof(talos_rt_generated_nba_accumulator_256,
                                    write_mask)),
                   widthMask),
              fixedMask);
   Value stagedValue =
-      field64(offsetof(obelisk_rt_generated_nba_accumulator_256, value));
+      field64(offsetof(talos_rt_generated_nba_accumulator_256, value));
   auto unknownLoad = LLVM::LoadOp::create(
       b, loc, i64,
-      field(offsetof(obelisk_rt_generated_nba_accumulator_256, unknown)), 8);
+      field(offsetof(talos_rt_generated_nba_accumulator_256, unknown)), 8);
   schedule::set<schedule::Field::EvalTwoStateZeroUnknown>(unknownLoad,
                                                           b.getUnitAttr());
   Value stagedUnknown = unknownLoad;
   Value valueAddress =
-      gep(address("__obelisk_state_value"), b.getI8Type(), offset);
+      gep(address("__talos_state_value"), b.getI8Type(), offset);
   Value unknownAddress =
-      gep(address("__obelisk_state_unknown"), b.getI8Type(), offset);
+      gep(address("__talos_state_unknown"), b.getI8Type(), offset);
   SmallVector<APInt> cases;
   SmallVector<Block *> bodies;
   SmallVector<ValueRange> operands;
@@ -318,7 +318,7 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
         newValue = publish->getArgument(2),
         newUnknown = publish->getArgument(3);
   Value transientAddress =
-      field(offsetof(obelisk_rt_generated_nba_accumulator_256, transient));
+      field(offsetof(talos_rt_generated_nba_accumulator_256, transient));
   Value transient = LLVM::LoadOp::create(b, loc, i64, transientAddress, 8);
   Value changed =
       bor(bor(arith::XOrIOp::create(b, loc, oldValue, newValue),
@@ -337,10 +337,10 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
   b.setInsertionPointToStart(reset);
   LLVM::StoreOp::create(
       b, loc, c(0),
-      field(offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)), 8);
+      field(offsetof(talos_rt_generated_nba_accumulator_256, write_mask)), 8);
   LLVM::StoreOp::create(
       b, loc, llvmConstant(b, loc, i32, 0),
-      field(offsetof(obelisk_rt_generated_nba_accumulator_256, valid)), 4);
+      field(offsetof(talos_rt_generated_nba_accumulator_256, valid)), 4);
   cf::BranchOp::create(b, loc, watchHead, ValueRange{start});
   b.setInsertionPointToStart(watchHead);
   Value watcher = watchHead->getArgument(0);
@@ -349,9 +349,9 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
   b.setInsertionPointToStart(watchBody);
   Value edge = load(edgeTable, watcher);
   Value observed =
-      select(eq(edge, c(OBELISK_RT_WAIT_EDGE_POSEDGE)), posedge,
-             select(eq(edge, c(OBELISK_RT_WAIT_EDGE_NEGEDGE)), negedge,
-                    select(eq(edge, c(OBELISK_RT_WAIT_EDGE_BOTH)),
+      select(eq(edge, c(TALOS_RT_WAIT_EDGE_POSEDGE)), posedge,
+             select(eq(edge, c(TALOS_RT_WAIT_EDGE_NEGEDGE)), negedge,
+                    select(eq(edge, c(TALOS_RT_WAIT_EDGE_BOTH)),
                            bor(posedge, negedge), changed)));
   cf::CondBranchOp::create(b, loc,
                            eq(band(observed, load(watchTable, watcher)), c(0)),
@@ -378,4 +378,4 @@ void emitScalarNBACommitLoop(OpBuilder &b, ModuleOp module,
       b, loc, watchHead,
       ValueRange{arith::AddIOp::create(b, loc, watcher, c(1))});
 }
-} // namespace obelisk::detail
+} // namespace talos::detail

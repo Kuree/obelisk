@@ -7,7 +7,7 @@ static int forbidden_handle_rejected;
 static int forbidden_printf_rejected;
 static int system_tf_registered;
 
-void obelisk_vpi_callback_test_throw(void);
+void talos_vpi_callback_test_throw(void);
 
 static PLI_INT32 end_compile(p_cb_data callback) {
   (void)callback;
@@ -31,7 +31,7 @@ static void startup(void) {
   if (mode == 0)
     return;
   if (mode == 3)
-    obelisk_vpi_callback_test_throw();
+    talos_vpi_callback_test_throw();
   if (mode == 4) {
     static PLI_BYTE8 name[] = "$startup_inspect";
     s_vpi_systf_data system_task = {0};
@@ -57,7 +57,7 @@ static void startup(void) {
 
 void (*vlog_startup_routines[])(void) = {startup, 0};
 
-void obelisk_vpi_callback_test_reset(int new_mode) {
+void talos_vpi_callback_test_reset(int new_mode) {
   mode = new_mode;
   startup_calls = 0;
   end_compile_calls = 0;
@@ -66,7 +66,7 @@ void obelisk_vpi_callback_test_reset(int new_mode) {
   system_tf_registered = 0;
 }
 
-int obelisk_vpi_callback_test_query(int property) {
+int talos_vpi_callback_test_query(int property) {
   switch (property) {
   case 0:
     return startup_calls;

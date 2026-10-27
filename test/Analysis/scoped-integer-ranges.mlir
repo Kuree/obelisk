@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-scoped-integer-ranges -o %t.analyzed 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s --test-talos-scoped-integer-ranges -o %t.analyzed 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
 
 // Range snapshots must retain dominating live values and map all predecessor

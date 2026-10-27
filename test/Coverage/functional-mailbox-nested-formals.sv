@@ -1,9 +1,9 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native --coverage=functional %s -o %t.native
+// RUN: %talos --std=1800-2023 -O0 --target=native --coverage=functional %s -o %t.native
 // RUN: %t.native --coverage-output=%t.native.obcov | FileCheck %s
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode --coverage=functional %s -o %t.bytecode
+// RUN: %talos --std=1800-2023 -O3 --execution-tier=bytecode --coverage=functional %s -o %t.bytecode
 // RUN: %t.bytecode --coverage-output=%t.bytecode.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.native.txt
-// RUN: obelisk-cov report --format=text %t.bytecode.obcov -o %t.bytecode.txt
+// RUN: talos-cov report --format=text %t.native.obcov -o %t.native.txt
+// RUN: talos-cov report --format=text %t.bytecode.obcov -o %t.bytecode.txt
 // RUN: diff -u %t.native.txt %t.bytecode.txt
 
 // LRM 15.4.9, G.4 and 19.8.1: mailbox payloads can themselves be mailbox

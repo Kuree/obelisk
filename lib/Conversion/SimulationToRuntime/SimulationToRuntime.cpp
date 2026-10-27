@@ -1,12 +1,12 @@
 //===- SimulationToRuntime.cpp - Lower simulation I/O to runtime calls ---===//
 
-#include "obelisk/Conversion/SimulationToRuntime.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Conversion/SimulationToRuntime.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
-#include "obelisk/Conversion/SimulationToStandard.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/OutputItemFlags.h"
+#include "talos/Conversion/SimulationToStandard.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/OutputItemFlags.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -18,10 +18,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_CONVERTOBELISKSIMTORUNTIMEPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#define GEN_PASS_DEF_CONVERTTALOSSIMTORUNTIMEPASS
+#include "talos/Conversion/Passes.h.inc"
 
 void addSimulationToRuntimeTypeConversions(TypeConverter &converter) {
   converter.addConversion([&converter](sim::BytesType type,
@@ -100,12 +100,12 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
   SmallVector<Value> arguments;
   unsigned itemIndex = 0;
   for (int32_t flags : op.getItemFlags()) {
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_OMITTED) != 0) {
+    if ((flags & TALOS_RT_OUTPUT_ITEM_OMITTED) != 0) {
       arguments.push_back(runtime::RTArgumentEmptyOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext())));
       continue;
     }
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_ENUM) != 0) {
+    if ((flags & TALOS_RT_OUTPUT_ITEM_ENUM) != 0) {
       if (itemIndex + 1 >= op.getItems().size())
         return rewriter.notifyMatchFailure(
             op, "enum output item has no packed value and mnemonic");
@@ -122,10 +122,10 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
       arguments.push_back(runtime::RTArgumentEnumOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
           converted.front(), unknown, convertedName.front(),
-          (flags & OBELISK_RT_OUTPUT_ITEM_SIGNED) != 0));
+          (flags & TALOS_RT_OUTPUT_ITEM_SIGNED) != 0));
       continue;
     }
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_NET) != 0) {
+    if ((flags & TALOS_RT_OUTPUT_ITEM_NET) != 0) {
       if (itemIndex + 1 >= op.getItems().size())
         return rewriter.notifyMatchFailure(
             op, "net output item has no packed value and handle");
@@ -141,22 +141,22 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
             op,
             "net output item did not convert to packed value and i64 handle");
       Value unknown = converted.size() == 2 ? converted[1] : Value();
-      if (::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalDirectOutput>(op)) {
+      if (::talos::schedule::has<
+              ::talos::schedule::Field::EvalDirectOutput>(op)) {
         arguments.push_back(runtime::RTArgumentPackedOp::create(
             rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
             converted.front(), unknown,
-            (flags & OBELISK_RT_OUTPUT_ITEM_SIGNED) != 0));
+            (flags & TALOS_RT_OUTPUT_ITEM_SIGNED) != 0));
         continue;
       }
       arguments.push_back(runtime::RTArgumentNetOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
           converted.front(), unknown, convertedHandle.front(),
-          (flags & OBELISK_RT_OUTPUT_ITEM_SIGNED) != 0));
+          (flags & TALOS_RT_OUTPUT_ITEM_SIGNED) != 0));
       continue;
     }
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE) != 0) {
-      if (flags != OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE ||
+    if ((flags & TALOS_RT_OUTPUT_ITEM_RAW_AGGREGATE) != 0) {
+      if (flags != TALOS_RT_OUTPUT_ITEM_RAW_AGGREGATE ||
           itemIndex + 2 >= op.getItems().size())
         return rewriter.notifyMatchFailure(
             op, "raw aggregate output item has malformed operands");
@@ -183,7 +183,7 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
       arguments.push_back(runtime::RTArgumentBytesOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
           converted.front(), true,
-          (flags & OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) != 0));
+          (flags & TALOS_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) != 0));
       continue;
     }
     if (isa<sim::StringType>(sourceType)) {
@@ -193,9 +193,9 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
       arguments.push_back(runtime::RTArgumentManagedStringOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
           converted.front(),
-          (flags & (OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT |
-                    OBELISK_RT_OUTPUT_ITEM_FORMAT)) != 0,
-          (flags & OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) != 0));
+          (flags & (TALOS_RT_OUTPUT_ITEM_DESIGNATED_FORMAT |
+                    TALOS_RT_OUTPUT_ITEM_FORMAT)) != 0,
+          (flags & TALOS_RT_OUTPUT_ITEM_DESIGNATED_FORMAT) != 0));
       continue;
     }
     if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
@@ -256,7 +256,7 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
             op, "real output item did not convert 1:1");
       arguments.push_back(runtime::RTArgumentRealOp::create(
           rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
-          converted.front(), (flags & OBELISK_RT_OUTPUT_ITEM_REAL_TIME) != 0));
+          converted.front(), (flags & TALOS_RT_OUTPUT_ITEM_REAL_TIME) != 0));
       continue;
     }
     if (converted.size() != 1 && converted.size() != 2)
@@ -266,7 +266,7 @@ buildOutputList(Op op, Adaptor &adaptor, ConversionPatternRewriter &rewriter) {
     arguments.push_back(runtime::RTArgumentPackedOp::create(
         rewriter, loc, runtime::ArgumentType::get(rewriter.getContext()),
         converted.front(), unknown,
-        (flags & OBELISK_RT_OUTPUT_ITEM_SIGNED) != 0));
+        (flags & TALOS_RT_OUTPUT_ITEM_SIGNED) != 0));
   }
   Value array = runtime::RTArgumentArrayOp::create(
       rewriter, loc, runtime::ArgumentArrayType::get(rewriter.getContext()),
@@ -357,9 +357,9 @@ public:
     auto display = runtime::RTDisplayOp::create(
         rewriter, loc, runtime::StatusType::get(rewriter.getContext()), context,
         fd, newline, output->first, output->second, radix);
-    if (::obelisk::schedule::has<::obelisk::schedule::Field::EvalDirectOutput>(
+    if (::talos::schedule::has<::talos::schedule::Field::EvalDirectOutput>(
             op))
-      ::obelisk::schedule::set<::obelisk::schedule::Field::EvalDirectOutput>(
+      ::talos::schedule::set<::talos::schedule::Field::EvalDirectOutput>(
           display, rewriter.getUnitAttr());
     sim::SimStatusCheckOp::create(rewriter, loc, display.getStatus());
     rewriter.eraseOp(op);
@@ -839,9 +839,9 @@ public:
   }
 };
 
-class ConvertObeliskSimToRuntimePass final
-    : public impl::ConvertObeliskSimToRuntimePassBase<
-          ConvertObeliskSimToRuntimePass> {
+class ConvertTalosSimToRuntimePass final
+    : public impl::ConvertTalosSimToRuntimePassBase<
+          ConvertTalosSimToRuntimePass> {
 public:
   void runOnOperation() override {
     MLIRContext &context = getContext();
@@ -869,7 +869,7 @@ public:
         sim::SimDumpTimescaleOp, sim::SimDumpVarsOp, sim::SimDumpAllOp,
         sim::SimDumpControlOp, sim::SimDumpLimitOp, sim::SimDumpFlushOp>();
     target
-        .addLegalDialect<runtime::ObeliskRuntimeDialect, arith::ArithDialect>();
+        .addLegalDialect<runtime::TalosRuntimeDialect, arith::ArithDialect>();
     target.addLegalOp<ModuleOp, sim::SimContextRuntimeOp,
                       sim::SimStatusCheckOp>();
     target.addDynamicallyLegalOp<func::FuncOp>([&](func::FuncOp function) {
@@ -928,4 +928,4 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
       converter, context);
 }
 
-} // namespace obelisk
+} // namespace talos

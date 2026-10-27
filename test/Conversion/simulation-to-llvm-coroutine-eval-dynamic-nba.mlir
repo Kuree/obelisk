@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep))' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep))' \
 // RUN:   -o %t.planned.mlir
-// RUN: obelisk-opt %t.planned.mlir \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.mlir
+// RUN: talos-opt %t.planned.mlir \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=COMMIT < %t.mlir
 
@@ -106,8 +106,8 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
-// CHECK: %[[UNKNOWN_BASE:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
+// CHECK-LABEL: llvm.func @update.__talos_eval_body_0(
+// CHECK: %[[UNKNOWN_BASE:.*]] = llvm.mlir.addressof @__talos_state_unknown
 // CHECK: %[[UNKNOWN_ADDR:.*]] = llvm.getelementptr %[[UNKNOWN_BASE]]
 // CHECK: %[[UNKNOWN:.*]] = llvm.load %[[UNKNOWN_ADDR]]
 // CHECK: %[[KNOWN:.*]] = llvm.icmp "eq" %[[UNKNOWN]],
@@ -118,11 +118,11 @@ module attributes {
 // CHECK: %[[ABOVE_BEGIN:.*]] = llvm.icmp "sgt"
 // CHECK: %[[IN_BOUNDS:.*]] = llvm.and %[[BELOW_END]], %[[ABOVE_BEGIN]]
 // CHECK: %[[ACTIVE:.*]] = llvm.and %[[INDEX_VALID]], %[[IN_BOUNDS]]
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_0
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // CHECK: llvm.store
-// CHECK-NOT: __obelisk_eval_nba_offset_
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_nba
+// CHECK-NOT: __talos_eval_nba_offset_
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_nba
 // CHECK-NOT: llvm.call @malloc
 // CHECK: llvm.return
 
@@ -130,8 +130,8 @@ module attributes {
 // root of the word, such as a canonical accumulator staged by a
 // runtime-executed actor, keeps its bit for the runtime's index (IEEE
 // 1800-2023 4.9.4, 10.4.2); clearing the whole word dropped that update.
-// COMMIT-LABEL: llvm.func @__obelisk_aot_static_nba_commit_v1(
-// COMMIT: %[[DIRTY:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// COMMIT-LABEL: llvm.func @__talos_aot_static_nba_commit_v1(
+// COMMIT: %[[DIRTY:.*]] = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // COMMIT-NEXT: %[[WORD:.*]] = llvm.getelementptr %[[DIRTY]][0]
 // COMMIT-NEXT: llvm.load %[[WORD]]
 // COMMIT-NOT: llvm.store {{.*}}, %[[WORD]]

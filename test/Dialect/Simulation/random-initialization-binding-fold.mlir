@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
 
 // IEEE 1800-2023 18.14.1: an instance's initialization RNG is consumed only by
 // static process creation and static initializers. A binding that encloses

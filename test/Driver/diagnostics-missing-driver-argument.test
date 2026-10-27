@@ -1,9 +1,9 @@
 // Driver options that take a value diagnose a missing argument.
-// RUN: not obelisk -f 2>&1 | FileCheck %s --check-prefix=MISSING
-// RUN: not obelisk --filelist 2>&1 | FileCheck %s --check-prefix=MISSING
-// RUN: not obelisk -G 2>&1 | FileCheck %s --check-prefix=MISSING
-// RUN: not obelisk -o 2>&1 | FileCheck %s --check-prefix=MISSING
-// RUN: not obelisk -Xslang 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not talos -f 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not talos --filelist 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not talos -G 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not talos -o 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not talos -Xslang 2>&1 | FileCheck %s --check-prefix=MISSING
 
-// MISSING: obelisk: error:
+// MISSING: talos: error:
 // MISSING-SAME: missing argument

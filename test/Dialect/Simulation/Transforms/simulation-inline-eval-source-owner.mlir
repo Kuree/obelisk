@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=3}))' | FileCheck %s
 
 // The late inliner must carry the fused call site's logical-process identity
 // into helper operations. Materialization uses this identity to suppress an

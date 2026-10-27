@@ -1,19 +1,19 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt --test-obelisk-native-backend='scheduler=auto sim-opt-level=3 stop-after=lowering' '--test-obelisk-set-module-attributes=attrs="{schedule.native_scheduler = 1 : i32}"' -o %t.sim.mlir
-// RUN: obelisk-opt %t.sim.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-native-partitions),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: talos -emit-slang %s | talos-opt --test-talos-native-backend='scheduler=auto sim-opt-level=3 stop-after=lowering' '--test-talos-set-module-attributes=attrs="{schedule.native_scheduler = 1 : i32}"' -o %t.sim.mlir
+// RUN: talos-opt %t.sim.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-plan-native-partitions),convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir
 // RUN: FileCheck %s --implicit-check-not=gc_designate --implicit-check-not=gc_collect_pending --implicit-check-not=schedule.gc.collect < %t.mlir
 
 // A UVM-shaped producer/consumer testbench: a mailbox of transaction handles,
 // forked workers that capture handles across clock waits, handles held
 // across delays, a static registry and a linked history. The source is
-// lowered as `obelisk -O3 --vpi=off` lowers it, whose backend resolves the
+// lowered as `talos -O3 --vpi=off` lowers it, whose backend resolves the
 // auto scheduler to generic for this design, and replayed through that
 // build's backend passes without GC polls.
 
 // Mailbox traffic, forks and delays keep this design on the runtime
 // scheduler: no generated periodic loop proves a cycle, so nothing designates
 // collections and allocation keeps collecting under its precise roots.
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_push(
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_pop(
+// CHECK: llvm.call @talos_rt_v1_gc_managed_root_range_push(
+// CHECK: llvm.call @talos_rt_v1_gc_managed_root_range_pop(
 // CHECK: llvm.func @main(
 
 class packet;

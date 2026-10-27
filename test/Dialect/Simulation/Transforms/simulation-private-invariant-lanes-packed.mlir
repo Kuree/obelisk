@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=off},simulation.func(canonicalize,sroa,mem2reg,canonicalize,obelisk-sim-thread-suspension)),test-obelisk-activation-regions)' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-simplify-bodies{vpi=off},simulation.func(canonicalize,sroa,mem2reg,canonicalize,talos-sim-thread-suspension)),test-talos-activation-regions)' -o /dev/null 2>&1 | FileCheck %s
 
 // The same invariant lanes stored as a packed array of records.
 // CHECK: regions @writer valid=1

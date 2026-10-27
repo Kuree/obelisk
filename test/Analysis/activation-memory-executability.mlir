@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-activation-memory -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --test-obelisk-access-footprints='print-handles' -o /dev/null 2>&1 | FileCheck %s --check-prefix=HANDLES
+// RUN: talos-opt %s --test-talos-activation-memory -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-access-footprints='print-handles' -o /dev/null 2>&1 | FileCheck %s --check-prefix=HANDLES
 
 // A block without an executability proof remains conservative, including
 // when a range bound could in principle prove it dead. A live opaque reference

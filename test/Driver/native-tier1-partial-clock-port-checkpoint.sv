@@ -1,8 +1,8 @@
-// RUN: obelisk -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
+// RUN: talos -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.trace
+// RUN: talos -O3 --native-scheduler=auto %s -o %t.auto
+// RUN: talos -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.auto.out
@@ -32,7 +32,7 @@ module native_tier1_partial_clock_port_checkpoint;
   end
 endmodule
 
-// LLVM-NOT: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
-// LLVM: call void @obelisk_rt_v1_scheduler_static_transition_owned
-// LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
+// LLVM-NOT: call i32 @talos_rt_v1_scheduler_execute_aot_actor
+// LLVM: call void @talos_rt_v1_scheduler_static_transition_owned
+// LLVM: define {{.*}}i32 @__talos_eval_dispatch_v1
 // TRACE: eval_dispatches=0

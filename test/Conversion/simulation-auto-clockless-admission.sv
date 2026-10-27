@@ -1,7 +1,7 @@
-// RUN: obelisk -emit-slang %s -o %t.slang.mlir
-// RUN: obelisk-opt %t.slang.mlir --test-obelisk-native-backend='scheduler=auto stop-after=graph' --test-obelisk-native-aot-analysis -o /dev/null 2>&1 \
+// RUN: talos -emit-slang %s -o %t.slang.mlir
+// RUN: talos-opt %t.slang.mlir --test-talos-native-backend='scheduler=auto stop-after=graph' --test-talos-native-aot-analysis -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=ADMISSION
-// RUN: obelisk-opt %t.slang.mlir --test-obelisk-native-backend='scheduler=auto' | FileCheck %s --check-prefix=EVAL
+// RUN: talos-opt %t.slang.mlir --test-talos-native-backend='scheduler=auto' | FileCheck %s --check-prefix=EVAL
 
 // A large event-driven island can use generated eval without a structural
 // periodic clock (Auto scheduler): 128 combinational processes pass the
@@ -12,8 +12,8 @@
 // ADMISSION: bytecode @unit_129 bb0
 // ADMISSION-NEXT: bytecode @unit_129 bb1
 // ADMISSION-NEXT: reason suspension retains managed state
-// EVAL: llvm.mlir.global internal constant @__obelisk_aot_schedule_plan_v1()
-// EVAL: llvm.func @__obelisk_eval_dispatch_v1(
+// EVAL: llvm.mlir.global internal constant @__talos_aot_schedule_plan_v1()
+// EVAL: llvm.func @__talos_eval_dispatch_v1(
 
 module native_tier1_partial_clockless_admission;
   logic [7:0] stimulus = 0;

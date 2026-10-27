@@ -1,14 +1,14 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir 2> %t.trace
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 
 // The finite activation proof removes private scratch from shared-memory
 // dependencies even when the original executor remains a boundary.
-// TRACE: obelisk ranked activation: step2 valid=1 complete=1
-// TRACE: obelisk eval boundary: owner=0 island=0 body=step1.__obelisk_eval_body_0 successors=1{{$}}
-// TRACE-NEXT: obelisk eval boundary: owner=1 island=0 body=step2.__obelisk_eval_body_0 successors=2{{$}}
-// TRACE-NEXT: obelisk eval boundary: owner=2 island=0 body=step3.__obelisk_eval_body_0 successors=3{{$}}
-// TRACE-NEXT: obelisk eval boundary: owner=3 island=0 body=step4.__obelisk_eval_body_0 successors=4{{$}}
-// TRACE-NEXT: obelisk eval dependency: owner=4 island=0 body=step5.__obelisk_eval_body_0 successors={{$}}
+// TRACE: talos ranked activation: step2 valid=1 complete=1
+// TRACE: talos eval boundary: owner=0 island=0 body=step1.__talos_eval_body_0 successors=1{{$}}
+// TRACE-NEXT: talos eval boundary: owner=1 island=0 body=step2.__talos_eval_body_0 successors=2{{$}}
+// TRACE-NEXT: talos eval boundary: owner=2 island=0 body=step3.__talos_eval_body_0 successors=3{{$}}
+// TRACE-NEXT: talos eval boundary: owner=3 island=0 body=step4.__talos_eval_body_0 successors=4{{$}}
+// TRACE-NEXT: talos eval dependency: owner=4 island=0 body=step5.__talos_eval_body_0 successors={{$}}
 
 // Bounded reads use only the low half of storage 1. The final consumer writes
 // its high half, so the coarse graph has a false cycle through net boundaries.

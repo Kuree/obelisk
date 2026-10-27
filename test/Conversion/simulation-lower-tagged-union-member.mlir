@@ -1,13 +1,13 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // Hand-authored semantic MLIR verifies that reading a tagged-union member
 // guards the extraction and terminates the activation on an inactive tag.
 
-!int = !obelisk.integral<32, true, false, 31 : 0, int>
-!tagged = !obelisk.source_aggregate<"top", false, true, true, false, false, false,
+!int = !talos.integral<32, true, false, 31 : 0, int>
+!tagged = !talos.source_aggregate<"top", false, true, true, false, false, false,
     0, 32, 32, 0, [
       {name = "Invalid", ordinal = 0 : i32, packed_offset = 0 : i64,
-       type = !obelisk.void},
+       type = !talos.void},
       {name = "Valid", ordinal = 1 : i32, packed_offset = 0 : i64,
        type = !int}
     ]>
@@ -62,19 +62,19 @@ module {
           ],
           code_unit_id = 9200001 : i64
         } {
-      obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 1 : i64} {
+        talos.sv.expression.assignment attributes {
             node_id = 2 : i64, assignment_kind = 0 : i32,
             semantic_type = !int} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 3 : i64, referenced_path = "top.result",
               referenced_symbol = @result, semantic_type = !int} {
           }
-          obelisk.sv.expression.member_access attributes {
+          talos.sv.expression.member_access attributes {
               node_id = 4 : i64, field_ordinal = 1 : i64,
               referenced_path = "top.Valid", referenced_symbol = @Valid,
               semantic_type = !int} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 5 : i64, referenced_path = "top.value",
                 referenced_symbol = @value, semantic_type = !tagged} {
             }

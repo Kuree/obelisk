@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
+// RUN: talos-opt %s | talos-opt | FileCheck %s
 
 module {
   simulation.design @roundtrip attributes {time_precision_fs = 1000 : i64} {
     simulation.scope.decl 0 hierarchy "top" debug "top"
     simulation.scope.decl 1 parent 0 hierarchy "top.child"
-    simulation.code_unit.decl 10 in 0 root_initializer hierarchy "__obelisk_root" debug "root initializer"
+    simulation.code_unit.decl 10 in 0 root_initializer hierarchy "__talos_root" debug "root initializer"
     simulation.code_unit.decl 11 in 0 function hierarchy "top.callee" debug "callee"
     simulation.code_unit.decl 12 in 1 initial hierarchy "top.child.initial"
     simulation.code_unit.decl 13 in 1 initial hierarchy "top.child.process"
@@ -118,7 +118,7 @@ module {
 }
 
 // CHECK: simulation.design @roundtrip attributes {time_precision_fs = 1000 : i64}
-// CHECK: simulation.code_unit.decl 10 in 0 root_initializer hierarchy "__obelisk_root"
+// CHECK: simulation.code_unit.decl 10 in 0 root_initializer hierarchy "__talos_root"
 // CHECK: simulation.code_unit.decl 11 in 0 function hierarchy "top.callee"
 // CHECK: simulation.storage.decl 0 in 1 : !simulation.logic<8>
 // CHECK: simulation.net.decl 0 in 1 : !simulation.logic<8>

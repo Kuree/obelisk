@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | obelisk-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
+// RUN:   | talos-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -47,14 +47,14 @@ module attributes {
   }
 }
 
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_semaphore_create
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_semaphore_put
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_semaphore_try_get
+// NATIVE-DAG: llvm.func @talos_rt_v1_semaphore_create
+// NATIVE-DAG: llvm.func @talos_rt_v1_semaphore_put
+// NATIVE-DAG: llvm.func @talos_rt_v1_semaphore_try_get
 // NATIVE-LABEL: llvm.func @worker
-// NATIVE: llvm.call @obelisk_rt_v1_semaphore_create
+// NATIVE: llvm.call @talos_rt_v1_semaphore_create
 // NATIVE: llvm.icmp "eq" {{.*}} : i64
-// NATIVE: llvm.call @obelisk_rt_v1_semaphore_put
-// NATIVE: llvm.call @obelisk_rt_v1_semaphore_try_get
+// NATIVE: llvm.call @talos_rt_v1_semaphore_put
+// NATIVE: llvm.call @talos_rt_v1_semaphore_try_get
 // NATIVE: llvm.store {{.*}} : i32, !llvm.ptr
 
 // BYTECODE: runtime.bytecode_image = array<i8:

@@ -1,11 +1,11 @@
 //===- CoverageFileSupport.h - Coverage filesystem boundary ----*- C++ -*-===//
 
-#ifndef OBELISK_LIB_COVERAGE_COVERAGEFILESUPPORT_H
-#define OBELISK_LIB_COVERAGE_COVERAGEFILESUPPORT_H
+#ifndef TALOS_LIB_COVERAGE_COVERAGEFILESUPPORT_H
+#define TALOS_LIB_COVERAGE_COVERAGEFILESUPPORT_H
 
 #include <string>
 
-namespace obelisk::coverage::detail {
+namespace talos::coverage::detail {
 
 /// Atomically publish `temporary` as `output`, replacing an existing output.
 /// This narrow boundary keeps the native codec itself independent of LLVM and
@@ -13,6 +13,6 @@ namespace obelisk::coverage::detail {
 bool atomicReplaceFile(const std::string &temporary, const std::string &output,
                        std::string &error);
 
-} // namespace obelisk::coverage::detail
+} // namespace talos::coverage::detail
 
 #endif

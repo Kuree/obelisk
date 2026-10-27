@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-native-state-layout-analysis 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-native-state-layout-analysis 2>&1 | FileCheck %s
 
 // IEEE 1800-2017 7.3.2 gives a tagged union a tag alongside the member value,
 // and the native layout stores that tag above the member payload. A tagged

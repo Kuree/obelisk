@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | obelisk-translate --mlir-to-llvmir \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit),talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off require-bytecode=true},convert-talos-sim-processes-to-llvm-coroutines)' \
+// RUN:   | talos-translate --mlir-to-llvmir \
 // RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %s
@@ -11,7 +11,7 @@
 // scheduler suspension in both tiers.
 // CHECK: 1
 
-!logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
+!logic1 = !talos.integral<1, false, true, 0 : 0, logic>
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -26,7 +26,7 @@ module attributes {
     simulation.code_unit.decl 9230001 in 0 continuous hierarchy "top.udp"
     simulation.code_unit.decl 9230002 in 0 initial hierarchy "top.stimulus"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9230000 : i64,
                     simulation.lowered} {
@@ -56,11 +56,11 @@ module attributes {
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.input", argument = 2, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 1 : i64, semantic_type = !logic1} {
-        obelisk.sv.expression.named_value attributes {node_id = 2 : i64, referenced_path = "top.out", referenced_symbol = @out, semantic_type = !logic1} {}
-        obelisk.sv.expression.empty_argument attributes {node_id = 3 : i64, semantic_type = !logic1} {}
+      talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 1 : i64, semantic_type = !logic1} {
+        talos.sv.expression.named_value attributes {node_id = 2 : i64, referenced_path = "top.out", referenced_symbol = @out, semantic_type = !logic1} {}
+        talos.sv.expression.empty_argument attributes {node_id = 3 : i64, semantic_type = !logic1} {}
       }
-      obelisk.sv.expression.named_value attributes {node_id = 4 : i64, referenced_path = "top.input", referenced_symbol = @input, semantic_type = !logic1} {}
+      talos.sv.expression.named_value attributes {node_id = 4 : i64, referenced_path = "top.input", referenced_symbol = @input, semantic_type = !logic1} {}
       simulation.return
     }
 

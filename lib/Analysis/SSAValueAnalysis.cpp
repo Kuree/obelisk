@@ -1,18 +1,18 @@
 //===- SSAValueAnalysis.cpp - Shared forwarding facts -------------------===//
-#include "obelisk/Analysis/SSAValueAnalysis.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
-#include "obelisk/Analysis/GraphAlgorithms.h"
+#include "talos/Analysis/GraphAlgorithms.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SparseBitVector.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 struct InputOrigins {
   llvm::SparseBitVector<> inputs;
@@ -416,4 +416,4 @@ bool ValueLiveness::isLiveOut(Value value, Block *block) {
                       *user->getBlock()) != block;
          });
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

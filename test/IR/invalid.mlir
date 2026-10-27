@@ -1,18 +1,18 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 module {
   // expected-error @+2 {{failed to parse RefType parameter 'elementType'}}
   // expected-error @+1 {{logic width must be greater than zero}}
-  %bad = obelisk.var.alloc : !obelisk.ref<!obelisk.logic<0>>
+  %bad = talos.var.alloc : !talos.ref<!talos.logic<0>>
 }
 
 // -----
 
 module {
-  obelisk.sv.symbol.variable @bad_enum attributes {
+  talos.sv.symbol.variable @bad_enum attributes {
     node_id = 0 : i64,
     // expected-error @+1 {{enum base must be an integral type}}
-    semantic_type = !obelisk.enum<"bad_enum", !obelisk.string>
+    semantic_type = !talos.enum<"bad_enum", !talos.string>
   } {
   }
 }
@@ -21,10 +21,10 @@ module {
 
 module {
   // expected-error @+1 {{setter inventory describes 3 children but body contains 0}}
-  obelisk.sv.expression.structured_assignment_pattern attributes {
+  talos.sv.expression.structured_assignment_pattern attributes {
     has_default_setter = true, index_setter_count = 1 : i64,
     member_setter_count = 0 : i64, node_id = 0 : i64,
-    semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>,
+    semantic_type = !talos.integral<32, true, false, 31 : 0, int>,
     type_setter_count = 0 : i64
   } {
   }
@@ -34,15 +34,15 @@ module {
 
 module {
   // expected-error @+1 {{iterator loop_dimensions entry #0 requires symbol, nonempty path, and type}}
-  obelisk.sv.statement.foreach_loop attributes {
+  talos.sv.statement.foreach_loop attributes {
     loop_dimensions = [{
       has_iterator = true, has_static_range = true,
       iterator_path = "i", left = 3 : i64, right = 0 : i64
     }], node_id = 0 : i64
   } {
-    obelisk.sv.statement.empty attributes {node_id = 1 : i64} {
+    talos.sv.statement.empty attributes {node_id = 1 : i64} {
     }
-    obelisk.sv.statement.empty attributes {node_id = 2 : i64} {
+    talos.sv.statement.empty attributes {node_id = 2 : i64} {
     }
   }
 }
@@ -51,11 +51,11 @@ module {
 
 module {
   // expected-error @+1 {{malformed for-loop child inventory}}
-  obelisk.sv.statement.for_loop attributes {
+  talos.sv.statement.for_loop attributes {
     has_condition = false, initializer_count = 1 : i64,
     node_id = 0 : i64, step_count = 0 : i64
   } {
-    obelisk.sv.statement.empty attributes {node_id = 1 : i64} {
+    talos.sv.statement.empty attributes {node_id = 1 : i64} {
     }
   }
 }
@@ -64,11 +64,11 @@ module {
 
 module {
   // expected-error @+1 {{initializer_count must be nonnegative}}
-  obelisk.sv.statement.for_loop attributes {
+  talos.sv.statement.for_loop attributes {
     has_condition = false, initializer_count = -1 : i64,
     node_id = 0 : i64, step_count = 0 : i64
   } {
-    obelisk.sv.statement.empty attributes {node_id = 1 : i64} {
+    talos.sv.statement.empty attributes {node_id = 1 : i64} {
     }
   }
 }
@@ -77,9 +77,9 @@ module {
 
 module {
   // expected-error @+1 {{requires attribute 'constant_value'}}
-  obelisk.sv.expression.integer_literal attributes {
+  talos.sv.expression.integer_literal attributes {
     node_id = 0 : i64,
-    semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+    semantic_type = !talos.integral<1, false, true, 0 : 0, logic>
   } {
   }
 }
@@ -88,9 +88,9 @@ module {
 
 module {
   // expected-error @+1 {{requires attribute 'operator_kind'}}
-  obelisk.sv.expression.binary_op attributes {
+  talos.sv.expression.binary_op attributes {
     node_id = 0 : i64,
-    semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+    semantic_type = !talos.integral<1, false, true, 0 : 0, logic>
   } {
   }
 }
@@ -99,7 +99,7 @@ module {
 
 module {
   // expected-error @+1 {{represents an invalid semantic sentinel}}
-  obelisk.sv.pattern.invalid attributes {node_id = 0 : i64} {
+  talos.sv.pattern.invalid attributes {node_id = 0 : i64} {
   }
 }
 
@@ -107,14 +107,14 @@ module {
 
 module {
   // expected-error @+1 {{assertion invocation inventory describes 2 children but body contains 0}}
-  obelisk.sv.expression.assertion_instance attributes {
+  talos.sv.expression.assertion_instance attributes {
     argument_count = 1 : i64, argument_formal_paths = ["formal"],
     argument_formal_symbols = [@formal], argument_kinds = array<i64: 0>,
     has_expanded_body = true, is_recursive_property = false,
     local_variable_count = 0 : i64, local_variable_has_initializer = array<i64>,
     local_variable_paths = [], local_variable_symbols = [], node_id = 0 : i64,
     referenced_path = "property", referenced_symbol = @property,
-    semantic_type = !obelisk.property
+    semantic_type = !talos.property
   } {
   }
 }
@@ -123,7 +123,7 @@ module {
 
 module {
   // expected-error @+1 {{condition_pattern_flags must contain one entry per inventory item}}
-  obelisk.sv.statement.conditional attributes {
+  talos.sv.statement.conditional attributes {
     check_kind = 0 : i32, condition_count = 1 : i64,
     condition_pattern_flags = array<i64>, has_else = false, node_id = 0 : i64
   } {
@@ -134,7 +134,7 @@ module {
 
 module {
   // expected-error @+1 {{every case item must contain at least one label}}
-  obelisk.sv.statement.case attributes {
+  talos.sv.statement.case attributes {
     check_kind = 0 : i32, condition_kind = 0 : i32, has_default = false,
     item_count = 1 : i64, item_label_counts = array<i64: 0>,
     node_id = 0 : i64
@@ -146,7 +146,7 @@ module {
 
 module {
   // expected-error @+1 {{item_filter_flags entries must be zero or one}}
-  obelisk.sv.statement.pattern_case attributes {
+  talos.sv.statement.pattern_case attributes {
     check_kind = 0 : i32, condition_kind = 0 : i32, has_default = false,
     item_count = 1 : i64, item_filter_flags = array<i64: 2>,
     node_id = 0 : i64
@@ -158,7 +158,7 @@ module {
 
 module {
   // expected-error @+1 {{pattern case cannot use the case-inside matching mode}}
-  obelisk.sv.statement.pattern_case attributes {
+  talos.sv.statement.pattern_case attributes {
     check_kind = 0 : i32, condition_kind = 3 : i32, has_default = false,
     item_count = 0 : i64, item_filter_flags = array<i64>, node_id = 0 : i64
   } {
@@ -169,9 +169,9 @@ module {
 
 module {
   // expected-error @+1 {{inside set must contain at least one item}}
-  obelisk.sv.expression.inside attributes {
+  talos.sv.expression.inside attributes {
     item_count = 0 : i64, node_id = 0 : i64,
-    semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+    semantic_type = !talos.integral<1, false, true, 0 : 0, logic>
   } {
   }
 }
@@ -180,9 +180,9 @@ module {
 
 module {
   // expected-error @+1 {{inside item inventory overflows}}
-  obelisk.sv.expression.inside attributes {
+  talos.sv.expression.inside attributes {
     item_count = -1 : i64, node_id = 0 : i64,
-    semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+    semantic_type = !talos.integral<1, false, true, 0 : 0, logic>
   } {
   }
 }
@@ -191,8 +191,8 @@ module {
 
 module {
   // expected-error @+1 {{value range must contain exactly two endpoints}}
-  obelisk.sv.expression.value_range attributes {
-    node_id = 0 : i64, range_kind = 0 : i32, semantic_type = !obelisk.void
+  talos.sv.expression.value_range attributes {
+    node_id = 0 : i64, range_kind = 0 : i32, semantic_type = !talos.void
   } {
   }
 }
@@ -201,12 +201,12 @@ module {
 
 module {
   // expected-error @+1 {{structure pattern field ordinals must be nonnegative and unique}}
-  obelisk.sv.pattern.structure attributes {
+  talos.sv.pattern.structure attributes {
     field_ordinals = array<i64: 0, 0>, node_id = 0 : i64
   } {
-    obelisk.sv.pattern.wildcard attributes {node_id = 1 : i64} {
+    talos.sv.pattern.wildcard attributes {node_id = 1 : i64} {
     }
-    obelisk.sv.pattern.wildcard attributes {node_id = 2 : i64} {
+    talos.sv.pattern.wildcard attributes {node_id = 2 : i64} {
     }
   }
 }
@@ -214,9 +214,9 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
+  talos.sv.symbol.root @root attributes {node_id = 0 : i64} {
     // expected-error @+1 {{cannot resolve "referenced_symbol" @missing}}
-    obelisk.sv.pattern.variable attributes {
+    talos.sv.pattern.variable attributes {
       node_id = 1 : i64, referenced_path = "missing", referenced_symbol = @missing
     } {
     }
@@ -226,14 +226,14 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
-    obelisk.sv.symbol.variable @ordinary attributes {
+  talos.sv.symbol.root @root attributes {node_id = 0 : i64} {
+    talos.sv.symbol.variable @ordinary attributes {
       lifetime = 0 : i32, node_id = 1 : i64, rand_mode = 0 : i32,
-      semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>
+      semantic_type = !talos.integral<4, false, true, 3 : 0, logic>
     } {
     }
     // expected-error @+1 {{referenced pattern variable does not resolve to a pattern binding}}
-    obelisk.sv.pattern.variable attributes {
+    talos.sv.pattern.variable attributes {
       node_id = 2 : i64, referenced_path = "ordinary",
       referenced_symbol = @ordinary
     } {
@@ -244,9 +244,9 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
+  talos.sv.symbol.root @root attributes {node_id = 0 : i64} {
     // expected-error @+1 {{cannot resolve "referenced_symbol" @missing}}
-    obelisk.sv.pattern.tagged attributes {
+    talos.sv.pattern.tagged attributes {
       field_ordinal = 0 : i64, node_id = 1 : i64, packed_offset = 0 : i64,
       referenced_path = "missing.member", referenced_symbol = @missing
     } {
@@ -257,15 +257,15 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
-    obelisk.sv.symbol.field @member attributes {
+  talos.sv.symbol.root @root attributes {node_id = 0 : i64} {
+    talos.sv.symbol.field @member attributes {
       bit_offset = 0 : i64, field_index = 1 : i64, lifetime = 0 : i32,
       node_id = 1 : i64, rand_mode = 0 : i32,
-      semantic_type = !obelisk.integral<4, false, true, 3 : 0, logic>
+      semantic_type = !talos.integral<4, false, true, 3 : 0, logic>
     } {
     }
     // expected-error @+1 {{tagged pattern field metadata does not match its referenced member}}
-    obelisk.sv.pattern.tagged attributes {
+    talos.sv.pattern.tagged attributes {
       field_ordinal = 0 : i64, node_id = 2 : i64, packed_offset = 0 : i64,
       referenced_path = "member", referenced_symbol = @member
     } {
@@ -276,10 +276,10 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.variable @bad_error attributes {
+  talos.sv.symbol.variable @bad_error attributes {
     node_id = 0 : i64,
-    // expected-error @+1 {{error recovery type cannot appear in valid Obelisk IR}}
-    semantic_type = !obelisk.error<true>
+    // expected-error @+1 {{error recovery type cannot appear in valid Talos IR}}
+    semantic_type = !talos.error<true>
   } {
   }
 }
@@ -288,7 +288,7 @@ module {
 
 module {
   // expected-error @+1 {{attribute 'subroutine_kind' failed to satisfy constraint}}
-  obelisk.sv.symbol.subroutine @bad_subroutine attributes {
+  talos.sv.symbol.subroutine @bad_subroutine attributes {
     node_id = 0 : i64, subroutine_kind = 2 : i32
   } {
   }
@@ -297,10 +297,10 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.variable @bad_range attributes {
+  talos.sv.symbol.variable @bad_range attributes {
     node_id = 0 : i64,
     // expected-error @+1 {{source range files must not be empty}}
-    semantic_type = !obelisk.source_range<"", 10, 2, "source.sv", 9, 1, "">
+    semantic_type = !talos.source_range<"", 10, 2, "source.sv", 9, 1, "">
   } {
   }
 }
@@ -308,10 +308,10 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.variable @bad_index attributes {
+  talos.sv.symbol.variable @bad_index attributes {
     node_id = 0 : i64,
-    // expected-error @+1 {{wildcard associative index must use !obelisk.untyped}}
-    semantic_type = !obelisk.assoc<!obelisk.string, !obelisk.real, true>
+    // expected-error @+1 {{wildcard associative index must use !talos.untyped}}
+    semantic_type = !talos.assoc<!talos.string, !talos.real, true>
   } {
   }
 }
@@ -320,7 +320,7 @@ module {
 
 module {
   // expected-error @+1 {{expects region #0 to have 0 or 1 blocks}}
-  obelisk.sv.statement.block attributes {node_id = 0 : i64} {
+  talos.sv.statement.block attributes {node_id = 0 : i64} {
   ^first:
   ^second:
   }
@@ -330,29 +330,29 @@ module {
 
 module {
   // expected-error @+1 {{unknown attribute width must match result width 8}}
-  %bad = obelisk.logic.constant 0 : i8, 0 : i4 : !obelisk.logic<8>
+  %bad = talos.logic.constant 0 : i8, 0 : i4 : !talos.logic<8>
 }
 
 // -----
 
 module {
-  %lhs = obelisk.logic.constant 0 : i8, 0 : i8 : !obelisk.logic<8>
-  %rhs = obelisk.logic.constant 1 : i8, 0 : i8 : !obelisk.logic<8>
+  %lhs = talos.logic.constant 0 : i8, 0 : i8 : !talos.logic<8>
+  %rhs = talos.logic.constant 1 : i8, 0 : i8 : !talos.logic<8>
   // expected-error @+1 {{case comparisons must produce i1}}
-  %bad = obelisk.logic.compare case_eq %lhs, %rhs
-      : (!obelisk.logic<8>, !obelisk.logic<8>) -> !obelisk.logic<8>
+  %bad = talos.logic.compare case_eq %lhs, %rhs
+      : (!talos.logic<8>, !talos.logic<8>) -> !talos.logic<8>
 }
 
 // -----
 
 module {
-  %logic = obelisk.logic.constant 0 : i8, 0 : i8 : !obelisk.logic<8>
-  %ref = obelisk.var.alloc = %logic : !obelisk.logic<8>
-      : !obelisk.ref<!obelisk.logic<8>>
+  %logic = talos.logic.constant 0 : i8, 0 : i8 : !talos.logic<8>
+  %ref = talos.var.alloc = %logic : !talos.logic<8>
+      : !talos.ref<!talos.logic<8>>
   %integer = arith.constant 0 : i32
   // expected-error @+1 {{reference element type must match value type}}
-  obelisk.store %integer to %ref
-      : i32, !obelisk.ref<!obelisk.logic<8>>
+  talos.store %integer to %ref
+      : i32, !talos.ref<!talos.logic<8>>
 }
 
 // -----
@@ -360,7 +360,7 @@ module {
 module {
   // expected-error @+2 {{failed to parse RefType parameter 'elementType'}}
   // expected-error @+1 {{packed struct must contain at least one field}}
-  %bad = obelisk.var.alloc : !obelisk.ref<!obelisk.packed_struct<{}>>
+  %bad = talos.var.alloc : !talos.ref<!talos.packed_struct<{}>>
 }
 
 // -----
@@ -368,74 +368,74 @@ module {
 module {
   // expected-error @+3 {{failed to parse RefType parameter 'elementType'}}
   // expected-error @+2 {{packed aggregate field "text" has unpacked type}}
-  %bad = obelisk.var.alloc
-      : !obelisk.ref<!obelisk.packed_struct<{text = !obelisk.string}>>
+  %bad = talos.var.alloc
+      : !talos.ref<!talos.packed_struct<{text = !talos.string}>>
 }
 
 // -----
 
 module {
-  %input = obelisk.var.alloc : !obelisk.ref<!obelisk.logic<8>>
+  %input = talos.var.alloc : !talos.ref<!talos.logic<8>>
   // expected-error @+1 {{part-select [10:3] exceeds input width 8}}
-  %bad = obelisk.ref.extract %input from 3
-      : !obelisk.ref<!obelisk.logic<8>> -> !obelisk.ref<!obelisk.logic<8>>
+  %bad = talos.ref.extract %input from 3
+      : !talos.ref<!talos.logic<8>> -> !talos.ref<!talos.logic<8>>
 }
 
 // -----
 
 module {
-  %input = obelisk.var.alloc : !obelisk.ref<!obelisk.logic<8>>
+  %input = talos.var.alloc : !talos.ref<!talos.logic<8>>
   %index = arith.constant 0.0 : f32
   // expected-error @+1 {{dynamic index must be a two- or four-state integer}}
-  %bad = obelisk.ref.dyn_extract %input from %index
-      : (!obelisk.ref<!obelisk.logic<8>>, f32)
-        -> !obelisk.ref<!obelisk.logic<1>>
+  %bad = talos.ref.dyn_extract %input from %index
+      : (!talos.ref<!talos.logic<8>>, f32)
+        -> !talos.ref<!talos.logic<1>>
 }
 
 // -----
 
 module {
-  %input = obelisk.var.alloc : !obelisk.ref<!obelisk.logic<4>>
+  %input = talos.var.alloc : !talos.ref<!talos.logic<4>>
   // expected-error @+1 {{input widths sum to 8 but result width is 4}}
-  %bad = obelisk.ref.concat %input, %input
-      : (!obelisk.ref<!obelisk.logic<4>>, !obelisk.ref<!obelisk.logic<4>>)
-        -> !obelisk.ref<!obelisk.logic<4>>
+  %bad = talos.ref.concat %input, %input
+      : (!talos.ref<!talos.logic<4>>, !talos.ref<!talos.logic<4>>)
+        -> !talos.ref<!talos.logic<4>>
 }
 
 // -----
 
 module {
-  %a = obelisk.logic.constant 0 : i4, 0 : i4 : !obelisk.logic<4>
+  %a = talos.logic.constant 0 : i4, 0 : i4 : !talos.logic<4>
   // expected-error @+1 {{input widths sum to 8 but result width is 4}}
-  %bad = obelisk.logic.concat %a, %a
-      : (!obelisk.logic<4>, !obelisk.logic<4>) -> !obelisk.logic<4>
+  %bad = talos.logic.concat %a, %a
+      : (!talos.logic<4>, !talos.logic<4>) -> !talos.logic<4>
 }
 
 // -----
 
 module {
-  %a = obelisk.logic.constant 0 : i8, 0 : i8 : !obelisk.logic<8>
+  %a = talos.logic.constant 0 : i8, 0 : i8 : !talos.logic<8>
   // expected-error @+1 {{kind must be shift_left, shift_right, or ashift_right}}
-  %bad = obelisk.logic.shift add %a by %a
-      : (!obelisk.logic<8>, !obelisk.logic<8>) -> !obelisk.logic<8>
+  %bad = talos.logic.shift add %a by %a
+      : (!talos.logic<8>, !talos.logic<8>) -> !talos.logic<8>
 }
 
 // -----
 
 module {
-  %a = obelisk.logic.constant 0 : i3, 0 : i3 : !obelisk.logic<3>
+  %a = talos.logic.constant 0 : i3, 0 : i3 : !talos.logic<3>
   // expected-error @+1 {{result width 8 is not a multiple of input width 3}}
-  %bad = obelisk.logic.replicate %a : !obelisk.logic<3> -> !obelisk.logic<8>
+  %bad = talos.logic.replicate %a : !talos.logic<3> -> !talos.logic<8>
 }
 
 // -----
 
 module {
-  %a = obelisk.logic.constant 0 : i8, 0 : i8 : !obelisk.logic<8>
-  %r = obelisk.logic.constant 0 : i4, 0 : i4 : !obelisk.logic<4>
+  %a = talos.logic.constant 0 : i8, 0 : i8 : !talos.logic<8>
+  %r = talos.logic.constant 0 : i4, 0 : i4 : !talos.logic<4>
   // expected-error @+1 {{replacement at bit 6 exceeds input width 8}}
-  %bad = obelisk.logic.insert %r into %a at 6
-      : (!obelisk.logic<8>, !obelisk.logic<4>) -> !obelisk.logic<8>
+  %bad = talos.logic.insert %r into %a at 6
+      : (!talos.logic<8>, !talos.logic<4>) -> !talos.logic<8>
 }
 
 // -----
@@ -443,54 +443,54 @@ module {
 module {
   %i = arith.constant 0 : i8
   // expected-error @+1 {{input width 8 does not match result width 4}}
-  %bad = obelisk.logic.from_bits %i : i8 -> !obelisk.logic<4>
+  %bad = talos.logic.from_bits %i : i8 -> !talos.logic<4>
 }
 
 // -----
 
 module {
-  %a = obelisk.logic.constant 0 : i8, 0 : i8 : !obelisk.logic<8>
+  %a = talos.logic.constant 0 : i8, 0 : i8 : !talos.logic<8>
   // expected-error @+1 {{input width 8 does not match result width 4}}
-  %bad = obelisk.logic.to_bits %a : !obelisk.logic<8> -> i4
+  %bad = talos.logic.to_bits %a : !talos.logic<8> -> i4
 }
 
 // -----
 
 module {
-  %n = obelisk.net.alloc wire : !obelisk.net<!obelisk.logic<8>>
+  %n = talos.net.alloc wire : !talos.net<!talos.logic<8>>
   // expected-error @+1 {{part-select [10:3] exceeds input width 8}}
-  %bad = obelisk.net.extract %n from 3
-      : !obelisk.net<!obelisk.logic<8>> -> !obelisk.net<!obelisk.logic<8>>
+  %bad = talos.net.extract %n from 3
+      : !talos.net<!talos.logic<8>> -> !talos.net<!talos.logic<8>>
 }
 
 // -----
 
 module {
-  %n = obelisk.net.alloc wire : !obelisk.net<!obelisk.logic<4>>
+  %n = talos.net.alloc wire : !talos.net<!talos.logic<4>>
   // expected-error @+1 {{input widths sum to 8 but result width is 4}}
-  %bad = obelisk.net.concat %n, %n
-      : (!obelisk.net<!obelisk.logic<4>>, !obelisk.net<!obelisk.logic<4>>)
-        -> !obelisk.net<!obelisk.logic<4>>
+  %bad = talos.net.concat %n, %n
+      : (!talos.net<!talos.logic<4>>, !talos.net<!talos.logic<4>>)
+        -> !talos.net<!talos.logic<4>>
 }
 
 // -----
 
 module {
-  %n = obelisk.net.alloc wire : !obelisk.net<!obelisk.logic<8>>
+  %n = talos.net.alloc wire : !talos.net<!talos.logic<8>>
   %index = arith.constant 0.0 : f32
   // expected-error @+1 {{dynamic index must be a two- or four-state integer}}
-  %bad = obelisk.net.dyn_extract %n from %index
-      : (!obelisk.net<!obelisk.logic<8>>, f32)
-        -> !obelisk.net<!obelisk.logic<1>>
+  %bad = talos.net.dyn_extract %n from %index
+      : (!talos.net<!talos.logic<8>>, f32)
+        -> !talos.net<!talos.logic<1>>
 }
 
 // -----
 
 module {
-  obelisk.sv.symbol.variable @bad_task attributes {
+  talos.sv.symbol.variable @bad_task attributes {
     node_id = 0 : i64,
     // expected-error @+1 {{task signature must not have a result}}
-    semantic_type = !obelisk.subroutine<() -> !obelisk.string, true>
+    semantic_type = !talos.subroutine<() -> !talos.string, true>
   } {
   }
 }
@@ -498,10 +498,10 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.variable @bad_function attributes {
+  talos.sv.symbol.variable @bad_function attributes {
     node_id = 0 : i64,
     // expected-error @+1 {{function signature must have exactly one result}}
-    semantic_type = !obelisk.subroutine<() -> (), false>
+    semantic_type = !talos.subroutine<() -> (), false>
   } {
   }
 }
@@ -509,10 +509,10 @@ module {
 // -----
 
 module {
-  obelisk.sv.symbol.variable @bad_integral_range attributes {
+  talos.sv.symbol.variable @bad_integral_range attributes {
     node_id = 0 : i64,
     // expected-error @+1 {{declared range width 4 does not match integral width 8}}
-    semantic_type = !obelisk.integral<8, false, true, 3 : 0, generic>
+    semantic_type = !talos.integral<8, false, true, 3 : 0, generic>
   } {
   }
 }
@@ -521,7 +521,7 @@ module {
 
 module {
   // expected-error @+1 {{only a packed union can be soft}}
-  obelisk.sv.symbol.variable @bad_soft attributes {node_id = 0 : i64, semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, true, 0, 0, 0, 0, []>} {
+  talos.sv.symbol.variable @bad_soft attributes {node_id = 0 : i64, semantic_type = !talos.source_aggregate<"rec", false, false, false, false, false, true, 0, 0, 0, 0, []>} {
   }
 }
 
@@ -529,7 +529,7 @@ module {
 
 module {
   // expected-error @+1 {{aggregate field ordinals must be dense and ordered}}
-  obelisk.sv.symbol.variable @bad_field_ordinal attributes {node_id = 0 : i64, semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 1 : i32, packed_offset = 0 : i64, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>} {
+  talos.sv.symbol.variable @bad_field_ordinal attributes {node_id = 0 : i64, semantic_type = !talos.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 1 : i32, packed_offset = 0 : i64, type = !talos.integral<8, false, false, 7 : 0, bit>}]>} {
   }
 }
 
@@ -537,7 +537,7 @@ module {
 
 module {
   // expected-error @+1 {{aggregate field has invalid packed offset}}
-  obelisk.sv.symbol.variable @bad_field_offset attributes {node_id = 0 : i64, semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 1 : i64, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>} {
+  talos.sv.symbol.variable @bad_field_offset attributes {node_id = 0 : i64, semantic_type = !talos.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 1 : i64, type = !talos.integral<8, false, false, 7 : 0, bit>}]>} {
   }
 }
 
@@ -545,7 +545,7 @@ module {
 
 module {
   // expected-error @+1 {{aggregate field has invalid randomization mode}}
-  obelisk.sv.symbol.variable @bad_field_rand_mode attributes {node_id = 0 : i64, semantic_type = !obelisk.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, rand_mode = 3 : i32, type = !obelisk.integral<8, false, false, 7 : 0, bit>}]>} {
+  talos.sv.symbol.variable @bad_field_rand_mode attributes {node_id = 0 : i64, semantic_type = !talos.source_aggregate<"rec", false, false, false, false, false, false, 0, 0, 0, 0, [{name = "a", ordinal = 0 : i32, packed_offset = 0 : i64, rand_mode = 3 : i32, type = !talos.integral<8, false, false, 7 : 0, bit>}]>} {
   }
 }
 
@@ -554,7 +554,7 @@ module {
 module {
   // expected-error @+2 {{failed to parse RefType parameter 'elementType'}}
   // expected-error @+1 {{packed union fields must have equal widths}}
-  %bad = obelisk.var.alloc : !obelisk.ref<!obelisk.packed_union<{a = !obelisk.logic<4>, b = !obelisk.logic<8>}>>
+  %bad = talos.var.alloc : !talos.ref<!talos.packed_union<{a = !talos.logic<4>, b = !talos.logic<8>}>>
 }
 
 // -----
@@ -562,17 +562,17 @@ module {
 module {
   // expected-error @+2 {{failed to parse RefType parameter 'elementType'}}
   // expected-error @+1 {{packed array element must be packed}}
-  %bad = obelisk.var.alloc : !obelisk.ref<!obelisk.ranged_packed_array<3 : 0 x !obelisk.string>>
+  %bad = talos.var.alloc : !talos.ref<!talos.ranged_packed_array<3 : 0 x !talos.string>>
 }
 
 // -----
 
 module {
   // expected-error @+1 {{condition_pattern_flags must contain one entry per inventory item}}
-  obelisk.sv.expression.conditional_op attributes {
+  talos.sv.expression.conditional_op attributes {
     condition_count = 2 : i64,
     condition_pattern_flags = array<i64: 0>, node_id = 0 : i64,
-    semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>
+    semantic_type = !talos.integral<1, false, true, 0 : 0, logic>
   } {
   }
 }
@@ -581,7 +581,7 @@ module {
 
 module {
   // expected-error @+1 {{randcase must contain at least one item}}
-  obelisk.sv.statement.rand_case attributes {item_count = 0 : i64, node_id = 0 : i64} {
+  talos.sv.statement.rand_case attributes {item_count = 0 : i64, node_id = 0 : i64} {
   }
 }
 
@@ -590,10 +590,10 @@ module {
 module {
   // Each item owns one weight expression and one statement.
   // expected-error @+1 {{malformed randcase item inventory}}
-  obelisk.sv.statement.rand_case attributes {item_count = 1 : i64, node_id = 0 : i64} {
-    obelisk.sv.expression.integer_literal attributes {
+  talos.sv.statement.rand_case attributes {item_count = 1 : i64, node_id = 0 : i64} {
+    talos.sv.expression.integer_literal attributes {
       constant_value = "1", node_id = 1 : i64,
-      semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>
+      semantic_type = !talos.integral<32, true, false, 31 : 0, int>
     } {
     }
   }

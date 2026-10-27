@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
 // LRM 6.14, 6.17, 9.7, 15.3, 25.9: compare object identity, including null.
 // These folds do not infer object status or contents from its handle.
 

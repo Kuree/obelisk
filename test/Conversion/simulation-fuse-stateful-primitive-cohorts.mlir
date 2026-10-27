@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=2},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true primitive-only=true max-straight-line-members=2},talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // Two primitive declarations with different previous-input widths must form
 // separate homogeneous kernels. Each kernel carries independent state lanes
@@ -188,7 +188,7 @@ module {
 }
 
 // CHECK-LABEL: simulation.design @stateful_primitive_cohorts
-// CHECK-COUNT-2: simulation.spawn @__obelisk_region_kernel_
+// CHECK-COUNT-2: simulation.spawn @__talos_region_kernel_
 // CHECK: simulation.spawn @ordinary0
 // CHECK: simulation.spawn @ordinary1
 // CHECK-NOT: simulation.spawn @one0
@@ -199,18 +199,18 @@ module {
 // CHECK: simulation.driver.drive_inertial
 // CHECK: simulation.func private @ordinary1
 // CHECK: simulation.driver.drive_inertial
-// CHECK-COUNT-2: simulation.call @__obelisk_region_kernel_{{.*}}.__member
-// CHECK: simulation.func private @__obelisk_region_kernel_{{.*}}.__member(%[[CTX0:.*]]: !simulation.context{{.*}}, %{{.*}}: !simulation.ref<!simulation.logic<1>>{{.*}}, %{{.*}}: !simulation.logic<1>{{.*}}, %{{.*}}: !simulation.driver<!simulation.logic<1>>{{.*}}) -> (!simulation.logic<1>, i1) attributes
+// CHECK-COUNT-2: simulation.call @__talos_region_kernel_{{.*}}.__member
+// CHECK: simulation.func private @__talos_region_kernel_{{.*}}.__member(%[[CTX0:.*]]: !simulation.context{{.*}}, %{{.*}}: !simulation.ref<!simulation.logic<1>>{{.*}}, %{{.*}}: !simulation.logic<1>{{.*}}, %{{.*}}: !simulation.driver<!simulation.logic<1>>{{.*}}) -> (!simulation.logic<1>, i1) attributes
 // CHECK-SAME: passthrough = ["noinline"]
 // CHECK-SAME: schedule.outlined_primitive_member
-// CHECK: simulation.func private @__obelisk_region_kernel_{{.*}}.__member(%[[CTX1:.*]]: !simulation.context{{.*}}, %{{.*}}: !simulation.ref<!simulation.logic<2>>{{.*}}, %{{.*}}: !simulation.logic<2>{{.*}}, %{{.*}}: !simulation.driver<!simulation.logic<1>>{{.*}}) -> (!simulation.logic<2>, i1) attributes
+// CHECK: simulation.func private @__talos_region_kernel_{{.*}}.__member(%[[CTX1:.*]]: !simulation.context{{.*}}, %{{.*}}: !simulation.ref<!simulation.logic<2>>{{.*}}, %{{.*}}: !simulation.logic<2>{{.*}}, %{{.*}}: !simulation.driver<!simulation.logic<1>>{{.*}}) -> (!simulation.logic<2>, i1) attributes
 // CHECK-SAME: passthrough = ["noinline"]
 // CHECK-SAME: schedule.outlined_primitive_member
 
 // CHECK-LABEL: simulation.design @return_mapping
-// CHECK-COUNT-2: simulation.spawn @__obelisk_region_kernel_
-// CHECK-DAG: simulation.func private @__obelisk_region_kernel_{{.*}}.__member
-// CHECK-DAG: simulation.func private @__obelisk_region_kernel_{{.*}}.__member
+// CHECK-COUNT-2: simulation.spawn @__talos_region_kernel_
+// CHECK-DAG: simulation.func private @__talos_region_kernel_{{.*}}.__member
+// CHECK-DAG: simulation.func private @__talos_region_kernel_{{.*}}.__member
 
 // With identical continuation returns, both cohorts share one helper. The
 // original checks above retain separate helpers for different return values.

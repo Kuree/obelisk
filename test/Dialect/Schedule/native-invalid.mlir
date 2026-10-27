@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics
+// RUN: talos-opt %s --split-input-file --verify-diagnostics
 module {
   func.func @bad_edges(%handle: i64) {
     // expected-error@+1 {{edge inventory exceeds the watched operand prefix}}

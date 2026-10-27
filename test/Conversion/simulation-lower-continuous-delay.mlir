@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
-!logic4 = !obelisk.integral<4, false, true, 3 : 0, logic>
+!logic4 = !talos.integral<4, false, true, 3 : 0, logic>
 
 module {
   simulation.design @continuous_delay {
@@ -19,9 +19,9 @@ module {
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.input", argument = 2, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 1 : i64, semantic_type = !logic4} {
-        obelisk.sv.expression.named_value attributes {node_id = 2 : i64, referenced_path = "top.out", referenced_symbol = @out, semantic_type = !logic4} {}
-        obelisk.sv.expression.named_value attributes {node_id = 3 : i64, referenced_path = "top.input", referenced_symbol = @input, semantic_type = !logic4} {}
+      talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 1 : i64, semantic_type = !logic4} {
+        talos.sv.expression.named_value attributes {node_id = 2 : i64, referenced_path = "top.out", referenced_symbol = @out, semantic_type = !logic4} {}
+        talos.sv.expression.named_value attributes {node_id = 3 : i64, referenced_path = "top.input", referenced_symbol = @input, semantic_type = !logic4} {}
       }
       simulation.return
     }

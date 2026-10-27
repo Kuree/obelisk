@@ -1,8 +1,8 @@
 # RUN: %coverage-scaling-fixture 2048 128 %t.obcov
-# RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
-# RUN: obelisk-cov report --format=json --test=run128 %t.obcov | FileCheck %s --check-prefix=FILTERED --implicit-check-not='"contributors":[{'
+# RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+# RUN: talos-cov report --format=json --test=run128 %t.obcov | FileCheck %s --check-prefix=FILTERED --implicit-check-not='"contributors":[{'
 # RUN: %coverage-scaling-fixture 2048 128 %t.single-line.obcov same-line
-# RUN: obelisk-cov report --format=lcov %t.single-line.obcov | FileCheck %s --check-prefix=LCOV --implicit-check-not=DA:
+# RUN: talos-cov report --format=lcov %t.single-line.obcov | FileCheck %s --check-prefix=LCOV --implicit-check-not=DA:
 
 # 2048 line points and toggle fields, hit only by the first of 128 runs, keep
 # exactly that contributor through the sparse report indexes.

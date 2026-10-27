@@ -1,6 +1,6 @@
-// RUN: obelisk -O0 --vpi=off %s -o %t.o0.native
+// RUN: talos -O0 --vpi=off %s -o %t.o0.native
 // RUN: %t.o0.native +OUT=%t.o0.native 2>&1 | FileCheck %s
-// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode
+// RUN: talos -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: %t.o0.bytecode +OUT=%t.o0.bytecode 2>&1 | FileCheck %s
 
 // IEEE 1800-2017 21.4 and 21.5: memory ranges use numerical address order,

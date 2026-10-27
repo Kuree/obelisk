@@ -8,10 +8,10 @@
 #include "BytecodeLayout.h"
 #include "BytecodeSerialization.h"
 
-#include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
-#include "obelisk/Analysis/SimulationStorageAnalysis.h"
-#include "obelisk/Dialect/Runtime/RuntimeTypes.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/NativeStateLayoutAnalysis.h"
+#include "talos/Analysis/SimulationStorageAnalysis.h"
+#include "talos/Dialect/Runtime/RuntimeTypes.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
 
@@ -27,7 +27,7 @@
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 FailureOr<Layout> getLayout(Type type) {
   Layout layout;
@@ -47,19 +47,19 @@ FailureOr<Layout> getLayout(Type type) {
   } else if (isa<sim::ChandleType>(type)) {
     layout.kind = Bits;
     layout.width = 64;
-    layout.flags = OBELISK_RT_DBREG_CHANDLE;
+    layout.flags = TALOS_RT_DBREG_CHANDLE;
   } else if (isa<sim::CovergroupHandleType>(type)) {
     layout.kind = Bits;
     layout.width = 64;
-    layout.flags = OBELISK_RT_DBREG_COVERGROUP;
+    layout.flags = TALOS_RT_DBREG_COVERGROUP;
   } else if (isa<sim::ProcessType>(type)) {
     layout.kind = Bits;
     layout.width = 64;
-    layout.flags = OBELISK_RT_DBREG_PROCESS;
+    layout.flags = TALOS_RT_DBREG_PROCESS;
   } else if (isa<sim::VirtualInterfaceType>(type)) {
     layout.kind = Bits;
     layout.width = 64;
-    layout.flags = OBELISK_RT_DBREG_VIRTUAL_INTERFACE;
+    layout.flags = TALOS_RT_DBREG_VIRTUAL_INTERFACE;
   } else if (isa<sim::TimeType, sim::ManagedWatchType>(type)) {
     layout.kind = Bits;
     layout.width = 64;
@@ -69,7 +69,7 @@ FailureOr<Layout> getLayout(Type type) {
   } else if (isa<sim::EventType>(type)) {
     layout.kind = Handle;
     layout.width = 256;
-    layout.flags = OBELISK_RT_DBREG_EVENT;
+    layout.flags = TALOS_RT_DBREG_EVENT;
   } else if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::ContextType,
                  sim::ObserverType, runtime::ContextType>(type)) {
     layout.kind = Handle;
@@ -87,11 +87,11 @@ FailureOr<Layout> getLayout(Type type) {
     layout.kind = Managed;
     layout.width = 64;
     if (isa<sim::ClassHandleType>(type))
-      layout.flags = OBELISK_RT_DBREG_CLASS_HANDLE;
+      layout.flags = TALOS_RT_DBREG_CLASS_HANDLE;
     else if (isa<sim::SemaphoreType>(type))
-      layout.flags = OBELISK_RT_DBREG_SEMAPHORE;
+      layout.flags = TALOS_RT_DBREG_SEMAPHORE;
     else if (isa<sim::MailboxType>(type))
-      layout.flags = OBELISK_RT_DBREG_MAILBOX;
+      layout.flags = TALOS_RT_DBREG_MAILBOX;
   } else if (isa<sim::ManagedRefType>(type)) {
     layout.kind = ManagedRef;
     layout.width = 128;
@@ -334,4 +334,4 @@ FailureOr<StateLayout> buildStateLayout(sim::SimDesignOp design) {
   return result;
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

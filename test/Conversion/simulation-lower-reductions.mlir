@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
-!logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
-!logic8 = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>
-!bit1 = !obelisk.integral<1, false, false, 0 : 0, bit>
-!bit8 = !obelisk.ranged_packed_array<7 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>
+!logic1 = !talos.integral<1, false, true, 0 : 0, logic>
+!logic8 = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>
+!bit1 = !talos.integral<1, false, false, 0 : 0, bit>
+!bit8 = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>
 
 module {
   simulation.design @reductions {
@@ -45,75 +45,75 @@ module {
           ],
           code_unit_id = 9700001 : i64
         } {
-      obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
-        obelisk.sv.expression.unary_op attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 1 : i64} {
+        talos.sv.expression.unary_op attributes {
             node_id = 2 : i64, operator_kind = 3 : i32,
             semantic_type = !logic1} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 3 : i64, referenced_path = "top.value",
               referenced_symbol = @value, semantic_type = !logic8} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 4 : i64} {
-        obelisk.sv.expression.unary_op attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 4 : i64} {
+        talos.sv.expression.unary_op attributes {
             node_id = 5 : i64, operator_kind = 4 : i32,
             semantic_type = !logic1} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 6 : i64, referenced_path = "top.value",
               referenced_symbol = @value, semantic_type = !logic8} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 7 : i64} {
-        obelisk.sv.expression.unary_op attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 7 : i64} {
+        talos.sv.expression.unary_op attributes {
             node_id = 8 : i64, operator_kind = 5 : i32,
             semantic_type = !logic1} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 9 : i64, referenced_path = "top.value",
               referenced_symbol = @value, semantic_type = !logic8} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {
+      talos.sv.statement.expression_statement attributes {
           node_id = 10 : i64} {
-        obelisk.sv.expression.unary_op attributes {
+        talos.sv.expression.unary_op attributes {
             node_id = 11 : i64, operator_kind = 6 : i32,
             semantic_type = !logic1} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 12 : i64, referenced_path = "top.value",
               referenced_symbol = @value, semantic_type = !logic8} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {
+      talos.sv.statement.expression_statement attributes {
           node_id = 13 : i64} {
-        obelisk.sv.expression.unary_op attributes {
+        talos.sv.expression.unary_op attributes {
             node_id = 14 : i64, operator_kind = 7 : i32,
             semantic_type = !logic1} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 15 : i64, referenced_path = "top.value",
               referenced_symbol = @value, semantic_type = !logic8} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {
+      talos.sv.statement.expression_statement attributes {
           node_id = 16 : i64} {
-        obelisk.sv.expression.unary_op attributes {
+        talos.sv.expression.unary_op attributes {
             node_id = 17 : i64, operator_kind = 8 : i32,
             semantic_type = !logic1} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 18 : i64, referenced_path = "top.value",
               referenced_symbol = @value, semantic_type = !logic8} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {
+      talos.sv.statement.expression_statement attributes {
           node_id = 19 : i64} {
-        obelisk.sv.expression.unary_op attributes {
+        talos.sv.expression.unary_op attributes {
             node_id = 20 : i64, operator_kind = 5 : i32,
             semantic_type = !bit1} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 21 : i64, referenced_path = "top.bits",
               referenced_symbol = @bits, semantic_type = !bit8} {
           }

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
@@ -51,19 +51,19 @@ module attributes {
 // The abstract descriptor introduces Runner and its pure method. Concrete
 // shares the inherited interface through its base and records only its local
 // method override. Interface ordinals index the shared signature table.
-// CHECK-LABEL: llvm.mlir.global internal constant @Concrete.__obelisk_class_descriptor
-// CHECK: llvm.mlir.addressof @AbstractBase.__obelisk_class_descriptor
-// CHECK-NOT: @Concrete.__obelisk_interfaces
-// CHECK-LABEL: llvm.mlir.global internal constant @Concrete.__obelisk_methods
+// CHECK-LABEL: llvm.mlir.global internal constant @Concrete.__talos_class_descriptor
+// CHECK: llvm.mlir.addressof @AbstractBase.__talos_class_descriptor
+// CHECK-NOT: @Concrete.__talos_interfaces
+// CHECK-LABEL: llvm.mlir.global internal constant @Concrete.__talos_methods
 // CHECK-SAME: !llvm.array<1 x
 // CHECK: llvm.mlir.constant(17 : i64)
-// CHECK: llvm.mlir.addressof @Concrete_run.__obelisk_native_thunk
-// CHECK-LABEL: llvm.mlir.global internal constant @AbstractBase.__obelisk_interfaces
+// CHECK: llvm.mlir.addressof @Concrete_run.__talos_native_thunk
+// CHECK-LABEL: llvm.mlir.global internal constant @AbstractBase.__talos_interfaces
 // CHECK-SAME: !llvm.array<1 x
-// CHECK: llvm.mlir.addressof @Runner.__obelisk_interface_signatures
-// CHECK-LABEL: llvm.mlir.global internal constant @AbstractBase.__obelisk_methods
+// CHECK: llvm.mlir.addressof @Runner.__talos_interface_signatures
+// CHECK-LABEL: llvm.mlir.global internal constant @AbstractBase.__talos_methods
 // CHECK: llvm.mlir.constant(17 : i64)
 // CHECK: llvm.mlir.constant(2 : i32)
-// CHECK-LABEL: llvm.mlir.global internal constant @Runner.__obelisk_interface_signatures
+// CHECK-LABEL: llvm.mlir.global internal constant @Runner.__talos_interface_signatures
 // CHECK-SAME: !llvm.array<1 x i64>
 // CHECK: llvm.mlir.constant(17 : i64)

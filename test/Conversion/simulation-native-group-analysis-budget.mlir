@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
+// RUN: talos-opt %s --talos-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang %t.o -o %t.exe
 // RUN: %t.exe
-// RUN: obelisk-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o3
+// RUN: talos-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o3
 // RUN: %llvm_dist/bin/clang %t.o3 -o %t.o3.exe
 // RUN: %t.o3.exe
 
@@ -14,17 +14,17 @@
 // CHECK-SAME: schedule.eval.predicated_dataflow
 // CHECK-LABEL: llvm.func @group.fallback()
 module attributes {schedule.native.max_inline_ops = 120 : i64} {
-  llvm.mlir.global internal @__obelisk_state_value(dense<9> : tensor<8xi8>) : !llvm.array<8 x i8>
+  llvm.mlir.global internal @__talos_state_value(dense<9> : tensor<8xi8>) : !llvm.array<8 x i8>
   llvm.mlir.global internal @ready(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
-  llvm.mlir.global internal @__obelisk_eval_promotion_pending_mask_v1(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
+  llvm.mlir.global internal @__talos_eval_promotion_pending_mask_v1(dense<0> : tensor<1xi64>) : !llvm.array<1 x i64>
   llvm.func @group() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready} {
-    %p = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %p = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %bad = llvm.mlir.constant(99 : i8) : i8
     llvm.store %bad, %p : i8, !llvm.ptr
     llvm.return
   }
   llvm.func @candidate() attributes {schedule.eval.ranked_members = array<i32: 0, 1>, schedule.eval.group_ingress = @ready, schedule.eval.dataflow_candidate = @group} {
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %ready = llvm.mlir.addressof @ready : !llvm.ptr
     %mask = llvm.load %ready : !llvm.ptr -> i64
     %zero = llvm.mlir.constant(0 : i64) : i64
@@ -104,7 +104,7 @@ module attributes {schedule.native.max_inline_ops = 120 : i64} {
     llvm.return
   }
   llvm.func @main() -> i32 {
-    %base = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+    %base = llvm.mlir.addressof @__talos_state_value : !llvm.ptr
     %ready = llvm.mlir.addressof @ready : !llvm.ptr
     %mask = llvm.mlir.constant(85 : i64) : i64
     llvm.store %mask, %ready : i64, !llvm.ptr

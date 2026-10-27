@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 // expected-error @below {{symbol VPI object reference requires only a symbol}}
 module attributes {test.ref = #simulation.vpi_ref<kind = symbol, id = 0 : i64>} {}

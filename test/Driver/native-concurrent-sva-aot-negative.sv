@@ -1,4 +1,4 @@
-// RUN: not obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t 2>&1 | FileCheck %s
+// RUN: not talos --std=1800-2023 -O3 --native-scheduler=aot %s -o %t 2>&1 | FileCheck %s
 
 module native_concurrent_sva_aot_negative;
   logic clk = 0, a = 1, reset = 0;

@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s 2>/dev/null | FileCheck %s
+// RUN: talos -emit-slang %s 2>/dev/null | FileCheck %s
 
 // IEEE 1800-2023 20.4.1: an explicit $unit names the compilation unit, which
 // elaborates to no instance scope, so the call records the unit's time scale.

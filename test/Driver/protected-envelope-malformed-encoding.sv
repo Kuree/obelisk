@@ -1,8 +1,8 @@
 // XFAIL: *
 // Upstream Slang v11.0 has no decryption or protected-source redaction API.
 // Keep this source case visible without downstream Slang patches.
-// RUN: not %obelisk -emit-slang %s 2>&1 | FileCheck %s --check-prefix=TEXT
-// RUN: not %obelisk -Xslang --diag-json -Xslang %t.json -emit-slang %s 2>&1 | FileCheck %s --check-prefix=TEXT
+// RUN: not %talos -emit-slang %s 2>&1 | FileCheck %s --check-prefix=TEXT
+// RUN: not %talos -Xslang --diag-json -Xslang %t.json -emit-slang %s 2>&1 | FileCheck %s --check-prefix=TEXT
 // RUN: FileCheck %s --check-prefix=JSON --input-file=%t.json
 
 `pragma protect data_method="x-caesar", data_keyname="rot13", begin_protected

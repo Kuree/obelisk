@@ -1,8 +1,8 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov --coverage-test=comments
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
-// RUN: obelisk-cov report --format=html %t.obcov -o %t.html
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov report --format=html %t.obcov -o %t.html
 // RUN: FileCheck %s --check-prefix=HTML-BLOCK < %t.html
 // RUN: FileCheck %s --check-prefix=HTML < %t.html
 // RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html 'functional <group> type & comment' 'functional "group" \ path </script> & <tag>' 'functional >point< & comment' 'type: functional point type </script> comment' %}

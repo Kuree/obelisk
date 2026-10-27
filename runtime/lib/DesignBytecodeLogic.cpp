@@ -2,7 +2,7 @@
 
 #include "DesignBytecodeLogic.h"
 #include "DesignBytecodeImage.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include <algorithm>
 #include <cassert>
@@ -10,7 +10,7 @@
 #include <cstring>
 #include <limits>
 
-namespace obelisk::designbytecode {
+namespace talos::designbytecode {
 
 bool anyUnknown(const Logic &value) {
   return std::any_of(value.unknown.begin(), value.unknown.end(),
@@ -473,18 +473,18 @@ Logic bitwise(const Logic &left, const Logic &right, uint16_t opcode) {
     uint64_t lv = left.value[index], rv = right.value[index];
     uint64_t lu = left.unknown[index], ru = right.unknown[index];
     if (!left.fourState) {
-      result.value[index] = opcode == OBELISK_RT_DB_AND  ? lv & rv
-                            : opcode == OBELISK_RT_DB_OR ? lv | rv
+      result.value[index] = opcode == TALOS_RT_DB_AND  ? lv & rv
+                            : opcode == TALOS_RT_DB_OR ? lv | rv
                                                          : lv ^ rv;
       continue;
     }
     uint64_t lk = ~lu, rk = ~ru;
-    if (opcode == OBELISK_RT_DB_AND) {
+    if (opcode == TALOS_RT_DB_AND) {
       uint64_t knownZero = (~lv & lk) | (~rv & rk);
       uint64_t knownOne = (lv & lk) & (rv & rk);
       result.value[index] = knownOne;
       result.unknown[index] = ~(knownZero | knownOne);
-    } else if (opcode == OBELISK_RT_DB_OR) {
+    } else if (opcode == TALOS_RT_DB_OR) {
       uint64_t knownOne = (lv & lk) | (rv & rk);
       uint64_t knownZero = (~lv & lk) & (~rv & rk);
       result.value[index] = knownOne;
@@ -508,12 +508,12 @@ Logic shift(const Logic &input, const Logic &amount, uint16_t opcode) {
   oversized |= distance >= input.width;
   Logic result{input.width, input.fourState, LimbVector(input.value.size()),
                LimbVector(input.value.size())};
-  bool arithmetic = opcode == OBELISK_RT_DB_ASHR;
+  bool arithmetic = opcode == TALOS_RT_DB_ASHR;
   bool signValue = arithmetic && bit(input.value, input.width - 1);
   bool signUnknown = arithmetic && bit(input.unknown, input.width - 1);
   // Shifted-in bits are zero, or copies of the sign for an arithmetic shift.
   uint64_t kept = oversized ? 0 : input.width - distance;
-  if (opcode == OBELISK_RT_DB_SHL) {
+  if (opcode == TALOS_RT_DB_SHL) {
     copyBits(result.value, distance, input.value, 0, kept);
     copyBits(result.unknown, distance, input.unknown, 0, kept);
   } else {
@@ -538,7 +538,7 @@ void storeLimb(uint8_t *address, uint64_t limb) {
 
 Logic readLogic(const uint8_t *frame, const Layout &layout) {
   uint64_t limbs = limbCount(layout.width);
-  Logic result{layout.width, layout.kind == OBELISK_RT_DBREG_LOGIC,
+  Logic result{layout.width, layout.kind == TALOS_RT_DBREG_LOGIC,
                LimbVector(limbs), LimbVector(limbs)};
   const uint8_t *value = frame + layout.offset;
   // Whole limbs load with fixed-size copies; a narrower register keeps the
@@ -566,7 +566,7 @@ void writeLogic(uint8_t *frame, const Layout &layout, const Logic &value) {
   auto valueLimb = [&](uint64_t index) {
     uint64_t limb = index < valueLimbs ? value.value[index] : 0;
     // Four-state to two-state conversion maps both X and Z to zero.
-    if (layout.kind == OBELISK_RT_DBREG_BITS && index < unknownLimbs)
+    if (layout.kind == TALOS_RT_DBREG_BITS && index < unknownLimbs)
       limb &= ~value.unknown[index];
     return index + 1 == limbs ? limb & finalMask(layout.width) : limb;
   };
@@ -580,7 +580,7 @@ void writeLogic(uint8_t *frame, const Layout &layout, const Logic &value) {
       plane[index] = valueLimb(index);
     std::memcpy(address, plane.data(), layout.size);
   }
-  if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+  if (layout.kind == TALOS_RT_DBREG_LOGIC)
     for (uint64_t index = 0; index != limbs; ++index) {
       uint64_t limb = index < unknownLimbs ? value.unknown[index] : 0;
       if (index + 1 == limbs)
@@ -589,4 +589,4 @@ void writeLogic(uint8_t *frame, const Layout &layout, const Logic &value) {
     }
 }
 
-} // namespace obelisk::designbytecode
+} // namespace talos::designbytecode

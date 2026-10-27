@@ -1,6 +1,6 @@
 ; REQUIRES: llvm-pass-plugin
-; RUN: %llvm_dist/bin/opt -load-pass-plugin=%pass_plugin -passes='function(obelisk-limit-wide-integer-vectorization)' -S %s | FileCheck %s
-; RUN: %llvm_dist/bin/opt -load-pass-plugin=%pass_plugin -passes='function(obelisk-limit-wide-integer-vectorization,obelisk-limit-wide-integer-vectorization)' -S %s | FileCheck %s
+; RUN: %llvm_dist/bin/opt -load-pass-plugin=%pass_plugin -passes='function(talos-limit-wide-integer-vectorization)' -S %s | FileCheck %s
+; RUN: %llvm_dist/bin/opt -load-pass-plugin=%pass_plugin -passes='function(talos-limit-wide-integer-vectorization,talos-limit-wide-integer-vectorization)' -S %s | FileCheck %s
 ; RUN: %llvm_dist/bin/opt -load-pass-plugin=%pass_plugin -mtriple=%target_triple -passes='default<O3>' -S %s | FileCheck %s --check-prefix=OPT
 
 ; Packed selections can become loops of shifts on multi-kilobit integers.

@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --test-obelisk-print-bytecode=state=true -o /dev/null 2>&1 \
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --test-talos-print-bytecode=state=true -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
 
 module attributes {
@@ -44,4 +44,4 @@ module attributes {
 
 // The native tier resolves the active drivers and both retained charges with
 // the same strength-range runtime primitive before atomic publication.
-// NATIVE-COUNT-3: llvm.call @obelisk_rt_v1_strength_resolve_kind
+// NATIVE-COUNT-3: llvm.call @talos_rt_v1_strength_resolve_kind

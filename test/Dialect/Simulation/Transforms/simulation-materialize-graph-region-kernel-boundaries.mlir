@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // A ref.store publishes an immediate storage transition, but the current
 // generated region ABI has no changed-range result for it. Do not erase the
@@ -71,4 +71,4 @@ module {
 // CHECK: simulation.spawn @store_second
 // CHECK: simulation.func private @store_first
 // CHECK: simulation.func private @store_second
-// CHECK-NOT: simulation.func private @__obelisk_region_kernel_
+// CHECK-NOT: simulation.func private @__talos_region_kernel_

@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s -o /dev/null
-// RUN: obelisk -emit-obelisk %s -o /dev/null
+// RUN: talos -emit-slang %s -o /dev/null
+// RUN: talos -emit-talos %s -o /dev/null
 
 // Source inventory must not elaborate unused nested signatures, defaults, or
 // fields. Realized nested classes must retain resolvable lexical references.

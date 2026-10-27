@@ -1,4 +1,4 @@
-// RUN: cd %S/../Inputs/sdf && obelisk -emit-slang %s -o %t.mlir
+// RUN: cd %S/../Inputs/sdf && talos -emit-slang %s -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 
 // IEEE 1800-2017 32.4/.5 exact decimal scaling cannot reject a large

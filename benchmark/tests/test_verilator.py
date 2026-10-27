@@ -9,8 +9,8 @@ from unittest import mock
 BENCHMARK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_DIR))
 
-from obelisk_bench import model  # noqa: E402
-from obelisk_bench.suites import verilator  # noqa: E402
+from talos_bench import model  # noqa: E402
+from talos_bench.suites import verilator  # noqa: E402
 
 
 class SelectTest(unittest.TestCase):
@@ -174,8 +174,8 @@ class TopShellTest(unittest.TestCase):
         self.assertIn(".clk (clk)", shell)
 
     def test_the_shell_module_can_be_renamed(self):
-        shell = verilator.make_top_shell(["clk"], module_name="obelisk_top")
-        self.assertIn("module obelisk_top;", shell)
+        shell = verilator.make_top_shell(["clk"], module_name="talos_top")
+        self.assertIn("module talos_top;", shell)
         self.assertNotIn("module top;", shell)
 
     def test_the_instantiated_module_can_be_renamed(self):
@@ -246,7 +246,7 @@ class ShellModuleNameTest(unittest.TestCase):
         # generates one: the clock comes from a generated C++ main instead. A
         # test is therefore free to declare its own `module top`, and reusing
         # the name here would fail the compile on a duplicate definition that
-        # says nothing about Obelisk.
+        # says nothing about Talos.
         name = verilator.shell_module_name(
             "module top (input a);\nendmodule\nmodule t;\nendmodule\n")
         self.assertNotEqual(name, "top")
@@ -258,7 +258,7 @@ class ShellModuleNameTest(unittest.TestCase):
 
 class ExecutesDescriptorTest(unittest.TestCase):
     def descriptor(self, text: str) -> bool:
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             path = Path(tmp) / "t_x.py"
             path.write_text(text, encoding="utf-8")
             return verilator.detect_executes(path)
@@ -279,13 +279,13 @@ class ExecutesDescriptorTest(unittest.TestCase):
             "test.compile(fails=test.vlt_all)\n#test.execute()\n"))
 
     def test_an_unreadable_descriptor_keeps_running_the_design(self):
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             self.assertTrue(verilator.detect_executes(Path(tmp) / "absent.py"))
 
 
 class RunArgsDescriptorTest(unittest.TestCase):
     def args(self, text: str) -> list[str]:
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             path = Path(tmp) / "t_x.py"
             path.write_text(text, encoding="utf-8")
             return verilator.detect_run_args(path)
@@ -302,14 +302,14 @@ class RunArgsDescriptorTest(unittest.TestCase):
             self.args("test.execute(all_run_flags=['+OUT=' + output])\n"), [])
 
     def test_a_missing_descriptor_has_no_run_flags(self):
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             self.assertEqual(
                 verilator.detect_run_args(Path(tmp) / "absent.py"), [])
 
 
 class CompileDefinesDescriptorTest(unittest.TestCase):
     def defines(self, text: str) -> list[str]:
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             path = Path(tmp) / "t_x.py"
             path.write_text(text, encoding="utf-8")
             return verilator.detect_compile_defines(path)
@@ -350,7 +350,7 @@ class CompileDefinesDescriptorTest(unittest.TestCase):
 
 class CompileTopDescriptorTest(unittest.TestCase):
     def top(self, text: str) -> str | None:
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             path = Path(tmp) / "t_x.py"
             path.write_text(text, encoding="utf-8")
             return verilator.detect_compile_top(path)
@@ -378,7 +378,7 @@ class CompileTopDescriptorTest(unittest.TestCase):
 
 class CompileParameterDescriptorTest(unittest.TestCase):
     def overrides(self, text: str) -> list[tuple[str, str]]:
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             path = Path(tmp) / "t_x.py"
             path.write_text(text, encoding="utf-8")
             return verilator.detect_compile_settings(path).parameter_overrides
@@ -400,7 +400,7 @@ class CompileParameterDescriptorTest(unittest.TestCase):
 
 class CompileFrontendDescriptorTest(unittest.TestCase):
     def flags(self, text: str) -> list[str]:
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             path = Path(tmp) / "t_x.py"
             path.write_text(text, encoding="utf-8")
             return verilator.detect_compile_settings(path).frontend_flags
@@ -423,7 +423,7 @@ class CompileFrontendDescriptorTest(unittest.TestCase):
 class CompileLibraryDescriptorTest(unittest.TestCase):
     def settings(self, descriptor_text: str,
                  files: tuple[str, ...]) -> verilator.CompileSettings:
-        temporary = tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-")
+        temporary = tempfile.TemporaryDirectory(prefix="talos-vlt-test-")
         self.addCleanup(temporary.cleanup)
         regress = Path(temporary.name) / "test_regress"
         directory = regress / "t"
@@ -470,7 +470,7 @@ class CompileLibraryDescriptorTest(unittest.TestCase):
 
 class DescriptorDPISourcesTest(unittest.TestCase):
     def sources(self, descriptor_text: str, sources: dict[str, str]):
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             regress = Path(tmp) / "test_regress"
             directory = regress / "t"
             directory.mkdir(parents=True)
@@ -560,7 +560,7 @@ class DescriptorDPISourcesTest(unittest.TestCase):
         self.assertEqual(sources, [])
 
     def test_generated_dpi_header_alias_is_local_to_the_build_directory(self):
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             directory = Path(tmp)
             source = directory / "implementation.cpp"
             source.write_text('#include "dpi.h"\n', encoding="utf-8")
@@ -574,7 +574,7 @@ class DescriptorDPISourcesTest(unittest.TestCase):
             self.assertEqual(alias.read_text(encoding="utf-8"), "// generated\n")
 
     def test_checked_in_compatibility_header_can_back_the_fixed_name(self):
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             directory = Path(tmp)
             source = directory / "implementation.cpp"
             source.write_text('#include "dpi.h"\n', encoding="utf-8")
@@ -588,7 +588,7 @@ class DescriptorDPISourcesTest(unittest.TestCase):
                              "// expected\n")
 
     def test_generated_header_verilator_branch_is_selected_for_portable_dpi(self):
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             directory = Path(tmp)
             source = directory / "implementation.cpp"
             source.write_text(
@@ -616,7 +616,7 @@ class RuntimeErrorTest(unittest.TestCase):
             "*-* All Finished *-*\n", "warning: ignored key\n"))
 
     def test_golden_runtime_errors_must_match_every_source_location(self):
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             descriptor = Path(tmp) / "t_expected.py"
             descriptor.write_text(
                 "test.execute(expect_filename=test.golden_filename)\n",
@@ -643,7 +643,7 @@ class RuntimeErrorTest(unittest.TestCase):
                 descriptor, "", ""))
 
     def test_stop_golden_matches_standard_diagnostic_not_abort_policy(self):
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             descriptor = Path(tmp) / "t_stop_bad.py"
             descriptor.write_text(
                 "test.execute(fails=True, "
@@ -674,7 +674,7 @@ class RuntimeErrorTest(unittest.TestCase):
 class GoldenOutputTest(unittest.TestCase):
     def match(self, expected: str, stdout: str, stderr: str = "",
               name: str = "t_x") -> bool:
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             descriptor = Path(tmp) / f"{name}.py"
             descriptor.write_text(
                 "test.execute(expect_filename=test.golden_filename)\n",
@@ -735,7 +735,7 @@ class GoldenOutputTest(unittest.TestCase):
 
 class TimingLoopDescriptorTest(unittest.TestCase):
     def descriptor(self, text: str) -> bool:
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             path = Path(tmp) / "t_x.py"
             path.write_text(text, encoding="utf-8")
             return verilator.detect_timing_loop(path)
@@ -748,7 +748,7 @@ class TimingLoopDescriptorTest(unittest.TestCase):
         self.assertFalse(self.descriptor("test.compile()\n"))
 
     def test_a_missing_descriptor_keeps_the_sub_step_loop(self):
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             self.assertFalse(
                 verilator.detect_timing_loop(Path(tmp) / "absent.py"))
 
@@ -757,7 +757,7 @@ class ExpectationDescriptorTest(unittest.TestCase):
     """Where the descriptor says a nominated failure belongs."""
 
     def expectation(self, name: str, text: str | None):
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             path = Path(tmp) / (name + ".py")
             if text is not None:
                 path.write_text(text, encoding="utf-8")
@@ -849,7 +849,7 @@ class ExpectationDescriptorTest(unittest.TestCase):
 
 class TraceDumpfileTest(unittest.TestCase):
     def test_trace_macro_points_to_temporary_vcd(self):
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             expected = Path(tmp) / "simx.vcd"
             self.assertEqual(
                 verilator.trace_dumpfile_define(tmp),
@@ -870,7 +870,7 @@ class ObjectDirectoryTest(unittest.TestCase):
     def test_object_directory_macro_points_to_the_test_directory(self):
         # A test writes its log to `TEST_OBJ_DIR`; upstream's driver.py defines
         # it to the per-test obj_dir, so ours names the temporary directory.
-        with tempfile.TemporaryDirectory(prefix="obelisk-vlt-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-vlt-test-") as tmp:
             self.assertEqual(
                 verilator.object_directory_define(tmp),
                 f"-DTEST_OBJ_DIR={Path(tmp)}",
@@ -1261,7 +1261,7 @@ class ExcludedTest(unittest.TestCase):
         # The skip has to come before the test file is even read, so that
         # judging one costs nothing and needs no checkout.
         outcome = verilator.judge_one(
-            "/nonexistent/obelisk", Path("/nonexistent/t/t_param_avec.v"), 10)
+            "/nonexistent/talos", Path("/nonexistent/t/t_param_avec.v"), 10)
         self.assertEqual(outcome.status, model.SKIP)
         self.assertIn("IEEE 1800-2017 7.6", outcome.log)
         self.assertIn("by position", outcome.log)
@@ -1377,7 +1377,7 @@ class ExcludedTest(unittest.TestCase):
         self.assertIn("3.14.2.1", excluded.reason)
         self.assertIn("implementation-specific", excluded.reason)
 
-    def test_generate_block_disable_is_not_a_verilator_failure_for_obelisk(self):
+    def test_generate_block_disable_is_not_a_verilator_failure_for_talos(self):
         excluded = verilator.EXCLUDED["t_disable_genfor_unsup"]
         self.assertEqual(excluded.clause, "IEEE 1800-2017 9.6.2")
         self.assertIn("hierarchical block", excluded.reason)
@@ -1517,7 +1517,7 @@ class ExcludedTest(unittest.TestCase):
         # read and compiled -- here that means failing to find the file rather
         # than quietly reporting a skip.
         with self.assertRaises(OSError):
-            verilator.judge_one("/nonexistent/obelisk",
+            verilator.judge_one("/nonexistent/talos",
                                 Path("/nonexistent/t/t_unpacked_slice.v"), 10)
 
 

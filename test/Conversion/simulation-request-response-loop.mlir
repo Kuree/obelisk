@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --mlir-print-op-on-diagnostic=false --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},obelisk-sim-materialize-compute-fusion))' -o %t 2>&1 | FileCheck %s --check-prefix=PROOF
+// RUN: talos-opt %s --mlir-print-op-on-diagnostic=false --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},talos-sim-materialize-compute-fusion))' -o %t 2>&1 | FileCheck %s --check-prefix=PROOF
 // RUN: FileCheck %s --check-prefix=FUSED < %t
-// RUN: obelisk-opt %s --test-obelisk-activation-regions='functions=producer_and_consumer,transform publications=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=VALUES
-// RUN: obelisk-opt %s --test-obelisk-activation-regions='functions=producer_and_consumer,transform publications=true reaching-values=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=LANES
+// RUN: talos-opt %s --test-talos-activation-regions='functions=producer_and_consumer,transform publications=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=VALUES
+// RUN: talos-opt %s --test-talos-activation-regions='functions=producer_and_consumer,transform publications=true reaching-values=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=LANES
 
 // Value equations are acyclic: q0=v, q1=v+1, r0=q0, r1=q0+q1.
 // The producer reads responses between request stores, so statement order is
@@ -11,7 +11,7 @@
 // PROOF: 1 plans (1 data-dependence order)
 // FUSED-NOT: simulation.spawn @producer_and_consumer
 // FUSED-NOT: simulation.spawn @transform
-// FUSED: simulation.spawn @__obelisk_region_kernel_0_0
+// FUSED: simulation.spawn @__talos_region_kernel_0_0
 // FUSED: simulation.spawn @sample
 // Following SSA yields separates independent publications within one loop.
 // The value graph alone does not authorize reordering source publications.

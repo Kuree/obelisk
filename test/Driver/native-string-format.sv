@@ -1,10 +1,10 @@
-// RUN: obelisk -O0 %s -o %t.native
+// RUN: talos -O0 %s -o %t.native
 // RUN: %t.native | FileCheck %s
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
-// RUN: obelisk -O3 %s -o %t.optimized
+// RUN: talos -O3 %s -o %t.optimized
 // RUN: %t.optimized | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.optimized-bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.optimized-bytecode
 // RUN: %t.optimized-bytecode | FileCheck %s
 
 module native_string_format;

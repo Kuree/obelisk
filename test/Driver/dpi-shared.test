@@ -1,10 +1,10 @@
 // REQUIRES: native-elf
 // RUN: %target_clang -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
 // RUN: %target_clang -nostdlib -shared %t.o -o %t.so
-// RUN: obelisk %S/dpi.sv %t.so -o %t.shared
+// RUN: talos %S/dpi.sv %t.so -o %t.shared
 // RUN: %t.shared | FileCheck %s --check-prefix=OUTPUT
 // RUN: ln -f %t.so %t.hardlink.so
-// RUN: obelisk %S/dpi.sv %t.so %t.hardlink.so -o %t.hardlink
+// RUN: talos %S/dpi.sv %t.so %t.hardlink.so -o %t.hardlink
 // RUN: %t.hardlink | FileCheck %s --check-prefix=OUTPUT
 // RUN: llvm-readelf -d %t.shared | FileCheck %s --check-prefix=NO-SONAME --implicit-check-not='Shared library: [/'
 

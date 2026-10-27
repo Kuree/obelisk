@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-slang %s | FileCheck %s --check-prefix=SLANG
 
 module dpi_imports;
   import "DPI-C" pure c_add = function int sv_add(input int value);

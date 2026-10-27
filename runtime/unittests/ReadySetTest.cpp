@@ -1,20 +1,20 @@
 //===- ReadySetTest.cpp - Ordered ready-set invariants
 //---------------------===//
 
-#include "obelisk/Runtime/ReadySet.h"
-#include "obelisk/Runtime/ClockKernelReadySet.h"
+#include "talos/Runtime/ReadySet.h"
+#include "talos/Runtime/ClockKernelReadySet.h"
 #include "gtest/gtest.h"
 
 #include <random>
 #include <set>
 #include <utility>
 
-using obelisk::runtime::CursorReadySet;
-using obelisk::runtime::CursorReadySetLayout;
-using obelisk::runtime::CursorReadySetView;
-using obelisk::runtime::ReadySet;
-using obelisk::runtime::ReadySetLayout;
-using obelisk::runtime::ReadySetView;
+using talos::runtime::CursorReadySet;
+using talos::runtime::CursorReadySetLayout;
+using talos::runtime::CursorReadySetView;
+using talos::runtime::ReadySet;
+using talos::runtime::ReadySetLayout;
+using talos::runtime::ReadySetView;
 
 namespace {
 constexpr uint32_t none = ReadySetLayout::noBit;
@@ -26,22 +26,22 @@ TEST_P(ReadySetCapacity, ClockKernelPublicationMaintainsGeneratedIndex) {
     return;
   uint32_t words = (uint64_t{GetParam()} + 63) / 64;
   const ReadySetLayout layout =
-      obelisk::runtime::clockKernelReadySetLayout(words);
+      talos::runtime::clockKernelReadySetLayout(words);
   std::vector<uint64_t> indexed(layout.storageWords);
   ReadySetView ready(indexed.data(), layout);
   ready.clear();
-  obelisk_rt_native_clock_kernel kernel{};
+  talos_rt_native_clock_kernel kernel{};
   kernel.ingress_mask = indexed.data();
   kernel.ingress_word_count = words;
-  kernel.reserved = obelisk::runtime::indexedClockKernelReadySet;
+  kernel.reserved = talos::runtime::indexedClockKernelReadySet;
   // Generated consumption and native publication alternate, including a
   // backwards wakeup and publication after the cached empty sentinel.
   uint32_t last = GetParam() - 1;
   for (unsigned iteration = 0; iteration != 3; ++iteration) {
-    obelisk::runtime::publishClockKernelReady(kernel, last);
-    obelisk::runtime::publishClockKernelReady(kernel, last);
+    talos::runtime::publishClockKernelReady(kernel, last);
+    talos::runtime::publishClockKernelReady(kernel, last);
     EXPECT_EQ(ready.findFirst(), last);
-    obelisk::runtime::publishClockKernelReady(kernel, 0);
+    talos::runtime::publishClockKernelReady(kernel, 0);
     EXPECT_EQ(ready.popFirst(), 0u);
     if (last)
       EXPECT_EQ(ready.popFirst(), last);
@@ -52,7 +52,7 @@ TEST_P(ReadySetCapacity, ClockKernelPublicationMaintainsGeneratedIndex) {
   raw.back() = 0xabcde;
   kernel.ingress_mask = raw.data();
   kernel.reserved = 0;
-  obelisk::runtime::publishClockKernelReady(kernel, last);
+  talos::runtime::publishClockKernelReady(kernel, last);
   EXPECT_EQ(raw[last / 64], uint64_t{1} << (last % 64));
   EXPECT_EQ(raw.back(), 0xabcdeu);
 }

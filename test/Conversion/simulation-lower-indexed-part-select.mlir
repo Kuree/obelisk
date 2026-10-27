@@ -1,19 +1,19 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // Drives every indexed part-select direction combination directly from
 // hand-authored MLIR. The second child is the select width, not a second bound.
 // Both source declaration directions and both indexed directions must map the
 // selected source indices to the same physical low bit.
 
-!bit = !obelisk.integral<1, false, false, 0 : 0, bit>
-!int = !obelisk.integral<32, true, false, 31 : 0, int>
-!descending = !obelisk.ranged_packed_array<7 : 0 x !bit>
-!descending_slice = !obelisk.ranged_packed_array<6 : 4 x !bit>
-!ascending = !obelisk.ranged_packed_array<0 : 7 x !bit>
-!ascending_slice = !obelisk.ranged_packed_array<3 : 5 x !bit>
-!pair = !obelisk.ranged_packed_array<1 : 0 x !bit>
-!nested = !obelisk.ranged_packed_array<2 : 0 x !pair>
-!nested_slice = !obelisk.ranged_packed_array<2 : 1 x !pair>
+!bit = !talos.integral<1, false, false, 0 : 0, bit>
+!int = !talos.integral<32, true, false, 31 : 0, int>
+!descending = !talos.ranged_packed_array<7 : 0 x !bit>
+!descending_slice = !talos.ranged_packed_array<6 : 4 x !bit>
+!ascending = !talos.ranged_packed_array<0 : 7 x !bit>
+!ascending_slice = !talos.ranged_packed_array<3 : 5 x !bit>
+!pair = !talos.ranged_packed_array<1 : 0 x !bit>
+!nested = !talos.ranged_packed_array<2 : 0 x !pair>
+!nested_slice = !talos.ranged_packed_array<2 : 1 x !pair>
 
 module {
   simulation.design @indexed_part_select {
@@ -90,176 +90,176 @@ module {
           ],
           code_unit_id = 9500001 : i64
         } {
-      obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
-          obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 1 : i64} {
+          talos.sv.expression.assignment attributes {
             node_id = 2 : i64, assignment_kind = 0 : i32,
             semantic_type = !descending_slice} {
-          obelisk.sv.expression.range_select attributes {
+          talos.sv.expression.range_select attributes {
               node_id = 3 : i64, selection_kind = 1 : i32,
               semantic_type = !descending_slice} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 4 : i64, referenced_path = "top.descending",
                 referenced_symbol = @descending,
                 semantic_type = !descending} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 5 : i64, constant_value = "4",
                 semantic_type = !int} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 6 : i64, constant_value = "3",
                 semantic_type = !int} {
             }
           }
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               node_id = 7 : i64, constant_value = "3'b111",
               semantic_type = !descending_slice} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 8 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 8 : i64} {
+        talos.sv.expression.assignment attributes {
             node_id = 9 : i64, assignment_kind = 0 : i32,
             semantic_type = !descending_slice} {
-          obelisk.sv.expression.range_select attributes {
+          talos.sv.expression.range_select attributes {
               node_id = 10 : i64, selection_kind = 2 : i32,
               semantic_type = !descending_slice} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 11 : i64, referenced_path = "top.descending",
                 referenced_symbol = @descending,
                 semantic_type = !descending} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 12 : i64, constant_value = "6",
                 semantic_type = !int} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 13 : i64, constant_value = "3",
                 semantic_type = !int} {
             }
           }
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               node_id = 14 : i64, constant_value = "3'b111",
               semantic_type = !descending_slice} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 15 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 15 : i64} {
+        talos.sv.expression.assignment attributes {
             node_id = 16 : i64, assignment_kind = 0 : i32,
             semantic_type = !ascending_slice} {
-          obelisk.sv.expression.range_select attributes {
+          talos.sv.expression.range_select attributes {
               node_id = 17 : i64, selection_kind = 1 : i32,
               semantic_type = !ascending_slice} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 18 : i64, referenced_path = "top.ascending",
                 referenced_symbol = @ascending,
                 semantic_type = !ascending} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 19 : i64, constant_value = "3",
                 semantic_type = !int} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 20 : i64, constant_value = "3",
                 semantic_type = !int} {
             }
           }
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               node_id = 21 : i64, constant_value = "3'b111",
               semantic_type = !ascending_slice} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 22 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 22 : i64} {
+        talos.sv.expression.assignment attributes {
             node_id = 23 : i64, assignment_kind = 0 : i32,
             semantic_type = !ascending_slice} {
-          obelisk.sv.expression.range_select attributes {
+          talos.sv.expression.range_select attributes {
               node_id = 24 : i64, selection_kind = 2 : i32,
               semantic_type = !ascending_slice} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 25 : i64, referenced_path = "top.ascending",
                 referenced_symbol = @ascending,
                 semantic_type = !ascending} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 26 : i64, constant_value = "5",
                 semantic_type = !int} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 27 : i64, constant_value = "3",
                 semantic_type = !int} {
             }
           }
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               node_id = 28 : i64, constant_value = "3'b111",
               semantic_type = !ascending_slice} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 29 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 29 : i64} {
+        talos.sv.expression.assignment attributes {
             node_id = 30 : i64, assignment_kind = 0 : i32,
             semantic_type = !nested_slice} {
-          obelisk.sv.expression.range_select attributes {
+          talos.sv.expression.range_select attributes {
               node_id = 31 : i64, selection_kind = 2 : i32,
               semantic_type = !nested_slice} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 32 : i64, referenced_path = "top.nested",
                 referenced_symbol = @nested,
                 semantic_type = !nested} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 33 : i64, constant_value = "2",
                 semantic_type = !int} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 34 : i64, constant_value = "2",
                 semantic_type = !int} {
             }
           }
-          obelisk.sv.expression.integer_literal attributes {
+          talos.sv.expression.integer_literal attributes {
               node_id = 35 : i64, constant_value = "4'b1111",
               semantic_type = !nested_slice} {
           }
         }
       }
-      obelisk.sv.statement.expression_statement attributes {node_id = 36 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 36 : i64} {
+        talos.sv.expression.assignment attributes {
             node_id = 37 : i64, assignment_kind = 0 : i32,
             semantic_type = !nested_slice} {
-          obelisk.sv.expression.range_select attributes {
+          talos.sv.expression.range_select attributes {
               node_id = 38 : i64, selection_kind = 2 : i32,
               semantic_type = !nested_slice} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 39 : i64, referenced_path = "top.nested",
                 referenced_symbol = @nested,
                 semantic_type = !nested} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 40 : i64, constant_value = "2",
                 semantic_type = !int} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 41 : i64, constant_value = "2",
                 semantic_type = !int} {
             }
           }
-          obelisk.sv.expression.range_select attributes {
+          talos.sv.expression.range_select attributes {
               node_id = 42 : i64, selection_kind = 2 : i32,
               semantic_type = !nested_slice} {
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 43 : i64, referenced_path = "top.nested",
                 referenced_symbol = @nested,
                 semantic_type = !nested} {
             }
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 node_id = 44 : i64, referenced_path = "top.index",
                 referenced_symbol = @index,
                 semantic_type = !int} {
             }
-            obelisk.sv.expression.integer_literal attributes {
+            talos.sv.expression.integer_literal attributes {
                 node_id = 45 : i64, constant_value = "2",
                 semantic_type = !int} {
             }

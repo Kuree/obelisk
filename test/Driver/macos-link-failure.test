@@ -1,7 +1,7 @@
 // REQUIRES: native-macho
 // RUN: %split-file %s %t.dir
-// RUN: %obelisk %S/macos-native.sv -o %t.dir/simulator
-// RUN: not %obelisk %t.dir/missing.sv -o %t.dir/simulator 2>&1 | FileCheck %s
+// RUN: %talos %S/macos-native.sv -o %t.dir/simulator
+// RUN: not %talos %t.dir/missing.sv -o %t.dir/simulator 2>&1 | FileCheck %s
 // RUN: %t.dir/simulator | FileCheck %S/macos-native.sv --check-prefix=OUTPUT
 
 // An unresolved strong symbol must fail without replacing an existing output.

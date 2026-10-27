@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-activation-memory='values=true' -o %t.analyzed 2>&1 | FileCheck %s --implicit-check-not="values valid=0"
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s --test-talos-activation-memory='values=true' -o %t.analyzed 2>&1 | FileCheck %s --implicit-check-not="values valid=0"
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
 
 !elt = !simulation.packed_struct<[#simulation.field<name = "high", type = !simulation.logic<4>, ordinal = 0, packedOffset = 8>, #simulation.field<name = "low", type = !simulation.logic<8>, ordinal = 1, packedOffset = 0>]>

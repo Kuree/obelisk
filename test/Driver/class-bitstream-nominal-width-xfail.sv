@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: obelisk --std=1800-2023 -emit-obelisk %s -o /dev/null
+// RUN: talos --std=1800-2023 -emit-talos %s -o /dev/null
 
 // Slang checks the nominal Base width and rejects a legal cast whose runtime
 // object is Derived; object bit-stream width follows the concrete object.

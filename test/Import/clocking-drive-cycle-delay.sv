@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s 2>/dev/null | FileCheck %s
+// RUN: talos -emit-slang %s 2>/dev/null | FileCheck %s
 
 // IEEE 1800-2023 14.16: the cycle delay on the right-hand side of a
 // synchronous drive counts cycles of the target clockvar's own clocking

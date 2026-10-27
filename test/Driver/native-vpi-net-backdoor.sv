@@ -1,8 +1,8 @@
 // REQUIRES: native-elf
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
-// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_net_probe.c -I%resource_dir/include -Wl,-soname,libobelisk_vpi_net_probe.so -o %t.dir/lib/libobelisk_vpi_net_probe.so
-// RUN: cd %t.dir && obelisk -O2 --vpi=read --native-scheduler=auto %s lib/libobelisk_vpi_net_probe.so -o bin/read-auto
-// RUN: cd %t.dir && obelisk -O2 --vpi=full --native-scheduler=auto %s lib/libobelisk_vpi_net_probe.so -o bin/full-auto
+// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_net_probe.c -I%resource_dir/include -Wl,-soname,libtalos_vpi_net_probe.so -o %t.dir/lib/libtalos_vpi_net_probe.so
+// RUN: cd %t.dir && talos -O2 --vpi=read --native-scheduler=auto %s lib/libtalos_vpi_net_probe.so -o bin/read-auto
+// RUN: cd %t.dir && talos -O2 --vpi=full --native-scheduler=auto %s lib/libtalos_vpi_net_probe.so -o bin/full-auto
 // RUN: %t.dir/bin/read-auto > %t.read-auto.out
 // RUN: FileCheck %s < %t.read-auto.out
 // RUN: %t.dir/bin/full-auto | diff -u %t.read-auto.out -

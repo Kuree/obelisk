@@ -1,7 +1,7 @@
 //===- NativeModulePruning.h - Model reachability ------------*- C++ -*-===//
 
-#ifndef OBELISK_TOOLS_DRIVER_NATIVEMODULEPRUNING_H
-#define OBELISK_TOOLS_DRIVER_NATIVEMODULEPRUNING_H
+#ifndef TALOS_TOOLS_DRIVER_NATIVEMODULEPRUNING_H
+#define TALOS_TOOLS_DRIVER_NATIVEMODULEPRUNING_H
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/SymbolTable.h"
@@ -9,7 +9,7 @@
 #include "mlir/IR/Verifier.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
-#include "obelisk/Analysis/ParallelWalk.h"
+#include "talos/Analysis/ParallelWalk.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -19,29 +19,29 @@
 #include "llvm/Transforms/IPO/GlobalDCE.h"
 #include "llvm/Transforms/IPO/Internalize.h"
 
-namespace obelisk::driver::detail {
+namespace talos::driver::detail {
 
 inline llvm::StringRef nativePrunedSymbolCategory(llvm::StringRef name) {
-  if (name.ends_with(".__obelisk_bytecode_entry"))
+  if (name.ends_with(".__talos_bytecode_entry"))
     return "bytecode-entry";
-  if (name.starts_with("__obelisk_eval_variant_dispatch_"))
+  if (name.starts_with("__talos_eval_variant_dispatch_"))
     return "variant-dispatch";
-  if (name.contains(".__obelisk_frame_"))
+  if (name.contains(".__talos_frame_"))
     return "frame";
-  if (name.contains(".__obelisk_process_descriptor"))
+  if (name.contains(".__talos_process_descriptor"))
     return "process-descriptor";
-  if (name.contains(".__obelisk_spawn") ||
-      name.contains(".__obelisk_schedule_") ||
-      name.contains(".__obelisk_bytecode_continuations"))
+  if (name.contains(".__talos_spawn") ||
+      name.contains(".__talos_schedule_") ||
+      name.contains(".__talos_bytecode_continuations"))
     return "spawn";
-  if (name.contains(".__obelisk_activate"))
+  if (name.contains(".__talos_activate"))
     return "activation";
-  if (name.contains(".__obelisk_coro_"))
+  if (name.contains(".__talos_coro_"))
     return "coroutine";
-  if (name.contains(".__obelisk_eval_") || name.contains(".__obelisk_clean"))
+  if (name.contains(".__talos_eval_") || name.contains(".__talos_clean"))
     return "eval";
-  if (name.contains(".__obelisk_native_execute") ||
-      name.contains(".__obelisk_execute"))
+  if (name.contains(".__talos_native_execute") ||
+      name.contains(".__talos_execute"))
     return "execute";
   return "other";
 }
@@ -57,11 +57,11 @@ inline void reportNativePrunedSymbols(const llvm::StringSet<> &removed,
   for (llvm::StringRef name : names) {
     llvm::StringRef category = nativePrunedSymbolCategory(name);
     ++counts[category];
-    llvm::errs() << "obelisk native pruned symbol: stage=" << stage
+    llvm::errs() << "talos native pruned symbol: stage=" << stage
                  << " category=" << category << " name=" << name << '\n';
   }
   for (const auto &[category, count] : counts)
-    llvm::errs() << "obelisk native pruning category: stage=" << stage
+    llvm::errs() << "talos native pruning category: stage=" << stage
                  << " category=" << category << " symbols=" << count << '\n';
 }
 
@@ -72,7 +72,7 @@ inline void reportNativePrunedSymbols(const llvm::StringSet<> &removed,
 /// anything when SymbolDCE itself must run: for nested symbol tables, or for a
 /// live operation whose uses cannot be enumerated, which it reports.
 inline bool eraseDeadModuleSymbols(mlir::ModuleOp module) {
-  if (obelisk::analysis::anyNested<mlir::Operation *>(
+  if (talos::analysis::anyNested<mlir::Operation *>(
           module, [&](mlir::Operation *operation) {
             return operation != module.getOperation() &&
                    operation->hasTrait<mlir::OpTrait::SymbolTable>();
@@ -85,7 +85,7 @@ inline bool eraseDeadModuleSymbols(mlir::ModuleOp module) {
   llvm::SmallVector<llvm::SmallVector<mlir::StringAttr, 2>> uses(
       operations.size());
   llvm::SmallVector<char> unknown(operations.size(), false);
-  obelisk::analysis::parallelForChunked(
+  talos::analysis::parallelForChunked(
       module.getContext(), operations.size(), [&](size_t index) {
         auto found = mlir::SymbolTable::getSymbolUses(operations[index]);
         if (!found) {
@@ -157,9 +157,9 @@ pruneNativeExecutableSymbols(mlir::ModuleOp module,
     if (name == "main" || exports.contains(name) || name.starts_with("llvm."))
       continue;
     if (requiresLifecycle &&
-        (name == "__obelisk_current_context" ||
-         name == "__obelisk_state_value" || name == "__obelisk_state_unknown" ||
-         name == "__obelisk_execution_descriptor_v1"))
+        (name == "__talos_current_context" ||
+         name == "__talos_state_value" || name == "__talos_state_unknown" ||
+         name == "__talos_execution_descriptor_v1"))
       continue;
     if (auto function = mlir::dyn_cast<mlir::LLVM::LLVMFuncOp>(&operation)) {
       if (function.isExternal())
@@ -207,6 +207,6 @@ pruneNativeExecutableModel(llvm::Module &module,
   return definitions;
 }
 
-} // namespace obelisk::driver::detail
+} // namespace talos::driver::detail
 
 #endif

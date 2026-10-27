@@ -1,12 +1,12 @@
 # RUN: %split-file %s %t
-# RUN: %obelisk --std=1800-2023 -O0 --target=native --coverage=functional \
+# RUN: %talos --std=1800-2023 -O0 --target=native --coverage=functional \
 # RUN:   %t/first.sv %t/second.sv -o %t/native
 # RUN: %t/native --coverage-output=%t/native.obcov
-# RUN: obelisk-cov report --format=text %t/native.obcov | FileCheck %s
-# RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode --coverage=functional \
+# RUN: talos-cov report --format=text %t/native.obcov | FileCheck %s
+# RUN: %talos --std=1800-2023 -O3 --execution-tier=bytecode --coverage=functional \
 # RUN:   %t/first.sv %t/second.sv -o %t/bytecode
 # RUN: %t/bytecode --coverage-output=%t/bytecode.obcov
-# RUN: obelisk-cov report --format=text %t/bytecode.obcov | FileCheck %s
+# RUN: talos-cov report --format=text %t/bytecode.obcov | FileCheck %s
 
 # LRM 19.5.3: automatic bins use the exact enum's members. The two $unit
 # color_t declarations have identical display names but different values.

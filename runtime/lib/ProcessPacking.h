@@ -7,10 +7,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef OBELISK_RUNTIME_LIB_PROCESSPACKING_H
-#define OBELISK_RUNTIME_LIB_PROCESSPACKING_H
+#ifndef TALOS_RUNTIME_LIB_PROCESSPACKING_H
+#define TALOS_RUNTIME_LIB_PROCESSPACKING_H
 
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -19,9 +19,9 @@
 
 inline bool decodeNativeAutomatic(uint64_t handle, uint32_t &id,
                                   int64_t &offset) {
-  obelisk_rt_stable_handle_v1 decoded;
-  if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
-      decoded.kind != OBELISK_RT_STABLE_HANDLE_AUTOMATIC)
+  talos_rt_stable_handle_v1 decoded;
+  if (!talos_rt_stable_handle_decode(handle, &decoded) ||
+      decoded.kind != TALOS_RT_STABLE_HANDLE_AUTOMATIC)
     return false;
   id = decoded.id;
   offset = decoded.offset;
@@ -29,18 +29,18 @@ inline bool decodeNativeAutomatic(uint64_t handle, uint32_t &id,
 }
 
 inline bool decodeNativeGlobal(uint64_t handle, int64_t &offset) {
-  obelisk_rt_stable_handle_v1 decoded;
-  if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
-      decoded.kind != OBELISK_RT_STABLE_HANDLE_GLOBAL)
+  talos_rt_stable_handle_v1 decoded;
+  if (!talos_rt_stable_handle_decode(handle, &decoded) ||
+      decoded.kind != TALOS_RT_STABLE_HANDLE_GLOBAL)
     return false;
   offset = decoded.offset;
   return true;
 }
 
 inline bool decodeNativeStatic(uint64_t handle, uint32_t &id, int64_t &offset) {
-  obelisk_rt_stable_handle_v1 decoded;
-  if (!obelisk_rt_stable_handle_decode(handle, &decoded) ||
-      decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC)
+  talos_rt_stable_handle_v1 decoded;
+  if (!talos_rt_stable_handle_decode(handle, &decoded) ||
+      decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC)
     return false;
   id = decoded.id;
   offset = decoded.offset;
@@ -56,7 +56,7 @@ inline bool addHandleOffset(int64_t base, uint64_t offset, int64_t &result) {
 }
 
 inline uint64_t nativeHandleOffset(uint64_t handle, int64_t amount) {
-  return obelisk_rt_stable_handle_offset(handle, amount);
+  return talos_rt_stable_handle_offset(handle, amount);
 }
 
 inline uint64_t packedWidthMask(uint64_t bitWidth) {
@@ -243,4 +243,4 @@ inline void storePackedBytes(uint8_t *plane, uint64_t bitOffset,
     plane[firstByte + byte] = static_cast<uint8_t>(bits >> (byte * 8));
 }
 
-#endif // OBELISK_RUNTIME_LIB_PROCESSPACKING_H
+#endif // TALOS_RUNTIME_LIB_PROCESSPACKING_H

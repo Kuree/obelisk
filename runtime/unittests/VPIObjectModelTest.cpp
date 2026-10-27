@@ -1,8 +1,8 @@
 //===- VPIObjectModelTest.cpp - IEEE VPI traversal model tests -----------===//
 
-#include "obelisk/Reflection/VPIObjectModel.h"
+#include "talos/Reflection/VPIObjectModel.h"
 #include "../lib/VPIInternal.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "gtest/gtest.h"
 
@@ -26,7 +26,7 @@
 
 namespace {
 
-using namespace obelisk::reflection;
+using namespace talos::reflection;
 
 using Mode = VPITraversalMode;
 using Order = VPITraversalOrder;
@@ -42,7 +42,7 @@ using IndexedKind = VPIIndexedAccessKind;
 using KindSet = std::set<uint32_t>;
 
 TEST(VPIObjectModel, ClassDefinitionValueOriginStopsAtGraphBoundaries) {
-  using obelisk::runtime::hasClassDefinitionValueOrigin;
+  using talos::runtime::hasClassDefinitionValueOrigin;
   EXPECT_TRUE(hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiReg));
   EXPECT_TRUE(
       hasClassDefinitionValueOrigin(vpiClassDefn, false, vpiNamedEvent));
@@ -62,7 +62,7 @@ TEST(VPIObjectModel, ClassDefinitionValueOriginStopsAtGraphBoundaries) {
 }
 
 TEST(VPIObjectModel, RefObjectTypespecRequiresNetVariableOrPartSelectActual) {
-  using obelisk::runtime::hasRefObjectTypespecActual;
+  using talos::runtime::hasRefObjectTypespecActual;
   EXPECT_TRUE(hasRefObjectTypespecActual(vpiReg));
   EXPECT_TRUE(hasRefObjectTypespecActual(vpiPackedArrayVar));
   EXPECT_TRUE(hasRefObjectTypespecActual(vpiNet));
@@ -1819,18 +1819,18 @@ TEST(VPIObjectModel, IntegerPropertyDomainImageExactlyMatchesGeneratedModel) {
 }
 
 TEST(VPIObjectModel, RuntimeExportsCanonicalImmutableModelImage) {
-  const obelisk_rt_vpi_object_model_v1 *model =
-      obelisk_rt_v1_vpi_object_model();
+  const talos_rt_vpi_object_model_v1 *model =
+      talos_rt_v1_vpi_object_model();
   ASSERT_NE(model, nullptr);
   ASSERT_NE(model->data, nullptr);
   EXPECT_EQ(model->size, sizeof(vpiObjectModelImage));
   EXPECT_EQ(model->fingerprint, vpiObjectModelImageFingerprint);
   EXPECT_EQ(std::memcmp(model->data, vpiObjectModelImage, model->size), 0);
   EXPECT_TRUE(validateVPIObjectModelImage(model->data, model->size));
-  EXPECT_EQ(obelisk_rt_v1_vpi_object_model(), model);
+  EXPECT_EQ(talos_rt_v1_vpi_object_model(), model);
 #if defined(__linux__) && !defined(__EMSCRIPTEN__)
-  using Accessor = const obelisk_rt_vpi_object_model_v1 *(*)(void);
-  void *symbol = dlsym(RTLD_DEFAULT, "obelisk_rt_v1_vpi_object_model");
+  using Accessor = const talos_rt_vpi_object_model_v1 *(*)(void);
+  void *symbol = dlsym(RTLD_DEFAULT, "talos_rt_v1_vpi_object_model");
   ASSERT_NE(symbol, nullptr);
   EXPECT_EQ(reinterpret_cast<Accessor>(symbol)(), model);
 #endif
@@ -3893,7 +3893,7 @@ TEST(VPIObjectModel,
 } // namespace
 
 TEST(VPIObjectModel, ArrayVariablesAndPrefixParentsUseVariableKinds) {
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   const auto *elements =
       findVPITraversal(vpiRegArray, vpiReg, VPITraversalMode::Iterate);
   ASSERT_NE(elements, nullptr);

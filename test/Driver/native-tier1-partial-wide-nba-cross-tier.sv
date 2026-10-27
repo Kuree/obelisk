@@ -1,8 +1,8 @@
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.diag
+// RUN: talos -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.diag
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 // RUN: FileCheck %s --check-prefix=PROOF < %t.diag
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O3 --native-scheduler=auto %s -o %t.auto
+// RUN: talos -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.auto > %t.auto.out
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.auto.out
@@ -40,7 +40,7 @@ module native_tier1_partial_wide_nba_cross_tier;
   end
 endmodule
 
-// LLVM: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
-// LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
+// LLVM: call i32 @talos_rt_v1_scheduler_execute_aot_actor
+// LLVM: define {{.*}}i32 @__talos_eval_dispatch_v1
 // PROOF: ordered NBA boundary:
 // PROOF-NOT: partial eval disabled

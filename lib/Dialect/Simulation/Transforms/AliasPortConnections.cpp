@@ -13,11 +13,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Analysis/HandleDataflowAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Analysis/HandleDataflowAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Builders.h"
@@ -33,13 +33,13 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMALIASPORTCONNECTIONSPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMALIASPORTCONNECTIONSPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
-namespace sim = ::obelisk::sim;
+namespace sim = ::talos::sim;
 
 /// One accepted equation `eliminated == target[path]` from a copy process.
 struct Candidate {
@@ -190,9 +190,9 @@ std::optional<CopyShape> matchCopy(sim::SimFuncOp function) {
   return shape;
 }
 
-class ObeliskSimAliasPortConnectionsPass
-    : public impl::ObeliskSimAliasPortConnectionsPassBase<
-          ObeliskSimAliasPortConnectionsPass> {
+class TalosSimAliasPortConnectionsPass
+    : public impl::TalosSimAliasPortConnectionsPassBase<
+          TalosSimAliasPortConnectionsPass> {
 public:
   using Base::Base;
 
@@ -200,7 +200,7 @@ private:
   void runOnOperation() override;
 };
 
-void ObeliskSimAliasPortConnectionsPass::runOnOperation() {
+void TalosSimAliasPortConnectionsPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   if (vpi != "off") {
     if (vpi != "read" && vpi != "full") {
@@ -874,4 +874,4 @@ void ObeliskSimAliasPortConnectionsPass::runOnOperation() {
 }
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

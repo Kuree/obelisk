@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-access-footprints -o /dev/null 2> %t.threaded
-// RUN: obelisk-opt %s --test-obelisk-access-footprints --mlir-disable-threading -o /dev/null 2> %t.serial
+// RUN: talos-opt %s --test-talos-access-footprints -o /dev/null 2> %t.threaded
+// RUN: talos-opt %s --test-talos-access-footprints --mlir-disable-threading -o /dev/null 2> %t.serial
 // RUN: diff %t.threaded %t.serial
 // RUN: FileCheck %s < %t.threaded
 

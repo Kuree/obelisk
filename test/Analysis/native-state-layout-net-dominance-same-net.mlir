@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-native-state-layout-analysis 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode > /dev/null
+// RUN: talos-opt %s --test-talos-native-state-layout-analysis 2>&1 | FileCheck %s
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode > /dev/null
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"

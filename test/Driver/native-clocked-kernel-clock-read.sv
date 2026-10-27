@@ -1,8 +1,8 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O3 --vpi=off --mlir-timing %t/logic.sv -o %t/logic 2> %t/logic.plan
+// RUN: talos -O3 --vpi=off --mlir-timing %t/logic.sv -o %t/logic 2> %t/logic.plan
 // RUN: FileCheck %s --check-prefix=PLAN < %t/logic.plan
 // RUN: %t/logic | FileCheck %s --check-prefix=LOGIC
-// RUN: obelisk -O3 --vpi=off --mlir-timing %t/bit.sv -o %t/bit 2> %t/bit.plan
+// RUN: talos -O3 --vpi=off --mlir-timing %t/bit.sv -o %t/bit 2> %t/bit.plan
 // RUN: FileCheck %s --check-prefix=PLAN < %t/bit.plan
 // RUN: %t/bit | FileCheck %s --check-prefix=BIT
 
@@ -12,7 +12,7 @@
 // checker runs after the copy's update event, when the copy equals the source
 // (IEEE 1800-2023 23.3.3, 4.9.1), so the printed level is the post-edge 0.
 // A 2-state source feeding a 4-state port is read through its exact widening.
-// PLAN: obelisk clocked kernel: {{.*}} clock_reads=1
+// PLAN: talos clocked kernel: {{.*}} clock_reads=1
 
 // The 4-state port copy takes `clk_i` from x to 0 at time zero, which is a
 // negedge as well (Table 9-2), with either source.

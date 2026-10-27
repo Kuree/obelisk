@@ -1,13 +1,13 @@
 //===- SimulationStatePlaneMaterialization.cpp - Native state globals -===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Analysis/NativeStorageLayout.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Analysis/NativeStorageLayout.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "llvm/ADT/DenseSet.h"
@@ -19,7 +19,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 Value nbaFieldGEP(OpBuilder &builder, Location location, Value base,
                   uint64_t offset) {
@@ -53,7 +53,7 @@ void materializeNativeStatePlanes(ModuleOp module,
   // The private guard word supports the existing unaligned scalar windows.
   uint64_t bytes = (layout.bitCount + 7) / 8 + sizeof(uint64_t);
   Type array = LLVM::LLVMArrayType::get(builder.getI8Type(), bytes);
-  for (StringRef name : {"__obelisk_state_value", "__obelisk_state_unknown"}) {
+  for (StringRef name : {"__talos_state_value", "__talos_state_unknown"}) {
     builder.setInsertionPointToStart(module.getBody());
     auto global =
         LLVM::GlobalOp::create(builder, location, array, false,
@@ -215,7 +215,7 @@ void materializeNativeStatePlanes(ModuleOp module,
   LLVM::GlobalOp::create(
       builder, location,
       LLVM::LLVMArrayType::get(builder.getI64Type(), fills.size()), true,
-      LLVM::Linkage::Internal, "__obelisk_state_initializers_v1",
+      LLVM::Linkage::Internal, "__talos_state_initializers_v1",
       DenseIntElementsAttr::get(tensor, ArrayRef<uint64_t>(fills)), 8);
 }
 
@@ -230,9 +230,9 @@ void assignUnknownSummary(ModuleOp module, NativeStateLayout &layout) {
   module.walk([&](sim::SimStorageDeclOp storage) {
     auto ranges = sim::get<sim::metadata::SteadyUnknown>(storage);
     auto handle = layout.storage.find(storage.getId());
-    obelisk_rt_stable_handle_v1 decoded{};
+    talos_rt_stable_handle_v1 decoded{};
     if (!ranges || handle == layout.storage.end() ||
-        !obelisk_rt_stable_handle_decode(handle->second, &decoded))
+        !talos_rt_stable_handle_decode(handle->second, &decoded))
       return;
     auto &pattern = layout.steadyUnknown[decoded.id];
     for (size_t index = 0; index + 1 < size_t(ranges.size()); index += 2)
@@ -252,10 +252,10 @@ void assignUnknownSummary(ModuleOp module, NativeStateLayout &layout) {
       auto storage = reference.getDefiningOp<sim::SimContextStorageOp>();
       auto handle =
           storage ? layout.storage.find(storage.getId()) : layout.storage.end();
-      obelisk_rt_stable_handle_v1 decoded{};
+      talos_rt_stable_handle_v1 decoded{};
       if (handle == layout.storage.end() ||
-          !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-          decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC)
+          !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+          decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC)
         continue;
       if (!fourState.lookup(decoded.id)) {
         layout.unknownSummaryBits.try_emplace(decoded.id,
@@ -293,17 +293,17 @@ void eliminateTwoStateUnknownPlane(ModuleOp module) {
   if (!native::get<native::TwoState>(module))
     return;
   constexpr uint64_t unknownOffset =
-      offsetof(obelisk_rt_generated_nba_accumulator_256, unknown);
+      offsetof(talos_rt_generated_nba_accumulator_256, unknown);
   constexpr uint64_t afterUnknown =
-      offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask);
+      offsetof(talos_rt_generated_nba_accumulator_256, write_mask);
   constexpr uint64_t unknownBytes = afterUnknown - unknownOffset;
   static_assert(unknownBytes ==
-                sizeof(obelisk_rt_generated_nba_accumulator_256::unknown));
+                sizeof(talos_rt_generated_nba_accumulator_256::unknown));
   SmallVector<LLVM::GlobalOp> globals;
   llvm::DenseSet<StringRef> names;
   for (auto global : module.getOps<LLVM::GlobalOp>())
-    if (global.getSymName() == "__obelisk_state_unknown" ||
-        global.getSymName().starts_with("__obelisk_eval_nba_unknown_")) {
+    if (global.getSymName() == "__talos_state_unknown" ||
+        global.getSymName().starts_with("__talos_eval_nba_unknown_")) {
       globals.push_back(global);
       names.insert(global.getSymName());
     }
@@ -313,7 +313,7 @@ void eliminateTwoStateUnknownPlane(ModuleOp module) {
     if (names.contains(address.getGlobalName())) {
       pointers.insert(address.getResult());
       worklist.push_back(address.getResult());
-    } else if (address.getGlobalName() == "__obelisk_continuous_unknown") {
+    } else if (address.getGlobalName() == "__talos_continuous_unknown") {
       for (Operation *user : address.getResult().getUsers())
         if (auto load = dyn_cast<LLVM::LoadOp>(user))
           if (pointers.insert(load.getResult()).second)
@@ -342,11 +342,11 @@ void eliminateTwoStateUnknownPlane(ModuleOp module) {
     }
   });
   for (auto accumulator : module.getOps<LLVM::GlobalOp>()) {
-    if (!accumulator.getSymName().starts_with("__obelisk_aot_nba_accumulator_"))
+    if (!accumulator.getSymName().starts_with("__talos_aot_nba_accumulator_"))
       continue;
     auto type = LLVM::LLVMArrayType::get(
         IntegerType::get(module.getContext(), 8),
-        sizeof(obelisk_rt_generated_nba_accumulator_256) - unknownBytes);
+        sizeof(talos_rt_generated_nba_accumulator_256) - unknownBytes);
     accumulator.setGlobalType(type);
     accumulator.getInitializerRegion().walk(
         [&](LLVM::ZeroOp zero) { zero.getResult().setType(type); });
@@ -413,7 +413,7 @@ void materializeUnknownSummary(ModuleOp module,
   llvm::DenseMap<uint32_t, const NativeStateLayout::Bound *> bounds;
   for (const auto &bound : layout.bounds)
     bounds[bound.handleID] = &bound;
-  // obelisk_rt_native_unknown_root_v1 records: offset, width and the
+  // talos_rt_native_unknown_root_v1 records: offset, width and the
   // (first, count) slice of pattern ranges, packed little-endian.
   SmallVector<uint64_t> roots, patterns;
   for (auto [bit, handle] : llvm::enumerate(layout.unknownSummaryRoots)) {
@@ -444,11 +444,11 @@ void materializeUnknownSummary(ModuleOp module,
          false);
   Type pointer = LLVM::LLVMPointerType::get(module.getContext());
   getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_native_state_refresh_unknown_summary",
+      module, "talos_rt_v1_native_state_refresh_unknown_summary",
       builder.getI32Type(), {pointer, pointer, i64, pointer});
-  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_native_state_mark_unknown",
+  getOrDeclareLLVMFunction(module, "talos_rt_v1_native_state_mark_unknown",
                            LLVM::LLVMVoidType::get(module.getContext()),
                            {pointer, i64, i64});
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

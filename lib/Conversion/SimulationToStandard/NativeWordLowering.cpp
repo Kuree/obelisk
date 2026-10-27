@@ -1,13 +1,13 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "obelisk/Conversion/SimulationToStandard.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationTypes.h"
+#include "talos/Conversion/SimulationToStandard.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationTypes.h"
 #include "llvm/ADT/DenseMap.h"
 #include <numeric>
 
 using namespace mlir;
-namespace obelisk {
+namespace talos {
 namespace {
 // Reduced ordered Boolean decision diagrams with complemented edges. The
 // truth table is tiny (<=6 variables); choose the cheapest variable ordering
@@ -206,4 +206,4 @@ void populateNativeWordValuePatterns(const TypeConverter &converter,
                WordResizeLanesConversion>(
       converter, patterns.getContext());
 }
-} // namespace obelisk
+} // namespace talos

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp{vpi=off}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-sccp{vpi=off}))' | FileCheck %s
 
 // The mirrored case: a strength1 driver of a constant one.
 // CHECK-LABEL: simulation.func private @reader

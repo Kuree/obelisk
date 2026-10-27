@@ -1,10 +1,10 @@
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.o0
+// RUN: talos -O0 --native-scheduler=generic %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.o3
+// RUN: talos -O3 --native-scheduler=generic %s -o %t.o3
 // RUN: %t.o3 | FileCheck %s
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode.o3
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode.o3
 // RUN: %t.bytecode.o3 | FileCheck %s
 
 module reactive_cohort_top;

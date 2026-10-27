@@ -1,0 +1,93 @@
+// RuntimeCall enum name, operation class, in-tree C ABI symbol, signature key.
+TALOS_RUNTIME_CALL(ContextCreate, RTContextCreateOp,
+                     talos_rt_v1_context_create, ContextCreate)
+TALOS_RUNTIME_CALL(ContextDestroy, RTContextDestroyOp,
+                     talos_rt_v1_context_destroy, ContextDestroy)
+TALOS_RUNTIME_CALL(StatusString, RTStatusStringOp,
+                     talos_rt_v1_status_string, StatusString)
+TALOS_RUNTIME_CALL(BufferRelease, RTBufferReleaseOp,
+                     talos_rt_v1_buffer_release, BufferRelease)
+TALOS_RUNTIME_CALL(LastError, RTLastErrorOp, talos_rt_v1_last_error,
+                     LastError)
+TALOS_RUNTIME_CALL(Finish, RTFinishOp, talos_rt_v1_scheduler_finish,
+                     Finish)
+TALOS_RUNTIME_CALL(ProgramExit, RTProgramExitOp,
+                     talos_rt_v1_scheduler_program_exit, Error)
+TALOS_RUNTIME_CALL(Stop, RTStopOp, talos_rt_v1_scheduler_stop,
+                     Finish)
+TALOS_RUNTIME_CALL(Fatal, RTFatalOp, talos_rt_v1_scheduler_fatal,
+                     Finish)
+TALOS_RUNTIME_CALL(Error, RTErrorOp, talos_rt_v1_scheduler_error, Error)
+TALOS_RUNTIME_CALL(PublicationBatchBegin, RTPublicationBatchBeginOp,
+                     talos_rt_v1_scheduler_publication_batch_begin, Error)
+TALOS_RUNTIME_CALL(PublicationBatchEnd, RTPublicationBatchEndOp,
+                     talos_rt_v1_scheduler_publication_batch_end, Error)
+TALOS_RUNTIME_CALL(GCCollect, RTGCCollectOp, talos_rt_v1_gc_collect_pending,
+                     Error)
+TALOS_RUNTIME_CALL(TerminationRequested, RTTerminationRequestedOp,
+                     talos_rt_v1_scheduler_termination_requested,
+                     TerminationRequested)
+TALOS_RUNTIME_CALL(ProgramOwned, RTProgramOwnedOp,
+                     talos_rt_v1_scheduler_program_owned,
+                     TerminationRequested)
+TALOS_RUNTIME_CALL(SchedulerTime, RTSchedulerTimeOp,
+                     talos_rt_v1_scheduler_time, SchedulerTime)
+TALOS_RUNTIME_CALL(Format, RTFormatOp, talos_rt_v1_format, Format)
+TALOS_RUNTIME_CALL(StringOutputFormat, RTStringOutputFormatOp,
+                     talos_rt_v1_string_output_format, StringOutputFormat)
+TALOS_RUNTIME_CALL(Display, RTDisplayOp, talos_rt_v1_display, Display)
+TALOS_RUNTIME_CALL(TimeFormat, RTTimeFormatOp, talos_rt_v1_time_format,
+                     TimeFormat)
+TALOS_RUNTIME_CALL(TimeScanScale, RTTimeScanScaleOp,
+                     talos_rt_v1_time_scan_scale, TimeScanScale)
+TALOS_RUNTIME_CALL(DumpOpen, RTDumpOpenOp, talos_rt_v1_dump_open,
+                     DumpOpen)
+TALOS_RUNTIME_CALL(DumpTimescale, RTDumpTimescaleOp,
+                     talos_rt_v1_dump_timescale, DumpU32)
+TALOS_RUNTIME_CALL(DumpVars, RTDumpVarsOp, talos_rt_v1_dump_vars, DumpVars)
+TALOS_RUNTIME_CALL(DumpAll, RTDumpAllOp, talos_rt_v1_dump_all, DumpContext)
+TALOS_RUNTIME_CALL(DumpControl, RTDumpControlOp, talos_rt_v1_dump_control,
+                     DumpU32)
+TALOS_RUNTIME_CALL(DumpLimit, RTDumpLimitOp, talos_rt_v1_dump_limit,
+                     DumpU64)
+TALOS_RUNTIME_CALL(DumpFlush, RTDumpFlushOp, talos_rt_v1_dump_flush,
+                     DumpContext)
+TALOS_RUNTIME_CALL(FileOpenMCD, RTFileOpenMCDOp,
+                     talos_rt_v1_file_open_mcd, FileOpenMCD)
+TALOS_RUNTIME_CALL(FileOpen, RTFileOpenOp, talos_rt_v1_file_open, FileOpen)
+TALOS_RUNTIME_CALL(FileClose, RTFileCloseOp, talos_rt_v1_file_close,
+                     FileDescriptorStatus)
+TALOS_RUNTIME_CALL(FileFlush, RTFileFlushOp, talos_rt_v1_file_flush,
+                     FileDescriptorStatus)
+TALOS_RUNTIME_CALL(FileWrite, RTFileWriteOp, talos_rt_v1_file_write,
+                     FileBytesCount)
+TALOS_RUNTIME_CALL(FileRead, RTFileReadOp, talos_rt_v1_file_read,
+                     FileBytesCount)
+TALOS_RUNTIME_CALL(FileReadMemToken, RTFileReadMemTokenOp,
+                     talos_rt_v1_file_readmem_token, FileReadMemToken)
+TALOS_RUNTIME_CALL(FileGetc, RTFileGetcOp, talos_rt_v1_file_getc,
+                     FileByteOut)
+TALOS_RUNTIME_CALL(FileUngetc, RTFileUngetcOp, talos_rt_v1_file_ungetc,
+                     FileUngetc)
+TALOS_RUNTIME_CALL(FileGetline, RTFileGetlineOp,
+                     talos_rt_v1_file_getline, FileBufferOut)
+TALOS_RUNTIME_CALL(FileEof, RTFileEofOp, talos_rt_v1_file_eof, FileU32Out)
+TALOS_RUNTIME_CALL(FileError, RTFileErrorOp, talos_rt_v1_file_error,
+                     FileError)
+TALOS_RUNTIME_CALL(FileSeek, RTFileSeekOp, talos_rt_v1_file_seek, FileSeek)
+TALOS_RUNTIME_CALL(FileTell, RTFileTellOp, talos_rt_v1_file_tell,
+                     FileI64Out)
+TALOS_RUNTIME_CALL(FileRewind, RTFileRewindOp, talos_rt_v1_file_rewind,
+                     FileDescriptorStatus)
+TALOS_RUNTIME_CALL(FragmentExecute, RTFragmentExecuteOp,
+                     talos_rt_v1_fragment_execute, FragmentExecute)
+TALOS_RUNTIME_CALL(BytecodeExecuteBounded, RTBytecodeExecuteBoundedOp,
+                     talos_rt_v1_bytecode_execute_bounded, BytecodeBounded)
+TALOS_RUNTIME_CALL(ProcessInstanceCreate, RTProcessInstanceCreateOp,
+                     talos_rt_v1_process_instance_create, ProcessCreate)
+TALOS_RUNTIME_CALL(ProcessInstanceFrame, RTProcessInstanceFrameOp,
+                     talos_rt_v1_process_instance_frame, ProcessFrame)
+TALOS_RUNTIME_CALL(ProcessInstanceExecute, RTProcessInstanceExecuteOp,
+                     talos_rt_v1_process_instance_execute, ProcessExecute)
+TALOS_RUNTIME_CALL(ProcessInstanceDestroy, RTProcessInstanceDestroyOp,
+                     talos_rt_v1_process_instance_destroy, ProcessDestroy)

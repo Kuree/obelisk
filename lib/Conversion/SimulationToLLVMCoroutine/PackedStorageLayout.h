@@ -1,7 +1,7 @@
 //===- PackedStorageLayout.h - Packed access units ------------*- C++ -*-===//
 
-#ifndef OBELISK_CONVERSION_PACKEDSTORAGELAYOUT_H
-#define OBELISK_CONVERSION_PACKEDSTORAGELAYOUT_H
+#ifndef TALOS_CONVERSION_PACKEDSTORAGELAYOUT_H
+#define TALOS_CONVERSION_PACKEDSTORAGELAYOUT_H
 
 #include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
@@ -15,7 +15,7 @@ class DataLayout;
 namespace mlir {
 class ModuleOp;
 }
-namespace obelisk::detail {
+namespace talos::detail {
 
 /// The containing memory access, independent of the logical selected bits.
 /// Sibling fields use the same address and integer type, as in Clang's
@@ -49,5 +49,5 @@ private:
   bool littleEndian;
 };
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 #endif

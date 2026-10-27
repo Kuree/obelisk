@@ -1,8 +1,8 @@
 // Invariants for the canonical scheduling attributes.
 #include "mlir/IR/Diagnostics.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
@@ -10,7 +10,7 @@
 #include <map>
 #include <set>
 using namespace mlir;
-namespace obelisk::schedule {
+namespace talos::schedule {
 static LogicalResult
 verifyEffectArray(llvm::function_ref<InFlightDiagnostic()> emitError,
                   ArrayAttr effects, StringRef owner) {
@@ -843,4 +843,4 @@ PeriodicAliasAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
-} // namespace obelisk::schedule
+} // namespace talos::schedule

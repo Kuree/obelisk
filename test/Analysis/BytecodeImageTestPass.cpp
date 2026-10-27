@@ -7,8 +7,8 @@
 
 #include "AnalysisTestPasses.h"
 
-#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Dialect/Runtime/RuntimeDialect.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -24,7 +24,7 @@ using namespace mlir;
 
 namespace {
 
-using Header = obelisk_rt_design_bytecode_header_v1;
+using Header = talos_rt_design_bytecode_header_v1;
 
 /// Bounds-checked little-endian reader over one serialized image.
 class ImageReader {
@@ -54,7 +54,7 @@ public:
   BytecodeImageTestPass(const BytecodeImageTestPass &other)
       : PassWrapper(other) {}
 
-  StringRef getArgument() const final { return "test-obelisk-print-bytecode"; }
+  StringRef getArgument() const final { return "test-talos-print-bytecode"; }
   StringRef getDescription() const final {
     return "print the serialized design-bytecode image records";
   }
@@ -71,23 +71,23 @@ public:
   void runOnOperation() final {
     ModuleOp module = getOperation();
     DenseI8ArrayAttr attr =
-        obelisk::runtime::get<obelisk::runtime::BytecodeImage>(module);
+        talos::runtime::get<talos::runtime::BytecodeImage>(module);
     if (!attr) {
       module.emitError("missing ")
-          << obelisk::runtime::BytecodeImage::getNameStr() << " attribute";
+          << talos::runtime::BytecodeImage::getNameStr() << " attribute";
       return signalPassFailure();
     }
     ArrayRef<int8_t> signedImage = attr.asArrayRef();
     ArrayRef<uint8_t> image(reinterpret_cast<const uint8_t *>(signedImage.data()),
                             signedImage.size());
-    if (image.size() < OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE ||
+    if (image.size() < TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE ||
         StringRef(reinterpret_cast<const char *>(image.data()), 8) !=
-            StringRef(OBELISK_RT_DESIGN_BYTECODE_MAGIC, 8)) {
-      module.emitError("invalid Obelisk design-bytecode header");
+            StringRef(TALOS_RT_DESIGN_BYTECODE_MAGIC, 8)) {
+      module.emitError("invalid Talos design-bytecode header");
       return signalPassFailure();
     }
     if (failed(print(ImageReader(image), llvm::errs()))) {
-      module.emitError("malformed Obelisk design-bytecode image");
+      module.emitError("malformed Talos design-bytecode image");
       return signalPassFailure();
     }
   }
@@ -128,7 +128,7 @@ private:
     uint64_t codeOffset = reader.header(offsetof(Header, code_offset));
     uint64_t instructionCount = reader.header(offsetof(Header, instruction_count));
     if (!reader.fits(codeOffset, instructionCount,
-                     OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE))
+                     TALOS_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE))
       return failure();
 
     uint64_t constantOffset = reader.header(offsetof(Header, constant_offset));
@@ -190,7 +190,7 @@ private:
 
     for (uint64_t index = 0; index < instructionCount; ++index) {
       uint64_t record =
-          codeOffset + index * OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE;
+          codeOffset + index * TALOS_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE;
       os << index << ": opcode=" << reader.read<uint16_t>(record)
          << " flags=" << reader.read<uint16_t>(record + 2)
          << " dst=" << reader.read<uint32_t>(record + 4)
@@ -263,8 +263,8 @@ private:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 void registerBytecodeImageTestPass() {
   PassRegistration<BytecodeImageTestPass>();
 }
-} // namespace obelisk
+} // namespace talos

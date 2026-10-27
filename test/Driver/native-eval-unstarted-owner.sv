@@ -1,6 +1,6 @@
-// RUN: obelisk -O3 --vpi=off --mlir-timing %s -o %t.eval 2> %t.timing
+// RUN: talos -O3 --vpi=off --mlir-timing %s -o %t.eval 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
+// RUN: talos -O0 --native-scheduler=generic %s -o %t.reference
 // RUN: %t.reference > %t.reference.out 2>&1
 // RUN: %t.eval > %t.eval.out 2>&1 && diff -u %t.reference.out %t.eval.out
 // RUN: FileCheck %s --implicit-check-not=violation < %t.reference.out
@@ -47,6 +47,6 @@ module native_eval_unstarted_owner;
   end
 endmodule
 
-// TIER: obelisk native eligibility: eligible=1 fully_eligible=1
-// TIER: obelisk eval owner: bit={{[0-9]+}} actor={{[0-9]+}} {{.*}}executor=__obelisk_direct_fragment_
+// TIER: talos native eligibility: eligible=1 fully_eligible=1
+// TIER: talos eval owner: bit={{[0-9]+}} actor={{[0-9]+}} {{.*}}executor=__talos_direct_fragment_
 // CHECK: 32 r=2

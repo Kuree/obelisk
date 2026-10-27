@@ -1,7 +1,7 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t
+// RUN: talos -O0 --vpi=off --native-scheduler=generic %s -o %t
 // RUN: %t --execution-tier=native | FileCheck %s
 // RUN: %t --execution-tier=bytecode | FileCheck %s
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic \
+// RUN: talos -O0 --vpi=off --native-scheduler=generic \
 // RUN:   -emit-llvm %s -o - | FileCheck %s --check-prefix=LLVM \
 // RUN:   --implicit-check-not='define {{.*}}.__member'
 
@@ -45,4 +45,4 @@ endmodule
 // CHECK: SEQUENTIAL UDP COHORT SCALE PASS 32
 // Thirty-two members require two bounded kernels but share one exact table
 // evaluator across the chunk boundary.
-// LLVM: define {{.*}}@__obelisk_region_kernel_{{.*}}.__member
+// LLVM: define {{.*}}@__talos_region_kernel_{{.*}}.__member

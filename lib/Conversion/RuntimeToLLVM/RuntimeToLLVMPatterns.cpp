@@ -1,15 +1,15 @@
 //===- RuntimeToLLVMPatterns.cpp - Typed runtime rewrite patterns --------===//
 
 #include "RuntimeToLLVMPatterns.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 
-#include "obelisk/Conversion/RuntimeToLLVM.h"
-#include "obelisk/Dialect/Runtime/RuntimeABI.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Conversion/RuntimeToLLVM.h"
+#include "talos/Dialect/Runtime/RuntimeABI.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -24,7 +24,7 @@
 
 using namespace mlir;
 
-namespace obelisk::runtimelowering {
+namespace talos::runtimelowering {
 
 LLVM::LLVMFunctionType getFunctionType(runtime::RuntimeCall call,
                                        const ABITypes &abi) {
@@ -164,9 +164,9 @@ FailureOr<LLVM::LLVMFuncOp> getOrCreateDeclaration(Operation *anchor,
   ModuleOp module = anchor->getParentOfType<ModuleOp>();
   StringRef name = runtime::getRuntimeSymbol(call);
   if (call == runtime::RuntimeCall::Display &&
-      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalDirectOutput>(
+      ::talos::schedule::has<::talos::schedule::Field::EvalDirectOutput>(
           anchor))
-    name = "obelisk_rt_v1_eval_display";
+    name = "talos_rt_v1_eval_display";
   LLVM::LLVMFunctionType expected = getFunctionType(call, abi);
   RuntimeDeclarations &declared = *abi.declarations;
   std::lock_guard<std::mutex> lock(declared.mutex);
@@ -1253,47 +1253,47 @@ private:
 void populateRuntimePatterns(const TypeConverter &converter,
                              RewritePatternSet &patterns, const ABITypes &abi) {
   MLIRContext *context = patterns.getContext();
-#define OBELISK_RUNTIME_MATERIALIZER(Op, Kind)                                 \
+#define TALOS_RUNTIME_MATERIALIZER(Op, Kind)                                 \
   patterns.add<RuntimeMaterializerLowering>(                                   \
       converter, runtime::Op::getOperationName(), RuntimeMaterializer::Kind,   \
       context, abi)
-  OBELISK_RUNTIME_MATERIALIZER(RTBytesConstantOp, BytesConstant);
-  OBELISK_RUNTIME_MATERIALIZER(RTScratchOp, Scratch);
+  TALOS_RUNTIME_MATERIALIZER(RTBytesConstantOp, BytesConstant);
+  TALOS_RUNTIME_MATERIALIZER(RTScratchOp, Scratch);
   patterns.add<RuntimeMaterializerLowering>(
       converter, schedule::NativeScratchOp::getOperationName(),
       RuntimeMaterializer::Scratch, context, abi);
-  OBELISK_RUNTIME_MATERIALIZER(RTBytesSizeOp, BytesSize);
-  OBELISK_RUNTIME_MATERIALIZER(RTPackedFromBytesOp, PackedFromBytes);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentEmptyOp, ArgumentEmpty);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentPackedOp, ArgumentPacked);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentEnumOp, ArgumentEnum);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentNetOp, ArgumentNet);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentRawAggregateOp, ArgumentRawAggregate);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentRealOp, ArgumentReal);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentBytesOp, ArgumentBytes);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentManagedStringOp,
+  TALOS_RUNTIME_MATERIALIZER(RTBytesSizeOp, BytesSize);
+  TALOS_RUNTIME_MATERIALIZER(RTPackedFromBytesOp, PackedFromBytes);
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentEmptyOp, ArgumentEmpty);
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentPackedOp, ArgumentPacked);
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentEnumOp, ArgumentEnum);
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentNetOp, ArgumentNet);
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentRawAggregateOp, ArgumentRawAggregate);
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentRealOp, ArgumentReal);
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentBytesOp, ArgumentBytes);
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentManagedStringOp,
                                ArgumentManagedString);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentManagedContainerOp,
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentManagedContainerOp,
                                ArgumentManagedContainer);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentManagedObjectOp,
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentManagedObjectOp,
                                ArgumentManagedObject);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentVirtualInterfaceOp,
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentVirtualInterfaceOp,
                                ArgumentVirtualInterface);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentProcessOp, ArgumentProcess);
-  OBELISK_RUNTIME_MATERIALIZER(RTArgumentArrayOp, ArgumentArray);
-  OBELISK_RUNTIME_MATERIALIZER(RTFormatEnvironmentOp, FormatEnvironment);
-  OBELISK_RUNTIME_MATERIALIZER(RTFileDescriptorFromBitsOp, DescriptorFromBits);
-  OBELISK_RUNTIME_MATERIALIZER(RTFileDescriptorToBitsOp, DescriptorToBits);
-  OBELISK_RUNTIME_MATERIALIZER(RTStatusIsOp, StatusIs);
-  OBELISK_RUNTIME_MATERIALIZER(RTStatusFromBitsOp, StatusCast);
-  OBELISK_RUNTIME_MATERIALIZER(RTStatusToBitsOp, StatusCast);
-#undef OBELISK_RUNTIME_MATERIALIZER
-#define OBELISK_RUNTIME_CALL(Name, Op, Symbol, Signature)                      \
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentProcessOp, ArgumentProcess);
+  TALOS_RUNTIME_MATERIALIZER(RTArgumentArrayOp, ArgumentArray);
+  TALOS_RUNTIME_MATERIALIZER(RTFormatEnvironmentOp, FormatEnvironment);
+  TALOS_RUNTIME_MATERIALIZER(RTFileDescriptorFromBitsOp, DescriptorFromBits);
+  TALOS_RUNTIME_MATERIALIZER(RTFileDescriptorToBitsOp, DescriptorToBits);
+  TALOS_RUNTIME_MATERIALIZER(RTStatusIsOp, StatusIs);
+  TALOS_RUNTIME_MATERIALIZER(RTStatusFromBitsOp, StatusCast);
+  TALOS_RUNTIME_MATERIALIZER(RTStatusToBitsOp, StatusCast);
+#undef TALOS_RUNTIME_MATERIALIZER
+#define TALOS_RUNTIME_CALL(Name, Op, Symbol, Signature)                      \
   patterns.add<RuntimeCallLowering>(converter,                                 \
                                     runtime::Op::getOperationName(),           \
                                     runtime::RuntimeCall::Name, context, abi);
-#include "obelisk/Dialect/Runtime/RuntimeABI.def"
-#undef OBELISK_RUNTIME_CALL
+#include "talos/Dialect/Runtime/RuntimeABI.def"
+#undef TALOS_RUNTIME_CALL
 }
 
-} // namespace obelisk::runtimelowering
+} // namespace talos::runtimelowering

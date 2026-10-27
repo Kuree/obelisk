@@ -2,11 +2,11 @@
 
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 std::optional<LogicalResult>
 Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
@@ -490,4 +490,4 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
   return std::nullopt;
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

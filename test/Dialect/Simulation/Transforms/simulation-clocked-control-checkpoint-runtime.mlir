@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --obelisk-sim-materialize-clocked-control | FileCheck %s --check-prefix=STATE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --talos-sim-materialize-clocked-control | FileCheck %s --check-prefix=STATE
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-materialize-clocked-control,talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
 // A checkpointing actor precedes the clock-control owner in dispatch order.
@@ -14,20 +14,20 @@
 // STATE-COUNT-1: simulation.suspend.edge posedge
 // STATE-NOT: simulation.suspend.edge
 // STATE-LABEL: simulation.func @report
-// PLAN: __obelisk_eval_body
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// PLAN: __talos_eval_body
+// PLAN: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
 // Ingress bit 0 is the checkpointing `report`, bit 1 the clock-control owner
 // `z_consumer`. After an owner runs, the dispatcher clears only that owner's
 // bit and returns a nonzero (checkpoint) status at once: `report` is not
 // replayed, and `z_consumer`'s pending edge stays in the ingress word for the
 // runtime's same-slot coordinator.
-// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
+// PLAN-LABEL: llvm.func @__talos_eval_dispatch_v1(
 // PLAN: llvm.switch %{{.*}} : i64, ^{{bb[0-9]+}} [
 // PLAN-NEXT: 0: ^{{bb[0-9]+}},
 // PLAN-NEXT: 1: ^{{bb[0-9]+}}
-// PLAN: llvm.call @__obelisk_direct_fragment_2_5.__obelisk_execute(%arg1)
+// PLAN: llvm.call @__talos_direct_fragment_2_5.__talos_execute(%arg1)
 // PLAN: ^{{bb[0-9]+}}(%[[REPORT_STATUS:.*]]: i32):
-// PLAN-NEXT: %[[INGRESS:.*]] = llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// PLAN-NEXT: %[[INGRESS:.*]] = llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // PLAN: %[[PENDING:.*]] = llvm.load %[[INGRESS]]
 // PLAN: %[[NOT_REPORT:.*]] = llvm.mlir.constant(-2 : i64)
 // PLAN-NEXT: %[[LEFT:.*]] = llvm.and %[[PENDING]], %[[NOT_REPORT]]
@@ -35,9 +35,9 @@
 // PLAN-NEXT: %[[ZERO:.*]] = llvm.mlir.constant(0 : i32)
 // PLAN-NEXT: %[[CONTINUE:.*]] = llvm.icmp "eq" %[[REPORT_STATUS]], %[[ZERO]]
 // PLAN-NEXT: llvm.cond_br %[[CONTINUE]], ^{{bb[0-9]+}}, ^[[RETURN:bb[0-9]+]](%[[REPORT_STATUS]] : i32)
-// PLAN: llvm.call @__obelisk_direct_fragment_1_16.__obelisk_execute(%arg1)
+// PLAN: llvm.call @__talos_direct_fragment_1_16.__talos_execute(%arg1)
 // PLAN: ^{{bb[0-9]+}}(%[[OWNER_STATUS:.*]]: i32):
-// PLAN-NEXT: %[[OWNER_INGRESS:.*]] = llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// PLAN-NEXT: %[[OWNER_INGRESS:.*]] = llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // PLAN: %[[OWNER_PENDING:.*]] = llvm.load %[[OWNER_INGRESS]]
 // PLAN: %[[NOT_OWNER:.*]] = llvm.mlir.constant(-3 : i64)
 // PLAN-NEXT: %[[OWNER_LEFT:.*]] = llvm.and %[[OWNER_PENDING]], %[[NOT_OWNER]]

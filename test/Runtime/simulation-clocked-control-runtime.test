@@ -1,20 +1,20 @@
 // Runtime semantics for ../Dialect/Simulation/Transforms/simulation-clocked-control-runtime.mlir.
 
-// RUN: obelisk-opt %S/../Dialect/Simulation/Transforms/simulation-clocked-control-runtime.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
-// RUN: obelisk-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %S/../Dialect/Simulation/Transforms/simulation-clocked-control-runtime.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-materialize-clocked-control,talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %s
 // RUN: %t.exe --execution-tier=bytecode | FileCheck %s
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diagnostics
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.exe > %t.out 2> %t.diagnostics
 // RUN: FileCheck %s < %t.out
 // RUN: FileCheck %s --check-prefix=TIER < %t.diagnostics
 
-// TIER-NOT: obelisk-periodic-reject
+// TIER-NOT: talos-periodic-reject
 // TIER: aot_node_executions=3
 // TIER-SAME: aot_fallbacks=0
-// TIER: obelisk-aot-actor slot=0 executions=1
-// TIER-NEXT: obelisk-aot-actor slot=1 executions=1
-// TIER-NEXT: obelisk-aot-actor slot=2 executions=1
+// TIER: talos-aot-actor slot=0 executions=1
+// TIER-NEXT: talos-aot-actor slot=1 executions=1
+// TIER-NEXT: talos-aot-actor slot=2 executions=1
 // CHECK: startup
 // CHECK-NEXT: reset 5
 // CHECK-NEXT: done 10005

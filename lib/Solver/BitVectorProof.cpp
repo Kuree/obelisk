@@ -1,4 +1,4 @@
-#include "obelisk/Solver/BitVectorProof.h"
+#include "talos/Solver/BitVectorProof.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/IR/Constants.h"
@@ -7,17 +7,17 @@
 #include <functional>
 #include <string>
 #include <vector>
-#ifdef OBELISK_ENABLE_Z3
+#ifdef TALOS_ENABLE_Z3
 #include "Z3Support.h"
 #include <z3++.h>
 #endif
 
-namespace obelisk::solver {
+namespace talos::solver {
 bool proveBitVectorBounds(llvm::Value *value, const llvm::APInt &lower,
                           const llvm::APInt &upper,
                           llvm::ArrayRef<BitVectorRange> ranges,
                           unsigned resourceLimit) {
-#ifndef OBELISK_ENABLE_Z3
+#ifndef TALOS_ENABLE_Z3
   return false;
 #else
   if (!resourceLimit || !value || !value->getType()->isIntegerTy())
@@ -35,11 +35,11 @@ bool proveBitVectorBounds(llvm::Value *value, const llvm::APInt &lower,
         range.smax.getBitWidth() != range.umin.getBitWidth() ||
         range.umin.ugt(range.umax) || range.smin.sgt(range.smax))
       return false;
-#ifdef OBELISK_Z3_SINGLE_THREADED
+#ifdef TALOS_Z3_SINGLE_THREADED
   std::lock_guard<std::mutex> lock(detail::getZ3Mutex());
 #endif
   try {
-#ifdef OBELISK_Z3_SINGLE_THREADED
+#ifdef TALOS_Z3_SINGLE_THREADED
     static z3::context context;
 #else
     static thread_local z3::context context;
@@ -188,4 +188,4 @@ bool proveBitVectorBounds(llvm::Value *value, const llvm::APInt &lower,
   }
 #endif
 }
-} // namespace obelisk::solver
+} // namespace talos::solver

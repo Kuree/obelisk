@@ -8,12 +8,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "TargetBackend.h"
-#include "obelisk/Conversion/SimulationToSchedule.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Conversion/SimulationToSchedule.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "BackendUtils.h"
 #include "NativeBackend.h"
@@ -24,18 +24,18 @@
 #include "PassIRDump.h"
 #include "WasmBackend.h"
 
-#include "obelisk/Analysis/NativeAOTAnalysis.h"
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Conversion/RuntimeToLLVM.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
-#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
-#include "obelisk/LLVM/ClockedGuardLayout.h"
-#include "obelisk/LLVM/WideIntegerVectorization.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
-#include "obelisk/Runtime/OutputItemFlags.h"
+#include "talos/Analysis/NativeAOTAnalysis.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Conversion/RuntimeToLLVM.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Conversion/SimulationToLLVMCoroutine.h"
+#include "talos/Dialect/Runtime/RuntimeDialect.h"
+#include "talos/LLVM/ClockedGuardLayout.h"
+#include "talos/LLVM/WideIntegerVectorization.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Runtime/OutputItemFlags.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
@@ -91,7 +91,7 @@
 using namespace llvm;
 using namespace mlir;
 
-namespace obelisk::driver {
+namespace talos::driver {
 
 CodeGenOptLevel getCodeGenOptLevel(uint32_t level) {
   switch (level) {
@@ -122,7 +122,7 @@ FailureOr<SmallString<256>> makeTemporaryBeside(StringRef output,
 LogicalResult atomicallyReplace(StringRef temporary, StringRef output) {
   std::error_code error = sys::fs::rename(temporary, output);
   if (error) {
-    errs() << "obelisk: error: could not publish '" << output
+    errs() << "talos: error: could not publish '" << output
            << "': " << error.message() << '\n';
     return failure();
   }
@@ -140,7 +140,7 @@ FailureOr<std::string> getSharedLibraryRunpath(StringRef outputPath,
   }
   SmallString<256> image(outputPath);
   if (std::error_code error = sys::fs::make_absolute(image)) {
-    errs() << "obelisk: error: could not resolve output directory for "
+    errs() << "talos: error: could not resolve output directory for "
               "runpath generation: "
            << error.message() << '\n';
     return failure();
@@ -148,7 +148,7 @@ FailureOr<std::string> getSharedLibraryRunpath(StringRef outputPath,
   sys::path::remove_dots(image, true);
   sys::path::remove_filename(image);
   if (std::error_code error = sys::fs::make_absolute(directory)) {
-    errs() << "obelisk: error: could not resolve shared-library directory '"
+    errs() << "talos: error: could not resolve shared-library directory '"
            << suppliedDirectory << "': " << error.message() << '\n';
     return failure();
   }
@@ -214,8 +214,8 @@ ArrayRef<StringLiteral> getRuntimeVPIEntryPoints() {
       "vpi_remove_cb",
       "vpi_scan",
       "vpi_vprintf",
-      // Obelisk's object-model query for VPI applications.
-      "obelisk_rt_v1_vpi_object_model"};
+      // Talos's object-model query for VPI applications.
+      "talos_rt_v1_vpi_object_model"};
   return names;
 }
 
@@ -227,11 +227,11 @@ TargetBackend::findSupportTree(StringRef executablePath) const {
   sys::path::remove_filename(executable);
   SmallVector<SmallString<256>, 2> candidates;
   SmallString<256> installed(executable);
-  sys::path::append(installed, "..", "lib", "obelisk", "targets");
+  sys::path::append(installed, "..", "lib", "talos", "targets");
   sys::path::append(installed, getTriple());
   candidates.push_back(installed);
   SmallString<256> buildTree(executable);
-  sys::path::append(buildTree, "..", "..", "lib", "obelisk");
+  sys::path::append(buildTree, "..", "..", "lib", "talos");
   sys::path::append(buildTree, "targets", getTriple());
   candidates.push_back(buildTree);
   for (SmallString<256> &candidate : candidates) {
@@ -245,13 +245,13 @@ TargetBackend::findSupportTree(StringRef executablePath) const {
 std::unique_ptr<TargetBackend> createTargetBackend(TargetKind target) {
   switch (target) {
   case TargetKind::Native:
-#if OBELISK_HAS_NATIVE_BACKEND
+#if TALOS_HAS_NATIVE_BACKEND
     return createNativeBackend();
 #else
     return nullptr;
 #endif
   case TargetKind::Wasm:
-#if OBELISK_HAS_WASM_BACKEND
+#if TALOS_HAS_WASM_BACKEND
     return createWasmBackend();
 #else
     return nullptr;
@@ -532,7 +532,7 @@ planNativeModuleSplit(llvm::Module &module, const NativePartitionPlan &plan) {
     std::string seed = module.getModuleIdentifier();
     seed.push_back('\0');
     seed.append(originalName);
-    std::string base = (Twine("__obelisk_partition_") +
+    std::string base = (Twine("__talos_partition_") +
                         utohexstr(xxHash64(seed)) + "_" + originalName)
                            .str();
     std::string name = base;
@@ -785,32 +785,32 @@ static bool formattedOutputMayReadNetStrength(ValueRange items,
                                               ArrayRef<int32_t> itemFlags,
                                               bool literalBytesAreFormats) {
   if (!llvm::any_of(itemFlags, [](int32_t flags) {
-        return (flags & OBELISK_RT_OUTPUT_ITEM_NET) != 0;
+        return (flags & TALOS_RT_OUTPUT_ITEM_NET) != 0;
       }))
     return false;
 
   unsigned itemIndex = 0;
   for (int32_t flags : itemFlags) {
-    if ((flags & OBELISK_RT_OUTPUT_ITEM_OMITTED) != 0)
+    if ((flags & TALOS_RT_OUTPUT_ITEM_OMITTED) != 0)
       continue;
     if (itemIndex == items.size())
       return true;
     mlir::Value item = items[itemIndex++];
-    if ((flags & (OBELISK_RT_OUTPUT_ITEM_ENUM | OBELISK_RT_OUTPUT_ITEM_NET)) !=
+    if ((flags & (TALOS_RT_OUTPUT_ITEM_ENUM | TALOS_RT_OUTPUT_ITEM_NET)) !=
         0) {
       if (itemIndex == items.size())
         return true;
       ++itemIndex;
       continue;
     }
-    bool explicitFormat = (flags & (OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT |
-                                    OBELISK_RT_OUTPUT_ITEM_FORMAT)) != 0;
-    if (isa<obelisk::sim::StringType>(item.getType()) && explicitFormat)
+    bool explicitFormat = (flags & (TALOS_RT_OUTPUT_ITEM_DESIGNATED_FORMAT |
+                                    TALOS_RT_OUTPUT_ITEM_FORMAT)) != 0;
+    if (isa<talos::sim::StringType>(item.getType()) && explicitFormat)
       return true;
-    if (!isa<obelisk::sim::BytesType>(item.getType()) ||
+    if (!isa<talos::sim::BytesType>(item.getType()) ||
         (!literalBytesAreFormats && !explicitFormat))
       continue;
-    auto constant = item.getDefiningOp<obelisk::sim::SimBytesConstantOp>();
+    auto constant = item.getDefiningOp<talos::sim::SimBytesConstantOp>();
     if (!constant || literalFormatMayReadNetStrength(constant.getValue()))
       return true;
   }
@@ -820,13 +820,13 @@ static bool formattedOutputMayReadNetStrength(ValueRange items,
 LogicalResult
 lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
             bool bytecode, StringRef vpi, StringRef bytecodeScope,
-            obelisk::schedule::NativeSchedulerMode nativeScheduler,
+            talos::schedule::NativeSchedulerMode nativeScheduler,
             uint32_t optLevel, bool planSemanticPartitions, bool timing,
             bool verifyEach, const PassIRDumpOptions &irDump,
             bool &requiresStateSync, bool &resolveInitialDrivers) {
   if (bytecode &&
-      nativeScheduler == obelisk::schedule::NativeSchedulerMode::Auto)
-    nativeScheduler = obelisk::schedule::NativeSchedulerMode::Generic;
+      nativeScheduler == talos::schedule::NativeSchedulerMode::Auto)
+    nativeScheduler = talos::schedule::NativeSchedulerMode::Generic;
   module->setAttr("llvm.target_triple",
                   StringAttr::get(module.getContext(), triple));
   module->setAttr(
@@ -860,61 +860,61 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
   bool hasPassSwitch = false;
   bool hasClockOccurrenceCondition = false;
   module.walk([&](mlir::Operation *operation) {
-    if (mlir::isa<obelisk::sim::SimOverrideOp,
-                  obelisk::sim::SimDynamicOverrideOp,
-                  obelisk::sim::SimReleaseOverrideOp>(operation))
+    if (mlir::isa<talos::sim::SimOverrideOp,
+                  talos::sim::SimDynamicOverrideOp,
+                  talos::sim::SimReleaseOverrideOp>(operation))
       hasLanguageOverride = true;
-    if (auto enqueue = mlir::dyn_cast<obelisk::sim::SimNBAEnqueueOp>(operation))
-      hasDriverNBA |= mlir::isa<obelisk::sim::DriverType>(
+    if (auto enqueue = mlir::dyn_cast<talos::sim::SimNBAEnqueueOp>(operation))
+      hasDriverNBA |= mlir::isa<talos::sim::DriverType>(
           enqueue.getDestination().getType());
-    if (auto net = mlir::dyn_cast<obelisk::sim::SimNetDeclOp>(operation))
+    if (auto net = mlir::dyn_cast<talos::sim::SimNetDeclOp>(operation))
       hasDelayedNet |= static_cast<bool>(net.getPropagationDelays());
     hasInertialDriver |=
-        mlir::isa<obelisk::sim::SimDriverDriveInertialOp,
-                  obelisk::sim::SimDriverDriveInertialPathOp,
-                  obelisk::sim::SimDriverDriveInertialStrengthPairOp,
-                  obelisk::sim::SimDriverDriveInertialPathStrengthPairOp>(
+        mlir::isa<talos::sim::SimDriverDriveInertialOp,
+                  talos::sim::SimDriverDriveInertialPathOp,
+                  talos::sim::SimDriverDriveInertialStrengthPairOp,
+                  talos::sim::SimDriverDriveInertialPathStrengthPairOp>(
             operation);
-    hasPassSwitch |= mlir::isa<obelisk::sim::SimPassSwitchDeclOp>(operation);
+    hasPassSwitch |= mlir::isa<talos::sim::SimPassSwitchDeclOp>(operation);
     if (auto wait =
-            mlir::dyn_cast<obelisk::sim::SimSuspendClockSetOp>(operation))
+            mlir::dyn_cast<talos::sim::SimSuspendClockSetOp>(operation))
       hasClockOccurrenceCondition |= !wait.getConditions().empty();
   });
   requiresStateSync = vpi != "off" || hasLanguageOverride || hasDriverNBA ||
                       hasDelayedNet || hasInertialDriver ||
                       hasClockOccurrenceCondition;
   resolveInitialDrivers = hasInertialDriver;
-  ::obelisk::schedule::set<::obelisk::schedule::Field::NativeScheduler>(
-      module, obelisk::schedule::NativeSchedulerModeAttr::get(
+  ::talos::schedule::set<::talos::schedule::Field::NativeScheduler>(
+      module, talos::schedule::NativeSchedulerModeAttr::get(
                   module.getContext(), nativeScheduler));
   // Hybrid AOT keeps bytecode available as the canonical implementation for
   // fragments that cannot be scheduled statically and for writable VPI
   // transition stages. The shared process frame lets those fragments return
   // to native execution at a continuation boundary without copying state.
   bool evalScheduler =
-      nativeScheduler == obelisk::schedule::NativeSchedulerMode::Eval;
+      nativeScheduler == talos::schedule::NativeSchedulerMode::Eval;
   bool needsHybridBytecode =
-      nativeScheduler != obelisk::schedule::NativeSchedulerMode::Generic;
+      nativeScheduler != talos::schedule::NativeSchedulerMode::Generic;
   bool needsSampledStatePlan = false;
   module.walk(
-      [&](obelisk::sim::SimSampledReadOp) { needsSampledStatePlan = true; });
+      [&](talos::sim::SimSampledReadOp) { needsSampledStatePlan = true; });
   bool needsWaveformMetadata = false;
   bool needsNetDriverTopology = hasPassSwitch;
   module.walk([&](mlir::Operation *operation) {
     needsWaveformMetadata |= mlir::isa<
-        obelisk::sim::SimDumpOpenOp, obelisk::sim::SimDumpOpenStringOp,
-        obelisk::sim::SimDumpTimescaleOp, obelisk::sim::SimDumpVarsOp,
-        obelisk::sim::SimDumpAllOp, obelisk::sim::SimDumpControlOp,
-        obelisk::sim::SimDumpLimitOp, obelisk::sim::SimDumpFlushOp,
-        obelisk::sim::SimDumpPortsOp, obelisk::sim::SimDumpPortsControlOp>(
+        talos::sim::SimDumpOpenOp, talos::sim::SimDumpOpenStringOp,
+        talos::sim::SimDumpTimescaleOp, talos::sim::SimDumpVarsOp,
+        talos::sim::SimDumpAllOp, talos::sim::SimDumpControlOp,
+        talos::sim::SimDumpLimitOp, talos::sim::SimDumpFlushOp,
+        talos::sim::SimDumpPortsOp, talos::sim::SimDumpPortsControlOp>(
         operation);
     needsNetDriverTopology |=
-        mlir::isa<obelisk::sim::SimNetCountDriversOp>(operation);
-    if (auto display = mlir::dyn_cast<obelisk::sim::SimDisplayOp>(operation))
+        mlir::isa<talos::sim::SimNetCountDriversOp>(operation);
+    if (auto display = mlir::dyn_cast<talos::sim::SimDisplayOp>(operation))
       needsNetDriverTopology |= formattedOutputMayReadNetStrength(
           display.getItems(), display.getItemFlags(), true);
     if (auto format =
-            mlir::dyn_cast<obelisk::sim::SimStringOutputFormatOp>(operation))
+            mlir::dyn_cast<talos::sim::SimStringOutputFormatOp>(operation))
       needsNetDriverTopology |= formattedOutputMayReadNetStrength(
           format.getItems(), format.getItemFlags(), false);
   });
@@ -932,32 +932,32 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
   requiresStateSync |= needsStandaloneStatePlan && !needsDesignEncoding;
   // Both tiers share the polls that bound garbage between collections, so
   // place them before bytecode is frozen.
-  manager.addPass(createObeliskSimInsertGCPollsPass());
+  manager.addPass(createTalosSimInsertGCPollsPass());
   // The storage bits expected to hold X/Z in steady state are inferred from
   // the canonical design, which bytecode freezes next; native versioning
   // loads them as a constant X while the unknown summary confirms them.
   if (optLevel > 0) {
-    ObeliskSimAnnotateSteadyUnknownPassOptions steadyUnknown;
+    TalosSimAnnotateSteadyUnknownPassOptions steadyUnknown;
     steadyUnknown.vpi = vpi.str();
-    manager.nest<obelisk::sim::SimDesignOp>().addPass(
-        createObeliskSimAnnotateSteadyUnknownPass(steadyUnknown));
+    manager.nest<talos::sim::SimDesignOp>().addPass(
+        createTalosSimAnnotateSteadyUnknownPass(steadyUnknown));
   }
   if (needsDesignEncoding) {
     // Bytecode and native lowering must observe the same suspension-safe SSA
     // shape. The coroutine pass also runs this canonicalization for native
     // lowering, but bytecode is frozen before that pass starts.
-    OpPassManager &designManager = manager.nest<obelisk::sim::SimDesignOp>();
-    designManager.nest<obelisk::sim::SimFuncOp>().addPass(
-        createObeliskSimThreadProcessCFGPass());
-    EncodeObeliskSimToBytecodePassOptions options;
+    OpPassManager &designManager = manager.nest<talos::sim::SimDesignOp>();
+    designManager.nest<talos::sim::SimFuncOp>().addPass(
+        createTalosSimThreadProcessCFGPass());
+    EncodeTalosSimToBytecodePassOptions options;
     options.vpi = vpi.str();
     options.requireBytecode = bytecode;
     options.pruneNative = bytecodeScope == "required" && needsHybridBytecode;
-    manager.addPass(createEncodeObeliskSimToBytecodePass(options));
+    manager.addPass(createEncodeTalosSimToBytecodePass(options));
   } else if (needsStandaloneStatePlan) {
-    SmallVector<obelisk::sim::SimDesignOp> designs;
+    SmallVector<talos::sim::SimDesignOp> designs;
     module.walk(
-        [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+        [&](talos::sim::SimDesignOp design) { designs.push_back(design); });
     if (designs.size() != 1)
       return module.emitError(
           "native-state planning requires exactly one simulation design");
@@ -985,13 +985,13 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
   // provides the deoptimization implementation.
   if (needsHybridBytecode || evalScheduler)
     manager.nest<sim::SimDesignOp>().addPass(
-        createObeliskSimOptimizeNativeRegionsPass());
+        createTalosSimOptimizeNativeRegionsPass());
   // Partition metadata is a native ELF object/ThinLTO contract. In
   // particular, wasm32 keeps its current single-module lowering and staged
   // wasm-object runtime even when the source design is large.
   if (planSemanticPartitions)
-    manager.nest<obelisk::sim::SimDesignOp>().addPass(
-        createObeliskSimPlanNativePartitionsPass());
+    manager.nest<talos::sim::SimDesignOp>().addPass(
+        createTalosSimPlanNativePartitionsPass());
   buildSimulationToLLVMCoroutinePipeline(manager);
   if (failed(manager.run(module)))
     return failure();
@@ -1002,7 +1002,7 @@ LogicalResult optimizeLLVMModule(llvm::Module &module,
                                  TargetMachine &targetMachine,
                                  uint32_t optLevel) {
   if (verifyModule(module, &errs())) {
-    errs() << "obelisk: error: invalid LLVM IR before native optimization\n";
+    errs() << "talos: error: invalid LLVM IR before native optimization\n";
     return failure();
   }
   PassBuilder builder(&targetMachine);
@@ -1016,17 +1016,17 @@ LogicalResult optimizeLLVMModule(llvm::Module &module,
   builder.registerLoopAnalyses(loopAnalyses);
   builder.crossRegisterProxies(loopAnalyses, functionAnalyses, cgsccAnalyses,
                                moduleAnalyses);
-  registerObeliskLLVMPasses(builder);
+  registerTalosLLVMPasses(builder);
   OptimizationLevel level = getLLVMOptLevel(optLevel);
   ModulePassManager passes = optLevel == 0
                                  ? builder.buildO0DefaultPipeline(level)
                                  : builder.buildPerModuleDefaultPipeline(level);
   passes.run(module, moduleAnalyses);
   // Layout passes read the optimized shape of the kernels; see
-  // obelisk/LLVM/ClockedGuardLayout.h.
+  // talos/LLVM/ClockedGuardLayout.h.
   ClockedGuardLayoutPass().run(module, moduleAnalyses);
   if (verifyModule(module, &errs())) {
-    errs() << "obelisk: error: invalid LLVM IR after native optimization\n";
+    errs() << "talos: error: invalid LLVM IR after native optimization\n";
     return failure();
   }
   return success();
@@ -1091,13 +1091,13 @@ LogicalResult lowerLLVMCoroutines(llvm::Module &module,
         LimitWideIntegerVectorizationPass()));
   passes.run(module, moduleAnalyses);
   if (verifyModule(module, &errs())) {
-    errs() << "obelisk: error: invalid LLVM IR after coroutine lowering\n";
+    errs() << "talos: error: invalid LLVM IR after coroutine lowering\n";
     return failure();
   }
   for (const llvm::Function &function : module)
     if (function.isIntrinsic() &&
         function.getName().starts_with("llvm.coro.") && !function.use_empty()) {
-      errs() << "obelisk: error: coroutine lowering left live intrinsic '"
+      errs() << "talos: error: coroutine lowering left live intrinsic '"
              << function.getName() << "'\n";
       return failure();
     }
@@ -1113,13 +1113,13 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
     return success();
   llvm::Function *main = module.getFunction("main");
   llvm::GlobalVariable *current =
-      module.getNamedGlobal("__obelisk_current_context");
+      module.getNamedGlobal("__talos_current_context");
   llvm::GlobalVariable *stateValue =
-      module.getNamedGlobal("__obelisk_state_value");
+      module.getNamedGlobal("__talos_state_value");
   llvm::GlobalVariable *stateUnknown =
-      module.getNamedGlobal("__obelisk_state_unknown");
+      module.getNamedGlobal("__talos_state_unknown");
   if (!main || !current || !stateValue) {
-    errs() << "obelisk: error: native state synchronization requires a "
+    errs() << "talos: error: native state synchronization requires a "
               "generated scheduler main\n";
     return failure();
   }
@@ -1130,16 +1130,16 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
     for (llvm::Instruction &instruction : block)
       if (auto *call = dyn_cast<llvm::CallBase>(&instruction))
         if (llvm::Function *callee = call->getCalledFunction()) {
-          if (callee->getName().ends_with(".__obelisk_spawn"))
+          if (callee->getName().ends_with(".__talos_spawn"))
             spawn = call;
-          else if (callee->getName() == "obelisk_rt_v1_scheduler_report_status")
+          else if (callee->getName() == "talos_rt_v1_scheduler_report_status")
             report = call;
         }
   if (report)
     for (llvm::Instruction &instruction : *report->getParent())
       if (auto *call = dyn_cast<llvm::CallBase>(&instruction))
         if (llvm::Function *callee = call->getCalledFunction())
-          if (callee->getName() == "obelisk_rt_v1_context_destroy")
+          if (callee->getName() == "talos_rt_v1_context_destroy")
             destroy = call;
   auto *returnStatus =
       destroy
@@ -1148,7 +1148,7 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
   if (!spawn || (enableVPI && (!report || !destroy || !returnStatus ||
                                report->arg_size() != 2 ||
                                returnStatus->getNumOperands() != 1))) {
-    errs() << "obelisk: error: generated scheduler lifecycle is incomplete\n";
+    errs() << "talos: error: generated scheduler lifecycle is incomplete\n";
     return failure();
   }
 
@@ -1164,7 +1164,7 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
         llvm::ConstantDataArray::getString(context, input.loaderName, true);
     auto *global = new llvm::GlobalVariable(
         module, bytes->getType(), true, llvm::GlobalValue::PrivateLinkage,
-        bytes, (Twine("__obelisk_vpi_module_") + Twine(stringIndex++)).str());
+        bytes, (Twine("__talos_vpi_module_") + Twine(stringIndex++)).str());
     global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     names.push_back(global);
   }
@@ -1175,20 +1175,20 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
     auto *array = new llvm::GlobalVariable(
         module, arrayType, true, llvm::GlobalValue::PrivateLinkage,
         llvm::ConstantArray::get(arrayType, names),
-        "__obelisk_vpi_startup_modules");
+        "__talos_vpi_startup_modules");
     llvm::Constant *zero = llvm::ConstantInt::get(i64, 0);
     SmallVector<llvm::Constant *, 2> indices{zero, zero};
     nameArrayPointer =
         llvm::ConstantExpr::getInBoundsGetElementPtr(arrayType, array, indices);
   }
   llvm::FunctionCallee fail = module.getOrInsertFunction(
-      "obelisk_rt_v1_scheduler_fail",
+      "talos_rt_v1_scheduler_fail",
       llvm::FunctionType::get(llvm::Type::getVoidTy(context),
                               {pointer, llvm::Type::getInt32Ty(context)},
                               false));
   llvm::IRBuilder<> beforeSpawn(spawn);
   llvm::Value *runtimeContext =
-      beforeSpawn.CreateLoad(pointer, current, "obelisk.vpi.context");
+      beforeSpawn.CreateLoad(pointer, current, "talos.vpi.context");
   auto *valueArray = dyn_cast<llvm::ArrayType>(stateValue->getValueType());
   auto *unknownArray =
       stateUnknown ? dyn_cast<llvm::ArrayType>(stateUnknown->getValueType())
@@ -1196,11 +1196,11 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
   if (!valueArray ||
       (stateUnknown && (!unknownArray || valueArray->getNumElements() !=
                                              unknownArray->getNumElements()))) {
-    errs() << "obelisk: error: generated native state planes disagree\n";
+    errs() << "talos: error: generated native state planes disagree\n";
     return failure();
   }
   llvm::GlobalVariable *execution =
-      module.getNamedGlobal("__obelisk_execution_descriptor_v1");
+      module.getNamedGlobal("__talos_execution_descriptor_v1");
   auto *executionInitializer =
       execution ? dyn_cast<llvm::ConstantStruct>(execution->getInitializer())
                 : nullptr;
@@ -1235,7 +1235,7 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
           : nullptr;
   if (!stateBitCount ||
       stateBitCount->getZExtValue() > valueArray->getNumElements() * 8) {
-    errs() << "obelisk: error: execution descriptor disagrees with generated "
+    errs() << "talos: error: execution descriptor disagrees with generated "
               "native state planes\n";
     return failure();
   }
@@ -1244,9 +1244,9 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
           ? dyn_cast<llvm::ConstantInt>(executionInitializer->getOperand(1))
           : nullptr;
   if (!stateUnknown && (!executionFlags || !(executionFlags->getZExtValue() &
-                                             OBELISK_RT_EXECUTION_TWO_STATE))) {
+                                             TALOS_RT_EXECUTION_TWO_STATE))) {
     errs()
-        << "obelisk: error: four-state execution requires an unknown plane\n";
+        << "talos: error: four-state execution requires an unknown plane\n";
     return failure();
   }
   llvm::Constant *unknownPointer =
@@ -1255,68 +1255,68 @@ addVPIStartupLifecycle(llvm::Module &module, StringRef vpi,
           : llvm::ConstantPointerNull::get(cast<llvm::PointerType>(pointer));
   if (requiresStateSync) {
     llvm::FunctionCallee sync = module.getOrInsertFunction(
-        "obelisk_rt_v1_native_state_sync",
+        "talos_rt_v1_native_state_sync",
         llvm::FunctionType::get(llvm::Type::getInt32Ty(context),
                                 {pointer, pointer, pointer, i64}, false));
     llvm::Value *syncStatus = beforeSpawn.CreateCall(
         sync,
         {runtimeContext, stateValue, unknownPointer,
          llvm::ConstantInt::get(i64, stateBitCount->getZExtValue())},
-        "obelisk.state.sync");
+        "talos.state.sync");
     beforeSpawn.CreateCall(fail, {runtimeContext, syncStatus});
   }
   if (resolveInitialDrivers) {
     llvm::FunctionCallee resolve = module.getOrInsertFunction(
-        "obelisk_rt_v1_scheduler_resolve_initial_drivers",
+        "talos_rt_v1_scheduler_resolve_initial_drivers",
         llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pointer},
                                 false));
     llvm::Value *resolveStatus = beforeSpawn.CreateCall(
-        resolve, {runtimeContext}, "obelisk.initial.drivers");
+        resolve, {runtimeContext}, "talos.initial.drivers");
     beforeSpawn.CreateCall(fail, {runtimeContext, resolveStatus});
   }
   if (enableVPI) {
     llvm::FunctionCallee startup = module.getOrInsertFunction(
-        "obelisk_rt_v1_vpi_startup",
+        "talos_rt_v1_vpi_startup",
         llvm::FunctionType::get(llvm::Type::getInt32Ty(context),
                                 {pointer, pointer, i64}, false));
     llvm::Value *status =
         beforeSpawn.CreateCall(startup,
                                {runtimeContext, nameArrayPointer,
                                 llvm::ConstantInt::get(i64, names.size())},
-                               "obelisk.vpi.startup");
+                               "talos.vpi.startup");
     beforeSpawn.CreateCall(fail, {runtimeContext, status});
     llvm::FunctionCallee endCompile = module.getOrInsertFunction(
-        "obelisk_rt_v1_vpi_end_compile",
+        "talos_rt_v1_vpi_end_compile",
         llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pointer},
                                 false));
     status = beforeSpawn.CreateCall(endCompile, {runtimeContext},
-                                    "obelisk.vpi.end_compile");
+                                    "talos.vpi.end_compile");
     beforeSpawn.CreateCall(fail, {runtimeContext, status});
     llvm::FunctionCallee startSimulation = module.getOrInsertFunction(
-        "obelisk_rt_v1_vpi_start_simulation",
+        "talos_rt_v1_vpi_start_simulation",
         llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pointer},
                                 false));
     status = beforeSpawn.CreateCall(startSimulation, {runtimeContext},
-                                    "obelisk.vpi.start_simulation");
+                                    "talos.vpi.start_simulation");
     beforeSpawn.CreateCall(fail, {runtimeContext, status});
     llvm::FunctionCallee endSimulation = module.getOrInsertFunction(
-        "obelisk_rt_v1_vpi_end_simulation",
+        "talos_rt_v1_vpi_end_simulation",
         llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pointer},
                                 false));
     llvm::FunctionCallee shutdown = module.getOrInsertFunction(
-        "obelisk_rt_v1_vpi_shutdown",
+        "talos_rt_v1_vpi_shutdown",
         llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pointer},
                                 false));
     llvm::IRBuilder<> beforeReport(report);
     llvm::Value *endStatus =
         beforeReport.CreateCall(endSimulation, {report->getArgOperand(0)},
-                                "obelisk.vpi.end_simulation");
+                                "talos.vpi.end_simulation");
     llvm::Value *runStatus = report->getArgOperand(1);
     llvm::Value *runFailed = beforeReport.CreateICmpNE(
         runStatus, llvm::ConstantInt::get(runStatus->getType(), 0),
-        "obelisk.vpi.run_failed");
+        "talos.vpi.run_failed");
     llvm::Value *finalStatus = beforeReport.CreateSelect(
-        runFailed, runStatus, endStatus, "obelisk.vpi.final_status");
+        runFailed, runStatus, endStatus, "talos.vpi.final_status");
     report->setArgOperand(1, finalStatus);
     returnStatus->setOperand(0, finalStatus);
     llvm::IRBuilder<> beforeDestroy(destroy);
@@ -1330,21 +1330,21 @@ LogicalResult writeObject(llvm::Module &module, TargetMachine &targetMachine,
   std::error_code error;
   raw_fd_ostream output(path, error, sys::fs::OF_None);
   if (error) {
-    errs() << "obelisk: error: could not create object '" << path
+    errs() << "talos: error: could not create object '" << path
            << "': " << error.message() << '\n';
     return failure();
   }
   legacy::PassManager codegen;
   if (targetMachine.addPassesToEmitFile(codegen, output, nullptr,
                                         CodeGenFileType::ObjectFile)) {
-    errs() << "obelisk: error: " << description
+    errs() << "talos: error: " << description
            << " target cannot emit objects\n";
     return failure();
   }
   codegen.run(module);
   output.flush();
   if (output.has_error()) {
-    errs() << "obelisk: error: failed while writing object '" << path
+    errs() << "talos: error: failed while writing object '" << path
            << "': " << output.error().message() << '\n';
     output.clear_error();
     return failure();
@@ -1356,7 +1356,7 @@ LogicalResult writeBitcode(llvm::Module &module, StringRef path) {
   std::error_code error;
   raw_fd_ostream output(path, error, sys::fs::OF_None);
   if (error) {
-    errs() << "obelisk: error: could not create bitcode '" << path
+    errs() << "talos: error: could not create bitcode '" << path
            << "': " << error.message() << '\n';
     return failure();
   }
@@ -1366,7 +1366,7 @@ LogicalResult writeBitcode(llvm::Module &module, StringRef path) {
   WriteBitcodeToFile(module, output, false, &index, true);
   output.flush();
   if (output.has_error()) {
-    errs() << "obelisk: error: failed while writing bitcode '" << path
+    errs() << "talos: error: failed while writing bitcode '" << path
            << "': " << output.error().message() << '\n';
     output.clear_error();
     return failure();
@@ -1397,22 +1397,22 @@ LogicalResult emitTargetOutput(ModuleOp module,
                                const NativeOutputOptions &options) {
   std::unique_ptr<TargetBackend> backend = createTargetBackend(options.target);
   if (!backend) {
-    errs() << "obelisk: error: this build does not include the requested "
+    errs() << "talos: error: this build does not include the requested "
               "code-generation target\n";
     return failure();
   }
 
   std::string targetError;
   bool graphRequiresBytecode = false;
-  module.walk([&](obelisk::sim::SimDesignOp design) {
-    obelisk::schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
+  module.walk([&](talos::sim::SimDesignOp design) {
+    talos::schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
     if (!graph)
       return;
     for (mlir::Attribute attribute : graph.getNodes())
       if (auto fragment =
-              mlir::dyn_cast<obelisk::schedule::ComputeFragmentAttr>(attribute))
+              mlir::dyn_cast<talos::schedule::ComputeFragmentAttr>(attribute))
         graphRequiresBytecode |=
-            fragment.getTier() == obelisk::schedule::ComputeTierKind::Bytecode;
+            fragment.getTier() == talos::schedule::ComputeTierKind::Bytecode;
   });
   bool useBytecode = options.bytecode || graphRequiresBytecode;
 
@@ -1427,16 +1427,16 @@ LogicalResult emitTargetOutput(ModuleOp module,
   std::unique_ptr<TargetMachine> targetMachine =
       backend->createTargetMachine(targetError, hostOptLevel);
   if (!targetMachine) {
-    errs() << "obelisk: error: could not create " << backend->getDescription()
+    errs() << "talos: error: could not create " << backend->getDescription()
            << " target: " << targetError << '\n';
     return failure();
   }
   bool requiresStateSync = false;
   bool resolveInitialDrivers = false;
-  std::optional<obelisk::schedule::NativeSchedulerMode> nativeScheduler =
-      obelisk::schedule::symbolizeNativeSchedulerMode(options.nativeScheduler);
+  std::optional<talos::schedule::NativeSchedulerMode> nativeScheduler =
+      talos::schedule::symbolizeNativeSchedulerMode(options.nativeScheduler);
   if (!nativeScheduler) {
-    errs() << "obelisk: error: invalid native scheduler mode\n";
+    errs() << "talos: error: invalid native scheduler mode\n";
     return failure();
   }
   // Reject unprofitable auto candidates before bytecode materialization.  A
@@ -1445,15 +1445,15 @@ LogicalResult emitTargetOutput(ModuleOp module,
   // the generated periodic eval form is actually materializable.  Converting
   // Auto to Eval here would incorrectly make that later proof mandatory for
   // ordinary non-periodic designs.
-  if (*nativeScheduler == obelisk::schedule::NativeSchedulerMode::Auto &&
+  if (*nativeScheduler == talos::schedule::NativeSchedulerMode::Auto &&
       useBytecode) {
-    *nativeScheduler = obelisk::schedule::NativeSchedulerMode::Generic;
-  } else if (*nativeScheduler == obelisk::schedule::NativeSchedulerMode::Auto &&
+    *nativeScheduler = talos::schedule::NativeSchedulerMode::Generic;
+  } else if (*nativeScheduler == talos::schedule::NativeSchedulerMode::Auto &&
              !useBytecode) {
-    obelisk::analysis::NativeAOTAnalysis aot =
-        obelisk::analysis::NativeAOTAnalysis::compute(module);
+    talos::analysis::NativeAOTAnalysis aot =
+        talos::analysis::NativeAOTAnalysis::compute(module);
     if (options.timing) {
-      errs() << "obelisk native eligibility: eligible=" << aot.isEligible()
+      errs() << "talos native eligibility: eligible=" << aot.isEligible()
              << " fully_eligible=" << aot.isFullyEligible()
              << " cost_effective=" << aot.isAOTCostEffective()
              << " native_cost=" << aot.getNativeGraphCost()
@@ -1461,18 +1461,18 @@ LogicalResult emitTargetOutput(ModuleOp module,
              << " excluded_actor_cost=" << aot.getExcludedActorCost()
              << " excluded_block_cost=" << aot.getExcludedBlockCost() << '\n';
       for (StringRef reason : aot.getReasons())
-        errs() << "obelisk native boundary: " << reason << '\n';
+        errs() << "talos native boundary: " << reason << '\n';
       // A fragment can touch several reasons, so these costs may overlap and
       // do not sum to the withheld total. They identify which boundary holds
       // the most graph cost, which the reason list alone does not.
-      for (const obelisk::analysis::NativeAOTBoundaryCost &entry :
+      for (const talos::analysis::NativeAOTBoundaryCost &entry :
            aot.getBoundaryCosts())
-        errs() << "obelisk native boundary cost: cost=" << entry.cost
+        errs() << "talos native boundary cost: cost=" << entry.cost
                << " fragments=" << entry.fragments << " actors=" << entry.actors
                << " reason=" << entry.reason << '\n';
     }
     if (!aot.isEligible() || !aot.isAOTCostEffective())
-      *nativeScheduler = obelisk::schedule::NativeSchedulerMode::Generic;
+      *nativeScheduler = talos::schedule::NativeSchedulerMode::Generic;
     // A structural periodic candidate is only a cheap pipeline-shaping hint.
     // Keep Auto through coroutine lowering, where physical aliases, exact
     // fanout, and direct-fragment coverage can be proved together. A false
@@ -1499,7 +1499,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
     auto now = std::chrono::steady_clock::now();
     double seconds =
         std::chrono::duration<double>(now - lastBackendTiming).count();
-    errs() << "obelisk backend timing: " << name << ": " << seconds << " s\n";
+    errs() << "talos backend timing: " << name << ": " << seconds << " s\n";
     lastBackendTiming = now;
   };
 
@@ -1542,7 +1542,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
       return failure();
     prunePartitionInventory(*removed);
     if (options.timing) {
-      errs() << "obelisk native pruning: MLIR symbols removed="
+      errs() << "talos native pruning: MLIR symbols removed="
              << removed->size() << '\n';
       detail::reportNativePrunedSymbols(*removed, "MLIR");
     }
@@ -1555,7 +1555,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
     unsigned changed = detail::balanceNativeGlobalInitializers(
         module, targetMachine->createDataLayout());
     if (options.timing)
-      errs() << "obelisk native balanced global initializers: " << changed
+      errs() << "talos native balanced global initializers: " << changed
              << '\n';
     markBackendTiming("global initializer balancing");
   }
@@ -1563,9 +1563,9 @@ LogicalResult emitTargetOutput(ModuleOp module,
     return failure();
   llvm::LLVMContext llvmContext;
   std::unique_ptr<llvm::Module> llvmModule =
-      translateModuleToLLVMIR(module, llvmContext, "obelisk");
+      translateModuleToLLVMIR(module, llvmContext, "talos");
   if (!llvmModule) {
-    errs() << "obelisk: error: LLVM dialect translation failed\n";
+    errs() << "talos: error: LLVM dialect translation failed\n";
     return failure();
   }
   markBackendTiming("MLIR to LLVM translation");
@@ -1601,7 +1601,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
   markBackendTiming("VPI lifecycle materialization");
   if (options.debugNativeExecutionCounts &&
       !detail::addNativeExecutionCounts(*llvmModule)) {
-    errs() << "obelisk: error: execution counts require a generated main\n";
+    errs() << "talos: error: execution counts require a generated main\n";
     return failure();
   }
   if (pruneModel) {
@@ -1613,7 +1613,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
         detail::pruneNativeExecutableModel(*llvmModule, nativeExports);
     prunePartitionInventory(removed);
     if (options.timing) {
-      errs() << "obelisk native pruning: LLVM symbols removed="
+      errs() << "talos native pruning: LLVM symbols removed="
              << removed.size() << '\n';
       detail::reportNativePrunedSymbols(removed, "LLVM");
     }
@@ -1633,11 +1633,11 @@ LogicalResult emitTargetOutput(ModuleOp module,
       return lhs.first != rhs.first ? lhs.first > rhs.first
                                     : lhs.second < rhs.second;
     });
-    errs() << "obelisk native LLVM inventory: functions=" << functions.size()
+    errs() << "talos native LLVM inventory: functions=" << functions.size()
            << " instructions=" << instructions << '\n';
     for (const auto &[count, name] : llvm::ArrayRef(functions).take_front(
              std::min<size_t>(10, functions.size())))
-      errs() << "obelisk native LLVM body: instructions=" << count
+      errs() << "talos native LLVM body: instructions=" << count
              << " name=" << name << '\n';
   }
   bool splitModule = nativePartitionPlan &&
@@ -1662,14 +1662,14 @@ LogicalResult emitTargetOutput(ModuleOp module,
     std::error_code error;
     raw_fd_ostream output(options.outputPath, error, sys::fs::OF_Text);
     if (error) {
-      errs() << "obelisk: error: could not open LLVM IR output '"
+      errs() << "talos: error: could not open LLVM IR output '"
              << options.outputPath << "': " << error.message() << '\n';
       return failure();
     }
     llvmModule->print(output, nullptr);
     output.flush();
     if (output.has_error()) {
-      errs() << "obelisk: error: failed while writing LLVM IR output '"
+      errs() << "talos: error: failed while writing LLVM IR output '"
              << options.outputPath << "': " << output.error().message() << '\n';
       output.clear_error();
       return failure();
@@ -1687,7 +1687,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
     Expected<NativeModuleSplitPlan> splitPlan =
         planNativeModuleSplit(*llvmModule, *nativePartitionPlan);
     if (!splitPlan) {
-      logAllUnhandledErrors(splitPlan.takeError(), errs(), "obelisk: error: ");
+      logAllUnhandledErrors(splitPlan.takeError(), errs(), "talos: error: ");
       return failure();
     }
     if (thinLTO) {
@@ -1717,7 +1717,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
             (Twine(options.outputPath) + ".part-" + Twine(index)).str(),
             nativeObject ? ".o" : ".bc");
         if (failed(temporary)) {
-          errs() << "obelisk: error: could not create ThinLTO partition "
+          errs() << "talos: error: could not create ThinLTO partition "
                     "temporary\n";
           removeTemporaries();
           return failure();
@@ -1728,7 +1728,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
         std::unique_ptr<TargetMachine> workerTarget =
             backend->createTargetMachine(error, hostOptLevel);
         if (!workerTarget) {
-          errs() << "obelisk: error: could not create ThinLTO pre-link "
+          errs() << "talos: error: could not create ThinLTO pre-link "
                     "target: "
                  << error << '\n';
           removeTemporaries();
@@ -1758,7 +1758,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
           if (!parsed) {
             std::lock_guard<std::mutex> lock(diagnosticMutex);
             logAllUnhandledErrors(parsed.takeError(), errs(),
-                                  "obelisk: error: ThinLTO partition parse "
+                                  "talos: error: ThinLTO partition parse "
                                   "failed: ");
             return false;
           }
@@ -1800,7 +1800,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
       llvm::append_range(modulePaths, partitionOutputPaths);
       if (options.timing)
         for (auto [index, seconds] : llvm::enumerate(partitionPreLinkSeconds))
-          errs() << "obelisk backend timing: partition " << index
+          errs() << "talos backend timing: partition " << index
                  << " coroutine legalization and "
                  << (splitPlan->nativeObjectGroups.contains(
                          splitPlan->groups[index])
@@ -1848,7 +1848,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
         FailureOr<SmallString<256>> temporary = makeTemporaryBeside(
             (Twine(options.outputPath) + ".part-" + Twine(index)).str(), ".o");
         if (failed(temporary)) {
-          errs() << "obelisk: error: could not create partition temporary\n";
+          errs() << "talos: error: could not create partition temporary\n";
           removeTemporaries();
           return failure();
         }
@@ -1858,7 +1858,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
         std::unique_ptr<TargetMachine> workerTarget =
             backend->createTargetMachine(error, hostOptLevel);
         if (!workerTarget) {
-          errs() << "obelisk: error: could not create partition target: "
+          errs() << "talos: error: could not create partition target: "
                  << error << '\n';
           removeTemporaries();
           return failure();
@@ -1866,9 +1866,9 @@ LogicalResult emitTargetOutput(ModuleOp module,
         partitionTargets.push_back(std::move(workerTarget));
       }
       if (options.timing) {
-        errs() << "obelisk backend timing: partition cloning: " << cloneSeconds
+        errs() << "talos backend timing: partition cloning: " << cloneSeconds
                << " s\n";
-        errs() << "obelisk backend timing: partition bitcode serialization: "
+        errs() << "talos backend timing: partition bitcode serialization: "
                << bitcodeSerializationSeconds << " s\n";
       }
       markBackendTiming("partition serialization and target creation");
@@ -1898,7 +1898,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
           if (!parsed) {
             std::lock_guard<std::mutex> lock(diagnosticMutex);
             logAllUnhandledErrors(parsed.takeError(), errs(),
-                                  "obelisk: error: partition parse failed: ");
+                                  "talos: error: partition parse failed: ");
             return false;
           }
           auto optimizationStart = std::chrono::steady_clock::now();
@@ -1932,15 +1932,15 @@ LogicalResult emitTargetOutput(ModuleOp module,
         }
       if (options.timing)
         for (auto [index, seconds] : llvm::enumerate(partitionCodegenSeconds)) {
-          errs() << "obelisk backend timing: partition " << index
+          errs() << "talos backend timing: partition " << index
                  << " optimization and codegen: " << seconds << " s\n";
-          errs() << "obelisk backend timing: partition " << index
+          errs() << "talos backend timing: partition " << index
                  << " bitcode parsing: " << partitionParseSeconds[index]
                  << " s\n";
-          errs() << "obelisk backend timing: partition " << index
+          errs() << "talos backend timing: partition " << index
                  << " LLVM optimization: "
                  << partitionOptimizationSeconds[index] << " s\n";
-          errs() << "obelisk backend timing: partition " << index
+          errs() << "talos backend timing: partition " << index
                  << " object emission: " << partitionObjectSeconds[index]
                  << " s\n";
         }
@@ -1950,7 +1950,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
     FailureOr<SmallString<256>> moduleTemporary =
         makeTemporaryBeside(options.outputPath, fullLTO ? ".bc" : ".o");
     if (failed(moduleTemporary)) {
-      errs() << "obelisk: error: could not create temporary target module\n";
+      errs() << "talos: error: could not create temporary target module\n";
       return failure();
     }
     moduleTemporaries.push_back(std::move(*moduleTemporary));
@@ -1978,7 +1978,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
   std::optional<std::string> support =
       backend->findSupportTree(options.executablePath);
   if (!support) {
-    errs() << "obelisk: error: " << backend->getDescription()
+    errs() << "talos: error: " << backend->getDescription()
            << " link support tree was not found relative to '"
            << options.executablePath << "'\n";
     removeTemporaries();
@@ -1991,4 +1991,4 @@ LogicalResult emitTargetOutput(ModuleOp module,
   return linked;
 }
 
-} // namespace obelisk::driver
+} // namespace talos::driver

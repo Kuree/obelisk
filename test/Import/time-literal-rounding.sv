@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang --std=1800-2017 %s | FileCheck %s --check-prefix=IEEE2017
-// RUN: obelisk -emit-slang --std=1800-2023 %s | FileCheck %s --check-prefix=IEEE2023
+// RUN: talos -emit-slang --std=1800-2017 %s | FileCheck %s --check-prefix=IEEE2017
+// RUN: talos -emit-slang --std=1800-2023 %s | FileCheck %s --check-prefix=IEEE2023
 
 // A time literal is a realtime value scaled to the current time unit.
 // IEEE 1800-2017 5.8 also rounds it to the current time precision, half away

@@ -4,9 +4,9 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -26,7 +26,7 @@ constexpr Strengths gates[] = {
     {"top.override", vpiHiZ, vpiWeakDrive},
     {"top.pu", vpiPullDrive, vpiPullDrive},
     {"top.pd", vpiPullDrive, vpiPullDrive},
-    // IEEE 28.10 ignores the opposite polarity. Obelisk canonicalizes that
+    // IEEE 28.10 ignores the opposite polarity. Talos canonicalizes that
     // unused polarity to Pull, consistently with executable driver lowering.
     {"top.pu_override", vpiPullDrive, vpiSupplyDrive},
     {"top.pd_override", vpiSupplyDrive, vpiPullDrive},
@@ -35,12 +35,12 @@ constexpr Strengths assignments[] = {{"", vpiStrongDrive, vpiStrongDrive},
                                      {"", vpiPullDrive, vpiWeakDrive}};
 
 void checkStaticStrengths(bool missingDefinition) {
-  using namespace obelisk;
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  using namespace talos;
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  sim::ObeliskSimulationDialect>();
+                  sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
@@ -70,8 +70,8 @@ void checkStaticStrengths(bool missingDefinition) {
   options.vpi = "read";
   auto encoded = encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
-  obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_VERSION;
+  talos_rt_execution_descriptor_v1 execution{};
+  execution.version = TALOS_RT_VERSION;
   execution.flags = encoded->executionFlags;
   execution.bytecode = encoded->bytecode.data();
   execution.bytecode_size = encoded->bytecode.size();
@@ -80,15 +80,15 @@ void checkStaticStrengths(bool missingDefinition) {
   execution.state_bit_count = encoded->stateBitCount;
   for (unsigned byte = 0; byte != 8; ++byte)
     execution.checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *raw = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &raw),
-            OBELISK_RT_OK);
-  std::unique_ptr<obelisk_rt_context, decltype(&obelisk_rt_v1_context_destroy)>
-      runtime(raw, obelisk_rt_v1_context_destroy);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(raw, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(raw), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(raw), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *raw = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &raw),
+            TALOS_RT_OK);
+  std::unique_ptr<talos_rt_context, decltype(&talos_rt_v1_context_destroy)>
+      runtime(raw, talos_rt_v1_context_destroy);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(raw, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(raw), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(raw), TALOS_RT_OK);
   std::vector<vpiHandle> handles;
   for (const auto &expected : gates) {
     SCOPED_TRACE(expected.name);
@@ -159,7 +159,7 @@ void checkStaticStrengths(bool missingDefinition) {
   HeaderWriter(invalidBytes.data()).setChecksum(hash);
   auto invalid = execution;
   invalid.design_database = invalidBytes.data();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&invalid), OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&invalid), TALOS_RT_INVALID_DESIGN);
 
   if (!missingDefinition) {
     auto expanded = mlir::OwningOpRef<mlir::ModuleOp>(module->clone());
@@ -206,7 +206,7 @@ void checkStaticStrengths(bool missingDefinition) {
   }
   for (auto handle : handles)
     EXPECT_EQ(vpi_free_object(handle), 1);
-  EXPECT_EQ(obelisk_rt_v1_vpi_end_simulation(raw), OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_v1_vpi_end_simulation(raw), TALOS_RT_OK);
 }
 } // namespace
 

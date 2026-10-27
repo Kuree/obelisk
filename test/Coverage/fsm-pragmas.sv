@@ -41,10 +41,10 @@ module top;
   end
 endmodule
 
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=fsm %s -o %t
+// RUN: %talos --std=1800-2023 -O0 --coverage=fsm %s -o %t
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s --check-prefix=RUNTIME
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode --coverage=fsm %s -o %t.bytecode
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: %talos --std=1800-2023 -O3 --execution-tier=bytecode --coverage=fsm %s -o %t.bytecode
 // RUN: %t.bytecode --coverage-output=%t.bytecode.obcov | FileCheck %s --check-prefix=RUNTIME
 
 // RUNTIME: 6/8 12/16

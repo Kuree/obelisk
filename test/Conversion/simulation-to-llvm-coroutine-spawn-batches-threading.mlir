@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-replicate --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.mlir
-// RUN: obelisk-opt %s --mlir-disable-threading --test-obelisk-replicate --convert-obelisk-sim-processes-to-llvm-coroutines | diff -u - %t.mlir
+// RUN: talos-opt %s --test-talos-replicate --convert-talos-sim-processes-to-llvm-coroutines -o %t.mlir
+// RUN: talos-opt %s --mlir-disable-threading --test-talos-replicate --convert-talos-sim-processes-to-llvm-coroutines | diff -u - %t.mlir
 // RUN: FileCheck %s --implicit-check-not=llvm.intr.coro --implicit-check-not=llvm.coro.destroy < %t.mlir
 // RUN: FileCheck %s --check-prefix=OPEN < %t.mlir
 
@@ -7,11 +7,11 @@
 // exercise module-global creation across worker bodies; threaded and serial
 // lowering must agree. The closed-executable form is in
 // simulation-to-llvm-coroutine-spawn-batches-closed.mlir.
-// CHECK-COUNT-33: llvm.call @obelisk_rt_v1_process_spawn_batch
-// CHECK-NOT: llvm.call @obelisk_rt_v1_process_spawn_batch
+// CHECK-COUNT-33: llvm.call @talos_rt_v1_process_spawn_batch
+// CHECK-NOT: llvm.call @talos_rt_v1_process_spawn_batch
 
-// OPEN-DAG: llvm.func @child.__obelisk_spawn(
-// OPEN-DAG: llvm.func @parent_0.__obelisk_spawn(
+// OPEN-DAG: llvm.func @child.__talos_spawn(
+// OPEN-DAG: llvm.func @parent_0.__talos_spawn(
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",

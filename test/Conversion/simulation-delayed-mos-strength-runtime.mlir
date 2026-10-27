@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --test-obelisk-print-bytecode=state=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off require-bytecode=true' --test-talos-print-bytecode=state=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 // Runtime behavior is checked in ../Runtime/simulation-delayed-mos-strength-runtime.test.
 
@@ -8,7 +8,7 @@
 // initial possible conduction, source/control replacement while pending,
 // same-logic strength changes, force/release, resistive transfer, downstream
 // pass propagation, and the absence of destination-to-source backflow.
-// LLVM: llvm.call @obelisk_rt_v1_mos_drive_delayed
+// LLVM: llvm.call @talos_rt_v1_mos_drive_delayed
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x0001023f
 
 module attributes {
@@ -73,7 +73,7 @@ module attributes {
     simulation.code_unit.decl 9991000 in 0 root_initializer hierarchy "top.root"
     simulation.code_unit.decl 9991001 in 0 initial hierarchy "top.initial"
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9991000 : i64,
                     simulation.lowered} {

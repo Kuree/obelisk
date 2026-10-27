@@ -1,13 +1,13 @@
 //===- VPIHandleToken.h - Non-reusable opaque handle tokens -----*- C++ -*-===//
 
-#ifndef OBELISK_RUNTIME_VPI_HANDLE_TOKEN_H
-#define OBELISK_RUNTIME_VPI_HANDLE_TOKEN_H
+#ifndef TALOS_RUNTIME_VPI_HANDLE_TOKEN_H
+#define TALOS_RUNTIME_VPI_HANDLE_TOKEN_H
 
 #include <atomic>
 #include <cstdint>
 #include <limits>
 
-namespace obelisk::runtime {
+namespace talos::runtime {
 
 inline bool allocateVPIHandleToken(std::atomic<uintptr_t> &next,
                                    uintptr_t &result) noexcept {
@@ -24,6 +24,6 @@ inline bool allocateVPIHandleToken(std::atomic<uintptr_t> &next,
   return true;
 }
 
-} // namespace obelisk::runtime
+} // namespace talos::runtime
 
 #endif

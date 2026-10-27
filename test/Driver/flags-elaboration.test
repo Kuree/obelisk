@@ -1,12 +1,12 @@
 // Elaboration options: top modules and parameters, time scale, constants,
 // declaration order, unknown modules, diagnostics, and slang passthrough.
-// RUN: obelisk -emit-slang --top=selected_top -G WIDTH=12 %S/Inputs/tops.sv | FileCheck %s --check-prefix=TOP
-// RUN: obelisk -emit-slang --timescale=10ns/1ns %S/Inputs/timescale.sv | FileCheck %s --check-prefix=TIMESCALE
-// RUN: obelisk -emit-slang %S/Inputs/exact_constants.sv | FileCheck %s --check-prefix=EXACT-CONSTANT
-// RUN: obelisk -emit-slang --allow-use-before-declare %S/Inputs/use_before_declare.sv | FileCheck %s --check-prefix=USE-BEFORE-DECLARE
-// RUN: obelisk -emit-slang --ignore-unknown-modules %S/Inputs/macros.sv | FileCheck %s --check-prefix=IGNORE-UNKNOWN
-// RUN: obelisk -emit-slang -Wno-unused --error-limit=5 --suppress-warnings=%S/Inputs %S/Inputs/macros.sv | FileCheck %s --check-prefix=DIAGNOSTICS
-// RUN: obelisk -emit-slang -Xslang --ignore-unknown-modules %S/Inputs/macros.sv | FileCheck %s --check-prefix=XSLANG
+// RUN: talos -emit-slang --top=selected_top -G WIDTH=12 %S/Inputs/tops.sv | FileCheck %s --check-prefix=TOP
+// RUN: talos -emit-slang --timescale=10ns/1ns %S/Inputs/timescale.sv | FileCheck %s --check-prefix=TIMESCALE
+// RUN: talos -emit-slang %S/Inputs/exact_constants.sv | FileCheck %s --check-prefix=EXACT-CONSTANT
+// RUN: talos -emit-slang --allow-use-before-declare %S/Inputs/use_before_declare.sv | FileCheck %s --check-prefix=USE-BEFORE-DECLARE
+// RUN: talos -emit-slang --ignore-unknown-modules %S/Inputs/macros.sv | FileCheck %s --check-prefix=IGNORE-UNKNOWN
+// RUN: talos -emit-slang -Wno-unused --error-limit=5 --suppress-warnings=%S/Inputs %S/Inputs/macros.sv | FileCheck %s --check-prefix=DIAGNOSTICS
+// RUN: talos -emit-slang -Xslang --ignore-unknown-modules %S/Inputs/macros.sv | FileCheck %s --check-prefix=XSLANG
 
 // TOP: hierarchical_name = "selected_top"
 // TOP: !slang.packed_array<11 : 0 x

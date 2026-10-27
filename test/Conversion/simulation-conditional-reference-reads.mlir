@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s '--pass-pipeline=builtin.module(simulation.design(simulation.func(schedule-lower-conditional-reference-accesses)))' -o %t.lowered
+// RUN: talos-opt %s '--pass-pipeline=builtin.module(simulation.design(simulation.func(schedule-lower-conditional-reference-accesses)))' -o %t.lowered
 // RUN: FileCheck %s < %t.lowered
-// RUN: obelisk-opt %t.lowered '--test-obelisk-local-storage=functions=conditional allocations=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=PRIVATE
-// RUN: obelisk-opt %t.lowered '--pass-pipeline=builtin.module(simulation.design(simulation.func(schedule-lower-conditional-reference-accesses)))' -o %t.again
+// RUN: talos-opt %t.lowered '--test-talos-local-storage=functions=conditional allocations=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=PRIVATE
+// RUN: talos-opt %t.lowered '--pass-pipeline=builtin.module(simulation.design(simulation.func(schedule-lower-conditional-reference-accesses)))' -o %t.again
 // RUN: diff %t.lowered %t.again
 
 // Selection captures an address, not its value. A store between selection and

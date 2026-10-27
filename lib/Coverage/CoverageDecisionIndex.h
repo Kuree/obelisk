@@ -1,11 +1,11 @@
 //===- CoverageDecisionIndex.h - shared symbolic coverage sets -----------===//
 
-#ifndef OBELISK_LIB_COVERAGE_COVERAGEDECISIONINDEX_H
-#define OBELISK_LIB_COVERAGE_COVERAGEDECISIONINDEX_H
+#ifndef TALOS_LIB_COVERAGE_COVERAGEDECISIONINDEX_H
+#define TALOS_LIB_COVERAGE_COVERAGEDECISIONINDEX_H
 
 #include "CoverageIndex.h"
 
-namespace obelisk::coverage::detail {
+namespace talos::coverage::detail {
 
 /// Reduced ordered decision graph over one fixed-width value domain. Nodes
 /// and binary operations have constant-size radix keys. Each distinct graph
@@ -387,6 +387,6 @@ public:
   }
 };
 
-} // namespace obelisk::coverage::detail
+} // namespace talos::coverage::detail
 
 #endif

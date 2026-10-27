@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics
+// RUN: talos-opt %s --split-input-file --verify-diagnostics
 
 // expected-error @+1 {{has undeclared attribute 'dpi.is_task'}}
 func.func private @undeclared() attributes {dpi.is_task = true}

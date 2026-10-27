@@ -1,7 +1,7 @@
-// RUN: obelisk --vpi=off -O3 --native-scheduler=eval %s -o %t.native
+// RUN: talos --vpi=off -O3 --native-scheduler=eval %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk --vpi=off -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos --vpi=off -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
 
 // IEEE 1800-2023 7.2.1: preserve the packed bit order, shared boundary bytes,

@@ -95,7 +95,7 @@ The object cache key is a digest of:
 2. target triple, data layout, CPU and feature set;
 3. optimization, sanitizer, VPI/DPI, execution-tier, and code-generation
    options that affect the object;
-4. Obelisk compiler revision, runtime ABI version, and pinned LLVM revision;
+4. Talos compiler revision, runtime ABI version, and pinned LLVM revision;
 5. ThinLTO import list and imported summary/content digests.
 
 The primary metadata partition also includes the ordered inventory of design

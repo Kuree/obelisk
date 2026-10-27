@@ -1,9 +1,9 @@
 # RUN: %coverage-fixture %t.id-a.obcov 18 merge-id-a 1 100 1 1 0 shared 1 1 1 merge-bin
 # RUN: %coverage-fixture %t.id-b.obcov 19 merge-id-b 0 100 1 1 0 shared 1 1 2 merge-bin
-# RUN: obelisk-cov report --format=json %t.id-a.obcov %t.id-b.obcov | FileCheck %s --check-prefix=IDS
+# RUN: talos-cov report --format=json %t.id-a.obcov %t.id-b.obcov | FileCheck %s --check-prefix=IDS
 # RUN: %coverage-fixture %t.conflict-a.obcov 12 conflict-a 1 90
 # RUN: %coverage-fixture %t.conflict-b.obcov 13 conflict-b 1 80
-# RUN: not obelisk-cov report --format=json %t.conflict-a.obcov %t.conflict-b.obcov 2>&1 | FileCheck %s --check-prefix=TYPE-CONFLICT
+# RUN: not talos-cov report --format=json %t.conflict-a.obcov %t.conflict-b.obcov 2>&1 | FileCheck %s --check-prefix=TYPE-CONFLICT
 
 # Two runs whose same-named bin differs only in its threshold (IEEE
 # 1800-2023 19.7.1) keep two resolved bins with distinct IDs and their own

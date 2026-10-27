@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
+// RUN: talos-opt %s | talos-opt | FileCheck %s
 
 // Each classification has a distinct attribute type, including classifications
 // whose runtime encodings overlap. Flags and reverse traversal round-trip.

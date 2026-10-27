@@ -2,9 +2,9 @@
 
 #include "AnalysisTestPasses.h"
 
-#include "obelisk/Analysis/HandleDataflowAnalysis.h"
-#include "obelisk/Analysis/LocalUnknownAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/HandleDataflowAnalysis.h"
+#include "talos/Analysis/LocalUnknownAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -26,18 +26,18 @@ public:
   LocalUnknownAnalysisTestPass(const LocalUnknownAnalysisTestPass &pass)
       : PassWrapper(pass) {}
 
-  StringRef getArgument() const final { return "test-obelisk-local-unknown"; }
+  StringRef getArgument() const final { return "test-talos-local-unknown"; }
   StringRef getDescription() const final {
     return "print the reads a gated two-state activation copy can make "
            "value-only";
   }
 
   void runOnOperation() final {
-    for (auto design : getOperation().getOps<obelisk::sim::SimDesignOp>()) {
-      using obelisk::analysis::LocalUnknownAnalysis;
-      obelisk::analysis::HandleDataflowAnalysis handles(design);
+    for (auto design : getOperation().getOps<talos::sim::SimDesignOp>()) {
+      using talos::analysis::LocalUnknownAnalysis;
+      talos::analysis::HandleDataflowAnalysis handles(design);
       auto callees = LocalUnknownAnalysis::summarize(design, handles);
-      for (auto function : design.getOps<obelisk::sim::SimFuncOp>()) {
+      for (auto function : design.getOps<talos::sim::SimFuncOp>()) {
         if (function.isExternal())
           continue;
         LocalUnknownAnalysis analysis(
@@ -54,10 +54,10 @@ public:
         for (Operation *read : analysis.getReads())
           if (auto name = read->getAttrOfType<StringAttr>("test.read"))
             llvm::errs() << "  read " << name.getValue() << ": "
-                         << obelisk::analysis::LocalUnknownAnalysis::stringify(
+                         << talos::analysis::LocalUnknownAnalysis::stringify(
                                 analysis.getKind(read))
                          << '\n';
-        function.walk([&](obelisk::sim::SimRefStoreOp store) {
+        function.walk([&](talos::sim::SimRefStoreOp store) {
           if (auto name = store->getAttrOfType<StringAttr>("test.store"))
             llvm::errs() << "  store " << name.getValue() << ": "
                          << (analysis.isKnownStore(store) ? "known"
@@ -75,8 +75,8 @@ public:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 void registerLocalUnknownAnalysisTestPass() {
   PassRegistration<LocalUnknownAnalysisTestPass>();
 }
-} // namespace obelisk
+} // namespace talos

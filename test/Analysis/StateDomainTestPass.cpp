@@ -1,11 +1,11 @@
 //===- StateDomainTestPass.cpp - Print whole-value state facts -----------===//
 
 #include "AnalysisTestPasses.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
 
-#include "obelisk/Analysis/KnownVersioningAnalysis.h"
-#include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/KnownVersioningAnalysis.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -23,20 +23,20 @@ namespace {
 
 bool shouldPrint(Value value) {
   std::function<bool(Type)> containsLogic = [&](Type type) {
-    if (isa<obelisk::sim::LogicType>(type))
+    if (isa<talos::sim::LogicType>(type))
       return true;
-    if (!obelisk::sim::isAggregateType(type))
+    if (!talos::sim::isAggregateType(type))
       return false;
     for (unsigned index = 0;
-         index < obelisk::sim::getAggregateNumElements(type); ++index)
-      if (containsLogic(obelisk::sim::getAggregateElementType(type, index)))
+         index < talos::sim::getAggregateNumElements(type); ++index)
+      if (containsLogic(talos::sim::getAggregateElementType(type, index)))
         return true;
     return false;
   };
   if (containsLogic(value.getType()))
     return true;
   auto result = dyn_cast<OpResult>(value);
-  return result && isa<obelisk::sim::SimLogicCompareOp>(result.getOwner());
+  return result && isa<talos::sim::SimLogicCompareOp>(result.getOwner());
 }
 
 class StateDomainTestPass
@@ -47,27 +47,27 @@ public:
   StateDomainTestPass(const StateDomainTestPass &other) : PassWrapper(other) {}
 
   StringRef getArgument() const final {
-    return "test-obelisk-sim-state-domain";
+    return "test-talos-sim-state-domain";
   }
   StringRef getDescription() const final {
-    return "print read-only Obelisk simulation state-domain facts";
+    return "print read-only Talos simulation state-domain facts";
   }
 
   void runOnOperation() final {
-    SmallVector<obelisk::sim::SimDesignOp> designs(
-        getOperation().getOps<obelisk::sim::SimDesignOp>());
+    SmallVector<talos::sim::SimDesignOp> designs(
+        getOperation().getOps<talos::sim::SimDesignOp>());
     llvm::sort(designs, [](auto lhs, auto rhs) {
       return lhs.getSymName() < rhs.getSymName();
     });
-    for (obelisk::sim::SimDesignOp design : designs) {
-      FailureOr<obelisk::StateDomainAnalysis> analysis = failure();
+    for (talos::sim::SimDesignOp design : designs) {
+      FailureOr<talos::StateDomainAnalysis> analysis = failure();
       if (shared) {
         auto proofs =
-            obelisk::StateDomainAnalysis::computeForSpecialization(design);
+            talos::StateDomainAnalysis::computeForSpecialization(design);
         if (succeeded(proofs))
           analysis = std::move(proofs->first);
       } else {
-        analysis = obelisk::StateDomainAnalysis::compute(design);
+        analysis = talos::StateDomainAnalysis::compute(design);
       }
       if (failed(analysis)) {
         signalPassFailure();
@@ -82,25 +82,25 @@ public:
                       llvm::cl::desc("share specialization proof indexes")};
 
 private:
-  static void printDesign(obelisk::sim::SimDesignOp design,
-                          const obelisk::StateDomainAnalysis &analysis) {
+  static void printDesign(talos::sim::SimDesignOp design,
+                          const talos::StateDomainAnalysis &analysis) {
     llvm::errs() << "state-domain @" << design.getSymName() << "\n";
-    for (const obelisk::InductiveStateRoot &root :
+    for (const talos::InductiveStateRoot &root :
          analysis.getInductiveRoots()) {
       StringRef resource = "unknown";
-      if (root.resource == obelisk::schedule::ComputeResourceKind::Storage)
+      if (root.resource == talos::schedule::ComputeResourceKind::Storage)
         resource = "storage";
-      else if (root.resource == obelisk::schedule::ComputeResourceKind::Net)
+      else if (root.resource == talos::schedule::ComputeResourceKind::Net)
         resource = "net";
       llvm::errs() << "root " << resource << " " << root.descriptor
                    << ": inductive-two-state\n";
     }
-    SmallVector<obelisk::sim::SimFuncOp> functions(
-        design.getBody().front().getOps<obelisk::sim::SimFuncOp>());
+    SmallVector<talos::sim::SimFuncOp> functions(
+        design.getBody().front().getOps<talos::sim::SimFuncOp>());
     llvm::sort(functions, [](auto lhs, auto rhs) {
       return lhs.getSymName() < rhs.getSymName();
     });
-    for (obelisk::sim::SimFuncOp function : functions) {
+    for (talos::sim::SimFuncOp function : functions) {
       llvm::errs() << "func @" << function.getSymName() << "\n";
       SmallVector<Block *> blocks;
       function.walk<WalkOrder::PreOrder>(
@@ -120,18 +120,18 @@ private:
     }
   }
 
-  static void printFact(const obelisk::StateDomainAnalysis &analysis,
+  static void printFact(const talos::StateDomainAnalysis &analysis,
                         unsigned block, std::optional<unsigned> operation,
                         unsigned valueIndex, Value value) {
-    obelisk::StateDomainFact fact = analysis.get(value);
+    talos::StateDomainFact fact = analysis.get(value);
     llvm::errs() << "  bb" << block;
     if (operation)
       llvm::errs() << ".op" << *operation << ".result";
     else
       llvm::errs() << ".arg";
     llvm::errs() << valueIndex << ": "
-                 << obelisk::stringifyStateDomain(fact.domain) << " ("
-                 << obelisk::stringifyStateDomainReason(fact.reason) << ")\n";
+                 << talos::stringifyStateDomain(fact.domain) << " ("
+                 << talos::stringifyStateDomainReason(fact.reason) << ")\n";
   }
 };
 
@@ -139,21 +139,21 @@ private:
 /// unresolved-call path can be exercised without accepting malformed test IR.
 class EraseMarkedSimulationFunctionTestPass
     : public PassWrapper<EraseMarkedSimulationFunctionTestPass,
-                         OperationPass<obelisk::sim::SimDesignOp>> {
+                         OperationPass<talos::sim::SimDesignOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
       EraseMarkedSimulationFunctionTestPass)
 
   StringRef getArgument() const final {
-    return "test-obelisk-erase-marked-sim-function";
+    return "test-talos-erase-marked-sim-function";
   }
   StringRef getDescription() const final {
     return "erase marked simulation functions for unresolved-call tests";
   }
 
   void runOnOperation() final {
-    for (obelisk::sim::SimFuncOp function : llvm::make_early_inc_range(
-             getOperation().getBody().getOps<obelisk::sim::SimFuncOp>()))
+    for (talos::sim::SimFuncOp function : llvm::make_early_inc_range(
+             getOperation().getBody().getOps<talos::sim::SimFuncOp>()))
       if (function->hasAttr("test.erase_before_sccp"))
         function.erase();
   }
@@ -166,22 +166,22 @@ class KnownVersioningTestPass
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(KnownVersioningTestPass)
   StringRef getArgument() const final {
-    return "test-obelisk-sim-known-versioning";
+    return "test-talos-sim-known-versioning";
   }
   StringRef getDescription() const final {
     return "print regions admitted for known-state versioning";
   }
 
   void runOnOperation() final {
-    getOperation().walk([](obelisk::sim::SimFuncOp function) {
-      obelisk::analysis::KnownVersioningAnalysis analysis(function);
+    getOperation().walk([](talos::sim::SimFuncOp function) {
+      talos::analysis::KnownVersioningAnalysis analysis(function);
       if (analysis.getRegions().empty() && analysis.getRejected().empty())
         return;
       DenseMap<Block *, unsigned> blockIndex;
       for (auto [index, block] : llvm::enumerate(function.getBody()))
         blockIndex[&block] = index;
-      auto kind = [](obelisk::analysis::KnownRegionKind value) {
-        return value == obelisk::analysis::KnownRegionKind::Loop ? "loop"
+      auto kind = [](talos::analysis::KnownRegionKind value) {
+        return value == talos::analysis::KnownRegionKind::Loop ? "loop"
                                                                  : "run";
       };
       auto name = [](Operation *op) -> std::string {
@@ -214,7 +214,7 @@ public:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 
 void registerStateDomainTestPasses() {
   PassRegistration<StateDomainTestPass>();
@@ -222,4 +222,4 @@ void registerStateDomainTestPasses() {
   PassRegistration<EraseMarkedSimulationFunctionTestPass>();
 }
 
-} // namespace obelisk
+} // namespace talos

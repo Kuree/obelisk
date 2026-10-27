@@ -1,11 +1,11 @@
-//===- DriverMain.h - Shared Obelisk driver entry point --------*- C++ -*-===//
+//===- DriverMain.h - Shared Talos driver entry point --------*- C++ -*-===//
 
-#ifndef OBELISK_TOOLS_DRIVER_DRIVERMAIN_H
-#define OBELISK_TOOLS_DRIVER_DRIVERMAIN_H
+#ifndef TALOS_TOOLS_DRIVER_DRIVERMAIN_H
+#define TALOS_TOOLS_DRIVER_DRIVERMAIN_H
 
-#include "obelisk/Frontend/SDF.h"
+#include "talos/Frontend/SDF.h"
 
-namespace obelisk::driver {
+namespace talos::driver {
 
 /// Build-time configuration of a driver executable. The production driver
 /// uses the defaults; the test driver lowers resource limits so tests can
@@ -14,9 +14,9 @@ struct DriverConfiguration {
   frontend::SDFResourceLimits sdfLimits;
 };
 
-int runObeliskDriver(int argc, char **argv,
+int runTalosDriver(int argc, char **argv,
                      const DriverConfiguration &config = {});
 
-} // namespace obelisk::driver
+} // namespace talos::driver
 
-#endif // OBELISK_TOOLS_DRIVER_DRIVERMAIN_H
+#endif // TALOS_TOOLS_DRIVER_DRIVERMAIN_H

@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | \
-// RUN:   obelisk-translate --mlir-to-llvmir | opt -passes=verify -disable-output
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.threaded
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-disable-threading -o %t.serial
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | \
+// RUN:   talos-translate --mlir-to-llvmir | opt -passes=verify -disable-output
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines -o %t.threaded
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines --mlir-disable-threading -o %t.serial
 // RUN: diff %t.threaded %t.serial
 
 module attributes {

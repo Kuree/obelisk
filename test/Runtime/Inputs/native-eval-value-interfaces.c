@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-extern uint8_t __obelisk_state_value[3], __obelisk_state_unknown[3];
+extern uint8_t __talos_state_value[3], __talos_state_unknown[3];
 extern bool lane_run(bool);
 extern void lane_write(bool);
 extern bool lane_read(uint16_t, uint16_t);
@@ -16,24 +16,24 @@ static uint16_t plane(const uint8_t *bytes) {
 
 static void reset(void) {
   const uint16_t value = 0x1234, unknown = 0;
-  memcpy(__obelisk_state_value, &value, sizeof value);
-  memcpy(__obelisk_state_unknown, &unknown, sizeof unknown);
+  memcpy(__talos_state_value, &value, sizeof value);
+  memcpy(__talos_state_unknown, &unknown, sizeof unknown);
 }
 
 bool observer(uint16_t expected, uint16_t expected_x) {
-  bool ok = plane(__obelisk_state_value) == expected &&
-            plane(__obelisk_state_unknown) == expected_x;
+  bool ok = plane(__talos_state_value) == expected &&
+            plane(__talos_state_unknown) == expected_x;
   const uint16_t value = 0xfeed, unknown = 0x00c0;
-  memcpy(__obelisk_state_value, &value, sizeof value);
-  memcpy(__obelisk_state_unknown, &unknown, sizeof unknown);
+  memcpy(__talos_state_value, &value, sizeof value);
+  memcpy(__talos_state_unknown, &unknown, sizeof unknown);
   return ok;
 }
 
 int main(void) {
   for (unsigned take = 0; take != 2; ++take) {
     reset();
-    if (!lane_run(take) || __obelisk_state_value[2] != 77 ||
-        __obelisk_state_unknown[2] != 0)
+    if (!lane_run(take) || __talos_state_value[2] != 77 ||
+        __talos_state_unknown[2] != 0)
       return 1;
     reset();
     // The original ABI is also the fine/cold path after local VPI fracture.

@@ -1,9 +1,9 @@
 # Coverage codec and scaling
 
-The compiler, native runtime, bytecode runtime, and `obelisk-cov` share the
+The compiler, native runtime, bytecode runtime, and `talos-cov` share the
 portable codec in `lib/Coverage/CoverageDatabase.cpp`. The declarative source
 of record sizes, domains, and wire constants is
-`include/obelisk/Coverage/CoverageDatabase.td`; `obelisk-tblgen` generates the
+`include/talos/Coverage/CoverageDatabase.td`; `talos-tblgen` generates the
 declarations, parser descriptors, and serializer descriptors. Embedded static
 schemas and persisted runs use the same codec. The format is unversioned while
 it is under development: producers and consumers are built together.
@@ -33,10 +33,10 @@ as the sink accepts them. It then writes the digest as the final callback.
 Validation, sink failure, and allocation diagnostics remain explicit. Atomic
 file publication occurs only after a complete successful write.
 
-The JSON report is identified as `obelisk-coverage-report`; it is also the
+The JSON report is identified as `talos-coverage-report`; it is also the
 payload embedded in the HTML report. Text, JSON, HTML, LCOV, inspect, and merge
-all read through the shared parser, and `obelisk-opt
---test-obelisk-print-coverage-schema` prints an embedded schema through it.
+all read through the shared parser, and `talos-opt
+--test-talos-print-coverage-schema` prints an embedded schema through it.
 
 ## Cost model
 

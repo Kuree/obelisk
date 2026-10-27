@@ -1,8 +1,8 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
+// RUN: talos -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O3 --vpi=off --native-scheduler=generic %s -o %t.generic
 // RUN: %t.generic | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval %s -o %t.eval
+// RUN: talos -O3 --vpi=off --native-scheduler=eval %s -o %t.eval
 // RUN: %t.eval | FileCheck %s
 // IEEE 1800-2023 9.2.2.2.1 excludes writes through output/inout function
 // arguments from implicit sensitivity. Snapshots taken before those calls

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' -o %t.mlir 2> %t.log
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-clocked-kernels))' -o %t.mlir 2> %t.log
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=REPORT < %t.log
 
@@ -8,11 +8,11 @@
 // another member, so the checker joins its clock's kernel with the counter;
 // the members run back to back within the slot, which 4.7 permits.
 
-// REPORT: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=2
+// REPORT: talos clocked kernel: __talos_clocked_0_1_0 members=2
 // REPORT-NOT: member body eligibility
 // The checker reads q before the counter stores it directly, as it would
 // before the NBA region (4.9.4).
-// CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+// CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
 // CHECK: simulation.assert.enabled
 // CHECK: simulation.ref.load
 // CHECK: simulation.time.now

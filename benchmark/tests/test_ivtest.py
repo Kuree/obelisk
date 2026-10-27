@@ -9,8 +9,8 @@ from unittest import mock
 BENCHMARK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_DIR))
 
-from obelisk_bench import model  # noqa: E402
-from obelisk_bench.suites import ivtest  # noqa: E402
+from talos_bench import model  # noqa: E402
+from talos_bench.suites import ivtest  # noqa: E402
 
 
 class ExcludedTest(unittest.TestCase):
@@ -29,7 +29,7 @@ class ExcludedTest(unittest.TestCase):
 
     def test_an_excluded_test_is_skipped_without_compiling(self):
         key, outcome = ivtest.judge_one(
-            "/nonexistent/obelisk", Path("/nonexistent"),
+            "/nonexistent/talos", Path("/nonexistent"),
             self.descriptor("pr1787423"), 10)
         self.assertEqual(key, "pr1787423")
         self.assertEqual(outcome.status, model.SKIP)
@@ -45,7 +45,7 @@ class ExcludedTest(unittest.TestCase):
 
     def test_legacy_fault_directives_are_an_exact_exclusion(self):
         key, outcome = ivtest.judge_one(
-            "/nonexistent/obelisk", Path("/nonexistent"),
+            "/nonexistent/talos", Path("/nonexistent"),
             self.descriptor("pr1467825"), 10)
         self.assertEqual(key, "pr1467825")
         self.assertEqual(outcome.status, model.SKIP)
@@ -54,7 +54,7 @@ class ExcludedTest(unittest.TestCase):
 
     def test_a_test_outside_the_list_is_still_judged(self):
         key, outcome = ivtest.judge_one(
-            "/nonexistent/obelisk", Path("/nonexistent"),
+            "/nonexistent/talos", Path("/nonexistent"),
             self.descriptor("ordinary_missing_test"), 10)
         self.assertEqual(key, "ordinary_missing_test")
         self.assertEqual(outcome.status, model.SKIP)
@@ -206,7 +206,7 @@ class FixtureDirectoryTest(unittest.TestCase):
                                   side_effect=compile_from_fixture),
             ):
                 _, outcome = ivtest.judge_one(
-                    "/nonexistent/obelisk", ivtest_dir, descriptor, 10,
+                    "/nonexistent/talos", ivtest_dir, descriptor, 10,
                     compile_threads=3)
 
             self.assertEqual(outcome.status, model.COMPILE_FAIL)
@@ -250,7 +250,7 @@ class FixtureDirectoryTest(unittest.TestCase):
                 mock.patch.object(ivtest.runner, "execute") as execute,
             ):
                 _, outcome = ivtest.judge_one(
-                    "/nonexistent/obelisk", ivtest_dir, descriptor, 10)
+                    "/nonexistent/talos", ivtest_dir, descriptor, 10)
 
             self.assertEqual(outcome.status, model.PASS)
             self.assertEqual(
@@ -260,7 +260,7 @@ class FixtureDirectoryTest(unittest.TestCase):
             self.assertFalse(
                 compile_frontend.call_args.kwargs["single_unit"])
             compile_cwd = Path(compile_frontend.call_args.kwargs["cwd"])
-            self.assertTrue(compile_cwd.name.startswith("obelisk-ivt-"))
+            self.assertTrue(compile_cwd.name.startswith("talos-ivt-"))
             self.assertNotEqual(compile_cwd, ivtest_dir)
             compile_design.assert_not_called()
             build_vpi_inputs.assert_not_called()
@@ -305,7 +305,7 @@ class FixtureDirectoryTest(unittest.TestCase):
                                       return_value=run_result) as execute,
                 ):
                     _, outcome = ivtest.judge_one(
-                        "/nonexistent/obelisk", ivtest_dir, descriptor, 10)
+                        "/nonexistent/talos", ivtest_dir, descriptor, 10)
 
                 self.assertEqual(outcome.status, model.PASS)
                 execute.assert_called_once()
@@ -341,7 +341,7 @@ class FixtureDirectoryTest(unittest.TestCase):
                                   return_value=run_result) as execute,
             ):
                 _, outcome = ivtest.judge_one(
-                    "/nonexistent/obelisk", ivtest_dir, descriptor, 10)
+                    "/nonexistent/talos", ivtest_dir, descriptor, 10)
 
             self.assertEqual(outcome.status, model.PASS)
             execute.assert_called_once()
@@ -472,7 +472,7 @@ class FixtureDirectoryTest(unittest.TestCase):
                                   return_value=run_result) as execute,
             ):
                 _, outcome = ivtest.judge_one(
-                    "/nonexistent/obelisk", ivtest_dir, descriptor, 10)
+                    "/nonexistent/talos", ivtest_dir, descriptor, 10)
 
             self.assertEqual(outcome.status, model.PASS)
             self.assertEqual(execute.call_args.args[1], 60.0)
@@ -510,7 +510,7 @@ class FixtureDirectoryTest(unittest.TestCase):
                                   return_value=run_result),
             ):
                 _, outcome = ivtest.judge_one(
-                    "/nonexistent/obelisk", ivtest_dir, descriptor, 10)
+                    "/nonexistent/talos", ivtest_dir, descriptor, 10)
 
             self.assertEqual(outcome.status, model.PASS)
 
@@ -542,7 +542,7 @@ class GoldFailureDiagnosticTest(unittest.TestCase):
                                           stdout="actual\n", stderr="ERROR detail\n")),
                 ):
                     _, outcome = ivtest.judge_one(
-                        "/nonexistent/obelisk", root, descriptor, 10)
+                        "/nonexistent/talos", root, descriptor, 10)
                 self.assertEqual(outcome.status, model.RUN_FAIL)
                 self.assertEqual(outcome.log,
                                  "compile warning\nactual\nERROR detail\n")

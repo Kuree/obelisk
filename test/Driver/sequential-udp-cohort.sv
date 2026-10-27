@@ -1,7 +1,7 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t
+// RUN: talos -O0 --vpi=off --native-scheduler=generic %s -o %t
 // RUN: %t --execution-tier=native | FileCheck %s
 // RUN: %t --execution-tier=bytecode | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=generic \
+// RUN: talos -O3 --vpi=off --native-scheduler=generic \
 // RUN:   -emit-llvm %s -o - | FileCheck %s --check-prefix=LLVM
 
 // Independent carried lanes must survive skipped cohort members.  The second
@@ -136,6 +136,6 @@ endmodule
 
 // The outlined member is a hard optimization boundary even at O3.
 // Calls can reside in coroutine resume functions printed after the members.
-// LLVM-DAG: call {{.*}}@__obelisk_region_kernel_{{.*}}.__member
-// LLVM-DAG: define {{.*}}@__obelisk_region_kernel_{{.*}}.__member{{.*}}#[[NOINLINE:[0-9]+]] {
+// LLVM-DAG: call {{.*}}@__talos_region_kernel_{{.*}}.__member
+// LLVM-DAG: define {{.*}}@__talos_region_kernel_{{.*}}.__member{{.*}}#[[NOINLINE:[0-9]+]] {
 // LLVM: attributes #[[NOINLINE]] = { noinline{{.*}} }

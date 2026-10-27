@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize --cse | FileCheck %s
+// RUN: talos-opt %s --canonicalize --cse | FileCheck %s
 
 // MLIR's ConstantLike contract requires every constant-like op to fold to an
 // Attribute.  Null handles used to claim the trait without a folder, so

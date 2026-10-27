@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' -o %t.mlir 2> %t.log
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-clocked-kernels))' -o %t.mlir 2> %t.log
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=REPORT < %t.log
 
@@ -61,11 +61,11 @@ module attributes {
       simulation.ref.store %zero to %clk : !bit, !bitref
       cf.br ^low
     }
-    // CHECK-NOT: __obelisk_clocked
+    // CHECK-NOT: __talos_clocked
     // CHECK: simulation.func private @count
     // CHECK: simulation.nba.enqueue
-    // REPORT-NOT: obelisk clocked kernel:
-    // REPORT: obelisk clocked kernel rejection: clock source = 1
+    // REPORT-NOT: talos clocked kernel:
+    // REPORT: talos clocked kernel rejection: clock source = 1
     simulation.func private @count(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
       %one = simulation.logic.constant 1 : i8, 0 : i8 : !byte
       cf.br ^wait

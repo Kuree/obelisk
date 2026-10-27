@@ -1,9 +1,9 @@
-add_mlir_library(ObeliskCoverageIR
+add_mlir_library(TalosCoverageIR
   CoverageDialect.cpp
 
   DEPENDS
-  ObeliskCoverageAttrsIncGen
-  ObeliskCoverageDialectIncGen
+  TalosCoverageAttrsIncGen
+  TalosCoverageDialectIncGen
 
   LINK_LIBS PUBLIC
   MLIRIR

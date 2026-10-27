@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
 
 // IEEE 1800-2023 7.2.2: a member of a struct default holds its initializer,
 // and a member without one holds its type's default.

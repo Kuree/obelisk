@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp))' > %t.threaded
-// RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp))' > %t.serial
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-sccp))' > %t.threaded
+// RUN: talos-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(talos-sim-sccp))' > %t.serial
 // RUN: diff -u %t.serial %t.threaded
 // RUN: FileCheck %s --check-prefix=SCCP < %t.threaded
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s --check-prefix=GRAPH
-// RUN: obelisk-opt %s -o /dev/null --pass-pipeline='builtin.module(test-obelisk-sim-state-domain)' 2>&1 | FileCheck %s --check-prefix=DOMAIN
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s --check-prefix=GRAPH
+// RUN: talos-opt %s -o /dev/null --pass-pipeline='builtin.module(test-talos-sim-state-domain)' 2>&1 | FileCheck %s --check-prefix=DOMAIN
 
 // SCCP-LABEL: simulation.func private @base_run
 // SCCP: arith.constant 42 : i32

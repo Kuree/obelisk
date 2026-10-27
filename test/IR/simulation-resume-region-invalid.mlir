@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 // IEEE 1800-2023 4.4.2.3: a wait may resume in the Inactive region that
 // follows its process's home region, as `@(event) #0` would. Re-Inactive

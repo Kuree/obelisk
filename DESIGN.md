@@ -1,6 +1,6 @@
-# Obelisk compiler design
+# Talos compiler design
 
-Obelisk compiles SystemVerilog through a semantic, elaborated boundary:
+Talos compiles SystemVerilog through a semantic, elaborated boundary:
 
 ```text
 SystemVerilog
@@ -9,7 +9,7 @@ SystemVerilog
 Slang MLIR dialect (`slang.*`, `!slang.*`)
     │  exhaustive typed conversion
     ▼
-Obelisk MLIR dialect (`obelisk.sv.*`, `!obelisk.*`)
+Talos MLIR dialect (`talos.sv.*`, `!talos.*`)
     │  supported simulation lowering
     ▼
 Simulation MLIR (`simulation.*`, `arith.*`, `cf.*`)
@@ -30,10 +30,10 @@ represent completely.
 
 Simulation optimization and scheduling passes live in
 `lib/Dialect/Simulation/Transforms`, with public pass declarations and TableGen
-definitions in `include/obelisk/Dialect/Simulation/Transforms`. The
-`ObeliskSimulationTransforms` library owns these passes independently of the
+definitions in `include/talos/Dialect/Simulation/Transforms`. The
+`TalosSimulationTransforms` library owns these passes independently of the
 conversion libraries in `lib/Conversion`. Their regression tests live in
-`test/Dialect/Simulation/Transforms`. `obelisk-opt` registers both the conversion
+`test/Dialect/Simulation/Transforms`. `talos-opt` registers both the conversion
 and simulation transformation pass sets; pass names and pipeline syntax are
 shared with the compiler driver.
 
@@ -47,8 +47,8 @@ semantics, functional coverage, or the other verification constructs on which
 UVM depends.
 
 Once those semantics have been omitted or flattened, a later conversion cannot
-reconstruct them. Adding more Moore-to-Obelisk conversion patterns would
-therefore preserve only the subset that survived the earlier boundary. Obelisk
+reconstruct them. Adding more Moore-to-Talos conversion patterns would
+therefore preserve only the subset that survived the earlier boundary. Talos
 instead starts again at slang's elaborated semantic AST and defines its own
 complete source and target dialects. This is a frontend replacement, not an
 incremental extension of the old pipeline: CIRCT is neither a build dependency
@@ -56,9 +56,9 @@ nor an intermediate representation in the new architecture.
 
 ## Toolchain and dependencies
 
-Obelisk consumes the official LLVM 22.1.6 binary distribution. It uses only
+Talos consumes the official LLVM 22.1.6 binary distribution. It uses only
 LLVM and MLIR's public CMake packages, headers, tools, and libraries; LLVM and
-MLIR are not built as part of Obelisk. On a normal configure, CMake downloads a
+MLIR are not built as part of Talos. On a normal configure, CMake downloads a
 checksummed platform archive into `build/_downloads` and extracts the SDK into
 `build/llvm-mlir`. The toolchain is therefore local to, and removable with, the
 build tree:
@@ -69,29 +69,29 @@ cmake -S . -B build -G Ninja
 # Fully offline: use a previously downloaded official archive. It is still
 # extracted inside build/llvm-mlir.
 cmake -S . -B build -G Ninja \
-  -DOBELISK_LLVM_PREBUILT_URL=file:///archives/LLVM-22.1.6-Linux-X64.tar.xz
+  -DTALOS_LLVM_PREBUILT_URL=file:///archives/LLVM-22.1.6-Linux-X64.tar.xz
 ```
 
 The SDK also supplies the host toolchain. Configuring a new build directory
-fetches it before `project()` and compiles Obelisk with its `clang`, which takes
+fetches it before `project()` and compiles Talos with its `clang`, which takes
 about half the time GCC does per translation unit, and links the host tools
 with its `ld.lld`, which links the 1.5 GB debug compiler executables about
 seven times faster than GNU ld. A compiler named by `CMAKE_CXX_COMPILER`,
 `CC`/`CXX`, or a toolchain file is kept, as is the compiler an existing build
-directory was configured with. `-DOBELISK_USE_SDK_CLANG=OFF` and
-`-DOBELISK_USE_SDK_LLD=OFF` restore the system defaults.
+directory was configured with. `-DTALOS_USE_SDK_CLANG=OFF` and
+`-DTALOS_USE_SDK_LLD=OFF` restore the system defaults.
 
 The selected SDK includes `llvm-tblgen`, `mlir-tblgen`, and the LLVM and MLIR
 CMake exports. The official archive does not ship the `FileCheck` or `not`
-test executables, so Obelisk builds small compatible drivers against the
+test executables, so Talos builds small compatible drivers against the
 prebuilt `LLVMFileCheck` and `LLVMSupport` libraries. The archive SHA-256 is
 checked before extraction, and all LLVM and MLIR libraries come from the same
 distribution.
 
-Obelisk pins slang v11.0. CMake downloads its checksummed source archive and
-builds the library as part of Obelisk. A command-line slang binary is not
+Talos pins slang v11.0. CMake downloads its checksummed source archive and
+builds the library as part of Talos. A command-line slang binary is not
 sufficient because the importer uses the C++ semantic AST API. Official release
-binaries are therefore useful as standalone compilers, but not as an Obelisk
+binaries are therefore useful as standalone compilers, but not as an Talos
 SDK dependency.
 
 For reproducible or offline builds, extract the exact v11.0 source archive and
@@ -99,18 +99,18 @@ configure with:
 
 ```sh
 cmake -S . -B build -G Ninja \
-  -DOBELISK_SLANG_SOURCE_DIR=/src/slang-11.0
+  -DTALOS_SLANG_SOURCE_DIR=/src/slang-11.0
 ```
 
 CMake verifies downloads by SHA-256 and disables slang's tools, tests,
 documentation, Python bindings, benchmarks, and install rules. Only the
-slang-facing Obelisk frontend is compiled as C++20; the rest of Obelisk stays
+slang-facing Talos frontend is compiled as C++20; the rest of Talos stays
 at the LLVM SDK's C++17 baseline.
 
 ## Slang semantic boundary
 
 The `slang` dialect is intentionally textual and inspectable. Its C++ namespace
-is `obelisk::slangir`. Each concrete semantic dispatch kind in slang v11.0 has
+is `talos::slangir`. Each concrete semantic dispatch kind in slang v11.0 has
 one concrete registered operation. The inventory covers 220 kinds across:
 
 - symbols and semantic types;
@@ -142,28 +142,28 @@ covergroup identities, virtual-interface modports, and task/function
 signatures. File ranges and macro expansion locations become MLIR locations
 and explicit range metadata.
 
-`obelisk -emit-slang` stops after this boundary. Compilation diagnostics or an
+`talos -emit-slang` stops after this boundary. Compilation diagnostics or an
 invalid semantic node prevent IR emission.
 
-## Obelisk completeness boundary
+## Talos completeness boundary
 
-Obelisk has concrete high-level operations corresponding to every Slang
-semantic operation. They live under `obelisk.sv.*`; there is no generic
+Talos has concrete high-level operations corresponding to every Slang
+semantic operation. They live under `talos.sv.*`; there is no generic
 payload operation and no semantic-kind opcode enum.
-Existing lower-level Obelisk operations are reused only when their types,
+Existing lower-level Talos operations are reused only when their types,
 effects, regions, and scheduling semantics match the source construct.
 
 The conversion uses strongly typed
-`OpConversionPattern<obelisk::slangir::...>` instances generated from the same
+`OpConversionPattern<talos::slangir::...>` instances generated from the same
 checked inventory. Its type converter maps every Slang type to a concrete
-Obelisk type. The entire Slang dialect is illegal in the conversion target, so
+Talos type. The entire Slang dialect is illegal in the conversion target, so
 success guarantees that no `slang.*` operation or `!slang.*` type remains.
 Partial conversion and silently discarded regions fail. Operations from other
 dialects remain legal only when their values, regions, and nested attributes
 contain no Slang types.
 
 This high-level completeness is separate from runtime lowering. Conversion to
-Obelisk means the SystemVerilog meaning is represented in the target dialect;
+Talos means the SystemVerilog meaning is represented in the target dialect;
 it does not claim that every construct has already been lowered to LLVM.
 
 ## Executable simulation and parallelization
@@ -201,7 +201,7 @@ and offsets remain integer attributes.
 
 ### Current executable boundary
 
-The exhaustive Slang and Obelisk semantic inventories are representational
+The exhaustive Slang and Talos semantic inventories are representational
 boundaries, not executable-support claims. At the current executable boundary,
 the same supported source subset lowers to native code and whole-design
 bytecode and is exercised at `-O0` and `-O3`. That subset includes:
@@ -415,7 +415,7 @@ The optimization priorities are, in order:
 SystemVerilog requires a single logical identity and sequential program order
 for a process, but not one indivisible host-thread invocation. IEEE 1800 permits
 a partially evaluated procedural event to be suspended and returned to the same
-event region, even without an explicit source time control. Obelisk may
+event region, even without an explicit source time control. Talos may
 therefore outline a large process CFG into smaller executable fragments and may
 resume successive fragments on different workers.
 
@@ -1424,7 +1424,7 @@ convergence helpers take one ingress dirty mask, return immediately when it is
 zero, evaluate only selected SCC members through a generated callback, carry
 downstream publications across sweeps, and continue until the local dirty set
 is empty. The direct Tier-1 wrapper calls this helper without any
-`obelisk_rt_*` edge or arbitrary iteration count. The current generated ABI is
+`talos_rt_*` edge or arbitrary iteration count. The current generated ABI is
 one word: SCCs or owner ready bits beyond 64 stay on the fine native/runtime
 owner and receive an explicit fallback marker in lowered IR instead of being
 silently truncated.
@@ -1750,14 +1750,14 @@ bytecode fallback does not force an otherwise exact deposit through it.
 
 This ABI is a build-internal contract, not a backward-compatible distribution
 boundary. The compiler, generated target objects, generated bytecode and
-descriptors, generated driver, and the selected `libobelisk_rt.a` object or
-`libobelisk_rt_lto.a` bitcode archive must all come from the same Obelisk source
+descriptors, generated driver, and the selected `libtalos_rt.a` object or
+`libtalos_rt_lto.a` bitcode archive must all come from the same Talos source
 revision. Native optimized links use the bitcode archive, which is additionally
 coupled to the pinned LLVM toolchain. Browser links use precompiled wasm32
-members in `libobelisk_rt.a` so each design does not recompile the runtime.
+members in `libtalos_rt.a` so each design does not recompile the runtime.
 Every compiler update requires regenerating and relinking the complete
 simulator; stale objects and bytecode are unsupported.
-The `_v1` C names and single `OBELISK_RT_VERSION` constant name the current
+The `_v1` C names and single `TALOS_RT_VERSION` constant name the current
 prototype schema. Native descriptors, bytecode, the design database, import
 sites, frame layouts, and wait records all carry version 1. The version does
 not freeze their layouts or require a v2 solely to preserve old artifacts; ABI
@@ -1796,7 +1796,7 @@ dynamic behavior is cold, megamorphic, or would cause excessive cloning.
 Code-form selection is profile- and workload-sensitive. A short interactive run
 may favor bytecode because time to first event includes compilation. A long
 regression or repeatedly executed RTL kernel favors AOT code. Profile feedback
-promotes hot interpreted fragments in a later AOT build. Obelisk deliberately
+promotes hot interpreted fragments in a later AOT build. Talos deliberately
 does not include a JIT tier: the runtime contains no native-code compiler, code
 cache, deoptimization metadata, executable-memory manager, or assumption
 invalidation protocol.
@@ -1872,7 +1872,7 @@ cannot reach a managed collection point free of root-registration overhead.
 LLVM statepoints remain an optional future representation if optimized native
 frames or a moving collector make them worthwhile. Heap allocation, tracing,
 weak-reference processing, reclamation, and lane coordination remain owned by
-the Obelisk runtime rather than LLVM.
+the Talos runtime rather than LLVM.
 
 ### Framework and library code
 
@@ -1968,8 +1968,8 @@ force mode is active. High-volume facilities such as waveform collection use
 batched native runtime intrinsics configured through VPI rather than one
 bytecode dispatch per transition.
 
-Obelisk distinguishes compiler capability profiles so users pay only for VPI
-semantics they require. These are Obelisk build profiles, not access modes
+Talos distinguishes compiler capability profiles so users pay only for VPI
+semantics they require. These are Talos build profiles, not access modes
 defined by the VPI standard:
 
 ```text
@@ -2041,7 +2041,7 @@ runtime handle ABI already contains a stable descriptor kind, ID, and generation
 rather than a native storage address; VPI lowering will reuse that identity so
 physical layout and partition ownership remain independent within one generated
 simulator. This identity stability does not imply binary compatibility between
-Obelisk revisions.
+Talos revisions.
 
 The current compiler records three compilation-level observability states:
 
@@ -2145,7 +2145,7 @@ It deliberately preserves the fine graph beneath each kernel. The cost model
 and solver described below will refine those boundaries and placements rather
 than replace that stable coarse/fine representation.
 
-An Obelisk-owned solver interface may use Z3 directly to select among legal
+An Talos-owned solver interface may use Z3 directly to select among legal
 compiler-generated choices. Z3 types do not cross that interface, and the
 executable IR does not depend on MLIR's SMT dialect. A deterministic heuristic
 provides an initial solution and a fallback when the solver is disabled or
@@ -2199,39 +2199,39 @@ Executable language boundaries are tracked in the [LRM support matrix](docs/lrm-
 
 ## Driver and tools
 
-`obelisk` owns its frontend option model and maps it explicitly onto
+`talos` owns its frontend option model and maps it explicitly onto
 `slang::driver::Driver`. Third-party driver option structures do not cross the
 frontend API.
 
 ```sh
 # Default: build a serial native standalone simulator.
-obelisk design.sv -o simulator
+talos design.sv -o simulator
 
 # Build the same supported design for required bytecode execution.
-obelisk --execution-tier=bytecode design.sv -o simulator-bytecode
+talos --execution-tier=bytecode design.sv -o simulator-bytecode
 
 # Stop after LLVM IR or ELF object emission.
-obelisk -emit-llvm design.sv -o design.ll
-obelisk -c design.sv -o design.o
+talos -emit-llvm design.sv -o design.ll
+talos -c design.sv -o design.o
 
 # Inspect the semantic target boundary.
-obelisk -emit-obelisk design.sv
+talos -emit-talos design.sv
 
 # Stop at the elaborated source boundary.
-obelisk -emit-slang design.sv
+talos -emit-slang design.sv
 
 # Inspect executable SSA or derived schedule metadata.
-obelisk -emit-sim --vpi=off design.sv
-obelisk -emit-schedule --threads=8 --vpi=read design.sv
+talos -emit-sim --vpi=off design.sv
+talos -emit-schedule --threads=8 --vpi=read design.sv
 
 # Generate and link the supported DPI-C import boundary.
-obelisk --emit-dpi-header design.sv -o design_dpi.h
-obelisk design.sv dpi.o -o simulator
+talos --emit-dpi-header design.sv -o design_dpi.h
+talos design.sv dpi.o -o simulator
 
 # Inspect or convert persisted source IR.
-obelisk -emit-slang design.sv | obelisk-opt
-obelisk -emit-slang design.sv |
-  obelisk-opt --convert-slang-to-obelisk
+talos -emit-slang design.sv | talos-opt
+talos -emit-slang design.sv |
+  talos-opt --convert-slang-to-talos
 ```
 
 When multiple output-action flags are present, the last flag wins. The driver
@@ -2244,20 +2244,20 @@ inputs, wasm32 sysroot selection, VPI capability profiles for inspection, and
 independent compiler and generated-worker counts. Native executable emission
 currently accepts only one worker.
 
-`obelisk-opt` registers the standard MLIR dialects, all four Obelisk-owned
+`talos-opt` registers the standard MLIR dialects, all four Talos-owned
 dialects, the semantic conversion pass, and the simulation-lowering pipeline.
 There is no separate source-import translation executable.
 
 ## Verification and testing
 
-All persistent syntax owned by the four Obelisk dialects uses custom assembly.
+All persistent syntax owned by the four Talos dialects uses custom assembly.
 Declarative constraints express fixed type and region relationships, with
 native verifiers for invariants such as integral widths/ranges and aggregate
 consistency.
 
 The test suites cover:
 
-- Slang, Obelisk, and simulation custom-assembly round trips;
+- Slang, Talos, and simulation custom-assembly round trips;
 - verifier rejection for invalid owned-dialect types and operations;
 - the exact AST and conversion inventories;
 - frontend flag behavior and output-action precedence;
@@ -2283,7 +2283,7 @@ flow:
 
 ```sh
 ninja -C build
-ninja -C build check-obelisk
+ninja -C build check-talos
 
 # Run only the compiler lit suite when iterating on compiler code:
 env/bin/lit -sv build/test
@@ -2306,10 +2306,10 @@ language slice. Exact full-region golden traces, simulation determinism across
 generated worker counts, sanitizer and race suites, and performance gates remain
 future coverage.
 
-An external conformance benchmark under `benchmark/` measures Obelisk against
+An external conformance benchmark under `benchmark/` measures Talos against
 third-party simulator regressions without patching them and without invoking any
 reference simulator. The harness owns its run loop: it compiles each test with
-Obelisk, runs the resulting native executable, and judges it three ways — a
+Talos, runs the resulting native executable, and judges it three ways — a
 compile-error test must fail to compile, a gold-file test must match its checked-in
 output, and a self-checking test must print its success marker. It covers:
 
@@ -2320,6 +2320,6 @@ output, and a self-checking test must print its success marker. It covers:
 Compile-failure diagnostics are bucketed into named language features to rank what
 to implement next, and each recorded run appends to a tracked history so the pass
 rate is watched over time. This is a measurement instrument, not a build gate;
-CTest and `check-obelisk` are unaffected. Run
+CTest and `check-talos` are unaffected. Run
 `python3 benchmark/run.py <suite> --suite-root <checkout>`; see
 `benchmark/README.md`.

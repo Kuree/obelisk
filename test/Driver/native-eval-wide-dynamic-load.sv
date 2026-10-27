@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --native-scheduler=eval -emit-llvm %s -o %t.ll
+// RUN: talos -O3 --native-scheduler=eval -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: talos -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.eval > %t.eval.out
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: diff -u %t.bytecode.out %t.eval.out
@@ -12,7 +12,7 @@
 // directly from the state planes. A window that overhangs the vector keeps
 // its in-range bits and reads X for the rest (IEEE 1800-2023 11.5.1); both
 // must agree with the interpreter.
-// LLVM: define i32 @__obelisk_eval_dispatch_v1
+// LLVM: define i32 @__talos_eval_dispatch_v1
 // CHECK: 00ff00ff00ff00ff1122334455667788 1a
 // CHECK: xxxxxxxxxxxxxxxxxxxxxxxxxxxx0123 1a
 

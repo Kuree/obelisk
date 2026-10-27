@@ -1,8 +1,8 @@
-// RUN: cd %S && obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: cd %S && talos -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.generic > %t.generic.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.generic.out
-// RUN: cd %S && not obelisk -O3 --native-scheduler=aot %s -o %t.aot-o3 2>&1 | FileCheck %s --check-prefix=AOT
-// RUN: cd %S && obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: cd %S && not talos -O3 --native-scheduler=aot %s -o %t.aot-o3 2>&1 | FileCheck %s --check-prefix=AOT
+// RUN: cd %S && talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.generic.out -
 
 `timescale 1ns / 1ns

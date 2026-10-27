@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s -o %t.slang.mlir
-// RUN: obelisk -emit-obelisk %s -o %t.obelisk.mlir
+// RUN: talos -emit-slang %s -o %t.slang.mlir
+// RUN: talos -emit-talos %s -o %t.talos.mlir
 module child #(parameter N = 3, type U = int);
 endmodule
 module parent #(parameter P = 2, type T = int);

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=off}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-simplify-bodies{vpi=off}))' | FileCheck %s
 // A termination poll after a harmless call is cleared by the same pass that
 // promotes private state. The cleared branch must be folded before the
 // activation-shape proof: the return it guarded is not a process exit, so the

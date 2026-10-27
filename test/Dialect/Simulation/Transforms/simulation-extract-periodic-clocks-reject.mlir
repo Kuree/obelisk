@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --obelisk-sim-extract-periodic-clocks | FileCheck %s --implicit-check-not=__obelisk_periodic_tick_ --implicit-check-not=schedule.periodic_control
+// RUN: talos-opt %s --split-input-file --talos-sim-extract-periodic-clocks | FileCheck %s --implicit-check-not=__talos_periodic_tick_ --implicit-check-not=schedule.periodic_control
 
 // CHECK: simulation.design @unequal
 module {

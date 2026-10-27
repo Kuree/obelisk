@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
-// RUN: obelisk-opt --mlir-print-op-generic %s | obelisk-opt | FileCheck %s
+// RUN: talos-opt %s | talos-opt | FileCheck %s
+// RUN: talos-opt --mlir-print-op-generic %s | talos-opt | FileCheck %s
 
 module attributes {
   test.descriptor = #runtime.descriptor_kind<process>,

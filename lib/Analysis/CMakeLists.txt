@@ -1,4 +1,4 @@
-add_mlir_library(ObeliskSimulationAnalysis
+add_mlir_library(TalosSimulationAnalysis
   ActivationControlFlow.cpp
   ActivationIdempotenceAnalysis.cpp
   ActivationMemoryAnalysis.cpp
@@ -46,12 +46,12 @@ add_mlir_library(ObeliskSimulationAnalysis
   StorageWriteAnalysis.cpp
 
   DEPENDS
-  ObeliskSimulationOpsIncGen
-  ObeliskScheduleOpsIncGen
+  TalosSimulationOpsIncGen
+  TalosScheduleOpsIncGen
 
   LINK_LIBS PUBLIC
-  ObeliskSimulationIR
-  ObeliskScheduleIR
+  TalosSimulationIR
+  TalosScheduleIR
   MLIRAnalysis
   MLIRArithDialect
   MLIRControlFlowDialect
@@ -62,9 +62,9 @@ add_mlir_library(ObeliskSimulationAnalysis
   MLIRIR
   LLVMCore
   LLVMAnalysis
-  ObeliskSolver
+  TalosSolver
 )
 
-target_include_directories(ObeliskSimulationAnalysis PRIVATE
+target_include_directories(TalosSimulationAnalysis PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )

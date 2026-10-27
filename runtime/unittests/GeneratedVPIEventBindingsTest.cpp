@@ -6,11 +6,11 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/ManagedClassLayoutAnalysis.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Runtime/Runtime.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "llvm/IR/DataLayout.h"
@@ -25,7 +25,7 @@
 #include <vector>
 
 namespace {
-using namespace obelisk::reflection;
+using namespace talos::reflection;
 
 uint64_t imageChecksum(const std::vector<uint8_t> &bytes) {
   uint64_t hash = UINT64_C(14695981039346656037);
@@ -37,24 +37,24 @@ uint64_t imageChecksum(const std::vector<uint8_t> &bytes) {
 }
 
 TEST(GeneratedDesignDatabase, EventBindings) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -71,43 +71,43 @@ TEST(GeneratedDesignDatabase, EventBindings) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
   auto event = [&](const char *name) {
-    obelisk_rt_design_cursor_v1 cursor{};
-    EXPECT_EQ(obelisk_rt_cached_design_lookup(
+    talos_rt_design_cursor_v1 cursor{};
+    EXPECT_EQ(talos_rt_cached_design_lookup(
                   runtime, reinterpret_cast<const uint8_t *>(name),
                   std::strlen(name), &cursor),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     return cursor;
   };
   uint64_t identity = UINT64_MAX;
-  EXPECT_EQ(obelisk_rt_cached_vpi_event_binding(runtime, event("top.first"),
+  EXPECT_EQ(talos_rt_cached_vpi_event_binding(runtime, event("top.first"),
                                                 &identity),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(identity, 0u);
-  EXPECT_EQ(obelisk_rt_cached_vpi_event_binding(runtime, event("top.second"),
+  EXPECT_EQ(talos_rt_cached_vpi_event_binding(runtime, event("top.second"),
                                                 &identity),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(identity, 7u);
-  EXPECT_EQ(obelisk_rt_cached_vpi_event_binding(runtime, event("top.unbound"),
+  EXPECT_EQ(talos_rt_cached_vpi_event_binding(runtime, event("top.unbound"),
                                                 &identity),
-            OBELISK_RT_EOF);
+            TALOS_RT_EOF);
   EXPECT_EQ(identity, 0u);
-  EXPECT_EQ(obelisk_rt_cached_vpi_event_binding(runtime, {}, &identity),
-            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(talos_rt_cached_vpi_event_binding(runtime, {}, &identity),
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(
-      obelisk_rt_cached_vpi_event_binding(runtime, event("top.first"), nullptr),
-      OBELISK_RT_INVALID_ARGUMENT);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  auto layouts = obelisk::analysis::ManagedClassLayoutAnalysis::compute(
+      talos_rt_cached_vpi_event_binding(runtime, event("top.first"), nullptr),
+      TALOS_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(runtime, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  auto layouts = talos::analysis::ManagedClassLayoutAnalysis::compute(
       design,
       llvm::DataLayout((*module)
                            ->getAttrOfType<mlir::StringAttr>("llvm.data_layout")
@@ -120,34 +120,34 @@ TEST(GeneratedDesignDatabase, EventBindings) {
     auto declaration = field.declaration;
     offsets.emplace(declaration.getSymName().str(), field.offset);
   }
-  obelisk_rt_class_descriptor_v1 descriptor{};
-  descriptor.version = OBELISK_RT_VERSION;
+  talos_rt_class_descriptor_v1 descriptor{};
+  descriptor.version = TALOS_RT_VERSION;
   descriptor.class_id = 1;
   descriptor.instance_size = layout->size;
   descriptor.instance_alignment = layout->alignment;
-  ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &descriptor), OBELISK_RT_OK);
-  obelisk_rt_object_v1 *object = nullptr;
-  obelisk_rt_gc_root_v1 root{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &object), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptor, &object),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_class_register(runtime, &descriptor), TALOS_RT_OK);
+  talos_rt_object_v1 *object = nullptr;
+  talos_rt_gc_root_v1 root{};
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &root, &object), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &descriptor, &object),
+            TALOS_RT_OK);
   const std::array<uint64_t, 2> eventIDs{0, 7};
-  ASSERT_EQ(obelisk_rt_v1_object_write(object, offsets.at("ready"),
+  ASSERT_EQ(talos_rt_v1_object_write(object, offsets.at("ready"),
                                        eventIDs.data(), sizeof(uint64_t)),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_object_write(object, offsets.at("events"),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_object_write(object, offsets.at("events"),
                                        eventIDs.data(), sizeof(eventIDs)),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   auto objectStorage = event("top.obj");
   auto aliasStorage = event("top.alias");
-  uint64_t word = obelisk_rt_managed_word_from_object(object);
+  uint64_t word = talos_rt_managed_word_from_object(object);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(runtime, objectStorage, &word, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(runtime, objectStorage, &word, nullptr, 64),
+      TALOS_RT_OK);
   word = 0;
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(runtime, aliasStorage, &word, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(runtime, aliasStorage, &word, nullptr, 64),
+      TALOS_RT_OK);
 
   // Run the authored initializer normally: it creates three real design
   // threads with event/event-order waits. No scheduler wait records are forged.
@@ -155,20 +155,20 @@ TEST(GeneratedDesignDatabase, EventBindings) {
       encoded->functions.begin(), encoded->functions.end(),
       [](const auto &function) { return function.symbol == "initial"; });
   ASSERT_NE(initial, encoded->functions.end());
-  obelisk_rt_design_bytecode_entry_v1 entry{&execution, initial->index, 0};
+  talos_rt_design_bytecode_entry_v1 entry{&execution, initial->index, 0};
   uint64_t scratchSize = 0, scratchAlignment = 0;
-  ASSERT_EQ(obelisk_rt_validate_design_bytecode(entry, runtime, &scratchSize,
+  ASSERT_EQ(talos_rt_validate_design_bytecode(entry, runtime, &scratchSize,
                                                 &scratchAlignment),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_LE(scratchAlignment, alignof(uint64_t));
   std::vector<uint64_t> frame((scratchSize + 7) / 8);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_execute_design_bytecode(entry, runtime, frame.data(),
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_execute_design_bytecode(entry, runtime, frame.data(),
                                                frame.size() * 8, 0, scratchSize,
                                                0, 0, &action),
-            OBELISK_RT_OK);
-  ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(runtime), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(runtime), TALOS_RT_OK);
   ASSERT_EQ(runtime->scheduledDesignTasks.size(), 3u);
 
   std::vector<vpiHandle> handles;
@@ -199,8 +199,8 @@ TEST(GeneratedDesignDatabase, EventBindings) {
   EXPECT_EQ(aliasOccurrences, 1u);
   uint64_t fixedEventID = 0;
   EXPECT_EQ(
-      obelisk_rt_cached_vpi_event_binding(runtime, aliasStorage, &fixedEventID),
-      OBELISK_RT_EOF);
+      talos_rt_cached_vpi_event_binding(runtime, aliasStorage, &fixedEventID),
+      TALOS_RT_EOF);
 
   auto variable = named("top.obj");
   auto receiver = keep(vpi_handle(vpiClassObj, variable));
@@ -256,23 +256,23 @@ TEST(GeneratedDesignDatabase, EventBindings) {
   }
   word = UINT64_MAX;
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(runtime, aliasStorage, &word, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(runtime, aliasStorage, &word, nullptr, 64),
+      TALOS_RT_OK);
   countWaiters(alias, 0);
   word = 7;
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(runtime, aliasStorage, &word, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(runtime, aliasStorage, &word, nullptr, 64),
+      TALOS_RT_OK);
   countWaiters(alias, 2);
   auto pending = keep(vpi_iterate(vpiWaitingProcesses, firstElement));
   // Waiting-process queries retain only a weak receiver recipe. The scalar
   // static event declaration and ordinary event aliases remain independent.
   word = 0;
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(runtime, objectStorage, &word, nullptr, 64),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+      talos_rt_v1_design_write(runtime, objectStorage, &word, nullptr, 64),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &root), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   EXPECT_EQ(vpi_get(vpiType, pending), vpiUndefined);
   EXPECT_EQ(vpi_get(vpiType, ready), vpiUndefined);
   for (auto type : eventTypes)
@@ -281,16 +281,16 @@ TEST(GeneratedDesignDatabase, EventBindings) {
   EXPECT_EQ(vpi_get(vpiType, elementType), vpiEventTypespec);
   countWaiters(shared, 2);
 
-  obelisk_rt_v1_scheduler_event(runtime, 0, 0);
+  talos_rt_v1_scheduler_event(runtime, 0, 0);
   countWaiters(firstEvent, 0); // Ready ordinary wait and consumed order prefix.
   countWaiters(secondEvent, 2);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(runtime), TALOS_RT_OK);
   countWaiters(firstEvent, 0);
   countWaiters(secondEvent, 2);
-  obelisk_rt_v1_scheduler_event(runtime, 7, 0);
+  talos_rt_v1_scheduler_event(runtime, 7, 0);
   countWaiters(secondEvent, 0); // Both are ready before dispatch.
   countWaiters(alias, 0);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(runtime), TALOS_RT_OK);
   EXPECT_TRUE(runtime->scheduledDesignTasks.empty());
   for (auto thread : threads)
     EXPECT_EQ(vpi_get(vpiType, thread), vpiUndefined);
@@ -298,9 +298,9 @@ TEST(GeneratedDesignDatabase, EventBindings) {
   // release whichever immutable declarations remain in the handle arena.
   for (auto handle : handles)
     (void)vpi_release_handle(handle);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(runtime);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(runtime);
 
   const auto &image = encoded->designDatabase;
   HeaderView header(image.data());
@@ -315,8 +315,8 @@ TEST(GeneratedDesignDatabase, EventBindings) {
     HeaderWriter(bytes.data()).setChecksum(imageChecksum(bytes));
     auto invalid = execution;
     invalid.design_database = bytes.data();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&invalid),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&invalid),
+              TALOS_RT_INVALID_DESIGN);
   };
   rejects([&](auto &bytes) {
     EventBindingWriter(bytes.data() + offset).setReserved(1);

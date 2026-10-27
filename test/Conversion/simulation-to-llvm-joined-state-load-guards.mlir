@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=off},obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=OFF
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=FULL
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=off},talos-sim-specialize-static-state-nba),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=OFF
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},talos-sim-specialize-static-state-nba),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=FULL
 
 // A joined handle may use direct plane loads only if every possible leaf is
 // certified. Keep arbitrary handles, invalid selections and guarded roots on
@@ -24,7 +24,7 @@ module attributes {
       simulation.return
     }
     // OFF-LABEL: llvm.func @unknown_join(
-    // OFF: llvm.call @obelisk_rt_v1_native_state_load_plane
+    // OFF: llvm.call @talos_rt_v1_native_state_load_plane
     // OFF: llvm.return
     simulation.func @unknown_join(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %external: !simulation.net<i8> {simulation.capture_kind = 1 : i32}, %choose: i1 {simulation.capture_kind = 1 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
       %known = simulation.context.net %ctx[0] : !simulation.net<i8>
@@ -34,7 +34,7 @@ module attributes {
       simulation.return %value : i8
     }
     // OFF-LABEL: llvm.func @invalid_join(
-    // OFF: llvm.call @obelisk_rt_v1_native_state_load_plane
+    // OFF: llvm.call @talos_rt_v1_native_state_load_plane
     // OFF: llvm.return
     simulation.func @invalid_join(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %choose: i1 {simulation.capture_kind = 1 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 2 : i64} {
       %root = simulation.context.storage %ctx[0] : !simulation.ref<i16>
@@ -49,12 +49,12 @@ module attributes {
     // The same finite join is direct without runtime overlays, but retains
     // the generic path when writable VPI can force either resolved net.
     // OFF-LABEL: llvm.func @known_join(
-    // OFF-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+    // OFF-NOT: llvm.call @talos_rt_v1_native_state_load_plane
     // OFF: llvm.select {{.*}} : i1, i8
-    // OFF-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+    // OFF-NOT: llvm.call @talos_rt_v1_native_state_load_plane
     // OFF: llvm.return
     // FULL-LABEL: llvm.func @known_join(
-    // FULL: llvm.call @obelisk_rt_v1_native_state_load_plane
+    // FULL: llvm.call @talos_rt_v1_native_state_load_plane
     // FULL: llvm.return
     simulation.func @known_join(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %choose: i1 {simulation.capture_kind = 1 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 3 : i64} {
       %a = simulation.context.net %ctx[0] : !simulation.net<i8>
@@ -67,15 +67,15 @@ module attributes {
     // Ordinary four-state reads must select both planes with the same handle.
     // The value-plane optimization must not discard X/Z information.
     // OFF-LABEL: llvm.func @four_state_join(
-    // OFF-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
-    // OFF: llvm.mlir.addressof @__obelisk_state_value
+    // OFF-NOT: llvm.call @talos_rt_v1_native_state_load_plane
+    // OFF: llvm.mlir.addressof @__talos_state_value
     // OFF: llvm.select {{.*}} : i1, i8
-    // OFF: llvm.mlir.addressof @__obelisk_state_unknown
+    // OFF: llvm.mlir.addressof @__talos_state_unknown
     // OFF: llvm.select {{.*}} : i1, i8
-    // OFF-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+    // OFF-NOT: llvm.call @talos_rt_v1_native_state_load_plane
     // OFF: llvm.return
     // FULL-LABEL: llvm.func @four_state_join(
-    // FULL-COUNT-2: llvm.call @obelisk_rt_v1_native_state_load_plane
+    // FULL-COUNT-2: llvm.call @talos_rt_v1_native_state_load_plane
     // FULL: llvm.return
     simulation.func @four_state_join(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %choose: i1 {simulation.capture_kind = 1 : i32}) -> !simulation.logic<8> attributes {entry_kind = 8 : i32, code_unit_id = 5 : i64} {
       %a = simulation.context.net %ctx[2] : !simulation.net<!simulation.logic<8>>
@@ -88,12 +88,12 @@ module attributes {
     // The second iteration retains the prior handle or selects another known
     // net. Following the backedge must terminate and certify both leaves.
     // OFF-LABEL: llvm.func @loop_join(
-    // OFF-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+    // OFF-NOT: llvm.call @talos_rt_v1_native_state_load_plane
     // OFF: llvm.select {{.*}} : i1, i8
-    // OFF-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+    // OFF-NOT: llvm.call @talos_rt_v1_native_state_load_plane
     // OFF: llvm.return
     // FULL-LABEL: llvm.func @loop_join(
-    // FULL: llvm.call @obelisk_rt_v1_native_state_load_plane
+    // FULL: llvm.call @talos_rt_v1_native_state_load_plane
     // FULL: llvm.return
     simulation.func @loop_join(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %keep: i1 {simulation.capture_kind = 1 : i32}) -> i8 attributes {entry_kind = 8 : i32, code_unit_id = 6 : i64} {
       %a = simulation.context.net %ctx[0] : !simulation.net<i8>

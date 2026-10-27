@@ -1,8 +1,8 @@
 // RUN: %target_clang %target_pic -c %S/Inputs/native_aot_dpi_host.c -o %t.o
-// RUN: obelisk -O3 --vpi=off --mlir-timing %s %t.o -o %t.aot 2> %t.timing
+// RUN: talos -O3 --vpi=off --mlir-timing %s %t.o -o %t.aot 2> %t.timing
 // RUN: FileCheck %s --check-prefix=PLAN < %t.timing
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.aot 2>&1 | FileCheck %s
-// RUN: obelisk -O3 --vpi=full --mlir-timing %s %t.o -o %t.full 2> %t.full.timing
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.aot 2>&1 | FileCheck %s
+// RUN: talos -O3 --vpi=full --mlir-timing %s %t.o -o %t.full 2> %t.full.timing
 // RUN: FileCheck %s --check-prefix=FULL < %t.full.timing
 // RUN: %t.full | FileCheck %s --check-prefix=FULL-OUT
 
@@ -20,10 +20,10 @@
 // FULL-OUT: count=9
 
 // PLAN-NOT: withheld actor
-// PLAN: obelisk native eligibility: eligible=1 fully_eligible=1
+// PLAN: talos native eligibility: eligible=1 fully_eligible=1
 // PLAN-NOT: withheld actor
 // CHECK: count=9
-// CHECK: obelisk-signal-diagnostics
+// CHECK: talos-signal-diagnostics
 // CHECK-SAME: aot_node_executions={{[1-9][0-9]*}}
 // CHECK-SAME: aot_fallbacks=0
 

@@ -1,8 +1,8 @@
 // RUN: %target_clang %target_pic -c %S/Inputs/chandle-formals.c -o %t.o
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional %s %t.o -o %t
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional %s %t.o -o %t
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
-// RUN: obelisk-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
 
 // IEEE 1800-2023 6.14, 13.5, 19.3 and 19.8.1: chandle inputs copy opaque C pointer
 // identities, refs alias the variable, and default handles are null.

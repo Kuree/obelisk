@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},test-obelisk-print-bytecode)' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off require-bytecode=true},test-talos-print-bytecode)' \
 // RUN:   -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph),encode-talos-sim-to-bytecode{vpi=off require-bytecode=true},convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
 
 // IEEE 1800-2017 21.2.1.5 and Clause 28: a %v conversion observes the
@@ -15,7 +15,7 @@
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010217
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010002 inputs=5 outputs=0
 // NATIVE: runtime.execution_flags
-// NATIVE: llvm.mlir.global internal constant @report.__obelisk_bytecode_entry
+// NATIVE: llvm.mlir.global internal constant @report.__talos_bytecode_entry
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -32,7 +32,7 @@ module attributes {
     simulation.code_unit.decl 9970001 in 0 continuous hierarchy "top.drive"
     simulation.code_unit.decl 9970002 in 0 fork hierarchy "top.report" {internal}
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 9970000 : i64} {
       %driver = simulation.context.driver %ctx[0] :

@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments))' | FileCheck %s --check-prefix=VPI
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=VPI-BODY
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments))' | FileCheck %s --check-prefix=VPI
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=VPI-BODY
 
 // VPI: simulation.design @fusion attributes {
 // VPI-SAME: schedule.static_fusion = [#schedule.fusion<id = 0, fragments = [{{[0-9]+}}, {{[0-9]+}}]>]
-// VPI-BODY: simulation.spawn @__obelisk_fused_0
-// VPI-BODY: simulation.func private @__obelisk_fused_0
+// VPI-BODY: simulation.spawn @__talos_fused_0
+// VPI-BODY: simulation.func private @__talos_fused_0
 // VPI-BODY-SAME: schedule.native.guarded_specialization_body
 // VPI-BODY-NOT: simulation.func private @a
 // VPI-BODY-NOT: simulation.func private @b

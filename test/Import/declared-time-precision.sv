@@ -1,8 +1,8 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -emit-slang %t/unit.sv | FileCheck %s --check-prefix=UNIT
-// RUN: obelisk -emit-slang %t/package.sv | FileCheck %s --check-prefix=PACKAGE
-// RUN: obelisk -emit-slang %t/directive.sv | FileCheck %s --check-prefix=DIRECTIVE
-// RUN: obelisk -emit-slang %t/none.sv | FileCheck %s --check-prefix=NONE
+// RUN: talos -emit-slang %t/unit.sv | FileCheck %s --check-prefix=UNIT
+// RUN: talos -emit-slang %t/package.sv | FileCheck %s --check-prefix=PACKAGE
+// RUN: talos -emit-slang %t/directive.sv | FileCheck %s --check-prefix=DIRECTIVE
+// RUN: talos -emit-slang %t/none.sv | FileCheck %s --check-prefix=NONE
 
 // IEEE 1800-2023 3.14.3: the global time precision is the minimum of every
 // timeprecision statement, every timeunit precision argument and the smallest

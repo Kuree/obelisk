@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --verify-diagnostics -o /dev/null
+// RUN: talos-opt %s --verify-diagnostics -o /dev/null
 module {
   simulation.design @bad {
     simulation.scope.decl 0 hierarchy "$root"

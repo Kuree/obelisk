@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s | FileCheck %s
+// RUN: talos -emit-slang %s | FileCheck %s
 
 // IEEE 1800-2023 7.2.2: a member's constant initializer is part of an
 // unpacked struct type's default value, so the importer records it with the

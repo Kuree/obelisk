@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp{vpi=off}))' > %t.off
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-sccp{vpi=off}))' > %t.off
 // RUN: FileCheck %s < %t.off
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{match={observability = 0 : i32} set={observability = 1 : i32}},simulation.design(obelisk-sim-sccp{vpi=read}))' \
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-edit-attributes{match={observability = 0 : i32} set={observability = 1 : i32}},simulation.design(talos-sim-sccp{vpi=read}))' \
 // RUN:   | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{match={observability = 0 : i32} set={observability = 2 : i32}},simulation.design(obelisk-sim-sccp{vpi=full}))' \
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-edit-attributes{match={observability = 0 : i32} set={observability = 2 : i32}},simulation.design(talos-sim-sccp{vpi=full}))' \
 // RUN:   | FileCheck %s --check-prefix=FULL
 
 // IEEE 1800-2017 6.6.6 gives supply0 and supply1 nets supply strength, and
@@ -48,7 +48,7 @@ module {
     simulation.driver.decl 4 in 0 drives 4 : !simulation.logic<1> design
     simulation.driver.decl 5 in 0 drives 5 : !simulation.logic<1> design
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32} {
       %supply0 = simulation.context.net %ctx[0] : !simulation.net<!simulation.logic<1>>

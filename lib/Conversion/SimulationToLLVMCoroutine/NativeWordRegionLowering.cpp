@@ -1,13 +1,13 @@
 #include "../SimulationToSchedule/NativePipeline.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/PatternMatch.h"
-#include "obelisk/Conversion/Passes.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Conversion/Passes.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
 using namespace mlir;
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_LOWERNATIVEWORDREGIONSPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "talos/Conversion/Passes.h.inc"
 namespace {
 class LowerNativeWordRegionsPass final
     : public impl::LowerNativeWordRegionsPassBase<LowerNativeWordRegionsPass> {
@@ -37,4 +37,4 @@ class LowerNativeWordRegionsPass final
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

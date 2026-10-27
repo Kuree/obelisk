@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
 // A context-free value helper followed by a termination poll must not create
@@ -10,13 +10,13 @@
 // PLAN-LABEL: llvm.func @identity(
 // PLAN-NOT: llvm.store
 // PLAN: {{^  }}}
-// PLAN-LABEL: llvm.func @publish.__obelisk_eval_body_0.__obelisk_checkpoint_path_0(
+// PLAN-LABEL: llvm.func @publish.__talos_eval_body_0.__talos_checkpoint_path_0(
 // PLAN-NOT: llvm.{{store|call}}
 // PLAN: llvm.call @identity(
-// PLAN-NEXT: llvm.call @obelisk_rt_v1_scheduler_termination_requested(
+// PLAN-NEXT: llvm.call @talos_rt_v1_scheduler_termination_requested(
 // PLAN-NOT: llvm.{{store|call}}
 // PLAN: {{^  }}}
-// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1
+// PLAN-LABEL: llvm.func @__talos_eval_dispatch_v1
 // The initial checker finishes through its ordinary timed continuation, not
 // an eval-owner checkpoint. Neither clock activation may leave the evaluator.
 !wide = !simulation.logic<65>

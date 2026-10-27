@@ -9,4 +9,4 @@ _Static_assert(vpiNettypeNetSelect == 15,
 _Static_assert(vpiInterconnect == 16,
                "staged SDK has the wrong vpiInterconnect value");
 
-int obelisk_vpi_2023_header_smoke(void) { return vpiNetTypedef; }
+int talos_vpi_2023_header_smoke(void) { return vpiNetTypedef; }

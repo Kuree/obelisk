@@ -1,10 +1,10 @@
-// RUN: obelisk -O3 --vpi=off --native-scheduler=generic -emit-llvm %s -o - | FileCheck %s --check-prefix=IR --implicit-check-not=obelisk_rt_v1_file_scan_dynamic --implicit-check-not=obelisk_rt_v1_scan_dynamic_validate --implicit-check-not=obelisk_rt_v1_string_scan_dynamic
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode -emit-llvm %s -o - | FileCheck %s --check-prefix=IR --implicit-check-not=obelisk_rt_v1_file_scan_dynamic --implicit-check-not=obelisk_rt_v1_scan_dynamic_validate --implicit-check-not=obelisk_rt_v1_string_scan_dynamic
-// RUN: obelisk -O3 --vpi=off --native-scheduler=aot -emit-llvm %s -o - | FileCheck %s --check-prefix=IR --implicit-check-not=obelisk_rt_v1_file_scan_dynamic --implicit-check-not=obelisk_rt_v1_scan_dynamic_validate --implicit-check-not=obelisk_rt_v1_string_scan_dynamic
-// RUN: obelisk -O3 --vpi=off --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O3 --vpi=off --native-scheduler=generic -emit-llvm %s -o - | FileCheck %s --check-prefix=IR --implicit-check-not=talos_rt_v1_file_scan_dynamic --implicit-check-not=talos_rt_v1_scan_dynamic_validate --implicit-check-not=talos_rt_v1_string_scan_dynamic
+// RUN: talos -O3 --vpi=off --execution-tier=bytecode -emit-llvm %s -o - | FileCheck %s --check-prefix=IR --implicit-check-not=talos_rt_v1_file_scan_dynamic --implicit-check-not=talos_rt_v1_scan_dynamic_validate --implicit-check-not=talos_rt_v1_string_scan_dynamic
+// RUN: talos -O3 --vpi=off --native-scheduler=aot -emit-llvm %s -o - | FileCheck %s --check-prefix=IR --implicit-check-not=talos_rt_v1_file_scan_dynamic --implicit-check-not=talos_rt_v1_scan_dynamic_validate --implicit-check-not=talos_rt_v1_string_scan_dynamic
+// RUN: talos -O3 --vpi=off --native-scheduler=generic %s -o %t.generic
 // RUN: %t.generic > %t.generic.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.generic.out
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.generic.out -
 
 // A design with no dynamic formatted scan must not acquire even declarations

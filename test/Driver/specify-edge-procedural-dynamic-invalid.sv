@@ -1,4 +1,4 @@
-// RUN: not obelisk -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not talos -emit-sim %s -o /dev/null 2>&1 | FileCheck %s
 module dynamic_select(input wire clock, data, input int index,
                       output logic [3:0] q);
   always @(posedge clock)

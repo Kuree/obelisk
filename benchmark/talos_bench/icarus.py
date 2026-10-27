@@ -1,0 +1,95 @@
+"""Translating Icarus `iverilog` arguments into Talos flags.
+
+ivtest descriptors carry per-test `iverilog-args` (language generation, macro
+defines, include/library paths, parameter overrides). Since the benchmark owns
+its run loop it calls Talos directly, but it still has to honour those Icarus
+arguments; this pure function performs that translation. Verilator's driver
+constructs Talos flags directly and does not use this path.
+"""
+
+from __future__ import annotations
+
+
+def translate_args(
+        icarus_args: list[str]) -> tuple[list[str], str, list[str]]:
+    """Translate Icarus args to `(talos_flags, language_std, plusargs)`.
+
+    Only the subset ivtest actually uses is handled; output paths and source
+    files are supplied by the caller and never appear here. Flags with no Talos
+    analogue (`-Wall`, unsupported generation toggles) are dropped.
+
+    A `+arg` is not an Icarus flag and needs no translation: IEEE 1800-2017
+    21.6 makes plusargs the standard way to pass information to a simulation,
+    "visually distinguished from other simulator arguments by their starting
+    with the plus (+) character" and read back with $test$plusargs and
+    $value$plusargs. ivtest packs them into the same comma-separated field as
+    the compile flags, so they are separated out here and returned verbatim for
+    the caller to give to the simulation rather than to the compiler.
+    """
+    flags: list[str] = []
+    plusargs: list[str] = []
+    std = "1800-2017"
+    index = 0
+    while index < len(icarus_args):
+        arg = icarus_args[index]
+        if arg in ("-I", "-y", "-Y", "-l"):
+            if index + 1 < len(icarus_args):
+                flags.extend((arg, icarus_args[index + 1]))
+            index += 2
+            continue
+        if arg.startswith("-I") and len(arg) > 2:
+            flags.extend(("-I", arg[2:]))
+            index += 1
+            continue
+        if arg.startswith("-y") and len(arg) > 2:
+            flags.extend(("-y", arg[2:]))
+            index += 1
+            continue
+        if arg.startswith("-D") and len(arg) > 2:
+            flags.extend(("-D", arg[2:]))
+            index += 1
+            continue
+        if arg == "-D" and index + 1 < len(icarus_args):
+            flags.extend(("-D", icarus_args[index + 1]))
+            index += 2
+            continue
+        if arg.startswith("-U") and len(arg) > 2:
+            flags.extend(("-U", arg[2:]))
+            index += 1
+            continue
+        if arg == "-U" and index + 1 < len(icarus_args):
+            flags.extend(("-U", icarus_args[index + 1]))
+            index += 2
+            continue
+        if arg.startswith("-P") and len(arg) > 2:
+            # -P<instance.param>=value -> Talos -G<param>=value.
+            override = arg[2:]
+            if "." in override:
+                override = override.split(".", 1)[1]
+            flags.extend(("-G", override))
+            index += 1
+            continue
+        if arg == "-g2023":
+            std = "1800-2023"
+            index += 1
+            continue
+        if arg in ("-Tmin", "-Ttyp", "-Tmax"):
+            flags.append("--timing=" + arg[2:])
+            index += 1
+            continue
+        if arg == "-T" and index + 1 < len(icarus_args):
+            value = icarus_args[index + 1]
+            if value in ("min", "typ", "max"):
+                flags.append("--timing=" + value)
+            index += 2
+            continue
+        # A standard plusarg (21.6), passed through untranslated.
+        if arg.startswith("+") and len(arg) > 1:
+            plusargs.append(arg)
+            index += 1
+            continue
+        # Everything else (other -g generations, -Wall, -gstrict-expr-width,
+        # and similar Icarus-specific switches) has no Talos analogue and is
+        # dropped.
+        index += 1
+    return flags, std, plusargs

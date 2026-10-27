@@ -6,11 +6,11 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/ManagedClassLayoutAnalysis.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Runtime/Runtime.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "llvm/IR/DataLayout.h"
@@ -23,33 +23,33 @@
 #include <vector>
 
 namespace {
-using namespace obelisk::reflection;
+using namespace talos::reflection;
 
 TEST(GeneratedDesignDatabase, MailboxMessages) {
-  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  const char *inputPath = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(inputPath, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  auto layouts = obelisk::analysis::ManagedClassLayoutAnalysis::compute(
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  auto layouts = talos::analysis::ManagedClassLayoutAnalysis::compute(
       design,
       llvm::DataLayout((*module)
                            ->getAttrOfType<mlir::StringAttr>("llvm.data_layout")
                            .getValue()));
   ASSERT_TRUE(mlir::succeeded(layouts));
-  obelisk::SimulationBytecodeOptions options;
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  const obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
+  const talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
       encoded->executionFlags,
       0,
       encoded->bytecode.data(),
@@ -66,98 +66,98 @@ TEST(GeneratedDesignDatabase, MailboxMessages) {
       0,
       nullptr,
       0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(runtime, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(runtime, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
 
-  std::array<obelisk_rt_class_descriptor_v1, 3> descriptors{};
-  std::array<obelisk_rt_trace_layout_v1, 3> traces{};
-  std::array<obelisk_rt_trace_entry_v1, 2> entries{};
+  std::array<talos_rt_class_descriptor_v1, 3> descriptors{};
+  std::array<talos_rt_trace_layout_v1, 3> traces{};
+  std::array<talos_rt_trace_entry_v1, 2> entries{};
   for (size_t i = 0; i != descriptors.size(); ++i) {
     const auto *layout = layouts->lookup(i + 1);
     ASSERT_NE(layout, nullptr);
     auto &descriptor = descriptors[i];
-    traces[i] = {OBELISK_RT_VERSION,
+    traces[i] = {TALOS_RT_VERSION,
                  0,
                  layout->size,
                  layout->alignment,
                  i ? &entries[i - 1] : nullptr,
                  i ? 1u : 0u};
-    descriptor.version = OBELISK_RT_VERSION;
+    descriptor.version = TALOS_RT_VERSION;
     descriptor.class_id = i + 1;
     descriptor.instance_size = layout->size;
     descriptor.instance_alignment = layout->alignment;
     descriptor.layout = &traces[i];
     if (i == 1) {
       ASSERT_TRUE(layout->builtinBaseOffset);
-      descriptor.builtin_base_kind = OBELISK_RT_BUILTIN_CLASS_MAILBOX;
+      descriptor.builtin_base_kind = TALOS_RT_BUILTIN_CLASS_MAILBOX;
       descriptor.builtin_base_offset = *layout->builtinBaseOffset;
       entries[0] = {
-          *layout->builtinBaseOffset,      0,      1, OBELISK_RT_TRACE_STRONG,
-          OBELISK_RT_MANAGED_SLOT_MAILBOX, nullptr};
+          *layout->builtinBaseOffset,      0,      1, TALOS_RT_TRACE_STRONG,
+          TALOS_RT_MANAGED_SLOT_MAILBOX, nullptr};
     } else if (i == 2) {
       descriptor.base = &descriptors[1];
-      entries[1] = {0, 0, 1, OBELISK_RT_TRACE_EMBEDDED, 0, &traces[1]};
+      entries[1] = {0, 0, 1, TALOS_RT_TRACE_EMBEDDED, 0, &traces[1]};
     }
-    ASSERT_EQ(obelisk_rt_v1_class_register(runtime, &descriptor),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_class_register(runtime, &descriptor),
+              TALOS_RT_OK);
   }
 
-  std::array<obelisk_rt_object_v1 *, 10> objects{};
-  obelisk_rt_gc_root_range_v1 roots{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_range_push(lane, &roots, objects.data(),
+  std::array<talos_rt_object_v1 *, 10> objects{};
+  talos_rt_gc_root_range_v1 roots{};
+  ASSERT_EQ(talos_rt_v1_gc_root_range_push(lane, &roots, objects.data(),
                                              objects.size()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   struct Element {
     uint32_t kind, flags;
     uint64_t bytes, alignment, bits;
   };
   const std::array<Element, 7> elements{{
-      {OBELISK_RT_ELEMENT_LOGIC, OBELISK_RT_ELEMENT_FOUR_STATE, 17, 1, 130},
-      {OBELISK_RT_ELEMENT_REAL, 0, 8, 8, 64},
-      {OBELISK_RT_ELEMENT_STRING, 0, 8, 8, 0},
-      {OBELISK_RT_ELEMENT_CLASS_HANDLE, 0, 8, 8, 0},
-      {OBELISK_RT_ELEMENT_CONTAINER_HANDLE, 0, 8, 8, 0},
-      {OBELISK_RT_ELEMENT_REAL, 0, 4, 4, 32},
-      {OBELISK_RT_ELEMENT_BITS, OBELISK_RT_ELEMENT_SIGNED, 4, 4, 32},
+      {TALOS_RT_ELEMENT_LOGIC, TALOS_RT_ELEMENT_FOUR_STATE, 17, 1, 130},
+      {TALOS_RT_ELEMENT_REAL, 0, 8, 8, 64},
+      {TALOS_RT_ELEMENT_STRING, 0, 8, 8, 0},
+      {TALOS_RT_ELEMENT_CLASS_HANDLE, 0, 8, 8, 0},
+      {TALOS_RT_ELEMENT_CONTAINER_HANDLE, 0, 8, 8, 0},
+      {TALOS_RT_ELEMENT_REAL, 0, 4, 4, 32},
+      {TALOS_RT_ELEMENT_BITS, TALOS_RT_ELEMENT_SIGNED, 4, 4, 32},
   }};
-  const obelisk_rt_element_trace_slot_v1 semaphoreSlot{
-      0, OBELISK_RT_MANAGED_SLOT_SEMAPHORE, 0};
+  const talos_rt_element_trace_slot_v1 semaphoreSlot{
+      0, TALOS_RT_MANAGED_SLOT_SEMAPHORE, 0};
   for (size_t i = 0; i != elements.size(); ++i) {
     const Element &element = elements[i];
-    ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
+    ASSERT_EQ(talos_rt_v1_mailbox_create_typed(
                   lane, 100 + i, element.kind, element.flags, element.bytes,
                   element.alignment, element.bits,
                   i == 4 ? &semaphoreSlot : nullptr, i == 4 ? 1 : 0, 0,
                   &objects[i ? i : 9]),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
   }
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptors[0], &objects[7]),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptors[2], &objects[0]),
-            OBELISK_RT_OK);
-  const uint64_t payloadWord = obelisk_rt_managed_word_from_object(objects[9]);
-  ASSERT_EQ(obelisk_rt_v1_object_write(objects[0],
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &descriptors[0], &objects[7]),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &descriptors[2], &objects[0]),
+            TALOS_RT_OK);
+  const uint64_t payloadWord = talos_rt_managed_word_from_object(objects[9]);
+  ASSERT_EQ(talos_rt_v1_object_write(objects[0],
                                        descriptors[1].builtin_base_offset,
                                        &payloadWord, sizeof(payloadWord)),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 1, &objects[8]),
-            OBELISK_RT_OK);
-  obelisk_rt_string_v1 string = 0;
-  obelisk_rt_gc_managed_root_v1 stringRoot{};
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_push(lane, &stringRoot, &string),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_semaphore_create(lane, 1, &objects[8]),
+            TALOS_RT_OK);
+  talos_rt_string_v1 string = 0;
+  talos_rt_gc_managed_root_v1 stringRoot{};
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_push(lane, &stringRoot, &string),
+            TALOS_RT_OK);
   const std::string text = "snapshot survives mailbox collection\n\"quoted\"";
   ASSERT_EQ(
-      obelisk_rt_v1_string_create(lane, text.data(), text.size(), &string),
-      OBELISK_RT_OK);
+      talos_rt_v1_string_create(lane, text.data(), text.size(), &string),
+      TALOS_RT_OK);
   std::array<uint8_t, 17> firstValue{}, firstUnknown{}, secondValue{};
   firstValue[0] = 0x12;
   firstUnknown[0] = 0x18; // Internal X=(0,1), Z=(1,1).
@@ -165,16 +165,16 @@ TEST(GeneratedDesignDatabase, MailboxMessages) {
   secondValue[8] = 0x80;
   const double real = 3.25;
   const float shortReal = -1.5f;
-  const uint64_t classWord = obelisk_rt_managed_word_from_object(objects[7]);
+  const uint64_t classWord = talos_rt_managed_word_from_object(objects[7]);
   const uint64_t semaphoreWord =
-      obelisk_rt_managed_word_from_object(objects[8]);
+      talos_rt_managed_word_from_object(objects[8]);
   const uint64_t nullWord = 0;
   auto put = [&](size_t index, const void *value,
                  const void *unknown = nullptr) {
     uint32_t success = 0;
-    EXPECT_EQ(obelisk_rt_v1_mailbox_try_put(lane, objects[index], value,
+    EXPECT_EQ(talos_rt_v1_mailbox_try_put(lane, objects[index], value,
                                             unknown, &success),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(success, 1u);
   };
   put(0, firstValue.data(), firstUnknown.data());
@@ -196,35 +196,35 @@ TEST(GeneratedDesignDatabase, MailboxMessages) {
       persistent.push_back(handle);
     return handle;
   };
-  std::array<obelisk_rt_design_cursor_v1, 7> storage{};
+  std::array<talos_rt_design_cursor_v1, 7> storage{};
   std::array<vpiHandle, 7> variables{}, mailboxes{};
   const std::array<const char *, 7> names{
       "top.wide",      "top.real",       "top.string", "top.object",
       "top.semaphore", "top.short_real", "top.word"};
   for (size_t i = 0; i != names.size(); ++i) {
-    ASSERT_EQ(obelisk_rt_cached_design_lookup(
+    ASSERT_EQ(talos_rt_cached_design_lookup(
                   runtime, reinterpret_cast<const uint8_t *>(names[i]),
                   std::strlen(names[i]), &storage[i]),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ObjectView object(encoded->designDatabase.data() + storage[i].offset);
-    ASSERT_EQ(obelisk_rt_v1_gc_design_candidate_root_register(
+    ASSERT_EQ(talos_rt_v1_gc_design_candidate_root_register(
                   runtime, object.getStateOffset(),
-                  OBELISK_RT_MANAGED_ROOT_KIND_CLASS |
-                      OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER),
-              OBELISK_RT_OK);
-    uint64_t word = obelisk_rt_managed_word_from_object(objects[i]);
+                  TALOS_RT_MANAGED_ROOT_KIND_CLASS |
+                      TALOS_RT_MANAGED_ROOT_KIND_CONTAINER),
+              TALOS_RT_OK);
+    uint64_t word = talos_rt_managed_word_from_object(objects[i]);
     ASSERT_EQ(
-        obelisk_rt_v1_design_write(runtime, storage[i], &word, nullptr, 64),
-        OBELISK_RT_OK);
+        talos_rt_v1_design_write(runtime, storage[i], &word, nullptr, 64),
+        TALOS_RT_OK);
     variables[i] =
         keep(vpi_handle_by_name(const_cast<char *>(names[i]), nullptr));
     mailboxes[i] = vpi_handle(vpiClassObj, variables[i]);
     ASSERT_NE(mailboxes[i], nullptr);
   }
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &stringRoot),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &roots), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_pop(lane, &stringRoot),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_range_pop(lane, &roots), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
 
   auto iterator = [&](size_t index) {
     vpiHandle result = vpi_iterate(vpiMessages, mailboxes[index]);
@@ -276,13 +276,13 @@ TEST(GeneratedDesignDatabase, MailboxMessages) {
   expectedBits[128] = '1';
   EXPECT_EQ(std::string(wideLiteral), "130'b" + expectedBits);
   uint32_t count = 0;
-  ASSERT_EQ(obelisk_rt_v1_mailbox_num(objects[0], &count), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_mailbox_num(objects[0], &count), TALOS_RT_OK);
   EXPECT_EQ(count, 2u); // Iteration does not consume FIFO messages.
   std::array<uint8_t, 17> removed{}, removedUnknown{};
   uint32_t present = 0;
-  ASSERT_EQ(obelisk_rt_v1_mailbox_try_get(objects[0], removed.data(),
+  ASSERT_EQ(talos_rt_v1_mailbox_try_get(objects[0], removed.data(),
                                           removedUnknown.data(), &present),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(present, 1u);
   EXPECT_EQ(removed, firstValue);
   EXPECT_EQ(removedUnknown, firstUnknown);
@@ -383,7 +383,7 @@ TEST(GeneratedDesignDatabase, MailboxMessages) {
     vpiHandle message = i ? semaphoreMessage : classMessage;
     EXPECT_EQ(vpi_get(vpiType, message), vpiClassVar);
     EXPECT_EQ(vpi_get64(vpiObjId, message),
-              static_cast<PLI_INT64>(obelisk_rt_v1_object_id(objects[7 + i])));
+              static_cast<PLI_INT64>(talos_rt_v1_object_id(objects[7 + i])));
     referents[i] = vpi_handle(vpiClassObj, message);
     ASSERT_NE(referents[i], nullptr);
     vpiHandle declared = keep(vpi_handle(vpiClassTypespec, message));
@@ -404,11 +404,11 @@ TEST(GeneratedDesignDatabase, MailboxMessages) {
   // referents. VPI snapshots preserve values, never SystemVerilog liveness.
   for (auto cursor : storage)
     ASSERT_EQ(
-        obelisk_rt_v1_design_write(runtime, cursor, &nullWord, nullptr, 64),
-        OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
-  obelisk_rt_gc_statistics_v1 statistics{};
-  ASSERT_EQ(obelisk_rt_v1_gc_statistics(runtime, &statistics), OBELISK_RT_OK);
+        talos_rt_v1_design_write(runtime, cursor, &nullWord, nullptr, 64),
+        TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
+  talos_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(talos_rt_v1_gc_statistics(runtime, &statistics), TALOS_RT_OK);
   EXPECT_EQ(statistics.live_objects, 0u);
   for (vpiHandle mailbox : mailboxes) {
     EXPECT_EQ(vpi_get(vpiType, mailbox), vpiUndefined);
@@ -438,9 +438,9 @@ TEST(GeneratedDesignDatabase, MailboxMessages) {
   EXPECT_EQ(vpi_get(vpiType, logicLeaf), vpiLogicTypespec);
   for (vpiHandle handle : persistent)
     EXPECT_EQ(vpi_release_handle(handle), 1);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(runtime);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(runtime);
 }
 
 } // namespace

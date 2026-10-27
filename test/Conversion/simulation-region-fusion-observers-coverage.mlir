@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},obelisk-sim-materialize-compute-fusion))' -o %t 2>&1 | FileCheck %s --check-prefix=COVERAGE
-// RUN: FileCheck %s --check-prefix=KEEP --implicit-check-not=__obelisk_region_kernel_ < %t
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},talos-sim-materialize-compute-fusion))' -o %t 2>&1 | FileCheck %s --check-prefix=COVERAGE
+// RUN: FileCheck %s --check-prefix=KEEP --implicit-check-not=__talos_region_kernel_ < %t
 
 // Toggle coverage observes the result even when nothing waits on it.
 // COVERAGE: statement component rejected: toggle coverage on storage 3

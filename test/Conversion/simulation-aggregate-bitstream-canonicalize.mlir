@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
 
 !bytes = !simulation.unpacked_array<0 : 1 x i8>
 !nibbles = !simulation.unpacked_array<0 : 1 x !simulation.logic<4>>

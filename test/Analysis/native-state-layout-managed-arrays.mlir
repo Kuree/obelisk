@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-native-state-layout-analysis -o %t 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-native-state-layout-analysis -o %t 2>&1 | FileCheck %s
 
 // A RAM-sized array has no managed roots. Its trace layout should depend on
 // the element type, not require visiting all four million stored words.

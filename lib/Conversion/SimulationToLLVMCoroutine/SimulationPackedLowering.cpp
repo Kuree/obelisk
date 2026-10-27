@@ -3,27 +3,27 @@
 #include "SimulationPackedLowering.h"
 #include "SimulationLocalStorageLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Analysis/LocalStorageAnalysis.h"
-#include "obelisk/Analysis/NativeWordAnalysis.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Analysis/LocalStorageAnalysis.h"
+#include "talos/Analysis/NativeWordAnalysis.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
-#include "obelisk/Analysis/ClassBitstreamPlan.h"
-#include "obelisk/Analysis/IntegerRangeIPO.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/SimulationStorageAnalysis.h"
-#include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Conversion/RuntimeToLLVM.h"
-#include "obelisk/Conversion/SimulationToRuntime.h"
-#include "obelisk/Conversion/SimulationToStandard.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHandle.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Analysis/ClassBitstreamPlan.h"
+#include "talos/Analysis/IntegerRangeIPO.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/SimulationStorageAnalysis.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
+#include "talos/Conversion/RuntimeToLLVM.h"
+#include "talos/Conversion/SimulationToRuntime.h"
+#include "talos/Conversion/SimulationToStandard.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHandle.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -46,16 +46,16 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 namespace {
 
 constexpr auto inductiveTwoStateAccessAttr =
-    ::obelisk::schedule::Field::EvalInductiveTwoStateAccess;
+    ::talos::schedule::Field::EvalInductiveTwoStateAccess;
 constexpr auto inductiveTwoStateAttr =
-    ::obelisk::schedule::Field::EvalInductiveTwoState;
+    ::talos::schedule::Field::EvalInductiveTwoState;
 constexpr auto conditionalTwoStateAttr =
-    ::obelisk::schedule::Field::EvalConditionallyTwoState;
+    ::talos::schedule::Field::EvalConditionallyTwoState;
 
 LogicalResult convertNativeAggregateType(Type type,
                                          SmallVectorImpl<Type> &results) {
@@ -119,7 +119,7 @@ void fuseWideDynamicRefCopies(
     auto copy = sim::SimRefCopyOp::create(
         rewriter, store.getLoc(), load.getReference(), store.getReference());
     copy->setAttrs(store->getAttrDictionary());
-    if (::obelisk::schedule::has<assumeCleanSpecializationAttr>(load))
+    if (::talos::schedule::has<assumeCleanSpecializationAttr>(load))
       native::mark<native::BulkCopySourceAssumeClean>(copy);
     nativeTwoStateOperations.erase(load.getOperation());
     stateAccesses.erase(load);
@@ -131,12 +131,12 @@ void fuseWideDynamicRefCopies(
 
 std::string makeElementTraceBytes(ArrayRef<int64_t> offsets,
                                   ArrayRef<int32_t> kinds) {
-  std::string bytes(offsets.size() * sizeof(obelisk_rt_element_trace_slot_v1),
+  std::string bytes(offsets.size() * sizeof(talos_rt_element_trace_slot_v1),
                     '\0');
   for (auto [index, offset, kind] : llvm::enumerate(offsets, kinds)) {
-    obelisk_rt_element_trace_slot_v1 slot{
+    talos_rt_element_trace_slot_v1 slot{
         static_cast<uint64_t>(offset),
-        static_cast<obelisk_rt_managed_slot_kind_v1>(kind), 0};
+        static_cast<talos_rt_managed_slot_kind_v1>(kind), 0};
     std::memcpy(bytes.data() + index * sizeof(slot), &slot, sizeof(slot));
   }
   return bytes;
@@ -145,7 +145,7 @@ std::string makeElementTraceBytes(ArrayRef<int64_t> offsets,
 uint64_t appendStableHash(uint64_t hash, uint64_t value, unsigned bytes) {
   for (unsigned index = 0; index != bytes; ++index) {
     hash ^= (value >> (index * 8)) & 0xff;
-    hash *= OBELISK_STABLE_HASH_PRIME;
+    hash *= TALOS_STABLE_HASH_PRIME;
   }
   return hash;
 }
@@ -237,9 +237,9 @@ NativeStateLayout makeCleanEvalStateLayout(const NativeStateLayout &layout) {
   auto authorize = [&](const auto &descriptors) {
     for (const auto &[descriptor, handle] : descriptors) {
       (void)descriptor;
-      obelisk_rt_stable_handle_v1 decoded{};
-      if (obelisk_rt_stable_handle_decode(handle, &decoded) &&
-          decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+      talos_rt_stable_handle_v1 decoded{};
+      if (talos_rt_stable_handle_decode(handle, &decoded) &&
+          decoded.kind == TALOS_RT_STABLE_HANDLE_STATIC &&
           decoded.offset == 0)
         clean.directHandles.insert(decoded.id);
     }
@@ -260,8 +260,8 @@ LogicalResult lowerPackedSimulationOperations(
     OpBuilder builder = OpBuilder::atBlockBegin(module.getBody());
     auto pointer = LLVM::LLVMPointerType::get(context);
     for (StringRef name :
-         {"__obelisk_continuous_value", "__obelisk_continuous_unknown",
-          "__obelisk_continuous_mask"}) {
+         {"__talos_continuous_value", "__talos_continuous_unknown",
+          "__talos_continuous_mask"}) {
       auto global =
           LLVM::GlobalOp::create(builder, module.getLoc(), pointer, false,
                                  LLVM::Linkage::Internal, name, Attribute{}, 8);
@@ -280,7 +280,7 @@ LogicalResult lowerPackedSimulationOperations(
       return;
     auto now = std::chrono::steady_clock::now();
     double seconds = std::chrono::duration<double>(now - lastTiming).count();
-    llvm::errs() << "obelisk packed timing: " << name << ": " << seconds
+    llvm::errs() << "talos packed timing: " << name << ": " << seconds
                  << " s\n";
     lastTiming = now;
   };
@@ -373,10 +373,10 @@ LogicalResult lowerPackedSimulationOperations(
           fact->second.rootWidth > INT32_MAX)
         continue;
       auto root = stateLayout.storage.find(*fact->second.descriptor);
-      obelisk_rt_stable_handle_v1 decoded{};
+      talos_rt_stable_handle_v1 decoded{};
       if (root != stateLayout.storage.end() &&
-          obelisk_rt_stable_handle_decode(root->second, &decoded) &&
-          decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC)
+          talos_rt_stable_handle_decode(root->second, &decoded) &&
+          decoded.kind == TALOS_RT_STABLE_HANDLE_STATIC)
         inBoundsSelections.insert(selection);
     }
   }
@@ -408,10 +408,10 @@ LogicalResult lowerPackedSimulationOperations(
           offset != stateLayout.storageOffsets.end() &&
           (offset->second + fact->second.low) % 8 == 0)
         byteAddressableState.insert(reference);
-      obelisk_rt_stable_handle_v1 decoded{};
+      talos_rt_stable_handle_v1 decoded{};
       if (root != stateLayout.storage.end() &&
-          obelisk_rt_stable_handle_decode(root->second, &decoded) &&
-          decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC) {
+          talos_rt_stable_handle_decode(root->second, &decoded) &&
+          decoded.kind == TALOS_RT_STABLE_HANDLE_STATIC) {
         auto isByteAddressable = [&](Value parent) {
           auto proof = handles.certificates.find(parent);
           return proof != handles.certificates.end() &&
@@ -450,9 +450,9 @@ LogicalResult lowerPackedSimulationOperations(
       if (function.isExternal())
         continue;
       ++functionCount;
-      bool guarded = ::obelisk::schedule::has<inductiveTwoStateAttr>(function);
+      bool guarded = ::talos::schedule::has<inductiveTwoStateAttr>(function);
       bool conditional =
-          ::obelisk::schedule::has<conditionalTwoStateAttr>(function);
+          ::talos::schedule::has<conditionalTwoStateAttr>(function);
       needsInductiveFacts |= guarded && !conditional;
       needsKnownStateFacts |= conditional;
     }
@@ -483,9 +483,9 @@ LogicalResult lowerPackedSimulationOperations(
       if (function.isExternal())
         continue;
       bool guardedTwoState =
-          ::obelisk::schedule::has<inductiveTwoStateAttr>(function);
+          ::talos::schedule::has<inductiveTwoStateAttr>(function);
       bool conditionalTwoState =
-          ::obelisk::schedule::has<conditionalTwoStateAttr>(function);
+          ::talos::schedule::has<conditionalTwoStateAttr>(function);
       const StateDomainAnalysis &guardedDomains =
           conditionalTwoState ? *knownStateDomains : *stateDomains;
       auto isTwoState = [&](Value value) {
@@ -664,7 +664,7 @@ LogicalResult lowerPackedSimulationOperations(
       if (literal.getValue().empty())
         return WalkResult::advance();
       StringAttr name =
-          allocateGlobalName("__obelisk_string_literal.", stringOrdinal);
+          allocateGlobalName("__talos_string_literal.", stringOrdinal);
       native::set<native::StringGlobal>(operation, name);
       return reserve(name.getValue(), literal.getValue());
     }
@@ -672,7 +672,7 @@ LogicalResult lowerPackedSimulationOperations(
       if (scan.getPrefix().empty())
         return WalkResult::advance();
       StringAttr name =
-          allocateGlobalName("__obelisk_scan_prefix.", scanPrefixOrdinal);
+          allocateGlobalName("__talos_scan_prefix.", scanPrefixOrdinal);
       native::set<native::ScanPrefixGlobal>(operation, name);
       return reserve(name.getValue(), scan.getPrefix());
     }
@@ -682,14 +682,14 @@ LogicalResult lowerPackedSimulationOperations(
       if (prefix.empty())
         return WalkResult::advance();
       StringAttr name =
-          allocateGlobalName("__obelisk_scan_prefix.", scanPrefixOrdinal);
+          allocateGlobalName("__talos_scan_prefix.", scanPrefixOrdinal);
       native::set<native::ScanPrefixGlobal>(operation, name);
       return reserve(name.getValue(), prefix);
     }
     if (auto scan = dyn_cast<sim::SimFileScanFieldOp>(operation)) {
       if (scan.getPrefix().empty())
         return WalkResult::advance();
-      StringAttr name = allocateGlobalName("__obelisk_file_scan_prefix.",
+      StringAttr name = allocateGlobalName("__talos_file_scan_prefix.",
                                            fileScanPrefixOrdinal);
       native::set<native::FileScanPrefixGlobal>(operation, name);
       return reserve(name.getValue(), scan.getPrefix());
@@ -699,13 +699,13 @@ LogicalResult lowerPackedSimulationOperations(
           operation->getAttrOfType<StringAttr>("prefix").getValue();
       if (prefix.empty())
         return WalkResult::advance();
-      StringAttr name = allocateGlobalName("__obelisk_file_scan_prefix.",
+      StringAttr name = allocateGlobalName("__talos_file_scan_prefix.",
                                            fileScanPrefixOrdinal);
       native::set<native::FileScanPrefixGlobal>(operation, name);
       return reserve(name.getValue(), prefix);
     }
     if (auto create = dyn_cast<sim::SimContainerCreateOp>(operation)) {
-      if (failed(reserveTrace(create.getLoc(), "__obelisk_element_trace_",
+      if (failed(reserveTrace(create.getLoc(), "__talos_element_trace_",
                               create.getTypeId(), create.getTraceOffsets(),
                               create.getTraceKinds())))
         return WalkResult::interrupt();
@@ -718,7 +718,7 @@ LogicalResult lowerPackedSimulationOperations(
       }
       if (!plan->empty()) {
         std::string name =
-            "__obelisk_element_pattern_" + std::to_string(create.getTypeId());
+            "__talos_element_pattern_" + std::to_string(create.getTypeId());
         native::set<native::ContainerPatternPlanGlobal>(
             operation, StringAttr::get(context, name));
         std::string bytes = encodeUnsignedPlan(*plan);
@@ -737,7 +737,7 @@ LogicalResult lowerPackedSimulationOperations(
     if (auto bitstream =
             dyn_cast<sim::SimAggregateExportBitstreamOp>(operation)) {
       std::string bytes = encodeBitstreamPlan(bitstream.getPlan());
-      std::string name = "__obelisk_aggregate_bitstream_plan_" +
+      std::string name = "__talos_aggregate_bitstream_plan_" +
                          llvm::utohexstr(llvm::hash_value(bytes));
       native::set<native::AggregateBitstreamPlanGlobal>(
           operation, StringAttr::get(context, name));
@@ -747,7 +747,7 @@ LogicalResult lowerPackedSimulationOperations(
     if (auto bitstream =
             dyn_cast<sim::SimAggregateImportBitstreamOp>(operation)) {
       std::string bytes = encodeBitstreamPlan(bitstream.getPlan());
-      std::string name = "__obelisk_aggregate_bitstream_plan_" +
+      std::string name = "__talos_aggregate_bitstream_plan_" +
                          llvm::utohexstr(llvm::hash_value(bytes));
       native::set<native::AggregateBitstreamPlanGlobal>(
           operation, StringAttr::get(context, name));
@@ -758,15 +758,15 @@ LogicalResult lowerPackedSimulationOperations(
             dyn_cast<sim::SimRecursiveExportBitstreamOp>(operation)) {
       uint64_t identity = static_cast<uint64_t>(bitstream.getPlan()[0]);
       if (static_cast<uint32_t>(identity) ==
-              OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC &&
+              TALOS_RT_RECURSIVE_BITSTREAM_PLAN_MAGIC &&
           static_cast<uint32_t>(identity >> 32) ==
-              OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION) {
+              TALOS_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION) {
         needsClassBitstreamABI = true;
         classBitstreamDesign = bitstream->getParentOfType<sim::SimDesignOp>();
         return WalkResult::advance();
       }
       std::string bytes = encodeBitstreamPlan(bitstream.getPlan());
-      std::string name = "__obelisk_recursive_bitstream_plan_" +
+      std::string name = "__talos_recursive_bitstream_plan_" +
                          llvm::utohexstr(llvm::hash_value(bytes));
       native::set<native::AggregateBitstreamPlanGlobal>(
           operation, StringAttr::get(context, name));
@@ -775,7 +775,7 @@ LogicalResult lowerPackedSimulationOperations(
     }
     if (auto path =
             dyn_cast<sim::SimReferencePathAggregateElementOp>(operation)) {
-      if (failed(reserveTrace(path.getLoc(), "__obelisk_element_trace_",
+      if (failed(reserveTrace(path.getLoc(), "__talos_element_trace_",
                               path.getTypeId(), path.getTraceOffsets(),
                               path.getTraceKinds())))
         return WalkResult::interrupt();
@@ -783,7 +783,7 @@ LogicalResult lowerPackedSimulationOperations(
     }
     if (auto path =
             dyn_cast<sim::SimReferencePathAggregateSliceOp>(operation)) {
-      if (failed(reserveTrace(path.getLoc(), "__obelisk_element_trace_",
+      if (failed(reserveTrace(path.getLoc(), "__talos_element_trace_",
                               path.getTypeId(), path.getTraceOffsets(),
                               path.getTraceKinds())))
         return WalkResult::interrupt();
@@ -791,14 +791,14 @@ LogicalResult lowerPackedSimulationOperations(
     }
     if (auto create = dyn_cast<sim::SimMailboxCreateOp>(operation)) {
       if (failed(reserveTrace(create.getLoc(),
-                              "__obelisk_mailbox_element_trace_",
+                              "__talos_mailbox_element_trace_",
                               create.getTypeId(), create.getTraceOffsets(),
                               create.getTraceKinds())))
         return WalkResult::interrupt();
       return WalkResult::advance();
     }
     if (auto create = dyn_cast<sim::SimAssocCreateOp>(operation)) {
-      if (failed(reserveTrace(create.getLoc(), "__obelisk_element_trace_",
+      if (failed(reserveTrace(create.getLoc(), "__talos_element_trace_",
                               create.getTypeId(), create.getTraceOffsets(),
                               create.getTraceKinds())))
         return WalkResult::interrupt();
@@ -814,7 +814,7 @@ LogicalResult lowerPackedSimulationOperations(
         create.emitOpError("element key has no runtime layout");
         return WalkResult::interrupt();
       }
-      if (failed(reserveTrace(create.getLoc(), "__obelisk_element_trace_",
+      if (failed(reserveTrace(create.getLoc(), "__talos_element_trace_",
                               descriptor->typeID, descriptor->traceOffsets,
                               descriptor->traceKinds)))
         return WalkResult::interrupt();
@@ -829,18 +829,18 @@ LogicalResult lowerPackedSimulationOperations(
     else if (auto cyclic = dyn_cast<sim::SimRandomCycleSampleOp>(operation))
       program = cyclic.getProgram();
     if (!program.empty()) {
-      std::string name = "__obelisk_random_program_" +
+      std::string name = "__talos_random_program_" +
                          llvm::utohexstr(llvm::hash_value(program));
       return reserve(name, program);
     }
     if (auto call = dyn_cast<sim::SimDPICallOp>(operation)) {
       if (call.getSourceFile().empty())
         return WalkResult::advance();
-      uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
+      uint64_t hash = TALOS_STABLE_HASH_OFFSET_BASIS;
       for (unsigned char byte : call.getSourceFile().bytes())
         hash = appendStableHash(hash, byte, 1);
       std::string name =
-          (Twine("__obelisk_dpi_source_") + Twine(call.getImportId()) + "_" +
+          (Twine("__talos_dpi_source_") + Twine(call.getImportId()) + "_" +
            Twine(call.getSourceLine()) + "_" + Twine(call.getSourceColumn()) +
            "_" + Twine(hash))
               .str();
@@ -905,30 +905,30 @@ LogicalResult lowerPackedSimulationOperations(
   Type i64 = IntegerType::get(context, 64);
   if (needsContainerBitstreamABI &&
       failed(declareRuntimeABI(
-          module.getLoc(), "obelisk_rt_v1_container_export_bitstream", i32,
+          module.getLoc(), "talos_rt_v1_container_export_bitstream", i32,
           {pointer, pointer, pointer, i64, i64, i32, i64, i64, i64, i32})))
     return failure();
   if (needsAggregateBitstreamABI &&
       failed(declareRuntimeABI(module.getLoc(),
-                               "obelisk_rt_v1_aggregate_export_bitstream", i32,
+                               "talos_rt_v1_aggregate_export_bitstream", i32,
                                {pointer, pointer, i64, i64, i32, pointer,
                                 pointer, i64, i64, i32, pointer, i64})))
     return failure();
   if (needsAggregateBitstreamImportABI &&
       failed(declareRuntimeABI(module.getLoc(),
-                               "obelisk_rt_v1_aggregate_import_bitstream", i32,
+                               "talos_rt_v1_aggregate_import_bitstream", i32,
                                {pointer, pointer, i64, i64, i32, pointer,
                                 pointer, i64, i64, i32, pointer, i64})))
     return failure();
   if (needsRecursiveBitstreamABI &&
       failed(declareRuntimeABI(
-          module.getLoc(), "obelisk_rt_v1_recursive_export_bitstream", i32,
+          module.getLoc(), "talos_rt_v1_recursive_export_bitstream", i32,
           {pointer, pointer, pointer, i64, i64, i32, pointer, pointer, i64, i64,
            i32, pointer, i64, i32, pointer, pointer})))
     return failure();
   if (needsClassBitstreamABI &&
       failed(declareRuntimeABI(
-          module.getLoc(), "obelisk_rt_v2_recursive_export_bitstream", i32,
+          module.getLoc(), "talos_rt_v2_recursive_export_bitstream", i32,
           {pointer, i64, pointer, pointer, i64, i64, i32, pointer, pointer, i64,
            i64, i32, i32, pointer, pointer})))
     return failure();
@@ -1034,8 +1034,8 @@ LogicalResult lowerPackedSimulationOperations(
         // state across suspension and releases it on resumption or
         // cancellation.
         if (function.getEntryKind() == sim::EntryKind::Observer ||
-            ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::EvalBorrowedCaptures>(function))
+            ::talos::schedule::has<
+                ::talos::schedule::Field::EvalBorrowedCaptures>(function))
           return WalkResult::skip();
         unsigned physical = 0;
         for (BlockArgument argument :
@@ -1063,7 +1063,7 @@ LogicalResult lowerPackedSimulationOperations(
   markTiming("managed lifetime inventory");
   // This is transaction-local metadata produced only by the AOT signature
   // pattern below. Never consume a same-named source attribute.
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [](sim::SimFuncOp function) {
         native::remove<native::TwoStateBlockUnknowns>(function);
       });
@@ -1251,7 +1251,7 @@ LogicalResult lowerPackedSimulationOperations(
                       sim::SimAggregateInsertOp, sim::SimArrayDynExtractOp,
                       sim::SimArrayDynInsertOp, sim::SimUnionConstructOp,
                       sim::SimUnionExtractOp, sim::SimUnionIsActiveOp>();
-    target.addLegalDialect<runtime::ObeliskRuntimeDialect>();
+    target.addLegalDialect<runtime::TalosRuntimeDialect>();
     target.addLegalOp<sim::SimContextRuntimeOp, sim::SimStatusCheckOp>();
     target.addLegalDialect<schedule::ScheduleDialect>();
     target.addIllegalOp<schedule::NativeKnownValueOp,
@@ -1275,7 +1275,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimProcessControlOp, sim::SimControlBoundaryOp>(
         [&](Operation *operation) { return c.isLegal(operation); });
     target.addDynamicallyLegalDialect<
-        sim::ObeliskSimulationDialect, arith::ArithDialect,
+        sim::TalosSimulationDialect, arith::ArithDialect,
         cf::ControlFlowDialect, func::FuncDialect>([&](Operation *operation) {
       return hasNoLogic(operation) && c.isLegal(operation);
     });
@@ -1301,16 +1301,16 @@ LogicalResult lowerPackedSimulationOperations(
   constexpr size_t functionsPerChunk = 64;
   constexpr uint64_t operationsPerChunk = 4096;
   uint64_t chunkOperations = 0;
-  ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+  ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         uint64_t operations = 0;
         function.walk([&](Operation *) { ++operations; });
         if (functionChunks.empty() ||
             functionChunks.back().size() == functionsPerChunk ||
             chunkOperations + operations > operationsPerChunk ||
-            ::obelisk::schedule::has<cleanEvalBodyAttr>(
+            ::talos::schedule::has<cleanEvalBodyAttr>(
                 functionChunks.back().front()) !=
-                ::obelisk::schedule::has<cleanEvalBodyAttr>(function)) {
+                ::talos::schedule::has<cleanEvalBodyAttr>(function)) {
           functionChunks.emplace_back();
           chunkOperations = 0;
         }
@@ -1368,7 +1368,7 @@ LogicalResult lowerPackedSimulationOperations(
             RewritePatternSet workerPatterns(context);
             populatePackedPatterns(
                 workerConverter, workerPatterns,
-                ::obelisk::schedule::has<cleanEvalBodyAttr>(functions.front()),
+                ::talos::schedule::has<cleanEvalBodyAttr>(functions.front()),
                 &locals);
             FrozenRewritePatternSet workerFrozen(std::move(workerPatterns));
             ConversionTarget workerTarget(*context);
@@ -1395,7 +1395,7 @@ LogicalResult lowerPackedSimulationOperations(
     for (const auto &timing : chunkTimings)
       if (timing.cfgSeconds + timing.storageSeconds + timing.conversionSeconds >
           1.0)
-        llvm::errs() << "obelisk packed chunk: " << timing.largestFunction
+        llvm::errs() << "talos packed chunk: " << timing.largestFunction
                      << ": " << timing.sourceOps << " -> " << timing.loweredOps
                      << " ops; CFG " << timing.cfgSeconds << " s; storage "
                      << timing.storageSeconds << " s; conversion "
@@ -1424,7 +1424,7 @@ LogicalResult lowerPackedSimulationOperations(
   // doing this inside the signature pattern would not update future one-to-N
   // operand adaptors owned by the conversion driver.
   WalkResult specializedBlockArguments =
-      ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
+      ::talos::detail::walkNativeFunctions<sim::SimFuncOp>(
           module, [&](sim::SimFuncOp function) {
             auto mappings =
                 native::get<native::TwoStateBlockUnknowns>(function);
@@ -1515,4 +1515,4 @@ LogicalResult lowerPackedSimulationOperations(
   return success();
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

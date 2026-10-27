@@ -1,11 +1,11 @@
 // XFAIL: *
 // Slang v11 does not accept qualified assignment-pattern type keys.
-// RUN: obelisk -O3 %s -o %t.o3.native
+// RUN: talos -O3 %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode | FileCheck %s
-// RUN: obelisk -emit-slang %s | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-obelisk %s | FileCheck %s --check-prefix=OBELISK
+// RUN: talos -emit-slang %s | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-talos %s | FileCheck %s --check-prefix=TALOS
 
 package assignment_pattern_types;
   typedef enum logic [1:0] { RED, GREEN, BLUE } color_t;
@@ -107,7 +107,7 @@ module native_assignment_pattern_setters;
   // SLANG: type_setter_count = 3 : i64, type_setter_types = [!slang.integral<32
   // SLANG-SAME: !slang.integral<32
   // SLANG-SAME: !slang.integral<8
-  // OBELISK: type_setter_count = 3 : i64, type_setter_types = [!obelisk.integral<32
-  // OBELISK-SAME: !obelisk.integral<32
-  // OBELISK-SAME: !obelisk.integral<8
+  // TALOS: type_setter_count = 3 : i64, type_setter_types = [!talos.integral<32
+  // TALOS-SAME: !talos.integral<32
+  // TALOS-SAME: !talos.integral<8
 endmodule

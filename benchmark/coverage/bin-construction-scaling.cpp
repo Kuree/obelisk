@@ -1,13 +1,13 @@
 // Bounded constructor timing probe, deliberately outside the unit suite.
-#include "obelisk/Coverage/CoverageDatabase.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Coverage/CoverageDatabase.h"
+#include "talos/Runtime/Runtime.h"
 
 #include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 
-using namespace obelisk::coverage;
+using namespace talos::coverage;
 
 int main(int argc, char **argv) {
   const uint64_t count = argc > 1 ? std::strtoull(argv[1], nullptr, 10) : 16;
@@ -80,51 +80,51 @@ int main(int argc, char **argv) {
     return 1;
   }
   struct Execution {
-    obelisk_rt_execution_descriptor_v1 descriptor{};
-    obelisk_rt_execution_extension_v1 extension{};
+    talos_rt_execution_descriptor_v1 descriptor{};
+    talos_rt_execution_extension_v1 extension{};
   } execution;
   static_assert(offsetof(Execution, extension) ==
-                sizeof(obelisk_rt_execution_descriptor_v1));
-  execution.descriptor.version = OBELISK_RT_VERSION;
-  execution.descriptor.flags = OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
+                sizeof(talos_rt_execution_descriptor_v1));
+  execution.descriptor.version = TALOS_RT_VERSION;
+  execution.descriptor.flags = TALOS_RT_EXECUTION_COVERAGE_SCHEMA;
   execution.descriptor.reserved = sizeof(execution.descriptor);
-  execution.extension.version = OBELISK_RT_EXECUTION_EXTENSION_VERSION;
+  execution.extension.version = TALOS_RT_EXECUTION_EXTENSION_VERSION;
   execution.extension.size = sizeof(execution.extension);
   execution.extension.coverage_schema = image.data();
   execution.extension.coverage_schema_size = image.size();
-  obelisk_rt_context *context = nullptr;
-  obelisk_rt_status status =
-      obelisk_rt_v1_context_create_for_design(&execution.descriptor, &context);
-  if (status == OBELISK_RT_OK)
+  talos_rt_context *context = nullptr;
+  talos_rt_status status =
+      talos_rt_v1_context_create_for_design(&execution.descriptor, &context);
+  if (status == TALOS_RT_OK)
     status =
-        obelisk_rt_v1_coverage_finalize(context, 0, 0, nullptr, nullptr,
-                                        OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL);
+        talos_rt_v1_coverage_finalize(context, 0, 0, nullptr, nullptr,
+                                        TALOS_RT_COVERAGE_PERSIST_FUNCTIONAL);
   const auto begin = std::chrono::steady_clock::now();
-  obelisk_rt_covergroup_v1 handle = 0;
-  if (status == OBELISK_RT_OK)
-    status = obelisk_rt_v1_covergroup_create(context, 10, nullptr, 0, nullptr,
+  talos_rt_covergroup_v1 handle = 0;
+  if (status == TALOS_RT_OK)
+    status = talos_rt_v1_covergroup_create(context, 10, nullptr, 0, nullptr,
                                              0, &handle);
   const auto end = std::chrono::steady_clock::now();
   std::printf("points=%llu construct=%.6f status=%u\n",
               static_cast<unsigned long long>(count),
               std::chrono::duration<double>(end - begin).count(),
               static_cast<unsigned>(status));
-  if (status == OBELISK_RT_OK && argc > 2) {
+  if (status == TALOS_RT_OK && argc > 2) {
     const std::string path = argv[2];
     status =
-        obelisk_rt_v1_coverage_save(context, path.data(), path.size(), 0, 0);
+        talos_rt_v1_coverage_save(context, path.data(), path.size(), 0, 0);
     Database saved;
     const std::array<uint32_t, 4> binPrefix = {0, 16, 33, 49};
     const uint64_t expectedBins = count / 4 * 50 + binPrefix[count % 4];
     const uint64_t expectedGroups = count * 2 - (count + 3) / 4;
-    if (status == OBELISK_RT_OK &&
+    if (status == TALOS_RT_OK &&
         (readFile(path, saved) != Status::Ok ||
          saved.functionalConfigurations.size() != 1 ||
          saved.resolvedFunctionalItems.size() != count ||
          saved.resolvedFunctionalBins.size() != expectedBins ||
          saved.resolvedFunctionalBinGroups.size() != expectedGroups))
-      status = OBELISK_RT_INVALID_DESIGN;
+      status = TALOS_RT_INVALID_DESIGN;
   }
-  obelisk_rt_v1_context_destroy(context);
-  return status == OBELISK_RT_OK ? 0 : 1;
+  talos_rt_v1_context_destroy(context);
+  return status == TALOS_RT_OK ? 0 : 1;
 }

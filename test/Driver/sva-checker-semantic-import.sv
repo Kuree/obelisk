@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-obelisk %s | FileCheck %s --check-prefix=OBELISK
+// RUN: talos -emit-slang %s | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-talos %s | FileCheck %s --check-prefix=TALOS
 
 checker handshake_checker(
     event clock_event,
@@ -77,28 +77,28 @@ endmodule
 // SLANG-SAME: instance_paths = ["sva_checker_semantic_import.procedural_i"]
 // SLANG-SAME: instance_symbols = [
 
-// OBELISK: obelisk.sv.symbol.checker
-// OBELISK-SAME: port_count = 5 : i64
-// OBELISK-SAME: port_paths = ["handshake_checker.clock_event", "handshake_checker.reset_n", "handshake_checker.request", "handshake_checker.acknowledge", "handshake_checker.completed"]
-// OBELISK: obelisk.sv.symbol.checker_instance
-// OBELISK-SAME: connection_actual_kinds = array<i64: 2, 0, 0, 0, 0>
-// OBELISK-SAME: connection_count = 5 : i64
-// OBELISK-SAME: connection_has_output_initial = array<i64: 0, 0, 0, 0, 1>
-// OBELISK-SAME: is_procedural = false
-// OBELISK-SAME: referenced_checker_path = "handshake_checker"
-// OBELISK: obelisk.sv.symbol.checker_instance_body
-// OBELISK-SAME: is_procedural = false
-// OBELISK-SAME: parent_instance_path = "sva_checker_semantic_import.checker_i"
-// OBELISK-SAME: referenced_checker_path = "handshake_checker"
-// OBELISK: obelisk.sv.symbol.clocking_block
-// OBELISK-SAME: hierarchical_name = "sva_checker_semantic_import.checker_i.cb"
-// OBELISK: obelisk.sv.symbol.property
-// OBELISK-SAME: default_clocking_path = "sva_checker_semantic_import.checker_i.cb"
-// OBELISK: obelisk.sv.statement.concurrent_assertion
-// OBELISK-SAME: has_default_disable = true
-// OBELISK: obelisk.sv.symbol.checker_instance
-// OBELISK-SAME: is_procedural = true
-// OBELISK-SAME: name = "procedural_i"
-// OBELISK: obelisk.sv.statement.procedural_checker
-// OBELISK-SAME: instance_count = 1 : i64
-// OBELISK-SAME: instance_paths = ["sva_checker_semantic_import.procedural_i"]
+// TALOS: talos.sv.symbol.checker
+// TALOS-SAME: port_count = 5 : i64
+// TALOS-SAME: port_paths = ["handshake_checker.clock_event", "handshake_checker.reset_n", "handshake_checker.request", "handshake_checker.acknowledge", "handshake_checker.completed"]
+// TALOS: talos.sv.symbol.checker_instance
+// TALOS-SAME: connection_actual_kinds = array<i64: 2, 0, 0, 0, 0>
+// TALOS-SAME: connection_count = 5 : i64
+// TALOS-SAME: connection_has_output_initial = array<i64: 0, 0, 0, 0, 1>
+// TALOS-SAME: is_procedural = false
+// TALOS-SAME: referenced_checker_path = "handshake_checker"
+// TALOS: talos.sv.symbol.checker_instance_body
+// TALOS-SAME: is_procedural = false
+// TALOS-SAME: parent_instance_path = "sva_checker_semantic_import.checker_i"
+// TALOS-SAME: referenced_checker_path = "handshake_checker"
+// TALOS: talos.sv.symbol.clocking_block
+// TALOS-SAME: hierarchical_name = "sva_checker_semantic_import.checker_i.cb"
+// TALOS: talos.sv.symbol.property
+// TALOS-SAME: default_clocking_path = "sva_checker_semantic_import.checker_i.cb"
+// TALOS: talos.sv.statement.concurrent_assertion
+// TALOS-SAME: has_default_disable = true
+// TALOS: talos.sv.symbol.checker_instance
+// TALOS-SAME: is_procedural = true
+// TALOS-SAME: name = "procedural_i"
+// TALOS: talos.sv.statement.procedural_checker
+// TALOS-SAME: instance_count = 1 : i64
+// TALOS-SAME: instance_paths = ["sva_checker_semantic_import.procedural_i"]

@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // Without the observer, the index storage is private to the fused kernel.
-// CHECK-LABEL: simulation.func private @__obelisk_fused_0
+// CHECK-LABEL: simulation.func private @__talos_fused_0
 // CHECK-NOT: simulation.ref.store
 // CHECK-NOT: simulation.ref.load
 // CHECK: simulation.nba.enqueue
-// CHECK-LABEL: simulation.func private @__obelisk_fused_1
+// CHECK-LABEL: simulation.func private @__talos_fused_1
 // CHECK-NOT: simulation.ref.store
 // CHECK-NOT: simulation.ref.load
 // CHECK: simulation.nba.enqueue

@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-real-conversions)))' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-lower-real-conversions)))' \
 // RUN:   | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-lower-real-conversions)))' \
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-lower-real-conversions)))' \
 // RUN:   | FileCheck %s --check-prefix=WIDE
 
 // This test exercises standard-typed real conversion normalization as its own

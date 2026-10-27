@@ -1,4 +1,4 @@
-// RUN: obelisk -O0 -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
+// RUN: talos -O0 -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
 
 module specify_transition_delays_strength_pair(
     input wire data, input wire enable, output wire destination);

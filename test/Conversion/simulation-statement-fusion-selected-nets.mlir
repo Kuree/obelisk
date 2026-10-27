@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o %t 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' -o %t 2>&1 | FileCheck %s --check-prefix=PLAN
 // RUN: FileCheck %s < %t
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off prune-native=true},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion,simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off prune-native=true},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=LLVM < %t.llvm.mlir
-// RUN: obelisk-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %target_cxx %t.o %runtime_link_flags -o %t.exe
 // RUN: %t.exe --execution-tier=native | FileCheck %s --check-prefix=OUTPUT
 
@@ -11,10 +11,10 @@
 // the request -> transform -> response order, including when the net and
 // output storage have the same descriptor number.
 // PLAN: 1 plans (1 data-dependence order)
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn @producer_and_consumer
 // CHECK-NOT: simulation.spawn @transform
-// CHECK: simulation.func private @__obelisk_region_kernel_0_0
+// CHECK: simulation.func private @__talos_region_kernel_0_0
 // CHECK: simulation.driver.drive
 // CHECK: arith.select {{.*}} : !simulation.net<i8>
 // CHECK: simulation.net.read
@@ -22,10 +22,10 @@
 // CHECK: simulation.ref.store
 // A select of known net handles must become a select of loaded values in the
 // hot body, without passing through the arbitrary-handle runtime ABI.
-// LLVM-LABEL: llvm.func @__obelisk_region_kernel_0_0.__obelisk_eval_body_0(
-// LLVM-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+// LLVM-LABEL: llvm.func @__talos_region_kernel_0_0.__talos_eval_body_0(
+// LLVM-NOT: llvm.call @talos_rt_v1_native_state_load_plane
 // LLVM: llvm.select {{.*}} : i1, i8
-// LLVM-NOT: llvm.call @obelisk_rt_v1_native_state_load_plane
+// LLVM-NOT: llvm.call @talos_rt_v1_native_state_load_plane
 // LLVM: llvm.return
 // OUTPUT-NOT: FAIL
 // OUTPUT: SELECTED NETS PASS

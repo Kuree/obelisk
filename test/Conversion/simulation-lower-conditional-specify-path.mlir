@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // Hand-authored Simulation IR exercises conditional path selection without
 // depending on SystemVerilog parsing. Both `if` predicates share one source;
@@ -6,7 +6,7 @@
 // neither truth evaluator returns true. The condition nets are sampled by
 // direct calls but do not enter the continuous actor's sensitivity wait.
 
-!logic1 = !obelisk.integral<1, false, true, 0 : 0, logic>
+!logic1 = !talos.integral<1, false, true, 0 : 0, logic>
 
 module {
   simulation.design @conditional_specify_lowering {
@@ -80,13 +80,13 @@ module {
                       #simulation.argument_binding<path = "top.snapshot", argument = 3, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.c0", argument = 4, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.c1", argument = 5, kind = direct, copyOut = false>]} {
-      obelisk.sv.expression.assignment attributes {
+      talos.sv.expression.assignment attributes {
           assignment_kind = 0 : i32, node_id = 1 : i64,
           semantic_type = !logic1} {
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 2 : i64, referenced_path = "top.out",
             referenced_symbol = @out, semantic_type = !logic1} {}
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 3 : i64, referenced_path = "top.source",
             referenced_symbol = @source, semantic_type = !logic1} {}
       }

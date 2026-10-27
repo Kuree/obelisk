@@ -1,7 +1,7 @@
-// RUN: obelisk -emit-slang %S/../Conversion/simulation-gc-uvm-mailbox.sv | obelisk-opt --test-obelisk-native-backend='scheduler=auto sim-opt-level=3 stop-after=lowering' '--test-obelisk-set-module-attributes=attrs="{schedule.native_scheduler = 1 : i32}"' -o %t.sim.mlir
-// RUN: obelisk-opt %t.sim.mlir --pass-pipeline='builtin.module(obelisk-sim-insert-gc-polls,simulation.design(obelisk-sim-plan-native-partitions),convert-obelisk-sim-processes-to-llvm-coroutines,materialize-runtime-byte-globals)' | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.polled-mailbox.o
+// RUN: talos -emit-slang %S/../Conversion/simulation-gc-uvm-mailbox.sv | talos-opt --test-talos-native-backend='scheduler=auto sim-opt-level=3 stop-after=lowering' '--test-talos-set-module-attributes=attrs="{schedule.native_scheduler = 1 : i32}"' -o %t.sim.mlir
+// RUN: talos-opt %t.sim.mlir --pass-pipeline='builtin.module(talos-sim-insert-gc-polls,simulation.design(talos-sim-plan-native-partitions),convert-talos-sim-processes-to-llvm-coroutines,materialize-runtime-byte-globals)' | talos-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.polled-mailbox.o
 // RUN: %target_cxx %t.polled-mailbox.o %runtime_link_flags -o %t.polled-mailbox.exe
-// RUN: env OBELISK_RT_GC_THRESHOLD=1 OBELISK_RT_GC_DIAGNOSTICS=1 %t.polled-mailbox.exe 2>&1 | FileCheck %s --check-prefix=POLLED-MAILBOX
+// RUN: env TALOS_RT_GC_THRESHOLD=1 TALOS_RT_GC_DIAGNOSTICS=1 %t.polled-mailbox.exe 2>&1 | FileCheck %s --check-prefix=POLLED-MAILBOX
 
 // UVM-shaped class testbenches run with a GC threshold small enough that the
 // heap collects many times. Every collection must keep each strongly
@@ -9,4 +9,4 @@
 // members, queues, mailboxes, forked workers and suspended process frames.
 // Polled collection with the mailbox testbench at a one-byte threshold.
 // POLLED-MAILBOX: {{^}}checksum=576 history=120 depth=16 last=15{{$}}
-// POLLED-MAILBOX: obelisk-gc-diagnostics collections={{[1-9][0-9]*}} designated=0 {{.*}} polled=1
+// POLLED-MAILBOX: talos-gc-diagnostics collections={{[1-9][0-9]*}} designated=0 {{.*}} polled=1

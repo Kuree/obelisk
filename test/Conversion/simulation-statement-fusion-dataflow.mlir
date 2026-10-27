@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{schedule.native.max_inline_ops = 1 : i64}"' > %t.low-inline.mlir
-// RUN: obelisk-opt %t.low-inline.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{schedule.native.max_statement_ops = 1 : i64}"' > %t.low-statement.mlir
-// RUN: obelisk-opt %t.low-statement.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true}))' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BUDGET
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s '--test-talos-set-module-attributes=attrs="{schedule.native.max_inline_ops = 1 : i64}"' > %t.low-inline.mlir
+// RUN: talos-opt %t.low-inline.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s '--test-talos-set-module-attributes=attrs="{schedule.native.max_statement_ops = 1 : i64}"' > %t.low-statement.mlir
+// RUN: talos-opt %t.low-statement.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true}))' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BUDGET
 // BUDGET: statement component rejected: operation budget
 
 // Statement order is cyclic: producer_and_consumer reads bank_result before it
@@ -12,9 +12,9 @@
 // not a reference-algorithm execution (IEEE 1800-2023 4.6(a)); 4.3 admits it
 // because no user-visible observer can see the transitions it removes.
 // CHECK-LABEL: simulation.design @source_order_cycle
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn
-// CHECK-LABEL: simulation.func private @__obelisk_region_kernel_0_0
+// CHECK-LABEL: simulation.func private @__talos_region_kernel_0_0
 // CHECK: %[[ADDRESS:.*]] = simulation.context.storage %{{.*}}[0]
 // CHECK: ^bb1:
 // CHECK: %[[A:.*]] = simulation.ref.load %[[ADDRESS]]

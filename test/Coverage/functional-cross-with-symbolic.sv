@@ -1,11 +1,11 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
 // RUN: %t --coverage-output=%t.second.obcov > /dev/null
-// RUN: obelisk-cov merge -o %t.merged.obcov %t.obcov %t.second.obcov
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=TEXT
-// RUN: obelisk-cov report --format=json %t.merged.obcov | FileCheck %s --check-prefix=JSON --implicit-check-not='"tuple_set":0,"matches_policy":{{[0-9]+}},"matches_count":{{[0-9]+}},"flags":{{([0-35-9]|[0-9][0-9]+)}}'
-// RUN: obelisk-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
-// RUN: obelisk-cov inspect %t.merged.obcov | FileCheck %s --check-prefix=MERGED
+// RUN: talos-cov merge -o %t.merged.obcov %t.obcov %t.second.obcov
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=TEXT
+// RUN: talos-cov report --format=json %t.merged.obcov | FileCheck %s --check-prefix=JSON --implicit-check-not='"tuple_set":0,"matches_policy":{{[0-9]+}},"matches_count":{{[0-9]+}},"flags":{{([0-35-9]|[0-9][0-9]+)}}'
+// RUN: talos-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
+// RUN: talos-cov inspect %t.merged.obcov | FileCheck %s --check-prefix=MERGED
 
 // IEEE 1800-2023 19.6.1.2 permits symbolic analysis. These bins contain
 // 2**64 value tuples: equality has exactly 2**32 satisfying tuples, without

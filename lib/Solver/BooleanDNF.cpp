@@ -1,6 +1,6 @@
 //===- BooleanDNF.cpp - Compile-time propositional minimization -----------===//
 
-#include "obelisk/Solver/ConstraintSolver.h"
+#include "talos/Solver/ConstraintSolver.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -8,7 +8,7 @@
 
 #include <algorithm>
 #include <limits>
-#ifdef OBELISK_Z3_SINGLE_THREADED
+#ifdef TALOS_Z3_SINGLE_THREADED
 #include <mutex>
 #endif
 #include <numeric>
@@ -16,12 +16,12 @@
 #include <string>
 #include <utility>
 
-#ifdef OBELISK_ENABLE_Z3
+#ifdef TALOS_ENABLE_Z3
 #include "Z3Support.h"
 #include <z3++.h>
 #endif
 
-namespace obelisk::solver {
+namespace talos::solver {
 namespace {
 
 static bool literalLess(const BooleanLiteral &lhs, const BooleanLiteral &rhs) {
@@ -82,17 +82,17 @@ BooleanDNFAnalysis minimizeBooleanDNF(std::vector<BooleanCube> cubes,
   BooleanDNFAnalysis analysis;
   analysis.cubes = normalizeDNF(std::move(cubes));
 
-#ifdef OBELISK_ENABLE_Z3
+#ifdef TALOS_ENABLE_Z3
   analysis.backend = "z3";
   if (analysis.cubes.empty() || resourceLimit == 0 || queryLimit == 0)
     return analysis;
 
-#ifdef OBELISK_Z3_SINGLE_THREADED
+#ifdef TALOS_Z3_SINGLE_THREADED
   // The non-pthread wasm compiler uses Z3's single-threaded build.
   std::lock_guard<std::mutex> z3Lock(detail::getZ3Mutex());
 #endif
   try {
-#ifdef OBELISK_Z3_SINGLE_THREADED
+#ifdef TALOS_Z3_SINGLE_THREADED
     static z3::context context;
 #else
     // Z3 contexts are isolated rather than shared across native MLIR workers.
@@ -204,4 +204,4 @@ BooleanDNFAnalysis minimizeBooleanDNF(std::vector<BooleanCube> cubes,
   return analysis;
 }
 
-} // namespace obelisk::solver
+} // namespace talos::solver

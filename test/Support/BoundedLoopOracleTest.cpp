@@ -7,10 +7,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Analysis/BoundedLoopAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationDialect.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/BoundedLoopAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Simulation/SimulationDialect.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -72,8 +72,8 @@ std::vector<size_t> provenLoops(StringRef functions, size_t count,
                                 StringRef aliases = "") {
   MLIRContext context;
   context.loadDialect<arith::ArithDialect, cf::ControlFlowDialect,
-                      obelisk::schedule::ScheduleDialect,
-                      obelisk::sim::ObeliskSimulationDialect>();
+                      talos::schedule::ScheduleDialect,
+                      talos::sim::TalosSimulationDialect>();
   std::string source;
   llvm::raw_string_ostream os(source);
   os << aliases << "module { simulation.design @proof {\n"
@@ -87,9 +87,9 @@ std::vector<size_t> provenLoops(StringRef functions, size_t count,
   std::vector<size_t> loops(count, ~size_t(0));
   if (!module)
     return loops;
-  module->walk([&](obelisk::sim::SimFuncOp function) {
+  module->walk([&](talos::sim::SimFuncOp function) {
     size_t index = std::stoul(function.getSymName().drop_front().str());
-    loops[index] = obelisk::analysis::analyzeBoundedLoops(function.getBody())
+    loops[index] = talos::analysis::analyzeBoundedLoops(function.getBody())
                        .size();
   });
   return loops;

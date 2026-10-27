@@ -1,11 +1,11 @@
-// RUN: obelisk --clocked-kernels=immediate -O2 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.auto.timing
+// RUN: talos --clocked-kernels=immediate -O2 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.auto.timing
 // RUN: FileCheck %s --check-prefix=ELIGIBILITY < %t.auto.timing
-// RUN: obelisk --clocked-kernels=immediate -O2 -emit-llvm --native-scheduler=eval %s -o - | FileCheck %s --check-prefix=LLVM
+// RUN: talos --clocked-kernels=immediate -O2 -emit-llvm --native-scheduler=eval %s -o - | FileCheck %s --check-prefix=LLVM
 // RUN: %t.auto > %t.auto.out
 // RUN: FileCheck %s < %t.auto.out
-// RUN: obelisk --clocked-kernels=immediate -O2 --native-scheduler=eval %s -o %t.eval
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval 2> %t.eval.diag | diff -u %t.auto.out -
-// RUN: FileCheck %s --check-prefix=DIAG --implicit-check-not=obelisk-periodic-reject < %t.eval.diag
+// RUN: talos --clocked-kernels=immediate -O2 --native-scheduler=eval %s -o %t.eval
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.eval 2> %t.eval.diag | diff -u %t.auto.out -
+// RUN: FileCheck %s --check-prefix=DIAG --implicit-check-not=talos-periodic-reject < %t.eval.diag
 
 // Periods 4 and 12 produce coincident edges at time 6, 18, and 30. Both source
 // bits share one packed physical root and cross separate port projections;
@@ -75,11 +75,11 @@ module native_periodic_multiclock;
 endmodule
 
 // CHECK: offedge count2=1 count3=0
-// ELIGIBILITY: obelisk native eligibility: eligible=1 fully_eligible=1 cost_effective=1 native_cost={{[1-9][0-9]*}} total_cost={{[1-9][0-9]*}}
+// ELIGIBILITY: talos native eligibility: eligible=1 fully_eligible=1 cost_effective=1 native_cost={{[1-9][0-9]*}} total_cost={{[1-9][0-9]*}}
 // CHECK: coincident preedge shared=100
 // CHECK: multiclock count2=8 count3=3 count2n=8 shared=35 either=8
 
-// DIAG: obelisk-signal-diagnostics
+// DIAG: talos-signal-diagnostics
 // DIAG-SAME: aot_node_executions={{[1-9][0-9]*}}
 // DIAG-SAME: aot_fallbacks=0
 // DIAG-SAME: periodic_preparations={{[1-9][0-9]*}}
@@ -88,36 +88,36 @@ endmodule
 // The scalar clock copy is forwarded by the calendar. Each remaining
 // outlined owner has an independent promotion latch.  The generated
 // scanner is a local masked-plane check and has no runtime edge.
-// LLVM-DAG: @__obelisk_eval_kernel_promotion_latched_v1 = internal {{.*}}global [6 x i8] zeroinitializer
-// LLVM-DAG: @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}} = internal {{.*}}global [1 x i64] [i64 63]
-// LLVM-LABEL: define {{.*}}i1 @__obelisk_eval_kernel_promotion_scan_v1(
-// LLVM-NOT: call {{.*}}@obelisk_rt_
+// LLVM-DAG: @__talos_eval_kernel_promotion_latched_v1 = internal {{.*}}global [6 x i8] zeroinitializer
+// LLVM-DAG: @__talos_eval_promotion_pending_mask_v1{{(\.0)?}} = internal {{.*}}global [1 x i64] [i64 63]
+// LLVM-LABEL: define {{.*}}i1 @__talos_eval_kernel_promotion_scan_v1(
+// LLVM-NOT: call {{.*}}@talos_rt_
 // LLVM: store i8 1, ptr
-// LLVM-LABEL: define {{.*}}i1 @__obelisk_eval_kernel_promotion_ready_v1(
-// LLVM-NOT: call {{.*}}@obelisk_rt_
-// LLVM: getelementptr {{.*}}@__obelisk_eval_kernel_promotion_latched_v1
+// LLVM-LABEL: define {{.*}}i1 @__talos_eval_kernel_promotion_ready_v1(
+// LLVM-NOT: call {{.*}}@talos_rt_
+// LLVM: getelementptr {{.*}}@__talos_eval_kernel_promotion_latched_v1
 // LLVM: load i8, ptr
-// LLVM: call {{.*}}@__obelisk_eval_kernel_promotion_scan_v1
+// LLVM: call {{.*}}@__talos_eval_kernel_promotion_scan_v1
 
 // Promotion invalidation is a cold generated store. It contains no runtime
 // edge; the subsequent quiescent coordinator scan selects four- or two-state.
-// LLVM-LABEL: define void @__obelisk_eval_promotion_invalidate_v1
-// LLVM-NOT: call {{.*}}@obelisk_rt_
-// LLVM: store i8 {{.*}}, ptr @__obelisk_eval_promotion_latched_v1
-// LLVM: call void @llvm.memset{{.*}}@__obelisk_eval_kernel_promotion_latched_v1
-// LLVM: store i64 63, ptr @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}}
+// LLVM-LABEL: define void @__talos_eval_promotion_invalidate_v1
+// LLVM-NOT: call {{.*}}@talos_rt_
+// LLVM: store i8 {{.*}}, ptr @__talos_eval_promotion_latched_v1
+// LLVM: call void @llvm.memset{{.*}}@__talos_eval_kernel_promotion_latched_v1
+// LLVM: store i64 63, ptr @__talos_eval_promotion_pending_mask_v1{{(\.0)?}}
 // LLVM: ret void
 
 // The shared dispatcher checks the ready mask against pending owners
 // locally and contains no runtime edge on its normal Tier-1/Tier-2 path.
-// LLVM-LABEL: define {{.*}}i32 @__obelisk_eval_dispatch_v1
-// LLVM-NOT: call {{.*}}@obelisk_rt_
-// LLVM: load i64, ptr @__obelisk_eval_promotion_pending_mask_v1{{(\.0)?}}
+// LLVM-LABEL: define {{.*}}i32 @__talos_eval_dispatch_v1
+// LLVM-NOT: call {{.*}}@talos_rt_
+// LLVM: load i64, ptr @__talos_eval_promotion_pending_mask_v1{{(\.0)?}}
 // Selected owners keep their proved direct computation edges.
 // LLVM: or i64
 // LLVM: and i64
 // LLVM: ret i32
 
 // There is one dispatcher; no trusted or hybrid model controller is emitted.
-// LLVM-NOT: define {{.*}}@__obelisk_eval_steady_two_state_coordinator
-// LLVM-NOT: define {{.*}}@__obelisk_eval_fast_coordinator
+// LLVM-NOT: define {{.*}}@__talos_eval_steady_two_state_coordinator
+// LLVM-NOT: define {{.*}}@__talos_eval_fast_coordinator

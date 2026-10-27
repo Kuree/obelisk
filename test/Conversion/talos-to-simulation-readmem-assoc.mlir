@@ -1,0 +1,67 @@
+// RUN: talos-opt %s --lower-talos-to-sim | FileCheck %s
+
+// MLIR-level coverage for integral associative memories. The default range is
+// the signed key domain; explicit unsigned bounds retain unsigned comparisons.
+
+module {
+  talos.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.top attributes {hierarchical_name = "top", is_uninstantiated = false, name = "top", node_id = 3 : i64, referenced_path = "top", referenced_symbol = @s0.top} {
+      talos.sv.symbol.instance_body @s4.top attributes {hierarchical_name = "top", name = "top", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        talos.sv.symbol.variable @s5.signed_memory attributes {hierarchical_name = "top.signed_memory", lifetime = 1 : i32, name = "signed_memory", node_id = 5 : i64, semantic_type = !talos.assoc<!talos.integral<32, true, false, 31 : 0, int>, !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>, false>} {
+        }
+        talos.sv.symbol.variable @s6.unsigned_memory attributes {hierarchical_name = "top.unsigned_memory", lifetime = 1 : i32, name = "unsigned_memory", node_id = 6 : i64, semantic_type = !talos.assoc<!talos.integral<8, false, false, 7 : 0, byte>, !talos.ranged_packed_array<3 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>, false>} {
+        }
+        talos.sv.symbol.procedural_block @s7 attributes {hierarchical_name = "top", node_id = 7 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.block attributes {node_id = 8 : i64} {
+            talos.sv.statement.list attributes {node_id = 9 : i64} {
+              talos.sv.statement.expression_statement attributes {node_id = 10 : i64} {
+                talos.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "$readmemh", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 11 : i64, semantic_type = !talos.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+                  talos.sv.expression.string_literal attributes {constant_value = "signed.mem", is_signed = false, node_id = 12 : i64, semantic_type = !talos.ranged_packed_array<79 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                  talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 13 : i64, semantic_type = !talos.assoc<!talos.integral<32, true, false, 31 : 0, int>, !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>, false>} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 14 : i64, referenced_path = "top.signed_memory", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s5.signed_memory, semantic_type = !talos.assoc<!talos.integral<32, true, false, 31 : 0, int>, !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>, false>} {
+                    }
+                    talos.sv.expression.empty_argument attributes {is_signed = false, node_id = 15 : i64, semantic_type = !talos.assoc<!talos.integral<32, true, false, 31 : 0, int>, !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>, false>} {
+                    }
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 16 : i64} {
+                talos.sv.expression.call attributes {argument_count = 4 : i64, callee_name = "$readmemb", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0, 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = true, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 17 : i64, semantic_type = !talos.void, subroutine_kind = 1 : i32, system_library_cell = "work.top", system_scope_path = "top", system_scope_symbol = @s1.$root::@s3.top::@s4.top} {
+                  talos.sv.expression.string_literal attributes {constant_value = "unsigned.mem", is_signed = false, node_id = 18 : i64, semantic_type = !talos.ranged_packed_array<95 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                  talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 19 : i64, semantic_type = !talos.assoc<!talos.integral<8, false, false, 7 : 0, byte>, !talos.ranged_packed_array<3 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>, false>} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 20 : i64, referenced_path = "top.unsigned_memory", referenced_symbol = @s1.$root::@s3.top::@s4.top::@s6.unsigned_memory, semantic_type = !talos.assoc<!talos.integral<8, false, false, 7 : 0, byte>, !talos.ranged_packed_array<3 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>, false>} {
+                    }
+                    talos.sv.expression.empty_argument attributes {is_signed = false, node_id = 21 : i64, semantic_type = !talos.assoc<!talos.integral<8, false, false, 7 : 0, byte>, !talos.ranged_packed_array<3 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>, false>} {
+                    }
+                  }
+                  talos.sv.expression.integer_literal attributes {constant_value = "2", is_declared_unsized = true, is_signed = true, node_id = 22 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                  }
+                  talos.sv.expression.integer_literal attributes {constant_value = "7", is_declared_unsized = true, is_signed = true, node_id = 23 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// CHECK: simulation.container.clone
+// CHECK: simulation.assoc.create {{.*}}key_kind = #simulation.assoc_key_kind<signed>, key_width = 32
+// CHECK: simulation.file.readmem_token {{.*}} {radix = #simulation.radix<hex>}
+// CHECK: arith.cmpi sge, {{.*}}, %{{.*-2147483648.*}} : i64
+// CHECK: arith.cmpi sle, {{.*}}, %{{.*2147483647.*}} : i64
+// CHECK: simulation.assoc.write {{.*}} : (!simulation.assoc_array<i32,
+// CHECK: simulation.assoc.create {{.*}}key_kind = #simulation.assoc_key_kind<unsigned>, key_width = 8
+// CHECK: simulation.file.readmem_token {{.*}} {radix = #simulation.radix<binary>}
+// CHECK: arith.cmpi uge
+// CHECK: arith.cmpi ule
+// CHECK: simulation.assoc.write {{.*}} : (!simulation.assoc_array<i8,

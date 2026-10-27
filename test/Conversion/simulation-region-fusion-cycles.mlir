@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --mlir-print-op-on-diagnostic=false --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},obelisk-sim-materialize-compute-fusion))' -o %t 2>&1 | FileCheck %s --check-prefix=REASON
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion))' -o %t.quiet
+// RUN: talos-opt %s --mlir-print-op-on-diagnostic=false --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},talos-sim-materialize-compute-fusion))' -o %t 2>&1 | FileCheck %s --check-prefix=REASON
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion))' -o %t.quiet
 // RUN: diff %t %t.quiet
-// RUN: FileCheck %s --check-prefix=KEEP --implicit-check-not=__obelisk_region_kernel_ < %t
-// RUN: obelisk-opt %s --test-obelisk-activation-regions='functions=a,b,c,d publications=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=VALUES
-// RUN: obelisk-opt %s --test-obelisk-activation-regions='functions=a,b,c,d publications=true reaching-values=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=VALUES
+// RUN: FileCheck %s --check-prefix=KEEP --implicit-check-not=__talos_region_kernel_ < %t
+// RUN: talos-opt %s --test-talos-activation-regions='functions=a,b,c,d publications=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=VALUES
+// RUN: talos-opt %s --test-talos-activation-regions='functions=a,b,c,d publications=true reaching-values=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=VALUES
 // A process SCC can contain both schedulable statement paths and actual
 // feedback. Report a directed witness without weakening the acyclicity guard.
 // The data cycle between these two cross-owner edges also rules out a

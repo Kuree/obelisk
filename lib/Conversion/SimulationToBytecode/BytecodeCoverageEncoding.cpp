@@ -5,7 +5,7 @@
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 std::optional<LogicalResult>
 Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
@@ -82,7 +82,7 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
     return success();
   }
   if (auto op = dyn_cast<sim::SimCovergroupEqualOp>(operation)) {
-    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
+    emit({Compare, TALOS_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
           reg(plan, op.getLhs()), reg(plan, op.getRhs())});
     return success();
   }
@@ -222,11 +222,11 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
     uint32_t captureBase = 0;
     for (sim::SimObserverBindOp binding : bindings) {
       for (Value dependency : binding.getDependencies()) {
-        uint32_t kind = OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL;
+        uint32_t kind = TALOS_RT_OBSERVER_DEPENDENCY_SIGNAL;
         uint32_t width = 0;
         uint32_t stable = kInvalidRegister;
         if (isa<sim::ArgumentRefType>(dependency.getType())) {
-          kind = OBELISK_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF;
+          kind = TALOS_RT_OBSERVER_DEPENDENCY_ARGUMENT_REF;
           auto capture = llvm::find(binding.getCaptures(), dependency);
           if (capture == binding.getCaptures().end())
             return binding.emitOpError(
@@ -246,11 +246,11 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
                 "argument-ref dependency has no simulation storage width");
           width = *storageWidth;
         } else if (isa<sim::ManagedWatchType>(dependency.getType())) {
-          kind = OBELISK_RT_OBSERVER_DEPENDENCY_MANAGED;
+          kind = TALOS_RT_OBSERVER_DEPENDENCY_MANAGED;
           width = 1;
           stable = reg(plan, dependency);
         } else if (isa<sim::EventType>(dependency.getType())) {
-          kind = OBELISK_RT_OBSERVER_DEPENDENCY_EVENT;
+          kind = TALOS_RT_OBSERVER_DEPENDENCY_EVENT;
           width = 1;
         } else {
           Type element =
@@ -420,4 +420,4 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
   return std::nullopt;
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

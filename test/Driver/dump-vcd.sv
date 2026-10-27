@@ -2,10 +2,10 @@
 // state planes, so every execution tier must produce the same file.
 //
 // RUN: %split-file %s %t
-// RUN: cd %t && obelisk design.sv -o %t/native.sim
+// RUN: cd %t && talos design.sv -o %t/native.sim
 // RUN: cd %t && %t/native.sim
 // RUN: FileCheck %s --check-prefix=VCD --implicit-check-not='$root' < %t/waves.vcd
-// RUN: cd %t && obelisk --native-scheduler=eval design.sv -o %t/eval.sim
+// RUN: cd %t && talos --native-scheduler=eval design.sv -o %t/eval.sim
 // RUN: cd %t && %t/eval.sim
 // RUN: FileCheck %s --check-prefix=VCD --implicit-check-not='$root' < %t/waves.vcd
 

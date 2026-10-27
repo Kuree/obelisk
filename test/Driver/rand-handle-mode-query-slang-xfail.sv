@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk -emit-slang %s -o /dev/null
+// RUN: %talos -emit-slang %s -o /dev/null
 
 // IEEE 1800-2023 18.8: object.random_variable.rand_mode() returns the mode of
 // a random variable, including a rand class handle, whose mode is separate

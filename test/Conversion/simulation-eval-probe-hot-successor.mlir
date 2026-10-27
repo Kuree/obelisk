@@ -1,15 +1,15 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --implicit-check-not='llvm.call @obelisk_rt_v1_scheduler_execute_aot_actor'
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s --implicit-check-not='llvm.call @talos_rt_v1_scheduler_execute_aot_actor'
 
 // A second hot edge exposes a private local allocation. Its loads cannot alias
 // design state, so the dry-run predicate and activation stay native. Only the
 // fatal branch needs a cold checkpoint (LRM 4.6 and 6.21).
 // CHECK: module attributes {{.*}}schedule.eval.generated
-// CHECK: llvm.func @work.__obelisk_eval_body_0.__obelisk_path_known_
-// CHECK: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path_
-// CHECK: llvm.func @__obelisk_direct_fragment_2_{{[0-9]+}}.__obelisk_execute(
-// CHECK: llvm.call @__obelisk_eval_path_dispatch_v1_
-// CHECK: llvm.func @__obelisk_eval_checkpoint_body_v1_
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_fatal
+// CHECK: llvm.func @work.__talos_eval_body_0.__talos_path_known_
+// CHECK: llvm.func @work.__talos_eval_body_0.__talos_checkpoint_path_
+// CHECK: llvm.func @__talos_direct_fragment_2_{{[0-9]+}}.__talos_execute(
+// CHECK: llvm.call @__talos_eval_path_dispatch_v1_
+// CHECK: llvm.func @__talos_eval_checkpoint_body_v1_
+// CHECK: llvm.call @talos_rt_v1_scheduler_fatal
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

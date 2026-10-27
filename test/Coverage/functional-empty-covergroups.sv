@@ -1,11 +1,11 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
 // RUN: %t +load_only --coverage-load=%t.obcov --coverage-output=%t.loaded.obcov | FileCheck %s --check-prefix=LOAD
-// RUN: obelisk-cov report --format=text %t.loaded.obcov | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk-cov inspect %t.loaded.obcov | FileCheck %s --check-prefix=INSPECT
-// RUN: %obelisk --std=1800-2023 -DEMPTY_ONLY -O0 --coverage=functional -o %t.empty %s
+// RUN: talos-cov report --format=text %t.loaded.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov inspect %t.loaded.obcov | FileCheck %s --check-prefix=INSPECT
+// RUN: %talos --std=1800-2023 -DEMPTY_ONLY -O0 --coverage=functional -o %t.empty %s
 // RUN: %t.empty --coverage-output=%t.empty.obcov | FileCheck %s --check-prefix=EMPTY
-// RUN: obelisk-cov report --format=text %t.empty.obcov | FileCheck %s --check-prefix=EMPTY-REPORT
+// RUN: talos-cov report --format=text %t.empty.obcov | FileCheck %s --check-prefix=EMPTY-REPORT
 
 // Covergroups without coverage items are valid, independent instances
 // (IEEE 1800-2023 19.3). With no bins, 19.11 scores an instance or type 0%,

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // A checkpoint predicate tracks exact-cell blocking writes across a CFG join.
 // Both arms leave `count + 1` in the cell, so the predicate compares the
@@ -6,7 +6,7 @@
 // partial write is not observed by any later probe read and stays out of the
 // predicate. Neither predicate may publish a speculative update.
 
-// CHECK-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_path_known_0(
+// CHECK-LABEL: llvm.func @work.__talos_eval_body_0.__talos_path_known_0(
 // CHECK-DAG: %[[LIMIT:.*]] = llvm.mlir.constant(500 : i32)
 // CHECK-NOT: llvm.{{store|call}}
 // CHECK: %[[OLD:.*]] = llvm.load
@@ -18,7 +18,7 @@
 // CHECK: llvm.icmp "eq" %[[NEXT]], %[[LIMIT]] : i32
 // CHECK-NOT: llvm.{{load|store|call}}
 // CHECK: {{^  }}}
-// CHECK-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path_0(
+// CHECK-LABEL: llvm.func @work.__talos_eval_body_0.__talos_checkpoint_path_0(
 // CHECK-DAG: %[[LIMIT:.*]] = llvm.mlir.constant(500 : i32)
 // CHECK-NOT: llvm.{{store|call}}
 // CHECK: %[[OLD:.*]] = llvm.load

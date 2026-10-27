@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics
+// RUN: talos-opt %s --split-input-file --verify-diagnostics
 
 func.func private @inverted() attributes {
   // expected-error @+1 {{integer range is empty}}

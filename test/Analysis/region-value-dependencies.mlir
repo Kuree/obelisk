@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --test-obelisk-region-value-dependencies -o %t.analyzed 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s --test-talos-region-value-dependencies -o %t.analyzed 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
 
 module {

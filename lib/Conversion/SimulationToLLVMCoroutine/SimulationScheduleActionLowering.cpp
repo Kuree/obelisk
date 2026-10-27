@@ -5,18 +5,18 @@
 #include "mlir/IR/Threading.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/DialectConversion.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Conversion/SimulationToLLVMCoroutine.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/Transforms/NativeTransforms.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include <atomic>
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 namespace detail {
 void lowerSpecializedNBABatch(schedule::NativeNBABatchOp op);
 void lowerNativeReadyRegion(schedule::NativeReadyRegionOp op,
@@ -199,7 +199,7 @@ void declareStaticTransition(ModuleOp module) {
   OpBuilder builder(module.getContext());
   auto ptr = LLVM::LLVMPointerType::get(builder.getContext());
   detail::getOrDeclareLLVMFunction(
-      module, "obelisk_rt_v1_scheduler_static_transition",
+      module, "talos_rt_v1_scheduler_static_transition",
       LLVM::LLVMVoidType::get(builder.getContext()),
       {ptr, builder.getI32Type(), builder.getI64Type(), builder.getI64Type(),
        builder.getI64Type(), builder.getI64Type(), builder.getI64Type(),
@@ -222,7 +222,7 @@ void lowerNBABatches(Operation *operation, SymbolTableCollection *cache) {
     auto ptr = LLVM::LLVMPointerType::get(builder.getContext());
     auto i32 = builder.getI32Type();
     detail::getOrDeclareLLVMFunction(module,
-                                     "obelisk_rt_v1_static_nba_commit_batch",
+                                     "talos_rt_v1_static_nba_commit_batch",
                                      i32, {ptr, ptr, i32, i32, ptr});
     SmallVector<uint32_t> roots;
     for (auto commit : batch.getBody().getOps<schedule::NativeNBACommitOp>())
@@ -235,7 +235,7 @@ void lowerNBABatches(Operation *operation, SymbolTableCollection *cache) {
       auto tensor = RankedTensorType::get({int64_t(roots.size())}, i32);
       table = LLVM::GlobalOp::create(
           builder, loc, LLVM::LLVMArrayType::get(i32, roots.size()), true,
-          LLVM::Linkage::Internal, "__obelisk_nba_batch_roots",
+          LLVM::Linkage::Internal, "__talos_nba_batch_roots",
           DenseIntElementsAttr::get(tensor, ArrayRef<uint32_t>(roots)), 4);
       unique.insert(table);
       // Keep a caller's cache coherent; the name is already unique.
@@ -246,7 +246,7 @@ void lowerNBABatches(Operation *operation, SymbolTableCollection *cache) {
     auto call = LLVM::CallOp::create(
         builder, loc, TypeRange{i32},
         SymbolRefAttr::get(builder.getContext(),
-                           "obelisk_rt_v1_static_nba_commit_batch"),
+                           "talos_rt_v1_static_nba_commit_batch"),
         ValueRange{batch.getContext(), address,
                    detail::llvmConstant(builder, loc, i32, roots.size()),
                    batch.getBarrier(), batch.getChanged()});
@@ -348,7 +348,7 @@ void materializeLocalScheduleActions(
     auto call = LLVM::CallOp::create(
         builder, transition.getLoc(), TypeRange{},
         SymbolRefAttr::get(builder.getContext(),
-                           "obelisk_rt_v1_scheduler_static_transition"),
+                           "talos_rt_v1_scheduler_static_transition"),
         ValueRange{transition.getContext(),
                    detail::llvmConstant(builder, transition.getLoc(),
                                         builder.getI32Type(),
@@ -470,7 +470,7 @@ LogicalResult lowerNativeScheduleActionsToLLVM(Operation *operation,
 }
 
 #define GEN_PASS_DEF_CONVERTNATIVESCHEDULEACTIONSTOLLVMPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "talos/Conversion/Passes.h.inc"
 namespace {
 struct ConvertNativeScheduleActionsToLLVMPass
     : impl::ConvertNativeScheduleActionsToLLVMPassBase<
@@ -482,4 +482,4 @@ struct ConvertNativeScheduleActionsToLLVMPass
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -S -passes='verify,coro-early,sroa,instcombine,simplifycfg,coro-split<reuse-storage>,coro-elide,coro-cleanup,sroa,instcombine,simplifycfg,dce,strip-dead-prototypes,verify' | FileCheck %s --check-prefix=SPLIT
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | talos-translate --mlir-to-llvmir | opt -S -passes='verify,coro-early,sroa,instcombine,simplifycfg,coro-split<reuse-storage>,coro-elide,coro-cleanup,sroa,instcombine,simplifycfg,dce,strip-dead-prototypes,verify' | FileCheck %s --check-prefix=SPLIT
 
 // Creating a frame must not run source code or publish a semantic wait. The
 // wrapper resumes it immediately within the same activation (LRM 4.3/4.6).
@@ -23,7 +23,7 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func internal @__obelisk_native_coro_execute_v1(
+// CHECK-LABEL: llvm.func internal @__talos_native_coro_execute_v1(
 // CHECK-SAME: %[[INSTANCE:.*]]: !llvm.ptr, %[[RAMP:.*]]: !llvm.ptr
 // CHECK-SAME: passthrough = ["noinline"]
 // CHECK: llvm.call %[[RAMP]](%[[INSTANCE]],
@@ -31,20 +31,20 @@ module attributes {
 // CHECK-NEXT: llvm.br ^[[RESUME:bb[0-9]+]](%[[STARTED]] : !llvm.ptr)
 // CHECK: ^[[RESUME]](%[[HANDLE:[0-9]+]]: !llvm.ptr):
 // CHECK-NEXT: llvm.intr.coro.resume %[[HANDLE]]
-// CHECK-LABEL: llvm.func internal @__obelisk_native_coro_destroy_v1
+// CHECK-LABEL: llvm.func internal @__talos_native_coro_destroy_v1
 // CHECK: %[[NULL:[0-9]+]] = llvm.mlir.zero : !llvm.ptr
 // CHECK: llvm.cond_br
 // CHECK: llvm.call_intrinsic "llvm.coro.destroy"
 // CHECK: llvm.store %[[NULL]]
-// CHECK-LABEL: llvm.func @initial_suspend.__obelisk_native_execute
-// CHECK: %[[RAMP_ADDR:[0-9]+]] = llvm.mlir.addressof @initial_suspend.__obelisk_coro_ramp
-// CHECK-NEXT: %[[STATUS:[0-9]+]] = llvm.call tail @__obelisk_native_coro_execute_v1(%arg0, %[[RAMP_ADDR]])
+// CHECK-LABEL: llvm.func @initial_suspend.__talos_native_execute
+// CHECK: %[[RAMP_ADDR:[0-9]+]] = llvm.mlir.addressof @initial_suspend.__talos_coro_ramp
+// CHECK-NEXT: %[[STATUS:[0-9]+]] = llvm.call tail @__talos_native_coro_execute_v1(%arg0, %[[RAMP_ADDR]])
 // CHECK-NEXT: llvm.return %[[STATUS]]
 
-// SPLIT-LABEL: define void @initial_suspend.__obelisk_coro_ramp(
-// SPLIT-NOT: call i32 @obelisk_rt_v1_dump_flush
-// SPLIT-LABEL: define i32 @initial_suspend.__obelisk_native_requirements(
-// SPLIT-LABEL: define internal fastcc void @initial_suspend.__obelisk_coro_ramp.resume(
-// SPLIT: call i32 @obelisk_rt_v1_dump_flush
-// SPLIT-LABEL: define internal fastcc void @initial_suspend.__obelisk_coro_ramp.destroy(
-// SPLIT-NOT: call i32 @obelisk_rt_v1_dump_flush
+// SPLIT-LABEL: define void @initial_suspend.__talos_coro_ramp(
+// SPLIT-NOT: call i32 @talos_rt_v1_dump_flush
+// SPLIT-LABEL: define i32 @initial_suspend.__talos_native_requirements(
+// SPLIT-LABEL: define internal fastcc void @initial_suspend.__talos_coro_ramp.resume(
+// SPLIT: call i32 @talos_rt_v1_dump_flush
+// SPLIT-LABEL: define internal fastcc void @initial_suspend.__talos_coro_ramp.destroy(
+// SPLIT-NOT: call i32 @talos_rt_v1_dump_flush

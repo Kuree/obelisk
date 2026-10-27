@@ -1,6 +1,6 @@
-// RUN: obelisk --std=1800-2023 -emit-slang %s | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk --std=1800-2023 -emit-obelisk %s | FileCheck %s --check-prefix=OBELISK
-// RUN: obelisk --std=1800-2023 -emit-slang %s | FileCheck %s --check-prefix=EXACT
+// RUN: talos --std=1800-2023 -emit-slang %s | FileCheck %s --check-prefix=SLANG
+// RUN: talos --std=1800-2023 -emit-talos %s | FileCheck %s --check-prefix=TALOS
+// RUN: talos --std=1800-2023 -emit-slang %s | FileCheck %s --check-prefix=EXACT
 
 module functional_coverage_semantics;
   bit clk;
@@ -91,11 +91,11 @@ endclass
 // The built-in call retains the exact selected method symbol.
 // SLANG-DAG: slang.expression.call attributes {{.*}}callee_name = "get_coverage"{{.*}}referenced_symbol = @{{.*get_coverage[^,}]*}}
 
-// OBELISK-DAG: obelisk.sv.type.covergroup_type @{{[^ ]+}} attributes {base_group = !obelisk.covergroup_handle<@{{[^>]+}}>{{.*}}coverage_event_kind = 4 : i32, has_coverage_event = true
-// OBELISK-DAG: obelisk.sv.coverage.option attributes {{.*}}option_kind = 12 : i32{{.*}}owner_kind = 0 : i32
-// OBELISK-DAG: obelisk.sv.symbol.cover_cross @{{[^ ]+}} attributes {expression_roles = [1 : i32]{{.*}}target_count = 2
-// OBELISK-DAG: obelisk.sv.bins.with_filter attributes {enclosing_cross_symbol = @{{[^,}]+}}, has_matches = true
-// OBELISK-DAG: obelisk.sv.expression.call attributes {{.*}}callee_name = "get_coverage"{{.*}}referenced_symbol = @{{.*get_coverage[^,}]*}}
+// TALOS-DAG: talos.sv.type.covergroup_type @{{[^ ]+}} attributes {base_group = !talos.covergroup_handle<@{{[^>]+}}>{{.*}}coverage_event_kind = 4 : i32, has_coverage_event = true
+// TALOS-DAG: talos.sv.coverage.option attributes {{.*}}option_kind = 12 : i32{{.*}}owner_kind = 0 : i32
+// TALOS-DAG: talos.sv.symbol.cover_cross @{{[^ ]+}} attributes {expression_roles = [1 : i32]{{.*}}target_count = 2
+// TALOS-DAG: talos.sv.bins.with_filter attributes {enclosing_cross_symbol = @{{[^,}]+}}, has_matches = true
+// TALOS-DAG: talos.sv.expression.call attributes {{.*}}callee_name = "get_coverage"{{.*}}referenced_symbol = @{{.*get_coverage[^,}]*}}
 
 // Exact SymbolRefs preserve formal and cross ordering, selector target kind,
 // option ownership, inherited base identity, and built-in method identity.

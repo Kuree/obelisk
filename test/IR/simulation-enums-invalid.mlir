@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 module {
   func.func @integer_is_not_an_enum(%ctx: !simulation.context, %seed: i32) {

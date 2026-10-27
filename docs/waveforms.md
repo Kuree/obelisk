@@ -6,7 +6,7 @@ embeds the waveform metadata needed for names, scopes, widths, and canonical
 bit offsets. This does not enable VPI or require a `--vpi` option.
 
 ```sh
-obelisk design.sv -o simulator
+talos design.sv -o simulator
 ```
 
 In the browser playground, writable simulation files are captured in memory.
@@ -60,7 +60,7 @@ cost of an expanded array is paid per element per time slot in both file size
 and scan time. Omissions are named on stderr and the bound is configurable:
 
 ```sh
-OBELISK_RT_DUMP_MAX_ARRAY=4096 ./simulator
+TALOS_RT_DUMP_MAX_ARRAY=4096 ./simulator
 ```
 
 Real variables are declared `$var real` and emitted as `r` records rather than

@@ -1,18 +1,18 @@
 //===- Tokens.cpp - Raw SystemVerilog token listing of input files --------===//
 //
-// `obelisk -dump-tokens`: the ObeliskSourceTokens listing for each input file.
+// `talos -dump-tokens`: the TalosSourceTokens listing for each input file.
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Frontend/Frontend.h"
-#include "obelisk/Frontend/SourceTokens.h"
+#include "talos/Frontend/Frontend.h"
+#include "talos/Frontend/SourceTokens.h"
 
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
 
-namespace obelisk::frontend {
+namespace talos::frontend {
 
 FailureOr<std::string>
 listSystemVerilogTokens(llvm::ArrayRef<std::string> inputFilenames,
@@ -23,7 +23,7 @@ listSystemVerilogTokens(llvm::ArrayRef<std::string> inputFilenames,
     auto buffer = llvm::MemoryBuffer::getFile(filename, /*IsText=*/false,
                                               /*RequiresNullTerminator=*/false);
     if (!buffer) {
-      llvm::errs() << "obelisk: error: could not read '" << filename
+      llvm::errs() << "talos: error: could not read '" << filename
                    << "': " << buffer.getError().message() << '\n';
       return failure();
     }
@@ -35,4 +35,4 @@ listSystemVerilogTokens(llvm::ArrayRef<std::string> inputFilenames,
   return listing;
 }
 
-} // namespace obelisk::frontend
+} // namespace talos::frontend

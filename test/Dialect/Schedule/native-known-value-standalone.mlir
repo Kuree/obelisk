@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --canonicalize | FileCheck %s
+// RUN: talos-opt %s --canonicalize | FileCheck %s
 
 // Without any simulation type the arith dialect is only loaded because the
 // schedule dialect depends on it; folding a known integer predicate creates

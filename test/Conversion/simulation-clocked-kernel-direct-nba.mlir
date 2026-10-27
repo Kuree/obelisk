@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' -o %t.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-clocked-kernels))' -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=MEMBERS < %t.mlir
 
@@ -84,8 +84,8 @@ module attributes {
     }
     // The kernel waits on the clock most members use and runs `mirror`, which
     // reads `a`, before `swap` stores it.
-    // CHECK: simulation.spawn @__obelisk_clocked_0_1_0(
-    // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+    // CHECK: simulation.spawn @__talos_clocked_0_1_0(
+    // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
     // CHECK: simulation.suspend.edge posedge
     // CHECK: %[[OLD:.*]] = simulation.ref.load %[[A:arg[0-9]+]] : !simulation.ref<!simulation.logic<8>>
     // CHECK-NEXT: %[[SNAP:.*]] = simulation.ref.alloc %[[OLD]]

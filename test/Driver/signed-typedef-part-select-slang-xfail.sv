@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk -emit-slang %s -o - | FileCheck %s
+// RUN: %talos -emit-slang %s -o - | FileCheck %s
 
 // IEEE 1800-2023 11.8.1: a part-select is unsigned even when it selects a
 // whole signed vector, and 6.18 makes a typedef name for the same type. Slang

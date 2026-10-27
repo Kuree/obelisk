@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -o /dev/null --pass-pipeline='builtin.module(test-obelisk-native-aot-analysis)' 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o /dev/null --pass-pipeline='builtin.module(test-talos-native-aot-analysis)' 2>&1 | FileCheck %s
 
 // The compute graph of native-aot-auto-profitability.mlir with
 // a costly fragment: the same design becomes profitable for native AOT.

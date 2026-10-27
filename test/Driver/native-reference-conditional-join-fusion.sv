@@ -1,11 +1,11 @@
-// RUN: obelisk -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
+// RUN: talos -O0 --vpi=off --native-scheduler=generic %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.eval 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: talos -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.eval 2>&1 | FileCheck %s --check-prefix=PLAN
 // RUN: %t.eval | FileCheck %s
 // A case can merge selected array reads into a reference-phi block ending in
 // a conditional branch. Each chosen read must keep its own native root.
-// PLAN: obelisk statement scheduling: eligible=2 cohorts=1 plans=1 dataflow=1
-// PLAN-NOT: checkpoint admission: {{.*}}function=__obelisk_region_kernel
+// PLAN: talos statement scheduling: eligible=2 cohorts=1 plans=1 dataflow=1
+// PLAN-NOT: checkpoint admission: {{.*}}function=__talos_region_kernel
 // CHECK: next=11
 // CHECK-NEXT: next=10
 // CHECK-NEXT: next=01

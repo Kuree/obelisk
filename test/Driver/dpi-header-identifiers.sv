@@ -1,4 +1,4 @@
-// RUN: %obelisk --emit-dpi-header %s -o %t.h
+// RUN: %talos --emit-dpi-header %s -o %t.h
 // RUN: FileCheck %s < %t.h
 // RUN: %llvm_dist/bin/clang -x c -fsyntax-only -include %t.h \
 // RUN:   -I%resource_dir/include /dev/null
@@ -20,10 +20,10 @@ module dpi_header_identifiers;
 endmodule
 
 // CHECK: typedef struct dpi_header_identifiers_1 {
-// CHECK: int32_t obelisk_int;
-// CHECK: int32_t obelisk_class;
-// CHECK: int32_t obelisk_namespace;
-// CHECK: int32_t obelisk_operator;
+// CHECK: int32_t talos_int;
+// CHECK: int32_t talos_class;
+// CHECK: int32_t talos_namespace;
+// CHECK: int32_t talos_operator;
 // CHECK: int32_t a_b;
 // CHECK: int32_t a_b_1;
 // CHECK: } dpi_header_identifiers_1;

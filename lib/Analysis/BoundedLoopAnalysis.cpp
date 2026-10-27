@@ -1,4 +1,4 @@
-#include "obelisk/Analysis/BoundedLoopAnalysis.h"
+#include "talos/Analysis/BoundedLoopAnalysis.h"
 #include "mlir/Analysis/CFGLoopInfo.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
@@ -7,10 +7,10 @@
 #include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/RegionUtils.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/SmallPtrSet.h"
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 std::optional<ConstantIntRanges> getInductionRange(const BoundedLoop &loop,
                                                    bool includeExit) {
   if (!arith::applyCmpPredicate(loop.predicate, loop.init, loop.limit))
@@ -959,4 +959,4 @@ bool hasFiniteControlFlow(Region &region) {
   return ready.size() == incoming.size();
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

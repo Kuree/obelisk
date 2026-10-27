@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --schedule-promote-eval-storage | FileCheck %s --implicit-check-not='simulation.ref.alloc' --implicit-check-not='^bb{{[0-9]+}}{{.*}}!simulation.ref<'
+// RUN: talos-opt %s --schedule-promote-eval-storage | FileCheck %s --implicit-check-not='simulation.ref.alloc' --implicit-check-not='^bb{{[0-9]+}}{{.*}}!simulation.ref<'
 
 // SROA exposes 19 extracts from a joined aggregate load. Canonicalization can
 // turn those extracts into 38 reference operations, exceeding the bounded

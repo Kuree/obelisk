@@ -8,32 +8,32 @@
 #include "mlir/IR/Verifier.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "obelisk/Analysis/ActivationControlFlow.h"
-#include "obelisk/Analysis/ActivationIdempotenceAnalysis.h"
-#include "obelisk/Analysis/ActivationMemoryAnalysis.h"
-#include "obelisk/Analysis/ActivationRegionAnalysis.h"
-#include "obelisk/Analysis/SSAValueAnalysis.h"
-#include "obelisk/Analysis/SourceMemoryAnalysis.h"
-#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
+#include "talos/Analysis/ActivationControlFlow.h"
+#include "talos/Analysis/ActivationIdempotenceAnalysis.h"
+#include "talos/Analysis/ActivationMemoryAnalysis.h"
+#include "talos/Analysis/ActivationRegionAnalysis.h"
+#include "talos/Analysis/SSAValueAnalysis.h"
+#include "talos/Analysis/SourceMemoryAnalysis.h"
+#include "talos/Dialect/Schedule/Transforms/NativeTransforms.h"
 #include <memory>
 
 using namespace mlir;
 namespace {
 class RepeatableActivationTestPass
     : public PassWrapper<RepeatableActivationTestPass,
-                         OperationPass<obelisk::sim::SimDesignOp>> {
+                         OperationPass<talos::sim::SimDesignOp>> {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(RepeatableActivationTestPass)
   StringRef getArgument() const final {
-    return "test-obelisk-repeatable-activations";
+    return "test-talos-repeatable-activations";
   }
   void runOnOperation() final {
     auto design = getOperation();
-    obelisk::analysis::HandleDataflowAnalysis handles(design);
+    talos::analysis::HandleDataflowAnalysis handles(design);
     auto repeatable =
-        obelisk::schedule::collectRepeatableCombinationalActivations(design,
+        talos::schedule::collectRepeatableCombinationalActivations(design,
                                                                      handles);
-    design.walk([&](obelisk::sim::SimFuncOp function) {
+    design.walk([&](talos::sim::SimFuncOp function) {
       llvm::errs() << "repeatable @" << function.getSymName() << " = "
                    << repeatable.contains(function.getSymNameAttr()) << '\n';
     });
@@ -47,15 +47,15 @@ class SourceMemoryForwardingTestPass
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SourceMemoryForwardingTestPass)
   StringRef getArgument() const final {
-    return "test-obelisk-source-memory-forwarding";
+    return "test-talos-source-memory-forwarding";
   }
   StringRef getDescription() const final {
     return "forward loads using dense source-memory snapshots";
   }
   void runOnOperation() final {
-    getOperation().walk([&](obelisk::sim::SimFuncOp function) {
+    getOperation().walk([&](talos::sim::SimFuncOp function) {
       if (!function.isExternal())
-        obelisk::analysis::forwardSourceMemoryLoads(function, true);
+        talos::analysis::forwardSourceMemoryLoads(function, true);
     });
   }
 };
@@ -66,7 +66,7 @@ class ActivationControlFlowTestPass
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ActivationControlFlowTestPass)
   StringRef getArgument() const final {
-    return "test-obelisk-activation-control-flow";
+    return "test-talos-activation-control-flow";
   }
   StringRef getDescription() const final {
     return "print edge-threaded disposable activation CFGs";
@@ -77,7 +77,7 @@ public:
         return;
       OwningOpRef<func::FuncOp> copy(cast<func::FuncOp>(function->clone()));
       bool changed = false;
-      while (obelisk::analysis::threadActivationControlFlow(copy->getBody())) {
+      while (talos::analysis::threadActivationControlFlow(copy->getBody())) {
         changed = true;
         RewritePatternSet patterns(function.getContext());
         for (RegisteredOperationName name :
@@ -105,7 +105,7 @@ class RegionValueDependencyTestPass
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(RegionValueDependencyTestPass)
   StringRef getArgument() const final {
-    return "test-obelisk-region-value-dependencies";
+    return "test-talos-region-value-dependencies";
   }
   StringRef getDescription() const final {
     return "print result-specific SSA dependencies through region yields";
@@ -120,7 +120,7 @@ public:
         if (op->hasAttr("test.root"))
           root = op;
       });
-      obelisk::analysis::RegionValueDependencyAnalysis analysis(root, inputs);
+      talos::analysis::RegionValueDependencyAnalysis analysis(root, inputs);
       llvm::errs() << "values @" << function.getSymName()
                    << " valid=" << analysis.isValid() << '\n';
       if (!analysis.isValid())
@@ -153,7 +153,7 @@ public:
   ActivationMemoryTestPass(const ActivationMemoryTestPass &other)
       : PassWrapper(other) {}
   StringRef getArgument() const final {
-    return "test-obelisk-activation-memory";
+    return "test-talos-activation-memory";
   }
   StringRef getDescription() const final {
     return "print source-ordered activation memory facts";
@@ -162,14 +162,14 @@ public:
                                      llvm::cl::init(65536)};
   Option<bool> values{*this, "values", llvm::cl::init(false)};
   void runOnOperation() final {
-    getOperation().walk([&](obelisk::sim::SimDesignOp design) {
-      obelisk::analysis::HandleDataflowAnalysis handles(design);
-      for (auto function : design.getBody().getOps<obelisk::sim::SimFuncOp>()) {
-        obelisk::analysis::ActivationMemoryAnalysis memory(
+    getOperation().walk([&](talos::sim::SimDesignOp design) {
+      talos::analysis::HandleDataflowAnalysis handles(design);
+      for (auto function : design.getBody().getOps<talos::sim::SimFuncOp>()) {
+        talos::analysis::ActivationMemoryAnalysis memory(
             function, handles, maximumPartitions,
-            values ? obelisk::analysis::ActivationMemoryAnalysis::
+            values ? talos::analysis::ActivationMemoryAnalysis::
                          DependencyMode::ReachingValues
-                   : obelisk::analysis::ActivationMemoryAnalysis::
+                   : talos::analysis::ActivationMemoryAnalysis::
                          DependencyMode::Accesses);
         llvm::errs() << "activation @" << function.getSymName()
                      << " valid=" << memory.isValid()
@@ -189,7 +189,7 @@ public:
           llvm::errs() << "  values valid=" << memory.hasValueDependencies()
                        << '\n';
           print("value-input", memory.getValueInputs());
-          function.walk([&](obelisk::sim::SimRefStoreOp store) {
+          function.walk([&](talos::sim::SimRefStoreOp store) {
             auto found = memory.getPublications().find(store);
             if (found != memory.getPublications().end())
               for (const auto &lane : found->second) {
@@ -220,7 +220,7 @@ public:
                     cf::ControlFlowDialect, scf::SCFDialect, ub::UBDialect>();
   }
   StringRef getArgument() const final {
-    return "test-obelisk-activation-regions";
+    return "test-talos-activation-regions";
   }
   StringRef getDescription() const final {
     return "print activation units and their memory effects";
@@ -246,11 +246,11 @@ public:
   ListOption<std::string> functions{*this, "functions",
                                     llvm::cl::CommaSeparated};
   void runOnOperation() final {
-    getOperation().walk([&](obelisk::sim::SimDesignOp design) {
-      obelisk::analysis::HandleDataflowAnalysis handles(design);
-      SmallVector<std::unique_ptr<obelisk::analysis::ActivationRegionAnalysis>>
+    getOperation().walk([&](talos::sim::SimDesignOp design) {
+      talos::analysis::HandleDataflowAnalysis handles(design);
+      SmallVector<std::unique_ptr<talos::analysis::ActivationRegionAnalysis>>
           owned;
-      for (auto function : design.getBody().getOps<obelisk::sim::SimFuncOp>()) {
+      for (auto function : design.getBody().getOps<talos::sim::SimFuncOp>()) {
         if (!functions.empty() &&
             !llvm::is_contained(functions, function.getSymName().str()))
           continue;
@@ -259,13 +259,13 @@ public:
           continue;
         }
         auto trace =
-            [&](obelisk::analysis::ActivationRegionAnalysis::TracePhase phase,
+            [&](talos::analysis::ActivationRegionAnalysis::TracePhase phase,
                 Operation *view) {
               if (!dump)
                 return;
               llvm::errs()
                   << "activation "
-                  << (phase == obelisk::analysis::ActivationRegionAnalysis::
+                  << (phase == talos::analysis::ActivationRegionAnalysis::
                                    TracePhase::Initial
                           ? "initial"
                           : "resume")
@@ -274,18 +274,18 @@ public:
               llvm::errs() << '\n';
             };
         auto proof =
-            std::make_unique<obelisk::analysis::ActivationRegionAnalysis>(
+            std::make_unique<talos::analysis::ActivationRegionAnalysis>(
                 function, handles, trace,
                 inputDependencies
-                    ? obelisk::analysis::ActivationMemoryAnalysis::
+                    ? talos::analysis::ActivationMemoryAnalysis::
                           DependencyMode::Inputs
-                : reachingValues ? obelisk::analysis::ActivationMemoryAnalysis::
+                : reachingValues ? talos::analysis::ActivationMemoryAnalysis::
                                        DependencyMode::ReachingValues
-                                 : obelisk::analysis::ActivationMemoryAnalysis::
+                                 : talos::analysis::ActivationMemoryAnalysis::
                                        DependencyMode::Accesses,
-                threadControl ? obelisk::analysis::ActivationRegionAnalysis::
+                threadControl ? talos::analysis::ActivationRegionAnalysis::
                                     ControlFlowPreparation::ThreadDispatch
-                              : obelisk::analysis::ActivationRegionAnalysis::
+                              : talos::analysis::ActivationRegionAnalysis::
                                     ControlFlowPreparation::Canonical);
         auto &analysis = *proof;
         if (auto maximum = function->getAttrOfType<IntegerAttr>(
@@ -304,12 +304,12 @@ public:
                      << " valid=" << analysis.isValid();
         if (!analysis.isValid())
           llvm::errs() << " reason="
-                       << obelisk::analysis::stringifyActivationFailure(
+                       << talos::analysis::stringifyActivationFailure(
                               analysis.getFailureReason());
         llvm::errs() << '\n';
         if (idempotence && analysis.isValid())
           llvm::errs() << "  idempotent="
-                       << obelisk::analysis::hasIdempotentStateTransition(
+                       << talos::analysis::hasIdempotentStateTransition(
                               analysis.getActivationFunction(),
                               analysis.getMemory(), handles,
                               idempotenceMaximumOperations)
@@ -354,7 +354,7 @@ public:
         if (dump && analysis.isValid())
           analysis.getActivationFunction().print(llvm::errs());
         if (sliceRoot >= 0 && analysis.isValid()) {
-          obelisk::analysis::ActivationSlice slice{&analysis, {}};
+          talos::analysis::ActivationSlice slice{&analysis, {}};
           analysis.getActivationFunction().walk([&](Operation *op) {
             auto found = analysis.getMemory().getWrites().find(op);
             if (found != analysis.getMemory().getWrites().end() &&
@@ -364,7 +364,7 @@ public:
               slice.stores.push_back(op);
           });
           if (!slice.stores.empty())
-            if (auto view = obelisk::analysis::cloneActivationSlice(slice)) {
+            if (auto view = talos::analysis::cloneActivationSlice(slice)) {
               llvm::errs() << "activation slice @" << function.getSymName()
                            << '\n';
               view->print(llvm::errs());
@@ -372,7 +372,7 @@ public:
             }
         }
         if (publications && analysis.isValid()) {
-          auto values = obelisk::analysis::getActivationPublications(analysis);
+          auto values = talos::analysis::getActivationPublications(analysis);
           if (values)
             for (const auto &publication : *values) {
               llvm::errs() << "  publication";
@@ -391,12 +391,12 @@ public:
           owned.push_back(std::move(proof));
       }
       if (publications || regionOrder || sliceOrder) {
-        SmallVector<const obelisk::analysis::ActivationRegionAnalysis *> views;
+        SmallVector<const talos::analysis::ActivationRegionAnalysis *> views;
         for (const auto &view : owned)
           views.push_back(view.get());
-        SmallVector<obelisk::analysis::ActivationRegionStep> cycle;
+        SmallVector<talos::analysis::ActivationRegionStep> cycle;
         if (sliceOrder) {
-          auto order = obelisk::analysis::getActivationSliceOrder(views, &cycle);
+          auto order = talos::analysis::getActivationSliceOrder(views, &cycle);
           llvm::errs() << "slice graph: "
                        << (order           ? "acyclic"
                            : cycle.empty() ? "unavailable"
@@ -405,7 +405,7 @@ public:
         }
         if (publications) {
           auto order =
-              obelisk::analysis::getActivationPublicationOrder(views, &cycle);
+              talos::analysis::getActivationPublicationOrder(views, &cycle);
           llvm::errs() << "publication graph: "
                        << (order           ? "acyclic"
                            : cycle.empty() ? "unavailable"
@@ -414,7 +414,7 @@ public:
         }
         if (regionOrder) {
           auto order =
-              obelisk::analysis::getActivationRegionOrder(views, &cycle);
+              talos::analysis::getActivationRegionOrder(views, &cycle);
           llvm::errs() << "region order: "
                        << (order           ? "acyclic"
                            : cycle.empty() ? "unavailable"
@@ -424,7 +424,7 @@ public:
             for (const auto &step : *order)
               step.activation->getNode(step.operation)
                   ->walk([&](Operation *op) {
-                    auto store = dyn_cast<obelisk::sim::SimRefStoreOp>(op);
+                    auto store = dyn_cast<talos::sim::SimRefStoreOp>(op);
                     if (!store)
                       return;
                     auto found =
@@ -444,10 +444,10 @@ public:
 private:
   /// Whenever full publication analysis has value dependencies, the cheaper
   /// input-only proof must succeed with the same publication inputs.
-  void compare(obelisk::sim::SimFuncOp function,
-               const obelisk::analysis::HandleDataflowAnalysis &handles) {
-    using obelisk::analysis::ActivationMemoryAnalysis;
-    using obelisk::analysis::ActivationRegionAnalysis;
+  void compare(talos::sim::SimFuncOp function,
+               const talos::analysis::HandleDataflowAnalysis &handles) {
+    using talos::analysis::ActivationMemoryAnalysis;
+    using talos::analysis::ActivationRegionAnalysis;
     ActivationRegionAnalysis full(
         function, handles, {},
         ActivationMemoryAnalysis::DependencyMode::ReachingValues);
@@ -466,7 +466,7 @@ private:
   }
 };
 } // namespace
-void obelisk::registerActivationMemoryAnalysisTestPass() {
+void talos::registerActivationMemoryAnalysisTestPass() {
   PassRegistration<RepeatableActivationTestPass>();
   PassRegistration<SourceMemoryForwardingTestPass>();
   PassRegistration<ActivationControlFlowTestPass>();

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // A checkpoint predicate forwards fixed partial writes into later whole-root
 // reads and preserves the untouched bits: the packed-struct check of the
@@ -8,11 +8,11 @@
 // store or call. The two-state copy stores only the value plane of `packed`,
 // so the known-path predicate also requires its unknown plane to be clear.
 
-// CHECK-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_path_known_0(
+// CHECK-LABEL: llvm.func @work.__talos_eval_body_0.__talos_path_known_0(
 // CHECK-DAG: %[[UPPER:.*]] = llvm.mlir.constant(2147483648 : i62)
 // CHECK-DAG: %[[MISMATCH:.*]] = llvm.mlir.constant(false)
 // CHECK-DAG: %[[LIMIT:.*]] = llvm.mlir.constant(66036 : i32)
-// CHECK-DAG: %[[UNKNOWN:.*]] = llvm.mlir.addressof @__obelisk_state_unknown
+// CHECK-DAG: %[[UNKNOWN:.*]] = llvm.mlir.addressof @__talos_state_unknown
 // CHECK-NOT: llvm.{{store|call}}
 // CHECK: %[[OLD:.*]] = llvm.load
 // CHECK-NOT: llvm.{{load|store|call}}
@@ -30,7 +30,7 @@
 // CHECK: llvm.icmp "eq" %{{.*}}, %[[LIMIT]] : i32
 // CHECK-NOT: llvm.{{load|store|call}}
 // CHECK: {{^  }}}
-// CHECK-LABEL: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path_0(
+// CHECK-LABEL: llvm.func @work.__talos_eval_body_0.__talos_checkpoint_path_0(
 // CHECK-DAG: %[[UPPER:.*]] = llvm.mlir.constant(2147483648 : i62)
 // CHECK-DAG: %[[MISMATCH:.*]] = llvm.mlir.constant(false)
 // CHECK-DAG: %[[LIMIT:.*]] = llvm.mlir.constant(66036 : i32)

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s | FileCheck %s
+// RUN: talos-opt %s | FileCheck %s
 
 // CHECK: func.func private @abi_records(!runtime.handle, !runtime.action, !runtime.fragment, !runtime.bytecode, !runtime.bytecode_entry, !runtime.bytecode_validation, !runtime.bytecode_operand, !runtime.bytecode_service_site, !runtime.opcode, !runtime.bytecode_type, !runtime.bytecode_operand_kind, !runtime.bytecode_operand_direction, !runtime.bytecode_service_value, !runtime.bytecode_service, !runtime.arg, !runtime.cstring)
 module attributes {

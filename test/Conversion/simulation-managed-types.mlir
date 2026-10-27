@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s | FileCheck %s
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=INSTRUCTIONS
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s | FileCheck %s
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=INSTRUCTIONS
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 
 !candidate = !simulation.unpacked_union<fields = [
   #simulation.field<name = "object", type = !simulation.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
@@ -17,7 +17,7 @@ module attributes {
 } {
   // A serially prepared native byte global may be reused only when its full
   // ABI shape and payload agree with the requested trace.
-  llvm.mlir.global internal constant @__obelisk_element_trace_100("\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00") {alignment = 1 : i64}
+  llvm.mlir.global internal constant @__talos_element_trace_100("\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00") {alignment = 1 : i64}
 
   simulation.design @managed_types {
     simulation.scope.decl 0 hierarchy "top"
@@ -123,12 +123,12 @@ module attributes {
 
 // Candidate class roots retain the high candidate bit in the public trace
 // record, and reference paths retain their distinct exact slot kind.
-// NATIVE: llvm.mlir.global internal constant @__obelisk_element_trace_99("\00\00\00\00\00\00\00\00\01\00\00\80\00\00\00\00")
-// NATIVE-COUNT-1: llvm.mlir.global internal constant @__obelisk_element_trace_100("\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00")
-// NATIVE: llvm.call @obelisk_rt_v1_container_size
-// NATIVE: llvm.call @obelisk_rt_v1_container_create_like
-// NATIVE: llvm.call @obelisk_rt_v1_container_read
-// NATIVE: llvm.call @obelisk_rt_v1_container_write
-// NATIVE: llvm.call @obelisk_rt_v1_container_create_typed
-// NATIVE: llvm.call @obelisk_rt_v1_container_write
-// NATIVE: llvm.call @obelisk_rt_v1_container_create_typed
+// NATIVE: llvm.mlir.global internal constant @__talos_element_trace_99("\00\00\00\00\00\00\00\00\01\00\00\80\00\00\00\00")
+// NATIVE-COUNT-1: llvm.mlir.global internal constant @__talos_element_trace_100("\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00")
+// NATIVE: llvm.call @talos_rt_v1_container_size
+// NATIVE: llvm.call @talos_rt_v1_container_create_like
+// NATIVE: llvm.call @talos_rt_v1_container_read
+// NATIVE: llvm.call @talos_rt_v1_container_write
+// NATIVE: llvm.call @talos_rt_v1_container_create_typed
+// NATIVE: llvm.call @talos_rt_v1_container_write
+// NATIVE: llvm.call @talos_rt_v1_container_create_typed

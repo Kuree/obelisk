@@ -1,8 +1,8 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
+// RUN: %talos --std=1800-2023 -O0 --target=native \
 // RUN:   --coverage=functional -o %t.native %s
 // RUN: %t.native --coverage-output=%t.native.obcov \
 // RUN:   --coverage-test=coverpoint-control > %t.native.txt
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
+// RUN: %talos --std=1800-2023 -O3 --execution-tier=bytecode \
 // RUN:   --coverage=functional -o %t.bytecode %s
 // RUN: %t.bytecode --coverage-output=%t.bytecode.obcov \
 // RUN:   --coverage-test=coverpoint-control > %t.bytecode.txt

@@ -8,21 +8,21 @@
 
 namespace {
 
-using namespace obelisk::designbytecode;
+using namespace talos::designbytecode;
 
 void visitManagedWord(const uint8_t *address, ManagedRootVisit visit,
                       void *visitorEnvironment) {
-  obelisk_rt_managed_word_v1 word = 0;
+  talos_rt_managed_word_v1 word = 0;
   std::memcpy(&word, address, sizeof(word));
   if (word == 0 || (word & 3) != 0)
     return;
-  if (obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word))
+  if (talos_rt_object_v1 *object = talos_rt_object_from_managed_word(word))
     visit(visitorEnvironment, &object);
 }
 
 } // namespace
 
-namespace obelisk::designbytecode {
+namespace talos::designbytecode {
 
 void ScopedBytecodeFrameRoots::enumerate(void *environment,
                                          ManagedRootVisit visit,
@@ -33,14 +33,14 @@ void ScopedBytecodeFrameRoots::enumerate(void *environment,
   for (uint32_t index = 0; index != roots->frame->function.layoutCount;
        ++index) {
     Layout layout = layoutAt(*roots->image, roots->frame->function, index);
-    if (layout.kind == OBELISK_RT_DBREG_STRING) {
+    if (layout.kind == TALOS_RT_DBREG_STRING) {
       visitManagedWord(roots->frame->data + layout.offset, visit,
                        visitorEnvironment);
       continue;
     }
-    if (layout.kind != OBELISK_RT_DBREG_MANAGED &&
-        layout.kind != OBELISK_RT_DBREG_MANAGED_REF &&
-        layout.kind != OBELISK_RT_DBREG_ARGUMENT_REF)
+    if (layout.kind != TALOS_RT_DBREG_MANAGED &&
+        layout.kind != TALOS_RT_DBREG_MANAGED_REF &&
+        layout.kind != TALOS_RT_DBREG_ARGUMENT_REF)
       continue;
     visitManagedWord(roots->frame->data + layout.offset, visit,
                      visitorEnvironment);
@@ -49,46 +49,46 @@ void ScopedBytecodeFrameRoots::enumerate(void *environment,
 
 ScopedBytecodeFrameRoots::ScopedBytecodeFrameRoots(const Image &image,
                                                    Frame &frame,
-                                                   obelisk_rt_context *context)
+                                                   talos_rt_context *context)
     : roots{&image, &frame} {
   bool hasManaged = false;
   for (uint32_t index = 0; index != frame.function.layoutCount; ++index) {
     uint8_t kind = layoutAt(image, frame.function, index).kind;
-    hasManaged |= kind == OBELISK_RT_DBREG_MANAGED ||
-                  kind == OBELISK_RT_DBREG_MANAGED_REF ||
-                  kind == OBELISK_RT_DBREG_ARGUMENT_REF ||
-                  kind == OBELISK_RT_DBREG_STRING;
+    hasManaged |= kind == TALOS_RT_DBREG_MANAGED ||
+                  kind == TALOS_RT_DBREG_MANAGED_REF ||
+                  kind == TALOS_RT_DBREG_ARGUMENT_REF ||
+                  kind == TALOS_RT_DBREG_STRING;
   }
   if (!hasManaged)
     return;
-  lane = obelisk_rt_v1_gc_current_lane(context);
+  lane = talos_rt_v1_gc_current_lane(context);
   status =
-      lane ? obelisk_rt_managed_roots_push(lane, &provider, enumerate, &roots)
-           : OBELISK_RT_INVALID_LIFECYCLE;
-  pushed = status == OBELISK_RT_OK;
+      lane ? talos_rt_managed_roots_push(lane, &provider, enumerate, &roots)
+           : TALOS_RT_INVALID_LIFECYCLE;
+  pushed = status == TALOS_RT_OK;
 }
 
 ScopedBytecodeFrameRoots::~ScopedBytecodeFrameRoots() {
   if (pushed)
-    (void)obelisk_rt_managed_roots_pop(lane, &provider);
+    (void)talos_rt_managed_roots_pop(lane, &provider);
 }
 
-} // namespace obelisk::designbytecode
+} // namespace talos::designbytecode
 
-using namespace obelisk::designbytecode;
+using namespace talos::designbytecode;
 
-void obelisk_rt_enumerate_design_managed_roots(
-    obelisk_rt_context *context, ManagedRootVisit visit,
+void talos_rt_enumerate_design_managed_roots(
+    talos_rt_context *context, ManagedRootVisit visit,
     void *visitorEnvironment) noexcept {
   if (!context || !visit)
     return;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     bool hasBytecode =
         context->execution &&
-        (context->execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0;
+        (context->execution->flags & TALOS_RT_EXECUTION_HAS_BYTECODE) != 0;
     Image image;
     if (hasBytecode) {
-      obelisk_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
+      talos_rt_design_bytecode_entry_v1 entry{context->execution, 0, 0};
       hasBytecode =
           loadValidatedImage(entry, context, image, /*inventoryOnly=*/true);
     }
@@ -99,7 +99,7 @@ void obelisk_rt_enumerate_design_managed_roots(
         visit(visitorEnvironment, &state.managedValue);
       for (uint64_t offset : state.managedRootByteOffsets) {
         if (offset > state.value.size() ||
-            sizeof(obelisk_rt_managed_word_v1) > state.value.size() - offset)
+            sizeof(talos_rt_managed_word_v1) > state.value.size() - offset)
           continue;
         visitManagedWord(state.value.data() + offset, visit,
                          visitorEnvironment);
@@ -107,15 +107,15 @@ void obelisk_rt_enumerate_design_managed_roots(
       for (const NativeAutomaticState::CandidateRoot &root :
            state.candidateRootByteOffsets) {
         if (root.byteOffset > state.value.size() ||
-            sizeof(obelisk_rt_managed_word_v1) >
+            sizeof(talos_rt_managed_word_v1) >
                 state.value.size() - root.byteOffset)
           continue;
-        obelisk_rt_managed_word_v1 word = 0;
+        talos_rt_managed_word_v1 word = 0;
         std::memcpy(&word, state.value.data() + root.byteOffset, sizeof(word));
         word =
-            obelisk_rt_v1_gc_candidate_root(context, word, root.allowedKinds);
-        if (obelisk_rt_object_v1 *object =
-                obelisk_rt_object_from_managed_word(word)) {
+            talos_rt_v1_gc_candidate_root(context, word, root.allowedKinds);
+        if (talos_rt_object_v1 *object =
+                talos_rt_object_from_managed_word(word)) {
           visit(visitorEnvironment, &object);
         }
       }
@@ -125,10 +125,10 @@ void obelisk_rt_enumerate_design_managed_roots(
       for (auto &[offset, state] : fields) {
         (void)offset;
         if (state.forceActive)
-          for (obelisk_rt_object_v1 *&root : state.forceRoots)
+          for (talos_rt_object_v1 *&root : state.forceRoots)
             visit(visitorEnvironment, &root);
         if (state.assignActive)
-          for (obelisk_rt_object_v1 *&root : state.assignRoots)
+          for (talos_rt_object_v1 *&root : state.assignRoots)
             visit(visitorEnvironment, &root);
       }
     }
@@ -137,19 +137,19 @@ void obelisk_rt_enumerate_design_managed_roots(
         (void)handle;
         for (auto &[id, formal] : instance.formals) {
           (void)id;
-          if (formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING)
+          if (formal.kind == TALOS_RT_FUNCTIONAL_VALUE_STRING)
             visitManagedWord(reinterpret_cast<const uint8_t *>(&formal.payload),
                              visit, visitorEnvironment);
           else if ((formal.kind ==
-                        OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
+                        TALOS_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
                     formal.kind ==
-                        OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE ||
-                    formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
-                    formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE ||
-                    formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX) &&
+                        TALOS_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE ||
+                    formal.kind == TALOS_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
+                    formal.kind == TALOS_RT_FUNCTIONAL_VALUE_SEMAPHORE ||
+                    formal.kind == TALOS_RT_FUNCTIONAL_VALUE_MAILBOX) &&
                    formal.owner)
             visit(visitorEnvironment, &formal.owner);
-          else if (formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&
+          else if (formal.kind == TALOS_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&
                    formal.argumentRefKind != 0 && formal.owner)
             visit(visitorEnvironment, &formal.owner);
         }
@@ -162,8 +162,8 @@ void obelisk_rt_enumerate_design_managed_roots(
             continue;
           if (registration->receiver)
             visit(visitorEnvironment, &registration->receiver);
-          const obelisk_rt_observer_descriptor_v1 *descriptor =
-              obelisk::process::findObserverDescriptor(
+          const talos_rt_observer_descriptor_v1 *descriptor =
+              talos::process::findObserverDescriptor(
                   registration->execution, registration->observerCodeUnitID);
           if (!descriptor ||
               descriptor->capture_count != registration->captures.size())
@@ -171,87 +171,87 @@ void obelisk_rt_enumerate_design_managed_roots(
           for (uint32_t index = 0; index != descriptor->capture_count;
                ++index) {
             uint32_t kind = descriptor->capture_abi[index].kind;
-            obelisk_rt_computed_capture_v1 &capture =
+            talos_rt_computed_capture_v1 &capture =
                 registration->captures[index];
-            if (kind != OBELISK_RT_OBSERVER_CAPTURE_MANAGED &&
-                !(kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF &&
+            if (kind != TALOS_RT_OBSERVER_CAPTURE_MANAGED &&
+                !(kind == TALOS_RT_OBSERVER_CAPTURE_ARGUMENT_REF &&
                   capture.payload1 != 0))
               continue;
-            obelisk_rt_object_v1 *object =
-                obelisk_rt_object_from_managed_word(capture.stable_id);
+            talos_rt_object_v1 *object =
+                talos_rt_object_from_managed_word(capture.stable_id);
             if (!object)
               continue;
             visit(visitorEnvironment, &object);
-            capture.stable_id = obelisk_rt_managed_word_from_object(object);
+            capture.stable_id = talos_rt_managed_word_from_object(object);
           }
         }
     }
-    for (obelisk_rt_process_instance_v1 *instance :
+    for (talos_rt_process_instance_v1 *instance :
          context->managedRootProcesses) {
       if (!instance || !instance->descriptor ||
           !instance->descriptor->frame_layout || !instance->frame)
         continue;
-      const obelisk_rt_frame_layout_v1 &layout =
+      const talos_rt_frame_layout_v1 &layout =
           *instance->descriptor->frame_layout;
       for (uint32_t index = 0; index != layout.field_count; ++index) {
-        const obelisk_rt_frame_field_v1 &field = layout.fields[index];
-        if (field.flags != OBELISK_RT_FRAME_MANAGED_ROOT &&
-            field.flags != OBELISK_RT_FRAME_CANDIDATE_ROOT)
+        const talos_rt_frame_field_v1 &field = layout.fields[index];
+        if (field.flags != TALOS_RT_FRAME_MANAGED_ROOT &&
+            field.flags != TALOS_RT_FRAME_CANDIDATE_ROOT)
           continue;
         uint8_t *address =
             static_cast<uint8_t *>(instance->frame) + field.offset;
-        if (field.flags == OBELISK_RT_FRAME_MANAGED_ROOT) {
+        if (field.flags == TALOS_RT_FRAME_MANAGED_ROOT) {
           visitManagedWord(address, visit, visitorEnvironment);
         } else {
-          obelisk_rt_managed_word_v1 word = 0;
+          talos_rt_managed_word_v1 word = 0;
           std::memcpy(&word, address, sizeof(word));
-          word = obelisk_rt_v1_gc_candidate_root(context, word, field.reserved);
-          if (obelisk_rt_object_v1 *object =
-                  obelisk_rt_object_from_managed_word(word)) {
+          word = talos_rt_v1_gc_candidate_root(context, word, field.reserved);
+          if (talos_rt_object_v1 *object =
+                  talos_rt_object_from_managed_word(word)) {
             visit(visitorEnvironment, &object);
           }
         }
       }
     }
     auto visitManagedWait = [&](uint32_t suspendKind,
-                                const obelisk_rt_wait_record_v1 *wait) {
-      if ((suspendKind != OBELISK_RT_SUSPEND_SEMAPHORE &&
-           suspendKind != OBELISK_RT_SUSPEND_MAILBOX) ||
+                                const talos_rt_wait_record_v1 *wait) {
+      if ((suspendKind != TALOS_RT_SUSPEND_SEMAPHORE &&
+           suspendKind != TALOS_RT_SUSPEND_MAILBOX) ||
           !wait || wait->count != 1)
         return;
-      const auto *entries = reinterpret_cast<const obelisk_rt_wait_entry_v1 *>(
+      const auto *entries = reinterpret_cast<const talos_rt_wait_entry_v1 *>(
           reinterpret_cast<const uint8_t *>(wait) + sizeof(*wait));
-      obelisk_rt_managed_word_v1 word = entries[0].stable_id;
-      obelisk_rt_object_v1 *object = obelisk_rt_object_from_managed_word(word);
-      if (obelisk_rt_managed_word_from_object(object) != word)
+      talos_rt_managed_word_v1 word = entries[0].stable_id;
+      talos_rt_object_v1 *object = talos_rt_object_from_managed_word(word);
+      if (talos_rt_managed_word_from_object(object) != word)
         return;
       visit(visitorEnvironment, &object);
     };
     auto visitComputedWait = [&](uint32_t suspendKind,
-                                 const obelisk_rt_wait_record_v1 *record,
+                                 const talos_rt_wait_record_v1 *record,
                                  uint64_t available) {
-      if (suspendKind != OBELISK_RT_SUSPEND_OBSERVER || !record ||
+      if (suspendKind != TALOS_RT_SUSPEND_OBSERVER || !record ||
           !context->execution)
         return;
       const auto *wait =
-          reinterpret_cast<const obelisk_rt_computed_wait_record_v1 *>(record);
-      if (!obelisk_rt_validate_computed_wait_record(context->execution, wait,
+          reinterpret_cast<const talos_rt_computed_wait_record_v1 *>(record);
+      if (!talos_rt_validate_computed_wait_record(context->execution, wait,
                                                     available))
         return;
       const auto *observers =
-          obelisk::process::computedWaitSpan<obelisk_rt_computed_observer_v1>(
+          talos::process::computedWaitSpan<talos_rt_computed_observer_v1>(
               wait, wait->observers_offset, wait->observer_count);
       const auto *captures =
-          obelisk::process::computedWaitSpan<obelisk_rt_computed_capture_v1>(
+          talos::process::computedWaitSpan<talos_rt_computed_capture_v1>(
               wait, wait->captures_offset, wait->capture_count);
       if (!observers || !captures)
         return;
       for (uint32_t observerIndex = 0; observerIndex != wait->observer_count;
            ++observerIndex) {
-        const obelisk_rt_computed_observer_v1 &observer =
+        const talos_rt_computed_observer_v1 &observer =
             observers[observerIndex];
-        const obelisk_rt_observer_descriptor_v1 *descriptor =
-            obelisk::process::findObserverDescriptor(context->execution,
+        const talos_rt_observer_descriptor_v1 *descriptor =
+            talos::process::findObserverDescriptor(context->execution,
                                                      observer.code_unit_id);
         if (!descriptor)
           continue;
@@ -259,14 +259,14 @@ void obelisk_rt_enumerate_design_managed_roots(
              ++captureIndex) {
           uint32_t kind = descriptor->capture_abi[captureIndex].kind;
           const auto &capture = captures[observer.capture_begin + captureIndex];
-          if (kind != OBELISK_RT_OBSERVER_CAPTURE_MANAGED &&
-              !(kind == OBELISK_RT_OBSERVER_CAPTURE_ARGUMENT_REF &&
+          if (kind != TALOS_RT_OBSERVER_CAPTURE_MANAGED &&
+              !(kind == TALOS_RT_OBSERVER_CAPTURE_ARGUMENT_REF &&
                 (capture.payload1 == 1 || capture.payload1 == 2)))
             continue;
-          obelisk_rt_managed_word_v1 word = capture.stable_id;
-          obelisk_rt_object_v1 *object =
-              obelisk_rt_object_from_managed_word(word);
-          if (obelisk_rt_managed_word_from_object(object) != word)
+          talos_rt_managed_word_v1 word = capture.stable_id;
+          talos_rt_object_v1 *object =
+              talos_rt_object_from_managed_word(word);
+          if (talos_rt_managed_word_from_object(object) != word)
             continue;
           visit(visitorEnvironment, &object);
         }
@@ -274,18 +274,18 @@ void obelisk_rt_enumerate_design_managed_roots(
     };
     for (const ScheduledProcess &process : context->scheduledProcesses)
       if (process.instance) {
-        const obelisk_rt_wait_record_v1 *wait =
-            obelisk::process::currentWait(process);
+        const talos_rt_wait_record_v1 *wait =
+            talos::process::currentWait(process);
         visitManagedWait(process.suspendKind, wait);
         visitComputedWait(process.suspendKind, wait, process.waitSize);
       }
     for (const ScheduledDesignTask &task : context->scheduledDesignTasks) {
       if (task.terminated ||
-          task.waitSize < sizeof(obelisk_rt_wait_record_v1) ||
+          task.waitSize < sizeof(talos_rt_wait_record_v1) ||
           task.waitOffset > task.scratchOffset ||
           task.waitSize > task.scratchOffset - task.waitOffset)
         continue;
-      const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+      const auto *wait = reinterpret_cast<const talos_rt_wait_record_v1 *>(
           task.frame.data() + task.waitOffset);
       visitManagedWait(task.suspendKind, wait);
       visitComputedWait(task.suspendKind, wait, task.waitSize);
@@ -317,7 +317,7 @@ void obelisk_rt_enumerate_design_managed_roots(
             std::min<uint64_t>(scratchOffset, frame.size());
         auto visitOffset = [&](uint64_t offset) {
           if (offset > canonicalSize ||
-              sizeof(obelisk_rt_managed_word_v1) > canonicalSize - offset)
+              sizeof(talos_rt_managed_word_v1) > canonicalSize - offset)
             return;
           visitManagedWord(frame.data() + offset, visit, visitorEnvironment);
         };
@@ -328,54 +328,54 @@ void obelisk_rt_enumerate_design_managed_roots(
               capture.valueOffset == UINT64_MAX)
             continue;
           uint8_t kind = layoutAt(image, function, capture.argument).kind;
-          if (kind == OBELISK_RT_DBREG_STRING) {
+          if (kind == TALOS_RT_DBREG_STRING) {
             if (capture.valueOffset <= canonicalSize &&
-                sizeof(obelisk_rt_managed_word_v1) <=
+                sizeof(talos_rt_managed_word_v1) <=
                     canonicalSize - capture.valueOffset)
               visitManagedWord(frame.data() + capture.valueOffset, visit,
                                visitorEnvironment);
-          } else if (kind == OBELISK_RT_DBREG_MANAGED ||
-                     kind == OBELISK_RT_DBREG_MANAGED_REF ||
-                     kind == OBELISK_RT_DBREG_ARGUMENT_REF)
+          } else if (kind == TALOS_RT_DBREG_MANAGED ||
+                     kind == TALOS_RT_DBREG_MANAGED_REF ||
+                     kind == TALOS_RT_DBREG_ARGUMENT_REF)
             visitOffset(capture.valueOffset);
         }
         uint64_t end = function.firstInstruction + function.instructionCount;
         for (uint64_t pc = function.firstInstruction; pc != end; ++pc) {
           Instruction instruction = instructionAt(image, pc);
-          if (instruction.opcode == OBELISK_RT_DB_FRAME_ROOT ||
-              instruction.opcode == OBELISK_RT_DB_CLEAR_FRAME_ROOT) {
+          if (instruction.opcode == TALOS_RT_DB_FRAME_ROOT ||
+              instruction.opcode == TALOS_RT_DB_CLEAR_FRAME_ROOT) {
             if (instruction.immediate <= canonicalSize &&
-                sizeof(obelisk_rt_managed_word_v1) <=
+                sizeof(talos_rt_managed_word_v1) <=
                     canonicalSize - instruction.immediate) {
               const uint8_t *address = frame.data() + instruction.immediate;
               if (instruction.flags == 0) {
                 visitManagedWord(address, visit, visitorEnvironment);
               } else {
-                obelisk_rt_managed_word_v1 word = 0;
+                talos_rt_managed_word_v1 word = 0;
                 std::memcpy(&word, address, sizeof(word));
-                word = obelisk_rt_v1_gc_candidate_root(context, word,
+                word = talos_rt_v1_gc_candidate_root(context, word,
                                                        instruction.destination);
-                if (obelisk_rt_object_v1 *object =
-                        obelisk_rt_object_from_managed_word(word)) {
+                if (talos_rt_object_v1 *object =
+                        talos_rt_object_from_managed_word(word)) {
                   visit(visitorEnvironment, &object);
                 }
               }
             }
             continue;
           }
-          if (instruction.opcode != OBELISK_RT_DB_STORE_FRAME ||
+          if (instruction.opcode != TALOS_RT_DB_STORE_FRAME ||
               instruction.source0 >= function.layoutCount)
             continue;
           uint8_t kind = layoutAt(image, function, instruction.source0).kind;
-          if (kind == OBELISK_RT_DBREG_STRING) {
+          if (kind == TALOS_RT_DBREG_STRING) {
             if (instruction.immediate <= canonicalSize &&
-                sizeof(obelisk_rt_managed_word_v1) <=
+                sizeof(talos_rt_managed_word_v1) <=
                     canonicalSize - instruction.immediate)
               visitManagedWord(frame.data() + instruction.immediate, visit,
                                visitorEnvironment);
-          } else if (kind == OBELISK_RT_DBREG_MANAGED ||
-                     kind == OBELISK_RT_DBREG_MANAGED_REF ||
-                     kind == OBELISK_RT_DBREG_ARGUMENT_REF)
+          } else if (kind == TALOS_RT_DBREG_MANAGED ||
+                     kind == TALOS_RT_DBREG_MANAGED_REF ||
+                     kind == TALOS_RT_DBREG_ARGUMENT_REF)
             visitOffset(instruction.immediate);
         }
       };
@@ -384,7 +384,7 @@ void obelisk_rt_enumerate_design_managed_roots(
         visitActivation(caller.function, caller.frame, caller.scratchOffset);
     }
   }
-  OBELISK_RT_CATCH_ALL {
+  TALOS_RT_CATCH_ALL {
     // The image was validated when the context was created. A collector cannot
     // report through the C ABI, so malformed or concurrently destroyed state
     // is conservatively ignored here and is diagnosed by its owning entry.

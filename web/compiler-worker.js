@@ -1,15 +1,15 @@
-// Runs the wasm build of the Obelisk driver off the main thread.
+// Runs the wasm build of the Talos driver off the main thread.
 //
 // Contract with the driver module (emscripten MODULARIZE build of
-// tools/driver): a factory on self.createObeliskModule, an in-memory FS, and
+// tools/driver): a factory on self.createTalosModule, an in-memory FS, and
 // callMain(argv). The driver writes a linked wasm simulation to the output
 // path, which this worker then runs itself. Keeping the simulation here leaves
 // the page responsive, and lets it stop a design that never calls $finish by
 // terminating the worker.
 //
 // A run request with `coverageReport` whose flags include --coverage runs with
-// a coverage database, which the wasm build of obelisk-cov
-// (self.createObeliskCovModule, same contract) turns into the self-contained
+// a coverage database, which the wasm build of talos-cov
+// (self.createTalosCovModule, same contract) turns into the self-contained
 // HTML report the Coverage view shows. The run's result is posted first, as
 // `exited` with `coveragePending`, so stopping while the report is built
 // loses only the report; a final `coverage` message carries the report.
@@ -26,20 +26,20 @@ function stripAnsi(text) {
 function loadDriver() {
   if (modulePromise) return modulePromise;
   modulePromise = (async () => {
-    // obelisk.js is the emscripten glue emitted next to obelisk.wasm.
+    // talos.js is the emscripten glue emitted next to talos.wasm.
     self.importScripts('./toolchain.js');
-    self.importScripts('./obelisk.js');
-    if (typeof self.createObeliskModule !== 'function') {
-      throw new Error('obelisk.js did not expose createObeliskModule');
+    self.importScripts('./talos.js');
+    if (typeof self.createTalosModule !== 'function') {
+      throw new Error('talos.js did not expose createTalosModule');
     }
-    const mod = await self.createObeliskModule({
+    const mod = await self.createTalosModule({
       noInitialRun: true,
-      thisProgram: '/bin/obelisk',
+      thisProgram: '/bin/talos',
       print: (line) => post('log', { stream: 'stdout', text: stripAnsi(line) + '\n' }),
       printErr: (line) => post('log', { stream: 'stderr', text: stripAnsi(line) + '\n' }),
       locateFile: (path) => new URL(path, self.location.href).href,
     });
-    await self.installObeliskToolchain(mod);
+    await self.installTalosToolchain(mod);
     return mod;
   })();
   return modulePromise;
@@ -88,16 +88,16 @@ function createOutputBatcher() {
 const COVERAGE_FILE = 'design.obcov';
 const COVERAGE_TEST = 'design';
 
-/** Run obelisk-cov over a run's coverage database; resolves to the page. */
+/** Run talos-cov over a run's coverage database; resolves to the page. */
 async function coverageReport(database, source, std) {
-  self.importScripts('./obelisk-cov.js');
-  if (typeof self.createObeliskCovModule !== 'function') {
-    throw new Error('obelisk-cov.js did not expose createObeliskCovModule');
+  self.importScripts('./talos-cov.js');
+  if (typeof self.createTalosCovModule !== 'function') {
+    throw new Error('talos-cov.js did not expose createTalosCovModule');
   }
   const errors = [];
-  const mod = await self.createObeliskCovModule({
+  const mod = await self.createTalosCovModule({
     noInitialRun: true,
-    thisProgram: '/bin/obelisk-cov',
+    thisProgram: '/bin/talos-cov',
     print: () => {},
     printErr: (line) => errors.push(stripAnsi(line)),
     locateFile: (path) => new URL(path, self.location.href).href,
@@ -117,7 +117,7 @@ async function coverageReport(database, source, std) {
     if (typeof error === 'object' && error !== null && 'status' in error) status = error.status;
     else throw error;
   }
-  if (status !== 0) throw new Error(errors.join(' ') || `obelisk-cov exited with ${status}`);
+  if (status !== 0) throw new Error(errors.join(' ') || `talos-cov exited with ${status}`);
   return mod.FS.readFile('/work/coverage.html', { encoding: 'utf8' });
 }
 

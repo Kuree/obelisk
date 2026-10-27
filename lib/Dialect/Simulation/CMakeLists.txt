@@ -1,4 +1,4 @@
-add_mlir_library(ObeliskSimulationIR
+add_mlir_library(TalosSimulationIR
   SimulationAttributes.cpp
   SimulationCanonicalization.cpp
   SimulationContainerOps.cpp
@@ -18,28 +18,28 @@ add_mlir_library(ObeliskSimulationIR
   SimulationOpDefs3.cpp
 
   DEPENDS
-  ObeliskCoverageAttrsIncGen
-  ObeliskCoverageDialectIncGen
-  ObeliskDPIAttrsIncGen
-  ObeliskDPIDialectIncGen
-  ObeliskDPIEnumsIncGen
-  ObeliskNativeAttrsIncGen
-  ObeliskNativeDialectIncGen
-  ObeliskScheduleAttrsIncGen
-  ObeliskScheduleOpsIncGen
-  ObeliskScheduleDialectIncGen
-  ObeliskSimulationDialectIncGen
-  ObeliskSimulationEnumsIncGen
-  ObeliskSimulationAttrsIncGen
-  ObeliskSimulationOpsIncGen
-  ObeliskSimulationTypesIncGen
-  ObeliskVPIObjectModelIncGen
+  TalosCoverageAttrsIncGen
+  TalosCoverageDialectIncGen
+  TalosDPIAttrsIncGen
+  TalosDPIDialectIncGen
+  TalosDPIEnumsIncGen
+  TalosNativeAttrsIncGen
+  TalosNativeDialectIncGen
+  TalosScheduleAttrsIncGen
+  TalosScheduleOpsIncGen
+  TalosScheduleDialectIncGen
+  TalosSimulationDialectIncGen
+  TalosSimulationEnumsIncGen
+  TalosSimulationAttrsIncGen
+  TalosSimulationOpsIncGen
+  TalosSimulationTypesIncGen
+  TalosVPIObjectModelIncGen
 
   LINK_LIBS PUBLIC
-  ObeliskCoverageIR
-  ObeliskDPIIR
-  ObeliskNativeIR
-  ObeliskRuntimeIR
+  TalosCoverageIR
+  TalosDPIIR
+  TalosNativeIR
+  TalosRuntimeIR
   MLIRCallInterfaces
   MLIRCastInterfaces
   MLIRArithDialect
@@ -54,9 +54,9 @@ add_mlir_library(ObeliskSimulationIR
   MLIRViewLikeInterface
 )
 
-target_link_libraries(ObeliskSimulationIR PUBLIC ObeliskScheduleIR)
+target_link_libraries(TalosSimulationIR PUBLIC TalosScheduleIR)
 
-target_include_directories(ObeliskSimulationIR PRIVATE
+target_include_directories(TalosSimulationIR PRIVATE
   "${PROJECT_SOURCE_DIR}/runtime/include"
 )
 

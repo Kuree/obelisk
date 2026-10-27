@@ -1,6 +1,6 @@
 //===- CombinationalDependencyAnalysis.cpp - Statement dependencies ===//
-#include "obelisk/Analysis/CombinationalDependencyAnalysis.h"
-#include "obelisk/Analysis/GraphAlgorithms.h"
+#include "talos/Analysis/CombinationalDependencyAnalysis.h"
+#include "talos/Analysis/GraphAlgorithms.h"
 
 #include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -10,7 +10,7 @@
 #include <queue>
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 using Analysis = CombinationalDependencyAnalysis;
 using Access = Analysis::Access;
@@ -436,4 +436,4 @@ CombinationalDependencyAnalysis::getInterleaving(
     return std::nullopt;
   return order;
 }
-} // namespace obelisk::analysis
+} // namespace talos::analysis

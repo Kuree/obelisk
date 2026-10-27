@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -51,17 +51,17 @@ module attributes {
   }
 }
 
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_process_current(!llvm.ptr) -> i64
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_process_status(!llvm.ptr, i64, !llvm.ptr) -> i32
+// NATIVE-DAG: llvm.func @talos_rt_v1_process_current(!llvm.ptr) -> i64
+// NATIVE-DAG: llvm.func @talos_rt_v1_process_status(!llvm.ptr, i64, !llvm.ptr) -> i32
 // NATIVE-LABEL: llvm.func @parent
-// NATIVE: llvm.call @child.__obelisk_spawn
+// NATIVE: llvm.call @child.__talos_spawn
 // NATIVE: llvm.mlir.constant(0 : i64)
-// NATIVE: llvm.call @obelisk_rt_v1_process_current
+// NATIVE: llvm.call @talos_rt_v1_process_current
 // NATIVE: llvm.icmp "eq"
-// NATIVE: llvm.call @obelisk_rt_v1_process_status
-// NATIVE: llvm.call @obelisk_rt_v1_scheduler_fail
-// NATIVE-LABEL: llvm.func @child.__obelisk_spawn
-// NATIVE: llvm.call @obelisk_rt_v1_process_spawn
+// NATIVE: llvm.call @talos_rt_v1_process_status
+// NATIVE: llvm.call @talos_rt_v1_scheduler_fail
+// NATIVE-LABEL: llvm.func @child.__talos_spawn
+// NATIVE: llvm.call @talos_rt_v1_process_spawn
 
 // The process value is one two-state 64-bit logical token in bytecode, rather
 // than the historical 32-byte generic descriptor handle. The serialized

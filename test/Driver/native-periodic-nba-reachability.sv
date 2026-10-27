@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --compile-threads=1 --native-scheduler=generic %s -o %t.generic
-// RUN: obelisk -O3 --compile-threads=8 --native-scheduler=auto %s -o %t.auto
+// RUN: talos -O3 --compile-threads=1 --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O3 --compile-threads=8 --native-scheduler=auto %s -o %t.auto
 // RUN: %t.generic > %t.generic.out
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.diag
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.diag
 // RUN: diff -u %t.generic.out %t.auto.out
 // RUN: FileCheck %s < %t.auto.out
 // RUN: FileCheck %s --check-prefix=DIAG < %t.diag
@@ -51,6 +51,6 @@ endmodule
 // CHECK: unknown low=03 feedback=03 high=xx
 // CHECK: first bus=c305 low=07 feedback=07 high=c3
 // CHECK: last bus=c305 low=07 feedback=07 high=c3
-// DIAG: obelisk-signal-diagnostics
+// DIAG: talos-signal-diagnostics
 // DIAG-SAME: aot_fallbacks=0
 // DIAG-SAME: periodic_preparations={{[1-9][0-9]*}}

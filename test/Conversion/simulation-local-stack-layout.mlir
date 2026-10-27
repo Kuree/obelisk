@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // Unpacked objects have an ABI layout per plane. Packed leaves preserve their
 // bit layout. Whole-object loads gather both planes from the same field offsets.

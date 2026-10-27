@@ -1,4 +1,4 @@
-//===- Options.td - Obelisk compiler driver options ---------*- tablegen -*-===//
+//===- Options.td - Talos compiler driver options ---------*- tablegen -*-===//
 
 include "llvm/Option/OptParser.td"
 
@@ -15,7 +15,7 @@ def h : Flag<["-"], "h">, Alias<help>, Flags<[HelpHidden]>;
 def help_hidden : Flag<["--"], "help-hidden">,
   HelpText<"Display all options, including internal options">;
 def version : Flag<["--"], "version">,
-  HelpText<"Display the Obelisk and frontend versions">;
+  HelpText<"Display the Talos and frontend versions">;
 
 def emit_slang : Flag<["-"], "emit-slang">, Group<Action_Group>,
   HelpText<"Emit elaborated Slang dialect MLIR after SystemVerilog import">;
@@ -29,8 +29,8 @@ def dump_tokens : Flag<["-"], "dump-tokens">, Group<Action_Group>,
   Flags<[HelpHidden]>,
   HelpText<"List each token and comment of the unpreprocessed source as "
            "'<byte offset> <byte length> <kind>'">;
-def emit_obelisk : Flag<["-"], "emit-obelisk">, Group<Action_Group>,
-  HelpText<"Emit Obelisk dialect MLIR">;
+def emit_talos : Flag<["-"], "emit-talos">, Group<Action_Group>,
+  HelpText<"Emit Talos dialect MLIR">;
 def emit_sim : Flag<["-"], "emit-sim">, Group<Action_Group>,
   HelpText<"Emit executable simulation SSA MLIR">;
 def schedule_format_EQ : Joined<["--"], "schedule-format=">,
@@ -44,7 +44,7 @@ def emit_llvm : Flag<["-"], "emit-llvm">, Group<Action_Group>,
 def emit_dpi_header : Flag<["--"], "emit-dpi-header">, Group<Action_Group>,
   HelpText<"Emit exact C prototypes for DPI imports and exports">;
 def print_resource_dir : Flag<["--"], "print-resource-dir">, Group<Action_Group>,
-  HelpText<"Print the Obelisk resource directory and exit">;
+  HelpText<"Print the Talos resource directory and exit">;
 def print_host_c_runtime : Flag<["--"], "print-host-c-runtime">,
   Group<Action_Group>, Flags<[HelpHidden]>,
   HelpText<"Print discovered host C-runtime link inputs and exit">;

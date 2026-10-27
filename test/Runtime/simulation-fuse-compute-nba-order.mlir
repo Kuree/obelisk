@@ -1,6 +1,6 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O0 --native-scheduler=generic %t/nba-order.sv -o %t/nba-order.unfused
-// RUN: obelisk -O3 --native-scheduler=generic %t/nba-order.sv -o %t/nba-order.fused
+// RUN: talos -O0 --native-scheduler=generic %t/nba-order.sv -o %t/nba-order.unfused
+// RUN: talos -O3 --native-scheduler=generic %t/nba-order.sv -o %t/nba-order.fused
 // RUN: %t/nba-order.unfused > %t/nba-order.unfused.out
 // RUN: %t/nba-order.fused > %t/nba-order.fused.out
 // RUN: diff %t/nba-order.unfused.out %t/nba-order.fused.out

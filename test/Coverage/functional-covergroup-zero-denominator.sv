@@ -1,6 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native -o %t.native %s
+// RUN: %talos --std=1800-2023 -O0 --target=native -o %t.native %s
 // RUN: %t.native > %t.native.txt
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
+// RUN: %talos --std=1800-2023 -O3 --execution-tier=bytecode \
 // RUN:   -o %t.bytecode %s
 // RUN: %t.bytecode > %t.bytecode.txt
 // RUN: diff -u %t.native.txt %t.bytecode.txt

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-to-runtime | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-to-runtime | FileCheck %s
 
 // A shared task can call $finish from either an ordinary or final process, so
 // final-phase detection belongs to the common runtime call rather than a

@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk -emit-slang %s -o /dev/null
+// RUN: %talos -emit-slang %s -o /dev/null
 
 // IEEE 1800-2023 25.7: a default argument needed by a call through a modport
 // import is specified in the prototype. Slang v11 binds arguments against the

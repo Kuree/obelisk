@@ -1,7 +1,7 @@
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.native
+// RUN: talos -O3 --native-scheduler=auto %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
+// RUN: talos -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 // RUN: FileCheck %s --check-prefix=NO-CHECKPOINT < %t.ll
 
@@ -28,7 +28,7 @@ module native_tier1_dynamic_packed_store_checkpoint;
   end
 endmodule
 
-// LLVM: define {{.*}}i32 @__obelisk_eval_dispatch_v1
-// LLVM: call i32 @obelisk_rt_v1_native_state_bind_shared
-// NO-CHECKPOINT-NOT: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
+// LLVM: define {{.*}}i32 @__talos_eval_dispatch_v1
+// LLVM: call i32 @talos_rt_v1_native_state_bind_shared
+// NO-CHECKPOINT-NOT: call i32 @talos_rt_v1_scheduler_execute_aot_actor
 // CHECK: 0 5 0

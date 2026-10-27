@@ -1,12 +1,12 @@
 // REQUIRES: native-macho
 // RUN: %split-file %s %t.dir
 // RUN: %target_clang -dynamiclib %t.dir/plugin.c -Wl,-install_name,@rpath/plugin.dylib -o %t.dir/arm64.dylib && %target_clang --target=x86_64-apple-macosx15.0 -dynamiclib %t.dir/plugin.c -Wl,-install_name,@rpath/plugin.dylib -o %t.dir/x64.dylib
-// RUN: not %obelisk --vpi=full %S/macos-native.sv %t.dir/x64.dylib -o %t.dir/out 2>&1 | FileCheck %s --check-prefix=ARCH
-// RUN: %llvm_dist/bin/llvm-lipo -create %t.dir/arm64.dylib %t.dir/x64.dylib -output %t.dir/universal.dylib && not %obelisk %S/macos-native.sv %t.dir/universal.dylib -o %t.dir/out 2>&1 | FileCheck %s --check-prefix=VPI
-// RUN: cp %t.dir/arm64.dylib %t.dir/duplicate.dylib && not %obelisk --vpi=full %S/macos-native.sv %t.dir/arm64.dylib %t.dir/duplicate.dylib -o %t.dir/out 2>&1 | FileCheck %s --check-prefix=DUPLICATE
-// RUN: %target_clang --target=aarch64-unknown-linux-gnu -c %t.dir/plugin.c -o %t.dir/elf.o && not %obelisk %S/macos-native.sv %t.dir/elf.o -o %t.dir/out 2>&1 | FileCheck %s --check-prefix=FORMAT
-// RUN: %obelisk %S/macos-native.sv -o %t.dir/executable && not %obelisk %t.dir/executable -o %t.dir/out 2>&1 | FileCheck %s --check-prefix=EXECUTABLE
-// RUN: %target_clang -dynamiclib %t.dir/plugin.c -Wl,-install_name,librelative.dylib -o %t.dir/relative.dylib && not %obelisk %S/macos-native.sv %t.dir/relative.dylib -o %t.dir/out 2>&1 | FileCheck %s --check-prefix=RELATIVE
+// RUN: not %talos --vpi=full %S/macos-native.sv %t.dir/x64.dylib -o %t.dir/out 2>&1 | FileCheck %s --check-prefix=ARCH
+// RUN: %llvm_dist/bin/llvm-lipo -create %t.dir/arm64.dylib %t.dir/x64.dylib -output %t.dir/universal.dylib && not %talos %S/macos-native.sv %t.dir/universal.dylib -o %t.dir/out 2>&1 | FileCheck %s --check-prefix=VPI
+// RUN: cp %t.dir/arm64.dylib %t.dir/duplicate.dylib && not %talos --vpi=full %S/macos-native.sv %t.dir/arm64.dylib %t.dir/duplicate.dylib -o %t.dir/out 2>&1 | FileCheck %s --check-prefix=DUPLICATE
+// RUN: %target_clang --target=aarch64-unknown-linux-gnu -c %t.dir/plugin.c -o %t.dir/elf.o && not %talos %S/macos-native.sv %t.dir/elf.o -o %t.dir/out 2>&1 | FileCheck %s --check-prefix=FORMAT
+// RUN: %talos %S/macos-native.sv -o %t.dir/executable && not %talos %t.dir/executable -o %t.dir/out 2>&1 | FileCheck %s --check-prefix=EXECUTABLE
+// RUN: %target_clang -dynamiclib %t.dir/plugin.c -Wl,-install_name,librelative.dylib -o %t.dir/relative.dylib && not %talos %S/macos-native.sv %t.dir/relative.dylib -o %t.dir/out 2>&1 | FileCheck %s --check-prefix=RELATIVE
 
 // ARCH: Mach-O library is not for the native ARM64 target
 // VPI: exports vlog_startup_routines but --vpi=off

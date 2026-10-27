@@ -1,12 +1,12 @@
 // REQUIRES: windows
-// RUN: %obelisk %s -o %t.exe
+// RUN: %talos %s -o %t.exe
 // RUN: llvm-readobj --file-headers --coff-imports %t.exe | FileCheck %s --check-prefix=%coff_machine
 // RUN: %t.exe | FileCheck %s --check-prefix=OUTPUT
-// RUN: %obelisk -O0 %s -o %t.o0.exe
+// RUN: %talos -O0 %s -o %t.o0.exe
 // RUN: %t.o0.exe | FileCheck %s --check-prefix=OUTPUT
-// RUN: %obelisk -flto %s -o %t.lto.exe
+// RUN: %talos -flto %s -o %t.lto.exe
 // RUN: %t.lto.exe | FileCheck %s --check-prefix=OUTPUT
-// RUN: %obelisk -c %s -o %t.obj && llvm-readobj --file-headers %t.obj | FileCheck %s --check-prefix=%coff_machine
+// RUN: %talos -c %s -o %t.obj && llvm-readobj --file-headers %t.obj | FileCheck %s --check-prefix=%coff_machine
 
 module windows_native;
   logic [7:0] value;

@@ -1,9 +1,9 @@
-// RUN: %obelisk --coverage=line,toggle \
+// RUN: %talos --coverage=line,toggle \
 // RUN:   --coverage-config=%S/../Inputs/coverage-config.json \
 // RUN:   --coverage-prefix-map=%S=src -emit-slang %s | FileCheck %s
-// RUN: %obelisk --coverage=line -emit-sim %s | FileCheck %s --check-prefix=SIM
-// RUN: not %obelisk --coverage=line,line -emit-slang %s 2>&1 | FileCheck %s --check-prefix=DUPLICATE
-// RUN: not %obelisk --coverage-prefix-map=missing-equals -emit-slang %s 2>&1 | FileCheck %s --check-prefix=MAP
+// RUN: %talos --coverage=line -emit-sim %s | FileCheck %s --check-prefix=SIM
+// RUN: not %talos --coverage=line,line -emit-slang %s 2>&1 | FileCheck %s --check-prefix=DUPLICATE
+// RUN: not %talos --coverage-prefix-map=missing-equals -emit-slang %s 2>&1 | FileCheck %s --check-prefix=MAP
 
 module top;
 endmodule

@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file --test-obelisk-local-unknown -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --split-input-file --test-obelisk-local-unknown=checks=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=CHECKS
+// RUN: talos-opt %s --split-input-file --test-talos-local-unknown -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --split-input-file --test-talos-local-unknown=checks=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=CHECKS
 
 // Every read of a fixed storage root is gated, also one that only moves into
 // a store: the entry check covers its whole root. A memory element whose

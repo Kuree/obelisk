@@ -1,9 +1,9 @@
 # RUN: %coverage-fixture %t.type.obcov 6 type-zero 0 100 0 0 0 named
 # RUN: %coverage-fixture %t.group.obcov 7 group-zero 0 100 1 0 0 named 0
 # RUN: %coverage-fixture %t.item.obcov 8 item-zero 0 100 1 0 0 named 1 0
-# RUN: obelisk-cov report --format=json %t.type.obcov | FileCheck %s --check-prefix=TYPE
-# RUN: obelisk-cov report --format=json %t.group.obcov | FileCheck %s --check-prefix=GROUP
-# RUN: obelisk-cov report --format=json %t.item.obcov | FileCheck %s --check-prefix=ITEM
+# RUN: talos-cov report --format=json %t.type.obcov | FileCheck %s --check-prefix=TYPE
+# RUN: talos-cov report --format=json %t.group.obcov | FileCheck %s --check-prefix=GROUP
+# RUN: talos-cov report --format=json %t.item.obcov | FileCheck %s --check-prefix=ITEM
 
 # A covergroup type, an instance or an item with weight 0 (IEEE 1800-2023
 # 19.7.1, option.weight) still reports its own 0% coverage but does not count

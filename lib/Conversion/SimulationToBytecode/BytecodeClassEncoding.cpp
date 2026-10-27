@@ -1,13 +1,13 @@
 //===- BytecodeClassEncoding.cpp - Managed class bytecode encoding -------===//
 
 #include "BytecodeEncoder.h"
-#include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
+#include "talos/Analysis/ManagedClassLayoutAnalysis.h"
 
 #include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 LogicalResult Encoder::prepareClassLayouts() {
   FailureOr<analysis::ManagedClassLayoutAnalysis> layouts =
@@ -256,4 +256,4 @@ Encoder::encodeClassVirtualTaskCall(FunctionPlan &plan,
   return success();
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

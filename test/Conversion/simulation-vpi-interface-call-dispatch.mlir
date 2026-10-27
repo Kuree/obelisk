@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s | FileCheck %s
+// RUN: talos-opt %s | FileCheck %s
 // IEEE 1800-2023 37.43: a frame identifies the actual invocation. Nominal
 // interface membership and declaration-owned extern providers prove targets
 // independently of the executable dispatch branch list.

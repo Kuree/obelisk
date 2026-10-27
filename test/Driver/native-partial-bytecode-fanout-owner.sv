@@ -1,6 +1,6 @@
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
+// RUN: talos -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
+// RUN: talos -O0 --native-scheduler=generic %s -o %t.reference
 // RUN: %t.auto > %t.auto.out
 // RUN: %t.reference > %t.reference.out
 // RUN: diff -u %t.reference.out %t.auto.out
@@ -39,5 +39,5 @@ endmodule
 
 // TIER: native eligibility: eligible=1 fully_eligible=0 cost_effective=1
 // TIER-NOT: partial eval disabled
-// TIER: obelisk eval executor inventory: {{.*}} runtime_checkpoints=1
+// TIER: talos eval executor inventory: {{.*}} runtime_checkpoints=1
 // CHECK: b=0 b_changes=4 n=4

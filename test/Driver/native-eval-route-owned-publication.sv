@@ -1,5 +1,5 @@
-// RUN: obelisk -O3 --vpi=off %s -o %t.eval
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
+// RUN: talos -O3 --vpi=off %s -o %t.eval
+// RUN: talos -O0 --native-scheduler=generic %s -o %t.reference
 // RUN: %t.reference > %t.reference.out 2>&1
 // RUN: %t.eval > %t.eval.out 2>&1 && diff -u %t.reference.out %t.eval.out
 // RUN: FileCheck %s < %t.reference.out

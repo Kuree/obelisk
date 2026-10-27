@@ -1,7 +1,7 @@
 // A SystemVerilog tokenizer small enough to run anywhere a snippet is shown.
 //
 // Baked embed snippets are colored from the compiler's own lexer
-// (`obelisk -dump-tokens`); this approximation covers the cases where that is
+// (`talos -dump-tokens`); this approximation covers the cases where that is
 // not available: runner.js coloring plain blocks on other sites, and the
 // Embed dialog while the compiler is busy or unavailable. runner.js carries
 // its own copy because it must stay one classic script that other sites load

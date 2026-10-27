@@ -4,9 +4,9 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -18,21 +18,21 @@
 #include <vector>
 namespace {
 TEST(GeneratedDesignDatabase, ProceduralTypes) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "full";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
-  obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_VERSION;
+  talos_rt_execution_descriptor_v1 execution{};
+  execution.version = TALOS_RT_VERSION;
   execution.flags = encoded->executionFlags;
   execution.bytecode = encoded->bytecode.data();
   execution.bytecode_size = encoded->bytecode.size();
@@ -41,15 +41,15 @@ TEST(GeneratedDesignDatabase, ProceduralTypes) {
   execution.state_bit_count = encoded->stateBitCount;
   for (unsigned byte = 0; byte != 8; ++byte)
     execution.checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *raw = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &raw),
-            OBELISK_RT_OK);
-  std::unique_ptr<obelisk_rt_context, decltype(&obelisk_rt_v1_context_destroy)>
-      runtime(raw, obelisk_rt_v1_context_destroy);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(raw, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(raw), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(raw), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *raw = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &raw),
+            TALOS_RT_OK);
+  std::unique_ptr<talos_rt_context, decltype(&talos_rt_v1_context_destroy)>
+      runtime(raw, talos_rt_v1_context_destroy);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(raw, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(raw), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(raw), TALOS_RT_OK);
   std::vector<vpiHandle> handles;
   auto keep = [&](vpiHandle handle) {
     if (handle)
@@ -137,7 +137,7 @@ TEST(GeneratedDesignDatabase, ProceduralTypes) {
     EXPECT_EQ(value.value.integer, 777);
   }
   // Removing the scope fact cannot turn a statement into a typedef owner.
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   HeaderView header(encoded->designDatabase.data());
   uint64_t statementOffset = 0;
   for (uint64_t index = 0; index != header.getStatementCount(); ++index) {
@@ -150,7 +150,7 @@ TEST(GeneratedDesignDatabase, ProceduralTypes) {
   auto malformed = encoded->designDatabase;
   StatementWriter writer(malformed.data() + statementOffset);
   writer.setFlags(StatementView(malformed.data() + statementOffset).getFlags() &
-                  ~OBELISK_RT_DESIGN_STATEMENT_SCOPE);
+                  ~TALOS_RT_DESIGN_STATEMENT_SCOPE);
   auto rehash = [](auto &image) {
     uint64_t hash = UINT64_C(14695981039346656037);
     for (size_t i = 0; i != image.size(); ++i) {
@@ -162,7 +162,7 @@ TEST(GeneratedDesignDatabase, ProceduralTypes) {
   rehash(malformed);
   auto invalid = execution;
   invalid.design_database = malformed.data();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&invalid), OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&invalid), TALOS_RT_INVALID_DESIGN);
   // Duplicate one block typedef into another exact lexical scope. Both
   // original declarations stay reachable, so only ownership becomes invalid.
   using Row = std::array<uint8_t, RelationLayout.size>;
@@ -216,16 +216,16 @@ TEST(GeneratedDesignDatabase, ProceduralTypes) {
     auto descriptor = execution;
     descriptor.design_database = image.data();
     descriptor.design_database_size = image.size();
-    return obelisk_rt_v1_design_validate(&descriptor);
+    return talos_rt_v1_design_validate(&descriptor);
   };
-  EXPECT_EQ(validateRelations(relations), OBELISK_RT_OK);
+  EXPECT_EQ(validateRelations(relations), TALOS_RT_OK);
   Row duplicate = outerTypedef;
   RelationWriter(duplicate.data())
       .setSourceIndex(RelationView(innerTypedef.data()).getSourceIndex());
   RelationWriter(duplicate.data()).setOrdinal(1);
   auto duplicateOwners = relations;
   duplicateOwners.push_back(duplicate);
-  EXPECT_EQ(validateRelations(duplicateOwners), OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(validateRelations(duplicateOwners), TALOS_RT_INVALID_DESIGN);
   // A typed frozen enum value requires its exact owning enum and reverse
   // declaration inventory; dropping only the handle edge is not valid.
   auto missingEnumOwner = relations;
@@ -238,16 +238,16 @@ TEST(GeneratedDesignDatabase, ProceduralTypes) {
       });
   ASSERT_NE(ownerEdge, missingEnumOwner.end());
   missingEnumOwner.erase(ownerEdge);
-  EXPECT_EQ(validateRelations(missingEnumOwner), OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(validateRelations(missingEnumOwner), TALOS_RT_INVALID_DESIGN);
   for (auto handle : handles)
     EXPECT_EQ(vpi_release_handle(handle), 1);
   handles.clear();
   runtime.reset();
   // Old authored enum declarations carry spelling only. They remain valid
   // metadata and report an unavailable value instead of decoding that text.
-  for (auto constant : design.getOps<obelisk::sim::SimVPIEnumConstDeclOp>())
+  for (auto constant : design.getOps<talos::sim::SimVPIEnumConstDeclOp>())
     constant.removeImmutableValueAttr();
-  auto legacy = obelisk::encodeSimulationDesign(design, options);
+  auto legacy = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(legacy));
   execution.bytecode = legacy->bytecode.data();
   execution.bytecode_size = legacy->bytecode.size();
@@ -256,13 +256,13 @@ TEST(GeneratedDesignDatabase, ProceduralTypes) {
   execution.checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     execution.checksum |= uint64_t{legacy->bytecode[32 + byte]} << (byte * 8);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &raw),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &raw),
+            TALOS_RT_OK);
   runtime.reset(raw);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(raw, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(raw), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(raw), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(raw, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(raw), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(raw), TALOS_RT_OK);
   function = keep(vpi_handle_by_name(const_cast<char *>("top.work"), nullptr));
   outer = keep(vpi_handle(vpiStmt, function));
   outerAliases = children(outer, vpiTypedef);

@@ -1,13 +1,13 @@
 //===- GeneratedVPIConstantEvaluationTest.cpp - Constant arithmetic -------===//
 
 #include "../lib/VPIExpressionValue.h"
-#include "obelisk/Dialect/Simulation/SimulationVPIConstantValues.h"
+#include "talos/Dialect/Simulation/SimulationVPIConstantValues.h"
 #include "gtest/gtest.h"
 #include <array>
 #include <vector>
 
 TEST(VPIConstantEvaluation, CompilerRuntimeParity) {
-  using namespace obelisk;
+  using namespace talos;
   using Shape = reflection::VPIIntegralExpressionShape;
   unsigned checked = 0;
   for (unsigned width : {1u, 8u, 32u, 64u, 65u, 130u})
@@ -77,7 +77,7 @@ TEST(VPIConstantEvaluation, CompilerRuntimeParity) {
 }
 
 TEST(VPIConstantEvaluation, CheckedIntegerBounds) {
-  using namespace obelisk::sim;
+  using namespace talos::sim;
   using llvm::APInt;
   EXPECT_EQ(knownVPIConstantInteger(
                 {APInt(65, UINT64_MAX).sextOrTrunc(65), APInt(65, 0)}, true),
@@ -99,7 +99,7 @@ TEST(VPIConstantEvaluation, CheckedIntegerBounds) {
 }
 
 TEST(VPIConstantEvaluation, IntegralCornerCases) {
-  using namespace obelisk;
+  using namespace talos;
   using Shape = reflection::VPIIntegralExpressionShape;
   using llvm::APInt;
   auto check = [&](uint32_t code, std::initializer_list<uint8_t> bits,
@@ -131,7 +131,7 @@ TEST(VPIConstantEvaluation, IntegralCornerCases) {
 }
 
 TEST(VPIConstantEvaluation, IntegralCasts) {
-  using namespace obelisk;
+  using namespace talos;
   using Shape = reflection::VPIIntegralExpressionShape;
   using llvm::APInt;
   // Independent bit-string oracles cover crossing limb boundaries, truncation,
@@ -194,7 +194,7 @@ TEST(VPIConstantEvaluation, IntegralCasts) {
 }
 
 TEST(VPIConstantEvaluation, Concatenations) {
-  using namespace obelisk;
+  using namespace talos;
   using Shape = reflection::VPIIntegralExpressionShape;
   using llvm::APInt;
   auto check = [&](uint32_t code, std::vector<std::string> bits,

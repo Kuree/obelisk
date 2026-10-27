@@ -1,9 +1,9 @@
-// RUN: obelisk -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
-// RUN: obelisk -O3 %s -o %t.o3.native
+// RUN: talos -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
+// RUN: talos -O3 %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode | FileCheck %s
-// RUN: not obelisk -O3 --native-scheduler=aot %s -o %t.aot 2>&1 | FileCheck %s --check-prefix=AOT-ERROR
+// RUN: not talos -O3 --native-scheduler=aot %s -o %t.aot 2>&1 | FileCheck %s --check-prefix=AOT-ERROR
 
 `timescale 1ns / 1ns
 

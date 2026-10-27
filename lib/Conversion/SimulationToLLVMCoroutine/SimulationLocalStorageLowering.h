@@ -1,7 +1,7 @@
 //===- SimulationLocalStorageLowering.h -------------------------*- C++ -*-===//
 
-#ifndef OBELISK_CONVERSION_SIMULATIONLOCALSTORAGELOWERING_H
-#define OBELISK_CONVERSION_SIMULATIONLOCALSTORAGELOWERING_H
+#ifndef TALOS_CONVERSION_SIMULATIONLOCALSTORAGELOWERING_H
+#define TALOS_CONVERSION_SIMULATIONLOCALSTORAGELOWERING_H
 
 #include "PackedStorageLayout.h"
 #include "mlir/IR/Value.h"
@@ -16,7 +16,7 @@ namespace mlir {
 class RewritePatternSet;
 class TypeConverter;
 } // namespace mlir
-namespace obelisk::detail {
+namespace talos::detail {
 
 /// Per-conversion storage plan. Local reference values lower to bit offsets;
 /// the closed-use proof supplies their stack base without a runtime handle.
@@ -87,5 +87,5 @@ private:
 void populateLocalStorageConversionPatterns(mlir::RewritePatternSet &patterns,
                                             mlir::TypeConverter &converter,
                                             const LocalStorageLowering &locals);
-} // namespace obelisk::detail
+} // namespace talos::detail
 #endif

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --obelisk-sim-optimize-native-regions | FileCheck %s
+// RUN: talos-opt %s --talos-sim-optimize-native-regions | FileCheck %s
 
 module {
   simulation.design @native_region attributes {

@@ -1,6 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s 2>&1 | FileCheck %s --check-prefix=COMPILE --implicit-check-not=error:
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s 2>&1 | FileCheck %s --check-prefix=COMPILE --implicit-check-not=error:
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s --check-prefix=QUERY
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 
 // LRM 19.7.1, 19.10 and 19.11. Keep this executable check to two small
 // configurations; the initialization order and ABI contracts have MLIR tests.

@@ -1,5 +1,5 @@
-// RUN: not obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines 2>&1 | FileCheck %s
-// RUN: not obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' 2>&1 | FileCheck %s
+// RUN: not talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines 2>&1 | FileCheck %s
+// RUN: not talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' 2>&1 | FileCheck %s
 
 // A serialized type from the i128:128 target cannot be reused on i128:64.
 // Reject before either backend builds handles, frame offsets or bytecode.

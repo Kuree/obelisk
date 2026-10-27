@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s | talos-opt | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -76,11 +76,11 @@ module attributes {
   }
 }
 
-// NATIVE: llvm.call @obelisk_rt_v1_mailbox_create_typed
-// NATIVE: llvm.call @obelisk_rt_v1_box_is_type
-// NATIVE: llvm.call @obelisk_rt_v1_mailbox_try_put
-// NATIVE: llvm.call @obelisk_rt_v1_mailbox_try_peek
-// NATIVE: llvm.call @obelisk_rt_v1_mailbox_num
-// NATIVE: llvm.call @obelisk_rt_v1_mailbox_try_get
+// NATIVE: llvm.call @talos_rt_v1_mailbox_create_typed
+// NATIVE: llvm.call @talos_rt_v1_box_is_type
+// NATIVE: llvm.call @talos_rt_v1_mailbox_try_put
+// NATIVE: llvm.call @talos_rt_v1_mailbox_try_peek
+// NATIVE: llvm.call @talos_rt_v1_mailbox_num
+// NATIVE: llvm.call @talos_rt_v1_mailbox_try_get
 // NATIVE: llvm.mlir.constant(11 : i32)
 // BYTECODE: runtime.bytecode_image

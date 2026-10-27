@@ -1,6 +1,6 @@
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
+// RUN: talos -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: talos -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.generic > %t.generic.out
 // RUN: %t.auto | diff -u %t.generic.out -
 

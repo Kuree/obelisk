@@ -1,13 +1,13 @@
 //===- SimulationProcessFunctionLowering.h - Native function lowering -===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSFUNCTIONLOWERING_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSFUNCTIONLOWERING_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSFUNCTIONLOWERING_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSFUNCTIONLOWERING_H
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 struct PreparedPlainNativeProcess {
   mlir::ModuleOp module;
@@ -43,6 +43,6 @@ mlir::LogicalResult
 lowerPreparedOrdinaryFunction(PreparedOrdinaryNativeFunction &function);
 mlir::LogicalResult lowerOrdinaryFunction(sim::SimFuncOp function);
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSFUNCTIONLOWERING_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_SIMULATIONPROCESSFUNCTIONLOWERING_H

@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 // IEEE 1800-2017 21.2.1.7 requires each unpacked array nested in a managed
 // container to retain its assignment-pattern shape. The container descriptor
@@ -30,7 +30,7 @@ module attributes {
 
 // The eight little-endian words are version, dimension count, leaf kind,
 // leaf flags, leaf byte size, leaf bit width, extent, and byte stride.
-// NATIVE: llvm.mlir.global internal constant @__obelisk_element_pattern_123("\01\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00{{[ ]}}\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00")
-// NATIVE: llvm.call @obelisk_rt_v1_container_create_typed_pattern
+// NATIVE: llvm.mlir.global internal constant @__talos_element_pattern_123("\01\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\01\00\00\00\00\00\00\00\00\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00{{[ ]}}\00\00\00\00\00\00\00\02\00\00\00\00\00\00\00\04\00\00\00\00\00\00\00")
+// NATIVE: llvm.call @talos_rt_v1_container_create_typed_pattern
 
 // BYTECODE: constants: {{.*}}01000000000000000100000000000000010000000000000000000000000000000400000000000000200000000000000002000000000000000400000000000000

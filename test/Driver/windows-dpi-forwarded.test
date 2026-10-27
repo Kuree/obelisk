@@ -3,9 +3,9 @@
 // RUN: %target_clang -fuse-ld=lld -shared %t.dir/impl.c -Wl,/export:actual_add -o %t.dir/impl.dll
 // RUN: %target_clang -fuse-ld=lld -shared -nostdlib %t.dir/empty.c -Wl,/noentry -Xlinker /def:%t.dir/forward.def -o %t.dir/forward.dll
 // RUN: mkdir -p %t.dir/bundle
-// RUN: obelisk %t.dir/design.sv %t.dir/forward.dll %t.dir/impl.dll -o %t.dir/bundle/simulator.exe
+// RUN: talos %t.dir/design.sv %t.dir/forward.dll %t.dir/impl.dll -o %t.dir/bundle/simulator.exe
 // RUN: %t.dir/bundle/simulator.exe | FileCheck %s
-// RUN: obelisk --execution-tier=bytecode %t.dir/design.sv %t.dir/forward.dll %t.dir/impl.dll -o %t.dir/bundle/simulator.exe
+// RUN: talos --execution-tier=bytecode %t.dir/design.sv %t.dir/forward.dll %t.dir/impl.dll -o %t.dir/bundle/simulator.exe
 // RUN: %t.dir/bundle/simulator.exe | FileCheck %s
 
 // CHECK: forwarded=42

@@ -1,11 +1,11 @@
 // RUN: %split-file %s %t
-// RUN: obelisk --clocked-kernels=immediate -O3 -emit-sim %t/materialize.sv -o %t/materialized.mlir
+// RUN: talos --clocked-kernels=immediate -O3 -emit-sim %t/materialize.sv -o %t/materialized.mlir
 // RUN: FileCheck %s --check-prefix=MATERIALIZED < %t/materialized.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-materialize.test.
 
-// MATERIALIZED: simulation.spawn @__obelisk_fused_0
-// MATERIALIZED-COUNT-1: simulation.func private @__obelisk_fused_0
+// MATERIALIZED: simulation.spawn @__talos_fused_0
+// MATERIALIZED-COUNT-1: simulation.func private @__talos_fused_0
 // MATERIALIZED-COUNT-1: simulation.suspend.edge posedge
 // MATERIALIZED-COUNT-2: simulation.nba.enqueue
 // MATERIALIZED-NOT: simulation.func private @unit_0

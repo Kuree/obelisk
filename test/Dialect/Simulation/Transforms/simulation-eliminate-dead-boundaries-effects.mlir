@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --allow-unregistered-dialect --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-boundaries))' | FileCheck %s
+// RUN: talos-opt %s --allow-unregistered-dialect --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-boundaries))' | FileCheck %s
 
 module {
   simulation.design @effects {

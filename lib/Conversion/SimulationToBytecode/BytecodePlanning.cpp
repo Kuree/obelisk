@@ -5,14 +5,14 @@
 #include "BytecodeSerialization.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
-#include "obelisk/Analysis/NativeAOTAnalysis.h"
-#include "obelisk/Analysis/SimulationEffectAnalysis.h"
-#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
-#include "obelisk/Analysis/StaticSpecializationAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/NativeAOTAnalysis.h"
+#include "talos/Analysis/SimulationEffectAnalysis.h"
+#include "talos/Analysis/SimulationScheduleAnalysis.h"
+#include "talos/Analysis/StaticSpecializationAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -22,7 +22,7 @@
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 LogicalResult Encoder::prepareStaticSpecializationSites() {
   FailureOr<analysis::StaticSpecializationAnalysis> specialization =
@@ -115,7 +115,7 @@ void pruneNativeFunctions(sim::SimDesignOp design,
     // stays only when a retained function depends on it.
     if (!native.getActorSlots().contains(function) &&
         !nativeBootstraps.contains(function) &&
-        !::obelisk::schedule::has<::obelisk::schedule::Field::EvalContinuation>(
+        !::talos::schedule::has<::talos::schedule::Field::EvalContinuation>(
             function))
       retain(function);
     bool needsFallback =
@@ -140,7 +140,7 @@ void pruneNativeFunctions(sim::SimDesignOp design,
     for (Operation *callee : dependencies[worklist.pop_back_val()])
       retain(callee);
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk bytecode retention: " << retained.size() << "/"
+    llvm::errs() << "talos bytecode retention: " << retained.size() << "/"
                  << functions.size() << " functions\n";
   llvm::erase_if(functions, [&](sim::SimFuncOp function) {
     return !retained.contains(function);
@@ -262,7 +262,7 @@ LogicalResult Encoder::planFunctions() {
         return failure();
       plan.frame = std::move(*frame);
       if (plan.frame->getFrameSize() >=
-          OBELISK_RT_DESIGN_FUNCTION_FRAME_SIZE_LIMIT)
+          TALOS_RT_DESIGN_FUNCTION_FRAME_SIZE_LIMIT)
         return plan.function.emitOpError(
             "process frame is too large for bytecode function flags");
       ArrayRef<ProcessFrameValue> captures =
@@ -296,4 +296,4 @@ LogicalResult Encoder::planScheduleRanks() {
   return success();
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-storage-writes -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-storage-writes -o /dev/null 2>&1 | FileCheck %s
 // LRM 4.4.2.4, 4.6, 10.4.2, 11.5.1: loops, path joins, storage aliases,
 // and a fresh NBA window are facts of control/data flow, not syntax rules.
 // The printed lattice facts are internal certificates, not LRM requirements.

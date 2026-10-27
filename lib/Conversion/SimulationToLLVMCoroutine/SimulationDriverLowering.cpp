@@ -1,16 +1,16 @@
 //===- SimulationDriverLowering.cpp - Native driver patterns ------------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHandle.h"
-#include "obelisk/Runtime/StrengthResolution.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHandle.h"
+#include "talos/Runtime/StrengthResolution.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -25,11 +25,11 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 uint64_t encodeNativeStaticHandle(uint32_t id, int32_t offset = 0) {
-  return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, id,
+  return talos_rt_stable_handle_encode(TALOS_RT_STABLE_HANDLE_STATIC, id,
                                          offset);
 }
 
@@ -502,18 +502,18 @@ public:
       // net leaves its driver unforced, but release needs the retained driver
       // contribution in canonical storage.
       if (cleanLayout && !native::has<native::GuardedBulkDrive>(op) &&
-          !::obelisk::schedule::has<
-              ::obelisk::schedule::Field::DeferNetResolution>(op) &&
+          !::talos::schedule::has<
+              ::talos::schedule::Field::DeferNetResolution>(op) &&
           !sim::has<sim::metadata::UserNetRawDrive>(op)) {
         auto id = native::get<native::DriverId>(op);
         auto found = id ? cleanIndex->driverByID.find(id.getUInt())
                         : cleanIndex->driverByID.end();
         std::optional<uint64_t> handle =
             resolveCFGConstantInteger(adaptor.getDriver().front());
-        obelisk_rt_stable_handle_v1 decoded{};
+        talos_rt_stable_handle_v1 decoded{};
         bool candidate = found != cleanIndex->driverByID.end() && handle &&
-                         obelisk_rt_stable_handle_decode(*handle, &decoded) &&
-                         decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+                         talos_rt_stable_handle_decode(*handle, &decoded) &&
+                         decoded.kind == TALOS_RT_STABLE_HANDLE_STATIC &&
                          decoded.id == found->second->handleID &&
                          decoded.offset == 0;
         if (candidate) {
@@ -551,7 +551,7 @@ public:
           Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
           Value address = LLVM::AddressOfOp::create(
               rewriter, op.getLoc(), pointer,
-              "__obelisk_state_specialization_fast_v1");
+              "__talos_state_specialization_fast_v1");
           Value flag = LLVM::LoadOp::create(rewriter, op.getLoc(),
                                             rewriter.getI32Type(), address, 4);
           Value allowed = arith::CmpIOp::create(
@@ -579,10 +579,10 @@ public:
     } else {
       std::optional<uint64_t> encodedHandle =
           resolveCFGConstantInteger(adaptor.getDriver().front());
-      obelisk_rt_stable_handle_v1 decodedHandle{};
+      talos_rt_stable_handle_v1 decodedHandle{};
       if (affectedDriver && encodedHandle &&
-          obelisk_rt_stable_handle_decode(*encodedHandle, &decodedHandle) &&
-          decodedHandle.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+          talos_rt_stable_handle_decode(*encodedHandle, &decodedHandle) &&
+          decodedHandle.kind == TALOS_RT_STABLE_HANDLE_STATIC &&
           decodedHandle.id == affectedDriver->handleID &&
           decodedHandle.offset >= 0)
         updateLow = static_cast<uint64_t>(decodedHandle.offset);
@@ -645,20 +645,20 @@ public:
     if (userRaw) {
       oldRawValue = loadStatePlane(
           rewriter, op.getLoc(), adaptor.getDriver().front(), driveType,
-          "__obelisk_state_value", false, layout.bitCount, storeLayout);
+          "__talos_state_value", false, layout.bitCount, storeLayout);
       oldRawUnknown = loadStatePlane(
           rewriter, op.getLoc(), adaptor.getDriver().front(), driveType,
-          "__obelisk_state_unknown", true, layout.bitCount, storeLayout);
+          "__talos_state_unknown", true, layout.bitCount, storeLayout);
     }
     Value driveValueChanged = storeStatePlane(
         rewriter, op.getLoc(), adaptor.getDriver().front(), driveValue,
-        "__obelisk_state_value", layout.bitCount, storeLayout);
+        "__talos_state_value", layout.bitCount, storeLayout);
     Value driveUnknownChanged =
         knownContribution
             ? boolean(false)
             : storeStatePlane(rewriter, op.getLoc(),
                               adaptor.getDriver().front(), driveUnknown,
-                              "__obelisk_state_unknown", layout.bitCount,
+                              "__talos_state_unknown", layout.bitCount,
                               storeLayout);
     Value rawChanged = arith::OrIOp::create(
         rewriter, op.getLoc(), driveValueChanged, driveUnknownChanged);
@@ -666,8 +666,8 @@ public:
     // A conditional gate stores its complementary low-polarity bank before
     // its high-polarity bank. The first store deliberately stops here so the
     // second drive resolves and publishes one atomic logical transition.
-    bool deferResolution = ::obelisk::schedule::has<
-        ::obelisk::schedule::Field::DeferNetResolution>(op);
+    bool deferResolution = ::talos::schedule::has<
+        ::talos::schedule::Field::DeferNetResolution>(op);
     if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>)
       deferResolution = op.getDeferResolution();
     if (deferResolution) {
@@ -681,13 +681,13 @@ public:
             return storage;
           };
           Value contextAddress = LLVM::AddressOfOp::create(
-              rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+              rewriter, op.getLoc(), pointer, "__talos_current_context");
           Value runtimeContext = LLVM::LoadOp::create(
               rewriter, op.getLoc(), pointer, contextAddress, 8);
           LLVM::CallOp::create(
               rewriter, op.getLoc(), TypeRange{},
               SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v1_scheduler_real_transition"),
+                                 "talos_rt_v1_scheduler_real_transition"),
               ValueRange{runtimeContext, adaptor.getDriver().front(),
                          llvmConstant(rewriter, op.getLoc(),
                                       rewriter.getI32Type(), *sourceWidth),
@@ -697,7 +697,7 @@ public:
               rewriter, op.getLoc(), adaptor.getDriver().front(), *sourceWidth,
               oldRawValue, oldRawUnknown, driveValue, driveUnknown,
               std::nullopt,
-              ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(
+              ::talos::schedule::get<schedule::metadata::evalSourceOwner>(
                   op));
         }
       }
@@ -720,21 +720,21 @@ public:
         Type i32 = rewriter.getI32Type();
         Type i64 = rewriter.getI64Type();
         Value contextAddress = LLVM::AddressOfOp::create(
-            rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+            rewriter, op.getLoc(), pointer, "__talos_current_context");
         Value runtimeContext = LLVM::LoadOp::create(rewriter, op.getLoc(),
                                                     pointer, contextAddress, 8);
         Value status =
             LLVM::CallOp::create(
                 rewriter, op.getLoc(), TypeRange{i32},
                 SymbolRefAttr::get(rewriter.getContext(),
-                                   "obelisk_rt_v1_scheduler_resolve_drivers"),
+                                   "talos_rt_v1_scheduler_resolve_drivers"),
                 ValueRange{runtimeContext,
                            llvmConstant(rewriter, op.getLoc(), i64, begin),
                            llvmConstant(rewriter, op.getLoc(), i64, end)})
                 .getResult();
         LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{},
                              SymbolRefAttr::get(rewriter.getContext(),
-                                                "obelisk_rt_v1_scheduler_fail"),
+                                                "talos_rt_v1_scheduler_fail"),
                              ValueRange{runtimeContext, status});
         if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
           rewriter.replaceOp(op, rawChanged);
@@ -755,21 +755,21 @@ public:
       Type i32 = rewriter.getI32Type();
       Type i64 = rewriter.getI64Type();
       Value contextAddress = LLVM::AddressOfOp::create(
-          rewriter, op.getLoc(), pointer, "__obelisk_current_context");
+          rewriter, op.getLoc(), pointer, "__talos_current_context");
       Value runtimeContext = LLVM::LoadOp::create(rewriter, op.getLoc(),
                                                   pointer, contextAddress, 8);
       Value status =
           LLVM::CallOp::create(
               rewriter, op.getLoc(), TypeRange{i32},
               SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v1_scheduler_resolve_drivers"),
+                                 "talos_rt_v1_scheduler_resolve_drivers"),
               ValueRange{runtimeContext,
                          llvmConstant(rewriter, op.getLoc(), i64, begin),
                          llvmConstant(rewriter, op.getLoc(), i64, end)})
               .getResult();
       LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{},
                            SymbolRefAttr::get(rewriter.getContext(),
-                                              "obelisk_rt_v1_scheduler_fail"),
+                                              "talos_rt_v1_scheduler_fail"),
                            ValueRange{runtimeContext, status});
       rewriter.eraseOp(op);
       return success();
@@ -879,12 +879,12 @@ public:
             rewriter.getI64IntegerAttr(
                 encodeNativeStaticHandle(net->handleID)));
         Value oldValue = loadStatePlane(rewriter, op.getLoc(), netHandle,
-                                        driveType, "__obelisk_state_value",
+                                        driveType, "__talos_state_value",
                                         false, layout.bitCount, &layout);
         Value oldUnknown =
             !known
                 ? loadStatePlane(rewriter, op.getLoc(), netHandle, driveType,
-                                 "__obelisk_state_unknown", true,
+                                 "__talos_state_unknown", true,
                                  layout.bitCount, &layout)
                 : integerConstant(APInt::getZero(driveType.getWidth()));
         Value publishValue = driveValue;
@@ -907,7 +907,7 @@ public:
       for (const BulkPublication &publication : bulkPublications) {
         Value valueChanged = storeStatePlane(
             rewriter, op.getLoc(), publication.handle, publication.value,
-            "__obelisk_state_value", layout.bitCount, &layout);
+            "__talos_state_value", layout.bitCount, &layout);
         // A two-state net's unknown plane is permanently zero. A certified
         // four-state net stays known for this activation; its fallback still
         // publishes X/Z transitions and invalidates the certificate.
@@ -915,7 +915,7 @@ public:
             !publication.known
                 ? storeStatePlane(rewriter, op.getLoc(), publication.handle,
                                   publication.unknown,
-                                  "__obelisk_state_unknown", layout.bitCount,
+                                  "__talos_state_unknown", layout.bitCount,
                                   &layout)
                 : boolean(false);
         changed = arith::OrIOp::create(
@@ -930,7 +930,7 @@ public:
             publication.net->fourState ? publication.unknown : Value{},
             resolveDirectStaticStateRange(publication.handle,
                                           publication.net->width, &layout),
-            ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op));
+            ::talos::schedule::get<schedule::metadata::evalSourceOwner>(op));
       if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveChangedOp>)
         rewriter.replaceOp(op, changed);
       else
@@ -1147,12 +1147,12 @@ public:
           planes.push_back(inRunOrder(
               contribution.member,
               loadStatePlane(rewriter, op.getLoc(), handle, type,
-                             "__obelisk_state_value", false, layout.bitCount,
+                             "__talos_state_value", false, layout.bitCount,
                              &layout)));
           planes.push_back(inRunOrder(
               contribution.member,
               loadStatePlane(rewriter, op.getLoc(), handle, type,
-                             "__obelisk_state_unknown", true, layout.bitCount,
+                             "__talos_state_unknown", true, layout.bitCount,
                              &layout)));
         }
         // Project the constant planes out of the tables, so the expansion
@@ -1241,7 +1241,7 @@ public:
               *lookup.netByID.lookup(member.net);
           Value netHandle = handleAt(memberNet.handleID, sliceLow(memberIndex));
           Value oldValue = loadStatePlane(rewriter, op.getLoc(), netHandle,
-                                          type, "__obelisk_state_value", false,
+                                          type, "__talos_state_value", false,
                                           layout.bitCount, &layout);
           // IEEE 1800-2023 6.3.1, 6.6.1: a certified known drive preserves
           // knownness on its exclusive bits. Other disjoint drivers do not
@@ -1258,7 +1258,7 @@ public:
           Value oldUnknown =
               !known
                   ? loadStatePlane(rewriter, op.getLoc(), netHandle, type,
-                                   "__obelisk_state_unknown", true,
+                                   "__talos_state_unknown", true,
                                    layout.bitCount, &layout)
                   : zero;
           Value publishValue =
@@ -1388,10 +1388,10 @@ public:
                 rewriter.getI64IntegerAttr(encodeNativeStaticHandle(
                     driver.handleID, static_cast<int32_t>(member.offset))));
             Value driverValue = loadStatePlane(rewriter, op.getLoc(), handle,
-                                               i1, "__obelisk_state_value",
+                                               i1, "__talos_state_value",
                                                false, layout.bitCount, &layout);
             Value driverUnknown = loadStatePlane(
-                rewriter, op.getLoc(), handle, i1, "__obelisk_state_unknown",
+                rewriter, op.getLoc(), handle, i1, "__talos_state_unknown",
                 true, layout.bitCount, &layout);
             unsigned strength0 = static_cast<unsigned>(driver.strength0);
             unsigned strength1 = static_cast<unsigned>(driver.strength1);
@@ -1414,7 +1414,7 @@ public:
                 LLVM::CallOp::create(
                     rewriter, op.getLoc(), TypeRange{strengthType},
                     SymbolRefAttr::get(rewriter.getContext(),
-                                       "obelisk_rt_v1_strength_resolve_kind"),
+                                       "talos_rt_v1_strength_resolve_kind"),
                     ValueRange{resolvedStrengths, driverStrengths,
                                resolutionValue})
                     .getResult();
@@ -1479,10 +1479,10 @@ public:
                     memberNet->handleID, static_cast<int32_t>(member.offset))));
             Value memberValue = loadStatePlane(
                 rewriter, op.getLoc(), memberHandle, i1,
-                "__obelisk_state_value", false, layout.bitCount, &layout);
+                "__talos_state_value", false, layout.bitCount, &layout);
             Value memberUnknown = loadStatePlane(
                 rewriter, op.getLoc(), memberHandle, i1,
-                "__obelisk_state_unknown", true, layout.bitCount, &layout);
+                "__talos_state_unknown", true, layout.bitCount, &layout);
             unsigned strength =
                 static_cast<unsigned>(*memberNet->chargeStrength);
             uint16_t zeroMask = strengthIndexBit(7 - strength);
@@ -1500,7 +1500,7 @@ public:
                 LLVM::CallOp::create(
                     rewriter, op.getLoc(), TypeRange{strengthType},
                     SymbolRefAttr::get(rewriter.getContext(),
-                                       "obelisk_rt_v1_strength_resolve_kind"),
+                                       "talos_rt_v1_strength_resolve_kind"),
                     ValueRange{chargeStrengths, storedStrengths,
                                resolutionValue})
                     .getResult();
@@ -1544,13 +1544,13 @@ public:
               rewriter.getI64IntegerAttr(encodeNativeStaticHandle(
                   memberNet->handleID, static_cast<int32_t>(member.offset))));
           Value oldResolvedValue = loadStatePlane(
-              rewriter, op.getLoc(), netHandle, i1, "__obelisk_state_value",
+              rewriter, op.getLoc(), netHandle, i1, "__talos_state_value",
               false, layout.bitCount, &layout);
           // The unknown plane of an integer net is permanently zero.
           Value oldResolvedUnknown =
               memberNet->fourState
                   ? loadStatePlane(rewriter, op.getLoc(), netHandle, i1,
-                                   "__obelisk_state_unknown", true,
+                                   "__talos_state_unknown", true,
                                    layout.bitCount, &layout)
                   : boolean(false);
           Value publishValue = resolvedValue;
@@ -1583,13 +1583,13 @@ public:
       changed = arith::OrIOp::create(
           rewriter, op.getLoc(), changed,
           storeStatePlane(rewriter, op.getLoc(), publication.handle,
-                          publication.value, "__obelisk_state_value",
+                          publication.value, "__talos_state_value",
                           layout.bitCount, &layout));
       if (publication.storeUnknown)
         changed = arith::OrIOp::create(
             rewriter, op.getLoc(), changed,
             storeStatePlane(rewriter, op.getLoc(), publication.handle,
-                            publication.unknown, "__obelisk_state_unknown",
+                            publication.unknown, "__talos_state_unknown",
                             layout.bitCount, &layout));
     }
     auto packBits = [&](ArrayRef<Publication> run, Value Publication::*member) {
@@ -1634,7 +1634,7 @@ public:
             publication.oldUnknown, publication.value,
             publication.fourState ? publication.unknown : Value{},
             publication.directRange,
-            ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op));
+            ::talos::schedule::get<schedule::metadata::evalSourceOwner>(op));
       } else {
         notifySignal(
             rewriter, op.getLoc(), run.front().handle, run.size(),
@@ -1642,7 +1642,7 @@ public:
             packBits(run, &Publication::oldUnknown),
             packBits(run, &Publication::value),
             packBits(run, &Publication::unknown), firstRange,
-            ::obelisk::schedule::get<schedule::metadata::evalSourceOwner>(op));
+            ::talos::schedule::get<schedule::metadata::evalSourceOwner>(op));
       }
       begin = end;
     }
@@ -1756,4 +1756,4 @@ void populateDriverToLLVMConversionPatterns(
       cleanLayout, cleanIndex, resolutionIndex);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

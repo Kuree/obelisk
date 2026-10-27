@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --schedule-promote-eval-storage | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-promote-eval-storage,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --schedule-promote-eval-storage | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-promote-eval-storage,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
 
 // IEEE 1800-2023 6.8/6.21: default four-state values and initialization on
 // each entry survive promotion. 7.3/7.3.1: union members share storage;

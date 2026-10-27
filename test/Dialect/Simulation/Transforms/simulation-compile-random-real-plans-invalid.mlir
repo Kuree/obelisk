@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --obelisk-sim-compile-random-plans --split-input-file --verify-diagnostics
+// RUN: talos-opt %s --talos-sim-compile-random-plans --split-input-file --verify-diagnostics
 // REQUIRES: compiled-sampler
 
 // Typed IEEE operations require the explicit program flag.

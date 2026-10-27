@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt --test-obelisk-native-backend='scheduler=eval timing=true' -o %t.mlir 2> %t.trace
+// RUN: talos -emit-slang %s | talos-opt --test-talos-native-backend='scheduler=eval timing=true' -o %t.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 // RUN: FileCheck %s < %t.mlir
 
@@ -8,14 +8,14 @@
 // `pulse` (NBA root 3) has two update sites and a `posedge` observer: its
 // 0->1->0 pulse must stay two ordered commits. The other four roots, including
 // the round trip that only a change waiter sees, form the private batch.
-// TRACE: obelisk NBA root keeps ordered commits: root=3 width=1 semantic-sites=2
-// TRACE: obelisk native NBA batch: candidates=4 roots=5 private-cone=4 unread=0 wide=0 slots=0
-// CHECK-LABEL: llvm.func @__obelisk_aot_static_nba_commit_v1(
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_commit_ordered(
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_batch_guard(
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_batch_finish(
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_batch_knownness(
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_commit_roots(
+// TRACE: talos NBA root keeps ordered commits: root=3 width=1 semantic-sites=2
+// TRACE: talos native NBA batch: candidates=4 roots=5 private-cone=4 unread=0 wide=0 slots=0
+// CHECK-LABEL: llvm.func @__talos_aot_static_nba_commit_v1(
+// CHECK: llvm.call @talos_rt_v1_static_nba_commit_ordered(
+// CHECK: llvm.call @talos_rt_v1_static_nba_batch_guard(
+// CHECK: llvm.call @talos_rt_v1_static_nba_batch_finish(
+// CHECK: llvm.call @talos_rt_v1_static_nba_batch_knownness(
+// CHECK: llvm.call @talos_rt_v1_static_nba_commit_roots(
 
 module native_nba_batch;
   bit clk = 0;

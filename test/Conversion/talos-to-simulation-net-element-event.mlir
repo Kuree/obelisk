@@ -1,0 +1,68 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' \
+// RUN:   '--encode-talos-sim-to-bytecode=vpi=off' -o /dev/null
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines -o /dev/null
+
+// IEEE 1800-2017 9.4.2: a value change on a net triggers an event control, and
+// an event expression may select an element of an aggregate as long as it
+// reduces to a singular value. A built-in net has no aggregate view operation,
+// so a constant bit select of one names the corresponding window of its flat
+// packed storage and stays a directly watchable handle. `w[1]` is the second
+// bit of a `[3:0]` net, so it is the one-bit window at bit 1.
+
+module attributes {
+  llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
+  llvm.target_triple = "x86_64-unknown-linux-gnu"
+} {
+  talos.sv.symbol.definition @s0.net_element_event attributes {definition_kind = 0 : i32, hierarchical_name = "net_element_event", name = "net_element_event", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.net_element_event attributes {hierarchical_name = "net_element_event", is_uninstantiated = false, name = "net_element_event", node_id = 3 : i64, referenced_path = "net_element_event", referenced_symbol = @s0.net_element_event} {
+      talos.sv.symbol.instance_body @s4.net_element_event attributes {hierarchical_name = "net_element_event", name = "net_element_event", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        talos.sv.symbol.net @s5.w attributes {hierarchical_name = "net_element_event.w", is_implicit = false, name = "w", net_kind = 1 : i32, node_id = 5 : i64, semantic_type = !talos.ranged_packed_array<3 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+        }
+        talos.sv.symbol.variable @s6.out attributes {hierarchical_name = "net_element_event.out", lifetime = 1 : i32, name = "out", node_id = 6 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, reg>} {
+        }
+        talos.sv.symbol.procedural_block @s7 attributes {hierarchical_name = "net_element_event", node_id = 7 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.timed attributes {node_id = 8 : i64} {
+            talos.sv.timing.signal_event attributes {edge_kind = 0 : i32, has_iff = false, node_id = 9 : i64} {
+              talos.sv.expression.element_select attributes {is_signed = false, node_id = 10 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 11 : i64, referenced_path = "net_element_event.w", referenced_symbol = @s1.$root::@s3.net_element_event::@s4.net_element_event::@s5.w, semantic_type = !talos.ranged_packed_array<3 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                }
+                talos.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 12 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+            }
+            talos.sv.statement.expression_statement attributes {node_id = 13 : i64} {
+              talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, is_signed = false, node_id = 14 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, reg>} {
+                talos.sv.expression.named_value attributes {is_signed = false, node_id = 15 : i64, referenced_path = "net_element_event.out", referenced_symbol = @s1.$root::@s3.net_element_event::@s4.net_element_event::@s6.out, semantic_type = !talos.integral<1, false, true, 0 : 0, reg>} {
+                }
+                talos.sv.expression.element_select attributes {is_signed = false, node_id = 16 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                  talos.sv.expression.named_value attributes {is_signed = false, node_id = 17 : i64, referenced_path = "net_element_event.w", referenced_symbol = @s1.$root::@s3.net_element_event::@s4.net_element_event::@s5.w, semantic_type = !talos.ranged_packed_array<3 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                  }
+                  talos.sv.expression.integer_literal attributes {constant_value = "1", is_declared_unsized = true, is_signed = true, node_id = 18 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// The scheduler watches exactly that window, so a change elsewhere in the net
+// is not an event on `w[1]`.
+// CHECK: effect = watch, resource = net, target = descriptor, descriptor = 0
+// CHECK-SAME: low = 1, width = 1
+// CHECK-SAME: trigger = change
+
+// CHECK: simulation.func private @unit_0(
+// CHECK-SAME: %[[NET:[^:]*]]: !simulation.net<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>
+// CHECK: %[[BIT:.*]] = simulation.net.extract %[[NET]] from 1
+// CHECK-SAME: -> !simulation.net<!simulation.logic<1>>
+// CHECK: simulation.suspend.change %[[BIT]]

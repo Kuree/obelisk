@@ -1,4 +1,4 @@
-// RUN: cd %S && obelisk -emit-slang %s -o %t.slang.mlir 2>%t.err
+// RUN: cd %S && talos -emit-slang %s -o %t.slang.mlir 2>%t.err
 // RUN: FileCheck %s --check-prefix=SLANG < %t.slang.mlir
 // RUN: FileCheck %s --check-prefix=NO-SDF < %t.slang.mlir
 // RUN: FileCheck %s --check-prefix=WARN < %t.err
@@ -71,5 +71,5 @@ endmodule
 // SLANG-DAG: timing_delay_fs = array<i64: 13000, 14000, 15000, 16000, 17000, 18000, 19000, 20000, 21000, 22000, 23000, 24000>
 // NO-SDF: module{{.*}} {
 // NO-SDF-NOT: slang.symbol.sdf
-// NO-SDF-NOT: obelisk.sdf.table
+// NO-SDF-NOT: talos.sdf.table
 // WARN: Inputs/sdf-value-counts.sdf:36:3: warning: SDF CELL did not match an elaborated instance

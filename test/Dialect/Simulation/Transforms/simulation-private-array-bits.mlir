@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=off},simulation.func(canonicalize,mem2reg,canonicalize)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-simplify-bodies{vpi=off},simulation.func(canonicalize,mem2reg,canonicalize)))' | FileCheck %s
 // Mixed array/packed views must all become selections of the same SSA value.
 // Array insert and packed insert retain their invalid/X/Z index semantics.
 !array = !simulation.unpacked_array<0 : 1 x !simulation.logic<8>>

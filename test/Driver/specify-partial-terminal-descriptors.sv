@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s -o - | FileCheck %s
+// RUN: talos -emit-slang %s -o - | FileCheck %s
 
 module partial_terminal_descriptors(input wire [0:3] source,
                                     output wire [3:0] destination);

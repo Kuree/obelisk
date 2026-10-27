@@ -1,54 +1,54 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=GUARD < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=BARRIER < %t.llvm.mlir
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph{vpi=read},talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=read},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
 // RUN: FileCheck %s --check-prefix=READ < %t.read.llvm.mlir
 
 // Empty dynamic slots must bypass stale address/value/unknown loads in all
 // three commit variants. The runtime checks below cover independent slots,
 // aliasing lanes, and negative/out-of-range/unknown indices.
-// GUARD-LABEL: llvm.func {{(internal )?}}@__obelisk_aot_static_nba_commit_v1(
-// GUARD: %[[ADDR0:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_
+// GUARD-LABEL: llvm.func {{(internal )?}}@__talos_aot_static_nba_commit_v1(
+// GUARD: %[[ADDR0:.*]] = llvm.mlir.addressof @__talos_eval_nba_valid_
 // GUARD-NEXT: %[[VALID0:.*]] = llvm.load %[[ADDR0]] {{.*}} : !llvm.ptr -> i32
 // GUARD-NEXT: %[[ZERO0:.*]] = llvm.mlir.constant(0 : i32)
 // GUARD-NEXT: %[[ACTIVE0:.*]] = llvm.icmp "ne" %[[VALID0]], %[[ZERO0]] : i32
 // GUARD-NEXT: llvm.cond_br %[[ACTIVE0]], ^[[WORK0:bb[0-9]+]], ^[[NEXT0:bb[0-9]+]]
 // GUARD: ^[[WORK0]]:
-// GUARD: llvm.mlir.addressof @__obelisk_eval_nba_offset_
+// GUARD: llvm.mlir.addressof @__talos_eval_nba_offset_
 // GUARD: ^[[NEXT0]]:
-// GUARD-NEXT: {{.*}}llvm.mlir.addressof @__obelisk_eval_nba_valid_
-// GUARD-LABEL: llvm.func {{(internal )?}}@__obelisk_aot_static_nba_commit_two_state_v1(
-// GUARD: %[[ADDR1:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_
+// GUARD-NEXT: {{.*}}llvm.mlir.addressof @__talos_eval_nba_valid_
+// GUARD-LABEL: llvm.func {{(internal )?}}@__talos_aot_static_nba_commit_two_state_v1(
+// GUARD: %[[ADDR1:.*]] = llvm.mlir.addressof @__talos_eval_nba_valid_
 // GUARD-NEXT: %[[VALID1:.*]] = llvm.load %[[ADDR1]] {{.*}} : !llvm.ptr -> i32
 // GUARD-NEXT: %[[ZERO1:.*]] = llvm.mlir.constant(0 : i32)
 // GUARD-NEXT: %[[ACTIVE1:.*]] = llvm.icmp "ne" %[[VALID1]], %[[ZERO1]] : i32
 // GUARD-NEXT: llvm.cond_br %[[ACTIVE1]], ^[[WORK1:bb[0-9]+]], ^[[NEXT1:bb[0-9]+]]
 // GUARD: ^[[WORK1]]:
-// GUARD: llvm.mlir.addressof @__obelisk_eval_nba_offset_
+// GUARD: llvm.mlir.addressof @__talos_eval_nba_offset_
 // GUARD: ^[[NEXT1]]:
-// GUARD-NEXT: {{.*}}llvm.mlir.addressof @__obelisk_eval_nba_valid_
-// GUARD-LABEL: llvm.func {{(internal )?}}@__obelisk_aot_static_nba_commit_two_state_fast_v1(
-// GUARD: %[[ADDR2:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_
+// GUARD-NEXT: {{.*}}llvm.mlir.addressof @__talos_eval_nba_valid_
+// GUARD-LABEL: llvm.func {{(internal )?}}@__talos_aot_static_nba_commit_two_state_fast_v1(
+// GUARD: %[[ADDR2:.*]] = llvm.mlir.addressof @__talos_eval_nba_valid_
 // GUARD-NEXT: %[[VALID2:.*]] = llvm.load %[[ADDR2]] {{.*}} : !llvm.ptr -> i32
 // GUARD-NEXT: %[[ZERO2:.*]] = llvm.mlir.constant(0 : i32)
 // GUARD-NEXT: %[[ACTIVE2:.*]] = llvm.icmp "ne" %[[VALID2]], %[[ZERO2]] : i32
 // GUARD-NEXT: llvm.cond_br %[[ACTIVE2]], ^[[WORK2:bb[0-9]+]], ^[[NEXT2:bb[0-9]+]]
 // GUARD: ^[[WORK2]]:
-// GUARD: llvm.mlir.addressof @__obelisk_eval_nba_offset_
+// GUARD: llvm.mlir.addressof @__talos_eval_nba_offset_
 // GUARD: ^[[NEXT2]]:
-// GUARD-NEXT: {{.*}}llvm.mlir.addressof @__obelisk_eval_nba_valid_
+// GUARD-NEXT: {{.*}}llvm.mlir.addressof @__talos_eval_nba_valid_
 // Read-only reflection admits cbValueChange, which runs after every value
 // change (IEEE 1800-2017 38.36.1), so an intermediate NBA value is observable
 // and neither lane may take a one-entry latch. The generated queue keeps both
 // writes; its count joins the dispatcher's empty-barrier test.
-// READ-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
-// READ: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
-// READ-NOT: llvm.mlir.global internal @__obelisk_eval_nba_valid_
-// READ-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// READ: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// READ-NOT: llvm.mlir.global internal @__talos_eval_nba_valid_
+// READ: llvm.mlir.global internal @__talos_eval_ordered_nba_queue_v1
+// READ-NOT: llvm.mlir.global internal @__talos_eval_nba_valid_
+// READ-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// READ: llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // READ: %[[D0:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
-// READ: llvm.mlir.addressof @__obelisk_eval_ordered_nba_queue_v1
+// READ: llvm.mlir.addressof @__talos_eval_ordered_nba_queue_v1
 // READ: %[[COUNT:.*]] = llvm.load {{.*}} : !llvm.ptr -> i32
 // READ: %[[WIDE:.*]] = llvm.zext %[[COUNT]] : i32 to i64
 // READ: %[[PENDING:.*]] = llvm.or %[[D0]], %[[WIDE]] : i64
@@ -58,21 +58,21 @@
 // Without VPI, nothing watches the root: two independent lanes keep one
 // latch each and must preserve both writes, including when their indices
 // alias. Negative, out-of-range and unknown indices must write none.
-// PLAN-COUNT-2: llvm.mlir.global internal @__obelisk_eval_nba_valid_
-// PLAN-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// PLAN-COUNT-2: llvm.mlir.global internal @__talos_eval_nba_valid_
+// PLAN-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// PLAN: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot
 
 // The dispatcher must include BOTH dynamic slots in its empty-barrier test.
 // Neither slot sets fixed dirty bits. Check the shared region path; the
 // executable assertions below catch lost dynamic-only NBA publications.
-// BARRIER-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// BARRIER: llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// BARRIER-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// BARRIER: llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // BARRIER: %[[D0:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
-// BARRIER-NEXT: %[[A0:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_0
+// BARRIER-NEXT: %[[A0:.*]] = llvm.mlir.addressof @__talos_eval_nba_valid_0
 // BARRIER-NEXT: %[[V0:.*]] = llvm.load %[[A0]] {{.*}} : !llvm.ptr -> i32
 // BARRIER-NEXT: %[[Z0:.*]] = llvm.zext %[[V0]] : i32 to i64
 // BARRIER-NEXT: %[[P0:.*]] = llvm.or %[[D0]], %[[Z0]] : i64
-// BARRIER-NEXT: %[[B0:.*]] = llvm.mlir.addressof @__obelisk_eval_nba_valid_1
+// BARRIER-NEXT: %[[B0:.*]] = llvm.mlir.addressof @__talos_eval_nba_valid_1
 // BARRIER-NEXT: %[[W0:.*]] = llvm.load %[[B0]] {{.*}} : !llvm.ptr -> i32
 // BARRIER-NEXT: %[[X0:.*]] = llvm.zext %[[W0]] : i32 to i64
 // BARRIER-NEXT: %[[Q0:.*]] = llvm.or %[[P0]], %[[X0]] : i64
@@ -82,7 +82,7 @@
 // BARRIER-NEXT: llvm.cond_br %[[EMPTY0]], ^[[DONE0:bb[0-9]+]](%[[OK0]] : i32), ^[[COMMIT0:bb[0-9]+]]
 // BARRIER-NEXT: ^[[COMMIT0]]:
 // BARRIER: ^[[DONE0]](%[[STATUS0:.*]]: i32):
-// BARRIER-NEXT: %[[EXIT0:.*]] = llvm.call @__obelisk_eval_route_promotion_boundary_v1(%[[STATUS0]]) : (i32) -> i32
+// BARRIER-NEXT: %[[EXIT0:.*]] = llvm.call @__talos_eval_route_promotion_boundary_v1(%[[STATUS0]]) : (i32) -> i32
 // BARRIER-NEXT: llvm.return %[[EXIT0]] : i32
 
 !words = !simulation.unpacked_array<0 : 31 x !simulation.logic<32>>

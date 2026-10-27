@@ -1,17 +1,17 @@
-#include "obelisk/Analysis/GraphAlgorithms.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
+#include "talos/Analysis/GraphAlgorithms.h"
+#include "talos/Dialect/Native/NativeDialect.h"
 //===- NativeAOTAnalysis.cpp - Native scheduler eligibility --------------===//
 
-#include "obelisk/Analysis/NativeAOTAnalysis.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Analysis/NativeAOTAnalysis.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
-#include "obelisk/Analysis/DPIEffectAnalysis.h"
-#include "obelisk/Analysis/SimulationScheduleAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/DPIEffectAnalysis.h"
+#include "talos/Analysis/SimulationScheduleAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -26,7 +26,7 @@
 
 using namespace mlir;
 
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
 bool isManagedType(Type type) {
@@ -97,11 +97,11 @@ bool isPersistentMonitorActor(sim::SimFuncOp function) {
 /// control.
 bool isCovergroupClockingSamplerActorImpl(sim::SimFuncOp function) {
   if (!function ||
-      !::obelisk::schedule::has<
-          ::obelisk::schedule::Field::CovergroupClockingSampler>(function) ||
-      !::obelisk::schedule::has<::obelisk::schedule::Field::DetachedControls>(
+      !::talos::schedule::has<
+          ::talos::schedule::Field::CovergroupClockingSampler>(function) ||
+      !::talos::schedule::has<::talos::schedule::Field::DetachedControls>(
           function) ||
-      !::obelisk::schedule::has<::obelisk::schedule::Field::PrimeOnSpawn>(
+      !::talos::schedule::has<::talos::schedule::Field::PrimeOnSpawn>(
           function) ||
       !function->hasAttr("internal") ||
       SymbolTable::getSymbolVisibility(function) !=
@@ -400,51 +400,51 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       return SymbolTable::getSymbolVisibility(function) ==
                  SymbolTable::Visibility::Private &&
              function->hasAttr("internal") &&
-             ::obelisk::schedule::has<
-                 ::obelisk::schedule::Field::ConcurrentEosCoordinator>(
+             ::talos::schedule::has<
+                 ::talos::schedule::Field::ConcurrentEosCoordinator>(
                  function) &&
-             ::obelisk::schedule::has<
-                 ::obelisk::schedule::Field::ConcurrentEosCounted>(function) &&
-             ::obelisk::schedule::has<
-                 ::obelisk::schedule::Field::DetachedControls>(function) &&
+             ::talos::schedule::has<
+                 ::talos::schedule::Field::ConcurrentEosCounted>(function) &&
+             ::talos::schedule::has<
+                 ::talos::schedule::Field::DetachedControls>(function) &&
              function.getEntryKind() == sim::EntryKind::Final &&
              function.getHomeRegion() == sim::EventRegion::Active &&
              function.getDomain() == sim::ExecutionDomain::Design;
     if (!function->hasAttr("internal"))
       return false;
-    return (::obelisk::schedule::has<
-                ::obelisk::schedule::Field::ConcurrentReport>(function) &&
-            ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::DetachedControls>(function) &&
+    return (::talos::schedule::has<
+                ::talos::schedule::Field::ConcurrentReport>(function) &&
+            ::talos::schedule::has<
+                ::talos::schedule::Field::DetachedControls>(function) &&
             function.getEntryKind() == sim::EntryKind::Fork &&
             function.getHomeRegion() == sim::EventRegion::Reactive) ||
-           (::obelisk::schedule::has<
-                ::obelisk::schedule::Field::ConcurrentCancel>(function) &&
-            ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::DetachedControls>(function) &&
-            ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::PrioritySignalResume>(function) &&
+           (::talos::schedule::has<
+                ::talos::schedule::Field::ConcurrentCancel>(function) &&
+            ::talos::schedule::has<
+                ::talos::schedule::Field::DetachedControls>(function) &&
+            ::talos::schedule::has<
+                ::talos::schedule::Field::PrioritySignalResume>(function) &&
             function.getEntryKind() == sim::EntryKind::Fork &&
             function.getHomeRegion() == sim::EventRegion::Reactive) ||
-           (::obelisk::schedule::has<
-                ::obelisk::schedule::Field::ConcurrentAbort>(function) &&
-            ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::DetachedControls>(function) &&
-            ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::PrioritySignalResume>(function) &&
+           (::talos::schedule::has<
+                ::talos::schedule::Field::ConcurrentAbort>(function) &&
+            ::talos::schedule::has<
+                ::talos::schedule::Field::DetachedControls>(function) &&
+            ::talos::schedule::has<
+                ::talos::schedule::Field::PrioritySignalResume>(function) &&
             function.getEntryKind() == sim::EntryKind::Fork &&
             function.getHomeRegion() == sim::EventRegion::Reactive) ||
-           (::obelisk::schedule::has<
-                ::obelisk::schedule::Field::ConcurrentCancelObserver>(
+           (::talos::schedule::has<
+                ::talos::schedule::Field::ConcurrentCancelObserver>(
                 function) &&
-            ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::DetachedControls>(function) &&
+            ::talos::schedule::has<
+                ::talos::schedule::Field::DetachedControls>(function) &&
             function.getEntryKind() == sim::EntryKind::Observer) ||
-           (::obelisk::schedule::has<
-                ::obelisk::schedule::Field::ConcurrentAbortObserver>(
+           (::talos::schedule::has<
+                ::talos::schedule::Field::ConcurrentAbortObserver>(
                 function) &&
-            ::obelisk::schedule::has<
-                ::obelisk::schedule::Field::DetachedControls>(function) &&
+            ::talos::schedule::has<
+                ::talos::schedule::Field::DetachedControls>(function) &&
             function.getEntryKind() == sim::EntryKind::Observer);
   };
   auto rejectPlan = [&](StringRef reason) {
@@ -592,7 +592,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     Block *block =
         function ? graphBlocks.lookup(function, fragment.getBlock()) : nullptr;
     return block && block->mightHaveTerminator() &&
-           ::obelisk::schedule::has<schedule::metadata::boundedLoopLatch>(
+           ::talos::schedule::has<schedule::metadata::boundedLoopLatch>(
                block->getTerminator());
   };
   DenseMap<Operation *, bool> coldActors;
@@ -1564,7 +1564,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
              std::make_pair(byFunction.lookup(lhs).first, lhs);
     });
     for (StringRef name : ArrayRef<StringRef>(ordered).take_front(20))
-      llvm::errs() << "obelisk native withheld block: cost="
+      llvm::errs() << "talos native withheld block: cost="
                    << byFunction.lookup(name).first
                    << " fragments=" << byFunction.lookup(name).second
                    << " at=" << name << '\n';
@@ -1607,7 +1607,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
              std::make_pair(byActor.lookup(lhs).first, lhs);
     });
     for (StringRef name : ArrayRef<StringRef>(ordered).take_front(40))
-      llvm::errs() << "obelisk native withheld actor: cost="
+      llvm::errs() << "talos native withheld actor: cost="
                    << byActor.lookup(name).first << " at=" << name
                    << " reason=" << byActor.lookup(name).second << '\n';
   }
@@ -1642,4 +1642,4 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   return result;
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

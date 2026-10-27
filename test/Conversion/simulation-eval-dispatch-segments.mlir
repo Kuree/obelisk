@@ -1,13 +1,13 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-replicate,simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-replicate,simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
-// test-obelisk-replicate expands counter# into 513 clocked counters, each a
+// test-talos-replicate expands counter# into 513 clocked counters, each a
 // direct eval owner outside any ranked group. Beyond one 512-owner segment,
 // the coordinator selects a segment function by `bit >> 9`; the segment runs
 // owners while the globally first ready leaf remains local. Empty leaves and
 // cross-segment publications return to the coordinator. The four-state
 // fallback flag is passed by address; errors and termination still escape.
 
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1(
 // CHECK: %[[FALLBACK:.*]] = llvm.alloca %{{.*}} x i1
 // CHECK: ^[[DISPATCH:bb[0-9]+]]:
 // CHECK: llvm.switch %[[BIT:.*]] : i64, ^[[SEGMENTS:bb[0-9]+]] [
@@ -20,14 +20,14 @@
 // CHECK-NEXT: 1: ^[[SECOND:bb[0-9]+]]
 // CHECK-NEXT: ]
 // CHECK: ^[[FIRST]]:
-// CHECK-NEXT: %[[STATUS:.*]] = llvm.call @__obelisk_eval_dispatch_v1.segment_0(%arg1, %[[BIT]], %[[FALLBACK]])
+// CHECK-NEXT: %[[STATUS:.*]] = llvm.call @__talos_eval_dispatch_v1.segment_0(%arg1, %[[BIT]], %[[FALLBACK]])
 // CHECK-NEXT: %[[OK:.*]] = llvm.mlir.constant(0 : i32)
 // CHECK-NEXT: %[[RESUME:.*]] = llvm.icmp "eq" %[[STATUS]], %[[OK]]
 // CHECK-NEXT: llvm.cond_br %[[RESUME]], ^[[DISPATCH]], ^[[FAILED:bb[0-9]+]](%[[STATUS]] : i32)
 // CHECK: ^[[SECOND]]:
-// CHECK-NEXT: llvm.call @__obelisk_eval_dispatch_v1.segment_1(%arg1, %[[BIT]], %[[FALLBACK]])
+// CHECK-NEXT: llvm.call @__talos_eval_dispatch_v1.segment_1(%arg1, %[[BIT]], %[[FALLBACK]])
 
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1.segment_0(%arg0: !llvm.ptr, %arg1: i64, %arg2: !llvm.ptr) -> i32
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1.segment_0(%arg0: !llvm.ptr, %arg1: i64, %arg2: !llvm.ptr) -> i32
 // CHECK: llvm.br ^[[LOCAL:bb[0-9]+]](%arg1 : i64)
 // CHECK-NEXT: ^[[LOCAL]](%[[SELECTED:.*]]: i64):
 // CHECK-NEXT: llvm.switch %[[SELECTED]] : i64, ^[[NONE:bb[0-9]+]] [
@@ -35,14 +35,14 @@
 // CHECK: 511: ^
 // CHECK-NEXT: ]
 
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1.segment_1(%arg0: !llvm.ptr, %arg1: i64, %arg2: !llvm.ptr) -> i32
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1.segment_1(%arg0: !llvm.ptr, %arg1: i64, %arg2: !llvm.ptr) -> i32
 // CHECK-NEXT: llvm.br ^[[LOCAL:bb[0-9]+]](%arg1 : i64)
 // CHECK-NEXT: ^[[LOCAL]](%[[SELECTED:.*]]: i64):
 // CHECK-NEXT: llvm.switch %[[SELECTED]] : i64, ^[[NONE:bb[0-9]+]] [
 // CHECK-NEXT: 512: ^[[OWNER:bb[0-9]+]]
 // CHECK-NEXT: ]
 // CHECK-NEXT: ^[[CONTINUE:bb[0-9]+]]:
-// CHECK: %[[INGRESS:.*]] = llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// CHECK: %[[INGRESS:.*]] = llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // CHECK: %[[CACHE:.*]] = llvm.getelementptr %[[INGRESS]][72]
 // CHECK: %[[WORD:.*]] = llvm.load %[[CACHE]]
 // CHECK: %[[START:.*]] = llvm.mlir.constant(8 : i64)
@@ -56,10 +56,10 @@
 // CHECK-NEXT: %[[UNAVAILABLE:.*]] = llvm.mlir.constant(13 : i32)
 // CHECK-NEXT: llvm.return %[[UNAVAILABLE]]
 // CHECK: llvm.store %{{.*}}, %arg2 {{.*}} : i1, !llvm.ptr
-// CHECK-NEXT: llvm.call @__obelisk_direct_fragment_{{.*}}.__obelisk_execute(%arg0)
+// CHECK-NEXT: llvm.call @__talos_direct_fragment_{{.*}}.__talos_execute(%arg0)
 // The proven two-state call's trivial trusted wrapper is inlined, so the
 // segment calls the owner's path dispatcher directly.
-// CHECK: llvm.call @__obelisk_eval_path_dispatch_v1_{{[0-9]+}}(%arg0) {schedule.eval.direct_call}
+// CHECK: llvm.call @__talos_eval_path_dispatch_v1_{{[0-9]+}}(%arg0) {schedule.eval.direct_call}
 // CHECK: llvm.cond_br %{{.*}}, ^{{bb[0-9]+}}, ^[[FAIL]](%{{.*}} : i32)
 // CHECK: llvm.cond_br %{{.*}}, ^[[NONE]], ^[[CONTINUE]]
 // CHECK: ^[[LOAD]]:

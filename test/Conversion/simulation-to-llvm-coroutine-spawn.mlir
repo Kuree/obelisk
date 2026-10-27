@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=STATIC
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=STATIC
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -41,20 +41,20 @@ module attributes {
   }
 }
 
-// CHECK-DAG: llvm.mlir.global internal thread_local @__obelisk_current_context
-// CHECK-DAG: llvm.mlir.global internal @__obelisk_static_specialization_fast_v1
-// CHECK-LABEL: llvm.func @child.__obelisk_spawn
-// CHECK: llvm.mlir.addressof @child.__obelisk_spawn_plan
-// CHECK: llvm.call @obelisk_rt_v1_process_spawn
+// CHECK-DAG: llvm.mlir.global internal thread_local @__talos_current_context
+// CHECK-DAG: llvm.mlir.global internal @__talos_static_specialization_fast_v1
+// CHECK-LABEL: llvm.func @child.__talos_spawn
+// CHECK: llvm.mlir.addressof @child.__talos_spawn_plan
+// CHECK: llvm.call @talos_rt_v1_process_spawn
 // CHECK-LABEL: llvm.func @parent
-// CHECK: llvm.call @obelisk_rt_v1_native_state_alloc
-// CHECK: llvm.call @obelisk_rt_v1_native_state_retain
-// CHECK: llvm.call @child.__obelisk_spawn
+// CHECK: llvm.call @talos_rt_v1_native_state_alloc
+// CHECK: llvm.call @talos_rt_v1_native_state_retain
+// CHECK: llvm.call @child.__talos_spawn
 
 // Design-lifetime captures require no automatic-state retain. The parent
 // above still retains its allocated local before passing it to the child.
 // STATIC-LABEL: llvm.func @static_parent(
-// STATIC-NOT: llvm.call @obelisk_rt_v1_native_state_retain
-// STATIC: llvm.call @child.__obelisk_spawn
-// STATIC-NOT: llvm.call @obelisk_rt_v1_native_state_retain
+// STATIC-NOT: llvm.call @talos_rt_v1_native_state_retain
+// STATIC: llvm.call @child.__talos_spawn
+// STATIC-NOT: llvm.call @talos_rt_v1_native_state_retain
 // STATIC: llvm.return

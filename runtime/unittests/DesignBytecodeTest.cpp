@@ -6,9 +6,9 @@
 #include "../lib/ProcessShared.h"
 #include "../lib/RuntimeInternal.h"
 #include "../lib/VPIHandleToken.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Reflection/VPIObjectModel.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
@@ -36,7 +36,7 @@
 namespace {
 
 constexpr uint64_t kSemanticDirectorySize =
-    obelisk::reflection::SemanticDirectoryLayout.size;
+    talos::reflection::SemanticDirectoryLayout.size;
 
 void put16(std::vector<uint8_t> &bytes, size_t offset, uint16_t value) {
   for (unsigned index = 0; index != 2; ++index)
@@ -105,7 +105,7 @@ uint64_t appendHash(uint64_t hash, const void *data, size_t size) {
   return hash;
 }
 
-uint64_t frameChecksum(const obelisk_rt_frame_layout_v1 &layout) {
+uint64_t frameChecksum(const talos_rt_frame_layout_v1 &layout) {
   uint64_t hash = UINT64_C(14695981039346656037);
   hash = appendHash(hash, &layout.version, sizeof(layout.version));
   hash = appendHash(hash, &layout.flags, sizeof(layout.flags));
@@ -129,7 +129,7 @@ void instruction(std::vector<uint8_t> &bytes, size_t code, size_t index,
                  uint32_t source0 = 0, uint32_t source1 = 0,
                  uint32_t source2 = 0, uint32_t auxiliary = 0,
                  uint64_t immediate = 0) {
-  size_t offset = code + index * OBELISK_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE;
+  size_t offset = code + index * TALOS_RT_DESIGN_BYTECODE_INSTRUCTION_SIZE;
   put16(bytes, offset, opcode);
   put16(bytes, offset + 2, flags);
   put32(bytes, offset + 4, destination);
@@ -141,16 +141,16 @@ void instruction(std::vector<uint8_t> &bytes, size_t code, size_t index,
 }
 
 std::vector<uint8_t> makeBytecode() {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 40;
   constexpr size_t constantOffset = codeOffset + 3 * 32;
   constexpr size_t continuationOffset = constantOffset + 32;
   std::vector<uint8_t> bytes(continuationOffset + 24, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 8, TALOS_RT_VERSION);
   put32(bytes, 12, 0);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 1);
@@ -182,14 +182,14 @@ std::vector<uint8_t> makeBytecode() {
   put64(bytes, functionOffset + 80, 1);
   put64(bytes, functionOffset + 88, 1);
 
-  bytes[layoutOffset] = OBELISK_RT_DBREG_LOGIC;
+  bytes[layoutOffset] = TALOS_RT_DBREG_LOGIC;
   put32(bytes, layoutOffset + 4, 65);
   put64(bytes, layoutOffset + 8, 0);
   put64(bytes, layoutOffset + 16, 32);
 
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_CONSTANT);
-  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_STORE_FRAME, 0, 0, 0);
-  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_CONSTANT);
+  instruction(bytes, codeOffset, 1, TALOS_RT_DB_STORE_FRAME, 0, 0, 0);
+  instruction(bytes, codeOffset, 2, TALOS_RT_DB_TERMINATE);
   put64(bytes, constantOffset, UINT64_C(0xfedcba9876543210));
   put64(bytes, constantOffset + 8, 1);
   put64(bytes, constantOffset + 16, UINT64_C(0x00000000000000f0));
@@ -202,7 +202,7 @@ std::vector<uint8_t> makeBytecode() {
 }
 
 std::vector<uint8_t> makeDynamicScanIntrinsicBytecode(uint32_t intrinsicID) {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 3 * 40;
   constexpr size_t operandOffset = codeOffset + 2 * 32;
@@ -211,8 +211,8 @@ std::vector<uint8_t> makeDynamicScanIntrinsicBytecode(uint32_t intrinsicID) {
   constexpr size_t siteOffset = intrinsicOffset + 16;
   std::vector<uint8_t> bytes(siteOffset + 16, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 8, TALOS_RT_VERSION);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 1);
@@ -249,18 +249,18 @@ std::vector<uint8_t> makeDynamicScanIntrinsicBytecode(uint32_t intrinsicID) {
     put64(bytes, record + 8, offset);
     put64(bytes, record + 16, 8);
   };
-  layout(0, OBELISK_RT_DBREG_STRING, 64, 0);
-  layout(1, OBELISK_RT_DBREG_BITS, 32, 8);
-  layout(2, OBELISK_RT_DBREG_BITS, 64, 16);
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_INTRINSIC);
-  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_RETURN);
+  layout(0, TALOS_RT_DBREG_STRING, 64, 0);
+  layout(1, TALOS_RT_DBREG_BITS, 32, 8);
+  layout(2, TALOS_RT_DBREG_BITS, 64, 16);
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_INTRINSIC);
+  instruction(bytes, codeOffset, 1, TALOS_RT_DB_RETURN);
 
   std::vector<uint32_t> inputs;
   std::vector<uint32_t> outputs;
-  if (intrinsicID == OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC) {
+  if (intrinsicID == TALOS_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC) {
     inputs = {0, 1, 0, 1, 1, 2, 2, 2, 2};
     outputs = {0, 1, 1, 1, 1};
-  } else if (intrinsicID == OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC) {
+  } else if (intrinsicID == TALOS_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC) {
     inputs = {1, 0, 1, 1, 2, 2, 2, 2};
     outputs = {0, 1, 1, 1, 1};
   } else {
@@ -286,14 +286,14 @@ std::vector<uint8_t> makeDynamicScanIntrinsicBytecode(uint32_t intrinsicID) {
 
 std::vector<uint8_t> makeComparisonBytecode(uint8_t resultKind,
                                             uint16_t comparisonKind) {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 3 * 40;
   constexpr size_t continuationOffset = codeOffset + 2 * 32;
   std::vector<uint8_t> bytes(continuationOffset + 24, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 8, TALOS_RT_VERSION);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 1);
@@ -318,7 +318,7 @@ std::vector<uint8_t> makeComparisonBytecode(uint8_t resultKind,
   put32(bytes, functionOffset + 48, 2);
   put32(bytes, functionOffset + 52, 0);
   uint64_t resultSize =
-      resultKind == OBELISK_RT_DBREG_LOGIC ? uint64_t{16} : uint64_t{8};
+      resultKind == TALOS_RT_DBREG_LOGIC ? uint64_t{16} : uint64_t{8};
   put64(bytes, functionOffset + 56, 32 + resultSize);
   put64(bytes, functionOffset + 64, 8);
   put64(bytes, functionOffset + 72, 0);
@@ -326,7 +326,7 @@ std::vector<uint8_t> makeComparisonBytecode(uint8_t resultKind,
 
   for (unsigned index = 0; index != 2; ++index) {
     size_t layout = layoutOffset + index * 40;
-    bytes[layout] = OBELISK_RT_DBREG_LOGIC;
+    bytes[layout] = TALOS_RT_DBREG_LOGIC;
     put32(bytes, layout + 4, 1);
     put64(bytes, layout + 8, index * 16);
     put64(bytes, layout + 16, 16);
@@ -336,9 +336,9 @@ std::vector<uint8_t> makeComparisonBytecode(uint8_t resultKind,
   put64(bytes, layoutOffset + 88, 32);
   put64(bytes, layoutOffset + 96, resultSize);
 
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_COMPARE, comparisonKind, 2, 0,
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_COMPARE, comparisonKind, 2, 0,
               1);
-  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_RETURN);
+  instruction(bytes, codeOffset, 1, TALOS_RT_DB_RETURN);
   put32(bytes, continuationOffset, 0);
   put32(bytes, continuationOffset + 4, 0);
   put64(bytes, continuationOffset + 8, 0);
@@ -348,7 +348,7 @@ std::vector<uint8_t> makeComparisonBytecode(uint8_t resultKind,
 
 std::vector<uint8_t> makeInitializationBoundaryBytecode(bool invalidJoin) {
   constexpr uint64_t registerCount = 66;
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t layoutSize = registerCount * 40;
   constexpr size_t codeOffset = layoutOffset + layoutSize;
@@ -359,8 +359,8 @@ std::vector<uint8_t> makeInitializationBoundaryBytecode(bool invalidJoin) {
   const size_t continuationOffset = constantOffset + 32;
   std::vector<uint8_t> bytes(continuationOffset + 24, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 8, TALOS_RT_VERSION);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 1);
@@ -393,24 +393,24 @@ std::vector<uint8_t> makeInitializationBoundaryBytecode(bool invalidJoin) {
 
   for (uint64_t index = 0; index != registerCount; ++index) {
     size_t layout = layoutOffset + index * 40;
-    bytes[layout] = OBELISK_RT_DBREG_BITS;
+    bytes[layout] = TALOS_RT_DBREG_BITS;
     put32(bytes, layout + 4, 1);
     put64(bytes, layout + 8, index * 8);
     put64(bytes, layout + 16, 8);
   }
 
   if (invalidJoin) {
-    instruction(bytes, codeOffset, 0, OBELISK_RT_DB_CONSTANT, 0, 63);
-    instruction(bytes, codeOffset, 1, OBELISK_RT_DB_BRANCH, 0, 0, 0, 0, 0, 4);
-    instruction(bytes, codeOffset, 2, OBELISK_RT_DB_CONSTANT, 0, 64);
-    instruction(bytes, codeOffset, 3, OBELISK_RT_DB_JUMP, 0, 0, 0, 0, 0, 4);
-    instruction(bytes, codeOffset, 4, OBELISK_RT_DB_MOVE, 0, 65, 64);
-    instruction(bytes, codeOffset, 5, OBELISK_RT_DB_RETURN);
+    instruction(bytes, codeOffset, 0, TALOS_RT_DB_CONSTANT, 0, 63);
+    instruction(bytes, codeOffset, 1, TALOS_RT_DB_BRANCH, 0, 0, 0, 0, 0, 4);
+    instruction(bytes, codeOffset, 2, TALOS_RT_DB_CONSTANT, 0, 64);
+    instruction(bytes, codeOffset, 3, TALOS_RT_DB_JUMP, 0, 0, 0, 0, 0, 4);
+    instruction(bytes, codeOffset, 4, TALOS_RT_DB_MOVE, 0, 65, 64);
+    instruction(bytes, codeOffset, 5, TALOS_RT_DB_RETURN);
   } else {
-    instruction(bytes, codeOffset, 0, OBELISK_RT_DB_CONSTANT, 0, 63);
-    instruction(bytes, codeOffset, 1, OBELISK_RT_DB_CONSTANT, 0, 64);
-    instruction(bytes, codeOffset, 2, OBELISK_RT_DB_CONSTANT, 0, 65);
-    instruction(bytes, codeOffset, 3, OBELISK_RT_DB_RETURN, 0, 0, 0, 3);
+    instruction(bytes, codeOffset, 0, TALOS_RT_DB_CONSTANT, 0, 63);
+    instruction(bytes, codeOffset, 1, TALOS_RT_DB_CONSTANT, 0, 64);
+    instruction(bytes, codeOffset, 2, TALOS_RT_DB_CONSTANT, 0, 65);
+    instruction(bytes, codeOffset, 3, TALOS_RT_DB_RETURN, 0, 0, 0, 3);
     put32(bytes, operandOffset, 1);
     put32(bytes, operandOffset + 4, 63);
     put32(bytes, operandOffset + 8, 2);
@@ -426,7 +426,7 @@ std::vector<uint8_t> makeInitializationBoundaryBytecode(bool invalidJoin) {
 }
 
 std::vector<uint8_t> makeObserverBytecode(uint8_t resultKind) {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 2 * 40;
   constexpr size_t operandOffset = codeOffset + 2 * 32;
@@ -434,9 +434,9 @@ std::vector<uint8_t> makeObserverBytecode(uint8_t resultKind) {
   constexpr size_t continuationOffset = constantOffset + 32;
   std::vector<uint8_t> bytes(continuationOffset + 24, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 8, TALOS_RT_VERSION);
   put32(bytes, 12, 0);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 1);
@@ -468,7 +468,7 @@ std::vector<uint8_t> makeObserverBytecode(uint8_t resultKind) {
   put64(bytes, functionOffset + 80, 1);
   put64(bytes, functionOffset + 88, 0);
 
-  bytes[layoutOffset] = OBELISK_RT_DBREG_HANDLE;
+  bytes[layoutOffset] = TALOS_RT_DBREG_HANDLE;
   put32(bytes, layoutOffset + 4, 256);
   put64(bytes, layoutOffset + 8, 0);
   put64(bytes, layoutOffset + 16, 32);
@@ -477,8 +477,8 @@ std::vector<uint8_t> makeObserverBytecode(uint8_t resultKind) {
   put64(bytes, layoutOffset + 48, 32);
   put64(bytes, layoutOffset + 56, 32);
 
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_CONSTANT, 0, 1);
-  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_RETURN, 0, 0, 0, 1);
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_CONSTANT, 0, 1);
+  instruction(bytes, codeOffset, 1, TALOS_RT_DB_RETURN, 0, 0, 0, 1);
   put32(bytes, operandOffset, 1);
   put32(bytes, operandOffset + 4, 1);
   put32(bytes, continuationOffset, 0);
@@ -489,7 +489,7 @@ std::vector<uint8_t> makeObserverBytecode(uint8_t resultKind) {
 }
 
 std::vector<uint8_t> makeImportBytecode(uint32_t importID) {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 2 * 40;
   constexpr size_t operandOffset = codeOffset + 4 * 32;
@@ -499,9 +499,9 @@ std::vector<uint8_t> makeImportBytecode(uint32_t importID) {
   constexpr size_t siteOffset = intrinsicOffset + 16;
   std::vector<uint8_t> bytes(siteOffset + 16, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 8, TALOS_RT_VERSION);
   put32(bytes, 12, 0);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 1);
@@ -535,16 +535,16 @@ std::vector<uint8_t> makeImportBytecode(uint32_t importID) {
 
   for (size_t index = 0; index != 2; ++index) {
     size_t layout = layoutOffset + index * 40;
-    bytes[layout] = OBELISK_RT_DBREG_LOGIC;
+    bytes[layout] = TALOS_RT_DBREG_LOGIC;
     put32(bytes, layout + 4, 65);
     put64(bytes, layout + 8, index * 32);
     put64(bytes, layout + 16, 32);
   }
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_CONSTANT, 0, 0);
-  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_CONSTANT, 0, 0);
+  instruction(bytes, codeOffset, 1, TALOS_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               0);
-  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_STORE_FRAME, 0, 0, 1);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, 2, TALOS_RT_DB_STORE_FRAME, 0, 0, 1);
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_TERMINATE);
   // Input register zero, then output register one.
   put32(bytes, operandOffset + 4, 0);
   put32(bytes, operandOffset + 8, 1);
@@ -555,7 +555,7 @@ std::vector<uint8_t> makeImportBytecode(uint32_t importID) {
   put32(bytes, continuationOffset, 0);
   put32(bytes, continuationOffset + 4, 0);
   put64(bytes, continuationOffset + 8, 0);
-  put32(bytes, intrinsicOffset, OBELISK_RT_INTRINSIC_V1_IMPORT);
+  put32(bytes, intrinsicOffset, TALOS_RT_INTRINSIC_V1_IMPORT);
   put32(bytes, intrinsicOffset + 4, 1);
   put32(bytes, intrinsicOffset + 8, 1);
   put32(bytes, intrinsicOffset + 12, importID);
@@ -569,38 +569,38 @@ std::vector<uint8_t> makeImportBytecode(uint32_t importID) {
 
 std::vector<uint8_t> makeRandomSolveProgram(bool solveBefore) {
   constexpr size_t instructionCount = 2;
-  size_t metadataSize = solveBefore ? OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
-                                          OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE
+  size_t metadataSize = solveBefore ? TALOS_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
+                                          TALOS_RT_RANDOM_SOLVE_EDGE_SIZE
                                     : 0;
   std::vector<uint8_t> bytes(
-      OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
-          instructionCount * OBELISK_RT_RANDOM_INSTRUCTION_SIZE + metadataSize,
+      TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE +
+          instructionCount * TALOS_RT_RANDOM_INSTRUCTION_SIZE + metadataSize,
       0);
-  put32(bytes, 0, OBELISK_RT_RANDOM_PROGRAM_MAGIC);
-  put16(bytes, 4, OBELISK_RT_RANDOM_PROGRAM_VERSION);
-  put16(bytes, 6, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE);
+  put32(bytes, 0, TALOS_RT_RANDOM_PROGRAM_MAGIC);
+  put16(bytes, 4, TALOS_RT_RANDOM_PROGRAM_VERSION);
+  put16(bytes, 6, TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE);
   put32(bytes, 8, 2);
   put32(bytes, 12, instructionCount);
   put32(bytes, 16, 0);
   put32(bytes, 20,
-        solveBefore ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE : 0);
+        solveBefore ? TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE : 0);
 
-  size_t instruction = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
-  bytes[instruction] = OBELISK_RT_RANDOM_PUSH_LITERAL_V1;
+  size_t instruction = TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE;
+  bytes[instruction] = TALOS_RT_RANDOM_PUSH_LITERAL_V1;
   bytes[instruction + 1] = 1;
   put64(bytes, instruction + 8, 1);
-  instruction += OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
-  bytes[instruction] = OBELISK_RT_RANDOM_END_HARD_V1;
+  instruction += TALOS_RT_RANDOM_INSTRUCTION_SIZE;
+  bytes[instruction] = TALOS_RT_RANDOM_END_HARD_V1;
   bytes[instruction + 1] = 1;
-  put32(bytes, instruction + 4, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
+  put32(bytes, instruction + 4, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
 
   if (solveBefore) {
-    size_t edge = instruction + OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
+    size_t edge = instruction + TALOS_RT_RANDOM_INSTRUCTION_SIZE;
     put32(bytes, edge, 1);
-    edge += OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
+    edge += TALOS_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
     put64(bytes, edge, 1);
     put64(bytes, edge + 8, 2);
-    put32(bytes, edge + 16, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
+    put32(bytes, edge + 16, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
   }
   return bytes;
 }
@@ -614,7 +614,7 @@ std::vector<uint8_t> makeRandomSolveBytecode(bool stateful, uint64_t rngState,
   uint32_t instructionCount = inputCount + 1 + outputCount + 1;
   uint32_t operandCount = inputCount + outputCount;
 
-  size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   size_t layoutOffset = functionOffset + 96;
   size_t codeOffset = layoutOffset + registerCount * 40;
   size_t operandOffset = codeOffset + instructionCount * 32;
@@ -627,8 +627,8 @@ std::vector<uint8_t> makeRandomSolveBytecode(bool stateful, uint64_t rngState,
   std::vector<uint8_t> bytes(siteOffset + 16, 0);
 
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 8, TALOS_RT_VERSION);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 1);
@@ -657,13 +657,13 @@ std::vector<uint8_t> makeRandomSolveBytecode(bool stateful, uint64_t rngState,
   put64(bytes, functionOffset + 80, 1);
   put64(bytes, functionOffset + 88, 1);
 
-  bytes[layoutOffset] = OBELISK_RT_DBREG_BYTES;
+  bytes[layoutOffset] = TALOS_RT_DBREG_BYTES;
   put32(bytes, layoutOffset + 4, 128);
   put64(bytes, layoutOffset + 16, 16);
   uint32_t successRegister = inputCount + 1;
   for (uint32_t reg = 1; reg != registerCount; ++reg) {
     size_t layout = layoutOffset + reg * 40;
-    bytes[layout] = OBELISK_RT_DBREG_BITS;
+    bytes[layout] = TALOS_RT_DBREG_BITS;
     put32(bytes, layout + 4, reg == successRegister ? 1 : 64);
     put64(bytes, layout + 8, 16 + (reg - 1) * 8);
     put64(bytes, layout + 16, 8);
@@ -671,15 +671,15 @@ std::vector<uint8_t> makeRandomSolveBytecode(bool stateful, uint64_t rngState,
 
   for (uint32_t reg = 0; reg != inputCount; ++reg) {
     uint64_t constant = reg == 0 ? 0 : 16 + (reg - 1) * 8;
-    instruction(bytes, codeOffset, reg, OBELISK_RT_DB_CONSTANT, 0, reg, 0, 0, 0,
+    instruction(bytes, codeOffset, reg, TALOS_RT_DB_CONSTANT, 0, reg, 0, 0, 0,
                 0, constant);
   }
   uint32_t pc = inputCount;
-  instruction(bytes, codeOffset, pc++, OBELISK_RT_DB_INTRINSIC);
+  instruction(bytes, codeOffset, pc++, TALOS_RT_DB_INTRINSIC);
   for (uint32_t output = 0; output != outputCount; ++output)
-    instruction(bytes, codeOffset, pc++, OBELISK_RT_DB_STORE_FRAME, 0, 0,
+    instruction(bytes, codeOffset, pc++, TALOS_RT_DB_STORE_FRAME, 0, 0,
                 inputCount + output, 0, 0, 0, output * 8);
-  instruction(bytes, codeOffset, pc, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, pc, TALOS_RT_DB_TERMINATE);
 
   for (uint32_t input = 0; input != inputCount; ++input)
     put32(bytes, operandOffset + input * 8 + 4, input);
@@ -700,8 +700,8 @@ std::vector<uint8_t> makeRandomSolveBytecode(bool stateful, uint64_t rngState,
   put32(bytes, continuationOffset + 4, 0);
   put64(bytes, continuationOffset + 8, 0);
   put32(bytes, intrinsicOffset,
-        stateful ? OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE
-                 : OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE);
+        stateful ? TALOS_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE
+                 : TALOS_RT_INTRINSIC_V1_RANDOM_SOLVE);
   put32(bytes, intrinsicOffset + 4, inputCount);
   put32(bytes, intrinsicOffset + 8, outputCount);
   put32(bytes, siteOffset, 0);
@@ -720,38 +720,38 @@ std::vector<uint8_t> makeRandomSolveWideBytecode() {
   constexpr uint32_t operandCount = inputCount + outputCount;
 
   constexpr uint32_t programInstructionCount = 4;
-  std::vector<uint8_t> program(OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
+  std::vector<uint8_t> program(TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
                                    programInstructionCount *
-                                       OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2 +
+                                       TALOS_RT_RANDOM_INSTRUCTION_SIZE_V2 +
                                    2 * sizeof(uint64_t),
                                0);
-  put32(program, 0, OBELISK_RT_RANDOM_PROGRAM_MAGIC);
-  put16(program, 4, OBELISK_RT_RANDOM_PROGRAM_VERSION_V2);
-  put16(program, 6, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2);
+  put32(program, 0, TALOS_RT_RANDOM_PROGRAM_MAGIC);
+  put16(program, 4, TALOS_RT_RANDOM_PROGRAM_VERSION_V2);
+  put16(program, 6, TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2);
   put32(program, 8, 65);
   put32(program, 12, programInstructionCount);
   put32(program, 24, 2);
-  size_t programInstruction = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2;
-  program[programInstruction] = OBELISK_RT_RANDOM_PUSH_VARIABLE_V1;
+  size_t programInstruction = TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2;
+  program[programInstruction] = TALOS_RT_RANDOM_PUSH_VARIABLE_V1;
   put32(program, programInstruction + 4, 65);
-  programInstruction += OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
-  program[programInstruction] = OBELISK_RT_RANDOM_PUSH_LITERAL_V1;
+  programInstruction += TALOS_RT_RANDOM_INSTRUCTION_SIZE_V2;
+  program[programInstruction] = TALOS_RT_RANDOM_PUSH_LITERAL_V1;
   put32(program, programInstruction + 4, 65);
-  programInstruction += OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
-  program[programInstruction] = OBELISK_RT_RANDOM_EQ_V1;
+  programInstruction += TALOS_RT_RANDOM_INSTRUCTION_SIZE_V2;
+  program[programInstruction] = TALOS_RT_RANDOM_EQ_V1;
   put32(program, programInstruction + 4, 1);
-  programInstruction += OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
-  program[programInstruction] = OBELISK_RT_RANDOM_END_HARD_V1;
+  programInstruction += TALOS_RT_RANDOM_INSTRUCTION_SIZE_V2;
+  program[programInstruction] = TALOS_RT_RANDOM_END_HARD_V1;
   put32(program, programInstruction + 4, 1);
   put32(program, programInstruction + 8,
-        OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
+        TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
   size_t literalOffset =
-      OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
-      programInstructionCount * OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2;
+      TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
+      programInstructionCount * TALOS_RT_RANDOM_INSTRUCTION_SIZE_V2;
   put64(program, literalOffset, 5);
   put64(program, literalOffset + 8, 1);
 
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + registerCount * 40;
   constexpr size_t operandOffset = codeOffset + instructionCount * 32;
@@ -764,8 +764,8 @@ std::vector<uint8_t> makeRandomSolveWideBytecode() {
   std::vector<uint8_t> bytes(siteOffset + 16, 0);
 
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 8, TALOS_RT_VERSION);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 1);
@@ -802,7 +802,7 @@ std::vector<uint8_t> makeRandomSolveWideBytecode() {
                                                         8,  8,  16, 8, 8};
   for (uint32_t reg = 0; reg != registerCount; ++reg) {
     size_t layout = layoutOffset + reg * 40;
-    bytes[layout] = reg == 0 ? OBELISK_RT_DBREG_BYTES : OBELISK_RT_DBREG_BITS;
+    bytes[layout] = reg == 0 ? TALOS_RT_DBREG_BYTES : TALOS_RT_DBREG_BITS;
     put32(bytes, layout + 4, widths[reg]);
     put64(bytes, layout + 8, offsets[reg]);
     put64(bytes, layout + 16, extents[reg]);
@@ -811,15 +811,15 @@ std::vector<uint8_t> makeRandomSolveWideBytecode() {
   constexpr std::array<uint64_t, inputCount> constants{0,  16, 32, 48,
                                                        56, 64, 72};
   for (uint32_t reg = 0; reg != inputCount; ++reg)
-    instruction(bytes, codeOffset, reg, OBELISK_RT_DB_CONSTANT, 0, reg, 0, 0, 0,
+    instruction(bytes, codeOffset, reg, TALOS_RT_DB_CONSTANT, 0, reg, 0, 0, 0,
                 0, constants[reg]);
   uint32_t pc = inputCount;
-  instruction(bytes, codeOffset, pc++, OBELISK_RT_DB_INTRINSIC);
+  instruction(bytes, codeOffset, pc++, TALOS_RT_DB_INTRINSIC);
   constexpr std::array<uint64_t, outputCount> frameOffsets{0, 16, 24};
   for (uint32_t output = 0; output != outputCount; ++output)
-    instruction(bytes, codeOffset, pc++, OBELISK_RT_DB_STORE_FRAME, 0, 0,
+    instruction(bytes, codeOffset, pc++, TALOS_RT_DB_STORE_FRAME, 0, 0,
                 inputCount + output, 0, 0, 0, frameOffsets[output]);
-  instruction(bytes, codeOffset, pc, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, pc, TALOS_RT_DB_TERMINATE);
 
   for (uint32_t input = 0; input != inputCount; ++input)
     put32(bytes, operandOffset + input * 8 + 4, input);
@@ -844,7 +844,7 @@ std::vector<uint8_t> makeRandomSolveWideBytecode() {
   put32(bytes, continuationOffset + 4, 0);
   put64(bytes, continuationOffset + 8, 0);
   put32(bytes, intrinsicOffset,
-        OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_WIDE_STATE);
+        TALOS_RT_INTRINSIC_V1_RANDOM_SOLVE_WIDE_STATE);
   put32(bytes, intrinsicOffset + 4, inputCount);
   put32(bytes, intrinsicOffset + 8, outputCount);
   put32(bytes, siteOffset, 0);
@@ -862,7 +862,7 @@ std::vector<uint8_t> makeRandomCycleBytecode(uint64_t key, uint64_t position,
   constexpr uint32_t registerCount = inputCount + outputCount;
   constexpr uint32_t instructionCount = inputCount + 1 + outputCount + 1;
   constexpr uint32_t operandCount = inputCount + outputCount;
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + registerCount * 40;
   constexpr size_t operandOffset = codeOffset + instructionCount * 32;
@@ -874,8 +874,8 @@ std::vector<uint8_t> makeRandomCycleBytecode(uint64_t key, uint64_t position,
   std::vector<uint8_t> bytes(siteOffset + 16, 0);
 
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 8, TALOS_RT_VERSION);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 1);
@@ -906,21 +906,21 @@ std::vector<uint8_t> makeRandomCycleBytecode(uint64_t key, uint64_t position,
 
   for (uint32_t reg = 0; reg != registerCount; ++reg) {
     size_t layout = layoutOffset + reg * 40;
-    bytes[layout] = OBELISK_RT_DBREG_BITS;
+    bytes[layout] = TALOS_RT_DBREG_BITS;
     put32(bytes, layout + 4, 64);
     put64(bytes, layout + 8, reg * 8);
     put64(bytes, layout + 16, 8);
   }
 
   for (uint32_t reg = 0; reg != inputCount; ++reg)
-    instruction(bytes, codeOffset, reg, OBELISK_RT_DB_CONSTANT, 0, reg, 0, 0, 0,
+    instruction(bytes, codeOffset, reg, TALOS_RT_DB_CONSTANT, 0, reg, 0, 0, 0,
                 0, reg * 8);
   uint32_t pc = inputCount;
-  instruction(bytes, codeOffset, pc++, OBELISK_RT_DB_INTRINSIC);
+  instruction(bytes, codeOffset, pc++, TALOS_RT_DB_INTRINSIC);
   for (uint32_t output = 0; output != outputCount; ++output)
-    instruction(bytes, codeOffset, pc++, OBELISK_RT_DB_STORE_FRAME, 0, 0,
+    instruction(bytes, codeOffset, pc++, TALOS_RT_DB_STORE_FRAME, 0, 0,
                 inputCount + output, 0, 0, 0, output * 8);
-  instruction(bytes, codeOffset, pc, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, pc, TALOS_RT_DB_TERMINATE);
 
   for (uint32_t input = 0; input != inputCount; ++input)
     put32(bytes, operandOffset + input * 8 + 4, input);
@@ -934,7 +934,7 @@ std::vector<uint8_t> makeRandomCycleBytecode(uint64_t key, uint64_t position,
   put32(bytes, continuationOffset, 0);
   put32(bytes, continuationOffset + 4, 0);
   put64(bytes, continuationOffset + 8, 0);
-  put32(bytes, intrinsicOffset, OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT);
+  put32(bytes, intrinsicOffset, TALOS_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT);
   put32(bytes, intrinsicOffset + 4, inputCount);
   put32(bytes, intrinsicOffset + 8, outputCount);
   put32(bytes, siteOffset, 0);
@@ -949,31 +949,31 @@ struct ImportObservation {
   uint32_t calls = 0;
 };
 
-obelisk_rt_status importedLogic(obelisk_rt_context *, uint32_t importID,
-                                const obelisk_rt_import_input_v1 *inputs,
+talos_rt_status importedLogic(talos_rt_context *, uint32_t importID,
+                                const talos_rt_import_input_v1 *inputs,
                                 uint32_t inputCount,
-                                obelisk_rt_import_output_v1 *outputs,
+                                talos_rt_import_output_v1 *outputs,
                                 uint32_t outputCount, void *userData) {
   auto *observation = static_cast<ImportObservation *>(userData);
   ++observation->calls;
   EXPECT_NE(importID, 0u);
   EXPECT_EQ(inputCount, 1u);
   EXPECT_EQ(outputCount, 1u);
-  EXPECT_EQ(inputs[0].kind, OBELISK_RT_DBREG_LOGIC);
+  EXPECT_EQ(inputs[0].kind, TALOS_RT_DBREG_LOGIC);
   EXPECT_EQ(inputs[0].bit_width, 65u);
   EXPECT_EQ(inputs[0].limb_count, 2u);
-  EXPECT_EQ(outputs[0].kind, OBELISK_RT_DBREG_LOGIC);
+  EXPECT_EQ(outputs[0].kind, TALOS_RT_DBREG_LOGIC);
   EXPECT_EQ(outputs[0].bit_width, 65u);
   outputs[0].value[0] = inputs[0].value[0] ^ UINT64_C(0xffff);
   outputs[0].value[1] = UINT64_MAX;
   outputs[0].unknown[0] = inputs[0].unknown[0];
   outputs[0].unknown[1] = UINT64_MAX;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0,
                                            uint64_t eventHandle = 7) {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 4 * 40;
   constexpr size_t operandOffset = codeOffset + 7 * 32;
@@ -984,9 +984,9 @@ std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0,
   constexpr size_t stateOffset = siteOffset + 2 * 16;
   std::vector<uint8_t> bytes(stateOffset, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 8, TALOS_RT_VERSION);
   put32(bytes, 12, 0);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 1);
@@ -1029,28 +1029,28 @@ std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0,
     put64(bytes, record + 8, offset);
     put64(bytes, record + 16, size);
   };
-  layout(0, OBELISK_RT_DBREG_LOGIC, 8, 0, 16);
-  layout(1, OBELISK_RT_DBREG_HANDLE, 256, 16, 32);
-  layout(2, OBELISK_RT_DBREG_BITS, 64, 48, 8);
-  layout(3, OBELISK_RT_DBREG_HANDLE, 256, 56, 32);
+  layout(0, TALOS_RT_DBREG_LOGIC, 8, 0, 16);
+  layout(1, TALOS_RT_DBREG_HANDLE, 256, 16, 32);
+  layout(2, TALOS_RT_DBREG_BITS, 64, 48, 8);
+  layout(3, TALOS_RT_DBREG_HANDLE, 256, 56, 32);
 
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_CONSTANT, 0, 0, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_CONSTANT, 0, 0, 0, 0, 0, 0,
               0);
-  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_MAKE_HANDLE, 0, 1,
-              OBELISK_RT_DESCRIPTOR_STORAGE, 8, 0, 0, stateHandle);
-  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_CONSTANT, 0, 2, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 1, TALOS_RT_DB_MAKE_HANDLE, 0, 1,
+              TALOS_RT_DESCRIPTOR_STORAGE, 8, 0, 0, stateHandle);
+  instruction(bytes, codeOffset, 2, TALOS_RT_DB_CONSTANT, 0, 2, 0, 0, 0, 0,
               16);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               0);
   if (eventHandle == UINT64_MAX)
-    instruction(bytes, codeOffset, 4, OBELISK_RT_DB_CONSTANT, 0, 3, 0, 0, 0, 0,
+    instruction(bytes, codeOffset, 4, TALOS_RT_DB_CONSTANT, 0, 3, 0, 0, 0, 0,
                 24);
   else
-    instruction(bytes, codeOffset, 4, OBELISK_RT_DB_MAKE_HANDLE, 0, 3,
-                OBELISK_RT_DESCRIPTOR_EVENT, 0, 0, 0, eventHandle);
-  instruction(bytes, codeOffset, 5, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
+    instruction(bytes, codeOffset, 4, TALOS_RT_DB_MAKE_HANDLE, 0, 3,
+                TALOS_RT_DESCRIPTOR_EVENT, 0, 0, 0, eventHandle);
+  instruction(bytes, codeOffset, 5, TALOS_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               1);
-  instruction(bytes, codeOffset, 6, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, 6, TALOS_RT_DB_TERMINATE);
 
   put32(bytes, operandOffset + 4, 0);
   put32(bytes, operandOffset + 8 + 4, 1);
@@ -1059,16 +1059,16 @@ std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0,
   put64(bytes, constantOffset, UINT64_C(0xa5));
   put64(bytes, constantOffset + 8, UINT64_C(0x04));
   put64(bytes, constantOffset + 16, 5);
-  put32(bytes, constantOffset + 24, OBELISK_RT_DESCRIPTOR_EVENT);
+  put32(bytes, constantOffset + 24, TALOS_RT_DESCRIPTOR_EVENT);
   put64(bytes, constantOffset + 32, UINT64_MAX);
   put64(bytes, constantOffset + 40, UINT64_MAX);
   put32(bytes, continuationOffset, 0);
   put32(bytes, continuationOffset + 4, 0);
   put64(bytes, continuationOffset + 8, 0);
 
-  put32(bytes, intrinsicOffset, OBELISK_RT_INTRINSIC_V1_NBA);
+  put32(bytes, intrinsicOffset, TALOS_RT_INTRINSIC_V1_NBA);
   put32(bytes, intrinsicOffset + 4, 3);
-  put32(bytes, intrinsicOffset + 16, OBELISK_RT_INTRINSIC_V1_EVENT_TRIGGER);
+  put32(bytes, intrinsicOffset + 16, TALOS_RT_INTRINSIC_V1_EVENT_TRIGGER);
   put32(bytes, intrinsicOffset + 16 + 4, 1);
   put32(bytes, intrinsicOffset + 16 + 12, 1);
   put32(bytes, siteOffset, 0);
@@ -1082,7 +1082,7 @@ std::vector<uint8_t> makeSchedulerBytecode(uint64_t stateHandle = 0,
 }
 
 std::vector<uint8_t> makeDriverBytecode() {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 4 * 40;
   std::vector<uint8_t> bytes = makeSchedulerBytecode();
@@ -1090,10 +1090,10 @@ std::vector<uint8_t> makeDriverBytecode() {
   bytes.resize(stateOffset + 2 * 32, 0);
   // Reinterpret the first handle as a 65-bit driver at state offset 65 and
   // replace the queued NBA with an immediate driver update.
-  put32(bytes, codeOffset + 1 * 32 + 8, OBELISK_RT_DESCRIPTOR_DRIVER);
+  put32(bytes, codeOffset + 1 * 32 + 8, TALOS_RT_DESCRIPTOR_DRIVER);
   put32(bytes, codeOffset + 1 * 32 + 12, 65);
   put64(bytes, codeOffset + 1 * 32 + 24, 65);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_STORE_STATE, 0, 0, 1, 0);
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_STORE_STATE, 0, 0, 1, 0);
 
   // Net [0,65), then its four-state driver [65,130).
   put32(bytes, stateOffset, UINT32_MAX - 1);
@@ -1123,7 +1123,7 @@ uint32_t resolutionFlags(uint8_t resolution, bool driver) {
 }
 
 std::vector<uint8_t> makeStrengthDriverBytecode(uint8_t resolution = 0) {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 4 * 40;
   std::vector<uint8_t> bytes = makeDriverBytecode();
@@ -1160,15 +1160,15 @@ std::vector<uint8_t> makeStrengthDriverBytecode(uint8_t resolution = 0) {
   // wide.
   put32(bytes, layoutOffset + 2 * 40 + 4, 1);
   put32(bytes, codeOffset + 1 * 32 + 12, 1);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_STORE_STATE,
-              OBELISK_RT_DB_STORE_STATE_CHANGED |
-                  OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION,
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_STORE_STATE,
+              TALOS_RT_DB_STORE_STATE_CHANGED |
+                  TALOS_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION,
               2, 1, 0);
-  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_MAKE_HANDLE, 0, 3,
-              OBELISK_RT_DESCRIPTOR_DRIVER, 1, 0, 0, 130);
-  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_BRANCH, 0, 2, 0, 0, 0, 0, 6);
-  instruction(bytes, codeOffset, 5, OBELISK_RT_DB_STORE_STATE, 0, 0, 3, 0);
-  instruction(bytes, codeOffset, 6, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, 2, TALOS_RT_DB_MAKE_HANDLE, 0, 3,
+              TALOS_RT_DESCRIPTOR_DRIVER, 1, 0, 0, 130);
+  instruction(bytes, codeOffset, 4, TALOS_RT_DB_BRANCH, 0, 2, 0, 0, 0, 0, 6);
+  instruction(bytes, codeOffset, 5, TALOS_RT_DB_STORE_STATE, 0, 0, 3, 0);
+  instruction(bytes, codeOffset, 6, TALOS_RT_DB_TERMINATE);
   put64(bytes, constantOffset, 1);
   put64(bytes, constantOffset + 8, 0);
   put64(bytes, 24, bytes.size());
@@ -1179,7 +1179,7 @@ std::vector<uint8_t> makeStrengthDriverBytecode(uint8_t resolution = 0) {
 }
 
 std::vector<uint8_t> makeConnectedDriverBytecode() {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 4 * 40;
   std::vector<uint8_t> bytes = makeSchedulerBytecode();
@@ -1189,10 +1189,10 @@ std::vector<uint8_t> makeConnectedDriverBytecode() {
 
   // The process drives net one. Net zero is a distinct logical descriptor in
   // the same scalar connectivity components.
-  put32(bytes, codeOffset + 1 * 32 + 8, OBELISK_RT_DESCRIPTOR_DRIVER);
+  put32(bytes, codeOffset + 1 * 32 + 8, TALOS_RT_DESCRIPTOR_DRIVER);
   put32(bytes, codeOffset + 1 * 32 + 12, 130);
   put64(bytes, codeOffset + 1 * 32 + 24, 130);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_STORE_STATE, 0, 0, 1, 0);
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_STORE_STATE, 0, 0, 1, 0);
 
   auto state = [&](size_t index, uint32_t kind, uint32_t flags,
                    uint64_t valueOffset, uint64_t targetOffset) {
@@ -1279,7 +1279,7 @@ std::vector<uint8_t> makeMixedWiredDriverBytecode(bool rhsDominates) {
 }
 
 std::vector<uint8_t> makeMultiSinkWiredDriverBytecode() {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 4 * 40;
   std::vector<uint8_t> bytes = makeConnectedDriverBytecode();
@@ -1325,7 +1325,7 @@ std::vector<uint8_t> makeMultiSinkWiredDriverBytecode() {
 }
 
 std::vector<uint8_t> makeVPIBytecode() {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 10 * 40;
   constexpr size_t operandOffset = codeOffset + 11 * 32;
@@ -1336,9 +1336,9 @@ std::vector<uint8_t> makeVPIBytecode() {
   constexpr size_t stateOffset = siteOffset + 5 * 16;
   std::vector<uint8_t> bytes(stateOffset, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 8, TALOS_RT_VERSION);
   put32(bytes, 12, 0);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 1);
@@ -1379,37 +1379,37 @@ std::vector<uint8_t> makeVPIBytecode() {
     put64(bytes, record + 8, offset);
     put64(bytes, record + 16, size);
   };
-  layout(0, OBELISK_RT_DBREG_BITS, 64, 0, 8);
-  layout(1, OBELISK_RT_DBREG_STATUS, 64, 8, 8);
-  layout(2, OBELISK_RT_DBREG_BITS, 64, 16, 8);
-  layout(3, OBELISK_RT_DBREG_STATUS, 64, 24, 8);
-  layout(4, OBELISK_RT_DBREG_LOGIC, 65, 32, 32);
-  layout(5, OBELISK_RT_DBREG_STATUS, 64, 64, 8);
-  layout(6, OBELISK_RT_DBREG_LOGIC, 65, 72, 32);
-  layout(7, OBELISK_RT_DBREG_STATUS, 64, 104, 8);
-  layout(8, OBELISK_RT_DBREG_HANDLE, 256, 112, 32);
-  layout(9, OBELISK_RT_DBREG_LOGIC, 65, 144, 32);
+  layout(0, TALOS_RT_DBREG_BITS, 64, 0, 8);
+  layout(1, TALOS_RT_DBREG_STATUS, 64, 8, 8);
+  layout(2, TALOS_RT_DBREG_BITS, 64, 16, 8);
+  layout(3, TALOS_RT_DBREG_STATUS, 64, 24, 8);
+  layout(4, TALOS_RT_DBREG_LOGIC, 65, 32, 32);
+  layout(5, TALOS_RT_DBREG_STATUS, 64, 64, 8);
+  layout(6, TALOS_RT_DBREG_LOGIC, 65, 72, 32);
+  layout(7, TALOS_RT_DBREG_STATUS, 64, 104, 8);
+  layout(8, TALOS_RT_DBREG_HANDLE, 256, 112, 32);
+  layout(9, TALOS_RT_DBREG_LOGIC, 65, 144, 32);
 
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               0);
-  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 1, TALOS_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               1);
-  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_CONSTANT, 0, 6, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 2, TALOS_RT_DB_CONSTANT, 0, 6, 0, 0, 0, 0,
               0);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               2);
-  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 4, TALOS_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               3);
-  instruction(bytes, codeOffset, 5, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 5, TALOS_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               4);
-  instruction(bytes, codeOffset, 6, OBELISK_RT_DB_STORE_STATE, 0, 0, 8, 6);
-  instruction(bytes, codeOffset, 7, OBELISK_RT_DB_LOAD_STATE, 0, 9, 8);
-  instruction(bytes, codeOffset, 8, OBELISK_RT_DB_STORE_FRAME, 0, 0, 9);
-  instruction(bytes, codeOffset, 9, OBELISK_RT_DB_STORE_FRAME,
-              OBELISK_RT_DESCRIPTOR_STORAGE, 0, 8, 0, 0, 65, 32);
+  instruction(bytes, codeOffset, 6, TALOS_RT_DB_STORE_STATE, 0, 0, 8, 6);
+  instruction(bytes, codeOffset, 7, TALOS_RT_DB_LOAD_STATE, 0, 9, 8);
+  instruction(bytes, codeOffset, 8, TALOS_RT_DB_STORE_FRAME, 0, 0, 9);
+  instruction(bytes, codeOffset, 9, TALOS_RT_DB_STORE_FRAME,
+              TALOS_RT_DESCRIPTOR_STORAGE, 0, 8, 0, 0, 65, 32);
   // Keep the process live so the test can inspect its process-owned automatic
   // state. Destroying the instance below releases that owner reference.
-  instruction(bytes, codeOffset, 10, OBELISK_RT_DB_CONTINUE);
+  instruction(bytes, codeOffset, 10, TALOS_RT_DB_CONTINUE);
 
   // ROOT -> cursor, status.
   put32(bytes, operandOffset, 0);
@@ -1441,11 +1441,11 @@ std::vector<uint8_t> makeVPIBytecode() {
     uint32_t id, inputs, outputs;
   };
   std::array<Intrinsic, 5> intrinsics{{
-      {OBELISK_RT_INTRINSIC_V1_VPI_ROOT, 0, 2},
-      {OBELISK_RT_INTRINSIC_V1_VPI_CHILD, 1, 2},
-      {OBELISK_RT_INTRINSIC_V1_VPI_WRITE, 2, 1},
-      {OBELISK_RT_INTRINSIC_V1_VPI_READ, 1, 2},
-      {OBELISK_RT_INTRINSIC_V1_STATE_ALLOC, 1, 1},
+      {TALOS_RT_INTRINSIC_V1_VPI_ROOT, 0, 2},
+      {TALOS_RT_INTRINSIC_V1_VPI_CHILD, 1, 2},
+      {TALOS_RT_INTRINSIC_V1_VPI_WRITE, 2, 1},
+      {TALOS_RT_INTRINSIC_V1_VPI_READ, 1, 2},
+      {TALOS_RT_INTRINSIC_V1_STATE_ALLOC, 1, 1},
   }};
   std::array<uint32_t, 5> firstOperands{{0, 2, 5, 8, 11}};
   for (size_t index = 0; index != intrinsics.size(); ++index) {
@@ -1464,7 +1464,7 @@ std::vector<uint8_t> makeVPIBytecode() {
 }
 
 std::vector<uint8_t> makePartialAutomaticBytecode(bool nba) {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 10 * 40;
   constexpr size_t operandOffset = codeOffset + 11 * 32;
@@ -1476,22 +1476,22 @@ std::vector<uint8_t> makePartialAutomaticBytecode(bool nba) {
   // The 65-bit initial/replacement value is also read as signed i64 -3 for a
   // partially overlapping view [-3, 62).
   put64(bytes, constantOffset, UINT64_MAX - 2);
-  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_CONSTANT, 0, 2, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 4, TALOS_RT_DB_CONSTANT, 0, 2, 0, 0, 0, 0,
               0);
-  instruction(bytes, codeOffset, 6, OBELISK_RT_DB_HANDLE_OFFSET, 0, 8, 8, 2, 0,
+  instruction(bytes, codeOffset, 6, TALOS_RT_DB_HANDLE_OFFSET, 0, 8, 8, 2, 0,
               65, 0);
   if (!nba) {
-    instruction(bytes, codeOffset, 7, OBELISK_RT_DB_STORE_STATE, 0, 0, 8, 6);
-    instruction(bytes, codeOffset, 8, OBELISK_RT_DB_LOAD_STATE, 0, 9, 8);
-    instruction(bytes, codeOffset, 9, OBELISK_RT_DB_STORE_FRAME, 0, 0, 9);
+    instruction(bytes, codeOffset, 7, TALOS_RT_DB_STORE_STATE, 0, 0, 8, 6);
+    instruction(bytes, codeOffset, 8, TALOS_RT_DB_LOAD_STATE, 0, 9, 8);
+    instruction(bytes, codeOffset, 9, TALOS_RT_DB_STORE_FRAME, 0, 0, 9);
   } else {
-    instruction(bytes, codeOffset, 7, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
+    instruction(bytes, codeOffset, 7, TALOS_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
                 3);
-    instruction(bytes, codeOffset, 8, OBELISK_RT_DB_NOP);
-    instruction(bytes, codeOffset, 9, OBELISK_RT_DB_STORE_FRAME,
-                OBELISK_RT_DESCRIPTOR_STORAGE, 0, 8, 0, 0, 65, 0);
+    instruction(bytes, codeOffset, 8, TALOS_RT_DB_NOP);
+    instruction(bytes, codeOffset, 9, TALOS_RT_DB_STORE_FRAME,
+                TALOS_RT_DESCRIPTOR_STORAGE, 0, 8, 0, 0, 65, 0);
     size_t intrinsic = intrinsicOffset + 3 * 16;
-    put32(bytes, intrinsic, OBELISK_RT_INTRINSIC_V1_NBA);
+    put32(bytes, intrinsic, TALOS_RT_INTRINSIC_V1_NBA);
     put32(bytes, intrinsic + 4, 2);
     put32(bytes, intrinsic + 8, 0);
     put32(bytes, intrinsic + 12, 0);
@@ -1508,44 +1508,44 @@ std::vector<uint8_t> makePartialAutomaticBytecode(bool nba) {
 }
 
 std::vector<uint8_t> makeAutomaticFrameLoadBytecode() {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 10 * 40;
   std::vector<uint8_t> bytes = makeVPIBytecode();
   put64(bytes, functionOffset + 24, 4);
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME,
-              OBELISK_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0, 65, 0);
-  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_LOAD_STATE, 0, 9, 8);
-  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_STORE_FRAME, 0, 0, 9);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_LOAD_FRAME,
+              TALOS_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0, 65, 0);
+  instruction(bytes, codeOffset, 1, TALOS_RT_DB_LOAD_STATE, 0, 9, 8);
+  instruction(bytes, codeOffset, 2, TALOS_RT_DB_STORE_FRAME, 0, 0, 9);
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_TERMINATE);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
 
 std::vector<uint8_t> makeStaticHandleRoundTripBytecode() {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 10 * 40;
   std::vector<uint8_t> bytes = makeVPIBytecode();
   put64(bytes, functionOffset + 24, 8);
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME,
-              OBELISK_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0, 65, 0);
-  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_HANDLE_ID, 0, 2, 8);
-  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_HANDLE_OFFSET, 0, 8, 8,
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_LOAD_FRAME,
+              TALOS_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0, 65, 0);
+  instruction(bytes, codeOffset, 1, TALOS_RT_DB_HANDLE_ID, 0, 2, 8);
+  instruction(bytes, codeOffset, 2, TALOS_RT_DB_HANDLE_OFFSET, 0, 8, 8,
               UINT32_MAX, 0, 4, 3);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_LOAD_STATE, 0, 9, 8);
-  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_STORE_STATE, 0, 0, 8, 9);
-  instruction(bytes, codeOffset, 5, OBELISK_RT_DB_STORE_FRAME,
-              OBELISK_RT_DESCRIPTOR_STORAGE, 0, 8, 0, 0, 65, 0);
-  instruction(bytes, codeOffset, 6, OBELISK_RT_DB_STORE_FRAME, 0, 0, 2, 0, 0, 8,
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_LOAD_STATE, 0, 9, 8);
+  instruction(bytes, codeOffset, 4, TALOS_RT_DB_STORE_STATE, 0, 0, 8, 9);
+  instruction(bytes, codeOffset, 5, TALOS_RT_DB_STORE_FRAME,
+              TALOS_RT_DESCRIPTOR_STORAGE, 0, 8, 0, 0, 65, 0);
+  instruction(bytes, codeOffset, 6, TALOS_RT_DB_STORE_FRAME, 0, 0, 2, 0, 0, 8,
               8);
-  instruction(bytes, codeOffset, 7, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, 7, TALOS_RT_DB_TERMINATE);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
 
 std::vector<uint8_t> makeStaticNBABytecode() {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 10 * 40;
   constexpr size_t operandOffset = codeOffset + 11 * 32;
@@ -1555,14 +1555,14 @@ std::vector<uint8_t> makeStaticNBABytecode() {
   constexpr size_t siteOffset = intrinsicOffset + 5 * 16;
   std::vector<uint8_t> bytes = makeVPIBytecode();
   put64(bytes, functionOffset + 24, 4);
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME,
-              OBELISK_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0, 65, 0);
-  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_CONSTANT, 0, 6);
-  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_LOAD_FRAME,
+              TALOS_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0, 65, 0);
+  instruction(bytes, codeOffset, 1, TALOS_RT_DB_CONSTANT, 0, 6);
+  instruction(bytes, codeOffset, 2, TALOS_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               3);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_TERMINATE);
   size_t intrinsic = intrinsicOffset + 3 * 16;
-  put32(bytes, intrinsic, OBELISK_RT_INTRINSIC_V1_NBA);
+  put32(bytes, intrinsic, TALOS_RT_INTRINSIC_V1_NBA);
   put32(bytes, intrinsic + 4, 2);
   put32(bytes, intrinsic + 8, 0);
   put32(bytes, intrinsic + 12, 0);
@@ -1578,7 +1578,7 @@ std::vector<uint8_t> makeStaticNBABytecode() {
 }
 
 std::vector<uint8_t> makeAutomaticSpawnBytecode(uint32_t childRank = 0) {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 2 * 96;
   constexpr size_t codeOffset = layoutOffset + 5 * 40;
   constexpr size_t operandOffset = codeOffset + 8 * 32;
@@ -1589,9 +1589,9 @@ std::vector<uint8_t> makeAutomaticSpawnBytecode(uint32_t childRank = 0) {
   constexpr size_t stateOffset = siteOffset + 2 * 16;
   std::vector<uint8_t> bytes(stateOffset + 2 * 32, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 8, TALOS_RT_VERSION);
   put32(bytes, 12, 0);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 2);
@@ -1643,24 +1643,24 @@ std::vector<uint8_t> makeAutomaticSpawnBytecode(uint32_t childRank = 0) {
     put64(bytes, record + 8, offset);
     put64(bytes, record + 16, size);
   };
-  layout(0, OBELISK_RT_DBREG_HANDLE, 256, 0, 32);
-  layout(1, OBELISK_RT_DBREG_HANDLE, 256, 32, 32);
-  layout(2, OBELISK_RT_DBREG_HANDLE, 256, 0, 32);
-  layout(3, OBELISK_RT_DBREG_LOGIC, 65, 32, 32);
-  layout(4, OBELISK_RT_DBREG_HANDLE, 256, 64, 32);
+  layout(0, TALOS_RT_DBREG_HANDLE, 256, 0, 32);
+  layout(1, TALOS_RT_DBREG_HANDLE, 256, 32, 32);
+  layout(2, TALOS_RT_DBREG_HANDLE, 256, 0, 32);
+  layout(3, TALOS_RT_DBREG_LOGIC, 65, 32, 32);
+  layout(4, TALOS_RT_DBREG_HANDLE, 256, 64, 32);
 
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME,
-              OBELISK_RT_DESCRIPTOR_STORAGE, 0, 0, 0, 0, 65, 0);
-  instruction(bytes, codeOffset, 1, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_LOAD_FRAME,
+              TALOS_RT_DESCRIPTOR_STORAGE, 0, 0, 0, 0, 65, 0);
+  instruction(bytes, codeOffset, 1, TALOS_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               0);
-  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_TERMINATE);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_LOAD_FRAME,
-              OBELISK_RT_DESCRIPTOR_STORAGE, 0, 0, 0, 0, 65, 0);
-  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_CONSTANT, 0, 1);
-  instruction(bytes, codeOffset, 5, OBELISK_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
+  instruction(bytes, codeOffset, 2, TALOS_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_LOAD_FRAME,
+              TALOS_RT_DESCRIPTOR_STORAGE, 0, 0, 0, 0, 65, 0);
+  instruction(bytes, codeOffset, 4, TALOS_RT_DB_CONSTANT, 0, 1);
+  instruction(bytes, codeOffset, 5, TALOS_RT_DB_INTRINSIC, 0, 0, 0, 0, 0, 0,
               1);
-  instruction(bytes, codeOffset, 6, OBELISK_RT_DB_STORE_STATE, 0, 0, 0, 1);
-  instruction(bytes, codeOffset, 7, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, 6, TALOS_RT_DB_STORE_STATE, 0, 0, 0, 1);
+  instruction(bytes, codeOffset, 7, TALOS_RT_DB_TERMINATE);
 
   // SPAWN input and output, followed by STATE_ALLOC input and output.
   put32(bytes, operandOffset + 4, 0);
@@ -1678,11 +1678,11 @@ std::vector<uint8_t> makeAutomaticSpawnBytecode(uint32_t childRank = 0) {
     put64(bytes, continuation + 8, index == 0 ? 0 : 3);
     put32(bytes, continuation + 16, index == 0 ? 0 : childRank);
   }
-  put32(bytes, intrinsicOffset, OBELISK_RT_INTRINSIC_V1_SPAWN);
+  put32(bytes, intrinsicOffset, TALOS_RT_INTRINSIC_V1_SPAWN);
   put32(bytes, intrinsicOffset + 4, 1);
   put32(bytes, intrinsicOffset + 8, 1);
   put32(bytes, intrinsicOffset + 12, 1);
-  put32(bytes, intrinsicOffset + 16, OBELISK_RT_INTRINSIC_V1_STATE_ALLOC);
+  put32(bytes, intrinsicOffset + 16, TALOS_RT_INTRINSIC_V1_STATE_ALLOC);
   put32(bytes, intrinsicOffset + 16 + 4, 1);
   put32(bytes, intrinsicOffset + 16 + 8, 1);
   put32(bytes, siteOffset, 0);
@@ -1710,19 +1710,19 @@ std::vector<uint8_t> makePreponedEventSpawnBytecode() {
   size_t codeOffset = get64(bytes, 72);
   // The root reconstructs the canonical event capture and passes it through a
   // bytecode spawn. The child reconstructs the same capture and terminates.
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME,
-              OBELISK_RT_DESCRIPTOR_EVENT, 0, 0, 0, 0, 0, 0);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_LOAD_FRAME,
-              OBELISK_RT_DESCRIPTOR_EVENT, 0, 0, 0, 0, 0, 0);
-  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_NOP);
-  instruction(bytes, codeOffset, 5, OBELISK_RT_DB_NOP);
-  instruction(bytes, codeOffset, 6, OBELISK_RT_DB_NOP);
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_LOAD_FRAME,
+              TALOS_RT_DESCRIPTOR_EVENT, 0, 0, 0, 0, 0, 0);
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_LOAD_FRAME,
+              TALOS_RT_DESCRIPTOR_EVENT, 0, 0, 0, 0, 0, 0);
+  instruction(bytes, codeOffset, 4, TALOS_RT_DB_NOP);
+  instruction(bytes, codeOffset, 5, TALOS_RT_DB_NOP);
+  instruction(bytes, codeOffset, 6, TALOS_RT_DB_NOP);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
 
 std::vector<uint8_t> makeSignalWaitSpawnBytecode() {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 2 * 96;
   constexpr size_t codeOffset = layoutOffset + 5 * 40;
   constexpr size_t operandOffset = codeOffset + 8 * 32;
@@ -1744,16 +1744,16 @@ std::vector<uint8_t> makeSignalWaitSpawnBytecode() {
   put64(bytes, 184, bytes.size());
   put64(bytes, functionOffset + 96 + 80, 3);
   put64(bytes, functionOffset + 96 + 88, 129);
-  bytes[layoutOffset + 3 * 40] = OBELISK_RT_DBREG_LOGIC;
+  bytes[layoutOffset + 3 * 40] = TALOS_RT_DBREG_LOGIC;
   put32(bytes, layoutOffset + 3 * 40 + 4, 64);
   put64(bytes, layoutOffset + 3 * 40 + 16, 16);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_CONSTANT, 0, 1);
-  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_SUSPEND,
-              OBELISK_RT_SUSPEND_EDGE, 0, 1, 0, 0, 0, 1);
-  instruction(bytes, codeOffset, 5, OBELISK_RT_DB_CONSTANT, 0, 1);
-  instruction(bytes, codeOffset, 6, OBELISK_RT_DB_SUSPEND,
-              OBELISK_RT_SUSPEND_EDGE, 0, 1, 0, 0, 0, 2);
-  instruction(bytes, codeOffset, 7, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_CONSTANT, 0, 1);
+  instruction(bytes, codeOffset, 4, TALOS_RT_DB_SUSPEND,
+              TALOS_RT_SUSPEND_EDGE, 0, 1, 0, 0, 0, 1);
+  instruction(bytes, codeOffset, 5, TALOS_RT_DB_CONSTANT, 0, 1);
+  instruction(bytes, codeOffset, 6, TALOS_RT_DB_SUSPEND,
+              TALOS_RT_SUSPEND_EDGE, 0, 1, 0, 0, 0, 2);
+  instruction(bytes, codeOffset, 7, TALOS_RT_DB_TERMINATE);
   put64(bytes, constantOffset, 8);
   put64(bytes, constantOffset + 8, 0);
   put32(bytes, continuationOffset + 2 * 24, 1);
@@ -1769,10 +1769,10 @@ std::vector<uint8_t> makeSignalWaitSpawnBytecode() {
 }
 
 struct DesignEventOnlyComputedWait {
-  obelisk_rt_computed_wait_record_v1 wait{};
-  obelisk_rt_computed_observer_v1 observer{};
-  obelisk_rt_computed_dependency_v1 dependency{};
-  obelisk_rt_computed_clause_v1 clause{};
+  talos_rt_computed_wait_record_v1 wait{};
+  talos_rt_computed_observer_v1 observer{};
+  talos_rt_computed_dependency_v1 dependency{};
+  talos_rt_computed_clause_v1 clause{};
   uint64_t previousValue = 0;
   uint64_t previousUnknown = 0;
 };
@@ -1781,7 +1781,7 @@ constexpr uint64_t designEventOnlyObserverID = 7;
 constexpr uint64_t designEventOnlyDependencyID = 0x7d02;
 
 std::vector<uint8_t> makeEventOnlyComputedWaitBytecode() {
-  std::vector<uint8_t> bytes = makeObserverBytecode(OBELISK_RT_DBREG_BITS);
+  std::vector<uint8_t> bytes = makeObserverBytecode(TALOS_RT_DBREG_BITS);
   size_t functionOffset = get64(bytes, 40);
   size_t layoutOffset = get64(bytes, 56);
   size_t codeOffset = get64(bytes, 72);
@@ -1838,7 +1838,7 @@ std::vector<uint8_t> makeEventOnlyComputedWaitBytecode() {
         sizeof(DesignEventOnlyComputedWait) * 2 + 1);
 
   size_t processLayout = layoutOffset + 2 * 40;
-  bytes[processLayout] = OBELISK_RT_DBREG_BITS;
+  bytes[processLayout] = TALOS_RT_DBREG_BITS;
   put32(bytes, processLayout + 4, 64);
   put64(bytes, processLayout + 8, 0);
   put64(bytes, processLayout + 16, 8);
@@ -1846,10 +1846,10 @@ std::vector<uint8_t> makeEventOnlyComputedWaitBytecode() {
   put32(bytes, layoutOffset + 40 + 4, 1);
   put64(bytes, layoutOffset + 40 + 16, 8);
 
-  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_CONSTANT, 0, 0);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_SUSPEND,
-              OBELISK_RT_SUSPEND_OBSERVER, 0, 0, 0, 0, 0, 1);
-  instruction(bytes, codeOffset, 4, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, 2, TALOS_RT_DB_CONSTANT, 0, 0);
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_SUSPEND,
+              TALOS_RT_SUSPEND_OBSERVER, 0, 0, 0, 0, 0, 1);
+  instruction(bytes, codeOffset, 4, TALOS_RT_DB_TERMINATE);
   put32(bytes, continuationOffset + 24, 1);
   put32(bytes, continuationOffset + 24 + 4, 0);
   put64(bytes, continuationOffset + 24 + 8, 2);
@@ -1870,12 +1870,12 @@ std::vector<uint8_t> makeDatabase(bool writable = true,
   constexpr uint64_t indexOffset = 448;
   std::vector<uint8_t> bytes(indexOffset + 48, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 8, TALOS_RT_VERSION);
   put32(bytes, 12, 0);
   put32(bytes, 16,
-        OBELISK_RT_DESIGN_PROFILE_READ |
-            (writable ? OBELISK_RT_DESIGN_PROFILE_WRITE : 0));
-  put32(bytes, 20, OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+        TALOS_RT_DESIGN_PROFILE_READ |
+            (writable ? TALOS_RT_DESIGN_PROFILE_WRITE : 0));
+  put32(bytes, 20, TALOS_RT_DESIGN_DATABASE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, scopeOffset);
   put64(bytes, 48, scopeOffset);
@@ -1893,8 +1893,8 @@ std::vector<uint8_t> makeDatabase(bool writable = true,
   put64(bytes, 160, stringOffset);
 
   put32(bytes, scopeOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
-  put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+        designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, vpiModule));
+  put32(bytes, scopeOffset + 4, TALOS_RT_DESIGN_CAP_ITERATE);
   put64(bytes, scopeOffset + 8, 1);
   put64(bytes, scopeOffset + 24, objectOffset);
   put64(bytes, scopeOffset + 40, stringOffset);
@@ -1904,10 +1904,10 @@ std::vector<uint8_t> makeDatabase(bool writable = true,
   }
 
   put32(bytes, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiReg));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STORAGE, vpiReg));
   put32(bytes, objectOffset + 4,
-        OBELISK_RT_DESIGN_CAP_READ |
-            (writable ? OBELISK_RT_DESIGN_CAP_WRITE : 0));
+        TALOS_RT_DESIGN_CAP_READ |
+            (writable ? TALOS_RT_DESIGN_CAP_WRITE : 0));
   put64(bytes, objectOffset + 8, 7);
   put64(bytes, objectOffset + 16, scopeOffset);
   if (withSource)
@@ -1921,10 +1921,10 @@ std::vector<uint8_t> makeDatabase(bool writable = true,
   if (withSource)
     put64(bytes, objectOffset + 88, (uint64_t{7} << 32) | 5);
 
-  put32(bytes, typeOffset, OBELISK_RT_DESIGN_RECORD_TYPE);
+  put32(bytes, typeOffset, TALOS_RT_DESIGN_RECORD_TYPE);
   put32(bytes, typeOffset + 4,
-        OBELISK_RT_DESIGN_TYPE_SCALAR |
-            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED)
+        TALOS_RT_DESIGN_TYPE_SCALAR |
+            ((TALOS_RT_DESIGN_TYPE_FOUR_STATE | TALOS_RT_DESIGN_TYPE_PACKED)
              << 8));
   put64(bytes, typeOffset + 8, 65);
   put64(bytes, typeOffset + 16, 64);
@@ -1985,9 +1985,9 @@ std::vector<uint8_t> makeCompactStaticObjectDatabase() {
   put64(bytes, directoryOffset + 168, 2);
 
   put32(bytes, semanticTypeOffset,
-        OBELISK_RT_DESIGN_SEMANTIC_ENUM | OBELISK_RT_DESIGN_SEMANTIC_SIGNED |
+        TALOS_RT_DESIGN_SEMANTIC_ENUM | TALOS_RT_DESIGN_SEMANTIC_SIGNED |
             (vpiEnumTypespec
-             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+             << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   put32(bytes, semanticTypeOffset + 4, 0);
   put32(bytes, semanticTypeOffset + 8, 1);
   put32(bytes, semanticTypeOffset + 12, UINT32_MAX);
@@ -1995,13 +1995,13 @@ std::vector<uint8_t> makeCompactStaticObjectDatabase() {
   put32(bytes, semanticTypeOffset + 20, 14);
   put32(
       bytes, semanticTypeOffset + 64,
-      OBELISK_RT_DESIGN_SEMANTIC_INT | OBELISK_RT_DESIGN_SEMANTIC_SIGNED |
-          (vpiIntTypespec << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+      TALOS_RT_DESIGN_SEMANTIC_INT | TALOS_RT_DESIGN_SEMANTIC_SIGNED |
+          (vpiIntTypespec << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   put32(bytes, semanticTypeOffset + 64 + 12, UINT32_MAX);
   put32(bytes, semanticTypeOffset + 64 + 16, UINT32_MAX);
   put32(bytes, semanticEdgeOffset, 1);
   put32(bytes, semanticEdgeOffset + 4,
-        OBELISK_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE);
+        TALOS_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE);
   put32(bytes, semanticRootOffset, (uint32_t{3} << 30) | 0);
   put32(bytes, semanticRootOffset + 4, 0);
   put32(bytes, semanticRootOffset + 8, (uint32_t{3} << 30) | 1);
@@ -2123,7 +2123,7 @@ std::vector<uint8_t> makeAutomaticNamedEventDatabase() {
   std::vector<uint8_t> bytes = makeFixedPropertyDatabase(false);
   constexpr uint64_t objectOffset = 240;
   put32(bytes, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiNamedEvent));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STORAGE, vpiNamedEvent));
 
   const uint32_t directoryOffset = get32(bytes, 12);
   const uint64_t propertyOffset = get64(bytes, directoryOffset + 112);
@@ -2145,9 +2145,9 @@ std::vector<uint8_t> makeDefinitionPropertyDatabase() {
   const uint32_t directoryOffset = static_cast<uint32_t>(bytes.size());
   const uint64_t definitionOffset = directoryOffset + kSemanticDirectorySize;
   const uint64_t bindingOffset =
-      definitionOffset + obelisk::reflection::DefinitionLayout.size;
+      definitionOffset + talos::reflection::DefinitionLayout.size;
   bytes.resize(
-      bindingOffset + obelisk::reflection::DefinitionBindingLayout.size, 0);
+      bindingOffset + talos::reflection::DefinitionBindingLayout.size, 0);
   put32(bytes, 12, directoryOffset);
   put64(bytes, 24, bytes.size());
   put64(bytes, directoryOffset + 176, definitionOffset);
@@ -2196,18 +2196,18 @@ std::vector<uint8_t> makeManagedScalarDatabase(uint32_t exactType,
   constexpr uint64_t typeOffset = 336;
   if (scopeVPIKind != 0)
     put32(bytes, 176,
-          designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, scopeVPIKind));
+          designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, scopeVPIKind));
   put32(bytes, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, exactType));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STORAGE, exactType));
   put32(bytes, objectOffset + 4,
-        OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_WRITE);
+        TALOS_RT_DESIGN_CAP_READ | TALOS_RT_DESIGN_CAP_WRITE);
   put64(bytes, objectOffset + 56, 64);
   put64(bytes, objectOffset + 64, 63);
   put64(bytes, objectOffset + 72, 0);
   put64(bytes, objectOffset + 80, 0);
   put32(bytes, typeOffset + 4,
-        OBELISK_RT_DESIGN_TYPE_SCALAR |
-            ((fourState ? OBELISK_RT_DESIGN_TYPE_FOUR_STATE : 0) << 8));
+        TALOS_RT_DESIGN_TYPE_SCALAR |
+            ((fourState ? TALOS_RT_DESIGN_TYPE_FOUR_STATE : 0) << 8));
   put64(bytes, typeOffset + 8, 64);
   put64(bytes, typeOffset + 16, 63);
   put64(bytes, typeOffset + 24, 0);
@@ -2217,7 +2217,7 @@ std::vector<uint8_t> makeManagedScalarDatabase(uint32_t exactType,
 
 std::vector<uint8_t> makeBuiltinClassVariableDatabase(uint32_t semanticKind) {
   std::vector<uint8_t> bytes = makeManagedScalarDatabase(vpiClassVar);
-  const bool mailbox = semanticKind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX;
+  const bool mailbox = semanticKind == TALOS_RT_DESIGN_SEMANTIC_MAILBOX;
   const uint32_t directoryOffset = static_cast<uint32_t>(bytes.size());
   const uint64_t typeOffset = directoryOffset + kSemanticDirectorySize;
   const uint64_t edgeOffset = typeOffset + (mailbox ? 2 : 1) * 64;
@@ -2233,21 +2233,21 @@ std::vector<uint8_t> makeBuiltinClassVariableDatabase(uint32_t semanticKind) {
   put64(bytes, directoryOffset + 40, 1);
   put32(bytes, typeOffset,
         semanticKind | (vpiClassTypespec
-                        << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+                        << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   put32(bytes, typeOffset + 12, UINT32_MAX);
   put32(bytes, typeOffset + 16, UINT32_MAX);
   if (mailbox) {
     put32(bytes, typeOffset + 8, 1);
     put32(bytes, typeOffset + 64,
-          OBELISK_RT_DESIGN_SEMANTIC_BIT |
-              OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
+          TALOS_RT_DESIGN_SEMANTIC_BIT |
+              TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE |
               (vpiBitTypespec
-               << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+               << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
     put32(bytes, typeOffset + 64 + 12, UINT32_MAX);
     put32(bytes, typeOffset + 64 + 16, UINT32_MAX);
     put64(bytes, typeOffset + 64 + 32, 31);
     put32(bytes, edgeOffset, 1);
-    put32(bytes, edgeOffset + 4, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT);
+    put32(bytes, edgeOffset + 4, TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT);
   }
   put32(bytes, rootOffset, uint32_t{1} << 30);
   put32(bytes, rootOffset + 4, 0);
@@ -2282,31 +2282,31 @@ std::vector<uint8_t> makeSemanticTraversalDatabase(bool wildcardAssoc = false) {
     const uint64_t offset = typeOffset + uint64_t{index} * 64;
     uint32_t publicKind = 0;
     switch (kind) {
-    case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY:
-    case OBELISK_RT_DESIGN_SEMANTIC_QUEUE:
+    case TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_QUEUE:
       publicKind = vpiArrayTypespec;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_STRING:
+    case TALOS_RT_DESIGN_SEMANTIC_STRING:
       publicKind = vpiStringTypespec;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
       publicKind = vpiPackedArrayTypespec;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
+    case TALOS_RT_DESIGN_SEMANTIC_LOGIC:
       publicKind = vpiLogicTypespec;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
+    case TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
       publicKind = vpiStructTypespec;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_ENUM:
+    case TALOS_RT_DESIGN_SEMANTIC_ENUM:
       publicKind = vpiEnumTypespec;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_MAILBOX:
+    case TALOS_RT_DESIGN_SEMANTIC_MAILBOX:
       publicKind = vpiClassTypespec;
       break;
-    case OBELISK_RT_DESIGN_SEMANTIC_BIT:
+    case TALOS_RT_DESIGN_SEMANTIC_BIT:
       publicKind = vpiBitTypespec;
       break;
     default:
@@ -2314,7 +2314,7 @@ std::vector<uint8_t> makeSemanticTraversalDatabase(bool wildcardAssoc = false) {
     }
     put32(bytes, offset,
           kind | flags |
-              (publicKind << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+              (publicKind << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
     put32(bytes, offset + 4, firstEdge);
     put32(bytes, offset + 8, edges);
     put32(bytes, offset + 12, UINT32_MAX);
@@ -2324,27 +2324,27 @@ std::vector<uint8_t> makeSemanticTraversalDatabase(bool wildcardAssoc = false) {
     put64(bytes, offset + 40, static_cast<uint64_t>(right));
     put64(bytes, offset + 48, bitWidth);
   };
-  type(0, OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY,
-       OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE, 0, 1, 3, 0);
-  type(1, OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY, 0, 1, 1);
-  type(2, OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY,
-       wildcardAssoc ? OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX : 0, 2, 2);
+  type(0, TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY,
+       TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE, 0, 1, 3, 0);
+  type(1, TALOS_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY, 0, 1, 1);
+  type(2, TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY,
+       wildcardAssoc ? TALOS_RT_DESIGN_SEMANTIC_WILDCARD_INDEX : 0, 2, 2);
   type(3,
-       wildcardAssoc ? OBELISK_RT_DESIGN_SEMANTIC_UNTYPED
-                     : OBELISK_RT_DESIGN_SEMANTIC_STRING,
+       wildcardAssoc ? TALOS_RT_DESIGN_SEMANTIC_UNTYPED
+                     : TALOS_RT_DESIGN_SEMANTIC_STRING,
        0, 4, 0);
-  type(4, OBELISK_RT_DESIGN_SEMANTIC_QUEUE, 0, 4, 1, 0, 0, 0, 9);
-  type(5, OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY,
-       OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
-           OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE,
+  type(4, TALOS_RT_DESIGN_SEMANTIC_QUEUE, 0, 4, 1, 0, 0, 0, 9);
+  type(5, TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY,
+       TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE |
+           TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE,
        5, 1, 7, 4);
-  type(6, OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT,
-       OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE, 6, 2, 0, 0, 2);
-  type(7, OBELISK_RT_DESIGN_SEMANTIC_LOGIC,
-       OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE, 8, 0);
-  type(8, OBELISK_RT_DESIGN_SEMANTIC_ENUM, 0, 8, 1);
-  type(9, OBELISK_RT_DESIGN_SEMANTIC_BIT, 0, 9, 0);
-  type(10, OBELISK_RT_DESIGN_SEMANTIC_MAILBOX, 0, 9, 1);
+  type(6, TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT,
+       TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE, 6, 2, 0, 0, 2);
+  type(7, TALOS_RT_DESIGN_SEMANTIC_LOGIC,
+       TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE, 8, 0);
+  type(8, TALOS_RT_DESIGN_SEMANTIC_ENUM, 0, 8, 1);
+  type(9, TALOS_RT_DESIGN_SEMANTIC_BIT, 0, 9, 0);
+  type(10, TALOS_RT_DESIGN_SEMANTIC_MAILBOX, 0, 9, 1);
 
   auto edge = [&](uint32_t index, uint32_t child, uint32_t role,
                   uint32_t ordinal, uint32_t name = 0,
@@ -2352,10 +2352,10 @@ std::vector<uint8_t> makeSemanticTraversalDatabase(bool wildcardAssoc = false) {
     const uint64_t offset = edgeOffset + uint64_t{index} * 24;
     put32(bytes, offset, child);
     put32(bytes, offset + 4,
-          role | ((role == OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER
+          role | ((role == TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER
                        ? (flags == 0
                               ? static_cast<uint32_t>(
-                                    OBELISK_RT_DESIGN_SEMANTIC_EDGE_NOT_RANDOM)
+                                    TALOS_RT_DESIGN_SEMANTIC_EDGE_NOT_RANDOM)
                               : flags)
                        : 0)
                   << 8));
@@ -2363,19 +2363,19 @@ std::vector<uint8_t> makeSemanticTraversalDatabase(bool wildcardAssoc = false) {
     put32(bytes, offset + 12, name);
     put64(bytes, offset + 16, packedOffset);
   };
-  edge(0, 1, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
-  edge(1, 2, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
-  edge(2, 3, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX, 0);
-  edge(3, 4, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 1);
-  edge(4, 5, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
-  edge(5, 6, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
+  edge(0, 1, TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
+  edge(1, 2, TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
+  edge(2, 3, TALOS_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX, 0);
+  edge(3, 4, TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 1);
+  edge(4, 5, TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
+  edge(5, 6, TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
   // Relative string-table offsets 14 and 8 spell "logic" and "value".
-  edge(6, 7, OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER, 0, 14, 1,
-       OBELISK_RT_DESIGN_SEMANTIC_EDGE_RANDOM);
-  edge(7, 8, OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER, 1, 8, 0,
-       OBELISK_RT_DESIGN_SEMANTIC_EDGE_RANDOM_CYCLIC);
-  edge(8, 9, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE, 0);
-  edge(9, 9, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
+  edge(6, 7, TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER, 0, 14, 1,
+       TALOS_RT_DESIGN_SEMANTIC_EDGE_RANDOM);
+  edge(7, 8, TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER, 1, 8, 0,
+       TALOS_RT_DESIGN_SEMANTIC_EDGE_RANDOM_CYCLIC);
+  edge(8, 9, TALOS_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE, 0);
+  edge(9, 9, TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT, 0);
   put32(bytes, rootOffset, uint32_t{1} << 30);
   put32(bytes, rootOffset + 4, 0);
   put64(bytes, 32, imageChecksum(bytes));
@@ -2391,9 +2391,9 @@ std::vector<uint8_t> makeNamedSemanticTypespecDatabase() {
   constexpr uint64_t semanticEdgeOffset = semanticTypeOffset + 11 * 64;
   constexpr uint64_t semanticRootOffset = semanticEdgeOffset + 10 * 24;
   put32(bytes, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT,
                          vpiStructTypespec));
-  put32(bytes, objectOffset + 4, OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC);
+  put32(bytes, objectOffset + 4, TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC);
   put64(bytes, objectOffset + 80, 0);
   // A primary named aggregate has no typedef alias. Its semantic name proves
   // that this declaration defines the type rather than aliasing a built-in.
@@ -2409,9 +2409,9 @@ std::vector<uint8_t> makeBuiltinAliasTypespecDatabase() {
   constexpr uint64_t semanticRootOffset =
       496 + kSemanticDirectorySize + 11 * 64 + 10 * 24;
   put32(bytes, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT,
                          vpiLogicTypespec));
-  put32(bytes, objectOffset + 4, OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC);
+  put32(bytes, objectOffset + 4, TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC);
   put64(bytes, objectOffset + 80, 0);
   put32(bytes, semanticRootOffset + 4, 7);
   put64(bytes, 32, imageChecksum(bytes));
@@ -2425,11 +2425,11 @@ std::vector<uint8_t> makeDirectIntegralVectorDatabase() {
       496 + kSemanticDirectorySize + 11 * 64 + 10 * 24;
   constexpr uint64_t logic = semanticTypeOffset + 7 * 64;
   put32(bytes, logic,
-        OBELISK_RT_DESIGN_SEMANTIC_LOGIC |
-            OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
-            OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
+        TALOS_RT_DESIGN_SEMANTIC_LOGIC |
+            TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE |
+            TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE |
             (vpiLogicTypespec
-             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+             << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   put64(bytes, logic + 32, static_cast<uint64_t>(-2));
   put64(bytes, logic + 40, 5);
   put32(bytes, semanticRootOffset + 4, 7);
@@ -2472,17 +2472,17 @@ std::vector<uint8_t> makeStaticSemanticEndpointDatabase(bool classIdentity) {
   const uint32_t sourceKind =
       classIdentity ? vpiClassTypespec : vpiEnumTypespec;
   put32(bytes, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, sourceKind));
-  put32(bytes, objectOffset + 4, OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC);
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, sourceKind));
+  put32(bytes, objectOffset + 4, TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC);
 
   const uint64_t sourceSemantic =
       semanticTypeOffset + (classIdentity ? 10 : 8) * 64;
   put32(bytes, semanticRootOffset + 4, classIdentity ? 10 : 8);
   if (classIdentity) {
     put32(bytes, sourceSemantic,
-          OBELISK_RT_DESIGN_SEMANTIC_CLASS |
+          TALOS_RT_DESIGN_SEMANTIC_CLASS |
               (vpiClassTypespec
-               << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+               << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
     put32(bytes, sourceSemantic + 4, 0);
     put32(bytes, sourceSemantic + 8, 0);
     put32(bytes, sourceSemantic + 12, UINT32_MAX);
@@ -2493,9 +2493,9 @@ std::vector<uint8_t> makeStaticSemanticEndpointDatabase(bool classIdentity) {
     put32(bytes, sourceSemantic + 12, uint32_t{3} << 30);
     const uint64_t targetSemantic = semanticTypeOffset + 10 * 64;
     put32(bytes, targetSemantic,
-          OBELISK_RT_DESIGN_SEMANTIC_ENUM |
+          TALOS_RT_DESIGN_SEMANTIC_ENUM |
               (vpiEnumTypespec
-               << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+               << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
     put32(bytes, targetSemantic + 4, 9);
     put32(bytes, targetSemantic + 8, 1);
     put32(bytes, targetSemantic + 12, UINT32_MAX);
@@ -2503,7 +2503,7 @@ std::vector<uint8_t> makeStaticSemanticEndpointDatabase(bool classIdentity) {
     put32(bytes, targetSemantic + 20, 14);
     put32(bytes, targetSemantic + 28, 0);
     put32(bytes, semanticEdgeOffset + 9 * 24 + 4,
-          OBELISK_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE);
+          TALOS_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE);
     put32(bytes, semanticRootOffset + 8, uint32_t{3} << 30);
     put32(bytes, semanticRootOffset + 12, 10);
   }
@@ -2615,9 +2615,9 @@ std::vector<uint8_t> makeRootStaticRelationDatabase() {
   constexpr uint64_t indexOffset = 792;
   std::vector<uint8_t> bytes(indexOffset + 120, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
-  put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ);
-  put32(bytes, 20, OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+  put32(bytes, 8, TALOS_RT_VERSION);
+  put32(bytes, 16, TALOS_RT_DESIGN_PROFILE_READ);
+  put32(bytes, 20, TALOS_RT_DESIGN_DATABASE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, scopeOffset);
   put64(bytes, 48, scopeOffset);
@@ -2635,28 +2635,28 @@ std::vector<uint8_t> makeRootStaticRelationDatabase() {
   put64(bytes, 168, 7);
 
   put32(bytes, scopeOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, 0));
-  put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+        designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, 0));
+  put32(bytes, scopeOffset + 4, TALOS_RT_DESIGN_CAP_ITERATE);
   put64(bytes, scopeOffset + 8, 1);
   put64(bytes, scopeOffset + 24, objectOffset);
   put64(bytes, scopeOffset + 40, stringOffset);
 
   put32(bytes, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiPackage));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, vpiPackage));
   put64(bytes, objectOffset + 8, 2);
   put64(bytes, objectOffset + 16, scopeOffset);
   put64(bytes, objectOffset + 24, classOffset);
   put64(bytes, objectOffset + 40, stringOffset + 6);
 
   put32(bytes, classOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiClassDefn));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, vpiClassDefn));
   put64(bytes, classOffset + 8, 3);
   put64(bytes, classOffset + 16, scopeOffset);
   put64(bytes, classOffset + 24, nestedClassOffset);
   put64(bytes, classOffset + 40, stringOffset + 12);
 
   put32(bytes, nestedClassOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiClassDefn));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, vpiClassDefn));
   put64(bytes, nestedClassOffset + 8, 4);
   put64(bytes, nestedClassOffset + 16, scopeOffset);
   put64(bytes, nestedClassOffset + 24, methodOffset);
@@ -2665,8 +2665,8 @@ std::vector<uint8_t> makeRootStaticRelationDatabase() {
   // A source-visible class method keeps its executable code-unit record, but
   // lexical containment is relation-backed just like a static class record.
   put32(bytes, methodOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_FUNCTION, vpiFunction));
-  put32(bytes, methodOffset + 4, OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR);
+        designRecordKind(TALOS_RT_DESIGN_RECORD_FUNCTION, vpiFunction));
+  put32(bytes, methodOffset + 4, TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR);
   put64(bytes, methodOffset + 8, 5);
   put64(bytes, methodOffset + 16, scopeOffset);
   put64(bytes, methodOffset + 40, stringOffset + 34);
@@ -2776,9 +2776,9 @@ std::vector<uint8_t> makeClassMethodRelationDatabase() {
   constexpr uint64_t indexOffset = 744;
   std::vector<uint8_t> bytes(indexOffset + 120, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
-  put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ);
-  put32(bytes, 20, OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+  put32(bytes, 8, TALOS_RT_VERSION);
+  put32(bytes, 16, TALOS_RT_DESIGN_PROFILE_READ);
+  put32(bytes, 20, TALOS_RT_DESIGN_DATABASE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, rootOffset);
   put64(bytes, 48, rootOffset);
@@ -2795,37 +2795,37 @@ std::vector<uint8_t> makeClassMethodRelationDatabase() {
   put64(bytes, 160, relationOffset);
   put64(bytes, 168, 7);
 
-  put32(bytes, rootOffset, designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, 0));
-  put32(bytes, rootOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+  put32(bytes, rootOffset, designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, 0));
+  put32(bytes, rootOffset + 4, TALOS_RT_DESIGN_CAP_ITERATE);
   put64(bytes, rootOffset + 8, 1);
   put64(bytes, rootOffset + 24, moduleOffset);
   put64(bytes, rootOffset + 40, stringOffset);
 
   put32(bytes, moduleOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
-  put32(bytes, moduleOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+        designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, vpiModule));
+  put32(bytes, moduleOffset + 4, TALOS_RT_DESIGN_CAP_ITERATE);
   put64(bytes, moduleOffset + 8, 2);
   put64(bytes, moduleOffset + 16, rootOffset);
   put64(bytes, moduleOffset + 24, packageOffset);
   put64(bytes, moduleOffset + 40, stringOffset + 6);
 
   put32(bytes, packageOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiPackage));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, vpiPackage));
   put64(bytes, packageOffset + 8, 3);
   put64(bytes, packageOffset + 16, moduleOffset);
   put64(bytes, packageOffset + 24, classOffset);
   put64(bytes, packageOffset + 40, stringOffset + 10);
 
   put32(bytes, classOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiClassDefn));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, vpiClassDefn));
   put64(bytes, classOffset + 8, 4);
   put64(bytes, classOffset + 16, moduleOffset);
   put64(bytes, classOffset + 24, methodOffset);
   put64(bytes, classOffset + 40, stringOffset + 16);
 
   put32(bytes, methodOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_FUNCTION, vpiFunction));
-  put32(bytes, methodOffset + 4, OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR);
+        designRecordKind(TALOS_RT_DESIGN_RECORD_FUNCTION, vpiFunction));
+  put32(bytes, methodOffset + 4, TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR);
   put64(bytes, methodOffset + 8, 5);
   put64(bytes, methodOffset + 16, moduleOffset);
   put64(bytes, methodOffset + 40, stringOffset + 23);
@@ -2903,10 +2903,10 @@ std::vector<uint8_t> makeCodeUnitDatabase() {
   constexpr uint64_t indexOffset = 456;
   std::vector<uint8_t> bytes(indexOffset + 72, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 8, TALOS_RT_VERSION);
   put32(bytes, 12, 0);
-  put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ);
-  put32(bytes, 20, OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+  put32(bytes, 16, TALOS_RT_DESIGN_PROFILE_READ);
+  put32(bytes, 20, TALOS_RT_DESIGN_DATABASE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, scopeOffset);
   put64(bytes, 48, scopeOffset);
@@ -2924,21 +2924,21 @@ std::vector<uint8_t> makeCodeUnitDatabase() {
   put64(bytes, 160, stringOffset);
 
   put32(bytes, scopeOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
-  put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+        designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, vpiModule));
+  put32(bytes, scopeOffset + 4, TALOS_RT_DESIGN_CAP_ITERATE);
   put64(bytes, scopeOffset + 8, 1);
   put64(bytes, scopeOffset + 24, processOffset);
   put64(bytes, scopeOffset + 40, stringOffset);
 
   put32(bytes, processOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, vpiInitial));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_PROCESS, vpiInitial));
   put64(bytes, processOffset + 8, 71);
   put64(bytes, processOffset + 16, scopeOffset);
   put64(bytes, processOffset + 24, functionOffset);
   put64(bytes, processOffset + 40, stringOffset + 4);
 
   put32(bytes, functionOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_FUNCTION, vpiFunction));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_FUNCTION, vpiFunction));
   put64(bytes, functionOffset + 8, 72);
   put64(bytes, functionOffset + 16, scopeOffset);
   put64(bytes, functionOffset + 40, stringOffset + 13);
@@ -2974,7 +2974,7 @@ std::vector<uint8_t> makeAlwaysTypeDatabase(uint32_t alwaysType,
   std::vector<uint8_t> bytes = makeCodeUnitDatabase();
   constexpr uint64_t processOffset = 240;
   put32(bytes, processOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, vpiAlways));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_PROCESS, vpiAlways));
 
   struct Property {
     uint16_t selector;
@@ -3018,7 +3018,7 @@ std::vector<uint8_t> makeAutomaticCodeUnitDatabase(bool automaticTask,
   std::vector<uint8_t> bytes = makeCodeUnitDatabase();
   constexpr uint64_t processOffset = 240;
   put32(bytes, processOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, vpiTask));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_PROCESS, vpiTask));
 
   struct Property {
     uint32_t source;
@@ -3068,9 +3068,9 @@ std::vector<uint8_t> makeStatementDatabase() {
   constexpr uint64_t indexOffset = 664;
   std::vector<uint8_t> bytes(indexOffset + 72, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
-  put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ);
-  put32(bytes, 20, OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+  put32(bytes, 8, TALOS_RT_VERSION);
+  put32(bytes, 16, TALOS_RT_DESIGN_PROFILE_READ);
+  put32(bytes, 20, TALOS_RT_DESIGN_DATABASE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, scopeOffset);
   put64(bytes, 48, scopeOffset);
@@ -3091,22 +3091,22 @@ std::vector<uint8_t> makeStatementDatabase() {
   put64(bytes, 168, 3);
 
   put32(bytes, scopeOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
-  put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+        designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, vpiModule));
+  put32(bytes, scopeOffset + 4, TALOS_RT_DESIGN_CAP_ITERATE);
   put64(bytes, scopeOffset + 8, 1);
   put64(bytes, scopeOffset + 24, childScopeOffset);
   put64(bytes, scopeOffset + 40, stringOffset);
 
   put32(bytes, childScopeOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
-  put32(bytes, childScopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+        designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, vpiModule));
+  put32(bytes, childScopeOffset + 4, TALOS_RT_DESIGN_CAP_ITERATE);
   put64(bytes, childScopeOffset + 8, 2);
   put64(bytes, childScopeOffset + 16, scopeOffset);
   put64(bytes, childScopeOffset + 24, processOffset);
   put64(bytes, childScopeOffset + 40, stringOffset + 4);
 
   put32(bytes, processOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, vpiInitial));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_PROCESS, vpiInitial));
   put64(bytes, processOffset + 8, 10);
   put64(bytes, processOffset + 16, childScopeOffset);
   put64(bytes, processOffset + 40, stringOffset + 14);
@@ -3127,7 +3127,7 @@ std::vector<uint8_t> makeStatementDatabase() {
     put16(bytes, offset + 38, flags);
   };
   statement(0, 100, UINT32_MAX, vpiNamedBegin,
-            OBELISK_RT_DESIGN_STATEMENT_SCOPE, 8, 1, 37);
+            TALOS_RT_DESIGN_STATEMENT_SCOPE, 8, 1, 37);
   statement(1, 200, 0, vpiFor, 0, 9, 3, 0);
   statement(2, 300, 1, vpiNullStmt, 0, 10, 5, 0);
   auto site = [&](size_t index, uint64_t id, uint32_t statement,
@@ -3189,9 +3189,9 @@ std::vector<uint8_t> makeNestedModuleRelationDatabase() {
   constexpr uint64_t indexOffset = 432;
   std::vector<uint8_t> bytes(indexOffset + 72, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
-  put32(bytes, 16, OBELISK_RT_DESIGN_PROFILE_READ);
-  put32(bytes, 20, OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+  put32(bytes, 8, TALOS_RT_VERSION);
+  put32(bytes, 16, TALOS_RT_DESIGN_PROFILE_READ);
+  put32(bytes, 20, TALOS_RT_DESIGN_DATABASE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, scopeOffset);
   put64(bytes, 48, scopeOffset);
@@ -3210,8 +3210,8 @@ std::vector<uint8_t> makeNestedModuleRelationDatabase() {
   auto scope = [&](uint64_t offset, uint64_t id, uint64_t parent,
                    uint64_t firstChild, uint64_t name) {
     put32(bytes, offset,
-          designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
-    put32(bytes, offset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+          designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, vpiModule));
+    put32(bytes, offset + 4, TALOS_RT_DESIGN_CAP_ITERATE);
     put64(bytes, offset + 8, id);
     put64(bytes, offset + 16, parent);
     put64(bytes, offset + 24, firstChild);
@@ -3267,11 +3267,11 @@ std::vector<uint8_t> makeAggregateDatabase() {
   constexpr uint64_t indexOffset = 616;
   std::vector<uint8_t> bytes(indexOffset + 48, 0);
   std::memcpy(bytes.data(), "OBDSGN1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 8, TALOS_RT_VERSION);
   put32(bytes, 12, 0);
   put32(bytes, 16,
-        OBELISK_RT_DESIGN_PROFILE_READ | OBELISK_RT_DESIGN_PROFILE_WRITE);
-  put32(bytes, 20, OBELISK_RT_DESIGN_DATABASE_HEADER_SIZE);
+        TALOS_RT_DESIGN_PROFILE_READ | TALOS_RT_DESIGN_PROFILE_WRITE);
+  put32(bytes, 20, TALOS_RT_DESIGN_DATABASE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, scopeOffset);
   put64(bytes, 48, scopeOffset);
@@ -3288,16 +3288,16 @@ std::vector<uint8_t> makeAggregateDatabase() {
   put64(bytes, 144, stringOffset);
   put64(bytes, 160, stringOffset);
 
-  put32(bytes, scopeOffset, OBELISK_RT_DESIGN_RECORD_SCOPE);
-  put32(bytes, scopeOffset + 4, OBELISK_RT_DESIGN_CAP_ITERATE);
+  put32(bytes, scopeOffset, TALOS_RT_DESIGN_RECORD_SCOPE);
+  put32(bytes, scopeOffset + 4, TALOS_RT_DESIGN_CAP_ITERATE);
   put64(bytes, scopeOffset + 8, 1);
   put64(bytes, scopeOffset + 24, objectOffset);
   put64(bytes, scopeOffset + 40, stringOffset);
 
   put32(bytes, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiReg));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STORAGE, vpiReg));
   put32(bytes, objectOffset + 4,
-        OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_WRITE);
+        TALOS_RT_DESIGN_CAP_READ | TALOS_RT_DESIGN_CAP_WRITE);
   put64(bytes, objectOffset + 8, 7);
   put64(bytes, objectOffset + 16, scopeOffset);
   put64(bytes, objectOffset + 40, stringOffset + 4);
@@ -3307,10 +3307,10 @@ std::vector<uint8_t> makeAggregateDatabase() {
   put64(bytes, objectOffset + 72, 0);
   put64(bytes, objectOffset + 80, 0);
 
-  put32(bytes, typeOffset, OBELISK_RT_DESIGN_RECORD_TYPE);
+  put32(bytes, typeOffset, TALOS_RT_DESIGN_RECORD_TYPE);
   put32(bytes, typeOffset + 4,
-        OBELISK_RT_DESIGN_TYPE_STRUCT |
-            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED)
+        TALOS_RT_DESIGN_TYPE_STRUCT |
+            ((TALOS_RT_DESIGN_TYPE_FOUR_STATE | TALOS_RT_DESIGN_TYPE_PACKED)
              << 8));
   put64(bytes, typeOffset + 8, 65);
   put64(bytes, typeOffset + 16, 64);
@@ -3318,10 +3318,10 @@ std::vector<uint8_t> makeAggregateDatabase() {
   put64(bytes, typeOffset + 48, 1);
   put64(bytes, typeOffset + 72, stringOffset + 14);
 
-  put32(bytes, fieldTypeOffset, OBELISK_RT_DESIGN_RECORD_TYPE);
+  put32(bytes, fieldTypeOffset, TALOS_RT_DESIGN_RECORD_TYPE);
   put32(bytes, fieldTypeOffset + 4,
-        OBELISK_RT_DESIGN_TYPE_FIELD |
-            (OBELISK_RT_DESIGN_TYPE_FOUR_STATE << 8));
+        TALOS_RT_DESIGN_TYPE_FIELD |
+            (TALOS_RT_DESIGN_TYPE_FOUR_STATE << 8));
   put64(bytes, fieldTypeOffset + 8, 65);
   put64(bytes, fieldTypeOffset + 16, 64);
   put64(bytes, fieldTypeOffset + 32, scalarTypeOffset);
@@ -3329,10 +3329,10 @@ std::vector<uint8_t> makeAggregateDatabase() {
   put64(bytes, fieldTypeOffset + 64, 0);
   put64(bytes, fieldTypeOffset + 72, stringOffset + 21);
 
-  put32(bytes, scalarTypeOffset, OBELISK_RT_DESIGN_RECORD_TYPE);
+  put32(bytes, scalarTypeOffset, TALOS_RT_DESIGN_RECORD_TYPE);
   put32(bytes, scalarTypeOffset + 4,
-        OBELISK_RT_DESIGN_TYPE_SCALAR |
-            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED)
+        TALOS_RT_DESIGN_TYPE_SCALAR |
+            ((TALOS_RT_DESIGN_TYPE_FOUR_STATE | TALOS_RT_DESIGN_TYPE_PACKED)
              << 8));
   put64(bytes, scalarTypeOffset + 8, 65);
   put64(bytes, scalarTypeOffset + 16, 64);
@@ -3388,8 +3388,8 @@ std::vector<uint8_t> makeVPIShapeDatabase(VPIShapeType shape,
       exactVpiType == vpiNet || exactVpiType == vpiNetBit ||
               exactVpiType == vpiNetArray || exactVpiType == vpiRealNet ||
               exactVpiType == vpiShortRealNet
-          ? OBELISK_RT_DESIGN_RECORD_NET
-          : OBELISK_RT_DESIGN_RECORD_STORAGE;
+          ? TALOS_RT_DESIGN_RECORD_NET
+          : TALOS_RT_DESIGN_RECORD_STORAGE;
   if (shape == VPIShapeType::BasicScalar ||
       shape == VPIShapeType::BasicVector || shape == VPIShapeType::ShortReal ||
       shape == VPIShapeType::Real) {
@@ -3401,12 +3401,12 @@ std::vector<uint8_t> makeVPIShapeDatabase(VPIShapeType shape,
     const uint32_t flags =
         shape == VPIShapeType::ShortReal || shape == VPIShapeType::Real
             ? 0
-            : OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED;
+            : TALOS_RT_DESIGN_TYPE_FOUR_STATE | TALOS_RT_DESIGN_TYPE_PACKED;
     put32(bytes, objectOffset, designRecordKind(physicalKind, exactVpiType));
     put64(bytes, objectOffset + 56, width);
     put64(bytes, objectOffset + 64, width - 1);
     put32(bytes, rootTypeOffset + 4,
-          OBELISK_RT_DESIGN_TYPE_SCALAR | (flags << 8));
+          TALOS_RT_DESIGN_TYPE_SCALAR | (flags << 8));
     put64(bytes, rootTypeOffset + 8, width);
     put64(bytes, rootTypeOffset + 16, width - 1);
     put64(bytes, 32, imageChecksum(bytes));
@@ -3421,7 +3421,7 @@ std::vector<uint8_t> makeVPIShapeDatabase(VPIShapeType shape,
                   uint64_t childCount, uint64_t ordinalOrTag,
                   uint64_t packedOffset, uint64_t name) {
     std::fill(bytes.begin() + offset, bytes.begin() + offset + 80, 0);
-    put32(bytes, offset, OBELISK_RT_DESIGN_RECORD_TYPE);
+    put32(bytes, offset, TALOS_RT_DESIGN_RECORD_TYPE);
     put32(bytes, offset + 4, kind | (flags << 8));
     put64(bytes, offset + 8, width);
     put64(bytes, offset + 16, width - 1);
@@ -3439,8 +3439,8 @@ std::vector<uint8_t> makeVPIShapeDatabase(VPIShapeType shape,
     put64(bytes, objectOffset + 72, 0);
   };
 
-  const uint32_t fourState = OBELISK_RT_DESIGN_TYPE_FOUR_STATE;
-  const uint32_t packed = OBELISK_RT_DESIGN_TYPE_PACKED;
+  const uint32_t fourState = TALOS_RT_DESIGN_TYPE_FOUR_STATE;
+  const uint32_t packed = TALOS_RT_DESIGN_TYPE_PACKED;
   switch (shape) {
   case VPIShapeType::BasicScalar:
   case VPIShapeType::BasicVector:
@@ -3448,11 +3448,11 @@ std::vector<uint8_t> makeVPIShapeDatabase(VPIShapeType shape,
   case VPIShapeType::Real:
     break;
   case VPIShapeType::PackedArrayOneBit:
-    type(rootTypeOffset, OBELISK_RT_DESIGN_TYPE_ARRAY, fourState | packed, 1,
+    type(rootTypeOffset, TALOS_RT_DESIGN_TYPE_ARRAY, fourState | packed, 1,
          nestedTypeOffset, 0, 0, 0, 0, stringOffset + 14);
-    type(nestedTypeOffset, OBELISK_RT_DESIGN_TYPE_ARRAY, fourState | packed, 1,
+    type(nestedTypeOffset, TALOS_RT_DESIGN_TYPE_ARRAY, fourState | packed, 1,
          leafTypeOffset, 0, 0, 0, 0, stringOffset + 21);
-    type(leafTypeOffset, OBELISK_RT_DESIGN_TYPE_SCALAR, fourState | packed, 1,
+    type(leafTypeOffset, TALOS_RT_DESIGN_TYPE_SCALAR, fourState | packed, 1,
          0, 0, 0, 0, 0, stringOffset + 27);
     put64(bytes, 88, 3);
     setObjectWidth(1);
@@ -3460,13 +3460,13 @@ std::vector<uint8_t> makeVPIShapeDatabase(VPIShapeType shape,
   case VPIShapeType::UnpackedArrayOfScalar:
   case VPIShapeType::UnpackedArrayOfVector: {
     const uint64_t width = shape == VPIShapeType::UnpackedArrayOfScalar ? 1 : 8;
-    type(rootTypeOffset, OBELISK_RT_DESIGN_TYPE_ARRAY, fourState, width,
+    type(rootTypeOffset, TALOS_RT_DESIGN_TYPE_ARRAY, fourState, width,
          nestedTypeOffset, 0, 0, 0, 0, stringOffset + 14);
-    type(nestedTypeOffset, OBELISK_RT_DESIGN_TYPE_ARRAY, fourState, width,
+    type(nestedTypeOffset, TALOS_RT_DESIGN_TYPE_ARRAY, fourState, width,
          leafTypeOffset, 0, 0, 0, 0, stringOffset + 21);
     put64(bytes, rootTypeOffset + 16, 0);
     put64(bytes, nestedTypeOffset + 16, 0);
-    type(leafTypeOffset, OBELISK_RT_DESIGN_TYPE_SCALAR, fourState | packed,
+    type(leafTypeOffset, TALOS_RT_DESIGN_TYPE_SCALAR, fourState | packed,
          width, 0, 0, 0, 0, 0, stringOffset + 27);
     put64(bytes, 88, 3);
     setObjectWidth(width);
@@ -3481,12 +3481,12 @@ std::vector<uint8_t> makeVPIShapeDatabase(VPIShapeType shape,
     const bool isPacked = shape == VPIShapeType::PackedStructOneBit ||
                           shape == VPIShapeType::PackedUnionOneBit;
     type(rootTypeOffset,
-         isUnion ? OBELISK_RT_DESIGN_TYPE_UNION : OBELISK_RT_DESIGN_TYPE_STRUCT,
+         isUnion ? TALOS_RT_DESIGN_TYPE_UNION : TALOS_RT_DESIGN_TYPE_STRUCT,
          fourState | (isPacked ? packed : 0), 1, 0, nestedTypeOffset, 1, 0, 0,
          stringOffset + 14);
-    type(nestedTypeOffset, OBELISK_RT_DESIGN_TYPE_FIELD, fourState, 1,
+    type(nestedTypeOffset, TALOS_RT_DESIGN_TYPE_FIELD, fourState, 1,
          leafTypeOffset, 0, 0, 0, 0, stringOffset + 21);
-    type(leafTypeOffset, OBELISK_RT_DESIGN_TYPE_SCALAR, fourState | packed, 1,
+    type(leafTypeOffset, TALOS_RT_DESIGN_TYPE_SCALAR, fourState | packed, 1,
          0, 0, 0, 0, 0, stringOffset + 27);
     put64(bytes, 88, 3);
     setObjectWidth(1);
@@ -3501,7 +3501,7 @@ std::vector<uint8_t>
 makeVPIIndexedDatabase(int64_t outerLeft = 0, int64_t outerRight = 1,
                        int64_t packedLeft = 7, int64_t packedRight = 4,
                        uint32_t exactType = vpiRegArray,
-                       uint32_t recordKind = OBELISK_RT_DESIGN_RECORD_STORAGE,
+                       uint32_t recordKind = TALOS_RT_DESIGN_RECORD_STORAGE,
                        bool innerPacked = true, bool elementSigned = false,
                        bool outerPacked = false) {
   constexpr uint64_t objectOffset = 240;
@@ -3510,9 +3510,9 @@ makeVPIIndexedDatabase(int64_t outerLeft = 0, int64_t outerRight = 1,
   constexpr uint64_t scalarTypeOffset = packedTypeOffset + 80;
   constexpr uint64_t stringOffset = scalarTypeOffset + 80;
   std::vector<uint8_t> bytes = makeAggregateDatabase();
-  const uint32_t fourState = OBELISK_RT_DESIGN_TYPE_FOUR_STATE;
-  const uint32_t packed = OBELISK_RT_DESIGN_TYPE_PACKED;
-  const uint32_t signedFlag = OBELISK_RT_DESIGN_TYPE_SIGNED;
+  const uint32_t fourState = TALOS_RT_DESIGN_TYPE_FOUR_STATE;
+  const uint32_t packed = TALOS_RT_DESIGN_TYPE_PACKED;
+  const uint32_t signedFlag = TALOS_RT_DESIGN_TYPE_SIGNED;
   const uint64_t outerExtent = static_cast<uint64_t>(
       outerLeft >= outerRight ? outerLeft - outerRight + 1
                               : outerRight - outerLeft + 1);
@@ -3524,7 +3524,7 @@ makeVPIIndexedDatabase(int64_t outerLeft = 0, int64_t outerRight = 1,
                   uint64_t width, int64_t left, int64_t right, uint64_t element,
                   uint64_t name) {
     std::fill(bytes.begin() + offset, bytes.begin() + offset + 80, 0);
-    put32(bytes, offset, OBELISK_RT_DESIGN_RECORD_TYPE);
+    put32(bytes, offset, TALOS_RT_DESIGN_RECORD_TYPE);
     put32(bytes, offset + 4, kind | (flags << 8));
     put64(bytes, offset + 8, width);
     put64(bytes, offset + 16, static_cast<uint64_t>(left));
@@ -3538,15 +3538,15 @@ makeVPIIndexedDatabase(int64_t outerLeft = 0, int64_t outerRight = 1,
   put64(bytes, objectOffset + 56, width);
   put64(bytes, objectOffset + 64, static_cast<uint64_t>(outerLeft));
   put64(bytes, objectOffset + 72, static_cast<uint64_t>(outerRight));
-  type(outerTypeOffset, OBELISK_RT_DESIGN_TYPE_ARRAY,
+  type(outerTypeOffset, TALOS_RT_DESIGN_TYPE_ARRAY,
        fourState | (outerPacked ? packed : 0), width, outerLeft, outerRight,
        packedTypeOffset, stringOffset + 14);
-  type(packedTypeOffset, OBELISK_RT_DESIGN_TYPE_ARRAY,
+  type(packedTypeOffset, TALOS_RT_DESIGN_TYPE_ARRAY,
        fourState | (innerPacked ? packed : 0) |
            (elementSigned ? signedFlag : 0),
        packedExtent, packedLeft, packedRight, scalarTypeOffset,
        stringOffset + 21);
-  type(scalarTypeOffset, OBELISK_RT_DESIGN_TYPE_SCALAR,
+  type(scalarTypeOffset, TALOS_RT_DESIGN_TYPE_SCALAR,
        fourState | packed | (elementSigned ? signedFlag : 0), 1, 0, 0, 0,
        stringOffset + 27);
   put64(bytes, 32, imageChecksum(bytes));
@@ -3577,7 +3577,7 @@ std::vector<uint8_t> makeVPINetPropertyDatabase(
     std::optional<std::vector<ResolvedNetRunSpec>> resolvedRuns = std::nullopt,
     std::optional<std::vector<NetDelayRunSpec>> delayRuns = std::nullopt) {
   std::vector<uint8_t> bytes = makeVPIIndexedDatabase(
-      0, 1, 7, 4, exactType, OBELISK_RT_DESIGN_RECORD_NET);
+      0, 1, 7, 4, exactType, TALOS_RT_DESIGN_RECORD_NET);
   struct Property {
     uint16_t selector;
     uint16_t kind;
@@ -3663,7 +3663,7 @@ std::vector<uint8_t> makeVPITypedArrayDatabase(
     uint32_t publicElementTypespec, uint32_t semanticElementKind,
     uint64_t elementWidth, uint32_t semanticElementFlags = 0,
     uint32_t rootType = vpiRegArray,
-    uint32_t recordKind = OBELISK_RT_DESIGN_RECORD_STORAGE,
+    uint32_t recordKind = TALOS_RT_DESIGN_RECORD_STORAGE,
     uint32_t elementCount = 3) {
   std::vector<uint8_t> bytes =
       makeVPIIndexedDatabase(0, static_cast<int64_t>(elementCount - 1),
@@ -3685,11 +3685,11 @@ std::vector<uint8_t> makeVPITypedArrayDatabase(
   put64(bytes, directoryOffset + 40, 1);
 
   put32(bytes, typeOffset,
-        OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY |
-            OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
-            (semanticElementFlags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) |
+        TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY |
+            TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE |
+            (semanticElementFlags & TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE) |
             (vpiArrayTypespec
-             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+             << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   put32(bytes, typeOffset + 4, 0);
   put32(bytes, typeOffset + 8, 1);
   put32(bytes, typeOffset + 12, UINT32_MAX);
@@ -3701,12 +3701,12 @@ std::vector<uint8_t> makeVPITypedArrayDatabase(
   put32(bytes, elementOffset,
         semanticElementKind | semanticElementFlags |
             (publicElementTypespec
-             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+             << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   put32(bytes, elementOffset + 12, UINT32_MAX);
   put32(bytes, elementOffset + 16, UINT32_MAX);
 
   put32(bytes, edgeOffset, 1);
-  put32(bytes, edgeOffset + 4, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT);
+  put32(bytes, edgeOffset + 4, TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT);
   put32(bytes, rootOffset, uint32_t{1} << 30);
   put32(bytes, rootOffset + 4, 0);
   put64(bytes, 32, imageChecksum(bytes));
@@ -3715,21 +3715,21 @@ std::vector<uint8_t> makeVPITypedArrayDatabase(
 
 std::vector<uint8_t> makeVPIManagedStringArrayDatabase() {
   std::vector<uint8_t> bytes = makeVPITypedArrayDatabase(
-      vpiStringTypespec, OBELISK_RT_DESIGN_SEMANTIC_STRING, 64, 0, vpiRegArray,
-      OBELISK_RT_DESIGN_RECORD_STORAGE, 1);
+      vpiStringTypespec, TALOS_RT_DESIGN_SEMANTIC_STRING, 64, 0, vpiRegArray,
+      TALOS_RT_DESIGN_RECORD_STORAGE, 1);
   constexpr uint64_t outerTypeOffset = 336;
   constexpr uint64_t scalarTypeOffset = outerTypeOffset + 80;
   constexpr uint64_t unusedTypeOffset = scalarTypeOffset + 80;
   constexpr uint64_t stringOffset = unusedTypeOffset + 80;
   auto scalar = [&](uint64_t offset) {
     std::fill(bytes.begin() + offset, bytes.begin() + offset + 80, 0);
-    put32(bytes, offset, OBELISK_RT_DESIGN_RECORD_TYPE);
-    put32(bytes, offset + 4, OBELISK_RT_DESIGN_TYPE_SCALAR);
+    put32(bytes, offset, TALOS_RT_DESIGN_RECORD_TYPE);
+    put32(bytes, offset + 4, TALOS_RT_DESIGN_TYPE_SCALAR);
     put64(bytes, offset + 8, 64);
     put64(bytes, offset + 16, 63);
     put64(bytes, offset + 72, stringOffset + 27);
   };
-  put32(bytes, outerTypeOffset + 4, OBELISK_RT_DESIGN_TYPE_ARRAY);
+  put32(bytes, outerTypeOffset + 4, TALOS_RT_DESIGN_TYPE_ARRAY);
   put64(bytes, outerTypeOffset + 8, 64);
   put64(bytes, outerTypeOffset + 16, 0);
   put64(bytes, outerTypeOffset + 24, 0);
@@ -3747,15 +3747,15 @@ std::vector<uint8_t> makeVPIPortDatabase() {
   constexpr uint64_t typeOffset = 336;
   std::vector<uint8_t> bytes = makeDatabase();
   put32(bytes, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_PORT, vpiPort));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_PORT, vpiPort));
   put32(bytes, objectOffset + 4,
-        OBELISK_RT_DESIGN_CAP_READ | OBELISK_RT_DESIGN_CAP_PORT_INPUT);
+        TALOS_RT_DESIGN_CAP_READ | TALOS_RT_DESIGN_CAP_PORT_INPUT);
   put64(bytes, objectOffset + 56, 8);
   put64(bytes, objectOffset + 64, 7);
   put64(bytes, objectOffset + 72, 0);
   put32(bytes, typeOffset + 4,
-        OBELISK_RT_DESIGN_TYPE_SCALAR |
-            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED)
+        TALOS_RT_DESIGN_TYPE_SCALAR |
+            ((TALOS_RT_DESIGN_TYPE_FOUR_STATE | TALOS_RT_DESIGN_TYPE_PACKED)
              << 8));
   put64(bytes, typeOffset + 8, 8);
   put64(bytes, typeOffset + 16, 7);
@@ -3767,18 +3767,18 @@ std::vector<uint8_t> makeVPIPortDatabase() {
 struct Fixture {
   std::vector<uint8_t> bytecode = makeBytecode();
   std::vector<uint8_t> database = makeDatabase();
-  obelisk_rt_execution_descriptor_v1 execution{};
-  obelisk_rt_design_bytecode_entry_v1 entry{};
+  talos_rt_execution_descriptor_v1 execution{};
+  talos_rt_design_bytecode_entry_v1 entry{};
   std::array<uint32_t, 1> continuations{{0}};
-  obelisk_rt_frame_layout_v1 layout{};
-  obelisk_rt_process_descriptor_v1 descriptor{};
+  talos_rt_frame_layout_v1 layout{};
+  talos_rt_process_descriptor_v1 descriptor{};
 
   Fixture() {
-    execution = {OBELISK_RT_VERSION,
-                 OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                     OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                     OBELISK_RT_EXECUTION_VPI_READ |
-                     OBELISK_RT_EXECUTION_VPI_WRITE,
+    execution = {TALOS_RT_VERSION,
+                 TALOS_RT_EXECUTION_HAS_BYTECODE |
+                     TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                     TALOS_RT_EXECUTION_VPI_READ |
+                     TALOS_RT_EXECUTION_VPI_WRITE,
                  0,
                  bytecode.data(),
                  bytecode.size(),
@@ -3795,7 +3795,7 @@ struct Fixture {
                  nullptr,
                  0};
     entry = {&execution, 0, 0};
-    layout = {OBELISK_RT_VERSION,
+    layout = {TALOS_RT_VERSION,
               0,
               32,
               8,
@@ -3805,10 +3805,10 @@ struct Fixture {
               continuations.data(),
               0};
     layout.checksum = frameChecksum(layout);
-    descriptor = {{OBELISK_RT_DESCRIPTOR_PROCESS, 0, 9},
-                  OBELISK_RT_VERSION,
+    descriptor = {{TALOS_RT_DESCRIPTOR_PROCESS, 0, 9},
+                  TALOS_RT_VERSION,
                   0,
-                  OBELISK_RT_TIER_MASK_BYTECODE,
+                  TALOS_RT_TIER_MASK_BYTECODE,
                   0,
                   &layout,
                   nullptr,
@@ -3821,79 +3821,79 @@ struct Fixture {
 };
 
 TEST(DesignBytecode, MetadataOnlyImageHasNoExecutableEntry) {
-  std::vector<uint8_t> bytes(OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE, 0);
+  std::vector<uint8_t> bytes(TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
+  put32(bytes, 8, TALOS_RT_VERSION);
   put32(bytes, 16, bytes.size());
   put64(bytes, 24, bytes.size());
   for (size_t offset = 40; offset < 200; offset += 16)
     put64(bytes, offset, bytes.size());
   put64(bytes, 32, imageChecksum(bytes));
-  obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_VERSION;
-  execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+  talos_rt_execution_descriptor_v1 execution{};
+  execution.version = TALOS_RT_VERSION;
+  execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE;
   execution.bytecode = bytes.data();
   execution.bytecode_size = bytes.size();
   execution.checksum = imageChecksum(bytes);
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_OK);
-  obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+            TALOS_RT_OK);
+  talos_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   uint64_t scratchSize = 0, scratchAlignment = 0;
-  EXPECT_EQ(obelisk_rt_validate_design_bytecode(entry, context, &scratchSize,
+  EXPECT_EQ(talos_rt_validate_design_bytecode(entry, context, &scratchSize,
                                                 &scratchAlignment),
-            OBELISK_RT_INVALID_BYTECODE);
-  obelisk_rt_v1_context_destroy(context);
-  execution.flags |= OBELISK_RT_EXECUTION_REQUIRE_BYTECODE;
+            TALOS_RT_INVALID_BYTECODE);
+  talos_rt_v1_context_destroy(context);
+  execution.flags |= TALOS_RT_EXECUTION_REQUIRE_BYTECODE;
   context = nullptr;
-  EXPECT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
 }
 
 TEST(DesignBytecode, ContextBoundProcessCreationReusesValidatedDesign) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
 
-  obelisk_rt_process_instance_v1 *instance = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+  talos_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(talos_rt_v1_process_instance_create_for_context(
                 context, &fixture.descriptor, &instance),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_NE(instance, nullptr);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
 
   Fixture otherDesign;
-  instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(uintptr_t{1});
-  EXPECT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+  instance = reinterpret_cast<talos_rt_process_instance_v1 *>(uintptr_t{1});
+  EXPECT_EQ(talos_rt_v1_process_instance_create_for_context(
                 context, &otherDesign.descriptor, &instance),
-            OBELISK_RT_INVALID_DESIGN);
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(instance, nullptr);
 
   fixture.entry.reserved = 1;
-  instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(uintptr_t{1});
-  EXPECT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+  instance = reinterpret_cast<talos_rt_process_instance_v1 *>(uintptr_t{1});
+  EXPECT_EQ(talos_rt_v1_process_instance_create_for_context(
                 context, &fixture.descriptor, &instance),
-            OBELISK_RT_INVALID_BYTECODE);
+            TALOS_RT_INVALID_BYTECODE);
   EXPECT_EQ(instance, nullptr);
   fixture.entry.reserved = 0;
 
   fixture.entry.function = 1;
-  instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(uintptr_t{1});
-  EXPECT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+  instance = reinterpret_cast<talos_rt_process_instance_v1 *>(uintptr_t{1});
+  EXPECT_EQ(talos_rt_v1_process_instance_create_for_context(
                 context, &fixture.descriptor, &instance),
-            OBELISK_RT_INVALID_BYTECODE);
+            TALOS_RT_INVALID_BYTECODE);
   EXPECT_EQ(instance, nullptr);
   fixture.entry.function = 0;
 
-  instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(uintptr_t{1});
-  EXPECT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+  instance = reinterpret_cast<talos_rt_process_instance_v1 *>(uintptr_t{1});
+  EXPECT_EQ(talos_rt_v1_process_instance_create_for_context(
                 nullptr, &fixture.descriptor, &instance),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
   EXPECT_EQ(instance, nullptr);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, FailInstructionAcceptsFatalStatus) {
@@ -3901,96 +3901,96 @@ TEST(DesignBytecode, FailInstructionAcceptsFatalStatus) {
   const size_t layoutOffset = get64(fixture.bytecode, 56);
   const size_t codeOffset = get64(fixture.bytecode, 72);
   const size_t constantOffset = get64(fixture.bytecode, 104);
-  fixture.bytecode[layoutOffset] = OBELISK_RT_DBREG_STATUS;
+  fixture.bytecode[layoutOffset] = TALOS_RT_DBREG_STATUS;
   put32(fixture.bytecode, layoutOffset + 4, 64);
   put64(fixture.bytecode, layoutOffset + 16, 8);
-  instruction(fixture.bytecode, codeOffset, 1, OBELISK_RT_DB_FAIL, 0, 0, 0);
-  put64(fixture.bytecode, constantOffset, OBELISK_RT_FATAL);
+  instruction(fixture.bytecode, codeOffset, 1, TALOS_RT_DB_FAIL, 0, 0, 0);
+  put64(fixture.bytecode, constantOffset, TALOS_RT_FATAL);
   put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_FATAL);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  EXPECT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_FATAL);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 uint32_t designWriteObserverCalls = 0;
 uint32_t designWriteDirectExecutions = 0;
 
-obelisk_rt_status designWriteObserverEvaluator(obelisk_rt_context *,
+talos_rt_status designWriteObserverEvaluator(talos_rt_context *,
                                                const uint64_t *, uint32_t,
                                                uint64_t *value,
                                                uint64_t *unknown,
                                                uint32_t limbs) {
   if (!value || !unknown || limbs != 1)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ++designWriteObserverCalls;
   value[0] = 1;
   unknown[0] = 0;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status designWriteWaitRequirements(uint64_t *size,
+talos_rt_status designWriteWaitRequirements(uint64_t *size,
                                               uint64_t *alignment) {
   if (!size || !alignment)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *size = 0;
   *alignment = 1;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-designWriteWaitExecute(obelisk_rt_process_instance_v1 *instance) {
+talos_rt_status
+designWriteWaitExecute(talos_rt_process_instance_v1 *instance) {
   if (!instance || !instance->action)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
-                       OBELISK_RT_SUSPEND_OBSERVER,
+    return TALOS_RT_INVALID_ARGUMENT;
+  *instance->action = {TALOS_RT_FRAGMENT_SUSPEND,
+                       TALOS_RT_SUSPEND_OBSERVER,
                        1,
-                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                       TALOS_RT_ACTION_FRAME_WAIT_RECORD,
                        0,
                        176};
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-void designWriteWaitDestroy(obelisk_rt_process_instance_v1 *) {}
+void designWriteWaitDestroy(talos_rt_process_instance_v1 *) {}
 
-obelisk_rt_status
-designWriteDirectExecute(obelisk_rt_process_instance_v1 *instance) {
+talos_rt_status
+designWriteDirectExecute(talos_rt_process_instance_v1 *instance) {
   if (!instance || !instance->action)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ++designWriteDirectExecutions;
   if (instance->continuation == 0) {
-    *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
-                         OBELISK_RT_SUSPEND_CHANGE,
+    *instance->action = {TALOS_RT_FRAGMENT_SUSPEND,
+                         TALOS_RT_SUSPEND_CHANGE,
                          1,
-                         OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                         TALOS_RT_ACTION_FRAME_WAIT_RECORD,
                          0,
                          48};
   } else {
     *instance->action = {
-        OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+        TALOS_RT_FRAGMENT_TERMINATE, TALOS_RT_SUSPEND_NONE, 0, 0, 0, 0};
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 void populateDesignWriteWait(void *frame) {
   std::memset(frame, 0, 176);
-  auto *wait = static_cast<obelisk_rt_computed_wait_record_v1 *>(frame);
-  *wait = {OBELISK_RT_VERSION,
-           OBELISK_RT_SUSPEND_OBSERVER,
-           OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+  auto *wait = static_cast<talos_rt_computed_wait_record_v1 *>(frame);
+  *wait = {TALOS_RT_VERSION,
+           TALOS_RT_SUSPEND_OBSERVER,
+           TALOS_RT_COMPUTED_WAIT_INTERLEAVED,
            1,
            1,
            0,
@@ -4004,33 +4004,33 @@ void populateDesignWriteWait(void *frame) {
            0,
            176,
            0};
-  auto *binding = reinterpret_cast<obelisk_rt_computed_observer_v1 *>(
+  auto *binding = reinterpret_cast<talos_rt_computed_observer_v1 *>(
       static_cast<uint8_t *>(frame) + wait->observers_offset);
   *binding = {7, 0, 0, 0, 1, 160, 0};
-  auto *dependency = reinterpret_cast<obelisk_rt_computed_dependency_v1 *>(
+  auto *dependency = reinterpret_cast<talos_rt_computed_dependency_v1 *>(
       static_cast<uint8_t *>(frame) + wait->dependencies_offset);
-  *dependency = {0, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 65};
-  auto *clause = reinterpret_cast<obelisk_rt_computed_clause_v1 *>(
+  *dependency = {0, TALOS_RT_OBSERVER_DEPENDENCY_SIGNAL, 65};
+  auto *clause = reinterpret_cast<talos_rt_computed_clause_v1 *>(
       static_cast<uint8_t *>(frame) + wait->clauses_offset);
-  *clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE, OBELISK_RT_WAIT_EDGE_CHANGE,
+  *clause = {0, TALOS_RT_OBSERVER_CONDITION_NONE, TALOS_RT_WAIT_EDGE_CHANGE,
              0};
 }
 
 TEST(DesignBytecode, RejectsMalformedActivationBytecodeInventory) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
-  obelisk_rt_activation_descriptor_v1 activation{
-      1, nullptr, 99, OBELISK_RT_ACTIVATION_HAS_BYTECODE};
+  talos_rt_context *context = nullptr;
+  talos_rt_activation_descriptor_v1 activation{
+      1, nullptr, 99, TALOS_RT_ACTIVATION_HAS_BYTECODE};
   fixture.execution.activations = &activation;
   fixture.execution.activation_count = 1;
 
-#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+#ifdef TALOS_RT_BYTECODE_VALIDATION_DIAGNOSTICS
   testing::internal::CaptureStderr();
 #endif
   EXPECT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_INVALID_DESIGN);
-#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_INVALID_DESIGN);
+#ifdef TALOS_RT_BYTECODE_VALIDATION_DIAGNOSTICS
   EXPECT_NE(testing::internal::GetCapturedStderr().find(
                 "activation bytecode function is out of range"),
             std::string::npos);
@@ -4039,13 +4039,13 @@ TEST(DesignBytecode, RejectsMalformedActivationBytecodeInventory) {
 
   activation.bytecode_function = 0;
   activation.code_unit_id = 2;
-#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+#ifdef TALOS_RT_BYTECODE_VALIDATION_DIAGNOSTICS
   testing::internal::CaptureStderr();
 #endif
   EXPECT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_INVALID_DESIGN);
-#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_INVALID_DESIGN);
+#ifdef TALOS_RT_BYTECODE_VALIDATION_DIAGNOSTICS
   EXPECT_NE(testing::internal::GetCapturedStderr().find(
                 "activation descriptor does not match bytecode function"),
             std::string::npos);
@@ -4057,14 +4057,14 @@ TEST(DesignBytecode, ReportsMalformedImageReason) {
   Fixture fixture;
   fixture.bytecode[0] ^= 1;
 
-#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+#ifdef TALOS_RT_BYTECODE_VALIDATION_DIAGNOSTICS
   testing::internal::CaptureStderr();
 #endif
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   EXPECT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_INVALID_DESIGN);
-#ifdef OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_INVALID_DESIGN);
+#ifdef TALOS_RT_BYTECODE_VALIDATION_DIAGNOSTICS
   const std::string diagnostic = testing::internal::GetCapturedStderr();
   EXPECT_NE(diagnostic.find("invalid bytecode header identity, size, or "
                             "checksum"),
@@ -4076,21 +4076,21 @@ TEST(DesignBytecode, ReportsMalformedImageReason) {
 
 TEST(DesignBytecode, DesignWritePublishesToComputedObservers) {
   Fixture fixture;
-  obelisk_rt_observer_descriptor_v1 observer{7,
+  talos_rt_observer_descriptor_v1 observer{7,
                                              nullptr,
                                              0,
                                              1,
                                              0,
-                                             OBELISK_RT_OBSERVER_NO_BYTECODE,
+                                             TALOS_RT_OBSERVER_NO_BYTECODE,
                                              designWriteObserverEvaluator,
                                              0};
   fixture.execution.observers = &observer;
   fixture.execution.observer_count = 1;
 
-  obelisk_rt_frame_field_v1 field{
-      OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 0, 176, 8, 0};
+  talos_rt_frame_field_v1 field{
+      TALOS_RT_FRAME_WAIT, TALOS_RT_FRAME_FIELD_FLAGS_NONE, 0, 176, 8, 0};
   std::array<uint32_t, 2> continuations{{0, 1}};
-  obelisk_rt_frame_layout_v1 layout{OBELISK_RT_VERSION,
+  talos_rt_frame_layout_v1 layout{TALOS_RT_VERSION,
                                     0,
                                     176,
                                     8,
@@ -4100,11 +4100,11 @@ TEST(DesignBytecode, DesignWritePublishesToComputedObservers) {
                                     continuations.data(),
                                     0};
   layout.checksum = frameChecksum(layout);
-  obelisk_rt_process_descriptor_v1 process{
-      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 83},
-      OBELISK_RT_VERSION,
+  talos_rt_process_descriptor_v1 process{
+      {TALOS_RT_DESCRIPTOR_PROCESS, 0, 83},
+      TALOS_RT_VERSION,
       0,
-      OBELISK_RT_TIER_MASK_NATIVE,
+      TALOS_RT_TIER_MASK_NATIVE,
       0,
       &layout,
       designWriteWaitRequirements,
@@ -4114,48 +4114,48 @@ TEST(DesignBytecode, DesignWritePublishesToComputedObservers) {
       &fixture.execution,
       nullptr};
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&process, &instance),
-            OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(talos_rt_v1_process_instance_create(&process, &instance),
+            TALOS_RT_OK);
   void *frame = nullptr;
   uint64_t frameSize = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            TALOS_RT_OK);
   ASSERT_EQ(frameSize, 176u);
   populateDesignWriteWait(frame);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_add(context, instance, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
 
   static constexpr std::string_view name = "top.value";
-  obelisk_rt_design_cursor_v1 cursor{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+  talos_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>(name.data()), name.size(),
                 &cursor),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint64_t, 2> value{{1, 0}};
   std::array<uint64_t, 2> unknown{};
   context->signalValueSnapshots[0] = {1, false, false};
   context->signalValueSnapshots[64] = {1, false, false};
   designWriteObserverCalls = 0;
-  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, value.data(),
+  ASSERT_EQ(talos_rt_v1_design_write(context, cursor, value.data(),
                                        unknown.data(), 65),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(designWriteObserverCalls, 1u);
   EXPECT_TRUE(context->signalValueSnapshots.empty());
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, DesignWritePublishesCanonicalStaticSignalIdentity) {
   Fixture fixture;
-  obelisk_rt_frame_field_v1 field{
-      OBELISK_RT_FRAME_WAIT, OBELISK_RT_FRAME_FIELD_FLAGS_NONE, 0, 48, 8, 0};
+  talos_rt_frame_field_v1 field{
+      TALOS_RT_FRAME_WAIT, TALOS_RT_FRAME_FIELD_FLAGS_NONE, 0, 48, 8, 0};
   std::array<uint32_t, 2> continuations{{0, 1}};
-  obelisk_rt_frame_layout_v1 layout{OBELISK_RT_VERSION,
+  talos_rt_frame_layout_v1 layout{TALOS_RT_VERSION,
                                     0,
                                     48,
                                     8,
@@ -4165,11 +4165,11 @@ TEST(DesignBytecode, DesignWritePublishesCanonicalStaticSignalIdentity) {
                                     continuations.data(),
                                     0};
   layout.checksum = frameChecksum(layout);
-  obelisk_rt_process_descriptor_v1 process{
-      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 84},
-      OBELISK_RT_VERSION,
+  talos_rt_process_descriptor_v1 process{
+      {TALOS_RT_DESCRIPTOR_PROCESS, 0, 84},
+      TALOS_RT_VERSION,
       0,
-      OBELISK_RT_TIER_MASK_NATIVE,
+      TALOS_RT_TIER_MASK_NATIVE,
       0,
       &layout,
       designWriteWaitRequirements,
@@ -4179,78 +4179,78 @@ TEST(DesignBytecode, DesignWritePublishesCanonicalStaticSignalIdentity) {
       &fixture.execution,
       nullptr};
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 65),
-            OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&process, &instance),
-            OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_register_static(context, 1, 0, 65),
+            TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(talos_rt_v1_process_instance_create(&process, &instance),
+            TALOS_RT_OK);
   void *frame = nullptr;
   uint64_t frameSize = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            TALOS_RT_OK);
   ASSERT_EQ(frameSize, 48u);
-  auto *wait = static_cast<obelisk_rt_wait_record_v1 *>(frame);
-  auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
-  *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
-  *entry = {obelisk_rt_v1_native_state_static_handle(1),
-            OBELISK_RT_WAIT_EDGE_CHANGE, 65};
+  auto *wait = static_cast<talos_rt_wait_record_v1 *>(frame);
+  auto *entry = reinterpret_cast<talos_rt_wait_entry_v1 *>(wait + 1);
+  *wait = {TALOS_RT_VERSION, TALOS_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
+  *entry = {talos_rt_v1_native_state_static_handle(1),
+            TALOS_RT_WAIT_EDGE_CHANGE, 65};
   designWriteDirectExecutions = 0;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_add(context, instance, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   ASSERT_EQ(designWriteDirectExecutions, 1u);
 
   static constexpr std::string_view name = "top.value";
-  obelisk_rt_design_cursor_v1 cursor{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+  talos_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>(name.data()), name.size(),
                 &cursor),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint64_t, 2> value{{1, 0}};
   std::array<uint64_t, 2> unknown{};
-  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, value.data(),
+  ASSERT_EQ(talos_rt_v1_design_write(context, cursor, value.data(),
                                        unknown.data(), 65),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_EQ(designWriteDirectExecutions, 2u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, RejectsNonPackedObserverResultLayout) {
   auto create = [](std::vector<uint8_t> &bytecode,
-                   obelisk_rt_observer_descriptor_v1 &observer,
-                   obelisk_rt_execution_descriptor_v1 &execution,
-                   uint8_t resultKind, obelisk_rt_context **context) {
+                   talos_rt_observer_descriptor_v1 &observer,
+                   talos_rt_execution_descriptor_v1 &execution,
+                   uint8_t resultKind, talos_rt_context **context) {
     bytecode = makeObserverBytecode(resultKind);
     observer = {7, nullptr, 0, 256, 0, 0, nullptr, 0};
     execution = {};
-    execution.version = OBELISK_RT_VERSION;
-    execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+    execution.version = TALOS_RT_VERSION;
+    execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE;
     execution.bytecode = bytecode.data();
     execution.bytecode_size = bytecode.size();
     execution.checksum = imageChecksum(bytecode);
     execution.observers = &observer;
     execution.observer_count = 1;
-    return obelisk_rt_v1_context_create_for_design(&execution, context);
+    return talos_rt_v1_context_create_for_design(&execution, context);
   };
 
   std::vector<uint8_t> bytecode;
-  obelisk_rt_observer_descriptor_v1 observer{};
-  obelisk_rt_execution_descriptor_v1 execution{};
-  obelisk_rt_context *context = nullptr;
+  talos_rt_observer_descriptor_v1 observer{};
+  talos_rt_execution_descriptor_v1 execution{};
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      create(bytecode, observer, execution, OBELISK_RT_DBREG_BITS, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+      create(bytecode, observer, execution, TALOS_RT_DBREG_BITS, &context),
+      TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 
   context = nullptr;
   EXPECT_EQ(
-      create(bytecode, observer, execution, OBELISK_RT_DBREG_HANDLE, &context),
-      OBELISK_RT_INVALID_DESIGN);
+      create(bytecode, observer, execution, TALOS_RT_DBREG_HANDLE, &context),
+      TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
 }
 
@@ -4260,45 +4260,45 @@ TEST(DesignBytecode, BytecodeComputedObserverWakesOnlyForAffectedSignal) {
   constexpr uint32_t dependencyWidth = 65;
   constexpr uint32_t previousLimbCount = resultWidth / 64;
   constexpr uint64_t observersOffset =
-      sizeof(obelisk_rt_computed_wait_record_v1);
+      sizeof(talos_rt_computed_wait_record_v1);
   constexpr uint64_t capturesOffset =
-      observersOffset + sizeof(obelisk_rt_computed_observer_v1);
+      observersOffset + sizeof(talos_rt_computed_observer_v1);
   constexpr uint64_t dependenciesOffset = capturesOffset;
   constexpr uint64_t clausesOffset =
-      dependenciesOffset + sizeof(obelisk_rt_computed_dependency_v1);
+      dependenciesOffset + sizeof(talos_rt_computed_dependency_v1);
   constexpr uint64_t previousOffset =
-      clausesOffset + sizeof(obelisk_rt_computed_clause_v1);
+      clausesOffset + sizeof(talos_rt_computed_clause_v1);
   constexpr uint64_t waitSize =
       previousOffset + 2 * previousLimbCount * sizeof(uint64_t);
 
   Fixture fixture;
-  fixture.bytecode = makeObserverBytecode(OBELISK_RT_DBREG_BITS);
+  fixture.bytecode = makeObserverBytecode(TALOS_RT_DBREG_BITS);
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
-  obelisk_rt_observer_descriptor_v1 observer{7, nullptr, 0,       resultWidth,
+  talos_rt_observer_descriptor_v1 observer{7, nullptr, 0,       resultWidth,
                                              0, 0,       nullptr, 0};
   fixture.execution.observers = &observer;
   fixture.execution.observer_count = 1;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
 
   ScheduledDesignTask task;
   task.id = taskID;
   task.started = true;
-  task.suspendKind = OBELISK_RT_SUSPEND_OBSERVER;
+  task.suspendKind = TALOS_RT_SUSPEND_OBSERVER;
   task.waitSize = waitSize;
   task.scratchOffset = waitSize;
   task.frame.resize(waitSize);
 
   auto *wait =
-      reinterpret_cast<obelisk_rt_computed_wait_record_v1 *>(task.frame.data());
-  *wait = {OBELISK_RT_VERSION,
-           OBELISK_RT_SUSPEND_OBSERVER,
-           OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+      reinterpret_cast<talos_rt_computed_wait_record_v1 *>(task.frame.data());
+  *wait = {TALOS_RT_VERSION,
+           TALOS_RT_SUSPEND_OBSERVER,
+           TALOS_RT_COMPUTED_WAIT_INTERLEAVED,
            1,
            1,
            0,
@@ -4312,21 +4312,21 @@ TEST(DesignBytecode, BytecodeComputedObserverWakesOnlyForAffectedSignal) {
            0,
            waitSize,
            0};
-  auto *binding = reinterpret_cast<obelisk_rt_computed_observer_v1 *>(
+  auto *binding = reinterpret_cast<talos_rt_computed_observer_v1 *>(
       task.frame.data() + wait->observers_offset);
   *binding = {7, 0, 0, 0, 1, static_cast<uint32_t>(wait->previous_value_offset),
               0};
-  auto *dependency = reinterpret_cast<obelisk_rt_computed_dependency_v1 *>(
+  auto *dependency = reinterpret_cast<talos_rt_computed_dependency_v1 *>(
       task.frame.data() + wait->dependencies_offset);
-  *dependency = {0, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, dependencyWidth};
-  auto *clause = reinterpret_cast<obelisk_rt_computed_clause_v1 *>(
+  *dependency = {0, TALOS_RT_OBSERVER_DEPENDENCY_SIGNAL, dependencyWidth};
+  auto *clause = reinterpret_cast<talos_rt_computed_clause_v1 *>(
       task.frame.data() + wait->clauses_offset);
-  *clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE, OBELISK_RT_WAIT_EDGE_CHANGE,
+  *clause = {0, TALOS_RT_OBSERVER_CONDITION_NONE, TALOS_RT_WAIT_EDGE_CHANGE,
              0};
   auto *previous = reinterpret_cast<uint64_t *>(task.frame.data() +
                                                 wait->previous_value_offset);
   previous[0] = 1;
-  ASSERT_TRUE(obelisk_rt_validate_computed_wait_record(&fixture.execution, wait,
+  ASSERT_TRUE(talos_rt_validate_computed_wait_record(&fixture.execution, wait,
                                                        waitSize));
 
   context->scheduledDesignTasks.push_back(std::move(task));
@@ -4335,56 +4335,56 @@ TEST(DesignBytecode, BytecodeComputedObserverWakesOnlyForAffectedSignal) {
 
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    ASSERT_TRUE(obelisk_rt_evaluate_design_observers_unlocked(
-        context, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 128, 1));
+    ASSERT_TRUE(talos_rt_evaluate_design_observers_unlocked(
+        context, TALOS_RT_OBSERVER_DEPENDENCY_SIGNAL, 128, 1));
     EXPECT_EQ(context->pendingDesignComputedWaiters,
               std::vector<uint64_t>({taskID}));
     EXPECT_FALSE(context->scheduledDesignTasks.front().signalTriggered);
 
     uint64_t selectionGeneration = context->schedulerSelectionGeneration;
-    ASSERT_TRUE(obelisk_rt_evaluate_design_observers_unlocked(
-        context, OBELISK_RT_OBSERVER_DEPENDENCY_SIGNAL, 0, dependencyWidth));
+    ASSERT_TRUE(talos_rt_evaluate_design_observers_unlocked(
+        context, TALOS_RT_OBSERVER_DEPENDENCY_SIGNAL, 0, dependencyWidth));
     EXPECT_TRUE(context->pendingDesignComputedWaiters.empty());
     EXPECT_TRUE(context->scheduledDesignTasks.front().signalTriggered);
     EXPECT_EQ(context->designPollCandidates.count(taskID), 1u);
     EXPECT_NE(context->schedulerSelectionGeneration, selectionGeneration);
   }
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 uint64_t mixedTierObservedHandle = UINT64_MAX;
 uint8_t mixedTierObservedValue = UINT8_MAX;
 
-obelisk_rt_status mixedTierRequirements(uint64_t *size, uint64_t *alignment) {
+talos_rt_status mixedTierRequirements(uint64_t *size, uint64_t *alignment) {
   if (!size || !alignment)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *size = 0;
   *alignment = 1;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status mixedTierExecute(obelisk_rt_process_instance_v1 *instance) {
+talos_rt_status mixedTierExecute(talos_rt_process_instance_v1 *instance) {
   if (!instance || !instance->context || !instance->action)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::array<uint8_t, 9> dummy{}, value{};
-  obelisk_rt_status status = obelisk_rt_v1_native_state_load_plane(
+  talos_rt_status status = talos_rt_v1_native_state_load_plane(
       instance->context, dummy.data(), 65, mixedTierObservedHandle, 65, 0, 0,
       value.data());
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   mixedTierObservedValue = value[0];
   instance->native_handle = instance;
   *instance->action = {
-      OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
-  return OBELISK_RT_OK;
+      TALOS_RT_FRAGMENT_TERMINATE, TALOS_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  return TALOS_RT_OK;
 }
 
-void mixedTierDestroy(obelisk_rt_process_instance_v1 *instance) {
+void mixedTierDestroy(talos_rt_process_instance_v1 *instance) {
   instance->native_handle = nullptr;
 }
 
 TEST(DesignBytecode, CopiesAndFillsBitRangesLikeSingleBitAccess) {
-  using obelisk::designbytecode::LimbVector;
+  using talos::designbytecode::LimbVector;
   // Deterministic xorshift trials of random source, destination and count
   // alignments across one to four limbs, against a one-bit-at-a-time
   // reference.
@@ -4411,14 +4411,14 @@ TEST(DesignBytecode, CopiesAndFillsBitRangesLikeSingleBitAccess) {
     bool enabled = (next() & 1) != 0;
     if (trial % 2) {
       for (uint64_t bit = 0; bit != count; ++bit)
-        obelisk::designbytecode::setBit(
+        talos::designbytecode::setBit(
             expected, destination + bit,
-            obelisk::designbytecode::bit(from, source + bit));
-      obelisk::designbytecode::copyBits(to, destination, from, source, count);
+            talos::designbytecode::bit(from, source + bit));
+      talos::designbytecode::copyBits(to, destination, from, source, count);
     } else {
       for (uint64_t bit = 0; bit != count; ++bit)
-        obelisk::designbytecode::setBit(expected, destination + bit, enabled);
-      obelisk::designbytecode::fillBits(to, destination, count, enabled);
+        talos::designbytecode::setBit(expected, destination + bit, enabled);
+      talos::designbytecode::fillBits(to, destination, count, enabled);
     }
     ASSERT_TRUE(to == expected)
         << "trial " << trial << " source " << source << " destination "
@@ -4428,23 +4428,23 @@ TEST(DesignBytecode, CopiesAndFillsBitRangesLikeSingleBitAccess) {
 
 TEST(DesignBytecode, ExecutesArbitraryWidthLogicInSharedScratch) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
   void *frame = nullptr;
   uint64_t size = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &size),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &size),
+            TALOS_RT_OK);
   ASSERT_EQ(size, 32u);
   std::array<uint64_t, 4> planes{};
   std::memcpy(planes.data(), frame, sizeof(planes));
@@ -4452,18 +4452,18 @@ TEST(DesignBytecode, ExecutesArbitraryWidthLogicInSharedScratch) {
   EXPECT_EQ(planes[1], 1u);
   EXPECT_EQ(planes[2], UINT64_C(0xf0));
   EXPECT_EQ(planes[3], 1u);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ExecutesRegisteredImportedZeroTimeCall) {
   constexpr std::string_view symbol = "external_logic";
-  uint32_t importID = obelisk_rt_v1_import_id(
+  uint32_t importID = talos_rt_v1_import_id(
       reinterpret_cast<const uint8_t *>(symbol.data()), symbol.size());
   ASSERT_NE(importID, 0u);
   Fixture fixture;
   fixture.bytecode = makeImportBytecode(importID);
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE;
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.design_database = nullptr;
@@ -4471,54 +4471,54 @@ TEST(DesignBytecode, ExecutesRegisteredImportedZeroTimeCall) {
   fixture.execution.state_bit_count = 8;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_TIER_UNAVAILABLE);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  EXPECT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_TIER_UNAVAILABLE);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   ImportObservation observation;
-  ASSERT_EQ(obelisk_rt_v1_context_register_import(context, importID,
+  ASSERT_EQ(talos_rt_v1_context_register_import(context, importID,
                                                   importedLogic, &observation),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
   EXPECT_EQ(observation.calls, 1u);
   void *frame = nullptr;
   uint64_t frameSize = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            TALOS_RT_OK);
   ASSERT_EQ(frameSize, 32u);
   const auto *planes = static_cast<const uint64_t *>(frame);
   EXPECT_EQ(planes[0], UINT64_C(0xfedcba987654cdef));
   EXPECT_EQ(planes[1], 1u);
   EXPECT_EQ(planes[2], UINT64_C(0x30));
   EXPECT_EQ(planes[3], 1u);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ExecutesLegacyRandomSolveIntrinsic) {
   Fixture fixture;
   fixture.bytecode = makeRandomSolveBytecode(false, 0, 0);
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE;
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.design_database = nullptr;
@@ -4526,47 +4526,47 @@ TEST(DesignBytecode, ExecutesLegacyRandomSolveIntrinsic) {
   fixture.execution.state_bit_count = 8;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
   void *frame = nullptr;
   uint64_t size = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &size),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &size),
+            TALOS_RT_OK);
   ASSERT_GE(size, 16u);
   std::array<uint64_t, 2> outputs{};
   std::memcpy(outputs.data(), frame, sizeof(outputs));
   EXPECT_EQ(outputs[0], 0u);
   EXPECT_EQ(outputs[1], 1u);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ExecutesStatefulRandomSolveIntrinsic) {
-  obelisk_rt_random_state_v1 initial;
-  obelisk_rt_v1_random_state_seed(&initial, 17, 9);
-  obelisk_rt_random_state_v1 expected = initial;
+  talos_rt_random_state_v1 initial;
+  talos_rt_v1_random_state_seed(&initial, 17, 9);
+  talos_rt_random_state_v1 expected = initial;
   uint64_t expectedX = 0;
   uint64_t expectedY = 0;
-  ASSERT_EQ(obelisk_rt_v1_random_state_bounded(&expected, 2, &expectedX),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_random_state_bounded(&expected, 2, &expectedY),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_random_state_bounded(&expected, 2, &expectedX),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_random_state_bounded(&expected, 2, &expectedY),
+            TALOS_RT_OK);
 
   Fixture fixture;
   fixture.bytecode =
       makeRandomSolveBytecode(true, initial.state, initial.increment);
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE;
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.design_database = nullptr;
@@ -4574,37 +4574,37 @@ TEST(DesignBytecode, ExecutesStatefulRandomSolveIntrinsic) {
   fixture.execution.state_bit_count = 8;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
   void *frame = nullptr;
   uint64_t size = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &size),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &size),
+            TALOS_RT_OK);
   ASSERT_GE(size, 24u);
   std::array<uint64_t, 3> outputs{};
   std::memcpy(outputs.data(), frame, sizeof(outputs));
   EXPECT_EQ(outputs[0], expectedX | (expectedY << 1));
   EXPECT_EQ(outputs[1], 1u);
   EXPECT_EQ(outputs[2], expected.state);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ExecutesWideRandomSolveIntrinsic) {
   Fixture fixture;
   fixture.bytecode = makeRandomSolveWideBytecode();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE;
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.design_database = nullptr;
@@ -4612,23 +4612,23 @@ TEST(DesignBytecode, ExecutesWideRandomSolveIntrinsic) {
   fixture.execution.state_bit_count = 8;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
   void *frame = nullptr;
   uint64_t size = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &size),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &size),
+            TALOS_RT_OK);
   ASSERT_GE(size, 32u);
   std::array<uint64_t, 4> outputs{};
   std::memcpy(outputs.data(), frame, sizeof(outputs));
@@ -4636,8 +4636,8 @@ TEST(DesignBytecode, ExecutesWideRandomSolveIntrinsic) {
   EXPECT_EQ(outputs[1], 1u);
   EXPECT_EQ(outputs[2], 1u);
   EXPECT_EQ(outputs[3], 73u);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ExecutesRandomCycleIntrinsic) {
@@ -4646,13 +4646,13 @@ TEST(DesignBytecode, ExecutesRandomCycleIntrinsic) {
   constexpr uint64_t width = 11;
   uint64_t expectedPosition = 0;
   uint64_t expectedValue = 0;
-  ASSERT_EQ(obelisk_rt_v1_random_cycle_next(key, position, width,
+  ASSERT_EQ(talos_rt_v1_random_cycle_next(key, position, width,
                                             &expectedPosition, &expectedValue),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   Fixture fixture;
   fixture.bytecode = makeRandomCycleBytecode(key, position, width);
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE;
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.design_database = nullptr;
@@ -4660,30 +4660,30 @@ TEST(DesignBytecode, ExecutesRandomCycleIntrinsic) {
   fixture.execution.state_bit_count = 8;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
   void *frame = nullptr;
   uint64_t size = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &size),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &size),
+            TALOS_RT_OK);
   ASSERT_GE(size, 16u);
   std::array<uint64_t, 2> outputs{};
   std::memcpy(outputs.data(), frame, sizeof(outputs));
   EXPECT_EQ(outputs[0], expectedPosition);
   EXPECT_EQ(outputs[1], expectedValue);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, SchedulerCommitsDelayedNBAAndDeferredEvent) {
@@ -4699,35 +4699,35 @@ TEST(DesignBytecode, SchedulerCommitsDelayedNBAAndDeferredEvent) {
   fixture.descriptor.execution = &fixture.execution;
   fixture.descriptor.design_bytecode = &fixture.entry;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_add(context, instance, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
 
-  obelisk_rt_design_cursor_v1 object{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+  talos_rt_design_cursor_v1 object{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>("top.value"), 9, &object),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint64_t, 2> value{}, unknown{};
-  ASSERT_EQ(obelisk_rt_v1_design_read(context, object, value.data(),
+  ASSERT_EQ(talos_rt_v1_design_read(context, object, value.data(),
                                       unknown.data(), 65),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(value[0] & UINT64_C(0xff), UINT64_C(0xa5));
   EXPECT_EQ(unknown[0] & UINT64_C(0xff), UINT64_C(0x04));
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ConstructsReservedPreponedEventHandle) {
   Fixture fixture;
   fixture.bytecode = makeSchedulerBytecode(
-      /*stateHandle=*/0, OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT);
+      /*stateHandle=*/0, TALOS_RT_STABLE_HANDLE_PREPONED_EVENT);
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
@@ -4738,21 +4738,21 @@ TEST(DesignBytecode, ConstructsReservedPreponedEventHandle) {
   fixture.descriptor.execution = &fixture.execution;
   fixture.descriptor.design_bytecode = &fixture.entry;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  EXPECT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, TriggeringCanonicalNullEventHasNoEffect) {
@@ -4769,28 +4769,28 @@ TEST(DesignBytecode, TriggeringCanonicalNullEventHasNoEffect) {
   fixture.descriptor.execution = &fixture.execution;
   fixture.descriptor.design_bytecode = &fixture.entry;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  EXPECT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  EXPECT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
   EXPECT_TRUE(context->events.empty());
   EXPECT_TRUE(context->scheduledDesignEvents.empty());
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ResolvesEncodedStaticStateHandlesByIdentity) {
   Fixture fixture;
-  uint64_t stateHandle = obelisk_rt_v1_native_state_static_handle(1);
+  uint64_t stateHandle = talos_rt_v1_native_state_static_handle(1);
   ASSERT_NE(stateHandle, UINT64_MAX);
   fixture.bytecode = makeSchedulerBytecode(stateHandle);
   fixture.execution.bytecode = fixture.bytecode.data();
@@ -4803,31 +4803,31 @@ TEST(DesignBytecode, ResolvesEncodedStaticStateHandlesByIdentity) {
   fixture.descriptor.execution = &fixture.execution;
   fixture.descriptor.design_bytecode = &fixture.entry;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
-            OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_register_static(context, 1, 0, 8),
+            TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_add(context, instance, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
 
-  obelisk_rt_design_cursor_v1 object{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+  talos_rt_design_cursor_v1 object{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>("top.value"), 9, &object),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint64_t, 2> value{}, unknown{};
-  ASSERT_EQ(obelisk_rt_v1_design_read(context, object, value.data(),
+  ASSERT_EQ(talos_rt_v1_design_read(context, object, value.data(),
                                       unknown.data(), 65),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(value[0] & UINT64_C(0xff), UINT64_C(0xa5));
   EXPECT_EQ(unknown[0] & UINT64_C(0xff), UINT64_C(0x04));
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, CanonicalizesFlatHandlesToRegisteredStaticState) {
@@ -4843,28 +4843,28 @@ TEST(DesignBytecode, CanonicalizesFlatHandlesToRegisteredStaticState) {
   fixture.descriptor.execution = &fixture.execution;
   fixture.descriptor.design_bytecode = &fixture.entry;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 8),
-            OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_register_static(context, 1, 0, 8),
+            TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
 
   ASSERT_EQ(context->scheduledNBAs.size(), 1u);
   EXPECT_TRUE(context->scheduledDesignNBAs.empty());
   EXPECT_EQ(context->scheduledNBAs.front().bitOffset,
-            obelisk_rt_v1_native_state_static_handle(1));
+            talos_rt_v1_native_state_static_handle(1));
 
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ResolvesFourStateDriversFromInitialHighImpedance) {
@@ -4872,7 +4872,7 @@ TEST(DesignBytecode, ResolvesFourStateDriversFromInitialHighImpedance) {
   fixture.bytecode = makeDriverBytecode();
   fixture.database = makeDatabase();
   put32(fixture.database, 240,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_NET, vpiNet));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_NET, vpiNet));
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
@@ -4887,43 +4887,43 @@ TEST(DesignBytecode, ResolvesFourStateDriversFromInitialHighImpedance) {
   fixture.descriptor.execution = &fixture.execution;
   fixture.descriptor.design_bytecode = &fixture.entry;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_design_cursor_v1 net{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_design_cursor_v1 net{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>("top.value"), 9, &net),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint64_t, 2> value{}, unknown{};
   ASSERT_EQ(
-      obelisk_rt_v1_design_read(context, net, value.data(), unknown.data(), 65),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_read(context, net, value.data(), unknown.data(), 65),
+      TALOS_RT_OK);
   EXPECT_EQ(value[0], UINT64_MAX);
   EXPECT_EQ(value[1], 1u);
   EXPECT_EQ(unknown[0], UINT64_MAX);
   EXPECT_EQ(unknown[1], 1u);
 
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_design_read(context, net, value.data(), unknown.data(), 65),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_read(context, net, value.data(), unknown.data(), 65),
+      TALOS_RT_OK);
   EXPECT_EQ(value[0] & UINT64_C(0xff), UINT64_C(0xa5));
   EXPECT_EQ(unknown[0] & UINT64_C(0xff), UINT64_C(0x04));
   EXPECT_EQ(value[0] >> 8, UINT64_C(0x00ffffffffffffff));
   EXPECT_EQ(unknown[0] >> 8, UINT64_C(0x00ffffffffffffff));
   EXPECT_EQ(value[1], 1u);
   EXPECT_EQ(unknown[1], 1u);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ResolvesIEEEAmbiguousStrengthRangesBeforeFourState) {
@@ -4934,10 +4934,10 @@ TEST(DesignBytecode, ResolvesIEEEAmbiguousStrengthRangesBeforeFourState) {
   fixture.execution.state_bit_count = 260;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   auto setState = [&](uint64_t offset, bool value, bool unknown) {
     uint64_t mask = UINT64_C(1) << (offset % 64);
     if (value)
@@ -4950,8 +4950,8 @@ TEST(DesignBytecode, ResolvesIEEEAmbiguousStrengthRangesBeforeFourState) {
       context->stateUnknown[offset / 64] &= ~mask;
   };
   auto resolve = [&] {
-    ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_resolve_design_drivers(context, 65, 196),
+              TALOS_RT_OK);
   };
 
   // IEEE 1800-2017 28.12.3: strong L plus strong 0 becomes known 0. An
@@ -4988,31 +4988,31 @@ TEST(DesignBytecode, ResolvesIEEEAmbiguousStrengthRangesBeforeFourState) {
   EXPECT_EQ(context->stateValue[0] & 1, 1u);
   EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
 
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 // A generated native schedule owns the state planes its code reads. These
 // stand in for that ownership so a resolution can be observed reaching them.
 struct SchedulePlanState {
-  std::array<obelisk_rt_process_instance_v1 *, 2> actors{};
+  std::array<talos_rt_process_instance_v1 *, 2> actors{};
 };
 
-obelisk_rt_status planBind(void *opaque, obelisk_rt_context *, uint32_t slot,
-                           obelisk_rt_process_instance_v1 *instance) {
+talos_rt_status planBind(void *opaque, talos_rt_context *, uint32_t slot,
+                           talos_rt_process_instance_v1 *instance) {
   auto *state = static_cast<SchedulePlanState *>(opaque);
   if (!state || slot >= state->actors.size())
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   state->actors[slot] = instance;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status planRun(void *, obelisk_rt_context *) {
-  return OBELISK_RT_OK;
+talos_rt_status planRun(void *, talos_rt_context *) {
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status planSnapshot(void *, obelisk_rt_context *context,
-                               obelisk_rt_aot_deopt_snapshot *snapshot) {
-  return obelisk_rt_v1_scheduler_snapshot_aot(context, snapshot);
+talos_rt_status planSnapshot(void *, talos_rt_context *context,
+                               talos_rt_aot_deopt_snapshot *snapshot) {
+  return talos_rt_v1_scheduler_snapshot_aot(context, snapshot);
 }
 
 TEST(DesignBytecode, ResolvedNetsReachGeneratedSchedulePlanes) {
@@ -5027,14 +5027,14 @@ TEST(DesignBytecode, ResolvedNetsReachGeneratedSchedulePlanes) {
   fixture.execution.state_bit_count = 260;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   SchedulePlanState state;
   std::vector<uint8_t> planValue((260 + 7) / 8, 0);
   std::vector<uint8_t> planUnknown((260 + 7) / 8, 0);
-  obelisk_rt_native_schedule_plan plan{};
+  talos_rt_native_schedule_plan plan{};
   plan.size = sizeof(plan);
   plan.graph_layout_checksum = fixture.execution.checksum;
   plan.mutable_state = &state;
@@ -5046,7 +5046,7 @@ TEST(DesignBytecode, ResolvedNetsReachGeneratedSchedulePlanes) {
   plan.bind = planBind;
   plan.run = planRun;
   plan.fallback_snapshot = planSnapshot;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_install_aot(context, &plan), TALOS_RT_OK);
 
   auto setState = [&](uint64_t offset, bool value, bool unknown) {
     uint64_t mask = UINT64_C(1) << (offset % 64);
@@ -5063,7 +5063,7 @@ TEST(DesignBytecode, ResolvedNetsReachGeneratedSchedulePlanes) {
   setState(65, true, true);
   setState(130, false, true);
   setState(195, true, false);
-  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_resolve_design_drivers(context, 65, 196), TALOS_RT_OK);
   EXPECT_EQ(context->stateValue[0] & 1, 1u);
   EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
   EXPECT_EQ(planValue[0] & 1, 1u);
@@ -5073,12 +5073,12 @@ TEST(DesignBytecode, ResolvedNetsReachGeneratedSchedulePlanes) {
   setState(65, false, false);
   setState(130, true, true);
   setState(195, true, false);
-  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_resolve_design_drivers(context, 65, 196), TALOS_RT_OK);
   EXPECT_EQ(context->stateValue[0] & 1, 0u);
   EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
   EXPECT_EQ(planValue[0] & 1, 0u);
   EXPECT_EQ(planUnknown[0] & 1, 1u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ReadsExactDriverStrengthWithoutResolvedNetContamination) {
@@ -5088,10 +5088,10 @@ TEST(DesignBytecode, ReadsExactDriverStrengthWithoutResolvedNetContamination) {
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.state_bit_count = 260;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   auto setState = [&](uint64_t offset, bool value, bool unknown) {
     uint64_t mask = UINT64_C(1) << (offset % 64);
     auto set = [&](auto &plane, bool bit) {
@@ -5103,9 +5103,9 @@ TEST(DesignBytecode, ReadsExactDriverStrengthWithoutResolvedNetContamination) {
   };
   auto read = [&](uint64_t low, uint64_t high, uint16_t expected) {
     uint16_t strengths = 0;
-    EXPECT_EQ(obelisk_rt_design_driver_strength(context, low, high, &strengths,
+    EXPECT_EQ(talos_rt_design_driver_strength(context, low, high, &strengths,
                                                 false),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(strengths, expected);
   };
   // The paired gate drives strong 0; a separate strong 1 driver makes the net
@@ -5113,7 +5113,7 @@ TEST(DesignBytecode, ReadsExactDriverStrengthWithoutResolvedNetContamination) {
   setState(65, false, false);
   setState(130, true, true);
   setState(195, true, false);
-  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_resolve_design_drivers(context, 65, 196), TALOS_RT_OK);
   EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
   read(65, 130, uint16_t{1} << 1);
   read(195, UINT64_MAX, uint16_t{1} << 13);
@@ -5122,7 +5122,7 @@ TEST(DesignBytecode, ReadsExactDriverStrengthWithoutResolvedNetContamination) {
   // when another driver collapses the resolved net to a known 0.
   setState(65, false, true);
   setState(195, false, false);
-  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_resolve_design_drivers(context, 65, 196), TALOS_RT_OK);
   EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
   read(65, 130, uint16_t{0x00fe});
   read(195, UINT64_MAX, uint16_t{1} << 1);
@@ -5145,15 +5145,15 @@ TEST(DesignBytecode, ReadsExactDriverStrengthWithoutResolvedNetContamination) {
                            {195, 130},
                            {260, UINT64_MAX}}) {
     uint16_t strengths = UINT16_MAX;
-    EXPECT_EQ(obelisk_rt_design_driver_strength(context, low, high, &strengths,
+    EXPECT_EQ(talos_rt_design_driver_strength(context, low, high, &strengths,
                                                 false),
-              OBELISK_RT_INVALID_HANDLE);
+              TALOS_RT_INVALID_HANDLE);
     EXPECT_EQ(strengths, 0u);
   }
   EXPECT_EQ(context->stateValue, oldValue);
   EXPECT_EQ(context->stateUnknown, oldUnknown);
   EXPECT_EQ(context->schedulerStatus, oldScheduler);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, DriverStrengthReadsCurrentNativePlanesAndDirtyRoots) {
@@ -5163,30 +5163,30 @@ TEST(DesignBytecode, DriverStrengthReadsCurrentNativePlanesAndDirtyRoots) {
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.state_bit_count = 260;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   std::vector<uint8_t> value((260 + 7) / 8, 0);
   std::vector<uint8_t> unknown(value.size(), 0);
   value[195 / 8] |= uint8_t{1} << (195 % 8);
-  obelisk_rt_native_schedule_plan plan{};
+  talos_rt_native_schedule_plan plan{};
   plan.size = sizeof(plan);
-  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE;
+  plan.flags = TALOS_RT_NATIVE_SCHEDULE_DIRECT_STATE;
   plan.state_value = value.data();
   plan.state_unknown = unknown.data();
   plan.state_bit_count = 260;
   context->nativeSchedulePlan = &plan;
   uint16_t strengths = 0;
-  ASSERT_EQ(obelisk_rt_design_driver_strength(context, 195, UINT64_MAX,
+  ASSERT_EQ(talos_rt_design_driver_strength(context, 195, UINT64_MAX,
                                               &strengths, true),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(strengths, uint16_t{1} << 13);
   // Canonical state still holds initial Z and is selected when direct-state
   // observation is disabled or when this exact native root is dirty.
-  ASSERT_EQ(obelisk_rt_design_driver_strength(context, 195, UINT64_MAX,
+  ASSERT_EQ(talos_rt_design_driver_strength(context, 195, UINT64_MAX,
                                               &strengths, false),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(strengths, uint16_t{1} << 7);
   NativeStaticState state{};
   state.bitOffset = 195;
@@ -5194,19 +5194,19 @@ TEST(DesignBytecode, DriverStrengthReadsCurrentNativePlanesAndDirtyRoots) {
   context->nativeStaticStates.emplace(17, state);
   context->nativeScheduleDirtyRootsPresent = true;
   context->nativeScheduleTransientDirtyRoots.insert(17);
-  ASSERT_EQ(obelisk_rt_design_driver_strength(context, 195, UINT64_MAX,
+  ASSERT_EQ(talos_rt_design_driver_strength(context, 195, UINT64_MAX,
                                               &strengths, true),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(strengths, uint16_t{1} << 7);
   context->nativeScheduleTransientDirtyRoots.clear();
   context->nativeScheduleDirtyRootsPresent = false;
-  ASSERT_EQ(obelisk_rt_design_driver_strength(context, 195, UINT64_MAX,
+  ASSERT_EQ(talos_rt_design_driver_strength(context, 195, UINT64_MAX,
                                               &strengths, true),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(strengths, uint16_t{1} << 13);
   context->nativeStaticStates.clear();
   context->nativeSchedulePlan = nullptr;
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ResolvesWiredNetTruthTablesWithStrengths) {
@@ -5219,10 +5219,10 @@ TEST(DesignBytecode, ResolvesWiredNetTruthTablesWithStrengths) {
     fixture.execution.state_bit_count = 260;
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
     auto setState = [&](uint64_t offset, bool value, bool unknown) {
       uint64_t mask = UINT64_C(1) << (offset % 64);
       if (value)
@@ -5235,8 +5235,8 @@ TEST(DesignBytecode, ResolvesWiredNetTruthTablesWithStrengths) {
         context->stateUnknown[offset / 64] &= ~mask;
     };
     auto resolve = [&](bool expectedValue, bool expectedUnknown) {
-      ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
-                OBELISK_RT_OK);
+      ASSERT_EQ(talos_rt_resolve_design_drivers(context, 65, 196),
+                TALOS_RT_OK);
       EXPECT_EQ((context->stateValue[0] & 1) != 0, expectedValue);
       EXPECT_EQ((context->stateUnknown[0] & 1) != 0, expectedUnknown);
     };
@@ -5264,17 +5264,17 @@ TEST(DesignBytecode, ResolvesWiredNetTruthTablesWithStrengths) {
     setState(130, true, true);
     setState(195, true, true);
     resolve(true, true);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
 TEST(DesignBytecode, WiredResolutionPreservesStrongerDriveDominance) {
   // IEEE 1800-2017 28.12.1: wired logic applies only to equal-strength
   // conflicts. A strong 0 beats a weak 1 even on wor, and vice versa on wand.
-  EXPECT_EQ(obelisk_rt_v1_strength_resolve_kind(uint16_t{1} << 1,
+  EXPECT_EQ(talos_rt_v1_strength_resolve_kind(uint16_t{1} << 1,
                                                 uint16_t{1} << 10, 4),
             uint16_t{1} << 1);
-  EXPECT_EQ(obelisk_rt_v1_strength_resolve_kind(uint16_t{1} << 4,
+  EXPECT_EQ(talos_rt_v1_strength_resolve_kind(uint16_t{1} << 4,
                                                 uint16_t{1} << 13, 3),
             uint16_t{1} << 13);
 }
@@ -5291,10 +5291,10 @@ TEST(DesignBytecode, ResolvesImplicitPullAndSupplyNetDrives) {
     fixture.execution.state_bit_count = 260;
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
     bool implicitValue = resolution == 6 || resolution == 8;
     EXPECT_EQ((context->stateValue[0] & 1) != 0, implicitValue);
     EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
@@ -5313,12 +5313,12 @@ TEST(DesignBytecode, ResolvesImplicitPullAndSupplyNetDrives) {
     setState(65, true, true);
     setState(130, true, true);
     setState(195, !implicitValue, false);
-    ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_resolve_design_drivers(context, 65, 196),
+              TALOS_RT_OK);
     bool expected = resolution >= 7 ? implicitValue : !implicitValue;
     EXPECT_EQ((context->stateValue[0] & 1) != 0, expected);
     EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -5335,10 +5335,10 @@ TEST(DesignBytecode, PullNetConflictsWithEqualPullStrength) {
     fixture.execution.state_bit_count = 260;
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
     auto setState = [&](uint64_t offset, bool value, bool unknown) {
       uint64_t mask = UINT64_C(1) << (offset % 64);
       if (value)
@@ -5353,11 +5353,11 @@ TEST(DesignBytecode, PullNetConflictsWithEqualPullStrength) {
     setState(65, true, true);
     setState(130, true, true);
     setState(195, resolution == 5, false);
-    ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_resolve_design_drivers(context, 65, 196),
+              TALOS_RT_OK);
     EXPECT_EQ(context->stateValue[0] & 1, 0u);
     EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -5369,10 +5369,10 @@ TEST(DesignBytecode, RetainsDefaultTriregChargeIndefinitely) {
   fixture.execution.state_bit_count = 260;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   auto state = [&](uint64_t offset) {
     return std::pair((context->stateValue[offset / 64] &
                       (UINT64_C(1) << (offset % 64))) != 0,
@@ -5391,8 +5391,8 @@ TEST(DesignBytecode, RetainsDefaultTriregChargeIndefinitely) {
       context->stateUnknown[offset / 64] &= ~mask;
   };
   auto resolve = [&] {
-    ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_resolve_design_drivers(context, 65, 196),
+              TALOS_RT_OK);
   };
 
   // IEEE 1800-2017 6.7.1: trireg starts at x, not z.
@@ -5422,7 +5422,7 @@ TEST(DesignBytecode, RetainsDefaultTriregChargeIndefinitely) {
   setState(195, true, true);
   resolve();
   EXPECT_EQ(state(0), std::pair(false, true));
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, RetainsEffectiveCollapsedTriregChargeAcrossAliases) {
@@ -5443,10 +5443,10 @@ TEST(DesignBytecode, RetainsEffectiveCollapsedTriregChargeAcrossAliases) {
   fixture.execution.state_bit_count = 195;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   auto setDriver = [&](bool value, bool unknown) {
     uint64_t mask = UINT64_C(1) << (130 % 64);
     if (value)
@@ -5457,8 +5457,8 @@ TEST(DesignBytecode, RetainsEffectiveCollapsedTriregChargeAcrossAliases) {
       context->stateUnknown[130 / 64] |= mask;
     else
       context->stateUnknown[130 / 64] &= ~mask;
-    ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 130, 131),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_resolve_design_drivers(context, 130, 131),
+              TALOS_RT_OK);
   };
   auto expectAliases = [&](bool value, bool unknown) {
     EXPECT_EQ((context->stateValue[0] & 1) != 0, value);
@@ -5471,7 +5471,7 @@ TEST(DesignBytecode, RetainsEffectiveCollapsedTriregChargeAcrossAliases) {
   expectAliases(true, false);
   setDriver(true, true);
   expectAliases(true, false);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, SharesCollapsedTriregChargeByDeclaredStrength) {
@@ -5498,10 +5498,10 @@ TEST(DesignBytecode, SharesCollapsedTriregChargeByDeclaredStrength) {
   fixture.execution.state_bit_count = 195;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   auto setState = [&](uint64_t offset, bool value, bool unknown) {
     uint64_t mask = UINT64_C(1) << (offset % 64);
     if (value)
@@ -5516,13 +5516,13 @@ TEST(DesignBytecode, SharesCollapsedTriregChargeByDeclaredStrength) {
   setState(0, false, false);
   setState(65, true, false);
   setState(130, true, true);
-  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 130, 131),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_resolve_design_drivers(context, 130, 131),
+            TALOS_RT_OK);
   EXPECT_EQ((context->stateValue[0] & 1) != 0, true);
   EXPECT_EQ((context->stateUnknown[0] & 1) != 0, false);
   EXPECT_EQ((context->stateValue[1] & 2) != 0, true);
   EXPECT_EQ((context->stateUnknown[1] & 2) != 0, false);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, PublishesSplitStrengthBanksAtomically) {
@@ -5539,10 +5539,10 @@ TEST(DesignBytecode, PublishesSplitStrengthBanksAtomically) {
   fixture.descriptor.execution = &fixture.execution;
   fixture.descriptor.design_bytecode = &fixture.entry;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   auto setState = [&](uint64_t offset, bool value, bool unknown) {
     uint64_t mask = UINT64_C(1) << (offset % 64);
     if (value)
@@ -5558,24 +5558,24 @@ TEST(DesignBytecode, PublishesSplitStrengthBanksAtomically) {
   setState(65, false, false);
   context->signalDiagnosticsEnabled = true;
   struct {
-    obelisk_rt_wait_record_v1 wait;
-    obelisk_rt_wait_entry_v1 entry;
-  } waitRecord{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE, 0, 1, 0, 0},
-               {0, OBELISK_RT_WAIT_EDGE_CHANGE, 1}};
+    talos_rt_wait_record_v1 wait;
+    talos_rt_wait_entry_v1 entry;
+  } waitRecord{{TALOS_RT_VERSION, TALOS_RT_SUSPEND_EDGE, 0, 1, 0, 0},
+               {0, TALOS_RT_WAIT_EDGE_CHANGE, 1}};
   std::vector<std::unique_ptr<SignalSubscription>> subscriptions;
   std::unique_ptr<SignalWaitLatch> latch;
-  ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
+  ASSERT_TRUE(talos_rt_register_signal_wait_unlocked(
       context, &waitRecord.wait, subscriptions, latch));
 
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
   EXPECT_EQ(context->stateValue[0] & 1, 1u);
   EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
   ASSERT_TRUE(latch);
@@ -5584,9 +5584,9 @@ TEST(DesignBytecode, PublishesSplitStrengthBanksAtomically) {
   // Resolving after the low bank as well would add a spurious fourth one.
   EXPECT_EQ(context->signalDiagnostics.publications, 3u);
 
-  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_unregister_signal_wait_unlocked(context, subscriptions);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ResolvesDriversAcrossLogicalNetAliases) {
@@ -5594,7 +5594,7 @@ TEST(DesignBytecode, ResolvesDriversAcrossLogicalNetAliases) {
   fixture.bytecode = makeConnectedDriverBytecode();
   fixture.database = makeDatabase();
   put32(fixture.database, 240,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_NET, vpiNet));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_NET, vpiNet));
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
@@ -5609,34 +5609,34 @@ TEST(DesignBytecode, ResolvesDriversAcrossLogicalNetAliases) {
   fixture.descriptor.execution = &fixture.execution;
   fixture.descriptor.design_bytecode = &fixture.entry;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_design_cursor_v1 alias{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_design_cursor_v1 alias{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>("top.value"), 9, &alias),
-            OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+            TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
   std::array<uint64_t, 2> value{}, unknown{};
-  ASSERT_EQ(obelisk_rt_v1_design_read(context, alias, value.data(),
+  ASSERT_EQ(talos_rt_v1_design_read(context, alias, value.data(),
                                       unknown.data(), 65),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(value[0] & UINT64_C(0xff), UINT64_C(0xa5));
   EXPECT_EQ(unknown[0] & UINT64_C(0xff), UINT64_C(0x04));
-  EXPECT_EQ(obelisk_rt_v1_design_write(context, alias, value.data(),
+  EXPECT_EQ(talos_rt_v1_design_write(context, alias, value.data(),
                                        unknown.data(), 65),
-            OBELISK_RT_PERMISSION_DENIED);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+            TALOS_RT_PERMISSION_DENIED);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, UsesDominatingWiredKindAcrossNetAliases) {
@@ -5648,10 +5648,10 @@ TEST(DesignBytecode, UsesDominatingWiredKindAcrossNetAliases) {
     fixture.execution.bytecode_size = fixture.bytecode.size();
     fixture.execution.state_bit_count = 260;
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
 
     // The wor-side driver is 1 and the wand-side driver is 0. Both aliases
     // publish the result selected by the dominating port endpoint.
@@ -5659,13 +5659,13 @@ TEST(DesignBytecode, UsesDominatingWiredKindAcrossNetAliases) {
     context->stateValue[195 / 64] &= ~(UINT64_C(1) << (195 % 64));
     context->stateUnknown[130 / 64] &= ~(UINT64_C(1) << (130 % 64));
     context->stateUnknown[195 / 64] &= ~(UINT64_C(1) << (195 % 64));
-    ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 130, 260),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_resolve_design_drivers(context, 130, 260),
+              TALOS_RT_OK);
     EXPECT_EQ((context->stateValue[0] & 1) != 0, rhsDominates);
     EXPECT_EQ((context->stateValue[1] & 2) != 0, rhsDominates);
     EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
     EXPECT_EQ(context->stateUnknown[1] & 2, 0u);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -5676,11 +5676,11 @@ TEST(DesignBytecode, AcceptsMultipleDominatingEndpointsOfOneWiredKind) {
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.state_bit_count = 260;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, AcceptsDisjointUWireDriverComponents) {
@@ -5691,11 +5691,11 @@ TEST(DesignBytecode, AcceptsDisjointUWireDriverComponents) {
   fixture.execution.state_bit_count = 195;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
   fixture.entry = {&fixture.execution, 0, 0};
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, AcceptsLegacyMixedUWireWithoutDominanceFlags) {
@@ -5708,11 +5708,11 @@ TEST(DesignBytecode, AcceptsLegacyMixedUWireWithoutDominanceFlags) {
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.state_bit_count = 195;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, UsesOnlyDominatingCollapsedNetImplicitDrive) {
@@ -5734,17 +5734,17 @@ TEST(DesignBytecode, UsesOnlyDominatingCollapsedNetImplicitDrive) {
   fixture.execution.state_bit_count = 195;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   // IEEE 1800-2017 23.3.3.7: the dominating wand supplies the collapsed
   // net type, so the dominated tri0 declaration contributes no pull0 drive.
   EXPECT_EQ(context->stateValue[0] & 1, 1u);
   EXPECT_EQ(context->stateUnknown[0] & 1, 1u);
   EXPECT_EQ((context->stateValue[1] >> 1) & 1, 1u);
   EXPECT_EQ((context->stateUnknown[1] >> 1) & 1, 1u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, SupplyDominanceDisablesCollapsedUWireDriverLimit) {
@@ -5767,13 +5767,13 @@ TEST(DesignBytecode, SupplyDominanceDisablesCollapsedUWireDriverLimit) {
   fixture.execution.state_bit_count = 195;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   EXPECT_EQ(context->stateValue[0] & 1, 0u);
   EXPECT_EQ(context->stateUnknown[0] & 1, 0u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 struct VPILifecycleProbe {
@@ -5852,14 +5852,14 @@ PLI_INT32 registerLaterLifecycleCallbacks(p_cb_data data) {
 }
 
 struct VPIDestroyProbe {
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   bool destroyReturned = false;
   bool vpiRemainedUsable = false;
 };
 
 PLI_INT32 destroyContextFromCallback(p_cb_data data) {
   auto *probe = reinterpret_cast<VPIDestroyProbe *>(data->user_data);
-  obelisk_rt_v1_context_destroy(probe->context);
+  talos_rt_v1_context_destroy(probe->context);
   probe->destroyReturned = true;
   s_vpi_vlog_info info{};
   probe->vpiRemainedUsable = vpi_get_vlog_info(&info) == 1;
@@ -5868,7 +5868,7 @@ PLI_INT32 destroyContextFromCallback(p_cb_data data) {
 
 PLI_INT32 shutdownVPIFromCallback(p_cb_data data) {
   auto *probe = reinterpret_cast<VPIDestroyProbe *>(data->user_data);
-  obelisk_rt_v1_vpi_shutdown(probe->context);
+  talos_rt_v1_vpi_shutdown(probe->context);
   probe->destroyReturned = true;
   s_vpi_vlog_info info{};
   probe->vpiRemainedUsable = vpi_get_vlog_info(&info) == 1;
@@ -5876,48 +5876,48 @@ PLI_INT32 shutdownVPIFromCallback(p_cb_data data) {
 }
 
 TEST(VPI, StartupRequiresAnObservableDesignAndOwnsOneContext) {
-  EXPECT_EQ(obelisk_rt_v1_vpi_startup(nullptr, nullptr, 0),
-            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(talos_rt_v1_vpi_startup(nullptr, nullptr, 0),
+            TALOS_RT_INVALID_ARGUMENT);
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0),
-            OBELISK_RT_PERMISSION_DENIED);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create(&context), TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0),
+            TALOS_RT_PERMISSION_DENIED);
+  talos_rt_v1_context_destroy(context);
 
   Fixture fixture;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 1),
-            OBELISK_RT_INVALID_ARGUMENT);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0),
-            OBELISK_RT_INVALID_ARGUMENT);
-  EXPECT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_vpi_end_compile(context),
-            OBELISK_RT_INVALID_ARGUMENT);
-  EXPECT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_vpi_start_simulation(context),
-            OBELISK_RT_INVALID_ARGUMENT);
-  obelisk_rt_v1_vpi_end_simulation(context);
-  obelisk_rt_v1_vpi_end_simulation(context);
-  obelisk_rt_v1_vpi_shutdown(context);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 1),
+            TALOS_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0),
+            TALOS_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_vpi_end_compile(context),
+            TALOS_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_vpi_start_simulation(context),
+            TALOS_RT_INVALID_ARGUMENT);
+  talos_rt_v1_vpi_end_simulation(context);
+  talos_rt_v1_vpi_end_simulation(context);
+  talos_rt_v1_vpi_shutdown(context);
 
   char rootName[] = "$root";
   EXPECT_EQ(vpi_handle_by_name(rootName, nullptr), nullptr);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, CurrentFrameNullQueryIsQuietOutsideProceduralExecution) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   // IEEE 1800-2023 37.43 detail 4: NULL is the defined reference for the
   // current-frame query. There is no active procedural frame between
@@ -5929,18 +5929,18 @@ TEST(VPI, CurrentFrameNullQueryIsQuietOutsideProceduralExecution) {
   EXPECT_EQ(vpi_iterate(vpiThread, nullptr), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ContextDestroyRevokesAndFreesStateAcrossThreads) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char rootName[] = "$root";
   ASSERT_NE(vpi_handle_by_name(rootName, nullptr), nullptr);
@@ -5949,14 +5949,14 @@ TEST(VPI, ContextDestroyRevokesAndFreesStateAcrossThreads) {
   callback.cb_rtn = lifecycleProbeCallback;
   ASSERT_NE(vpi_register_cb(&callback), nullptr);
 
-  obelisk_rt_status duplicateStartup = OBELISK_RT_OK;
+  talos_rt_status duplicateStartup = TALOS_RT_OK;
   std::thread starter([&] {
-    duplicateStartup = obelisk_rt_v1_vpi_startup(context, nullptr, 0);
+    duplicateStartup = talos_rt_v1_vpi_startup(context, nullptr, 0);
   });
   starter.join();
-  EXPECT_EQ(duplicateStartup, OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(duplicateStartup, TALOS_RT_INVALID_ARGUMENT);
 
-  std::thread destroyer([&] { obelisk_rt_v1_context_destroy(context); });
+  std::thread destroyer([&] { talos_rt_v1_context_destroy(context); });
   destroyer.join();
 
   // Cross-thread destruction atomically revokes the originating simulation
@@ -5964,119 +5964,119 @@ TEST(VPI, ContextDestroyRevokesAndFreesStateAcrossThreads) {
   EXPECT_EQ(vpi_handle_by_name(rootName, nullptr), nullptr);
   context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ContextCanOutliveItsVPIOwnerThread) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
-  std::array<obelisk_rt_status, 4> statuses{};
+  talos_rt_context *context = nullptr;
+  std::array<talos_rt_status, 4> statuses{};
   std::thread owner([&] {
     statuses[0] =
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context);
-    if (statuses[0] != OBELISK_RT_OK)
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context);
+    if (statuses[0] != TALOS_RT_OK)
       return;
-    statuses[1] = obelisk_rt_v1_vpi_startup(context, nullptr, 0);
-    statuses[2] = obelisk_rt_v1_vpi_end_compile(context);
-    statuses[3] = obelisk_rt_v1_vpi_start_simulation(context);
+    statuses[1] = talos_rt_v1_vpi_startup(context, nullptr, 0);
+    statuses[2] = talos_rt_v1_vpi_end_compile(context);
+    statuses[3] = talos_rt_v1_vpi_start_simulation(context);
     char rootName[] = "$root";
     EXPECT_NE(vpi_handle_by_name(rootName, nullptr), nullptr);
   });
   owner.join();
   EXPECT_EQ(statuses,
-            (std::array<obelisk_rt_status, 4>{OBELISK_RT_OK, OBELISK_RT_OK,
-                                              OBELISK_RT_OK, OBELISK_RT_OK}));
+            (std::array<talos_rt_status, 4>{TALOS_RT_OK, TALOS_RT_OK,
+                                              TALOS_RT_OK, TALOS_RT_OK}));
   ASSERT_NE(context, nullptr);
 
   // The shared revocation slot remains valid after its thread-local owner has
   // exited, so destruction on this thread releases the complete VPI state.
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, OpaqueHandleTokenAllocationSaturatesWithoutWrapping) {
   const uintptr_t exhausted = std::numeric_limits<uintptr_t>::max();
   std::atomic<uintptr_t> next{exhausted - 1};
   uintptr_t token = 0;
-  EXPECT_TRUE(obelisk::runtime::allocateVPIHandleToken(next, token));
+  EXPECT_TRUE(talos::runtime::allocateVPIHandleToken(next, token));
   EXPECT_EQ(token, exhausted - 1);
   EXPECT_EQ(next.load(), exhausted);
 
   token = 17;
-  EXPECT_FALSE(obelisk::runtime::allocateVPIHandleToken(next, token));
+  EXPECT_FALSE(talos::runtime::allocateVPIHandleToken(next, token));
   EXPECT_EQ(token, 17u);
   EXPECT_EQ(next.load(), exhausted);
-  EXPECT_FALSE(obelisk::runtime::allocateVPIHandleToken(next, token));
+  EXPECT_FALSE(talos::runtime::allocateVPIHandleToken(next, token));
   EXPECT_EQ(next.load(), exhausted);
 }
 
-#if defined(OBELISK_VPI_CALLBACK_TEST_MODULE)
+#if defined(TALOS_VPI_CALLBACK_TEST_MODULE)
 TEST(VPI, LoadedStartupModuleEnforcesRestrictedPhaseAndRollsBackFailure) {
   void *module =
-      dlopen(OBELISK_VPI_CALLBACK_TEST_MODULE, RTLD_NOW | RTLD_LOCAL);
+      dlopen(TALOS_VPI_CALLBACK_TEST_MODULE, RTLD_NOW | RTLD_LOCAL);
   ASSERT_NE(module, nullptr) << dlerror();
   using Reset = void (*)(int);
   using Query = int (*)(int);
   auto reset =
-      reinterpret_cast<Reset>(dlsym(module, "obelisk_vpi_callback_test_reset"));
+      reinterpret_cast<Reset>(dlsym(module, "talos_vpi_callback_test_reset"));
   auto query =
-      reinterpret_cast<Query>(dlsym(module, "obelisk_vpi_callback_test_query"));
+      reinterpret_cast<Query>(dlsym(module, "talos_vpi_callback_test_query"));
   ASSERT_NE(reset, nullptr);
   ASSERT_NE(query, nullptr);
-  const char *modules[] = {OBELISK_VPI_CALLBACK_TEST_MODULE};
+  const char *modules[] = {TALOS_VPI_CALLBACK_TEST_MODULE};
 
   Fixture passiveFixture;
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&passiveFixture.execution,
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&passiveFixture.execution,
                                                     &context),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   reset(0);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, modules, 1), TALOS_RT_OK);
   EXPECT_EQ(query(0), 1);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_FALSE(context->vpiObservationDemand);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   EXPECT_FALSE(context->vpiObservationDemand);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   EXPECT_FALSE(context->vpiObservationDemand);
-  obelisk_rt_v1_vpi_end_simulation(context);
+  talos_rt_v1_vpi_end_simulation(context);
   EXPECT_FALSE(context->vpiObservationDemand);
   EXPECT_EQ(query(1), 0);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   Fixture activeFixture;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&activeFixture.execution,
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&activeFixture.execution,
                                                     &context),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   reset(1);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, modules, 1), TALOS_RT_OK);
   EXPECT_EQ(query(0), 1);
   EXPECT_EQ(query(2), 1);
   EXPECT_EQ(query(3), 1);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_FALSE(context->vpiObservationDemand);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   EXPECT_EQ(query(1), 1);
   EXPECT_FALSE(context->vpiObservationDemand);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   EXPECT_FALSE(context->vpiObservationDemand);
-  obelisk_rt_v1_vpi_end_simulation(context);
+  talos_rt_v1_vpi_end_simulation(context);
   EXPECT_FALSE(context->vpiObservationDemand);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   Fixture systemTfFixture;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&systemTfFixture.execution,
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&systemTfFixture.execution,
                                                     &context),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   reset(4);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, modules, 1), TALOS_RT_OK);
   EXPECT_EQ(query(0), 1);
   EXPECT_EQ(query(4), 1);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_FALSE(context->vpiObservationDemand);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   vpiHandle systemTfIterator = vpi_iterate(vpiUserSystf, nullptr);
   ASSERT_NE(systemTfIterator, nullptr);
   vpiHandle systemTf = vpi_scan(systemTfIterator);
@@ -6092,39 +6092,39 @@ TEST(VPI, LoadedStartupModuleEnforcesRestrictedPhaseAndRollsBackFailure) {
   EXPECT_EQ(vpi_release_handle(systemTf), 1);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_FALSE(context->vpiObservationDemand);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   Fixture failingFixture;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&failingFixture.execution,
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&failingFixture.execution,
                                                     &context),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   reset(2);
-  EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_vpi_startup(context, modules, 1),
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(context->vpiState, nullptr);
   EXPECT_EQ(query(0), 1);
   EXPECT_EQ(query(1), 0);
   // A failed module transaction leaves neither active state nor callbacks.
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   EXPECT_EQ(query(1), 0);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
-  obelisk_rt_v1_vpi_end_simulation(context);
-  obelisk_rt_v1_context_destroy(context);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
+  talos_rt_v1_vpi_end_simulation(context);
+  talos_rt_v1_context_destroy(context);
 
   Fixture throwingFixture;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&throwingFixture.execution,
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&throwingFixture.execution,
                                                     &context),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   reset(3);
-  EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_vpi_startup(context, modules, 1),
+            TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(context->vpiState, nullptr);
   EXPECT_EQ(query(0), 1);
   // Exception rollback revokes the TLS binding, so activation can be retried.
   reset(0);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, modules, 1), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, modules, 1), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 
   EXPECT_EQ(dlclose(module), 0);
 }
@@ -6132,12 +6132,12 @@ TEST(VPI, LoadedStartupModuleEnforcesRestrictedPhaseAndRollsBackFailure) {
 
 TEST(VPI, LifecycleCallbackDefersContextDestruction) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   VPIDestroyProbe probe{context};
   s_cb_data callback{};
@@ -6145,7 +6145,7 @@ TEST(VPI, LifecycleCallbackDefersContextDestruction) {
   callback.cb_rtn = destroyContextFromCallback;
   callback.user_data = reinterpret_cast<PLI_BYTE8 *>(&probe);
   ASSERT_NE(vpi_register_cb(&callback), nullptr);
-  EXPECT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   EXPECT_TRUE(probe.destroyReturned);
   EXPECT_TRUE(probe.vpiRemainedUsable);
 
@@ -6157,12 +6157,12 @@ TEST(VPI, LifecycleCallbackDefersContextDestruction) {
 
 TEST(VPI, LifecycleCallbackCannotDirectlyShutdownActiveVPI) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   VPIDestroyProbe probe{context};
   s_cb_data callback{};
@@ -6170,21 +6170,21 @@ TEST(VPI, LifecycleCallbackCannotDirectlyShutdownActiveVPI) {
   callback.cb_rtn = shutdownVPIFromCallback;
   callback.user_data = reinterpret_cast<PLI_BYTE8 *>(&probe);
   ASSERT_NE(vpi_register_cb(&callback), nullptr);
-  EXPECT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   EXPECT_TRUE(probe.destroyReturned);
   EXPECT_TRUE(probe.vpiRemainedUsable);
   EXPECT_NE(context->vpiState, nullptr);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, CopiesAndDispatchesLifecycleCallbackData) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   VPILifecycleProbe probe;
   probe.mutateInvocation = true;
@@ -6214,7 +6214,7 @@ TEST(VPI, CopiesAndDispatchesLifecycleCallbackData) {
   EXPECT_EQ(copied.value, nullptr);
   EXPECT_EQ(copied.index, 0);
 
-  EXPECT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   EXPECT_EQ(probe.calls, 1);
   EXPECT_EQ(probe.lastReason, cbStartOfSimulation);
   EXPECT_NE(probe.invocation, probe.registration);
@@ -6224,32 +6224,32 @@ TEST(VPI, CopiesAndDispatchesLifecycleCallbackData) {
   EXPECT_EQ(copied.cb_rtn, lifecycleProbeCallback);
   EXPECT_EQ(copied.user_data, reinterpret_cast<PLI_BYTE8 *>(&probe));
 
-  obelisk_rt_v1_vpi_end_simulation(context);
+  talos_rt_v1_vpi_end_simulation(context);
   EXPECT_EQ(probe.calls, 1);
   EXPECT_EQ(vpi_remove_cb(probe.self), 1);
   EXPECT_EQ(vpi_remove_cb(probe.self), 0);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, LifecycleCallbacksAreColdAndCanRegisterLaterPhases) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   SchedulePlanState scheduleState;
   std::vector<uint8_t> planValue((fixture.execution.state_bit_count + 7) / 8,
                                  0);
   std::vector<uint8_t> planUnknown(planValue.size(), 0);
   uint32_t specializationFast = 0;
-  obelisk_rt_native_schedule_plan plan{};
+  talos_rt_native_schedule_plan plan{};
   plan.size = sizeof(plan);
   plan.graph_layout_checksum = fixture.execution.checksum;
   plan.mutable_state = &scheduleState;
   plan.mutable_state_size = sizeof(scheduleState);
   plan.actor_capacity = scheduleState.actors.size();
-  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE |
-               OBELISK_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION;
+  plan.flags = TALOS_RT_NATIVE_SCHEDULE_DIRECT_STATE |
+               TALOS_RT_NATIVE_SCHEDULE_GUARDED_SPECIALIZATION;
   plan.state_value = planValue.data();
   plan.state_unknown = planUnknown.data();
   plan.state_bit_count = fixture.execution.state_bit_count;
@@ -6257,8 +6257,8 @@ TEST(VPI, LifecycleCallbacksAreColdAndCanRegisterLaterPhases) {
   plan.bind = planBind;
   plan.run = planRun;
   plan.fallback_snapshot = planSnapshot;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_install_aot(context, &plan), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_FALSE(context->vpiObservationDemand);
 
@@ -6272,7 +6272,7 @@ TEST(VPI, LifecycleCallbacksAreColdAndCanRegisterLaterPhases) {
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_FALSE(context->vpiObservationDemand);
 
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   ASSERT_EQ(probe.reasons, std::vector<int>({cbEndOfCompile}));
   ASSERT_NE(probe.start.self, nullptr);
   ASSERT_NE(probe.end.self, nullptr);
@@ -6285,27 +6285,27 @@ TEST(VPI, LifecycleCallbacksAreColdAndCanRegisterLaterPhases) {
   EXPECT_EQ(specializationFast, 1u);
   context->nativeScheduleRunning = false;
   specializationFast = 0;
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   EXPECT_EQ(probe.start.calls, 1);
   EXPECT_EQ(probe.start.lastReason, cbStartOfSimulation);
   EXPECT_TRUE(probe.start.actionFieldsWereNull);
-  obelisk_rt_v1_vpi_end_simulation(context);
+  talos_rt_v1_vpi_end_simulation(context);
   EXPECT_EQ(probe.end.calls, 1);
   EXPECT_EQ(probe.end.lastReason, cbEndOfSimulation);
   EXPECT_TRUE(probe.end.actionFieldsWereNull);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
-  obelisk_rt_v1_vpi_shutdown(context);
+  talos_rt_v1_vpi_shutdown(context);
   EXPECT_FALSE(context->vpiObservationDemand);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, RegistersQueriesAndIteratesSystemTasksAndFunctions) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
 
   EXPECT_EQ(vpi_register_systf(nullptr), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
@@ -6348,7 +6348,7 @@ TEST(VPI, RegistersQueriesAndIteratesSystemTasksAndFunctions) {
   function.user_data = &userData;
   vpiHandle functionHandle = vpi_register_systf(&function);
   ASSERT_NE(functionHandle, nullptr);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   EXPECT_EQ(vpi_get(vpiType, taskHandle), vpiUserSystf);
   EXPECT_EQ(vpi_register_systf(&function), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
@@ -6408,17 +6408,17 @@ TEST(VPI, RegistersQueriesAndIteratesSystemTasksAndFunctions) {
   EXPECT_EQ(vpi_release_handle(root), 1);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_FALSE(context->vpiObservationDemand);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, CallbackRemovalAndDispatchMutationAreStable) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   VPILifecycleProbe duplicate;
   s_cb_data data{};
@@ -6451,7 +6451,7 @@ TEST(VPI, CallbackRemovalAndDispatchMutationAreStable) {
   }
   ASSERT_NE(firstEquivalent, nullptr);
 
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   // Duplicate registration is multiplicative, and releasing the first handle
   // does not remove its underlying registration.
   EXPECT_EQ(duplicate.calls, 2);
@@ -6481,7 +6481,7 @@ TEST(VPI, CallbackRemovalAndDispatchMutationAreStable) {
   ASSERT_NE(selfRemover.self, nullptr);
   ASSERT_NE(nested.self, nullptr);
 
-  obelisk_rt_v1_vpi_end_simulation(context);
+  talos_rt_v1_vpi_end_simulation(context);
   EXPECT_EQ(peerRemover.calls, 1);
   EXPECT_EQ(peer.calls, 0);
   EXPECT_EQ(selfRemover.calls, 1);
@@ -6496,17 +6496,17 @@ TEST(VPI, CallbackRemovalAndDispatchMutationAreStable) {
   EXPECT_EQ(vpi_remove_cb(peerRemover.self), 1);
   EXPECT_EQ(vpi_remove_cb(nested.self), 1);
   EXPECT_EQ(vpi_remove_cb(nested.registered), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, EndOfSimulationCallbacksRemainColdUntilRemoved) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   VPILifecycleProbe firstProbe;
   VPILifecycleProbe secondProbe;
@@ -6527,7 +6527,7 @@ TEST(VPI, EndOfSimulationCallbacksRemainColdUntilRemoved) {
   EXPECT_EQ(vpi_remove_cb(second), 1);
   EXPECT_FALSE(context->vpiObservationDemand);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, TraversesReflectionAndTracksHandleState) {
@@ -6535,13 +6535,13 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   fixture.database = makeFixedPropertyDatabase(false);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char rootName[] = "$root";
   char valueName[] = "value";
@@ -6612,8 +6612,8 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   EXPECT_EQ(vpi_get(999, value), vpiUndefined);
   s_vpi_error_info error{};
   EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
-  EXPECT_STREQ(error.product, "Obelisk");
-  EXPECT_STREQ(error.code, "OBELISK_VPI");
+  EXPECT_STREQ(error.product, "Talos");
+  EXPECT_STREQ(error.code, "TALOS_VPI");
   EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
 
   EXPECT_EQ(vpi_release_handle(scanned), 1);
@@ -6623,7 +6623,7 @@ TEST(VPI, TraversesReflectionAndTracksHandleState) {
   EXPECT_EQ(vpi_release_handle(scope), 1);
   EXPECT_EQ(vpi_release_handle(value), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ReadsImmutableScopeIdentityPropertiesFromSparseImage) {
@@ -6631,12 +6631,12 @@ TEST(VPI, ReadsImmutableScopeIdentityPropertiesFromSparseImage) {
   fixture.database = makeScopeIdentityPropertyDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   char name[] = "top";
   vpiHandle module = vpi_handle_by_name(name, nullptr);
@@ -6660,7 +6660,7 @@ TEST(VPI, ReadsImmutableScopeIdentityPropertiesFromSparseImage) {
 
   EXPECT_EQ(vpi_release_handle(value), 1);
   EXPECT_EQ(vpi_release_handle(module), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ReadsAutomaticNamedEventFromSparseImage) {
@@ -6668,12 +6668,12 @@ TEST(VPI, ReadsAutomaticNamedEventFromSparseImage) {
   fixture.database = makeAutomaticNamedEventDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   char name[] = "top.value";
   vpiHandle event = vpi_handle_by_name(name, nullptr);
@@ -6683,7 +6683,7 @@ TEST(VPI, ReadsAutomaticNamedEventFromSparseImage) {
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
   EXPECT_EQ(vpi_release_handle(event), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ReadsDefinitionInvariantPropertiesThroughInstanceBinding) {
@@ -6691,12 +6691,12 @@ TEST(VPI, ReadsDefinitionInvariantPropertiesThroughInstanceBinding) {
   fixture.database = makeDefinitionPropertyDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   char name[] = "top";
   vpiHandle module = vpi_handle_by_name(name, nullptr);
@@ -6707,7 +6707,7 @@ TEST(VPI, ReadsDefinitionInvariantPropertiesThroughInstanceBinding) {
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
   EXPECT_EQ(vpi_release_handle(module), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignDatabase, RejectsMalformedDefinitionBindings) {
@@ -6723,8 +6723,8 @@ TEST(DesignDatabase, RejectsMalformedDefinitionBindings) {
     put64(fixture.database, 32, imageChecksum(fixture.database));
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+              TALOS_RT_INVALID_DESIGN);
   };
 
   rejected([](auto &bytes, uint32_t, uint64_t definition, uint64_t) {
@@ -6767,13 +6767,13 @@ TEST(DesignDatabase, RejectsMalformedDefinitionBindings) {
   });
   rejected([](auto &bytes, uint32_t directory, uint64_t, uint64_t binding) {
     bytes.resize(
-        bytes.size() + obelisk::reflection::DefinitionBindingLayout.size, 0);
+        bytes.size() + talos::reflection::DefinitionBindingLayout.size, 0);
     put64(bytes, 24, bytes.size());
     put64(bytes, directory + 200, 2);
     std::memcpy(bytes.data() + binding +
-                    obelisk::reflection::DefinitionBindingLayout.size,
+                    talos::reflection::DefinitionBindingLayout.size,
                 bytes.data() + binding,
-                obelisk::reflection::DefinitionBindingLayout.size);
+                talos::reflection::DefinitionBindingLayout.size);
   });
 }
 
@@ -6801,12 +6801,12 @@ TEST(VPI, ReadsGeneratedNetPropertiesAndInheritsThemThroughSelections) {
     fixture.database = makeVPINetPropertyDatabase(testCase.value);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
     char name[] = "top.value";
     vpiHandle root = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(root, nullptr);
@@ -6833,7 +6833,7 @@ TEST(VPI, ReadsGeneratedNetPropertiesAndInheritsThemThroughSelections) {
     EXPECT_EQ(vpi_release_handle(bit), 1);
     EXPECT_EQ(vpi_release_handle(element), 1);
     EXPECT_EQ(vpi_release_handle(root), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 
   for (uint32_t charge : {uint32_t{vpiSmallCharge}, uint32_t{vpiMediumCharge},
@@ -6845,12 +6845,12 @@ TEST(VPI, ReadsGeneratedNetPropertiesAndInheritsThemThroughSelections) {
         vpiTriReg, exerciseFlags, false, exerciseFlags, exerciseFlags, charge);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
     char name[] = "top.value";
     vpiHandle net = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(net, nullptr);
@@ -6871,7 +6871,7 @@ TEST(VPI, ReadsGeneratedNetPropertiesAndInheritsThemThroughSelections) {
     EXPECT_EQ(vpi_get(vpiChargeStrength, net), charge);
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_EQ(vpi_release_handle(net), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -6883,12 +6883,12 @@ TEST(VPI, ReadsResolvedNetTypeAtExactIndexedSelectionGranularity) {
       std::vector<ResolvedNetRunSpec>{{vpiWire, 0, 4}, {vpiWand, 4, 4}});
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   char name[] = "top.value";
   vpiHandle root = vpi_handle_by_name(name, nullptr);
@@ -6918,7 +6918,7 @@ TEST(VPI, ReadsResolvedNetTypeAtExactIndexedSelectionGranularity) {
   EXPECT_EQ(vpi_release_handle(element1), 1);
   EXPECT_EQ(vpi_release_handle(element0), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ReadsImmutableNetDelaysAtExactSelectionGranularity) {
@@ -6931,7 +6931,7 @@ TEST(VPI, ReadsImmutableNetDelaysAtExactSelectionGranularity) {
   fixture.execution.design_database_size = fixture.database.size();
   static constexpr char rootName[] = "$root";
   static constexpr char topName[] = "top";
-  const obelisk_rt_dpi_scope_v1 scopes[] = {
+  const talos_rt_dpi_scope_v1 scopes[] = {
       {0, UINT64_MAX, rootName, sizeof(rootName) - 1, -12, -12, 0},
       {1, 0, topName, sizeof(topName) - 1, -9, -12, 0},
   };
@@ -6939,12 +6939,12 @@ TEST(VPI, ReadsImmutableNetDelaysAtExactSelectionGranularity) {
   fixture.execution.dpi_scope_count = std::size(scopes);
   fixture.execution.dpi_time_precision = -12;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   char name[] = "top.value";
   vpiHandle root = vpi_handle_by_name(name, nullptr);
@@ -7021,7 +7021,7 @@ TEST(VPI, ReadsImmutableNetDelaysAtExactSelectionGranularity) {
   EXPECT_EQ(vpi_release_handle(second), 1);
   EXPECT_EQ(vpi_release_handle(first), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ReadsExplicitAndDefaultNetDeclarationAssignmentStrengths) {
@@ -7038,12 +7038,12 @@ TEST(VPI, ReadsExplicitAndDefaultNetDeclarationAssignmentStrengths) {
                                    vpiNetArray, strength0, strength1);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
     char name[] = "top.value";
     vpiHandle root = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(root, nullptr);
@@ -7056,7 +7056,7 @@ TEST(VPI, ReadsExplicitAndDefaultNetDeclarationAssignmentStrengths) {
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_EQ(vpi_release_handle(element), 1);
     EXPECT_EQ(vpi_release_handle(root), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -7066,12 +7066,12 @@ TEST(VPI, NetTypeIsUnavailableForUnmappedInterconnectWithoutInventingWire) {
       std::nullopt, false, true, false, false, 0, false, vpiInterconnectArray);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   char name[] = "top.value";
   vpiHandle net = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(net, nullptr);
@@ -7083,7 +7083,7 @@ TEST(VPI, NetTypeIsUnavailableForUnmappedInterconnectWithoutInventingWire) {
   EXPECT_EQ(vpi_get(vpiChargeStrength, net), 0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_release_handle(net), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ProtectedNetPropertiesAreDenied) {
@@ -7092,12 +7092,12 @@ TEST(VPI, ProtectedNetPropertiesAreDenied) {
       makeVPINetPropertyDatabase(vpiWire, false, false, false, false, 0, true);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   char name[] = "top.value";
   vpiHandle net = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(net, nullptr);
@@ -7120,7 +7120,7 @@ TEST(VPI, ProtectedNetPropertiesAreDenied) {
   EXPECT_EQ(vpi_get(vpiExplicitScalared, net), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_release_handle(net), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignDatabase, RejectsNetPropertiesOutsideGeneratedIntegerDomains) {
@@ -7159,10 +7159,10 @@ TEST(DesignDatabase, RejectsNetPropertiesOutsideGeneratedIntegerDomains) {
     put64(fixture.database, 32, imageChecksum(fixture.database));
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     EXPECT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_INVALID_DESIGN);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(context, nullptr);
   }
 }
@@ -7175,10 +7175,10 @@ TEST(DesignDatabase, RejectsMalformedResolvedNetRunImages) {
     fixture.database = std::move(database);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     EXPECT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_INVALID_DESIGN);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(context, nullptr);
   };
   auto locations = [](const std::vector<uint8_t> &database) {
@@ -7202,7 +7202,7 @@ TEST(DesignDatabase, RejectsMalformedResolvedNetRunImages) {
     uint32_t packedKind = get32(database, objectOffset);
     put32(database, objectOffset,
           (packedKind & UINT32_C(0xffff0000)) |
-              OBELISK_RT_DESIGN_RECORD_STORAGE);
+              TALOS_RT_DESIGN_RECORD_STORAGE);
     expectInvalid(std::move(database));
   }
   for (const auto &[fieldOffset, value] : {
@@ -7265,10 +7265,10 @@ TEST(DesignDatabase, RejectsMalformedNetDelayRunImages) {
     fixture.database = std::move(database);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     EXPECT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_INVALID_DESIGN);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(context, nullptr);
   };
   auto locations = [](const std::vector<uint8_t> &database) {
@@ -7329,19 +7329,19 @@ TEST(VPI, PriorityZeroReadPropertiesFollowGeneratedApplicability) {
   fixture.database = makeFixedPropertyDatabase(false);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   const auto *compatibility =
-      obelisk::reflection::findVPIProperty(0, vpiCompatibilityMode);
+      talos::reflection::findVPIProperty(0, vpiCompatibilityMode);
   ASSERT_NE(compatibility, nullptr);
   EXPECT_EQ(compatibility->valueKind,
-            obelisk::reflection::VPIPropertyValueKind::Integer);
+            talos::reflection::VPIPropertyValueKind::Integer);
   EXPECT_EQ(vpi_get(vpiCompatibilityMode, nullptr), vpiMode1800v2009);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_get(vpiSize, nullptr), vpiUndefined);
@@ -7377,10 +7377,10 @@ TEST(VPI, PriorityZeroReadPropertiesFollowGeneratedApplicability) {
   };
   for (const PropertyCase &item : cases) {
     const auto *descriptor =
-        obelisk::reflection::findVPIProperty(item.exactType, item.property);
+        talos::reflection::findVPIProperty(item.exactType, item.property);
     ASSERT_NE(descriptor, nullptr) << item.exactType << ":" << item.property;
     EXPECT_NE(descriptor->realization,
-              obelisk::reflection::VPIPropertyRealization::FixedImage);
+              talos::reflection::VPIPropertyRealization::FixedImage);
     EXPECT_EQ(vpi_get(item.property, item.handle), item.expected)
         << descriptor->apiName;
     EXPECT_EQ(vpi_chk_error(nullptr), 0) << descriptor->apiName;
@@ -7391,7 +7391,7 @@ TEST(VPI, PriorityZeroReadPropertiesFollowGeneratedApplicability) {
   EXPECT_EQ(vpi_get(vpiValid, value), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_release_handle(root), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, LegacyProtectedPropertyDefaultsFalseAndFailsClosed) {
@@ -7399,12 +7399,12 @@ TEST(VPI, LegacyProtectedPropertyDefaultsFalseAndFailsClosed) {
   fixture.database = makeProtectedScopeDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   char rootName[] = "$root";
   vpiHandle root = vpi_handle_by_name(rootName, nullptr);
@@ -7413,7 +7413,7 @@ TEST(VPI, LegacyProtectedPropertyDefaultsFalseAndFailsClosed) {
   EXPECT_EQ(vpi_get(vpiProtected, root), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_release_handle(root), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
@@ -7421,19 +7421,19 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
   fixture.database = makeManagedScalarDatabase(vpiStringVar);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   const auto *sizeProperty =
-      obelisk::reflection::findVPIProperty(vpiStringVar, vpiSize);
+      talos::reflection::findVPIProperty(vpiStringVar, vpiSize);
   ASSERT_NE(sizeProperty, nullptr);
   EXPECT_EQ(sizeProperty->realization,
-            obelisk::reflection::VPIPropertyRealization::Runtime);
+            talos::reflection::VPIPropertyRealization::Runtime);
   char name[] = "top.value";
   vpiHandle stringVariable = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(stringVariable, nullptr);
@@ -7450,17 +7450,17 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
   };
 
-  obelisk_rt_design_cursor_v1 cursor{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
+  talos_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(&fixture.execution,
                                         reinterpret_cast<const uint8_t *>(name),
                                         std::strlen(name), &cursor),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   auto storeString = [&](const char *bytes, uint64_t size) {
-    obelisk_rt_string_v1 string = UINT64_MAX;
-    ASSERT_EQ(obelisk_rt_v1_string_create(nullptr, bytes, size, &string),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &string, nullptr, 64),
-              OBELISK_RT_OK);
+    talos_rt_string_v1 string = UINT64_MAX;
+    ASSERT_EQ(talos_rt_v1_string_create(nullptr, bytes, size, &string),
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_design_write(context, cursor, &string, nullptr, 64),
+              TALOS_RT_OK);
   };
   storeString("hello", 5);
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), 5);
@@ -7472,22 +7472,22 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   expectString(embeddedNull, sizeof(embeddedNull));
 
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  obelisk_rt_string_v1 heapString = 0;
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(context, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  talos_rt_string_v1 heapString = 0;
   constexpr char heapText[] = "heap-backed-text";
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, heapText, sizeof(heapText) - 1,
+  ASSERT_EQ(talos_rt_v1_string_create(lane, heapText, sizeof(heapText) - 1,
                                         &heapString),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_managed_root_v1 heapStringRoot{};
+            TALOS_RT_OK);
+  talos_rt_gc_managed_root_v1 heapStringRoot{};
   ASSERT_EQ(
-      obelisk_rt_v1_gc_managed_root_push(lane, &heapStringRoot, &heapString),
-      OBELISK_RT_OK);
+      talos_rt_v1_gc_managed_root_push(lane, &heapStringRoot, &heapString),
+      TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &heapString, nullptr, 64),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+      talos_rt_v1_design_write(context, cursor, &heapString, nullptr, 64),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), sizeof(heapText) - 1);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   expectString(heapText, sizeof(heapText) - 1);
@@ -7503,21 +7503,21 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
 
   // Replacing the state word before removing its last root makes reclamation
   // deterministic and exercises the lifetime boundary guarded by the query.
-  obelisk_rt_string_v1 emptyString = 0;
+  talos_rt_string_v1 emptyString = 0;
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &emptyString, nullptr, 64),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &heapStringRoot),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+      talos_rt_v1_design_write(context, cursor, &emptyString, nullptr, 64),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_pop(lane, &heapStringRoot),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   EXPECT_STREQ(detachedScratch, heapText);
-  EXPECT_EQ(obelisk_rt_validate_string(context, heapString),
-            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(talos_rt_validate_string(context, heapString),
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), 0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &heapString, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(context, cursor, &heapString, nullptr, 64),
+      TALOS_RT_OK);
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
   s_vpi_value invalidRead{};
@@ -7525,38 +7525,38 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
   vpi_get_value(stringVariable, &invalidRead);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &emptyString, nullptr, 64),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+      talos_rt_v1_design_write(context, cursor, &emptyString, nullptr, 64),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
 
-  obelisk_rt_context *foreignContext = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create(&foreignContext), OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *foreignLane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(foreignContext, &foreignLane),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(foreignLane), OBELISK_RT_OK);
-  obelisk_rt_string_v1 foreignString = 0;
+  talos_rt_context *foreignContext = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create(&foreignContext), TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *foreignLane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(foreignContext, &foreignLane),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(foreignLane), TALOS_RT_OK);
+  talos_rt_string_v1 foreignString = 0;
   constexpr char foreignText[] = "foreign-heap-string";
-  ASSERT_EQ(obelisk_rt_v1_string_create(foreignLane, foreignText,
+  ASSERT_EQ(talos_rt_v1_string_create(foreignLane, foreignText,
                                         sizeof(foreignText) - 1,
                                         &foreignString),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_managed_root_v1 foreignStringRoot{};
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_push(foreignLane, &foreignStringRoot,
+            TALOS_RT_OK);
+  talos_rt_gc_managed_root_v1 foreignStringRoot{};
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_push(foreignLane, &foreignStringRoot,
                                                &foreignString),
-            OBELISK_RT_OK);
-  obelisk_rt_object_v1 *foreignStringObject =
-      obelisk_rt_object_from_managed_word(foreignString);
+            TALOS_RT_OK);
+  talos_rt_object_v1 *foreignStringObject =
+      talos_rt_object_from_managed_word(foreignString);
   ASSERT_NE(foreignStringObject, nullptr);
-  ASSERT_EQ(obelisk_rt_v1_gc_pin(foreignContext, foreignStringObject),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(foreignLane, &foreignStringRoot),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(foreignLane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_pin(foreignContext, foreignStringObject),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_pop(foreignLane, &foreignStringRoot),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(foreignLane), TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &foreignString, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(context, cursor, &foreignString, nullptr, 64),
+      TALOS_RT_OK);
   EXPECT_EQ(vpi_get(vpiSize, stringVariable), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
   invalidRead = {};
@@ -7564,15 +7564,15 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
   vpi_get_value(stringVariable, &invalidRead);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &emptyString, nullptr, 64),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_unpin(foreignContext, foreignStringObject),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(foreignLane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(foreignContext);
+      talos_rt_v1_design_write(context, cursor, &emptyString, nullptr, 64),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_unpin(foreignContext, foreignStringObject),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(foreignLane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(foreignContext);
 
   EXPECT_EQ(vpi_release_handle(stringVariable), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   Fixture protectedFixture;
   protectedFixture.database = makeManagedScalarDatabase(vpiStringVar, true);
@@ -7580,11 +7580,11 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
   protectedFixture.execution.design_database_size =
       protectedFixture.database.size();
   context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&protectedFixture.execution,
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&protectedFixture.execution,
                                                     &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   stringVariable = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(stringVariable, nullptr);
   EXPECT_EQ(vpi_get(vpiIsProtected, stringVariable), 1);
@@ -7598,7 +7598,7 @@ TEST(VPI, StringVariableSizeReadsTheManagedStringLength) {
             reinterpret_cast<PLI_BYTE8 *>(uintptr_t{1}));
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   vpiHandle staleHandle = stringVariable;
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
   protectedRead = {};
   protectedRead.format = vpiStringVal;
   protectedRead.value.str = reinterpret_cast<PLI_BYTE8 *>(uintptr_t{1});
@@ -7612,13 +7612,13 @@ TEST(VPI, IndexedStringVariableSizeReadsTheSelectedManagedWord) {
   fixture.database = makeVPIManagedStringArrayDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char name[] = "top.value";
   vpiHandle array = vpi_handle_by_name(name, nullptr);
@@ -7627,17 +7627,17 @@ TEST(VPI, IndexedStringVariableSizeReadsTheSelectedManagedWord) {
   ASSERT_NE(element, nullptr);
   EXPECT_EQ(vpi_get(vpiType, element), vpiStringVar);
 
-  obelisk_rt_design_cursor_v1 cursor{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
+  talos_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(&fixture.execution,
                                         reinterpret_cast<const uint8_t *>(name),
                                         std::strlen(name), &cursor),
-            OBELISK_RT_OK);
-  obelisk_rt_string_v1 selectedString = 0;
-  ASSERT_EQ(obelisk_rt_v1_string_create(nullptr, "indexed", 7, &selectedString),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_string_v1 selectedString = 0;
+  ASSERT_EQ(talos_rt_v1_string_create(nullptr, "indexed", 7, &selectedString),
+            TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &selectedString, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(context, cursor, &selectedString, nullptr, 64),
+      TALOS_RT_OK);
   EXPECT_EQ(vpi_get(vpiSize, element), 7);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   s_vpi_value read{};
@@ -7649,7 +7649,7 @@ TEST(VPI, IndexedStringVariableSizeReadsTheSelectedManagedWord) {
 
   EXPECT_EQ(vpi_release_handle(element), 1);
   EXPECT_EQ(vpi_release_handle(array), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, StringValueSurvivesConcurrentReplacementAndCollection) {
@@ -7657,44 +7657,44 @@ TEST(VPI, StringValueSurvivesConcurrentReplacementAndCollection) {
   fixture.database = makeManagedScalarDatabase(vpiStringVar);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char name[] = "top.value";
   vpiHandle handle = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(handle, nullptr);
-  obelisk_rt_design_cursor_v1 cursor{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
+  talos_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(&fixture.execution,
                                         reinterpret_cast<const uint8_t *>(name),
                                         std::strlen(name), &cursor),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   constexpr char first[] = "AAAAAAAA-heap-backed-string";
   constexpr char second[] = "BBBBBBBB-heap-backed-string";
   std::atomic<bool> done{false};
   std::atomic<unsigned> failureStep{0};
   std::thread writer([&] {
-    obelisk_rt_gc_lane_v1 *lane = nullptr;
+    talos_rt_gc_lane_v1 *lane = nullptr;
     bool laneEntered = false;
-    if (obelisk_rt_v1_gc_lane_create(context, &lane) != OBELISK_RT_OK) {
+    if (talos_rt_v1_gc_lane_create(context, &lane) != TALOS_RT_OK) {
       failureStep = 1;
       done = true;
       return;
     }
-    if (obelisk_rt_v1_gc_lane_enter(lane) != OBELISK_RT_OK) {
+    if (talos_rt_v1_gc_lane_enter(lane) != TALOS_RT_OK) {
       failureStep = 2;
     } else {
       laneEntered = true;
     }
-    obelisk_rt_string_v1 current = 0;
-    obelisk_rt_gc_managed_root_v1 currentRoot{};
+    talos_rt_string_v1 current = 0;
+    talos_rt_gc_managed_root_v1 currentRoot{};
     bool currentRootPushed = false;
-    if (failureStep == 0 && obelisk_rt_v1_gc_managed_root_push(
-                                lane, &currentRoot, &current) != OBELISK_RT_OK)
+    if (failureStep == 0 && talos_rt_v1_gc_managed_root_push(
+                                lane, &currentRoot, &current) != TALOS_RT_OK)
       failureStep = 3;
     else if (failureStep == 0)
       currentRootPushed = true;
@@ -7703,32 +7703,32 @@ TEST(VPI, StringValueSurvivesConcurrentReplacementAndCollection) {
       const char *text = iteration & 1 ? first : second;
       const uint64_t size =
           iteration & 1 ? sizeof(first) - 1 : sizeof(second) - 1;
-      obelisk_rt_string_v1 string = 0;
-      if (obelisk_rt_v1_string_create(lane, text, size, &string) !=
-          OBELISK_RT_OK) {
+      talos_rt_string_v1 string = 0;
+      if (talos_rt_v1_string_create(lane, text, size, &string) !=
+          TALOS_RT_OK) {
         failureStep = 4;
         break;
       }
-      if (obelisk_rt_v1_design_write(context, cursor, &string, nullptr, 64) !=
-          OBELISK_RT_OK)
+      if (talos_rt_v1_design_write(context, cursor, &string, nullptr, 64) !=
+          TALOS_RT_OK)
         failureStep = 5;
       if (failureStep == 0)
         current = string;
-      if (failureStep == 0 && obelisk_rt_v1_gc_collect(lane) != OBELISK_RT_OK)
+      if (failureStep == 0 && talos_rt_v1_gc_collect(lane) != TALOS_RT_OK)
         failureStep = 6;
     }
-    obelisk_rt_string_v1 empty = 0;
+    talos_rt_string_v1 empty = 0;
     if (failureStep == 0 &&
-        obelisk_rt_v1_design_write(context, cursor, &empty, nullptr, 64) !=
-            OBELISK_RT_OK)
+        talos_rt_v1_design_write(context, cursor, &empty, nullptr, 64) !=
+            TALOS_RT_OK)
       failureStep = 7;
     current = empty;
     if (currentRootPushed &&
-        obelisk_rt_v1_gc_managed_root_pop(lane, &currentRoot) != OBELISK_RT_OK)
+        talos_rt_v1_gc_managed_root_pop(lane, &currentRoot) != TALOS_RT_OK)
       failureStep = 8;
-    if (laneEntered && obelisk_rt_v1_gc_lane_leave(lane) != OBELISK_RT_OK)
+    if (laneEntered && talos_rt_v1_gc_lane_leave(lane) != TALOS_RT_OK)
       failureStep = 9;
-    if (obelisk_rt_v1_gc_lane_destroy(lane) != OBELISK_RT_OK)
+    if (talos_rt_v1_gc_lane_destroy(lane) != TALOS_RT_OK)
       failureStep = 10;
     done = true;
   });
@@ -7750,7 +7750,7 @@ TEST(VPI, StringValueSurvivesConcurrentReplacementAndCollection) {
   writer.join();
   EXPECT_EQ(failureStep, 0u);
   EXPECT_EQ(vpi_release_handle(handle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
@@ -7758,24 +7758,24 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
   fixture.database = makeManagedScalarDatabase(vpiClassVar);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(context, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   const auto *idProperty =
-      obelisk::reflection::findVPIProperty(vpiClassVar, vpiObjId);
+      talos::reflection::findVPIProperty(vpiClassVar, vpiObjId);
   ASSERT_NE(idProperty, nullptr);
   EXPECT_EQ(idProperty->valueKind,
-            obelisk::reflection::VPIPropertyValueKind::Int64);
+            talos::reflection::VPIPropertyValueKind::Int64);
   EXPECT_EQ(idProperty->realization,
-            obelisk::reflection::VPIPropertyRealization::Runtime);
+            talos::reflection::VPIPropertyRealization::Runtime);
 
   char name[] = "top.value";
   vpiHandle firstHandle = vpi_handle_by_name(name, nullptr);
@@ -7791,7 +7791,7 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
   EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
 
   const char className[] = "vpi_test_class";
-  const obelisk_rt_class_descriptor_v1 classDescriptor{OBELISK_RT_VERSION,
+  const talos_rt_class_descriptor_v1 classDescriptor{TALOS_RT_VERSION,
                                                        0,
                                                        UINT64_C(0x565049),
                                                        sizeof(void *),
@@ -7810,31 +7810,31 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
                                                        0,
                                                        0,
                                                        0};
-  obelisk_rt_object_v1 *firstObject = nullptr;
-  obelisk_rt_object_v1 *secondObject = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &classDescriptor, &firstObject),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_root_v1 firstRoot{};
-  obelisk_rt_gc_root_v1 secondRoot{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &firstRoot, &firstObject),
-            OBELISK_RT_OK);
+  talos_rt_object_v1 *firstObject = nullptr;
+  talos_rt_object_v1 *secondObject = nullptr;
+  ASSERT_EQ(talos_rt_v1_object_allocate(lane, &classDescriptor, &firstObject),
+            TALOS_RT_OK);
+  talos_rt_gc_root_v1 firstRoot{};
+  talos_rt_gc_root_v1 secondRoot{};
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &firstRoot, &firstObject),
+            TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_object_allocate(lane, &classDescriptor, &secondObject),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &secondRoot, &secondObject),
-            OBELISK_RT_OK);
+      talos_rt_v1_object_allocate(lane, &classDescriptor, &secondObject),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &secondRoot, &secondObject),
+            TALOS_RT_OK);
 
-  obelisk_rt_design_cursor_v1 cursor{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
+  talos_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(&fixture.execution,
                                         reinterpret_cast<const uint8_t *>(name),
                                         std::strlen(name), &cursor),
-            OBELISK_RT_OK);
-  uint64_t firstWord = obelisk_rt_managed_word_from_object(firstObject);
+            TALOS_RT_OK);
+  uint64_t firstWord = talos_rt_managed_word_from_object(firstObject);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &firstWord, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(context, cursor, &firstWord, nullptr, 64),
+      TALOS_RT_OK);
   const PLI_INT64 firstIdentity =
-      static_cast<PLI_INT64>(obelisk_rt_v1_object_id(firstObject));
+      static_cast<PLI_INT64>(talos_rt_v1_object_id(firstObject));
   ASSERT_NE(firstIdentity, 0);
   vpiHandle firstObjectHandle = vpi_handle(vpiClassObj, firstHandle);
   vpiHandle aliasObjectHandle = vpi_handle(vpiClassObj, aliasHandle);
@@ -7850,15 +7850,15 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), firstIdentity);
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), firstIdentity);
   EXPECT_EQ(vpi_get64(vpiObjId, aliasHandle), firstIdentity);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), firstIdentity);
 
-  uint64_t secondWord = obelisk_rt_managed_word_from_object(secondObject);
+  uint64_t secondWord = talos_rt_managed_word_from_object(secondObject);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &secondWord, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(context, cursor, &secondWord, nullptr, 64),
+      TALOS_RT_OK);
   const PLI_INT64 secondIdentity =
-      static_cast<PLI_INT64>(obelisk_rt_v1_object_id(secondObject));
+      static_cast<PLI_INT64>(talos_rt_v1_object_id(secondObject));
   ASSERT_NE(secondIdentity, 0);
   vpiHandle secondObjectHandle = vpi_handle(vpiClassObj, firstHandle);
   ASSERT_NE(secondObjectHandle, nullptr);
@@ -7871,33 +7871,33 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), secondIdentity);
   EXPECT_EQ(vpi_get64(vpiObjId, aliasHandle), secondIdentity);
 
-  obelisk_rt_string_v1 wrongKind = 0;
+  talos_rt_string_v1 wrongKind = 0;
   constexpr char wrongKindText[] = "not-a-class-object";
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, wrongKindText,
+  ASSERT_EQ(talos_rt_v1_string_create(lane, wrongKindText,
                                         sizeof(wrongKindText) - 1, &wrongKind),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_managed_root_v1 wrongKindRoot{};
+            TALOS_RT_OK);
+  talos_rt_gc_managed_root_v1 wrongKindRoot{};
   ASSERT_EQ(
-      obelisk_rt_v1_gc_managed_root_push(lane, &wrongKindRoot, &wrongKind),
-      OBELISK_RT_OK);
+      talos_rt_v1_gc_managed_root_push(lane, &wrongKindRoot, &wrongKind),
+      TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &wrongKind, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(context, cursor, &wrongKind, nullptr, 64),
+      TALOS_RT_OK);
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
-  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &wrongKindRoot),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_managed_root_pop(lane, &wrongKindRoot),
+            TALOS_RT_OK);
 
   EXPECT_EQ(vpi_release_handle(aliasHandle), 1);
   EXPECT_EQ(vpi_get64(vpiObjId, aliasHandle), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   uint64_t nullWord = 0;
-  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
+            TALOS_RT_OK);
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), 0);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &secondRoot), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &firstRoot), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &secondRoot), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &firstRoot), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   // VPI references are weak: after SV roots disappear, collection releases
   // every handle to the object (37.2.2), including aliases.
   EXPECT_EQ(vpi_get(vpiType, firstObjectHandle), vpiUndefined);
@@ -7906,52 +7906,52 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_release_handle(firstObjectHandle), 0);
   EXPECT_EQ(vpi_release_handle(aliasObjectHandle), 0);
-  EXPECT_EQ(obelisk_rt_v1_object_id(firstObject), 0u);
-  EXPECT_EQ(obelisk_rt_v1_object_id(secondObject), 0u);
+  EXPECT_EQ(talos_rt_v1_object_id(firstObject), 0u);
+  EXPECT_EQ(talos_rt_v1_object_id(secondObject), 0u);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &firstWord, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(context, cursor, &firstWord, nullptr, 64),
+      TALOS_RT_OK);
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
-  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
 
-  obelisk_rt_context *foreignContext = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create(&foreignContext), OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *foreignLane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(foreignContext, &foreignLane),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(foreignLane), OBELISK_RT_OK);
-  obelisk_rt_object_v1 *foreignObject = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_object_allocate(foreignLane, &classDescriptor,
+  talos_rt_context *foreignContext = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create(&foreignContext), TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *foreignLane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(foreignContext, &foreignLane),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(foreignLane), TALOS_RT_OK);
+  talos_rt_object_v1 *foreignObject = nullptr;
+  ASSERT_EQ(talos_rt_v1_object_allocate(foreignLane, &classDescriptor,
                                           &foreignObject),
-            OBELISK_RT_OK);
-  obelisk_rt_gc_root_v1 foreignRoot{};
+            TALOS_RT_OK);
+  talos_rt_gc_root_v1 foreignRoot{};
   ASSERT_EQ(
-      obelisk_rt_v1_gc_root_push(foreignLane, &foreignRoot, &foreignObject),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_pin(foreignContext, foreignObject), OBELISK_RT_OK);
+      talos_rt_v1_gc_root_push(foreignLane, &foreignRoot, &foreignObject),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_pin(foreignContext, foreignObject), TALOS_RT_OK);
   const uint64_t foreignWord =
-      obelisk_rt_managed_word_from_object(foreignObject);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(foreignLane, &foreignRoot),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(foreignLane), OBELISK_RT_OK);
+      talos_rt_managed_word_from_object(foreignObject);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(foreignLane, &foreignRoot),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(foreignLane), TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &foreignWord, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(context, cursor, &foreignWord, nullptr, 64),
+      TALOS_RT_OK);
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
-  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_unpin(foreignContext, foreignObject),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(foreignLane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(foreignContext);
+  ASSERT_EQ(talos_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_unpin(foreignContext, foreignObject),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(foreignLane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(foreignContext);
 
   EXPECT_EQ(vpi_release_handle(firstHandle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   Fixture protectedFixture;
   protectedFixture.database = makeManagedScalarDatabase(vpiClassVar, true);
@@ -7959,32 +7959,32 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
   protectedFixture.execution.design_database_size =
       protectedFixture.database.size();
   context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&protectedFixture.execution,
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&protectedFixture.execution,
                                                     &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   firstHandle = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(firstHandle, nullptr);
   EXPECT_EQ(vpi_get64(vpiObjId, firstHandle), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_release_handle(firstHandle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ProcessClassObjectsRetainIdentityAndTypespecAfterExit) {
   Fixture fixture;
   fixture.database =
-      makeBuiltinClassVariableDatabase(OBELISK_RT_DESIGN_SEMANTIC_PROCESS);
+      makeBuiltinClassVariableDatabase(TALOS_RT_DESIGN_SEMANTIC_PROCESS);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char name[] = "top.value";
   vpiHandle variable = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(variable, nullptr);
@@ -7998,25 +7998,25 @@ TEST(VPI, ProcessClassObjectsRetainIdentityAndTypespecAfterExit) {
   EXPECT_EQ(vpi_handle(vpiClassDefn, declaredType), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
-  obelisk_rt_design_cursor_v1 cursor{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
+  talos_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(&fixture.execution,
                                         reinterpret_cast<const uint8_t *>(name),
                                         std::strlen(name), &cursor),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint64_t, 2> tokens{};
   std::array<PLI_INT64, 2> identities{};
   std::array<vpiHandle, 2> objects{};
   for (size_t i = 0; i != tokens.size(); ++i) {
-    obelisk_rt_process_instance_v1 *instance = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+    talos_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(talos_rt_v1_process_instance_create_for_context(
                   context, &fixture.descriptor, &instance),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
-    tokens[i] = obelisk_rt_v1_scheduler_process_token(context, instance);
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_scheduler_add(context, instance, 0), TALOS_RT_OK);
+    tokens[i] = talos_rt_v1_scheduler_process_token(context, instance);
     ASSERT_NE(tokens[i], 0u);
     ASSERT_EQ(
-        obelisk_rt_v1_design_write(context, cursor, &tokens[i], nullptr, 64),
-        OBELISK_RT_OK);
+        talos_rt_v1_design_write(context, cursor, &tokens[i], nullptr, 64),
+        TALOS_RT_OK);
     objects[i] = vpi_handle(vpiClassObj, variable);
     ASSERT_NE(objects[i], nullptr);
     identities[i] = vpi_get64(vpiObjId, objects[i]);
@@ -8044,22 +8044,22 @@ TEST(VPI, ProcessClassObjectsRetainIdentityAndTypespecAfterExit) {
   }
   EXPECT_NE(identities[0], identities[1]);
   EXPECT_EQ(vpi_compare_objects(objects[0], objects[1]), 0);
-  obelisk_rt_process_control_disposition disposition{};
-  ASSERT_EQ(obelisk_rt_v1_process_control(context, tokens[1],
-                                          OBELISK_RT_PROCESS_CONTROL_KILL,
+  talos_rt_process_control_disposition disposition{};
+  ASSERT_EQ(talos_rt_v1_process_control(context, tokens[1],
+                                          TALOS_RT_PROCESS_CONTROL_KILL,
                                           &disposition),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   for (size_t i = 0; i != tokens.size(); ++i) {
-    obelisk_rt_process_state state{};
-    ASSERT_EQ(obelisk_rt_v1_process_status(context, tokens[i], &state),
-              OBELISK_RT_OK);
+    talos_rt_process_state state{};
+    ASSERT_EQ(talos_rt_v1_process_status(context, tokens[i], &state),
+              TALOS_RT_OK);
     EXPECT_EQ(state,
-              i == 0 ? OBELISK_RT_PROCESS_FINISHED : OBELISK_RT_PROCESS_KILLED);
+              i == 0 ? TALOS_RT_PROCESS_FINISHED : TALOS_RT_PROCESS_KILLED);
     EXPECT_EQ(vpi_get64(vpiObjId, objects[i]), identities[i]);
     ASSERT_EQ(
-        obelisk_rt_v1_design_write(context, cursor, &tokens[i], nullptr, 64),
-        OBELISK_RT_OK);
+        talos_rt_v1_design_write(context, cursor, &tokens[i], nullptr, 64),
+        TALOS_RT_OK);
     EXPECT_EQ(vpi_get64(vpiObjId, variable), identities[i]);
     vpiHandle alias = vpi_handle(vpiClassObj, variable);
     ASSERT_NE(alias, nullptr);
@@ -8067,30 +8067,30 @@ TEST(VPI, ProcessClassObjectsRetainIdentityAndTypespecAfterExit) {
     EXPECT_EQ(vpi_release_handle(alias), 1);
   }
   // The native/design tag is part of a process reference, not an address bit.
-  uint64_t unknown = tokens[0] & ~OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
-  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &unknown, nullptr, 64),
-            OBELISK_RT_OK);
+  uint64_t unknown = tokens[0] & ~TALOS_RT_LOGICAL_PROCESS_NATIVE_TAG;
+  ASSERT_EQ(talos_rt_v1_design_write(context, cursor, &unknown, nullptr, 64),
+            TALOS_RT_OK);
   EXPECT_EQ(vpi_get64(vpiObjId, variable), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
   EXPECT_EQ(vpi_handle(vpiClassObj, variable), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
   uint64_t nullWord = 0;
-  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
+            TALOS_RT_OK);
   EXPECT_EQ(vpi_handle(vpiClassObj, variable), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   for (vpiHandle object : objects)
     EXPECT_EQ(vpi_release_handle(object), 1);
   EXPECT_EQ(vpi_release_handle(declaredType), 1);
   EXPECT_EQ(vpi_release_handle(variable), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ProcessMailboxMessagesRetainIdentityAfterExitAndMailboxCollection) {
   Fixture fixture;
   fixture.database =
-      makeBuiltinClassVariableDatabase(OBELISK_RT_DESIGN_SEMANTIC_MAILBOX);
-  using namespace obelisk::reflection;
+      makeBuiltinClassVariableDatabase(TALOS_RT_DESIGN_SEMANTIC_MAILBOX);
+  using namespace talos::reflection;
   const HeaderView header(fixture.database.data());
   const SemanticDirectoryView directory(fixture.database.data() +
                                         header.getReserved());
@@ -8101,67 +8101,67 @@ TEST(VPI, ProcessMailboxMessagesRetainIdentityAfterExitAndMailboxCollection) {
                              directory.getSemanticTypeOffset() +
                              SemanticTypeLayout.size);
   element.setKindAndFlags(
-      OBELISK_RT_DESIGN_SEMANTIC_PROCESS |
-      (vpiClassTypespec << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+      TALOS_RT_DESIGN_SEMANTIC_PROCESS |
+      (vpiClassTypespec << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   element.setLeft(0);
   element.setRight(0);
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
-  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_gc_lane_v1 *lane = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
-  obelisk_rt_object_v1 *mailbox = nullptr;
-  obelisk_rt_gc_root_v1 root{};
-  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &mailbox), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(lane, 301,
-                                               OBELISK_RT_ELEMENT_BITS, 0, 8, 8,
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(talos_rt_v1_gc_lane_create(context, &lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
+  talos_rt_object_v1 *mailbox = nullptr;
+  talos_rt_gc_root_v1 root{};
+  ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &root, &mailbox), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_mailbox_create_typed(lane, 301,
+                                               TALOS_RT_ELEMENT_BITS, 0, 8, 8,
                                                64, nullptr, 0, 0, &mailbox),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   char name[] = "top.value";
-  obelisk_rt_design_cursor_v1 cursor{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
+  talos_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(&fixture.execution,
                                         reinterpret_cast<const uint8_t *>(name),
                                         std::strlen(name), &cursor),
-            OBELISK_RT_OK);
-  const uint64_t mailboxWord = obelisk_rt_managed_word_from_object(mailbox);
+            TALOS_RT_OK);
+  const uint64_t mailboxWord = talos_rt_managed_word_from_object(mailbox);
   ASSERT_EQ(
-      obelisk_rt_v1_design_write(context, cursor, &mailboxWord, nullptr, 64),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_write(context, cursor, &mailboxWord, nullptr, 64),
+      TALOS_RT_OK);
   vpiHandle variable = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(variable, nullptr);
   vpiHandle object = vpi_handle(vpiClassObj, variable);
   ASSERT_NE(object, nullptr);
   std::array<uint64_t, 2> tokens{}, identities{};
   for (size_t i = 0; i != tokens.size(); ++i) {
-    obelisk_rt_process_instance_v1 *instance = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+    talos_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(talos_rt_v1_process_instance_create_for_context(
                   context, &fixture.descriptor, &instance),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
-    tokens[i] = obelisk_rt_v1_scheduler_process_token(context, instance);
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_scheduler_add(context, instance, 0), TALOS_RT_OK);
+    tokens[i] = talos_rt_v1_scheduler_process_token(context, instance);
     ASSERT_NE(tokens[i], 0u);
     ASSERT_EQ(
-        obelisk_rt_process_object_identity(context, tokens[i], &identities[i]),
-        OBELISK_RT_OK);
+        talos_rt_process_object_identity(context, tokens[i], &identities[i]),
+        TALOS_RT_OK);
   }
   const std::array<uint64_t, 4> words{tokens[0], tokens[1], tokens[0], 0};
   for (uint64_t word : words) {
     uint32_t success = 0;
     ASSERT_EQ(
-        obelisk_rt_v1_mailbox_try_put(lane, mailbox, &word, nullptr, &success),
-        OBELISK_RT_OK);
+        talos_rt_v1_mailbox_try_put(lane, mailbox, &word, nullptr, &success),
+        TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
   }
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
   vpiHandle iterator = vpi_iterate(vpiMessages, object);
   ASSERT_NE(iterator, nullptr);
   EXPECT_EQ(vpi_get(vpiIteratorType, iterator), vpiMessages);
@@ -8202,28 +8202,28 @@ TEST(VPI, ProcessMailboxMessagesRetainIdentityAfterExitAndMailboxCollection) {
   vpiHandle pending = vpi_iterate(vpiMessages, object);
   ASSERT_NE(pending, nullptr);
 
-  obelisk_rt_process_control_disposition disposition{};
-  ASSERT_EQ(obelisk_rt_v1_process_control(context, tokens[1],
-                                          OBELISK_RT_PROCESS_CONTROL_KILL,
+  talos_rt_process_control_disposition disposition{};
+  ASSERT_EQ(talos_rt_v1_process_control(context, tokens[1],
+                                          TALOS_RT_PROCESS_CONTROL_KILL,
                                           &disposition),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   for (size_t i = 0; i != tokens.size(); ++i) {
-    obelisk_rt_process_state state{};
-    ASSERT_EQ(obelisk_rt_v1_process_status(context, tokens[i], &state),
-              OBELISK_RT_OK);
+    talos_rt_process_state state{};
+    ASSERT_EQ(talos_rt_v1_process_status(context, tokens[i], &state),
+              TALOS_RT_OK);
     EXPECT_EQ(state,
-              i ? OBELISK_RT_PROCESS_KILLED : OBELISK_RT_PROCESS_FINISHED);
+              i ? TALOS_RT_PROCESS_KILLED : TALOS_RT_PROCESS_FINISHED);
     EXPECT_EQ(vpi_get64(vpiObjId, processObjects[i]),
               static_cast<PLI_INT64>(identities[i]));
   }
   const uint64_t zero = 0;
-  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &zero, nullptr, 64),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
-  obelisk_rt_gc_statistics_v1 statistics{};
-  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_write(context, cursor, &zero, nullptr, 64),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &root), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
+  talos_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(talos_rt_v1_gc_statistics(context, &statistics), TALOS_RT_OK);
   EXPECT_EQ(statistics.live_objects, 0u);
   EXPECT_EQ(vpi_get(vpiType, object), vpiUndefined);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
@@ -8247,29 +8247,29 @@ TEST(VPI, ProcessMailboxMessagesRetainIdentityAfterExitAndMailboxCollection) {
     EXPECT_EQ(vpi_release_handle(messages[i]), 1);
   }
   EXPECT_EQ(vpi_release_handle(variable), 1);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, BuiltinClassObjectsHaveWeakIdentityAndExactDeclaredKinds) {
-  for (uint32_t kind : {OBELISK_RT_DESIGN_SEMANTIC_MAILBOX,
-                        OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE}) {
+  for (uint32_t kind : {TALOS_RT_DESIGN_SEMANTIC_MAILBOX,
+                        TALOS_RT_DESIGN_SEMANTIC_SEMAPHORE}) {
     SCOPED_TRACE(kind);
     Fixture fixture;
     fixture.database = makeBuiltinClassVariableDatabase(kind);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    obelisk_rt_gc_lane_v1 *lane = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    talos_rt_gc_lane_v1 *lane = nullptr;
+    ASSERT_EQ(talos_rt_v1_gc_lane_create(context, &lane), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char name[] = "top.value";
     vpiHandle variable = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(variable, nullptr);
@@ -8279,43 +8279,43 @@ TEST(VPI, BuiltinClassObjectsHaveWeakIdentityAndExactDeclaredKinds) {
     vpiHandle declared = vpi_handle(vpiClassTypespec, variable);
     ASSERT_NE(declared, nullptr);
     EXPECT_EQ(vpi_get(vpiClassType, declared),
-              kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX ? vpiMailboxClass
+              kind == TALOS_RT_DESIGN_SEMANTIC_MAILBOX ? vpiMailboxClass
                                                          : vpiSemaphoreClass);
     EXPECT_NE(vpi_get_str(vpiName, declared), nullptr);
     EXPECT_EQ(vpi_handle(vpiClassDefn, declared), nullptr);
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
-    std::array<obelisk_rt_object_v1 *, 3> objects{};
-    obelisk_rt_gc_root_range_v1 roots{};
-    ASSERT_EQ(obelisk_rt_v1_gc_root_range_push(lane, &roots, objects.data(),
+    std::array<talos_rt_object_v1 *, 3> objects{};
+    talos_rt_gc_root_range_v1 roots{};
+    ASSERT_EQ(talos_rt_v1_gc_root_range_push(lane, &roots, objects.data(),
                                                objects.size()),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
-                  lane, 99, OBELISK_RT_ELEMENT_BITS, 0, 4, 4, 32, nullptr, 0, 0,
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_mailbox_create_typed(
+                  lane, 99, TALOS_RT_ELEMENT_BITS, 0, 4, 4, 32, nullptr, 0, 0,
                   &objects[0]),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 1, &objects[1]),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_container_create_typed(
-                  lane, OBELISK_RT_CONTAINER_QUEUE, 99, OBELISK_RT_ELEMENT_BITS,
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_semaphore_create(lane, 1, &objects[1]),
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_container_create_typed(
+                  lane, TALOS_RT_CONTAINER_QUEUE, 99, TALOS_RT_ELEMENT_BITS,
                   0, 4, 4, 32, nullptr, 0, 0, UINT64_MAX, &objects[2]),
-              OBELISK_RT_OK);
-    obelisk_rt_design_cursor_v1 cursor{};
-    ASSERT_EQ(obelisk_rt_v1_design_lookup(
+              TALOS_RT_OK);
+    talos_rt_design_cursor_v1 cursor{};
+    ASSERT_EQ(talos_rt_v1_design_lookup(
                   &fixture.execution, reinterpret_cast<const uint8_t *>(name),
                   std::strlen(name), &cursor),
-              OBELISK_RT_OK);
-    const size_t selected = kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX ? 0 : 1;
+              TALOS_RT_OK);
+    const size_t selected = kind == TALOS_RT_DESIGN_SEMANTIC_MAILBOX ? 0 : 1;
     const uint64_t word =
-        obelisk_rt_managed_word_from_object(objects[selected]);
-    ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &word, nullptr, 64),
-              OBELISK_RT_OK);
+        talos_rt_managed_word_from_object(objects[selected]);
+    ASSERT_EQ(talos_rt_v1_design_write(context, cursor, &word, nullptr, 64),
+              TALOS_RT_OK);
     vpiHandle object = vpi_handle(vpiClassObj, variable);
     vpiHandle alias = vpi_handle(vpiClassObj, variable);
     ASSERT_NE(object, nullptr);
     ASSERT_NE(alias, nullptr);
     const auto identity =
-        static_cast<PLI_INT64>(obelisk_rt_v1_object_id(objects[selected]));
+        static_cast<PLI_INT64>(talos_rt_v1_object_id(objects[selected]));
     EXPECT_EQ(vpi_get64(vpiObjId, object), identity);
     EXPECT_EQ(vpi_get64(vpiObjId, variable), identity);
     EXPECT_EQ(vpi_compare_objects(object, alias), 1);
@@ -8332,10 +8332,10 @@ TEST(VPI, BuiltinClassObjectsHaveWeakIdentityAndExactDeclaredKinds) {
     }
     for (size_t wrong : {1 - selected, size_t{2}}) {
       const uint64_t invalid =
-          obelisk_rt_managed_word_from_object(objects[wrong]);
+          talos_rt_managed_word_from_object(objects[wrong]);
       ASSERT_EQ(
-          obelisk_rt_v1_design_write(context, cursor, &invalid, nullptr, 64),
-          OBELISK_RT_OK);
+          talos_rt_v1_design_write(context, cursor, &invalid, nullptr, 64),
+          TALOS_RT_OK);
       EXPECT_EQ(vpi_get64(vpiObjId, variable), vpiUndefined);
       EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
       EXPECT_EQ(vpi_handle(vpiClassObj, variable), nullptr);
@@ -8343,10 +8343,10 @@ TEST(VPI, BuiltinClassObjectsHaveWeakIdentityAndExactDeclaredKinds) {
     }
     const uint64_t nullWord = 0;
     ASSERT_EQ(
-        obelisk_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &roots), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+        talos_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_root_range_pop(lane, &roots), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
     EXPECT_EQ(vpi_get(vpiType, object), vpiUndefined);
     EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
     EXPECT_EQ(vpi_release_handle(alias), 0);
@@ -8354,9 +8354,9 @@ TEST(VPI, BuiltinClassObjectsHaveWeakIdentityAndExactDeclaredKinds) {
     EXPECT_EQ(vpi_release_handle(actual), 1);
     EXPECT_EQ(vpi_release_handle(declared), 1);
     EXPECT_EQ(vpi_release_handle(variable), 1);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-    obelisk_rt_v1_context_destroy(context);
+    ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -8366,25 +8366,25 @@ TEST(VPI, ManagedQueriesRejectFourStateAndUnknownPhysicalStorage) {
     fixture.database = makeManagedScalarDatabase(exactType, false, true);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
     char name[] = "top.value";
     vpiHandle handle = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(handle, nullptr);
-    obelisk_rt_design_cursor_v1 cursor{};
-    ASSERT_EQ(obelisk_rt_v1_design_lookup(
+    talos_rt_design_cursor_v1 cursor{};
+    ASSERT_EQ(talos_rt_v1_design_lookup(
                   &fixture.execution, reinterpret_cast<const uint8_t *>(name),
                   std::strlen(name), &cursor),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     uint64_t value = 0;
     uint64_t unknown = 1;
-    ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &value, &unknown, 64),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_design_write(context, cursor, &value, &unknown, 64),
+              TALOS_RT_OK);
     if (exactType == vpiStringVar)
       EXPECT_EQ(vpi_get(vpiSize, handle), vpiUndefined);
     else
@@ -8398,8 +8398,8 @@ TEST(VPI, ManagedQueriesRejectFourStateAndUnknownPhysicalStorage) {
     }
 
     unknown = 0;
-    ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &value, &unknown, 64),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_design_write(context, cursor, &value, &unknown, 64),
+              TALOS_RT_OK);
     if (exactType == vpiStringVar)
       EXPECT_EQ(vpi_get(vpiSize, handle), vpiUndefined);
     else
@@ -8412,7 +8412,7 @@ TEST(VPI, ManagedQueriesRejectFourStateAndUnknownPhysicalStorage) {
       EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
     }
     EXPECT_EQ(vpi_release_handle(handle), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -8428,12 +8428,12 @@ TEST(VPI, StringValueRejectsWrongWidthPhysicalStorage) {
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   char name[] = "top.value";
   vpiHandle handle = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(handle, nullptr);
@@ -8442,7 +8442,7 @@ TEST(VPI, StringValueRejectsWrongWidthPhysicalStorage) {
   vpi_get_value(handle, &read);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
   EXPECT_EQ(vpi_release_handle(handle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, FixedPropertiesEnforceProtectedObjectAccess) {
@@ -8450,13 +8450,13 @@ TEST(VPI, FixedPropertiesEnforceProtectedObjectAccess) {
   fixture.database = makeFixedPropertyDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char rootName[] = "$root";
   char valueName[] = "top.value";
@@ -8524,7 +8524,7 @@ TEST(VPI, FixedPropertiesEnforceProtectedObjectAccess) {
   EXPECT_EQ(vpi_release_handle(traversed), 1);
   EXPECT_EQ(vpi_release_handle(value), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignDatabase, RejectsMalformedFixedPropertySections) {
@@ -8542,8 +8542,8 @@ TEST(DesignDatabase, RejectsMalformedFixedPropertySections) {
     put64(fixture.database, 32, imageChecksum(fixture.database));
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+              TALOS_RT_INVALID_DESIGN);
   };
   rejected([](auto &bytes, uint32_t directory, uint64_t) {
     put64(bytes, directory + 112, bytes.size() + 1);
@@ -8603,8 +8603,8 @@ TEST(DesignDatabase, RejectsStoredFalseScopeIdentityBooleans) {
     put64(fixture.database, 32, imageChecksum(fixture.database));
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-              OBELISK_RT_INVALID_DESIGN)
+    EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+              TALOS_RT_INVALID_DESIGN)
         << selector;
   }
 }
@@ -8613,8 +8613,8 @@ TEST(DesignDatabase, RejectsProtectedStatementWithoutFixedProperty) {
   Fixture fixture;
   fixture.database = makeStatementDatabase();
   put16(fixture.database, 400 + 38,
-        OBELISK_RT_DESIGN_STATEMENT_PROTECTED |
-            OBELISK_RT_DESIGN_STATEMENT_SCOPE);
+        TALOS_RT_DESIGN_STATEMENT_PROTECTED |
+            TALOS_RT_DESIGN_STATEMENT_SCOPE);
   const uint32_t directoryOffset =
       static_cast<uint32_t>(fixture.database.size());
   const uint64_t semanticRootOffset = directoryOffset + kSemanticDirectorySize;
@@ -8629,30 +8629,30 @@ TEST(DesignDatabase, RejectsProtectedStatementWithoutFixedProperty) {
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+            TALOS_RT_INVALID_DESIGN);
 }
 
 TEST(VPI, LegacyStatementProtectionFlagIsFailClosed) {
   Fixture fixture;
   fixture.database = makeStatementDatabase();
   put16(fixture.database, 400 + 38,
-        OBELISK_RT_DESIGN_STATEMENT_PROTECTED |
-            OBELISK_RT_DESIGN_STATEMENT_SCOPE);
+        TALOS_RT_DESIGN_STATEMENT_PROTECTED |
+            TALOS_RT_DESIGN_STATEMENT_SCOPE);
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char processName[] = "top.child.proc";
   vpiHandle process = vpi_handle_by_name(processName, nullptr);
   ASSERT_NE(process, nullptr);
@@ -8664,7 +8664,7 @@ TEST(VPI, LegacyStatementProtectionFlagIsFailClosed) {
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_release_handle(statement), 1);
   EXPECT_EQ(vpi_release_handle(process), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ProtectedPackageStyleNameCannotBeHierarchicalLookupIntermediate) {
@@ -8720,13 +8720,13 @@ TEST(VPI, ProtectedPackageStyleNameCannotBeHierarchicalLookupIntermediate) {
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char packageName[] = "pkg::";
   char methodName[] = "pkg::C";
   vpiHandle package = vpi_handle_by_name(packageName, nullptr);
@@ -8735,18 +8735,18 @@ TEST(VPI, ProtectedPackageStyleNameCannotBeHierarchicalLookupIntermediate) {
   EXPECT_EQ(vpi_handle_by_name(methodName, nullptr), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_EQ(vpi_release_handle(package), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ReleasedAndExhaustedHandlesDoNotAliasNewObjects) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   std::unordered_set<uintptr_t> tokens;
   auto remember = [&](vpiHandle handle) {
@@ -8772,7 +8772,7 @@ TEST(VPI, ReleasedAndExhaustedHandlesDoNotAliasNewObjects) {
     EXPECT_EQ(vpi_remove_cb(registration), 1);
     EXPECT_EQ(vpi_release_handle(root), 1);
   }
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ScalarAndVectorQueriesFollowNetAndVariableTypeShape) {
@@ -8804,13 +8804,13 @@ TEST(VPI, ScalarAndVectorQueriesFollowNetAndVariableTypeShape) {
     fixture.database = makeVPIShapeDatabase(testCase.shape, testCase.exactType);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char valueName[] = "top.value";
     vpiHandle value = vpi_handle_by_name(valueName, nullptr);
     ASSERT_NE(value, nullptr);
@@ -8820,7 +8820,7 @@ TEST(VPI, ScalarAndVectorQueriesFollowNetAndVariableTypeShape) {
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
     EXPECT_EQ(vpi_release_handle(value), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -8828,13 +8828,13 @@ TEST(VPI, PhysicalArrayAndPackedPropertiesFollowImageShape) {
   auto start = [](Fixture &fixture) {
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     EXPECT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    EXPECT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    EXPECT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    EXPECT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    EXPECT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    EXPECT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    EXPECT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     return context;
   };
   char name[] = "top.value";
@@ -8843,9 +8843,9 @@ TEST(VPI, PhysicalArrayAndPackedPropertiesFollowImageShape) {
   // also reported through the deprecated vpiArray compatibility property.
   Fixture oneDimension;
   oneDimension.database = makeVPITypedArrayDatabase(
-      vpiLogicTypespec, OBELISK_RT_DESIGN_SEMANTIC_LOGIC, 1,
-      OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE);
-  obelisk_rt_context *context = start(oneDimension);
+      vpiLogicTypespec, TALOS_RT_DESIGN_SEMANTIC_LOGIC, 1,
+      TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE);
+  talos_rt_context *context = start(oneDimension);
   ASSERT_NE(context, nullptr);
   vpiHandle root = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(root, nullptr);
@@ -8858,13 +8858,13 @@ TEST(VPI, PhysicalArrayAndPackedPropertiesFollowImageShape) {
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_release_handle(member), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   // A multidimensional array is not a legacy memory; selecting its leftmost
   // dimension leaves a one-dimensional vpiRegArray that is one.
   Fixture multidimensional;
   multidimensional.database = makeVPIIndexedDatabase(
-      1, 0, 2, 0, vpiRegArray, OBELISK_RT_DESIGN_RECORD_STORAGE, false);
+      1, 0, 2, 0, vpiRegArray, TALOS_RT_DESIGN_RECORD_STORAGE, false);
   context = start(multidimensional);
   ASSERT_NE(context, nullptr);
   root = vpi_handle_by_name(name, nullptr);
@@ -8881,7 +8881,7 @@ TEST(VPI, PhysicalArrayAndPackedPropertiesFollowImageShape) {
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_release_handle(row), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   // In current IEEE 1800 mode vpiArray is membership provenance, not a
   // synonym for having an unpacked physical type.  Ordinary non-members with
@@ -8897,7 +8897,7 @@ TEST(VPI, PhysicalArrayAndPackedPropertiesFollowImageShape) {
   EXPECT_EQ(vpi_get(vpiArray, module), 0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_release_handle(module), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   struct PackedCase {
     VPIShapeType shape;
@@ -8922,7 +8922,7 @@ TEST(VPI, PhysicalArrayAndPackedPropertiesFollowImageShape) {
     root = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(root, nullptr);
     ASSERT_NE(
-        obelisk::reflection::findVPIProperty(testCase.exactType, vpiPacked),
+        talos::reflection::findVPIProperty(testCase.exactType, vpiPacked),
         nullptr);
     EXPECT_EQ(vpi_get(vpiPacked, root), testCase.packed);
     if (testCase.exactType == vpiPackedArrayVar) {
@@ -8930,7 +8930,7 @@ TEST(VPI, PhysicalArrayAndPackedPropertiesFollowImageShape) {
     }
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_EQ(vpi_release_handle(root), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -8951,29 +8951,29 @@ TEST(VPI, PhysicalVariableRandomizationPropertiesHaveExactDefault) {
   char name[] = "top.value";
   for (uint32_t exactType : variableTypes) {
     SCOPED_TRACE(exactType);
-    ASSERT_NE(obelisk::reflection::findVPIProperty(exactType, vpiRandType),
+    ASSERT_NE(talos::reflection::findVPIProperty(exactType, vpiRandType),
               nullptr);
-    ASSERT_NE(obelisk::reflection::findVPIProperty(exactType, vpiIsRandomized),
+    ASSERT_NE(talos::reflection::findVPIProperty(exactType, vpiIsRandomized),
               nullptr);
     Fixture fixture;
     fixture.database =
         makeVPIShapeDatabase(VPIShapeType::BasicScalar, exactType);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     vpiHandle variable = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(variable, nullptr);
     EXPECT_EQ(vpi_get(vpiRandType, variable), vpiNotRand);
     EXPECT_EQ(vpi_get(vpiIsRandomized, variable), 0);
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_EQ(vpi_release_handle(variable), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -8982,13 +8982,13 @@ TEST(VPI, IndexedAndMultiIndexedQueriesPreserveDeclaredIndicesAndValues) {
   fixture.database = makeVPIIndexedDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   auto integerValue = [](vpiHandle handle) {
     s_vpi_value value{};
@@ -9036,20 +9036,20 @@ TEST(VPI, IndexedAndMultiIndexedQueriesPreserveDeclaredIndicesAndValues) {
                                  0);
   std::vector<uint8_t> planUnknown(planValue.size(), 0);
   planValue[0] = 0xa5;
-  obelisk_rt_native_schedule_plan plan{};
+  talos_rt_native_schedule_plan plan{};
   plan.size = sizeof(plan);
   plan.graph_layout_checksum = fixture.execution.checksum;
   plan.mutable_state = &scheduleState;
   plan.mutable_state_size = sizeof(scheduleState);
   plan.actor_capacity = scheduleState.actors.size();
-  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE;
+  plan.flags = TALOS_RT_NATIVE_SCHEDULE_DIRECT_STATE;
   plan.state_value = planValue.data();
   plan.state_unknown = planUnknown.data();
   plan.state_bit_count = fixture.execution.state_bit_count;
   plan.bind = planBind;
   plan.run = planRun;
   plan.fallback_snapshot = planSnapshot;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_install_aot(context, &plan), TALOS_RT_OK);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
 
   vpiHandle outer0 = vpi_handle_by_index(root, 0);
@@ -9146,7 +9146,7 @@ TEST(VPI, IndexedAndMultiIndexedQueriesPreserveDeclaredIndicesAndValues) {
   for (vpiHandle handle :
        {arrayParent, packedParent, multi, bit07, bit04, outer0})
     release(handle);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, IndexedQueriesHandleCrossLimbWindowsAndPortBitContracts) {
@@ -9155,13 +9155,13 @@ TEST(VPI, IndexedQueriesHandleCrossLimbWindowsAndPortBitContracts) {
     fixture.database = makeVPIIndexedDatabase(0, 4, 12, 0);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char name[] = "top.value";
     vpiHandle root = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(root, nullptr);
@@ -9198,7 +9198,7 @@ TEST(VPI, IndexedQueriesHandleCrossLimbWindowsAndPortBitContracts) {
     EXPECT_EQ(vpi_release_handle(topBit), 1);
     EXPECT_EQ(vpi_release_handle(window), 1);
     EXPECT_EQ(vpi_release_handle(root), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 
   {
@@ -9206,13 +9206,13 @@ TEST(VPI, IndexedQueriesHandleCrossLimbWindowsAndPortBitContracts) {
     fixture.database = makeVPIPortDatabase();
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char name[] = "top.value";
     vpiHandle port = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(port, nullptr);
@@ -9229,7 +9229,7 @@ TEST(VPI, IndexedQueriesHandleCrossLimbWindowsAndPortBitContracts) {
     EXPECT_EQ(vpi_release_handle(parent), 1);
     EXPECT_EQ(vpi_release_handle(bit), 1);
     EXPECT_EQ(vpi_release_handle(port), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 
   struct NetCase {
@@ -9240,16 +9240,16 @@ TEST(VPI, IndexedQueriesHandleCrossLimbWindowsAndPortBitContracts) {
   for (const NetCase &testCase : netCases) {
     Fixture fixture;
     fixture.database = makeVPIIndexedDatabase(0, 1, 7, 4, testCase.rootType,
-                                              OBELISK_RT_DESIGN_RECORD_NET);
+                                              TALOS_RT_DESIGN_RECORD_NET);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char name[] = "top.value";
     vpiHandle root = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(root, nullptr);
@@ -9277,7 +9277,7 @@ TEST(VPI, IndexedQueriesHandleCrossLimbWindowsAndPortBitContracts) {
     EXPECT_EQ(vpi_release_handle(bit), 1);
     EXPECT_EQ(vpi_release_handle(element), 1);
     EXPECT_EQ(vpi_release_handle(root), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -9286,13 +9286,13 @@ TEST(VPI, IndexedQueriesPreserveNegativeAscendingAndDescendingBounds) {
   fixture.database = makeVPIIndexedDatabase(-2, -1, -3, -6);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char name[] = "top.value";
   vpiHandle root = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(root, nullptr);
@@ -9317,22 +9317,22 @@ TEST(VPI, IndexedQueriesPreserveNegativeAscendingAndDescendingBounds) {
   EXPECT_EQ(vpi_release_handle(index), 1);
   EXPECT_EQ(vpi_release_handle(bit), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, IndexedQueriesCountRemainingMultidimensionalUnpackedElements) {
   Fixture fixture;
   fixture.database = makeVPIIndexedDatabase(
-      1, 0, 2, 0, vpiRegArray, OBELISK_RT_DESIGN_RECORD_STORAGE, false);
+      1, 0, 2, 0, vpiRegArray, TALOS_RT_DESIGN_RECORD_STORAGE, false);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char name[] = "top.value";
   vpiHandle root = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(root, nullptr);
@@ -9348,22 +9348,22 @@ TEST(VPI, IndexedQueriesCountRemainingMultidimensionalUnpackedElements) {
   EXPECT_EQ(vpi_release_handle(element), 1);
   EXPECT_EQ(vpi_release_handle(row), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ArrayValueQueryUsesLRMMultidimensionalOrderAndUserStorage) {
   Fixture fixture;
   fixture.database = makeVPIIndexedDatabase(
-      2, 0, 3, 5, vpiRegArray, OBELISK_RT_DESIGN_RECORD_STORAGE, false);
+      2, 0, 3, 5, vpiRegArray, TALOS_RT_DESIGN_RECORD_STORAGE, false);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   // Internal planes encode IEEE A/B as value=A^B and unknown=B.
   constexpr uint16_t aval = 0b101101011;
@@ -9378,20 +9378,20 @@ TEST(VPI, ArrayValueQueryUsesLRMMultidimensionalOrderAndUserStorage) {
   planValue[1] = static_cast<uint8_t>((aval ^ bval) >> 8);
   planUnknown[0] = static_cast<uint8_t>(bval);
   planUnknown[1] = static_cast<uint8_t>(bval >> 8);
-  obelisk_rt_native_schedule_plan plan{};
+  talos_rt_native_schedule_plan plan{};
   plan.size = sizeof(plan);
   plan.graph_layout_checksum = fixture.execution.checksum;
   plan.mutable_state = &scheduleState;
   plan.mutable_state_size = sizeof(scheduleState);
   plan.actor_capacity = scheduleState.actors.size();
-  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_DIRECT_STATE;
+  plan.flags = TALOS_RT_NATIVE_SCHEDULE_DIRECT_STATE;
   plan.state_value = planValue.data();
   plan.state_unknown = planUnknown.data();
   plan.state_bit_count = fixture.execution.state_bit_count;
   plan.bind = planBind;
   plan.run = planRun;
   plan.fallback_snapshot = planSnapshot;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_install_aot(context, &plan), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_install_aot(context, &plan), TALOS_RT_OK);
 
   char name[] = "top.value";
   vpiHandle root = vpi_handle_by_name(name, nullptr);
@@ -9426,7 +9426,7 @@ TEST(VPI, ArrayValueQueryUsesLRMMultidimensionalOrderAndUserStorage) {
 
   EXPECT_EQ(vpi_release_handle(row), 1);
   EXPECT_EQ(vpi_release_handle(root), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ArrayValueQuerySupportsAllNineLRMFormats) {
@@ -9435,21 +9435,21 @@ TEST(VPI, ArrayValueQuerySupportsAllNineLRMFormats) {
                 const std::array<uint64_t, 3> &bits, auto check) {
     SCOPED_TRACE(format);
     ASSERT_EQ(isSigned,
-              (semanticFlags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0);
+              (semanticFlags & TALOS_RT_DESIGN_SEMANTIC_SIGNED) != 0);
     Fixture fixture;
     const size_t count = std::min<size_t>(bits.size(), 65 / width);
     fixture.database = makeVPITypedArrayDatabase(
         publicTypespec, semanticKind, width, semanticFlags, vpiRegArray,
-        OBELISK_RT_DESIGN_RECORD_STORAGE, count);
+        TALOS_RT_DESIGN_RECORD_STORAGE, count);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     std::fill(context->stateUnknown.begin(), context->stateUnknown.end(), 0);
     for (size_t element = 0; element != count; ++element)
       for (uint64_t bit = 0; bit != width; ++bit)
@@ -9468,32 +9468,32 @@ TEST(VPI, ArrayValueQuerySupportsAllNineLRMFormats) {
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
     check(values);
     EXPECT_EQ(vpi_release_handle(root), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   };
 
-  run(vpiIntTypespec, OBELISK_RT_DESIGN_SEMANTIC_INT, 32,
-      OBELISK_RT_DESIGN_SEMANTIC_SIGNED, true, vpiIntVal,
+  run(vpiIntTypespec, TALOS_RT_DESIGN_SEMANTIC_INT, 32,
+      TALOS_RT_DESIGN_SEMANTIC_SIGNED, true, vpiIntVal,
       {1, UINT32_C(0xffffffff), UINT32_C(0x80000000)},
       [](const s_vpi_arrayvalue &values) {
         EXPECT_EQ(values.value.integers[0], 1);
         EXPECT_EQ(values.value.integers[1], -1);
       });
-  run(vpiByteTypespec, OBELISK_RT_DESIGN_SEMANTIC_BYTE, 8,
-      OBELISK_RT_DESIGN_SEMANTIC_SIGNED, true, vpiShortIntVal,
+  run(vpiByteTypespec, TALOS_RT_DESIGN_SEMANTIC_BYTE, 8,
+      TALOS_RT_DESIGN_SEMANTIC_SIGNED, true, vpiShortIntVal,
       {UINT8_C(0x80), UINT8_C(0x7f), UINT8_C(0xff)},
       [](const s_vpi_arrayvalue &values) {
         EXPECT_EQ(values.value.shortints[0], -128);
         EXPECT_EQ(values.value.shortints[1], 127);
         EXPECT_EQ(values.value.shortints[2], -1);
       });
-  run(vpiLongIntTypespec, OBELISK_RT_DESIGN_SEMANTIC_LONG_INT, 64,
-      OBELISK_RT_DESIGN_SEMANTIC_SIGNED, true, vpiLongIntVal,
+  run(vpiLongIntTypespec, TALOS_RT_DESIGN_SEMANTIC_LONG_INT, 64,
+      TALOS_RT_DESIGN_SEMANTIC_SIGNED, true, vpiLongIntVal,
       {1, UINT64_MAX, UINT64_C(0x8000000000000000)},
       [](const s_vpi_arrayvalue &values) {
         EXPECT_EQ(values.value.longints[0], 1);
       });
-  run(vpiTimeTypespec, OBELISK_RT_DESIGN_SEMANTIC_TIME, 64,
-      OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE, false, vpiTimeVal,
+  run(vpiTimeTypespec, TALOS_RT_DESIGN_SEMANTIC_TIME, 64,
+      TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE, false, vpiTimeVal,
       {1, UINT64_C(0x123456789abcdef0), UINT64_MAX},
       [](const s_vpi_arrayvalue &values) {
         EXPECT_EQ(values.value.times[0].type, vpiSimTime);
@@ -9502,14 +9502,14 @@ TEST(VPI, ArrayValueQuerySupportsAllNineLRMFormats) {
   const std::array<double, 3> reals{{1.5, -0.25, 1234.0}};
   std::array<uint64_t, 3> realBits{};
   std::memcpy(realBits.data(), reals.data(), sizeof(reals));
-  run(vpiRealTypespec, OBELISK_RT_DESIGN_SEMANTIC_REAL, 64, 0, false,
+  run(vpiRealTypespec, TALOS_RT_DESIGN_SEMANTIC_REAL, 64, 0, false,
       vpiRealVal, realBits, [&](const s_vpi_arrayvalue &values) {
         EXPECT_DOUBLE_EQ(values.value.reals[0], reals[0]);
       });
   const std::array<float, 3> shortReals{{1.5F, -0.25F, 1234.0F}};
   std::array<uint32_t, 3> shortRealBits{};
   std::memcpy(shortRealBits.data(), shortReals.data(), sizeof(shortReals));
-  run(vpiShortRealTypespec, OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL, 32, 0, false,
+  run(vpiShortRealTypespec, TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL, 32, 0, false,
       vpiShortRealVal, {shortRealBits[0], shortRealBits[1], shortRealBits[2]},
       [&](const s_vpi_arrayvalue &values) {
         for (size_t index = 0; index != 2; ++index)
@@ -9520,8 +9520,8 @@ TEST(VPI, ArrayValueQuerySupportsAllNineLRMFormats) {
   for (uint32_t format :
        {vpiVectorVal, vpiRawTwoStateVal, vpiRawFourStateVal}) {
     SCOPED_TRACE(format);
-    run(vpiLogicTypespec, OBELISK_RT_DESIGN_SEMANTIC_LOGIC, 37,
-        OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE, false, format,
+    run(vpiLogicTypespec, TALOS_RT_DESIGN_SEMANTIC_LOGIC, 37,
+        TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE, false, format,
         {UINT64_C(0x1fffffffff), UINT64_C(0x123456789), 0},
         [format](const s_vpi_arrayvalue &values) {
           if (format == vpiVectorVal) {
@@ -9538,17 +9538,17 @@ TEST(VPI, ArrayValueQuerySupportsAllNineLRMFormats) {
 TEST(VPI, ArrayValueQueryRejectsInvalidRequestsWithoutChangingSchedulerTier) {
   Fixture fixture;
   fixture.database = makeVPITypedArrayDatabase(
-      vpiLogicTypespec, OBELISK_RT_DESIGN_SEMANTIC_LOGIC, 4,
-      OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE);
+      vpiLogicTypespec, TALOS_RT_DESIGN_SEMANTIC_LOGIC, 4,
+      TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char name[] = "top.value";
   vpiHandle root = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(root, nullptr);
@@ -9592,7 +9592,7 @@ TEST(VPI, ArrayValueQueryRejectsInvalidRequestsWithoutChangingSchedulerTier) {
   EXPECT_FALSE(context->nativeScheduleDirtyRootsPresent);
 
   EXPECT_EQ(vpi_release_handle(root), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, IndexedQueriesRejectNonIntegralFlattenedStorage) {
@@ -9606,20 +9606,20 @@ TEST(VPI, IndexedQueriesRejectNonIntegralFlattenedStorage) {
         makeVPIShapeDatabase(VPIShapeType::BasicVector, exactType);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char name[] = "top.value";
     vpiHandle value = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(value, nullptr);
     EXPECT_EQ(vpi_handle_by_index(value, 0), nullptr);
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_EQ(vpi_release_handle(value), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -9629,8 +9629,8 @@ TEST(VPI, IndexedQueriesRejectIndicesOnPartialOrdinaryPackedValues) {
     uint32_t recordKind;
   };
   constexpr TestCase testCases[]{
-      {vpiReg, OBELISK_RT_DESIGN_RECORD_STORAGE},
-      {vpiNet, OBELISK_RT_DESIGN_RECORD_NET},
+      {vpiReg, TALOS_RT_DESIGN_RECORD_STORAGE},
+      {vpiNet, TALOS_RT_DESIGN_RECORD_NET},
   };
   for (const TestCase &testCase : testCases) {
     SCOPED_TRACE(testCase.exactType);
@@ -9639,13 +9639,13 @@ TEST(VPI, IndexedQueriesRejectIndicesOnPartialOrdinaryPackedValues) {
         0, 1, 7, 4, testCase.exactType, testCase.recordKind, true, false, true);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char name[] = "top.value";
     vpiHandle root = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(root, nullptr);
@@ -9658,7 +9658,7 @@ TEST(VPI, IndexedQueriesRejectIndicesOnPartialOrdinaryPackedValues) {
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_EQ(vpi_release_handle(partial), 1);
     EXPECT_EQ(vpi_release_handle(root), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -9667,17 +9667,17 @@ TEST(VPI, TraversesLazyTypespecRangesElementsMembersAndEnumBase) {
   fixture.database = makeSemanticTraversalDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   auto integerValue = [](vpiHandle handle) {
     s_vpi_value value{};
@@ -9814,7 +9814,7 @@ TEST(VPI, TraversesLazyTypespecRangesElementsMembersAndEnumBase) {
   release(dynamic);
   release(array);
   release(object);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, WildcardAssociativeTypespecHasNoIndexTypespec) {
@@ -9822,16 +9822,16 @@ TEST(VPI, WildcardAssociativeTypespecHasNoIndexTypespec) {
   fixture.database = makeSemanticTraversalDatabase(true);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
-  obelisk_rt_context *context = nullptr;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char name[] = "top.value";
   vpiHandle object = vpi_handle_by_name(name, nullptr);
@@ -9853,7 +9853,7 @@ TEST(VPI, WildcardAssociativeTypespecHasNoIndexTypespec) {
   EXPECT_EQ(vpi_release_handle(dynamic), 1);
   EXPECT_EQ(vpi_release_handle(outer), 1);
   EXPECT_EQ(vpi_release_handle(object), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, PrimaryNamedTypespecHasNoTypedefAlias) {
@@ -9861,17 +9861,17 @@ TEST(VPI, PrimaryNamedTypespecHasNoTypedefAlias) {
   fixture.database = makeNamedSemanticTypespecDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char name[] = "top.value";
   vpiHandle named = vpi_handle_by_name(name, nullptr);
@@ -9885,7 +9885,7 @@ TEST(VPI, PrimaryNamedTypespecHasNoTypedefAlias) {
   EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
 
   EXPECT_EQ(vpi_release_handle(named), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, BuiltinTypedefAliasReturnsOneUnnamedUnderlyingTypespec) {
@@ -9893,17 +9893,17 @@ TEST(VPI, BuiltinTypedefAliasReturnsOneUnnamedUnderlyingTypespec) {
   fixture.database = makeBuiltinAliasTypespecDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char name[] = "top.value";
   vpiHandle named = vpi_handle_by_name(name, nullptr);
@@ -9918,7 +9918,7 @@ TEST(VPI, BuiltinTypedefAliasReturnsOneUnnamedUnderlyingTypespec) {
 
   EXPECT_EQ(vpi_release_handle(underlying), 1);
   EXPECT_EQ(vpi_release_handle(named), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, DirectIntegralVectorTraversesOneLazyPackedDimension) {
@@ -9926,17 +9926,17 @@ TEST(VPI, DirectIntegralVectorTraversesOneLazyPackedDimension) {
   fixture.database = makeDirectIntegralVectorDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   auto integerValue = [](vpiHandle handle) {
     s_vpi_value value{};
@@ -9973,7 +9973,7 @@ TEST(VPI, DirectIntegralVectorTraversesOneLazyPackedDimension) {
 
   for (vpiHandle handle : {element, range, right, left, vector, object})
     EXPECT_EQ(vpi_release_handle(handle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, NonArraySemanticPayloadIsNotAnElementTypespec) {
@@ -9981,17 +9981,17 @@ TEST(VPI, NonArraySemanticPayloadIsNotAnElementTypespec) {
   fixture.database = makeMailboxSemanticDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char name[] = "top.value";
   vpiHandle object = vpi_handle_by_name(name, nullptr);
@@ -10004,7 +10004,7 @@ TEST(VPI, NonArraySemanticPayloadIsNotAnElementTypespec) {
 
   EXPECT_EQ(vpi_release_handle(mailbox), 1);
   EXPECT_EQ(vpi_release_handle(object), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, RealAndShortRealUseRealValueFormatWithoutChangingBitStorage) {
@@ -10023,13 +10023,13 @@ TEST(VPI, RealAndShortRealUseRealValueFormatWithoutChangingBitStorage) {
     fixture.database = makeVPIShapeDatabase(testCase.shape, testCase.exactType);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
     char valueName[] = "top.value";
     vpiHandle value = vpi_handle_by_name(valueName, nullptr);
@@ -10058,7 +10058,7 @@ TEST(VPI, RealAndShortRealUseRealValueFormatWithoutChangingBitStorage) {
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
     EXPECT_EQ(vpi_release_handle(value), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 
   // Cross-kind reads use the signed semantic/physical type and the complete
@@ -10067,20 +10067,20 @@ TEST(VPI, RealAndShortRealUseRealValueFormatWithoutChangingBitStorage) {
   Fixture fixture;
   fixture.database = makeVPIShapeDatabase(VPIShapeType::BasicVector, vpiIntVar);
   put32(fixture.database, 336 + 4,
-        OBELISK_RT_DESIGN_TYPE_SCALAR |
-            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE |
-              OBELISK_RT_DESIGN_TYPE_SIGNED | OBELISK_RT_DESIGN_TYPE_PACKED)
+        TALOS_RT_DESIGN_TYPE_SCALAR |
+            ((TALOS_RT_DESIGN_TYPE_FOUR_STATE |
+              TALOS_RT_DESIGN_TYPE_SIGNED | TALOS_RT_DESIGN_TYPE_PACKED)
              << 8));
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char valueName[] = "top.value";
   vpiHandle value = vpi_handle_by_name(valueName, nullptr);
   ASSERT_NE(value, nullptr);
@@ -10099,27 +10099,27 @@ TEST(VPI, RealAndShortRealUseRealValueFormatWithoutChangingBitStorage) {
                "vpiRealVal conversion is not implemented for non-real "
                "objects");
   EXPECT_EQ(vpi_release_handle(value), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
   Fixture fixture;
   fixture.database = makeVPIShapeDatabase(VPIShapeType::BasicVector, vpiIntVar);
   put32(fixture.database, 336 + 4,
-        OBELISK_RT_DESIGN_TYPE_SCALAR |
-            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE |
-              OBELISK_RT_DESIGN_TYPE_SIGNED | OBELISK_RT_DESIGN_TYPE_PACKED)
+        TALOS_RT_DESIGN_TYPE_SCALAR |
+            ((TALOS_RT_DESIGN_TYPE_FOUR_STATE |
+              TALOS_RT_DESIGN_TYPE_SIGNED | TALOS_RT_DESIGN_TYPE_PACKED)
              << 8));
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char valueName[] = "top.value";
   vpiHandle handle = vpi_handle_by_name(valueName, nullptr);
@@ -10247,7 +10247,7 @@ TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
   EXPECT_EQ(vpi_release_handle(handle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   Fixture packedString;
   packedString.database =
@@ -10260,12 +10260,12 @@ TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
   packedString.execution.design_database = packedString.database.data();
   packedString.execution.design_database_size = packedString.database.size();
   context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&packedString.execution,
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&packedString.execution,
                                                     &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   handle = vpi_handle_by_name(valueName, nullptr);
   ASSERT_NE(handle, nullptr);
   char packedCharacters[] = "00000000010000010000000001000011";
@@ -10277,7 +10277,7 @@ TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
   EXPECT_STREQ(read.value.str, " A C");
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_release_handle(handle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   struct DefaultCase {
     VPIShapeType shape;
@@ -10299,11 +10299,11 @@ TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
     local.execution.design_database_size = local.database.size();
     context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&local.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&local.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     handle = vpi_handle_by_name(valueName, nullptr);
     ASSERT_NE(handle, nullptr);
     read = {};
@@ -10312,7 +10312,7 @@ TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
     EXPECT_EQ(read.format, testCase.format);
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_EQ(vpi_release_handle(handle), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 
   Fixture unsignedInteger;
@@ -10322,12 +10322,12 @@ TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
   unsignedInteger.execution.design_database_size =
       unsignedInteger.database.size();
   context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&unsignedInteger.execution,
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&unsignedInteger.execution,
                                                     &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   handle = vpi_handle_by_name(valueName, nullptr);
   ASSERT_NE(handle, nullptr);
   written.value.str = minusOne;
@@ -10342,7 +10342,7 @@ TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
   EXPECT_DOUBLE_EQ(read.value.real, 255.0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_release_handle(handle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   // Decimal conversion is limb-based, so values wider than the host integer
   // types preserve their exact magnitude and two's-complement sign.
@@ -10351,11 +10351,11 @@ TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
   wide.execution.design_database = wide.database.data();
   wide.execution.design_database_size = wide.database.size();
   context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&wide.execution, &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&wide.execution, &context),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   handle = vpi_handle_by_name(valueName, nullptr);
   ASSERT_NE(handle, nullptr);
   std::string twoTo64 = "1" + std::string(64, '0');
@@ -10366,24 +10366,24 @@ TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
   vpi_get_value(handle, &read);
   EXPECT_STREQ(read.value.str, "18446744073709551616");
   EXPECT_EQ(vpi_release_handle(handle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   wide.database = makeDatabase();
   constexpr uint64_t wideTypeOffset = 336;
   put32(wide.database, wideTypeOffset + 4,
-        OBELISK_RT_DESIGN_TYPE_SCALAR |
-            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE |
-              OBELISK_RT_DESIGN_TYPE_SIGNED | OBELISK_RT_DESIGN_TYPE_PACKED)
+        TALOS_RT_DESIGN_TYPE_SCALAR |
+            ((TALOS_RT_DESIGN_TYPE_FOUR_STATE |
+              TALOS_RT_DESIGN_TYPE_SIGNED | TALOS_RT_DESIGN_TYPE_PACKED)
              << 8));
   put64(wide.database, 32, imageChecksum(wide.database));
   wide.execution.design_database = wide.database.data();
   wide.execution.design_database_size = wide.database.size();
   context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&wide.execution, &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&wide.execution, &context),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   handle = vpi_handle_by_name(valueName, nullptr);
   ASSERT_NE(handle, nullptr);
   std::string minusOneWide(65, '1');
@@ -10399,7 +10399,7 @@ TEST(VPI, ReadsEveryScalarValueFormatAndResolvesObjectDefaults) {
   EXPECT_DOUBLE_EQ(read.value.real, -1.0);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_release_handle(handle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, NetStrengthReadsCanonicalStateOffsetWithoutChangingTiers) {
@@ -10408,7 +10408,7 @@ TEST(VPI, NetStrengthReadsCanonicalStateOffsetWithoutChangingTiers) {
   fixture.bytecode = makeConnectedDriverBytecode();
   fixture.database = makeDatabase();
   put32(fixture.database, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_NET, vpiNet));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_NET, vpiNet));
   // Source IDs and state coordinates are independent. A query that mistakes
   // this source identity for a stable state handle would inspect the wrong
   // connectivity component (or fail) instead of state bit 65.
@@ -10422,20 +10422,20 @@ TEST(VPI, NetStrengthReadsCanonicalStateOffsetWithoutChangingTiers) {
   fixture.execution.state_bit_count = 195;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   for (uint64_t bit = 130; bit != 195; ++bit) {
     const uint64_t mask = UINT64_C(1) << (bit % 64);
     context->stateValue[bit / 64] &= ~mask;
     context->stateUnknown[bit / 64] &= ~mask;
   }
-  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 130, 195),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_resolve_design_drivers(context, 130, 195),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char valueName[] = "top.value";
   vpiHandle net = vpi_handle_by_name(valueName, nullptr);
@@ -10461,7 +10461,7 @@ TEST(VPI, NetStrengthReadsCanonicalStateOffsetWithoutChangingTiers) {
 
   EXPECT_EQ(vpi_release_handle(selected), 1);
   EXPECT_EQ(vpi_release_handle(net), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ScalarNetReadsPreserveAmbiguousLowAndHighStrengths) {
@@ -10470,7 +10470,7 @@ TEST(VPI, ScalarNetReadsPreserveAmbiguousLowAndHighStrengths) {
   fixture.bytecode = makeStrengthDriverBytecode();
   fixture.database = makeDatabase();
   put32(fixture.database, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_NET, vpiNet));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_NET, vpiNet));
   put64(fixture.database, objectOffset + 8, 999);
   put64(fixture.database, objectOffset + 80, 0);
   put64(fixture.database, 32, imageChecksum(fixture.database));
@@ -10481,10 +10481,10 @@ TEST(VPI, ScalarNetReadsPreserveAmbiguousLowAndHighStrengths) {
   fixture.execution.state_bit_count = 260;
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   auto setState = [&](uint64_t offset, bool value, bool unknown) {
     const uint64_t mask = UINT64_C(1) << (offset % 64);
     if (value)
@@ -10496,9 +10496,9 @@ TEST(VPI, ScalarNetReadsPreserveAmbiguousLowAndHighStrengths) {
     else
       context->stateUnknown[offset / 64] &= ~mask;
   };
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char valueName[] = "top.value";
   vpiHandle net = vpi_handle_by_name(valueName, nullptr);
   ASSERT_NE(net, nullptr);
@@ -10508,20 +10508,20 @@ TEST(VPI, ScalarNetReadsPreserveAmbiguousLowAndHighStrengths) {
   setState(65, false, true);
   setState(130, true, true);
   setState(195, true, true);
-  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_resolve_design_drivers(context, 65, 196), TALOS_RT_OK);
   vpi_get_value(net, &read);
   EXPECT_EQ(read.value.scalar, vpiL);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
   setState(65, true, true);
   setState(130, false, true);
-  ASSERT_EQ(obelisk_rt_resolve_design_drivers(context, 65, 196), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_resolve_design_drivers(context, 65, 196), TALOS_RT_OK);
   vpi_get_value(net, &read);
   EXPECT_EQ(read.value.scalar, vpiH);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
 
   EXPECT_EQ(vpi_release_handle(net), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, SemanticBackedValuesUseTheirBackingRepresentation) {
@@ -10539,32 +10539,32 @@ TEST(VPI, SemanticBackedValuesUseTheirBackingRepresentation) {
     PLI_INT32 defaultFormat;
   };
   for (const Case &testCase : {
-           Case{vpiReg, OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL,
+           Case{vpiReg, TALOS_RT_DESIGN_SEMANTIC_SHORT_REAL,
                 vpiShortRealTypespec, 32, vpiRealVal},
-           Case{vpiReg, OBELISK_RT_DESIGN_SEMANTIC_REAL, vpiRealTypespec, 64,
+           Case{vpiReg, TALOS_RT_DESIGN_SEMANTIC_REAL, vpiRealTypespec, 64,
                 vpiRealVal},
-           Case{vpiReg, OBELISK_RT_DESIGN_SEMANTIC_STRING, vpiStringTypespec,
+           Case{vpiReg, TALOS_RT_DESIGN_SEMANTIC_STRING, vpiStringTypespec,
                 64, vpiStringVal},
        }) {
     SCOPED_TRACE(testCase.objectType);
     Fixture fixture;
     fixture.database = makeSemanticTraversalDatabase();
     put32(fixture.database, objectOffset,
-          designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE,
+          designRecordKind(TALOS_RT_DESIGN_RECORD_STORAGE,
                            testCase.objectType));
     put64(fixture.database, objectOffset + 56, testCase.width);
     put64(fixture.database, objectOffset + 64, testCase.width - 1);
     put64(fixture.database, objectOffset + 72, 0);
     put64(fixture.database, objectOffset + 80, 0);
     put32(fixture.database, physicalTypeOffset + 4,
-          OBELISK_RT_DESIGN_TYPE_SCALAR);
+          TALOS_RT_DESIGN_TYPE_SCALAR);
     put64(fixture.database, physicalTypeOffset + 8, testCase.width);
     put64(fixture.database, physicalTypeOffset + 16, testCase.width - 1);
     put64(fixture.database, physicalTypeOffset + 24, 0);
     put32(fixture.database, semanticTypeOffset,
           testCase.semanticKind |
               (testCase.publicTypespec
-               << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+               << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
     put32(fixture.database, semanticTypeOffset + 4, 0);
     put32(fixture.database, semanticTypeOffset + 8, 0);
     put64(fixture.database, semanticTypeOffset + 48, 0);
@@ -10573,17 +10573,17 @@ TEST(VPI, SemanticBackedValuesUseTheirBackingRepresentation) {
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
     fixture.execution.state_bit_count = testCase.width;
-    fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                              OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                              OBELISK_RT_EXECUTION_VPI_READ;
+    fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                              TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                              TALOS_RT_EXECUTION_VPI_READ;
 
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char valueName[] = "top.value";
     vpiHandle value = vpi_handle_by_name(valueName, nullptr);
     ASSERT_NE(value, nullptr);
@@ -10599,20 +10599,20 @@ TEST(VPI, SemanticBackedValuesUseTheirBackingRepresentation) {
     }
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_EQ(vpi_release_handle(value), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
 TEST(VPI, GeneratedValuePoliciesRejectInvalidReadsBeforeStateAccess) {
   {
     Fixture fixture;
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
     char valueName[] = "top.value";
     vpiHandle valueHandle = vpi_handle_by_name(valueName, nullptr);
@@ -10633,7 +10633,7 @@ TEST(VPI, GeneratedValuePoliciesRejectInvalidReadsBeforeStateAccess) {
     EXPECT_EQ(vpi_chk_error(&error), vpiError);
     EXPECT_STREQ(error.message, "VPI value destination is null");
     EXPECT_EQ(vpi_release_handle(valueHandle), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 
   struct RejectedCase {
@@ -10663,13 +10663,13 @@ TEST(VPI, GeneratedValuePoliciesRejectInvalidReadsBeforeStateAccess) {
     fixture.database = makeVPIShapeDatabase(testCase.shape, testCase.exactType);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char valueName[] = "top.value";
     vpiHandle valueHandle = vpi_handle_by_name(valueName, nullptr);
     ASSERT_NE(valueHandle, nullptr);
@@ -10682,7 +10682,7 @@ TEST(VPI, GeneratedValuePoliciesRejectInvalidReadsBeforeStateAccess) {
     EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
     EXPECT_STREQ(error.message, testCase.message);
     EXPECT_EQ(vpi_release_handle(valueHandle), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -10691,7 +10691,7 @@ TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
   Fixture fixture;
   fixture.database = makeDatabase();
   put32(fixture.database, scopeOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiClassDefn));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, vpiClassDefn));
   // Class member inventory is an explicit semantic relation. A physical
   // owner alone must not fabricate arbitrary VPI iterations.
   const uint64_t relationOffset = (fixture.database.size() + 7) & ~uint64_t{7};
@@ -10707,13 +10707,13 @@ TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   // Physical ownership is not the restriction in 37.29 detail 2: a static
   // member reached independently by hierarchical name remains readable.
@@ -10791,28 +10791,28 @@ TEST(VPI, ClassDefinitionValueRestrictionTracksHandleProvenance) {
   EXPECT_EQ(vpi_release_handle(classDefinition), 1);
   EXPECT_EQ(vpi_release_handle(directBit), 1);
   EXPECT_EQ(vpi_release_handle(direct), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 void installStatementDatabase(Fixture &fixture) {
   fixture.database = makeStatementDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
 }
 
 TEST(VPI, TraversesProcessAndStatementRelationsWithExactTypes) {
   Fixture fixture;
   installStatementDatabase(fixture);
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char childName[] = "top.child";
   char processName[] = "top.child.proc";
@@ -10884,7 +10884,7 @@ TEST(VPI, TraversesProcessAndStatementRelationsWithExactTypes) {
   EXPECT_EQ(vpi_scan(released), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
 
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, UsesIntrinsicKindsWithoutOutgoingRelations) {
@@ -10904,25 +10904,25 @@ TEST(VPI, UsesIntrinsicKindsWithoutOutgoingRelations) {
     Fixture fixture;
     fixture.database = makeCodeUnitDatabase();
     put32(fixture.database, 240,
-          designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS,
+          designRecordKind(TALOS_RT_DESIGN_RECORD_PROCESS,
                            processCase.encodedKind));
     put32(fixture.database, 244,
           processCase.encodedKind == 0
-              ? static_cast<uint32_t>(OBELISK_RT_DESIGN_CAP_INTERNAL)
+              ? static_cast<uint32_t>(TALOS_RT_DESIGN_CAP_INTERNAL)
               : 0);
     put64(fixture.database, 32, imageChecksum(fixture.database));
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                              OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                              OBELISK_RT_EXECUTION_VPI_READ;
-    obelisk_rt_context *context = nullptr;
+    fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                              TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                              TALOS_RT_EXECUTION_VPI_READ;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char rootName[] = "top";
     char processName[] = "top.proc";
     vpiHandle root = vpi_handle_by_name(rootName, nullptr);
@@ -10930,7 +10930,7 @@ TEST(VPI, UsesIntrinsicKindsWithoutOutgoingRelations) {
     ASSERT_NE(root, nullptr);
     if (processCase.expectedKind == vpiUndefined) {
       EXPECT_EQ(process, nullptr);
-      obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_context_destroy(context);
       continue;
     }
     ASSERT_NE(process, nullptr);
@@ -10951,7 +10951,7 @@ TEST(VPI, UsesIntrinsicKindsWithoutOutgoingRelations) {
       EXPECT_EQ(vpi_scan(taskFunctions), nullptr);
     }
     EXPECT_EQ(vpi_iterate(processCase.expectedKind, root), nullptr);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 
   for (uint32_t scopeKind :
@@ -10960,20 +10960,20 @@ TEST(VPI, UsesIntrinsicKindsWithoutOutgoingRelations) {
     Fixture fixture;
     fixture.database = makeCodeUnitDatabase();
     put32(fixture.database, 176,
-          designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, scopeKind));
+          designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, scopeKind));
     put64(fixture.database, 32, imageChecksum(fixture.database));
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                              OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                              OBELISK_RT_EXECUTION_VPI_READ;
-    obelisk_rt_context *context = nullptr;
+    fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                              TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                              TALOS_RT_EXECUTION_VPI_READ;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char rootName[] = "top";
     vpiHandle root = vpi_handle_by_name(rootName, nullptr);
     ASSERT_NE(root, nullptr);
@@ -10984,21 +10984,21 @@ TEST(VPI, UsesIntrinsicKindsWithoutOutgoingRelations) {
     ASSERT_NE(processes, nullptr);
     EXPECT_EQ(vpi_get(vpiType, vpi_scan(processes)), vpiInitial);
     EXPECT_EQ(vpi_scan(processes), nullptr);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 
   Fixture fixture;
   installStatementDatabase(fixture);
   put32(fixture.database, 240,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiInterface));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, vpiInterface));
   put64(fixture.database, 32, imageChecksum(fixture.database));
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char rootName[] = "top";
   char childName[] = "top.child";
   vpiHandle root = vpi_handle_by_name(rootName, nullptr);
@@ -11011,7 +11011,7 @@ TEST(VPI, UsesIntrinsicKindsWithoutOutgoingRelations) {
   ASSERT_NE(interfaces, nullptr);
   EXPECT_EQ(vpi_compare_objects(child, vpi_scan(interfaces)), 1);
   EXPECT_EQ(vpi_scan(interfaces), nullptr);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ReadsImmutableAlwaysTypeFromSparseImage) {
@@ -11030,15 +11030,15 @@ TEST(VPI, ReadsImmutableAlwaysTypeFromSparseImage) {
     fixture.database = makeAlwaysTypeDatabase(testCase.value);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                              OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                              OBELISK_RT_EXECUTION_VPI_READ;
-    obelisk_rt_context *context = nullptr;
+    fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                              TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                              TALOS_RT_EXECUTION_VPI_READ;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
     char processName[] = "top.proc";
     char functionName[] = "top.fn";
@@ -11056,7 +11056,7 @@ TEST(VPI, ReadsImmutableAlwaysTypeFromSparseImage) {
     EXPECT_FALSE(context->nativeScheduleDeoptimized);
     EXPECT_EQ(vpi_release_handle(function), 1);
     EXPECT_EQ(vpi_release_handle(process), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -11071,15 +11071,15 @@ TEST(VPI, ReadsImmutableCodeUnitAutomaticFromSparseImage) {
         makeAutomaticCodeUnitDatabase(automaticTask, automaticFunction);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                              OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                              OBELISK_RT_EXECUTION_VPI_READ;
-    obelisk_rt_context *context = nullptr;
+    fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                              TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                              TALOS_RT_EXECUTION_VPI_READ;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
     char taskName[] = "top.proc";
     char functionName[] = "top.fn";
@@ -11095,7 +11095,7 @@ TEST(VPI, ReadsImmutableCodeUnitAutomaticFromSparseImage) {
     EXPECT_FALSE(context->nativeScheduleDeoptimized);
     EXPECT_EQ(vpi_release_handle(function), 1);
     EXPECT_EQ(vpi_release_handle(task), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -11104,15 +11104,15 @@ TEST(VPI, ProtectedAlwaysTypeIsDenied) {
   fixture.database = makeAlwaysTypeDatabase(vpiAlwaysFF, true);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
-  obelisk_rt_context *context = nullptr;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   char processName[] = "top.proc";
   vpiHandle process = vpi_handle_by_name(processName, nullptr);
@@ -11124,7 +11124,7 @@ TEST(VPI, ProtectedAlwaysTypeIsDenied) {
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_EQ(vpi_release_handle(process), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignDatabase, RejectsAlwaysTypesOutsideGeneratedIntegerDomain) {
@@ -11132,13 +11132,13 @@ TEST(DesignDatabase, RejectsAlwaysTypesOutsideGeneratedIntegerDomain) {
   fixture.database = makeAlwaysTypeDatabase(vpiAlwaysLatch + 1);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
-  obelisk_rt_context *context = nullptr;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
+  talos_rt_context *context = nullptr;
   EXPECT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_INVALID_DESIGN);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
 }
 
@@ -11151,20 +11151,20 @@ TEST(VPI, BuildsStatementNamesFromCanonicalScopeOwners) {
     constexpr size_t process = 304;
     constexpr size_t relations = 568;
     put32(fixture.database, childScope,
-          designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, scopeKind));
+          designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, scopeKind));
     put32(fixture.database, process,
-          designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, processKind));
+          designRecordKind(TALOS_RT_DESIGN_RECORD_PROCESS, processKind));
     put16(fixture.database, relations + 14,
           designRelationSource(1, static_cast<uint16_t>(processKind)));
     put64(fixture.database, 32, imageChecksum(fixture.database));
 
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char processName[] = "top.child.proc";
     vpiHandle codeUnit = vpi_handle_by_name(processName, nullptr);
     ASSERT_NE(codeUnit, nullptr);
@@ -11185,7 +11185,7 @@ TEST(VPI, BuildsStatementNamesFromCanonicalScopeOwners) {
     } else {
       EXPECT_EQ(vpi_get(vpiType, scope), static_cast<PLI_INT32>(scopeKind));
     }
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   };
 
   check(vpiTask, vpiModule, "top.child.proc.body", true);
@@ -11196,7 +11196,7 @@ TEST(VPI, HonorsPerOccurrenceStatementScopes) {
   Fixture fixture;
   installStatementDatabase(fixture);
   put16(fixture.database, 400 + 36, vpiForeachStmt);
-  put16(fixture.database, 400 + 38, OBELISK_RT_DESIGN_STATEMENT_SCOPE);
+  put16(fixture.database, 400 + 38, TALOS_RT_DESIGN_STATEMENT_SCOPE);
   put32(fixture.database, 400 + 24, 0);
   put32(fixture.database, 520 + 8, 1);
   put16(fixture.database, 520 + 12, 1);
@@ -11207,13 +11207,13 @@ TEST(VPI, HonorsPerOccurrenceStatementScopes) {
   put64(fixture.database, 152, 2);
   put64(fixture.database, 32, imageChecksum(fixture.database));
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char processName[] = "top.child.proc";
   vpiHandle process = vpi_handle_by_name(processName, nullptr);
   ASSERT_NE(process, nullptr);
@@ -11226,7 +11226,7 @@ TEST(VPI, HonorsPerOccurrenceStatementScopes) {
   vpiHandle scope = vpi_handle(vpiScope, nested);
   ASSERT_NE(scope, nullptr);
   EXPECT_EQ(vpi_compare_objects(body, scope), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, RejectsScopeTraversalForStatementHelperKinds) {
@@ -11245,13 +11245,13 @@ TEST(VPI, RejectsScopeTraversalForStatementHelperKinds) {
         designRelationSource(2, vpiCase, true));
   put64(fixture.database, 32, imageChecksum(fixture.database));
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char processName[] = "top.child.proc";
   vpiHandle process = vpi_handle_by_name(processName, nullptr);
   ASSERT_NE(process, nullptr);
@@ -11262,7 +11262,7 @@ TEST(VPI, RejectsScopeTraversalForStatementHelperKinds) {
   vpiHandle caseItem = vpi_scan(vpi_iterate(vpiCaseItem, caseStatement));
   ASSERT_NE(caseItem, nullptr);
   EXPECT_EQ(vpi_handle(vpiScope, caseItem), nullptr);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, PreservesDualHandleAndIterateStatementSemantics) {
@@ -11292,13 +11292,13 @@ TEST(VPI, PreservesDualHandleAndIterateStatementSemantics) {
   put64(fixture.database, 136, 2);
   put64(fixture.database, 32, imageChecksum(fixture.database));
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char processName[] = "top.child.proc";
   vpiHandle process = vpi_handle_by_name(processName, nullptr);
   ASSERT_NE(process, nullptr);
@@ -11320,7 +11320,7 @@ TEST(VPI, PreservesDualHandleAndIterateStatementSemantics) {
   EXPECT_EQ(vpi_compare_objects(singular, first), 1);
   EXPECT_EQ(vpi_get(vpiType, first), vpiNullStmt);
   EXPECT_EQ(vpi_scan(iterator), nullptr);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, TraversesScopeOwnedStatementRelations) {
@@ -11354,13 +11354,13 @@ TEST(VPI, TraversesScopeOwnedStatementRelations) {
   relation(2, 2, 0, vpiAliasStmt);
   put64(fixture.database, 32, imageChecksum(fixture.database));
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char childName[] = "top.child";
   vpiHandle child = vpi_handle_by_name(childName, nullptr);
   ASSERT_NE(child, nullptr);
@@ -11374,7 +11374,7 @@ TEST(VPI, TraversesScopeOwnedStatementRelations) {
   ASSERT_NE(aliases, nullptr);
   EXPECT_EQ(vpi_get(vpiType, vpi_scan(aliases)), vpiAliasStmt);
   EXPECT_EQ(vpi_scan(aliases), nullptr);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, TraversesRelationsToScopeAndObjectRecords) {
@@ -11391,13 +11391,13 @@ TEST(VPI, TraversesRelationsToScopeAndObjectRecords) {
   put16(fixture.database, relations + 14, designRelationSource(1, vpiInitial));
   put64(fixture.database, 32, imageChecksum(fixture.database));
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char processName[] = "top.child.proc";
   vpiHandle process = vpi_handle_by_name(processName, nullptr);
   ASSERT_NE(process, nullptr);
@@ -11405,7 +11405,7 @@ TEST(VPI, TraversesRelationsToScopeAndObjectRecords) {
   ASSERT_NE(module, nullptr);
   EXPECT_EQ(vpi_get(vpiType, module), vpiModule);
   EXPECT_STREQ(vpi_get_str(vpiFullName, module), "top.child");
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   // IEEE 1800-2017 37.5: a module iterates its static processes. Reuse the
   // same image storage with a target in the immutable object table.
@@ -11421,11 +11421,11 @@ TEST(VPI, TraversesRelationsToScopeAndObjectRecords) {
 
   context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char moduleName[] = "top.child";
   module = vpi_handle_by_name(moduleName, nullptr);
   ASSERT_NE(module, nullptr);
@@ -11437,7 +11437,7 @@ TEST(VPI, TraversesRelationsToScopeAndObjectRecords) {
   EXPECT_EQ(vpi_get(vpiType, process), vpiInitial);
   EXPECT_STREQ(vpi_get_str(vpiFullName, process), "top.child.proc");
   EXPECT_EQ(vpi_scan(processes), nullptr);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, SeparatesHandleAndIterateModesForSameSelector) {
@@ -11445,17 +11445,17 @@ TEST(VPI, SeparatesHandleAndIterateModesForSameSelector) {
   fixture.database = makeNestedModuleRelationDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char moduleName[] = "top.child";
   vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
   ASSERT_NE(module, nullptr);
@@ -11473,7 +11473,7 @@ TEST(VPI, SeparatesHandleAndIterateModesForSameSelector) {
   EXPECT_STREQ(vpi_get_str(vpiFullName, firstElement), "top.child.leaf");
   EXPECT_EQ(vpi_compare_objects(containing, firstElement), 0);
   EXPECT_EQ(vpi_scan(elements), nullptr);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   // An entirely absent automatic parent group uses the same immutable
   // hierarchy fallback as an absent automatic child group.
@@ -11487,11 +11487,11 @@ TEST(VPI, SeparatesHandleAndIterateModesForSameSelector) {
   fixture.execution.design_database_size = fixture.database.size();
   context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   module = vpi_handle_by_name(moduleName, nullptr);
   ASSERT_NE(module, nullptr);
   containing = vpi_handle(vpiModule, module);
@@ -11503,7 +11503,7 @@ TEST(VPI, SeparatesHandleAndIterateModesForSameSelector) {
   ASSERT_NE(firstElement, nullptr);
   EXPECT_STREQ(vpi_get_str(vpiFullName, firstElement), "top.child.leaf");
   EXPECT_EQ(vpi_scan(elements), nullptr);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, RejectsAutomaticRelationsThatDisagreeWithOwnership) {
@@ -11520,10 +11520,10 @@ TEST(VPI, RejectsAutomaticRelationsThatDisagreeWithOwnership) {
   put16(fixture.database, relations + 14,
         designRelationSource(0, vpiModule, true));
   put64(fixture.database, 32, imageChecksum(fixture.database));
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   EXPECT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_INVALID_DESIGN);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_INVALID_DESIGN);
 
   // A process must name its actual owning scope, not another same-kind scope.
   installStatementDatabase(fixture);
@@ -11535,8 +11535,8 @@ TEST(VPI, RejectsAutomaticRelationsThatDisagreeWithOwnership) {
   put16(fixture.database, relations + 14, designRelationSource(1, vpiInitial));
   put64(fixture.database, 32, imageChecksum(fixture.database));
   EXPECT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_INVALID_DESIGN);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_INVALID_DESIGN);
 
   // A statement must name its effective lexical scope. A same-kind physical
   // scope cannot replace the nearest scope-bearing parent statement.
@@ -11561,19 +11561,19 @@ TEST(VPI, RejectsAutomaticRelationsThatDisagreeWithOwnership) {
   put16(fixture.database, relations + 32 + 14, designRelationSource(2, vpiFor));
   put64(fixture.database, 32, imageChecksum(fixture.database));
   EXPECT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_INVALID_DESIGN);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_INVALID_DESIGN);
 
   // The exact lexical target is accepted and returned by the relation-backed
   // query path.
   put32(fixture.database, relations + 32 + 4, (uint32_t{2} << 30) | 0);
   put64(fixture.database, 32, imageChecksum(fixture.database));
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char processName[] = "top.child.proc";
   vpiHandle process = vpi_handle_by_name(processName, nullptr);
   ASSERT_NE(process, nullptr);
@@ -11584,7 +11584,7 @@ TEST(VPI, RejectsAutomaticRelationsThatDisagreeWithOwnership) {
   vpiHandle lexicalScope = vpi_handle(vpiScope, nested);
   ASSERT_NE(lexicalScope, nullptr);
   EXPECT_EQ(vpi_compare_objects(body, lexicalScope), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   // Dense ordinals cannot duplicate a valid child and hide the remainder.
   installStatementDatabase(fixture);
@@ -11600,19 +11600,19 @@ TEST(VPI, RejectsAutomaticRelationsThatDisagreeWithOwnership) {
   }
   put64(fixture.database, 32, imageChecksum(fixture.database));
   EXPECT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_INVALID_DESIGN);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_INVALID_DESIGN);
 }
 
 TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char objectName[] = "top.value";
   vpiHandle object = vpi_handle_by_name(objectName, nullptr);
@@ -11680,24 +11680,24 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
   EXPECT_EQ(vpi_get_vlog_info(&info), 1);
   ASSERT_EQ(info.argc, 1);
   ASSERT_NE(info.argv, nullptr);
-  EXPECT_STREQ(info.argv[0], "obelisk");
-  EXPECT_STREQ(info.product, "Obelisk");
+  EXPECT_STREQ(info.argv[0], "talos");
+  EXPECT_STREQ(info.product, "Talos");
   EXPECT_STREQ(info.version, "prototype");
   EXPECT_EQ(vpi_get_vlog_info(nullptr), 0);
   EXPECT_EQ(vpi_release_handle(object), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   Fixture readOnly;
   readOnly.database = makeDatabase(false);
   readOnly.execution.design_database = readOnly.database.data();
   readOnly.execution.design_database_size = readOnly.database.size();
-  readOnly.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+  readOnly.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&readOnly.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&readOnly.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   object = vpi_handle_by_name(objectName, nullptr);
   ASSERT_NE(object, nullptr);
   value = {};
@@ -11707,24 +11707,24 @@ TEST(VPI, ConvertsValuesAndEnforcesMutationCapabilities) {
   EXPECT_EQ(vpi_chk_error(&error), vpiError);
   EXPECT_STREQ(error.message, "VPI mutation requires --vpi=full");
   EXPECT_EQ(vpi_release_handle(object), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   Fixture noSource;
   noSource.database = makeDatabase(true, false);
   noSource.execution.design_database = noSource.database.data();
   noSource.execution.design_database_size = noSource.database.size();
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&noSource.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&noSource.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   object = vpi_handle_by_name(objectName, nullptr);
   ASSERT_NE(object, nullptr);
   EXPECT_EQ(vpi_get_str(vpiFile, object), nullptr);
   EXPECT_EQ(vpi_get(vpiLineNo, object), 0);
   EXPECT_EQ(vpi_release_handle(object), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ForceReleaseContinuouslyDrivenStorageRecordsCoveredPlanes) {
@@ -11734,29 +11734,29 @@ TEST(VPI, ForceReleaseContinuouslyDrivenStorageRecordsCoveredPlanes) {
   fixture.database = makeVPIShapeDatabase(VPIShapeType::BasicScalar, vpiReg);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
-            OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_register_static(context, 1, 0, 1),
+            TALOS_RT_OK);
 
   // Two source-visible obligations alias the same canonical storage bit. This
   // test deliberately has no language waiter: coverage is a transition
   // consumer in its own right, even when scheduler fanout is otherwise empty.
   constexpr std::array<uint8_t, 1> zero{0};
   ASSERT_EQ(
-      obelisk_rt_v1_coverage_finalize(
+      talos_rt_v1_coverage_finalize(
           context, 0, 2, zero.data(), zero.data(),
-          OBELISK_RT_COVERAGE_PERSIST_ALL),
-      OBELISK_RT_OK);
-  uint64_t state = obelisk_rt_v1_native_state_static_handle(1);
+          TALOS_RT_COVERAGE_PERSIST_ALL),
+      TALOS_RT_OK);
+  uint64_t state = talos_rt_v1_native_state_static_handle(1);
   ASSERT_NE(state, UINT64_MAX);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 0, 1, state),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_bind(context, 1, 1, state),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_coverage_toggle_seal(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_bind(context, 0, 1, state),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_bind(context, 1, 1, state),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_coverage_toggle_seal(context), TALOS_RT_OK);
 
   {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
@@ -11769,9 +11769,9 @@ TEST(VPI, ForceReleaseContinuouslyDrivenStorageRecordsCoveredPlanes) {
     context->continuousUnknown[0] = 1;
   }
 
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char objectName[] = "top.value";
   vpiHandle object = vpi_handle_by_name(objectName, nullptr);
   ASSERT_NE(object, nullptr);
@@ -11815,34 +11815,34 @@ TEST(VPI, ForceReleaseContinuouslyDrivenStorageRecordsCoveredPlanes) {
   }
   uint64_t covered = 0, total = 0;
   double percentage = 0;
-  ASSERT_EQ(obelisk_rt_v1_coverage_query(context, OBELISK_RT_COVERAGE_TOGGLE,
+  ASSERT_EQ(talos_rt_v1_coverage_query(context, TALOS_RT_COVERAGE_TOGGLE,
                                          &covered, &total, &percentage),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(covered, 4u);
   EXPECT_EQ(total, 4u);
   EXPECT_DOUBLE_EQ(percentage, 100.0);
 
   EXPECT_EQ(vpi_release_handle(object), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ReportsAnOwnedSnapshotOfInvocationArguments) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  std::array<std::string, 4> storage{"obelisk-sim", "+UVM_TESTNAME=smoke",
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  std::array<std::string, 4> storage{"talos-sim", "+UVM_TESTNAME=smoke",
                                      "--seed=41", "design.cfg"};
   std::array<const char *, 4> arguments{};
   for (size_t index = 0; index != storage.size(); ++index)
     arguments[index] = storage[index].c_str();
-  ASSERT_EQ(obelisk_rt_v1_context_configure_argv(
+  ASSERT_EQ(talos_rt_v1_context_configure_argv(
                 context, static_cast<int>(arguments.size()), arguments.data()),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   s_vpi_vlog_info info{};
   ASSERT_EQ(vpi_get_vlog_info(&info), 1);
@@ -11850,14 +11850,14 @@ TEST(VPI, ReportsAnOwnedSnapshotOfInvocationArguments) {
   ASSERT_NE(info.argv, nullptr);
   for (size_t index = 0; index != storage.size(); ++index)
     EXPECT_STREQ(info.argv[index], storage[index].c_str());
-  EXPECT_STREQ(info.product, "Obelisk");
+  EXPECT_STREQ(info.product, "Talos");
   EXPECT_STREQ(info.version, "prototype");
 
   for (std::string &argument : storage)
     argument.assign("changed");
-  EXPECT_STREQ(info.argv[0], "obelisk-sim");
+  EXPECT_STREQ(info.argv[0], "talos-sim");
   EXPECT_STREQ(info.argv[1], "+UVM_TESTNAME=smoke");
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ExportsEveryReadQueryRoutineDeclaredByThePublicHeader) {
@@ -11889,13 +11889,13 @@ TEST(VPI, ExportsEveryReadQueryRoutineDeclaredByThePublicHeader) {
 
 TEST(VPI, UnbackedReadQueryRoutinesReportDeterministicErrors) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char name[] = "top.value";
   vpiHandle object = vpi_handle_by_name(name, nullptr);
   ASSERT_NE(object, nullptr);
@@ -11931,33 +11931,33 @@ TEST(VPI, UnbackedReadQueryRoutinesReportDeterministicErrors) {
   EXPECT_STREQ(vpi_mcd_name(1), "stdout");
   EXPECT_EQ(vpi_chk_error(&error), 0);
   EXPECT_EQ(vpi_release_handle(object), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, FileNameQueriesCoverMCDAndFDDescriptors) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   const std::filesystem::path base =
       std::filesystem::temp_directory_path() /
-      ("obelisk-vpi-file-name-" +
+      ("talos-vpi-file-name-" +
        std::to_string(reinterpret_cast<uintptr_t>(context)));
   const std::string mcdPath = base.string() + ".mcd";
   const std::string fdPath = base.string() + ".fd";
   uint32_t mcd = 0;
   uint32_t fd = 0;
-  ASSERT_EQ(obelisk_rt_v1_file_open_mcd(context, mcdPath.data(), mcdPath.size(),
+  ASSERT_EQ(talos_rt_v1_file_open_mcd(context, mcdPath.data(), mcdPath.size(),
                                         &mcd),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_file_open(context, fdPath.data(), fdPath.size(), "w+",
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_file_open(context, fdPath.data(), fdPath.size(), "w+",
                                     2, &fd),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   EXPECT_STREQ(vpi_mcd_name(mcd), mcdPath.c_str());
   EXPECT_STREQ(vpi_mcd_name(fd), fdPath.c_str());
@@ -11971,27 +11971,27 @@ TEST(VPI, FileNameQueriesCoverMCDAndFDDescriptors) {
   EXPECT_STREQ(error.message,
                "invalid or non-single-channel VPI file descriptor");
 
-  ASSERT_EQ(obelisk_rt_v1_file_close(context, mcd), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_file_close(context, mcd), TALOS_RT_OK);
   EXPECT_EQ(vpi_mcd_name(mcd), nullptr);
   EXPECT_EQ(vpi_chk_error(&error), vpiError);
-  ASSERT_EQ(obelisk_rt_v1_file_close(context, fd), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_file_close(context, fd), TALOS_RT_OK);
   EXPECT_EQ(vpi_mcd_name(fd), nullptr);
   EXPECT_EQ(vpi_chk_error(&error), vpiError);
 
   EXPECT_EQ(std::filesystem::remove(mcdPath), true);
   EXPECT_EQ(std::filesystem::remove(fdPath), true);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ValueResultStorageOutlivesHandlesAndIsSharedAcrossQueries) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char objectName[] = "top.value";
   vpiHandle first = vpi_handle_by_name(objectName, nullptr);
@@ -12028,7 +12028,7 @@ TEST(VPI, ValueResultStorageOutlivesHandlesAndIsSharedAcrossQueries) {
     EXPECT_EQ(secondValue.value.vector[index].aval, saved[index].aval);
     EXPECT_EQ(secondValue.value.vector[index].bval, saved[index].bval);
   }
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 struct VPITimerProbe {
@@ -12079,13 +12079,13 @@ PLI_INT32 timerProbeCallback(p_cb_data data) {
 
 TEST(VPI, TimersShareCalendarAndSupportCancellationAndRearming) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   VPITimerProbe early, late, canceled;
   auto add = [&](VPITimerProbe &probe, uint32_t delay) {
     s_vpi_time time{};
@@ -12115,19 +12115,19 @@ TEST(VPI, TimersShareCalendarAndSupportCancellationAndRearming) {
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   // Releasing the handle does not cancel a pending callback.
   EXPECT_EQ(vpi_release_handle(lateHandle), 1);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_EQ(early.times, std::vector<uint64_t>({7, 7}));
   EXPECT_EQ(late.times, std::vector<uint64_t>({29}));
   EXPECT_TRUE(canceled.times.empty());
   EXPECT_EQ(context->schedulerTime, 29u);
   EXPECT_FALSE(context->nextVPITimeCallback);
   EXPECT_FALSE(context->vpiTimeCallbackActive);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_EQ(late.times.size(), 1u);
   ASSERT_NE(add(canceled, 10), nullptr);
-  obelisk_rt_v1_vpi_shutdown(context);
+  talos_rt_v1_vpi_shutdown(context);
   EXPECT_FALSE(context->nextVPITimeCallback);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 std::vector<std::pair<uint64_t, PLI_INT32>> syncProbeCalls;
@@ -12147,13 +12147,13 @@ TEST(VPI, SynchronizationCallbacksRunOnceInTheirRegion) {
   // run before the NBA region and cbReadOnlySynch in Postponed of the time
   // their delay selects, even when no other event is scheduled then.
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   syncProbeCalls.clear();
   auto add = [&](PLI_INT32 reason, uint32_t delay) {
     s_vpi_time time{};
@@ -12173,33 +12173,33 @@ TEST(VPI, SynchronizationCallbacksRunOnceInTheirRegion) {
   EXPECT_EQ(context->nextVPISyncCallback, 0u);
   EXPECT_TRUE(context->vpiObservationDemand);
   EXPECT_EQ(vpi_remove_cb(canceled), 1);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_EQ(syncProbeCalls,
             (std::vector<std::pair<uint64_t, PLI_INT32>>{
                 {0, cbReadWriteSynch}, {3, cbNBASynch}, {3, cbReadOnlySynch}}));
   EXPECT_EQ(context->schedulerTime, 3u);
   EXPECT_FALSE(context->nextVPISyncCallback);
   EXPECT_FALSE(context->vpiObservationDemand);
-  obelisk_rt_v1_vpi_shutdown(context);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_vpi_shutdown(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, TimersValidateDelayAndCopyScaledObjectTime) {
   Fixture fixture;
-  const obelisk_rt_dpi_scope_v1 scopes[] = {
+  const talos_rt_dpi_scope_v1 scopes[] = {
       {0, UINT64_MAX, "$root", 5, -12, -12, 0},
       {1, 0, "top", 3, -9, -12, 0},
   };
   fixture.execution.dpi_scopes = scopes;
   fixture.execution.dpi_scope_count = std::size(scopes);
   fixture.execution.dpi_time_precision = -12;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   VPITimerProbe probe;
   s_cb_data callback{};
   callback.reason = cbAfterDelay;
@@ -12228,7 +12228,7 @@ TEST(VPI, TimersValidateDelayAndCopyScaledObjectTime) {
   EXPECT_EQ(vpi_release_handle(callback.obj), 1);
   callback = {};
   delay = {};
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_EQ(probe.times, std::vector<uint64_t>({1250}));
   EXPECT_EQ(probe.scaledTimes, std::vector<double>({1.25}));
 
@@ -12243,16 +12243,16 @@ TEST(VPI, TimersValidateDelayAndCopyScaledObjectTime) {
   EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
   delay.low = 1;
   ASSERT_NE(vpi_register_cb(&callback), nullptr);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_EQ(probe.times.back(), UINT64_MAX);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, QueriesSimulationAndObjectTimeWithoutSchedulerRegistration) {
   Fixture fixture;
   static constexpr char rootName[] = "$root";
   static constexpr char topName[] = "top";
-  const obelisk_rt_dpi_scope_v1 scopes[] = {
+  const talos_rt_dpi_scope_v1 scopes[] = {
       {0, UINT64_MAX, rootName, sizeof(rootName) - 1, -12, -12, 0},
       {1, 0, topName, sizeof(topName) - 1, -9, -12, 0},
   };
@@ -12260,13 +12260,13 @@ TEST(VPI, QueriesSimulationAndObjectTimeWithoutSchedulerRegistration) {
   fixture.execution.dpi_scope_count = std::size(scopes);
   fixture.execution.dpi_time_precision = -12;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   context->schedulerTime = UINT64_C(0x123456789abcdef0);
 
   EXPECT_EQ(vpi_get(vpiTimeUnit, nullptr), -12);
@@ -12321,14 +12321,14 @@ TEST(VPI, QueriesSimulationAndObjectTimeWithoutSchedulerRegistration) {
   EXPECT_FALSE(context->nativeScheduleDeoptimized);
   EXPECT_EQ(vpi_release_handle(value), 1);
   EXPECT_EQ(vpi_release_handle(module), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, IteratesCanonicalSchedulerTimeQueuesOnDemand) {
   Fixture fixture;
   static constexpr char rootName[] = "$root";
   static constexpr char topName[] = "top";
-  const obelisk_rt_dpi_scope_v1 scopes[] = {
+  const talos_rt_dpi_scope_v1 scopes[] = {
       {0, UINT64_MAX, rootName, sizeof(rootName) - 1, -12, -12, 0},
       {1, 0, topName, sizeof(topName) - 1, -9, -12, 0},
   };
@@ -12336,38 +12336,38 @@ TEST(VPI, IteratesCanonicalSchedulerTimeQueuesOnDemand) {
   fixture.execution.dpi_scope_count = std::size(scopes);
   fixture.execution.dpi_time_precision = -12;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   context->schedulerTime = 10;
 
   ScheduledProcess process;
-  process.instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(1);
+  process.instance = reinterpret_cast<talos_rt_process_instance_v1 *>(1);
   process.started = true;
-  process.suspendKind = OBELISK_RT_SUSPEND_DELAY;
+  process.suspendKind = TALOS_RT_SUSPEND_DELAY;
   process.wakeTime = 40;
   context->scheduledProcesses.push_back(std::move(process));
   ScheduledProcess finalProcess;
-  finalProcess.instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(1);
+  finalProcess.instance = reinterpret_cast<talos_rt_process_instance_v1 *>(1);
   finalProcess.phase = 1;
   finalProcess.started = true;
-  finalProcess.suspendKind = OBELISK_RT_SUSPEND_DELAY;
+  finalProcess.suspendKind = TALOS_RT_SUSPEND_DELAY;
   finalProcess.wakeTime = 11;
   context->scheduledProcesses.push_back(std::move(finalProcess));
 
   ScheduledDesignTask task;
   task.started = true;
-  task.suspendKind = OBELISK_RT_SUSPEND_DELAY;
+  task.suspendKind = TALOS_RT_SUSPEND_DELAY;
   task.wakeTime = 30;
   context->scheduledDesignTasks.push_back(std::move(task));
   ScheduledDesignTask terminatedTask;
   terminatedTask.started = true;
   terminatedTask.terminated = true;
-  terminatedTask.suspendKind = OBELISK_RT_SUSPEND_DELAY;
+  terminatedTask.suspendKind = TALOS_RT_SUSPEND_DELAY;
   terminatedTask.wakeTime = 12;
   context->scheduledDesignTasks.push_back(std::move(terminatedTask));
 
@@ -12445,7 +12445,7 @@ TEST(VPI, IteratesCanonicalSchedulerTimeQueuesOnDemand) {
   // A running event is itself before read-only synchronization and therefore
   // keeps the current numeric time queue visible. Once that event boundary is
   // cleared, the same empty scheduler is at/after read-only synchronization.
-  context->activeExecRegion = OBELISK_RT_REGION_ACTIVE;
+  context->activeExecRegion = TALOS_RT_REGION_ACTIVE;
   iterator = vpi_iterate(vpiTimeQueue, nullptr);
   ASSERT_NE(iterator, nullptr);
   vpiHandle current = vpi_scan(iterator);
@@ -12457,20 +12457,20 @@ TEST(VPI, IteratesCanonicalSchedulerTimeQueuesOnDemand) {
   EXPECT_EQ(currentTime.low, 10u);
   EXPECT_EQ(vpi_scan(iterator), nullptr);
   EXPECT_EQ(vpi_release_handle(current), 1);
-  context->activeExecRegion = OBELISK_RT_REGION_POSTPONED;
+  context->activeExecRegion = TALOS_RT_REGION_POSTPONED;
   EXPECT_EQ(vpi_iterate(vpiTimeQueue, nullptr), nullptr);
 
   context->activeExecRegion = UINT32_MAX;
   ScheduledProcess postponed;
-  postponed.instance = reinterpret_cast<obelisk_rt_process_instance_v1 *>(1);
-  postponed.queuedRegion = OBELISK_RT_REGION_POSTPONED;
+  postponed.instance = reinterpret_cast<talos_rt_process_instance_v1 *>(1);
+  postponed.queuedRegion = TALOS_RT_REGION_POSTPONED;
   context->scheduledProcesses.push_back(std::move(postponed));
   ScheduledNBA postponedNBA;
   postponedNBA.dueTime = context->schedulerTime;
-  postponedNBA.execRegion = OBELISK_RT_REGION_POSTPONED;
+  postponedNBA.execRegion = TALOS_RT_REGION_POSTPONED;
   context->scheduledNBAs.push_back(std::move(postponedNBA));
   EXPECT_EQ(vpi_iterate(vpiTimeQueue, nullptr), nullptr);
-  context->scheduledProcesses.front().queuedRegion = OBELISK_RT_REGION_ACTIVE;
+  context->scheduledProcesses.front().queuedRegion = TALOS_RT_REGION_ACTIVE;
   iterator = vpi_iterate(vpiTimeQueue, nullptr);
   ASSERT_NE(iterator, nullptr);
   current = vpi_scan(iterator);
@@ -12480,18 +12480,18 @@ TEST(VPI, IteratesCanonicalSchedulerTimeQueuesOnDemand) {
   context->scheduledProcesses.clear();
   context->scheduledNBAs.clear();
 
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, CurrentTimeQueueInspectionIsExactAndSideEffectFree) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   context->schedulerTime = 10;
   context->activeExecRegion = UINT32_MAX;
   context->signalDiagnosticsEnabled = true;
@@ -12520,20 +12520,20 @@ TEST(VPI, CurrentTimeQueueInspectionIsExactAndSideEffectFree) {
   };
 
   struct WaitRecord {
-    obelisk_rt_wait_record_v1 wait;
-    obelisk_rt_wait_entry_v1 entry;
+    talos_rt_wait_record_v1 wait;
+    talos_rt_wait_entry_v1 entry;
   };
 
   // Event-generation readiness is shared with the bytecode scheduler rather
   // than approximated by the VPI query.
   WaitRecord eventRecord{
-      {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EVENT, 0, 1, 0, 0},
-      {77, OBELISK_RT_WAIT_EDGE_NONE, 0}};
+      {TALOS_RT_VERSION, TALOS_RT_SUSPEND_EVENT, 0, 1, 0, 0},
+      {77, TALOS_RT_WAIT_EDGE_NONE, 0}};
   ScheduledDesignTask eventTask;
   eventTask.id = 101;
   eventTask.started = true;
-  eventTask.suspendKind = OBELISK_RT_SUSPEND_EVENT;
-  eventTask.queuedRegion = OBELISK_RT_REGION_ACTIVE;
+  eventTask.suspendKind = TALOS_RT_SUSPEND_EVENT;
+  eventTask.queuedRegion = TALOS_RT_REGION_ACTIVE;
   eventTask.waitSize = sizeof(eventRecord);
   eventTask.scratchOffset = sizeof(eventRecord);
   eventTask.frame.resize(sizeof(eventRecord));
@@ -12546,17 +12546,17 @@ TEST(VPI, CurrentTimeQueueInspectionIsExactAndSideEffectFree) {
 
   // A slot-final timing coordinator sorts immediately before true Postponed
   // work and therefore still precedes the read-only synchronization point.
-  WaitRecord slotFinalRecord{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE,
-                              OBELISK_RT_WAIT_CLOCK_OCCURRENCE |
-                                  OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL,
+  WaitRecord slotFinalRecord{{TALOS_RT_VERSION, TALOS_RT_SUSPEND_EDGE,
+                              TALOS_RT_WAIT_CLOCK_OCCURRENCE |
+                                  TALOS_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL,
                               1, 0, 0},
-                             {91, OBELISK_RT_WAIT_EDGE_POSEDGE, 1}};
+                             {91, TALOS_RT_WAIT_EDGE_POSEDGE, 1}};
   ScheduledDesignTask slotFinalTask;
   slotFinalTask.id = 102;
   slotFinalTask.started = true;
-  slotFinalTask.suspendKind = OBELISK_RT_SUSPEND_EDGE;
+  slotFinalTask.suspendKind = TALOS_RT_SUSPEND_EDGE;
   slotFinalTask.signalTriggered = true;
-  slotFinalTask.queuedRegion = OBELISK_RT_REGION_OBSERVED;
+  slotFinalTask.queuedRegion = TALOS_RT_REGION_OBSERVED;
   slotFinalTask.waitSize = sizeof(slotFinalRecord);
   slotFinalTask.scratchOffset = sizeof(slotFinalRecord);
   slotFinalTask.frame.resize(sizeof(slotFinalRecord));
@@ -12571,21 +12571,21 @@ TEST(VPI, CurrentTimeQueueInspectionIsExactAndSideEffectFree) {
   ScheduledDesignTask urgentTask;
   urgentTask.id = 103;
   urgentTask.urgent = true;
-  urgentTask.queuedRegion = OBELISK_RT_REGION_POSTPONED;
+  urgentTask.queuedRegion = TALOS_RT_REGION_POSTPONED;
   installDesignTask(std::move(urgentTask));
   EXPECT_TRUE(currentQueueVisible());
   clearDesignTasks();
 
   // Invalid managed waits are not runnable, but inspecting them must not
   // poison scheduler status or diagnostics.
-  WaitRecord invalidMailbox{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_MAILBOX,
-                             OBELISK_RT_WAIT_MAILBOX_NOT_EMPTY, 1, 0, 0},
-                            {0, OBELISK_RT_WAIT_EDGE_NONE, 0}};
+  WaitRecord invalidMailbox{{TALOS_RT_VERSION, TALOS_RT_SUSPEND_MAILBOX,
+                             TALOS_RT_WAIT_MAILBOX_NOT_EMPTY, 1, 0, 0},
+                            {0, TALOS_RT_WAIT_EDGE_NONE, 0}};
   ScheduledDesignTask mailboxTask;
   mailboxTask.id = 104;
   mailboxTask.started = true;
-  mailboxTask.suspendKind = OBELISK_RT_SUSPEND_MAILBOX;
-  mailboxTask.queuedRegion = OBELISK_RT_REGION_ACTIVE;
+  mailboxTask.suspendKind = TALOS_RT_SUSPEND_MAILBOX;
+  mailboxTask.queuedRegion = TALOS_RT_REGION_ACTIVE;
   mailboxTask.waitSize = sizeof(invalidMailbox);
   mailboxTask.scratchOffset = sizeof(invalidMailbox);
   mailboxTask.frame.resize(sizeof(invalidMailbox));
@@ -12593,20 +12593,20 @@ TEST(VPI, CurrentTimeQueueInspectionIsExactAndSideEffectFree) {
               sizeof(invalidMailbox));
   installDesignTask(std::move(mailboxTask));
   const uint64_t readinessCalls = context->signalDiagnostics.readinessCalls;
-  const obelisk_rt_status schedulerStatus = context->schedulerStatus;
+  const talos_rt_status schedulerStatus = context->schedulerStatus;
   EXPECT_FALSE(currentQueueVisible());
   EXPECT_EQ(context->signalDiagnostics.readinessCalls, readinessCalls);
   EXPECT_EQ(context->schedulerStatus, schedulerStatus);
   clearDesignTasks();
 
   // Native readiness inspection has the same side-effect-free contract.
-  obelisk_rt_frame_field_v1 waitField{OBELISK_RT_FRAME_WAIT,
-                                      OBELISK_RT_FRAME_FIELD_FLAGS_NONE,
+  talos_rt_frame_field_v1 waitField{TALOS_RT_FRAME_WAIT,
+                                      TALOS_RT_FRAME_FIELD_FLAGS_NONE,
                                       0,
                                       sizeof(invalidMailbox),
                                       alignof(WaitRecord),
                                       0};
-  obelisk_rt_frame_layout_v1 frameLayout{OBELISK_RT_VERSION,
+  talos_rt_frame_layout_v1 frameLayout{TALOS_RT_VERSION,
                                          0,
                                          sizeof(invalidMailbox),
                                          alignof(WaitRecord),
@@ -12615,17 +12615,17 @@ TEST(VPI, CurrentTimeQueueInspectionIsExactAndSideEffectFree) {
                                          0,
                                          nullptr,
                                          0};
-  obelisk_rt_process_descriptor_v1 descriptor{};
+  talos_rt_process_descriptor_v1 descriptor{};
   descriptor.frame_layout = &frameLayout;
-  obelisk_rt_process_instance_v1 instance{};
+  talos_rt_process_instance_v1 instance{};
   instance.descriptor = &descriptor;
   instance.frame = &invalidMailbox;
   instance.frame_size = sizeof(invalidMailbox);
   ScheduledProcess nativeMailbox;
   nativeMailbox.instance = &instance;
   nativeMailbox.started = true;
-  nativeMailbox.suspendKind = OBELISK_RT_SUSPEND_MAILBOX;
-  nativeMailbox.queuedRegion = OBELISK_RT_REGION_ACTIVE;
+  nativeMailbox.suspendKind = TALOS_RT_SUSPEND_MAILBOX;
+  nativeMailbox.queuedRegion = TALOS_RT_REGION_ACTIVE;
   nativeMailbox.waitSize = sizeof(invalidMailbox);
   context->scheduledProcesses.push_back(std::move(nativeMailbox));
   EXPECT_FALSE(currentQueueVisible());
@@ -12639,7 +12639,7 @@ TEST(VPI, CurrentTimeQueueInspectionIsExactAndSideEffectFree) {
   EXPECT_EQ(context->unstartedActiveActors.count(999), 1u);
   context->unstartedActiveActors.clear();
 
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ResolvesTimescalesByExactReflectionScopeIdentity) {
@@ -12648,7 +12648,7 @@ TEST(VPI, ResolvesTimescalesByExactReflectionScopeIdentity) {
   static constexpr char rootName[] = "$root";
   static constexpr char topName[] = "top";
   static constexpr char childName[] = "top.child";
-  const obelisk_rt_dpi_scope_v1 scopes[] = {
+  const talos_rt_dpi_scope_v1 scopes[] = {
       {0, UINT64_MAX, rootName, sizeof(rootName) - 1, -12, -12, 0},
       {1, 0, topName, sizeof(topName) - 1, -9, -12, 0},
       {2, 1, childName, sizeof(childName) - 1, -6, -12, 0},
@@ -12657,13 +12657,13 @@ TEST(VPI, ResolvesTimescalesByExactReflectionScopeIdentity) {
   fixture.execution.dpi_scope_count = std::size(scopes);
   fixture.execution.dpi_time_precision = -12;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   context->schedulerTime = 1000;
 
   char topPath[] = "top";
@@ -12690,7 +12690,7 @@ TEST(VPI, ResolvesTimescalesByExactReflectionScopeIdentity) {
   time.type = vpiScaledRealTime;
   vpi_get_time(statement, &time);
   EXPECT_DOUBLE_EQ(time.real, 0.001);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   // If exact metadata for a physical scope is missing, do not silently use
   // an enclosing scope's different time unit.
@@ -12700,18 +12700,18 @@ TEST(VPI, ResolvesTimescalesByExactReflectionScopeIdentity) {
   missing.execution.dpi_scope_count = 2;
   missing.execution.dpi_time_precision = -12;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&missing.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&missing.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   child = vpi_handle_by_name(childPath, nullptr);
   ASSERT_NE(child, nullptr);
   EXPECT_EQ(vpi_get(vpiTimeUnit, child), vpiUndefined);
   s_vpi_error_info error{};
   EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
   EXPECT_STREQ(error.message, "VPI object timescale metadata is unavailable");
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, VPIIntrinsicsTraverseAndAccessLiveState) {
@@ -12727,23 +12727,23 @@ TEST(DesignBytecode, VPIIntrinsicsTraverseAndAccessLiveState) {
   fixture.descriptor.execution = &fixture.execution;
   fixture.descriptor.design_bytecode = &fixture.entry;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_CONTINUE);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_CONTINUE);
   void *frame = nullptr;
   uint64_t frameSize = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            TALOS_RT_OK);
   ASSERT_EQ(frameSize, 40u);
   std::array<uint64_t, 4> planes{};
   std::memcpy(planes.data(), frame, sizeof(planes));
@@ -12757,19 +12757,19 @@ TEST(DesignBytecode, VPIIntrinsicsTraverseAndAccessLiveState) {
   EXPECT_NE(automatic, UINT64_MAX);
   EXPECT_NE(automatic >> 63, 0u);
   std::array<uint8_t, 9> dummy{}, automaticValue{}, automaticUnknown{};
-  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(context, dummy.data(), 65,
+  ASSERT_EQ(talos_rt_v1_native_state_load_plane(context, dummy.data(), 65,
                                                   automatic, 65, 0, 0,
                                                   automaticValue.data()),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(context, dummy.data(), 65,
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_load_plane(context, dummy.data(), 65,
                                                   automatic, 65, 1, 0,
                                                   automaticUnknown.data()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(automaticValue[0], 0xf0);
   EXPECT_EQ(automaticValue[8], 1u);
   EXPECT_EQ(automaticUnknown[0], 0x30);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, AutomaticViewsPreservePartialDirectAndNBASelections) {
@@ -12779,40 +12779,40 @@ TEST(DesignBytecode, AutomaticViewsPreservePartialDirectAndNBASelections) {
     fixture.execution.bytecode = fixture.bytecode.data();
     fixture.execution.bytecode_size = fixture.bytecode.size();
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    obelisk_rt_process_instance_v1 *instance = nullptr;
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    talos_rt_process_instance_v1 *instance = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-        OBELISK_RT_OK);
-    obelisk_rt_fragment_action_v1 action{};
-    ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                  instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-              OBELISK_RT_OK);
-    ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_CONTINUE);
+        talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+        TALOS_RT_OK);
+    talos_rt_fragment_action_v1 action{};
+    ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                  instance, context, TALOS_RT_TIER_BYTECODE, &action),
+              TALOS_RT_OK);
+    ASSERT_EQ(action.kind, TALOS_RT_FRAGMENT_CONTINUE);
     void *frame = nullptr;
     uint64_t frameSize = 0;
     ASSERT_EQ(
-        obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-        OBELISK_RT_OK);
+        talos_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+        TALOS_RT_OK);
     ASSERT_EQ(frameSize, 32u);
     std::array<uint64_t, 2> value{}, unknown{};
     if (nba) {
       uint64_t stable = 0;
       std::memcpy(&stable, frame, sizeof(stable));
       ASSERT_NE(stable, UINT64_MAX);
-      ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+      ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
       std::array<uint8_t, 9> dummy{};
-      ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+      ASSERT_EQ(talos_rt_v1_native_state_load_plane(
                     context, dummy.data(), 65, stable, 65, 0, 0,
                     reinterpret_cast<uint8_t *>(value.data())),
-                OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_native_state_load_plane(
                     context, dummy.data(), 65, stable, 65, 1, 1,
                     reinterpret_cast<uint8_t *>(unknown.data())),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
     } else {
       std::memcpy(value.data(), frame, 16);
       std::memcpy(unknown.data(), static_cast<uint8_t *>(frame) + 16, 16);
@@ -12821,8 +12821,8 @@ TEST(DesignBytecode, AutomaticViewsPreservePartialDirectAndNBASelections) {
     EXPECT_EQ(value[1], 1u);
     EXPECT_EQ(unknown[0], UINT64_C(0x37));
     EXPECT_EQ(unknown[1], 0u);
-    EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-    obelisk_rt_v1_context_destroy(context);
+    EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+    talos_rt_v1_context_destroy(context);
   };
   run(false);
   run(true);
@@ -12835,45 +12835,45 @@ TEST(DesignBytecode,
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   std::array<uint8_t, 9> initial{};
   uint64_t automatic = UINT64_MAX;
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(context, 65, initial.data(),
+  ASSERT_EQ(talos_rt_v1_native_state_alloc(context, 65, initial.data(),
                                              initial.data(), &automatic),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   auto run = [&](int64_t offset) {
-    uint64_t selected = obelisk_rt_v1_native_handle_offset(automatic, offset);
+    uint64_t selected = talos_rt_v1_native_handle_offset(automatic, offset);
     ASSERT_NE(selected, UINT64_MAX);
-    obelisk_rt_process_instance_v1 *instance = nullptr;
+    talos_rt_process_instance_v1 *instance = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-        OBELISK_RT_OK);
+        talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+        TALOS_RT_OK);
     void *frame = nullptr;
     uint64_t frameSize = 0;
     ASSERT_EQ(
-        obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-        OBELISK_RT_OK);
+        talos_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+        TALOS_RT_OK);
     ASSERT_EQ(frameSize, 32u);
     std::memcpy(frame, &selected, sizeof(selected));
-    obelisk_rt_fragment_action_v1 action{};
-    ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                  instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-              OBELISK_RT_OK);
-    EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+    talos_rt_fragment_action_v1 action{};
+    ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                  instance, context, TALOS_RT_TIER_BYTECODE, &action),
+              TALOS_RT_OK);
+    EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
     const auto *planes = static_cast<const uint64_t *>(frame);
     EXPECT_EQ(planes[0], 0u);
     EXPECT_EQ(planes[1], 0u);
     EXPECT_EQ(planes[2], UINT64_MAX);
     EXPECT_EQ(planes[3], 1u);
-    EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+    EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
   };
   run(-66);
   run(65);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, NativeStaticHandlesRemainBoundedAcrossBytecodeFrames) {
@@ -12882,62 +12882,62 @@ TEST(DesignBytecode, NativeStaticHandlesRemainBoundedAcrossBytecodeFrames) {
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 65),
-            OBELISK_RT_OK);
-  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_register_static(context, 1, 0, 65),
+            TALOS_RT_OK);
+  uint64_t root = talos_rt_v1_native_state_static_handle(1);
   ASSERT_NE(root, UINT64_MAX);
   std::array<uint8_t, 9> globalValue{}, globalUnknown{}, zeros{}, ones{};
   ones.fill(0xff);
   ones.back() = 1;
   uint8_t changed = 0;
-  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(context, globalValue.data(),
+  ASSERT_EQ(talos_rt_v1_native_state_store_plane(context, globalValue.data(),
                                                    65, root, 65, 0, ones.data(),
                                                    &changed),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_store_plane(
                 context, globalUnknown.data(), 65, root, 65, 1, zeros.data(),
                 &changed),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   auto run = [&](int64_t offset, uint64_t expectedValue0,
                  uint64_t expectedValue1, uint64_t expectedUnknown0,
                  uint64_t expectedUnknown1) {
-    uint64_t selected = obelisk_rt_v1_native_handle_offset(root, offset);
+    uint64_t selected = talos_rt_v1_native_handle_offset(root, offset);
     ASSERT_NE(selected, UINT64_MAX);
-    obelisk_rt_process_instance_v1 *instance = nullptr;
+    talos_rt_process_instance_v1 *instance = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-        OBELISK_RT_OK);
+        talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+        TALOS_RT_OK);
     void *frame = nullptr;
     uint64_t frameSize = 0;
     ASSERT_EQ(
-        obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-        OBELISK_RT_OK);
+        talos_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+        TALOS_RT_OK);
     ASSERT_EQ(frameSize, 32u);
     std::memcpy(frame, &selected, sizeof(selected));
-    obelisk_rt_fragment_action_v1 action{};
-    ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                  instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-              OBELISK_RT_OK);
-    EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+    talos_rt_fragment_action_v1 action{};
+    ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                  instance, context, TALOS_RT_TIER_BYTECODE, &action),
+              TALOS_RT_OK);
+    EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
     const auto *planes = static_cast<const uint64_t *>(frame);
     EXPECT_EQ(planes[0], expectedValue0);
     EXPECT_EQ(planes[1], expectedValue1);
     EXPECT_EQ(planes[2], expectedUnknown0);
     EXPECT_EQ(planes[3], expectedUnknown1);
-    EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+    EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
   };
   run(-3, UINT64_MAX - 7, 1, 7, 0);
   run(65, 0, 0, UINT64_MAX, 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, PackedCanonicalLoadsMatchBitwiseBoundsAndPublication) {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 10 * 40;
   for (bool boundedStatic : {false, true}) {
@@ -12952,12 +12952,12 @@ TEST(DesignBytecode, PackedCanonicalLoadsMatchBitwiseBoundsAndPublication) {
         size_t resultSize = limbs * 8 * (fourState ? 2 : 1);
         auto &bytes = fixture.bytecode;
         bytes[layoutOffset + 9 * 40] =
-            fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS;
+            fourState ? TALOS_RT_DBREG_LOGIC : TALOS_RT_DBREG_BITS;
         put32(bytes, layoutOffset + 9 * 40 + 4, width);
         put64(bytes, layoutOffset + 9 * 40 + 16, resultSize);
         put64(bytes, functionOffset + 56, 144 + resultSize);
-        instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME,
-                    OBELISK_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0, 130, 0);
+        instruction(bytes, codeOffset, 0, TALOS_RT_DB_LOAD_FRAME,
+                    TALOS_RT_DESCRIPTOR_STORAGE, 8, 0, 0, 0, 130, 0);
         put64(bytes, 32, imageChecksum(bytes));
         fixture.execution.bytecode = bytes.data();
         fixture.execution.bytecode_size = bytes.size();
@@ -12965,21 +12965,21 @@ TEST(DesignBytecode, PackedCanonicalLoadsMatchBitwiseBoundsAndPublication) {
         fixture.execution.state_bit_count = 256;
         fixture.layout.frame_size = std::max<size_t>(8, resultSize);
         fixture.layout.checksum = frameChecksum(fixture.layout);
-        obelisk_rt_context *context = nullptr;
-        ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution,
+        talos_rt_context *context = nullptr;
+        ASSERT_EQ(talos_rt_v1_context_create_for_design(&fixture.execution,
                                                           &context),
-                  OBELISK_RT_OK);
+                  TALOS_RT_OK);
         if (boundedStatic)
           ASSERT_EQ(
-              obelisk_rt_v1_native_state_register_static(context, 1, 53, 130),
-              OBELISK_RT_OK);
+              talos_rt_v1_native_state_register_static(context, 1, 53, 130),
+              TALOS_RT_OK);
         context->stateValue.assign(4, UINT64_C(0x96e1a5c387f0b42d));
         context->stateUnknown.assign(4, UINT64_C(0x1042088102044080));
         uint64_t root =
-            boundedStatic ? obelisk_rt_v1_native_state_static_handle(1) : 0;
+            boundedStatic ? talos_rt_v1_native_state_static_handle(1) : 0;
         uint8_t publishedValue = 0xa5, publishedUnknown = 0x3c;
         ClockConditionPublicationView publication{
-            obelisk_rt_v1_native_handle_offset(root, 64), 8, 0, &publishedValue,
+            talos_rt_v1_native_handle_offset(root, 64), 8, 0, &publishedValue,
             &publishedUnknown};
         for (bool overlay : {false, true}) {
           context->observerForcesCanonicalPlane = overlay;
@@ -12992,21 +12992,21 @@ TEST(DesignBytecode, PackedCanonicalLoadsMatchBitwiseBoundsAndPublication) {
             SCOPED_TRACE(offset);
             SCOPED_TRACE(overlay);
             uint64_t selected =
-                obelisk_rt_v1_native_handle_offset(root, offset);
-            obelisk_rt_process_instance_v1 *instance = nullptr;
-            ASSERT_EQ(obelisk_rt_v1_process_instance_create(&fixture.descriptor,
+                talos_rt_v1_native_handle_offset(root, offset);
+            talos_rt_process_instance_v1 *instance = nullptr;
+            ASSERT_EQ(talos_rt_v1_process_instance_create(&fixture.descriptor,
                                                             &instance),
-                      OBELISK_RT_OK);
+                      TALOS_RT_OK);
             void *frame = nullptr;
             uint64_t frameSize = 0;
-            ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame,
+            ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame,
                                                            &frameSize),
-                      OBELISK_RT_OK);
+                      TALOS_RT_OK);
             std::memcpy(frame, &selected, sizeof(selected));
-            obelisk_rt_fragment_action_v1 action{};
-            ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                          instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-                      OBELISK_RT_OK);
+            talos_rt_fragment_action_v1 action{};
+            ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                          instance, context, TALOS_RT_TIER_BYTECODE, &action),
+                      TALOS_RT_OK);
             std::vector<uint64_t> expected(resultSize / 8, 0);
             for (uint32_t bit = 0; bit != width; ++bit) {
               int64_t source = offset + bit;
@@ -13031,12 +13031,12 @@ TEST(DesignBytecode, PackedCanonicalLoadsMatchBitwiseBoundsAndPublication) {
             std::vector<uint64_t> actual(expected.size());
             std::memcpy(actual.data(), frame, resultSize);
             EXPECT_EQ(actual, expected);
-            EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance),
-                      OBELISK_RT_OK);
+            EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance),
+                      TALOS_RT_OK);
           }
         }
         context->conditionPublication = nullptr;
-        obelisk_rt_v1_context_destroy(context);
+        talos_rt_v1_context_destroy(context);
       }
     }
   }
@@ -13048,54 +13048,54 @@ TEST(DesignBytecode, StaticHandleOffsetIDStoreAndFrameRoundTrip) {
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 65),
-            OBELISK_RT_OK);
-  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_register_static(context, 1, 0, 65),
+            TALOS_RT_OK);
+  uint64_t root = talos_rt_v1_native_state_static_handle(1);
   ASSERT_NE(root, UINT64_MAX);
   std::array<uint8_t, 9> initial{
       {0xf0, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12, 0x01}};
   std::array<uint8_t, 9> unknown{};
   uint8_t changed = 0;
-  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(context, initial.data(), 65,
+  ASSERT_EQ(talos_rt_v1_native_state_store_plane(context, initial.data(), 65,
                                                    root, 65, 0, initial.data(),
                                                    &changed),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(context, unknown.data(), 65,
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_store_plane(context, unknown.data(), 65,
                                                    root, 65, 1, unknown.data(),
                                                    &changed),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
   void *frame = nullptr;
   uint64_t frameSize = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            TALOS_RT_OK);
   ASSERT_EQ(frameSize, 32u);
   std::memcpy(frame, &root, sizeof(root));
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
   uint64_t selected = 0;
   uint64_t identity = 0;
   std::memcpy(&selected, frame, sizeof(selected));
   std::memcpy(&identity, static_cast<uint8_t *>(frame) + 8, sizeof(identity));
-  EXPECT_EQ(selected, obelisk_rt_v1_native_handle_offset(root, 3));
+  EXPECT_EQ(selected, talos_rt_v1_native_handle_offset(root, 3));
   EXPECT_EQ(identity, root);
   std::array<uint8_t, 9> loaded{};
-  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+  ASSERT_EQ(talos_rt_v1_native_state_load_plane(
                 context, initial.data(), 65, root, 65, 0, 0, loaded.data()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(loaded, initial);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, StaticHandleNBARemainsBoundedAndApplies) {
@@ -13104,48 +13104,48 @@ TEST(DesignBytecode, StaticHandleNBARemainsBoundedAndApplies) {
   fixture.execution.bytecode = fixture.bytecode.data();
   fixture.execution.bytecode_size = fixture.bytecode.size();
   fixture.execution.checksum = imageChecksum(fixture.bytecode);
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 65),
-            OBELISK_RT_OK);
-  uint64_t root = obelisk_rt_v1_native_state_static_handle(1);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_register_static(context, 1, 0, 65),
+            TALOS_RT_OK);
+  uint64_t root = talos_rt_v1_native_state_static_handle(1);
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
   void *frame = nullptr;
   uint64_t frameSize = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            TALOS_RT_OK);
   std::memcpy(frame, &root, sizeof(root));
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   std::array<uint8_t, 9> dummy{}, value{}, unknown{};
-  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(context, dummy.data(), 65,
+  ASSERT_EQ(talos_rt_v1_native_state_load_plane(context, dummy.data(), 65,
                                                   root, 65, 0, 0, value.data()),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_load_plane(
                 context, dummy.data(), 65, root, 65, 1, 0, unknown.data()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(value[0], 0xf0);
   EXPECT_EQ(value[7], 0x12);
   EXPECT_EQ(value[8], 1u);
   EXPECT_EQ(unknown[0], 0x30);
   EXPECT_EQ(unknown[8], 0u);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
   std::vector<uint8_t> bytecode = makeAutomaticSpawnBytecode();
-  obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
-      OBELISK_RT_EXECUTION_HAS_BYTECODE,
+  talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
+      TALOS_RT_EXECUTION_HAS_BYTECODE,
       0,
       bytecode.data(),
       bytecode.size(),
@@ -13161,16 +13161,16 @@ TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
       0,
       nullptr,
       0};
-  obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+  talos_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   std::array<uint32_t, 1> continuations{{0}};
-  obelisk_rt_frame_layout_v1 layout{
-      OBELISK_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
+  talos_rt_frame_layout_v1 layout{
+      TALOS_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
   layout.checksum = frameChecksum(layout);
-  obelisk_rt_process_descriptor_v1 descriptor{
-      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 71},
-      OBELISK_RT_VERSION,
+  talos_rt_process_descriptor_v1 descriptor{
+      {TALOS_RT_DESCRIPTOR_PROCESS, 0, 71},
+      TALOS_RT_VERSION,
       0,
-      OBELISK_RT_TIER_MASK_BYTECODE,
+      TALOS_RT_TIER_MASK_BYTECODE,
       0,
       &layout,
       nullptr,
@@ -13180,42 +13180,42 @@ TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
       &execution,
       &entry};
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_OK);
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+            TALOS_RT_OK);
   std::array<uint8_t, 9> initial{}, dummy{};
   uint64_t automatic = UINT64_MAX;
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(context, 65, initial.data(),
+  ASSERT_EQ(talos_rt_v1_native_state_alloc(context, 65, initial.data(),
                                              initial.data(), &automatic),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   // The canonical process capture owns the extra reference that its native
   // spawn helper would normally establish.
-  ASSERT_EQ(obelisk_rt_v1_native_state_retain(context, automatic),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_retain(context, automatic),
+            TALOS_RT_OK);
 
-  obelisk_rt_process_instance_v1 *instance = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&descriptor, &instance),
-            OBELISK_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(talos_rt_v1_process_instance_create(&descriptor, &instance),
+            TALOS_RT_OK);
   void *frame = nullptr;
   uint64_t frameSize = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            TALOS_RT_OK);
   ASSERT_EQ(frameSize, 8u);
   std::memcpy(frame, &automatic, sizeof(automatic));
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_add(context, instance, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_TRUE(context->scheduledProcesses.empty());
   EXPECT_TRUE(context->scheduledDesignTasks.empty());
   EXPECT_TRUE(context->logicalProcessParentsWithChildren.empty());
   EXPECT_EQ(context->terminatedDesignTasks.rangeCount(), 1u);
   EXPECT_EQ(context->designTaskFrames.size(), 1u);
   std::array<uint8_t, 9> value{}, unknown{};
-  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+  ASSERT_EQ(talos_rt_v1_native_state_load_plane(
                 context, dummy.data(), 65, automatic, 65, 0, 0, value.data()),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_load_plane(
                 context, dummy.data(), 65, automatic, 65, 1, 0, unknown.data()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(value[0], 0xf0);
   EXPECT_EQ(value[7], 0x12);
   EXPECT_EQ(value[8], 1u);
@@ -13224,22 +13224,22 @@ TEST(DesignBytecode, SpawnRetainsStableAutomaticHandlesAndReclaimsTaskState) {
   // Allocation IDs are monotonic. ID two was allocated by the child task and
   // must have lost its owner reference when that task terminated.
   uint64_t taskOwned = (UINT64_C(1) << 63) | (UINT64_C(2) << 32);
-  EXPECT_EQ(obelisk_rt_v1_native_state_load_plane(
+  EXPECT_EQ(talos_rt_v1_native_state_load_plane(
                 context, dummy.data(), 65, taskOwned, 65, 0, 0, value.data()),
-            OBELISK_RT_INVALID_HANDLE);
-  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, automatic, 0),
-            OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_native_state_load_plane(
+            TALOS_RT_INVALID_HANDLE);
+  ASSERT_EQ(talos_rt_v1_native_state_release(context, automatic, 0),
+            TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_native_state_load_plane(
                 context, dummy.data(), 65, automatic, 65, 0, 0, value.data()),
-            OBELISK_RT_INVALID_HANDLE);
-  obelisk_rt_v1_context_destroy(context);
+            TALOS_RT_INVALID_HANDLE);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, SpawnRoundTripsReservedPreponedEventHandle) {
   std::vector<uint8_t> bytecode = makePreponedEventSpawnBytecode();
-  obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
-      OBELISK_RT_EXECUTION_HAS_BYTECODE,
+  talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
+      TALOS_RT_EXECUTION_HAS_BYTECODE,
       0,
       bytecode.data(),
       bytecode.size(),
@@ -13255,16 +13255,16 @@ TEST(DesignBytecode, SpawnRoundTripsReservedPreponedEventHandle) {
       0,
       nullptr,
       0};
-  obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+  talos_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   std::array<uint32_t, 1> continuations{{0}};
-  obelisk_rt_frame_layout_v1 layout{
-      OBELISK_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
+  talos_rt_frame_layout_v1 layout{
+      TALOS_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
   layout.checksum = frameChecksum(layout);
-  obelisk_rt_process_descriptor_v1 descriptor{
-      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 72},
-      OBELISK_RT_VERSION,
+  talos_rt_process_descriptor_v1 descriptor{
+      {TALOS_RT_DESCRIPTOR_PROCESS, 0, 72},
+      TALOS_RT_VERSION,
       0,
-      OBELISK_RT_TIER_MASK_BYTECODE,
+      TALOS_RT_TIER_MASK_BYTECODE,
       0,
       &layout,
       nullptr,
@@ -13274,35 +13274,35 @@ TEST(DesignBytecode, SpawnRoundTripsReservedPreponedEventHandle) {
       &execution,
       &entry};
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_OK);
-  obelisk_rt_process_instance_v1 *instance = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&descriptor, &instance),
-            OBELISK_RT_OK);
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+            TALOS_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(talos_rt_v1_process_instance_create(&descriptor, &instance),
+            TALOS_RT_OK);
   void *frame = nullptr;
   uint64_t frameSize = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(instance, &frame, &frameSize),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(instance, &frame, &frameSize),
+            TALOS_RT_OK);
   ASSERT_GE(frameSize, sizeof(uint64_t));
-  uint64_t preponed = OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT;
+  uint64_t preponed = TALOS_RT_STABLE_HANDLE_PREPONED_EVENT;
   std::memcpy(frame, &preponed, sizeof(preponed));
 
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
-  EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
+  EXPECT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ScheduledSignalWaitUsesDirectSubscriptions) {
   std::vector<uint8_t> bytecode = makeSignalWaitSpawnBytecode();
-  obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
-      OBELISK_RT_EXECUTION_HAS_BYTECODE,
+  talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
+      TALOS_RT_EXECUTION_HAS_BYTECODE,
       0,
       bytecode.data(),
       bytecode.size(),
@@ -13318,16 +13318,16 @@ TEST(DesignBytecode, ScheduledSignalWaitUsesDirectSubscriptions) {
       0,
       nullptr,
       0};
-  obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+  talos_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   std::array<uint32_t, 1> continuations{{0}};
-  obelisk_rt_frame_layout_v1 layout{
-      OBELISK_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
+  talos_rt_frame_layout_v1 layout{
+      TALOS_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
   layout.checksum = frameChecksum(layout);
-  obelisk_rt_process_descriptor_v1 descriptor{
-      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 72},
-      OBELISK_RT_VERSION,
+  talos_rt_process_descriptor_v1 descriptor{
+      {TALOS_RT_DESCRIPTOR_PROCESS, 0, 72},
+      TALOS_RT_VERSION,
       0,
-      OBELISK_RT_TIER_MASK_BYTECODE,
+      TALOS_RT_TIER_MASK_BYTECODE,
       0,
       &layout,
       nullptr,
@@ -13337,76 +13337,76 @@ TEST(DesignBytecode, ScheduledSignalWaitUsesDirectSubscriptions) {
       &execution,
       &entry};
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_OK);
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+            TALOS_RT_OK);
   context->signalDiagnosticsEnabled = true;
-  obelisk_rt_process_instance_v1 *instance = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&descriptor, &instance),
-            OBELISK_RT_OK);
+  talos_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(talos_rt_v1_process_instance_create(&descriptor, &instance),
+            TALOS_RT_OK);
   uint64_t capturedHandle = 16;
   std::memcpy(instance->frame, &capturedHandle, sizeof(capturedHandle));
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
-  ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  ASSERT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
+  ASSERT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
 
   ASSERT_EQ(context->scheduledDesignTasks.size(), 1u);
   ScheduledDesignTask &task = context->scheduledDesignTasks.front();
-  ASSERT_LE(8 + sizeof(obelisk_rt_wait_record_v1) +
-                sizeof(obelisk_rt_wait_entry_v1),
+  ASSERT_LE(8 + sizeof(talos_rt_wait_record_v1) +
+                sizeof(talos_rt_wait_entry_v1),
             task.scratchOffset);
   auto *wait =
-      reinterpret_cast<obelisk_rt_wait_record_v1 *>(task.frame.data() + 8);
-  auto *waitEntry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
-  *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE, 0, 1, 0, 0};
-  *waitEntry = {16, OBELISK_RT_WAIT_EDGE_NEGEDGE, 8};
+      reinterpret_cast<talos_rt_wait_record_v1 *>(task.frame.data() + 8);
+  auto *waitEntry = reinterpret_cast<talos_rt_wait_entry_v1 *>(wait + 1);
+  *wait = {TALOS_RT_VERSION, TALOS_RT_SUSPEND_EDGE, 0, 1, 0, 0};
+  *waitEntry = {16, TALOS_RT_WAIT_EDGE_NEGEDGE, 8};
 
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   ASSERT_EQ(context->scheduledDesignTasks.size(), 1u);
   ASSERT_EQ(context->scheduledDesignTasks.front().signalSubscriptions.size(),
             1u);
-  obelisk_rt_v1_scheduler_signal(
-      context, 18, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  talos_rt_v1_scheduler_signal(
+      context, 18, 1, TALOS_RT_SIGNAL_CHANGE | TALOS_RT_SIGNAL_POSEDGE);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_EQ(context->scheduledDesignTasks.size(), 1u);
   EXPECT_EQ(context->scheduledDesignTasks.front().signalSubscriptions.size(),
             1u);
-  obelisk_rt_v1_scheduler_signal(
-      context, 18, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_NEGEDGE);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  talos_rt_v1_scheduler_signal(
+      context, 18, 1, TALOS_RT_SIGNAL_CHANGE | TALOS_RT_SIGNAL_NEGEDGE);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_EQ(context->scheduledDesignTasks.size(), 1u);
   EXPECT_EQ(context->scheduledDesignTasks.front().signalSubscriptions.size(),
             1u);
   EXPECT_EQ(context->signalDiagnostics.subscriptionsHighWater, 1u);
-  obelisk_rt_v1_scheduler_signal(
-      context, 18, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_NEGEDGE);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  talos_rt_v1_scheduler_signal(
+      context, 18, 1, TALOS_RT_SIGNAL_CHANGE | TALOS_RT_SIGNAL_NEGEDGE);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_TRUE(context->scheduledDesignTasks.empty());
   EXPECT_TRUE(context->signalSubscriptionBuckets.empty());
   EXPECT_EQ(context->signalDiagnostics.subscriptionsHighWater, 1u);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode,
      ScheduledEventOnlyComputedWaitUnregistersAndRejectsPeriodicAOT) {
   std::vector<uint8_t> bytecode = makeEventOnlyComputedWaitBytecode();
-  obelisk_rt_observer_descriptor_v1 observer{
+  talos_rt_observer_descriptor_v1 observer{
       designEventOnlyObserverID, nullptr, 0, 1, 0, 0, nullptr, 0};
-  obelisk_rt_execution_descriptor_v1 execution{};
-  execution.version = OBELISK_RT_VERSION;
-  execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE;
+  talos_rt_execution_descriptor_v1 execution{};
+  execution.version = TALOS_RT_VERSION;
+  execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE;
   execution.bytecode = bytecode.data();
   execution.bytecode_size = bytecode.size();
   execution.checksum = imageChecksum(bytecode);
   execution.observers = &observer;
   execution.observer_count = 1;
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_OK);
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+            TALOS_RT_OK);
 
   ScheduledDesignTask task;
   task.id = 0x7d03;
@@ -13415,15 +13415,15 @@ TEST(DesignBytecode,
   task.scratchOffset = sizeof(DesignEventOnlyComputedWait);
   task.scratchSize = 8;
   task.urgent = true;
-  task.homeRegion = OBELISK_RT_REGION_ACTIVE;
-  task.queuedRegion = OBELISK_RT_REGION_ACTIVE;
+  task.homeRegion = TALOS_RT_REGION_ACTIVE;
+  task.queuedRegion = TALOS_RT_REGION_ACTIVE;
   task.insertionSequence = context->nextSchedulerSequence++;
   auto &record =
       *reinterpret_cast<DesignEventOnlyComputedWait *>(task.frame.data());
   record = {};
-  record.wait = {OBELISK_RT_VERSION,
-                 OBELISK_RT_SUSPEND_OBSERVER,
-                 OBELISK_RT_COMPUTED_WAIT_INTERLEAVED,
+  record.wait = {TALOS_RT_VERSION,
+                 TALOS_RT_SUSPEND_OBSERVER,
+                 TALOS_RT_COMPUTED_WAIT_INTERLEAVED,
                  1,
                  1,
                  0,
@@ -13448,15 +13448,15 @@ TEST(DesignBytecode,
   // Generic computed waits may be driven only by an event, so lifecycle
   // accounting cannot rely on a signal subscription being present.
   record.dependency = {designEventOnlyDependencyID,
-                       OBELISK_RT_OBSERVER_DEPENDENCY_EVENT, 1};
-  record.clause = {0, OBELISK_RT_OBSERVER_CONDITION_NONE,
-                   OBELISK_RT_WAIT_EDGE_POSEDGE,
-                   OBELISK_RT_COMPUTED_CLAUSE_EVENT_PRIMARY};
+                       TALOS_RT_OBSERVER_DEPENDENCY_EVENT, 1};
+  record.clause = {0, TALOS_RT_OBSERVER_CONDITION_NONE,
+                   TALOS_RT_WAIT_EDGE_POSEDGE,
+                   TALOS_RT_COMPUTED_CLAUSE_EVENT_PRIMARY};
   context->scheduledDesignTaskIndices.emplace(task.id, 0);
   context->designPollCandidates.insert(task.id);
   context->scheduledDesignTasks.push_back(std::move(task));
 
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   ASSERT_EQ(context->scheduledDesignTasks.size(), 1u);
   EXPECT_TRUE(
       context->scheduledDesignTasks.front().signalSubscriptions.empty());
@@ -13469,16 +13469,16 @@ TEST(DesignBytecode,
   // scheduled design task itself and rejects its live computed waiter.
   EXPECT_FALSE(nativePeriodicAOTEnvironmentClean(context));
 
-  obelisk_rt_v1_scheduler_event(context, designEventOnlyDependencyID, 0);
+  talos_rt_v1_scheduler_event(context, designEventOnlyDependencyID, 0);
   EXPECT_TRUE(context->scheduledDesignTasks.front().signalTriggered);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_TRUE(context->scheduledDesignTasks.empty());
   EXPECT_EQ(context->activeComputedObserverWaiterCount, 0u);
   EXPECT_TRUE(nativePeriodicAOTEnvironmentClean(context));
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
-void addBlockedForeverDesignTasks(obelisk_rt_context *context,
+void addBlockedForeverDesignTasks(talos_rt_context *context,
                                   uint64_t slowCount) {
   context->scheduledDesignTasks.reserve(context->scheduledDesignTasks.size() +
                                         slowCount);
@@ -13496,7 +13496,7 @@ void addBlockedForeverDesignTasks(obelisk_rt_context *context,
     slow.scratchOffset = 32;
     slow.scratchSize = 32;
     slow.started = true;
-    slow.suspendKind = OBELISK_RT_SUSPEND_FOREVER;
+    slow.suspendKind = TALOS_RT_SUSPEND_FOREVER;
     context->scheduledDesignTaskIndices.emplace(
         slow.id, context->scheduledDesignTasks.size());
     context->designPollCandidates.insert(slow.id);
@@ -13507,9 +13507,9 @@ void addBlockedForeverDesignTasks(obelisk_rt_context *context,
 void expectLargeDirectSignalCohortScansLinearly(uint64_t cohortSize,
                                                 uint64_t slowCount = 0) {
   std::vector<uint8_t> bytecode = makeSignalWaitSpawnBytecode();
-  obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
-      OBELISK_RT_EXECUTION_HAS_BYTECODE,
+  talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
+      TALOS_RT_EXECUTION_HAS_BYTECODE,
       0,
       bytecode.data(),
       bytecode.size(),
@@ -13525,16 +13525,16 @@ void expectLargeDirectSignalCohortScansLinearly(uint64_t cohortSize,
       0,
       nullptr,
       0};
-  obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+  talos_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   std::array<uint32_t, 1> continuations{{0}};
-  obelisk_rt_frame_layout_v1 layout{
-      OBELISK_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
+  talos_rt_frame_layout_v1 layout{
+      TALOS_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
   layout.checksum = frameChecksum(layout);
-  obelisk_rt_process_descriptor_v1 descriptor{
-      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 72},
-      OBELISK_RT_VERSION,
+  talos_rt_process_descriptor_v1 descriptor{
+      {TALOS_RT_DESCRIPTOR_PROCESS, 0, 72},
+      TALOS_RT_VERSION,
       0,
-      OBELISK_RT_TIER_MASK_BYTECODE,
+      TALOS_RT_TIER_MASK_BYTECODE,
       0,
       &layout,
       nullptr,
@@ -13544,36 +13544,36 @@ void expectLargeDirectSignalCohortScansLinearly(uint64_t cohortSize,
       &execution,
       &entry};
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_OK);
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+            TALOS_RT_OK);
   for (uint64_t index = 0; index != cohortSize; ++index) {
-    obelisk_rt_process_instance_v1 *instance = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_process_instance_create(&descriptor, &instance),
-              OBELISK_RT_OK);
+    talos_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(talos_rt_v1_process_instance_create(&descriptor, &instance),
+              TALOS_RT_OK);
     uint64_t capturedHandle = 16;
     std::memcpy(instance->frame, &capturedHandle, sizeof(capturedHandle));
-    obelisk_rt_fragment_action_v1 action{};
-    ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                  instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-              OBELISK_RT_OK);
-    ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
-    ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+    talos_rt_fragment_action_v1 action{};
+    ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                  instance, context, TALOS_RT_TIER_BYTECODE, &action),
+              TALOS_RT_OK);
+    ASSERT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
+    ASSERT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
   }
 
   ASSERT_EQ(context->scheduledDesignTasks.size(), cohortSize);
   for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
-    ASSERT_LE(8 + sizeof(obelisk_rt_wait_record_v1) +
-                  sizeof(obelisk_rt_wait_entry_v1),
+    ASSERT_LE(8 + sizeof(talos_rt_wait_record_v1) +
+                  sizeof(talos_rt_wait_entry_v1),
               task.scratchOffset);
     auto *wait =
-        reinterpret_cast<obelisk_rt_wait_record_v1 *>(task.frame.data() + 8);
-    auto *waitEntry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
-    *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE, 0, 1, 0, 0};
-    *waitEntry = {16, OBELISK_RT_WAIT_EDGE_NEGEDGE, 8};
+        reinterpret_cast<talos_rt_wait_record_v1 *>(task.frame.data() + 8);
+    auto *waitEntry = reinterpret_cast<talos_rt_wait_entry_v1 *>(wait + 1);
+    *wait = {TALOS_RT_VERSION, TALOS_RT_SUSPEND_EDGE, 0, 1, 0, 0};
+    *waitEntry = {16, TALOS_RT_WAIT_EDGE_NEGEDGE, 8};
   }
   // Start every child and establish its first direct signal subscription.
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   ASSERT_EQ(context->scheduledDesignTasks.size(), cohortSize);
   ASSERT_TRUE(context->designPollCandidates.empty());
 
@@ -13583,9 +13583,9 @@ void expectLargeDirectSignalCohortScansLinearly(uint64_t cohortSize,
   context->signalDiagnostics.candidateScans = 0;
   context->signalDiagnostics.readinessCalls = 0;
   // Wave one resumes every task, which then suspends on the same direct wait.
-  obelisk_rt_v1_scheduler_signal(
-      context, 18, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_NEGEDGE);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  talos_rt_v1_scheduler_signal(
+      context, 18, 1, TALOS_RT_SIGNAL_CHANGE | TALOS_RT_SIGNAL_NEGEDGE);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   ASSERT_EQ(context->scheduledDesignTasks.size(), cohortSize + slowCount);
   ASSERT_EQ(context->designPollCandidates.size(), slowCount);
   EXPECT_EQ(context->signalDiagnostics.candidateScans,
@@ -13593,9 +13593,9 @@ void expectLargeDirectSignalCohortScansLinearly(uint64_t cohortSize,
 
   // A second independent wave proves the resuspended tasks stay out of the
   // poll set until their next trigger. This continuation terminates them.
-  obelisk_rt_v1_scheduler_signal(
-      context, 18, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_NEGEDGE);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  talos_rt_v1_scheduler_signal(
+      context, 18, 1, TALOS_RT_SIGNAL_CHANGE | TALOS_RT_SIGNAL_NEGEDGE);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_EQ(context->scheduledDesignTasks.size(), slowCount);
   EXPECT_EQ(context->designPollCandidates.size(), slowCount);
   // Each wave performs one exact cohort build plus N-1 cached validations;
@@ -13605,7 +13605,7 @@ void expectLargeDirectSignalCohortScansLinearly(uint64_t cohortSize,
             2 * (slowCount * (cohortSize + 1) + 2 * cohortSize - 1));
   EXPECT_EQ(context->signalDiagnostics.readinessCalls,
             2 * (2 * cohortSize - 1));
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, DirectSignalCohort256ScansLinearly) {
@@ -13628,7 +13628,7 @@ TEST(DesignBytecode, DirectSignalCohortRescans64SlowCandidates) {
   expectLargeDirectSignalCohortScansLinearly(256, 64);
 }
 
-void addReadyTerminatingDesignTasks(obelisk_rt_context *context, uint64_t count,
+void addReadyTerminatingDesignTasks(talos_rt_context *context, uint64_t count,
                                     uint32_t region) {
   context->scheduledDesignTasks.reserve(context->scheduledDesignTasks.size() +
                                         count);
@@ -13644,7 +13644,7 @@ void addReadyTerminatingDesignTasks(obelisk_rt_context *context, uint64_t count,
     task.scratchOffset = 32;
     task.scratchSize = 32;
     task.started = true;
-    task.suspendKind = OBELISK_RT_SUSPEND_CHANGE;
+    task.suspendKind = TALOS_RT_SUSPEND_CHANGE;
     task.signalTriggered = true;
     task.queuedRegion = region;
     task.scheduleRank = 3;
@@ -13658,51 +13658,51 @@ void addReadyTerminatingDesignTasks(obelisk_rt_context *context, uint64_t count,
 
 TEST(DesignBytecode, SmallDirectSignalSetDoesNotAllocateCohort) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  addReadyTerminatingDesignTasks(context, 16, OBELISK_RT_REGION_ACTIVE);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  addReadyTerminatingDesignTasks(context, 16, TALOS_RT_REGION_ACTIVE);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_TRUE(context->scheduledDesignTasks.empty());
   EXPECT_EQ(context->designReadyCohort, nullptr);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ClockOccurrenceCacheSeparatesOrdinaryFromSlotFinalWaits) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  addReadyTerminatingDesignTasks(context, 19, OBELISK_RT_REGION_OBSERVED);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  addReadyTerminatingDesignTasks(context, 19, TALOS_RT_REGION_OBSERVED);
 
   for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
-    task.suspendKind = OBELISK_RT_SUSPEND_EDGE;
+    task.suspendKind = TALOS_RT_SUSPEND_EDGE;
     task.waitOffset = 0;
     task.waitSize =
-        sizeof(obelisk_rt_wait_record_v1) + sizeof(obelisk_rt_wait_entry_v1);
-    auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
+        sizeof(talos_rt_wait_record_v1) + sizeof(talos_rt_wait_entry_v1);
+    auto *wait = reinterpret_cast<talos_rt_wait_record_v1 *>(
         task.frame.data() + task.waitOffset);
-    auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
-    *wait = {OBELISK_RT_VERSION,
-             OBELISK_RT_SUSPEND_EDGE,
-             OBELISK_RT_WAIT_CLOCK_OCCURRENCE,
+    auto *entry = reinterpret_cast<talos_rt_wait_entry_v1 *>(wait + 1);
+    *wait = {TALOS_RT_VERSION,
+             TALOS_RT_SUSPEND_EDGE,
+             TALOS_RT_WAIT_CLOCK_OCCURRENCE,
              1,
              91,
              0};
-    *entry = {16, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
+    *entry = {16, TALOS_RT_WAIT_EDGE_POSEDGE, 1};
   }
   ScheduledDesignTask &slotFinal = context->scheduledDesignTasks.front();
   uint64_t slotFinalID = slotFinal.id;
-  auto *slotFinalWait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(
+  auto *slotFinalWait = reinterpret_cast<talos_rt_wait_record_v1 *>(
       slotFinal.frame.data() + slotFinal.waitOffset);
-  slotFinalWait->flags |= OBELISK_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL;
+  slotFinalWait->flags |= TALOS_RT_WAIT_CLOCK_OCCURRENCE_SLOT_FINAL;
 
   bool progress = false;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   ASSERT_NE(context->designReadyCohort, nullptr);
   ASSERT_TRUE(context->designReadyCohort->valid);
@@ -13715,25 +13715,25 @@ TEST(DesignBytecode, ClockOccurrenceCacheSeparatesOrdinaryFromSlotFinalWaits) {
     ASSERT_NE(indexed, context->scheduledDesignTaskIndices.end());
     const ScheduledDesignTask &task =
         context->scheduledDesignTasks[indexed->second];
-    const auto *wait = reinterpret_cast<const obelisk_rt_wait_record_v1 *>(
+    const auto *wait = reinterpret_cast<const talos_rt_wait_record_v1 *>(
         task.frame.data() + task.waitOffset);
-    EXPECT_EQ(wait->flags, OBELISK_RT_WAIT_CLOCK_OCCURRENCE);
+    EXPECT_EQ(wait->flags, TALOS_RT_WAIT_CLOCK_OCCURRENCE);
   }
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, SlowDominantDirectSignalSetStaysOnExactScan) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   constexpr uint64_t readyCount = 17;
   constexpr uint64_t slowCount = 1024;
-  addReadyTerminatingDesignTasks(context, readyCount, OBELISK_RT_REGION_ACTIVE);
+  addReadyTerminatingDesignTasks(context, readyCount, TALOS_RT_REGION_ACTIVE);
   addBlockedForeverDesignTasks(context, slowCount);
   context->signalDiagnosticsEnabled = true;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_EQ(context->scheduledDesignTasks.size(), slowCount);
   EXPECT_EQ(context->signalDiagnostics.candidateScans,
             readyCount * (readyCount + 1) / 2 + slowCount * (readyCount + 1));
@@ -13744,23 +13744,23 @@ TEST(DesignBytecode, SlowDominantDirectSignalSetStaysOnExactScan) {
   EXPECT_TRUE(context->designReadyCohort->suppressed);
   EXPECT_TRUE(context->designReadyCohort->persistentSuppression);
   EXPECT_TRUE(context->designReadyCohortExactScan);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode,
      SlowDominantSuppressionSurvivesTransientSchedulerGenerations) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_ACTIVE);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  addReadyTerminatingDesignTasks(context, 17, TALOS_RT_REGION_ACTIVE);
   addBlockedForeverDesignTasks(context, 1024);
 
   bool progress = false;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   ASSERT_TRUE(context->designReadyCohort->suppressed);
   EXPECT_EQ(context->designReadyCohort->suppressedCandidateHighWater, 1041u);
@@ -13774,18 +13774,18 @@ TEST(DesignBytecode,
   ++context->schedulerTime;
   context->schedulerRunningFinals = true;
   progress = true;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_FALSE(progress);
   EXPECT_TRUE(context->designReadyCohort->suppressed);
   EXPECT_EQ(context->designReadyCohort->selectionGeneration,
             rejectedGeneration);
 
   context->schedulerRunningFinals = false;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   EXPECT_TRUE(context->designReadyCohort->suppressed);
   EXPECT_EQ(context->designReadyCohort->selectionGeneration,
@@ -13793,36 +13793,36 @@ TEST(DesignBytecode,
 
   // Process creation is structural and makes the next call re-probe.
   addBlockedForeverDesignTasks(context, 1);
-  obelisk_rt_invalidate_design_ready_cohort(context);
+  talos_rt_invalidate_design_ready_cohort(context);
   uint64_t newNextTaskID = context->nextDesignTaskID;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   EXPECT_TRUE(context->designReadyCohort->suppressed);
   EXPECT_EQ(context->designReadyCohort->nextDesignTaskID, newNextTaskID);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, DesignTaskFilterTransitionsInvalidateCohortState) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_ACTIVE);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  addReadyTerminatingDesignTasks(context, 17, TALOS_RT_REGION_ACTIVE);
   addBlockedForeverDesignTasks(context, 1024);
 
   bool progress = false;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   ASSERT_TRUE(context->designReadyCohort->suppressed);
   ASSERT_TRUE(context->designReadyCohort->persistentSuppression);
 
   uint64_t forcedTask = context->scheduledDesignTasks.front().id;
-  obelisk_rt_set_design_task_filter_unlocked(context, true, forcedTask);
+  talos_rt_set_design_task_filter_unlocked(context, true, forcedTask);
   EXPECT_TRUE(context->nativeScheduleDesignTaskFilterActive);
   EXPECT_FALSE(context->designReadyCohort->valid);
   EXPECT_FALSE(context->designReadyCohort->suppressed);
@@ -13831,25 +13831,25 @@ TEST(DesignBytecode, DesignTaskFilterTransitionsInvalidateCohortState) {
   // the filter must discard it rather than reviving the old negative result.
   context->designReadyCohort->suppressed = true;
   context->designReadyCohort->persistentSuppression = true;
-  obelisk_rt_set_design_task_filter_unlocked(context, false, 0);
+  talos_rt_set_design_task_filter_unlocked(context, false, 0);
   EXPECT_FALSE(context->nativeScheduleDesignTaskFilterActive);
   EXPECT_FALSE(context->designReadyCohort->valid);
   EXPECT_FALSE(context->designReadyCohort->suppressed);
   EXPECT_FALSE(context->designReadyCohort->persistentSuppression);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, AllocatedCohortSuppressesAfterSlowDominantShrink) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_ACTIVE);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  addReadyTerminatingDesignTasks(context, 17, TALOS_RT_REGION_ACTIVE);
   bool progress = false;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   ASSERT_NE(context->designReadyCohort, nullptr);
   ASSERT_TRUE(context->designReadyCohort->valid);
@@ -13861,7 +13861,7 @@ TEST(DesignBytecode, AllocatedCohortSuppressesAfterSlowDominantShrink) {
   context->signalDiagnosticsEnabled = true;
   context->signalDiagnostics.candidateScans = 0;
   context->signalDiagnostics.readinessCalls = 0;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_EQ(context->scheduledDesignTasks.size(), slowCount);
   EXPECT_EQ(context->signalDiagnostics.candidateScans,
             readyCount * (readyCount + 1) / 2 + slowCount * (readyCount + 1));
@@ -13871,16 +13871,16 @@ TEST(DesignBytecode, AllocatedCohortSuppressesAfterSlowDominantShrink) {
   EXPECT_TRUE(context->designReadyCohort->suppressed);
   EXPECT_TRUE(context->designReadyCohort->persistentSuppression);
   EXPECT_TRUE(context->designReadyCohortExactScan);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, CachedSlowMembershipFallbackCountsAllValidationWork) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_ACTIVE);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  addReadyTerminatingDesignTasks(context, 17, TALOS_RT_REGION_ACTIVE);
   addBlockedForeverDesignTasks(context, 1);
 
   ScheduledDesignTask replacement;
@@ -13893,16 +13893,16 @@ TEST(DesignBytecode, CachedSlowMembershipFallbackCountsAllValidationWork) {
   replacement.scratchSize = 32;
   replacement.started = true;
   replacement.terminated = true;
-  replacement.suspendKind = OBELISK_RT_SUSPEND_FOREVER;
+  replacement.suspendKind = TALOS_RT_SUSPEND_FOREVER;
   uint64_t replacementID = replacement.id;
   context->scheduledDesignTaskIndices.emplace(
       replacement.id, context->scheduledDesignTasks.size());
   context->scheduledDesignTasks.push_back(std::move(replacement));
 
   bool progress = false;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   ASSERT_TRUE(context->designReadyCohort->valid);
   ASSERT_EQ(context->designReadyCohort->slowCandidates.size(), 1u);
@@ -13914,9 +13914,9 @@ TEST(DesignBytecode, CachedSlowMembershipFallbackCountsAllValidationWork) {
   context->signalDiagnosticsEnabled = true;
   context->signalDiagnostics.candidateScans = 0;
   context->signalDiagnostics.readinessCalls = 0;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   EXPECT_EQ(context->terminatedDesignTasks.count(expectedReady), 1u);
   // One cached-head check, one stale slow-membership check, then all 17 live
@@ -13924,22 +13924,22 @@ TEST(DesignBytecode, CachedSlowMembershipFallbackCountsAllValidationWork) {
   EXPECT_EQ(context->signalDiagnostics.candidateScans, 19u);
   EXPECT_EQ(context->signalDiagnostics.readinessCalls, 17u);
   EXPECT_FALSE(context->designReadyCohort->valid);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, DirectSignalCohortPreservesBoundAndControlOrdering) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   constexpr uint64_t cohortSize = 17;
-  addReadyTerminatingDesignTasks(context, cohortSize, OBELISK_RT_REGION_ACTIVE);
+  addReadyTerminatingDesignTasks(context, cohortSize, TALOS_RT_REGION_ACTIVE);
 
   bool progress = false;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   ASSERT_NE(context->designReadyCohort, nullptr);
   ASSERT_TRUE(context->designReadyCohort->valid);
@@ -13948,9 +13948,9 @@ TEST(DesignBytecode, DirectSignalCohortPreservesBoundAndControlOrdering) {
 
   // The upper bound is strict. Rejecting the cached head must not consume it.
   progress = true;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, OBELISK_RT_REGION_ACTIVE, 3,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, TALOS_RT_REGION_ACTIVE, 3,
                                            2, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_FALSE(progress);
   ASSERT_TRUE(context->designReadyCohort->valid);
   ASSERT_FALSE(context->designReadyCohort->ready.empty());
@@ -13958,33 +13958,33 @@ TEST(DesignBytecode, DirectSignalCohortPreservesBoundAndControlOrdering) {
 
   // A rare process-control mutation explicitly invalidates the cached order;
   // the following arbitration therefore returns to the exact general scan.
-  obelisk_rt_process_control_disposition disposition{};
-  ASSERT_EQ(obelisk_rt_v1_process_control(context, 100 + cohortSize - 2,
-                                          OBELISK_RT_PROCESS_CONTROL_SUSPEND,
+  talos_rt_process_control_disposition disposition{};
+  ASSERT_EQ(talos_rt_v1_process_control(context, 100 + cohortSize - 2,
+                                          TALOS_RT_PROCESS_CONTROL_SUSPEND,
                                           &disposition),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_FALSE(context->designReadyCohort->valid);
-  ASSERT_EQ(obelisk_rt_v1_process_control(context, 100 + cohortSize - 2,
-                                          OBELISK_RT_PROCESS_CONTROL_RESUME,
+  ASSERT_EQ(talos_rt_v1_process_control(context, 100 + cohortSize - 2,
+                                          TALOS_RT_PROCESS_CONTROL_RESUME,
                                           &disposition),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_TRUE(context->scheduledDesignTasks.empty());
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, DirectSignalCohortRevalidatesTimePhaseAndFinals) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  addReadyTerminatingDesignTasks(context, 20, OBELISK_RT_REGION_ACTIVE);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  addReadyTerminatingDesignTasks(context, 20, TALOS_RT_REGION_ACTIVE);
 
   bool progress = false;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   ASSERT_TRUE(context->designReadyCohort->valid);
 
@@ -13992,9 +13992,9 @@ TEST(DesignBytecode, DirectSignalCohortRevalidatesTimePhaseAndFinals) {
   // the freshly validated head in place for the following phase mutation.
   ++context->schedulerTime;
   progress = true;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, OBELISK_RT_REGION_ACTIVE, 0,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, TALOS_RT_REGION_ACTIVE, 0,
                                            0, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_FALSE(progress);
   ASSERT_TRUE(context->designReadyCohort->valid);
   EXPECT_EQ(context->designReadyCohort->schedulerTime, context->schedulerTime);
@@ -14003,9 +14003,9 @@ TEST(DesignBytecode, DirectSignalCohortRevalidatesTimePhaseAndFinals) {
   auto indexed = context->scheduledDesignTaskIndices.find(finalPhaseID);
   ASSERT_NE(indexed, context->scheduledDesignTaskIndices.end());
   context->scheduledDesignTasks[indexed->second].phase = 1;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   EXPECT_EQ(context->terminatedDesignTasks.count(finalPhaseID), 0u);
   ASSERT_TRUE(context->designReadyCohort->valid);
@@ -14013,9 +14013,9 @@ TEST(DesignBytecode, DirectSignalCohortRevalidatesTimePhaseAndFinals) {
   // Entering Finals rejects the active-phase cache. The sole final-phase task
   // is selected by the exact scan, while the unprofitable shape is suppressed.
   context->schedulerRunningFinals = true;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   EXPECT_EQ(context->terminatedDesignTasks.count(finalPhaseID), 1u);
   EXPECT_FALSE(context->designReadyCohort->valid);
@@ -14023,24 +14023,24 @@ TEST(DesignBytecode, DirectSignalCohortRevalidatesTimePhaseAndFinals) {
   EXPECT_TRUE(context->designReadyCohort->persistentSuppression);
   EXPECT_TRUE(context->designReadyCohortExactScan);
   EXPECT_TRUE(context->designReadyCohort->runningFinals);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, CachedDirectSignalCohortRespectsReactiveIteration) {
   for (bool enteredReactive : {false, true}) {
     SCOPED_TRACE(enteredReactive);
     Fixture fixture;
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_REACTIVE);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    addReadyTerminatingDesignTasks(context, 17, TALOS_RT_REGION_REACTIVE);
 
     bool progress = false;
-    ASSERT_EQ(obelisk_rt_run_one_design_task(
-                  context, enteredReactive ? UINT32_MAX : OBELISK_RT_REGION_REACTIVE,
+    ASSERT_EQ(talos_rt_run_one_design_task(
+                  context, enteredReactive ? UINT32_MAX : TALOS_RT_REGION_REACTIVE,
                   0, 0, &progress),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(progress, enteredReactive);
     ASSERT_NE(context->designReadyCohort, nullptr);
     ASSERT_TRUE(context->designReadyCohort->valid);
@@ -14049,42 +14049,42 @@ TEST(DesignBytecode, CachedDirectSignalCohortRespectsReactiveIteration) {
     ScheduledNBA nba;
     nba.sequence = context->nextSchedulerSequence++;
     nba.dueTime = context->schedulerTime;
-    nba.execRegion = OBELISK_RT_REGION_NBA;
+    nba.execRegion = TALOS_RT_REGION_NBA;
     nba.valuePlane = reinterpret_cast<uint8_t *>(context->stateValue.data());
     nba.unknownPlane = reinterpret_cast<uint8_t *>(context->stateUnknown.data());
     nba.planeBitCount = fixture.execution.state_bit_count;
     nba.bitOffset =
-        obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 0);
+        talos_rt_stable_handle_encode(TALOS_RT_STABLE_HANDLE_GLOBAL, 0, 0);
     nba.bitWidth = 1;
     nba.inlinePacked = true;
     nba.inlineValue = 1;
     context->scheduledNBAs.push_back(std::move(nba));
     context->nativeScheduleSingleStep = true;
-    ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
     // IEEE 1800-2023 4.5: NBA precedes entry into Reactive, but once that
     // iteration starts it must wait for the remaining Reactive tasks to drain.
     EXPECT_EQ(context->stateValue.front() & 1, enteredReactive ? 0u : 1u);
     EXPECT_EQ(context->scheduledDesignTasks.size(), enteredReactive ? 15u : 17u);
     EXPECT_EQ(context->designReadyCohort->valid, !enteredReactive);
     context->nativeScheduleSingleStep = false;
-    ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
     EXPECT_TRUE(context->scheduledDesignTasks.empty());
     EXPECT_EQ(context->stateValue.front() & 1, 1u);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
 TEST(DesignBytecode, CachedDirectSignalCohortInvalidatesForPriorityWake) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_REACTIVE);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  addReadyTerminatingDesignTasks(context, 17, TALOS_RT_REGION_REACTIVE);
   bool progress = false;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   ASSERT_TRUE(context->designReadyCohort->valid);
 
@@ -14094,33 +14094,33 @@ TEST(DesignBytecode, CachedDirectSignalCohortInvalidatesForPriorityWake) {
   context->scheduledDesignTasks[indexed->second].prioritySignal = true;
   if (++context->schedulerSelectionGeneration == 0)
     context->schedulerSelectionGeneration = 1;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   EXPECT_EQ(context->terminatedDesignTasks.count(priorityID), 1u);
   EXPECT_FALSE(context->designReadyCohort->valid);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode,
      SimultaneousPrioritySignalWakesRemainInExactCandidateOrder) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  addReadyTerminatingDesignTasks(context, 19, OBELISK_RT_REGION_ACTIVE);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  addReadyTerminatingDesignTasks(context, 19, TALOS_RT_REGION_ACTIVE);
 
   struct {
-    obelisk_rt_wait_record_v1 wait;
-    obelisk_rt_wait_entry_v1 entry;
-  } record{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0},
-           {16, OBELISK_RT_WAIT_EDGE_CHANGE, 8}};
+    talos_rt_wait_record_v1 wait;
+    talos_rt_wait_entry_v1 entry;
+  } record{{TALOS_RT_VERSION, TALOS_RT_SUSPEND_CHANGE, 0, 1, 0, 0},
+           {16, TALOS_RT_WAIT_EDGE_CHANGE, 8}};
   context->designPollCandidates.clear();
   for (ScheduledDesignTask &task : context->scheduledDesignTasks) {
     task.signalTriggered = false;
-    ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
+    ASSERT_TRUE(talos_rt_register_signal_wait_unlocked(
         context, &record.wait, task.signalSubscriptions, task.signalLatch,
         task.id, true));
   }
@@ -14131,8 +14131,8 @@ TEST(DesignBytecode,
 
   // Exercise the production direct-wait publication path so both equal-key
   // priority candidates become runnable in the same scheduler generation.
-  obelisk_rt_v1_scheduler_signal(
-      context, 18, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE);
+  talos_rt_v1_scheduler_signal(
+      context, 18, 1, TALOS_RT_SIGNAL_CHANGE | TALOS_RT_SIGNAL_POSEDGE);
   ASSERT_EQ(context->designPollCandidates.size(), 19u);
   uint64_t exactFirst = 0;
   for (uint64_t candidateID : context->designPollCandidates) {
@@ -14146,9 +14146,9 @@ TEST(DesignBytecode,
   ASSERT_NE(exactFirst, 0u);
 
   bool progress = false;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   EXPECT_EQ(context->terminatedDesignTasks.count(exactFirst), 1u);
   ASSERT_NE(context->designReadyCohort, nullptr);
@@ -14166,20 +14166,20 @@ TEST(DesignBytecode,
   }
   // Selecting an exact slow candidate discards the ready-only cache.
   EXPECT_FALSE(context->designReadyCohort->valid);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, CachedDirectSignalCohortYieldsToUrgentTaskRequeue) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  addReadyTerminatingDesignTasks(context, 17, OBELISK_RT_REGION_REACTIVE);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  addReadyTerminatingDesignTasks(context, 17, TALOS_RT_REGION_REACTIVE);
   bool progress = false;
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   ASSERT_TRUE(context->designReadyCohort->valid);
 
@@ -14193,26 +14193,26 @@ TEST(DesignBytecode, CachedDirectSignalCohortYieldsToUrgentTaskRequeue) {
   urgent.scratchSize = 32;
   urgent.started = true;
   urgent.urgent = true;
-  urgent.queuedRegion = OBELISK_RT_REGION_REACTIVE;
+  urgent.queuedRegion = TALOS_RT_REGION_REACTIVE;
   urgent.insertionSequence = 1000;
   context->scheduledDesignTaskIndices.emplace(
       urgent.id, context->scheduledDesignTasks.size());
   context->designPollCandidates.insert(urgent.id);
   context->scheduledDesignTasks.push_back(std::move(urgent));
-  ASSERT_EQ(obelisk_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
+  ASSERT_EQ(talos_rt_run_one_design_task(context, UINT32_MAX, UINT32_MAX,
                                            UINT64_MAX, &progress),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_TRUE(progress);
   EXPECT_EQ(context->terminatedDesignTasks.count(999), 1u);
   EXPECT_FALSE(context->designReadyCohort->valid);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, ScheduledClockOccurrenceRejectsMalformedWaitRecords) {
   std::vector<uint8_t> bytecode = makeSignalWaitSpawnBytecode();
-  obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
-      OBELISK_RT_EXECUTION_HAS_BYTECODE,
+  talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
+      TALOS_RT_EXECUTION_HAS_BYTECODE,
       0,
       bytecode.data(),
       bytecode.size(),
@@ -14228,16 +14228,16 @@ TEST(DesignBytecode, ScheduledClockOccurrenceRejectsMalformedWaitRecords) {
       0,
       nullptr,
       0};
-  obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+  talos_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
   std::array<uint32_t, 1> continuations{{0}};
-  obelisk_rt_frame_layout_v1 layout{
-      OBELISK_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
+  talos_rt_frame_layout_v1 layout{
+      TALOS_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
   layout.checksum = frameChecksum(layout);
-  obelisk_rt_process_descriptor_v1 descriptor{
-      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 72},
-      OBELISK_RT_VERSION,
+  talos_rt_process_descriptor_v1 descriptor{
+      {TALOS_RT_DESCRIPTOR_PROCESS, 0, 72},
+      TALOS_RT_VERSION,
       0,
-      OBELISK_RT_TIER_MASK_BYTECODE,
+      TALOS_RT_TIER_MASK_BYTECODE,
       0,
       &layout,
       nullptr,
@@ -14249,52 +14249,52 @@ TEST(DesignBytecode, ScheduledClockOccurrenceRejectsMalformedWaitRecords) {
 
   auto expectInvalid = [&](uint32_t count, uint64_t payload,
                            uint64_t conditionMask,
-                           obelisk_rt_wait_edge_kind conditionEdge,
+                           talos_rt_wait_edge_kind conditionEdge,
                            uint32_t conditionWidth) {
-    obelisk_rt_context *context = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-              OBELISK_RT_OK);
-    obelisk_rt_process_instance_v1 *instance = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_process_instance_create(&descriptor, &instance),
-              OBELISK_RT_OK);
+    talos_rt_context *context = nullptr;
+    ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+              TALOS_RT_OK);
+    talos_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(talos_rt_v1_process_instance_create(&descriptor, &instance),
+              TALOS_RT_OK);
     uint64_t capturedHandle = 16;
     std::memcpy(instance->frame, &capturedHandle, sizeof(capturedHandle));
-    obelisk_rt_fragment_action_v1 action{};
-    ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                  instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-              OBELISK_RT_OK);
-    ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
-    ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
+    talos_rt_fragment_action_v1 action{};
+    ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                  instance, context, TALOS_RT_TIER_BYTECODE, &action),
+              TALOS_RT_OK);
+    ASSERT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
+    ASSERT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
     ASSERT_EQ(context->scheduledDesignTasks.size(), 1u);
     ScheduledDesignTask &task = context->scheduledDesignTasks.front();
-    size_t requiredWaitEnd = 8 + sizeof(obelisk_rt_wait_record_v1) +
-                             2 * sizeof(obelisk_rt_wait_entry_v1);
+    size_t requiredWaitEnd = 8 + sizeof(talos_rt_wait_record_v1) +
+                             2 * sizeof(talos_rt_wait_entry_v1);
     task.frame.resize(std::max(task.frame.size(), requiredWaitEnd));
     task.scratchOffset =
         std::max<uint64_t>(task.scratchOffset, requiredWaitEnd);
-    ASSERT_LE(8 + sizeof(obelisk_rt_wait_record_v1) +
-                  2 * sizeof(obelisk_rt_wait_entry_v1),
+    ASSERT_LE(8 + sizeof(talos_rt_wait_record_v1) +
+                  2 * sizeof(talos_rt_wait_entry_v1),
               task.scratchOffset);
     auto *wait =
-        reinterpret_cast<obelisk_rt_wait_record_v1 *>(task.frame.data() + 8);
-    auto *entries = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
-    *wait = {OBELISK_RT_VERSION,
-             OBELISK_RT_SUSPEND_EDGE,
-             OBELISK_RT_WAIT_CLOCK_OCCURRENCE,
+        reinterpret_cast<talos_rt_wait_record_v1 *>(task.frame.data() + 8);
+    auto *entries = reinterpret_cast<talos_rt_wait_entry_v1 *>(wait + 1);
+    *wait = {TALOS_RT_VERSION,
+             TALOS_RT_SUSPEND_EDGE,
+             TALOS_RT_WAIT_CLOCK_OCCURRENCE,
              count,
              payload,
              conditionMask};
-    entries[0] = {16, OBELISK_RT_WAIT_EDGE_POSEDGE, 1};
+    entries[0] = {16, TALOS_RT_WAIT_EDGE_POSEDGE, 1};
     entries[1] = {17, conditionEdge, conditionWidth};
-    EXPECT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_INVALID_FRAME);
-    obelisk_rt_v1_context_destroy(context);
+    EXPECT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_INVALID_FRAME);
+    talos_rt_v1_context_destroy(context);
   };
 
-  expectInvalid(1, 0, 0, OBELISK_RT_WAIT_EDGE_NONE, 1);
-  expectInvalid(0, 1, 0, OBELISK_RT_WAIT_EDGE_NONE, 1);
-  expectInvalid(2, 1, 2, OBELISK_RT_WAIT_EDGE_NONE, 1);
-  expectInvalid(2, 1, 1, OBELISK_RT_WAIT_EDGE_POSEDGE, 1);
-  expectInvalid(2, 1, 1, OBELISK_RT_WAIT_EDGE_NONE, 0);
+  expectInvalid(1, 0, 0, TALOS_RT_WAIT_EDGE_NONE, 1);
+  expectInvalid(0, 1, 0, TALOS_RT_WAIT_EDGE_NONE, 1);
+  expectInvalid(2, 1, 2, TALOS_RT_WAIT_EDGE_NONE, 1);
+  expectInvalid(2, 1, 1, TALOS_RT_WAIT_EDGE_POSEDGE, 1);
+  expectInvalid(2, 1, 1, TALOS_RT_WAIT_EDGE_NONE, 0);
 }
 
 TEST(DesignBytecode, BlockingStorePreservesSparseTransitionCoordinates) {
@@ -14302,7 +14302,7 @@ TEST(DesignBytecode, BlockingStorePreservesSparseTransitionCoordinates) {
   fixture.bytecode = makeSchedulerBytecode();
   size_t codeOffset = get64(fixture.bytecode, 72);
   size_t constantOffset = get64(fixture.bytecode, 104);
-  instruction(fixture.bytecode, codeOffset, 3, OBELISK_RT_DB_STORE_STATE, 0, 0,
+  instruction(fixture.bytecode, codeOffset, 3, TALOS_RT_DB_STORE_STATE, 0, 0,
               1, 0);
   put64(fixture.bytecode, constantOffset, UINT64_C(0xa7));
   put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
@@ -14316,47 +14316,47 @@ TEST(DesignBytecode, BlockingStorePreservesSparseTransitionCoordinates) {
   fixture.descriptor.execution = &fixture.execution;
   fixture.descriptor.design_bytecode = &fixture.entry;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   context->forceMask.resize(2);
   context->forceMask[0] = UINT64_C(1) << 1;
 
   struct {
-    obelisk_rt_wait_record_v1 wait;
-    obelisk_rt_wait_entry_v1 entry;
-  } waitRecord{{OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_EDGE, 0, 1, 0, 0},
-               {7, OBELISK_RT_WAIT_EDGE_POSEDGE, 1}};
+    talos_rt_wait_record_v1 wait;
+    talos_rt_wait_entry_v1 entry;
+  } waitRecord{{TALOS_RT_VERSION, TALOS_RT_SUSPEND_EDGE, 0, 1, 0, 0},
+               {7, TALOS_RT_WAIT_EDGE_POSEDGE, 1}};
   std::vector<std::unique_ptr<SignalSubscription>> subscriptions;
   std::unique_ptr<SignalWaitLatch> latch;
-  ASSERT_TRUE(obelisk_rt_register_signal_wait_unlocked(
+  ASSERT_TRUE(talos_rt_register_signal_wait_unlocked(
       context, &waitRecord.wait, subscriptions, latch));
 
-  obelisk_rt_process_instance_v1 *instance = nullptr;
+  talos_rt_process_instance_v1 *instance = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_process_instance_create(&fixture.descriptor, &instance),
-      OBELISK_RT_OK);
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                instance, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+      talos_rt_v1_process_instance_create(&fixture.descriptor, &instance),
+      TALOS_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                instance, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
   ASSERT_TRUE(latch);
   EXPECT_TRUE(latch->triggered);
   EXPECT_EQ(context->stateValue[0] & UINT64_C(0xff), UINT64_C(0xa5));
   EXPECT_EQ(context->stateValue[0] & (UINT64_C(1) << 1), 0u);
 
-  obelisk_rt_unregister_signal_wait_unlocked(context, subscriptions);
-  EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_unregister_signal_wait_unlocked(context, subscriptions);
+  EXPECT_EQ(talos_rt_v1_process_instance_destroy(instance), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
   std::vector<uint8_t> bytecode = makeAutomaticSpawnBytecode(10);
-  obelisk_rt_execution_descriptor_v1 execution{
-      OBELISK_RT_VERSION,
-      OBELISK_RT_EXECUTION_HAS_BYTECODE,
+  talos_rt_execution_descriptor_v1 execution{
+      TALOS_RT_VERSION,
+      TALOS_RT_EXECUTION_HAS_BYTECODE,
       0,
       bytecode.data(),
       bytecode.size(),
@@ -14373,15 +14373,15 @@ TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
       nullptr,
       0};
   std::array<uint32_t, 1> continuations{{0}};
-  obelisk_rt_frame_layout_v1 bytecodeLayout{
-      OBELISK_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
+  talos_rt_frame_layout_v1 bytecodeLayout{
+      TALOS_RT_VERSION, 0, 8, 8, nullptr, 0, 1, continuations.data(), 0};
   bytecodeLayout.checksum = frameChecksum(bytecodeLayout);
-  obelisk_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
-  obelisk_rt_process_descriptor_v1 bytecodeDescriptor{
-      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 81},
-      OBELISK_RT_VERSION,
+  talos_rt_design_bytecode_entry_v1 entry{&execution, 0, 0};
+  talos_rt_process_descriptor_v1 bytecodeDescriptor{
+      {TALOS_RT_DESCRIPTOR_PROCESS, 0, 81},
+      TALOS_RT_VERSION,
       0,
-      OBELISK_RT_TIER_MASK_BYTECODE,
+      TALOS_RT_TIER_MASK_BYTECODE,
       0,
       &bytecodeLayout,
       nullptr,
@@ -14391,43 +14391,43 @@ TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
       &execution,
       &entry};
 
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
-            OBELISK_RT_OK);
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &context),
+            TALOS_RT_OK);
   std::array<uint8_t, 9> initial{};
-  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(context, 65, initial.data(),
+  ASSERT_EQ(talos_rt_v1_native_state_alloc(context, 65, initial.data(),
                                              initial.data(),
                                              &mixedTierObservedHandle),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_retain(context, mixedTierObservedHandle),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_retain(context, mixedTierObservedHandle),
+            TALOS_RT_OK);
 
   // Execute the bytecode root directly. It enqueues a rank-10 bytecode child
   // before the rank-5 native process is registered.
-  obelisk_rt_process_instance_v1 *root = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&bytecodeDescriptor, &root),
-            OBELISK_RT_OK);
+  talos_rt_process_instance_v1 *root = nullptr;
+  ASSERT_EQ(talos_rt_v1_process_instance_create(&bytecodeDescriptor, &root),
+            TALOS_RT_OK);
   void *frame = nullptr;
   uint64_t frameSize = 0;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_frame(root, &frame, &frameSize),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_instance_frame(root, &frame, &frameSize),
+            TALOS_RT_OK);
   ASSERT_EQ(frameSize, 8u);
   std::memcpy(frame, &mixedTierObservedHandle, sizeof(mixedTierObservedHandle));
-  obelisk_rt_fragment_action_v1 action{};
-  ASSERT_EQ(obelisk_rt_v1_process_instance_execute(
-                root, context, OBELISK_RT_TIER_BYTECODE, &action),
-            OBELISK_RT_OK);
-  ASSERT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
-  ASSERT_EQ(obelisk_rt_v1_process_instance_destroy(root), OBELISK_RT_OK);
+  talos_rt_fragment_action_v1 action{};
+  ASSERT_EQ(talos_rt_v1_process_instance_execute(
+                root, context, TALOS_RT_TIER_BYTECODE, &action),
+            TALOS_RT_OK);
+  ASSERT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
+  ASSERT_EQ(talos_rt_v1_process_instance_destroy(root), TALOS_RT_OK);
 
-  obelisk_rt_frame_layout_v1 nativeLayout{
-      OBELISK_RT_VERSION, 0, 0, 1, nullptr, 0, 1, continuations.data(), 0};
+  talos_rt_frame_layout_v1 nativeLayout{
+      TALOS_RT_VERSION, 0, 0, 1, nullptr, 0, 1, continuations.data(), 0};
   nativeLayout.checksum = frameChecksum(nativeLayout);
-  obelisk_rt_process_descriptor_v1 nativeDescriptor{
-      {OBELISK_RT_DESCRIPTOR_PROCESS, 0, 82},
-      OBELISK_RT_VERSION,
+  talos_rt_process_descriptor_v1 nativeDescriptor{
+      {TALOS_RT_DESCRIPTOR_PROCESS, 0, 82},
+      TALOS_RT_VERSION,
       0,
-      OBELISK_RT_TIER_MASK_NATIVE,
+      TALOS_RT_TIER_MASK_NATIVE,
       0,
       &nativeLayout,
       mixedTierRequirements,
@@ -14436,37 +14436,37 @@ TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
       nullptr,
       nullptr,
       nullptr};
-  obelisk_rt_process_instance_v1 *native = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&nativeDescriptor, &native),
-            OBELISK_RT_OK);
+  talos_rt_process_instance_v1 *native = nullptr;
+  ASSERT_EQ(talos_rt_v1_process_instance_create(&nativeDescriptor, &native),
+            TALOS_RT_OK);
   mixedTierObservedValue = UINT8_MAX;
-  ASSERT_EQ(obelisk_rt_v1_scheduler_add_ranked(context, native, 0, 5),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_add_ranked(context, native, 0, 5),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
   EXPECT_EQ(mixedTierObservedValue, 0);
 
   std::array<uint8_t, 9> dummy{}, value{};
-  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(context, dummy.data(), 65,
+  ASSERT_EQ(talos_rt_v1_native_state_load_plane(context, dummy.data(), 65,
                                                   mixedTierObservedHandle, 65,
                                                   0, 0, value.data()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(value[0], 0xf0);
   ASSERT_EQ(
-      obelisk_rt_v1_native_state_release(context, mixedTierObservedHandle, 0),
-      OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_native_state_release(context, mixedTierObservedHandle, 0),
+      TALOS_RT_OK);
+  talos_rt_v1_context_destroy(context);
   mixedTierObservedHandle = UINT64_MAX;
 }
 
 TEST(DesignBytecode, EventWordsRoundTripCanonicalHandles) {
-  using namespace obelisk::designbytecode;
+  using namespace talos::designbytecode;
   for (uint64_t identity :
-       {uint64_t{0}, uint64_t{37}, OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT,
-        OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG | uint64_t{77},
+       {uint64_t{0}, uint64_t{37}, TALOS_RT_STABLE_HANDLE_PREPONED_EVENT,
+        TALOS_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG | uint64_t{77},
         UINT64_MAX}) {
     std::array<uint8_t, 32> record{};
     ASSERT_TRUE(decodeCanonicalEventHandle(identity, record.data()));
-    EXPECT_EQ(read32(record.data()), OBELISK_RT_DESCRIPTOR_EVENT);
+    EXPECT_EQ(read32(record.data()), TALOS_RT_DESCRIPTOR_EVENT);
     uint64_t encoded = 0;
     ASSERT_TRUE(encodeCanonicalHandle(record.data(), encoded));
     EXPECT_EQ(encoded, identity);
@@ -14477,15 +14477,15 @@ TEST(DesignBytecode, EventWordsRoundTripCanonicalHandles) {
 // base reference, and writes the same identity back to its canonical frame.
 std::vector<uint8_t>
 makeBuiltinUpcastBytecode(uint8_t sourceFlags, uint8_t destinationFlags,
-                          uint16_t opcode = OBELISK_RT_DB_BITCAST) {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+                          uint16_t opcode = TALOS_RT_DB_BITCAST) {
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 2 * 40;
   constexpr size_t continuationOffset = codeOffset + 4 * 32;
   std::vector<uint8_t> bytes(continuationOffset + 24, 0);
   std::memcpy(bytes.data(), "OBBCDS1\0", 8);
-  put32(bytes, 8, OBELISK_RT_VERSION);
-  put32(bytes, 16, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE);
+  put32(bytes, 8, TALOS_RT_VERSION);
+  put32(bytes, 16, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE);
   put64(bytes, 24, bytes.size());
   put64(bytes, 40, functionOffset);
   put64(bytes, 48, 1);
@@ -14506,116 +14506,116 @@ makeBuiltinUpcastBytecode(uint8_t sourceFlags, uint8_t destinationFlags,
   put64(bytes, functionOffset + 64, 8);
   put64(bytes, functionOffset + 80, 1);
   put64(bytes, functionOffset + 88,
-        OBELISK_RT_DESIGN_FUNCTION_PROCESS | (uint64_t{16} << 1));
+        TALOS_RT_DESIGN_FUNCTION_PROCESS | (uint64_t{16} << 1));
   for (unsigned index = 0; index != 2; ++index) {
     size_t record = layoutOffset + index * 40;
-    bytes[record] = OBELISK_RT_DBREG_MANAGED;
+    bytes[record] = TALOS_RT_DBREG_MANAGED;
     bytes[record + 1] = index ? destinationFlags : sourceFlags;
     put32(bytes, record + 4, 64);
     put64(bytes, record + 8, index * 8);
     put64(bytes, record + 16, 8);
   }
-  instruction(bytes, codeOffset, 0, OBELISK_RT_DB_LOAD_FRAME);
+  instruction(bytes, codeOffset, 0, TALOS_RT_DB_LOAD_FRAME);
   instruction(bytes, codeOffset, 1, opcode, 0, 1, 0);
-  instruction(bytes, codeOffset, 2, OBELISK_RT_DB_STORE_FRAME, 0, 0, 1, 0, 0, 0,
+  instruction(bytes, codeOffset, 2, TALOS_RT_DB_STORE_FRAME, 0, 0, 1, 0, 0, 0,
               8);
-  instruction(bytes, codeOffset, 3, OBELISK_RT_DB_TERMINATE);
+  instruction(bytes, codeOffset, 3, TALOS_RT_DB_TERMINATE);
   put64(bytes, 32, imageChecksum(bytes));
   return bytes;
 }
 
 TEST(DesignBytecode, BuiltinUpcastChecksIdentityAndAncestry) {
-  for (uint8_t flags : {OBELISK_RT_DBREG_MAILBOX, OBELISK_RT_DBREG_SEMAPHORE}) {
+  for (uint8_t flags : {TALOS_RT_DBREG_MAILBOX, TALOS_RT_DBREG_SEMAPHORE}) {
     SCOPED_TRACE(static_cast<unsigned>(flags));
     Fixture fixture;
     fixture.bytecode =
-        makeBuiltinUpcastBytecode(OBELISK_RT_DBREG_CLASS_HANDLE, flags);
+        makeBuiltinUpcastBytecode(TALOS_RT_DBREG_CLASS_HANDLE, flags);
     fixture.execution.bytecode = fixture.bytecode.data();
     fixture.execution.bytecode_size = fixture.bytecode.size();
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    obelisk_rt_gc_lane_v1 *lane = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
-    obelisk_rt_trace_entry_v1 trace{
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    talos_rt_gc_lane_v1 *lane = nullptr;
+    ASSERT_EQ(talos_rt_v1_gc_lane_create(context, &lane), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
+    talos_rt_trace_entry_v1 trace{
         8,
         0,
         1,
-        OBELISK_RT_TRACE_STRONG,
-        static_cast<obelisk_rt_managed_slot_kind_v1>(
-            flags == OBELISK_RT_DBREG_MAILBOX ? OBELISK_RT_MANAGED_SLOT_MAILBOX
-                                            : OBELISK_RT_MANAGED_SLOT_SEMAPHORE),
+        TALOS_RT_TRACE_STRONG,
+        static_cast<talos_rt_managed_slot_kind_v1>(
+            flags == TALOS_RT_DBREG_MAILBOX ? TALOS_RT_MANAGED_SLOT_MAILBOX
+                                            : TALOS_RT_MANAGED_SLOT_SEMAPHORE),
         nullptr};
-    obelisk_rt_trace_layout_v1 layout{OBELISK_RT_VERSION, 0, 16, 8, &trace, 1};
-    obelisk_rt_class_descriptor_v1 base{};
-    base.version = OBELISK_RT_VERSION;
+    talos_rt_trace_layout_v1 layout{TALOS_RT_VERSION, 0, 16, 8, &trace, 1};
+    talos_rt_class_descriptor_v1 base{};
+    base.version = TALOS_RT_VERSION;
     base.class_id = 1;
     base.instance_size = 16;
     base.instance_alignment = 8;
     base.layout = &layout;
-    base.builtin_base_kind = flags == OBELISK_RT_DBREG_MAILBOX
-                                 ? OBELISK_RT_BUILTIN_CLASS_MAILBOX
-                                 : OBELISK_RT_BUILTIN_CLASS_SEMAPHORE;
+    base.builtin_base_kind = flags == TALOS_RT_DBREG_MAILBOX
+                                 ? TALOS_RT_BUILTIN_CLASS_MAILBOX
+                                 : TALOS_RT_BUILTIN_CLASS_SEMAPHORE;
     base.builtin_base_offset = 8;
-    obelisk_rt_class_descriptor_v1 derived = base;
+    talos_rt_class_descriptor_v1 derived = base;
     derived.class_id = 2;
     derived.base = &base;
-    derived.builtin_base_kind = OBELISK_RT_BUILTIN_CLASS_NONE;
+    derived.builtin_base_kind = TALOS_RT_BUILTIN_CLASS_NONE;
     derived.builtin_base_offset = 0;
-    obelisk_rt_class_descriptor_v1 unrelated = derived;
+    talos_rt_class_descriptor_v1 unrelated = derived;
     unrelated.class_id = 3;
     unrelated.base = nullptr;
     unrelated.layout = nullptr;
     for (const auto *descriptor : {&base, &derived, &unrelated})
-      ASSERT_EQ(obelisk_rt_v1_class_register(context, descriptor),
-                OBELISK_RT_OK);
-    obelisk_rt_object_v1 *object = nullptr;
-    obelisk_rt_gc_root_v1 root{};
-    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &object), OBELISK_RT_OK);
-    auto execute = [&](obelisk_rt_object_v1 *input,
-                       obelisk_rt_status expected) {
-      std::array<uint64_t, 4> frame{obelisk_rt_managed_word_from_object(input),
+      ASSERT_EQ(talos_rt_v1_class_register(context, descriptor),
+                TALOS_RT_OK);
+    talos_rt_object_v1 *object = nullptr;
+    talos_rt_gc_root_v1 root{};
+    ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &root, &object), TALOS_RT_OK);
+    auto execute = [&](talos_rt_object_v1 *input,
+                       talos_rt_status expected) {
+      std::array<uint64_t, 4> frame{talos_rt_managed_word_from_object(input),
                                     UINT64_MAX, 0, 0};
-      obelisk_rt_fragment_action_v1 action{};
-      EXPECT_EQ(obelisk_rt_execute_design_bytecode(fixture.entry, context,
+      talos_rt_fragment_action_v1 action{};
+      EXPECT_EQ(talos_rt_execute_design_bytecode(fixture.entry, context,
                                                    frame.data(), sizeof(frame),
                                                    16, 16, 0, 0, &action),
                 expected);
-      if (expected == OBELISK_RT_OK) {
+      if (expected == TALOS_RT_OK) {
         EXPECT_EQ(frame[1], frame[0]);
-        EXPECT_EQ(action.kind, OBELISK_RT_FRAGMENT_TERMINATE);
+        EXPECT_EQ(action.kind, TALOS_RT_FRAGMENT_TERMINATE);
       } else {
         EXPECT_EQ(frame[1], UINT64_MAX);
       }
     };
-    execute(nullptr, OBELISK_RT_OK);
+    execute(nullptr, TALOS_RT_OK);
     for (const auto *descriptor : {&base, &derived, &unrelated}) {
-      ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, descriptor, &object),
-                OBELISK_RT_OK);
-      execute(object, descriptor == &unrelated ? OBELISK_RT_INVALID_BYTECODE
-                                               : OBELISK_RT_OK);
+      ASSERT_EQ(talos_rt_v1_object_allocate(lane, descriptor, &object),
+                TALOS_RT_OK);
+      execute(object, descriptor == &unrelated ? TALOS_RT_INVALID_BYTECODE
+                                               : TALOS_RT_OK);
     }
     // A direct builtin cannot masquerade as the class source of an upcast.
-    ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 0, &object), OBELISK_RT_OK);
-    execute(object, OBELISK_RT_INVALID_BYTECODE);
-    ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-    obelisk_rt_v1_context_destroy(context);
+    ASSERT_EQ(talos_rt_v1_semaphore_create(lane, 0, &object), TALOS_RT_OK);
+    execute(object, TALOS_RT_INVALID_BYTECODE);
+    ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &root), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
 TEST(DesignBytecode, RejectsInvalidManagedBitcastsAndInexactMoves) {
   const std::pair<uint8_t, uint8_t> invalid[] = {
-      {OBELISK_RT_DBREG_MAILBOX, OBELISK_RT_DBREG_CLASS_HANDLE},
-      {OBELISK_RT_DBREG_SEMAPHORE, OBELISK_RT_DBREG_CLASS_HANDLE},
-      {OBELISK_RT_DBREG_MAILBOX, OBELISK_RT_DBREG_SEMAPHORE},
-      {OBELISK_RT_DBREG_CLASS_HANDLE, 0},
-      {0, OBELISK_RT_DBREG_MAILBOX},
-      {OBELISK_RT_DBREG_CLASS_HANDLE, OBELISK_RT_DBREG_CLASS_HANDLE}};
+      {TALOS_RT_DBREG_MAILBOX, TALOS_RT_DBREG_CLASS_HANDLE},
+      {TALOS_RT_DBREG_SEMAPHORE, TALOS_RT_DBREG_CLASS_HANDLE},
+      {TALOS_RT_DBREG_MAILBOX, TALOS_RT_DBREG_SEMAPHORE},
+      {TALOS_RT_DBREG_CLASS_HANDLE, 0},
+      {0, TALOS_RT_DBREG_MAILBOX},
+      {TALOS_RT_DBREG_CLASS_HANDLE, TALOS_RT_DBREG_CLASS_HANDLE}};
   auto validate = [](uint8_t source, uint8_t destination, uint16_t opcode) {
     Fixture fixture;
     fixture.bytecode = makeBuiltinUpcastBytecode(source, destination, opcode);
@@ -14623,18 +14623,18 @@ TEST(DesignBytecode, RejectsInvalidManagedBitcastsAndInexactMoves) {
     fixture.execution.bytecode_size = fixture.bytecode.size();
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
     uint64_t scratchSize = 0, scratchAlignment = 0;
-    return obelisk_rt_validate_design_bytecode(fixture.entry, nullptr,
+    return talos_rt_validate_design_bytecode(fixture.entry, nullptr,
                                                &scratchSize, &scratchAlignment);
   };
   for (auto [source, destination] : invalid)
-    EXPECT_EQ(validate(source, destination, OBELISK_RT_DB_BITCAST),
-              OBELISK_RT_INVALID_BYTECODE);
-  EXPECT_EQ(validate(OBELISK_RT_DBREG_CLASS_HANDLE, OBELISK_RT_DBREG_MAILBOX,
-                     OBELISK_RT_DB_MOVE),
-            OBELISK_RT_INVALID_BYTECODE);
-  EXPECT_EQ(validate(OBELISK_RT_DBREG_CLASS_HANDLE, OBELISK_RT_DBREG_SEMAPHORE,
-                     OBELISK_RT_DB_MOVE),
-            OBELISK_RT_INVALID_BYTECODE);
+    EXPECT_EQ(validate(source, destination, TALOS_RT_DB_BITCAST),
+              TALOS_RT_INVALID_BYTECODE);
+  EXPECT_EQ(validate(TALOS_RT_DBREG_CLASS_HANDLE, TALOS_RT_DBREG_MAILBOX,
+                     TALOS_RT_DB_MOVE),
+            TALOS_RT_INVALID_BYTECODE);
+  EXPECT_EQ(validate(TALOS_RT_DBREG_CLASS_HANDLE, TALOS_RT_DBREG_SEMAPHORE,
+                     TALOS_RT_DB_MOVE),
+            TALOS_RT_INVALID_BYTECODE);
 }
 
 TEST(DesignBytecode, OpaqueHandleRegistersRequireCanonicalGeometry) {
@@ -14642,95 +14642,95 @@ TEST(DesignBytecode, OpaqueHandleRegistersRequireCanonicalGeometry) {
     uint8_t kind, flags;
     uint32_t width;
     uint64_t size;
-    obelisk_rt_status expected;
+    talos_rt_status expected;
   };
   const Case cases[] = {
-      {OBELISK_RT_DBREG_MANAGED, OBELISK_RT_DBREG_MAILBOX, 64, 8,
-       OBELISK_RT_OK},
-      {OBELISK_RT_DBREG_MANAGED, OBELISK_RT_DBREG_MAILBOX, 32, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_MAILBOX, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_MANAGED,
-       OBELISK_RT_DBREG_MAILBOX | OBELISK_RT_DBREG_SIGNED, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_MANAGED,
-       OBELISK_RT_DBREG_MAILBOX | OBELISK_RT_DBREG_CLASS_HANDLE, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_MANAGED, OBELISK_RT_DBREG_SEMAPHORE, 64, 8,
-       OBELISK_RT_OK},
-      {OBELISK_RT_DBREG_MANAGED, OBELISK_RT_DBREG_SEMAPHORE, 32, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_SEMAPHORE, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_MANAGED,
-       OBELISK_RT_DBREG_SEMAPHORE | OBELISK_RT_DBREG_SIGNED, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_MANAGED,
-       OBELISK_RT_DBREG_SEMAPHORE | OBELISK_RT_DBREG_CLASS_HANDLE, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_VIRTUAL_INTERFACE, 64, 8,
-       OBELISK_RT_OK},
-      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_VIRTUAL_INTERFACE, 32, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_MANAGED, OBELISK_RT_DBREG_VIRTUAL_INTERFACE, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS,
-       OBELISK_RT_DBREG_VIRTUAL_INTERFACE | OBELISK_RT_DBREG_SIGNED, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS,
-       OBELISK_RT_DBREG_VIRTUAL_INTERFACE | OBELISK_RT_DBREG_CHANDLE, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS,
-       OBELISK_RT_DBREG_VIRTUAL_INTERFACE | OBELISK_RT_DBREG_COVERGROUP, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS,
-       OBELISK_RT_DBREG_VIRTUAL_INTERFACE | OBELISK_RT_DBREG_PROCESS, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_PROCESS, 64, 8, OBELISK_RT_OK},
-      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_PROCESS, 32, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_MANAGED, OBELISK_RT_DBREG_PROCESS, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS,
-       OBELISK_RT_DBREG_PROCESS | OBELISK_RT_DBREG_SIGNED, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS,
-       OBELISK_RT_DBREG_PROCESS | OBELISK_RT_DBREG_COVERGROUP, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS,
-       OBELISK_RT_DBREG_PROCESS | OBELISK_RT_DBREG_CHANDLE, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_COVERGROUP, 64, 8,
-       OBELISK_RT_OK},
-      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_COVERGROUP, 32, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_MANAGED, OBELISK_RT_DBREG_COVERGROUP, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS,
-       OBELISK_RT_DBREG_COVERGROUP | OBELISK_RT_DBREG_SIGNED, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS,
-       OBELISK_RT_DBREG_COVERGROUP | OBELISK_RT_DBREG_CHANDLE, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_CHANDLE, 64, 8, OBELISK_RT_OK},
-      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_CHANDLE, 32, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_LOGIC, OBELISK_RT_DBREG_CHANDLE, 65, 32,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_MANAGED, OBELISK_RT_DBREG_CHANDLE, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_BITS,
-       OBELISK_RT_DBREG_CHANDLE | OBELISK_RT_DBREG_SIGNED, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_HANDLE, OBELISK_RT_DBREG_EVENT, 256, 32, OBELISK_RT_OK},
-      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_EVENT, 64, 8,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_HANDLE, OBELISK_RT_DBREG_EVENT, 128, 32,
-       OBELISK_RT_INVALID_DESIGN},
-      {OBELISK_RT_DBREG_HANDLE,
-       OBELISK_RT_DBREG_EVENT | OBELISK_RT_DBREG_SIGNED, 256, 32,
-       OBELISK_RT_INVALID_DESIGN}};
+      {TALOS_RT_DBREG_MANAGED, TALOS_RT_DBREG_MAILBOX, 64, 8,
+       TALOS_RT_OK},
+      {TALOS_RT_DBREG_MANAGED, TALOS_RT_DBREG_MAILBOX, 32, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS, TALOS_RT_DBREG_MAILBOX, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_MANAGED,
+       TALOS_RT_DBREG_MAILBOX | TALOS_RT_DBREG_SIGNED, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_MANAGED,
+       TALOS_RT_DBREG_MAILBOX | TALOS_RT_DBREG_CLASS_HANDLE, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_MANAGED, TALOS_RT_DBREG_SEMAPHORE, 64, 8,
+       TALOS_RT_OK},
+      {TALOS_RT_DBREG_MANAGED, TALOS_RT_DBREG_SEMAPHORE, 32, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS, TALOS_RT_DBREG_SEMAPHORE, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_MANAGED,
+       TALOS_RT_DBREG_SEMAPHORE | TALOS_RT_DBREG_SIGNED, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_MANAGED,
+       TALOS_RT_DBREG_SEMAPHORE | TALOS_RT_DBREG_CLASS_HANDLE, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS, TALOS_RT_DBREG_VIRTUAL_INTERFACE, 64, 8,
+       TALOS_RT_OK},
+      {TALOS_RT_DBREG_BITS, TALOS_RT_DBREG_VIRTUAL_INTERFACE, 32, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_MANAGED, TALOS_RT_DBREG_VIRTUAL_INTERFACE, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS,
+       TALOS_RT_DBREG_VIRTUAL_INTERFACE | TALOS_RT_DBREG_SIGNED, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS,
+       TALOS_RT_DBREG_VIRTUAL_INTERFACE | TALOS_RT_DBREG_CHANDLE, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS,
+       TALOS_RT_DBREG_VIRTUAL_INTERFACE | TALOS_RT_DBREG_COVERGROUP, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS,
+       TALOS_RT_DBREG_VIRTUAL_INTERFACE | TALOS_RT_DBREG_PROCESS, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS, TALOS_RT_DBREG_PROCESS, 64, 8, TALOS_RT_OK},
+      {TALOS_RT_DBREG_BITS, TALOS_RT_DBREG_PROCESS, 32, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_MANAGED, TALOS_RT_DBREG_PROCESS, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS,
+       TALOS_RT_DBREG_PROCESS | TALOS_RT_DBREG_SIGNED, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS,
+       TALOS_RT_DBREG_PROCESS | TALOS_RT_DBREG_COVERGROUP, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS,
+       TALOS_RT_DBREG_PROCESS | TALOS_RT_DBREG_CHANDLE, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS, TALOS_RT_DBREG_COVERGROUP, 64, 8,
+       TALOS_RT_OK},
+      {TALOS_RT_DBREG_BITS, TALOS_RT_DBREG_COVERGROUP, 32, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_MANAGED, TALOS_RT_DBREG_COVERGROUP, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS,
+       TALOS_RT_DBREG_COVERGROUP | TALOS_RT_DBREG_SIGNED, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS,
+       TALOS_RT_DBREG_COVERGROUP | TALOS_RT_DBREG_CHANDLE, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS, TALOS_RT_DBREG_CHANDLE, 64, 8, TALOS_RT_OK},
+      {TALOS_RT_DBREG_BITS, TALOS_RT_DBREG_CHANDLE, 32, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_LOGIC, TALOS_RT_DBREG_CHANDLE, 65, 32,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_MANAGED, TALOS_RT_DBREG_CHANDLE, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_BITS,
+       TALOS_RT_DBREG_CHANDLE | TALOS_RT_DBREG_SIGNED, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_HANDLE, TALOS_RT_DBREG_EVENT, 256, 32, TALOS_RT_OK},
+      {TALOS_RT_DBREG_BITS, TALOS_RT_DBREG_EVENT, 64, 8,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_HANDLE, TALOS_RT_DBREG_EVENT, 128, 32,
+       TALOS_RT_INVALID_DESIGN},
+      {TALOS_RT_DBREG_HANDLE,
+       TALOS_RT_DBREG_EVENT | TALOS_RT_DBREG_SIGNED, 256, 32,
+       TALOS_RT_INVALID_DESIGN}};
   for (const auto &test : cases) {
     Fixture fixture;
     size_t record = get64(fixture.bytecode, 56);
@@ -14738,22 +14738,22 @@ TEST(DesignBytecode, OpaqueHandleRegistersRequireCanonicalGeometry) {
     fixture.bytecode[record + 1] = test.flags;
     put32(fixture.bytecode, record + 4, test.width);
     put64(fixture.bytecode, record + 16, test.size);
-    if (test.kind == OBELISK_RT_DBREG_HANDLE)
+    if (test.kind == TALOS_RT_DBREG_HANDLE)
       put16(fixture.bytecode, get64(fixture.bytecode, 72) + 32 + 2,
-            OBELISK_RT_DESCRIPTOR_EVENT);
+            TALOS_RT_DESCRIPTOR_EVENT);
     put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
     fixture.execution.bytecode = fixture.bytecode.data();
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     EXPECT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
         test.expected);
-    if (test.expected == OBELISK_RT_OK)
+    if (test.expected == TALOS_RT_OK)
       ASSERT_NE(context, nullptr);
     else
       EXPECT_EQ(context, nullptr);
     if (context)
-      obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -14764,10 +14764,10 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
     fixture.execution.bytecode_size = fixture.bytecode.size();
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
     fixture.entry.execution = &fixture.execution;
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     EXPECT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_INVALID_DESIGN);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_INVALID_DESIGN);
     EXPECT_EQ(context, nullptr);
   };
 
@@ -14785,17 +14785,17 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
 
   Fixture noEntryContinuation;
   put64(noEntryContinuation.bytecode,
-        OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE + 80, 0);
+        TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE + 80, 0);
   rejected(noEntryContinuation);
 
   Fixture reservedLayout;
   put16(reservedLayout.bytecode,
-        OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE + 96 + 2, 1);
+        TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE + 96 + 2, 1);
   rejected(reservedLayout);
 
   Fixture oversizedScheduleRank;
   put64(oversizedScheduleRank.bytecode,
-        OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE + 8, UINT64_C(1) << 32);
+        TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE + 8, UINT64_C(1) << 32);
   rejected(oversizedScheduleRank);
 
   Fixture reservedContinuation;
@@ -14804,8 +14804,8 @@ TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   rejected(reservedContinuation);
 
   Fixture finalNonProcess;
-  put64(finalNonProcess.bytecode, OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE + 88,
-        OBELISK_RT_DESIGN_FUNCTION_FINAL);
+  put64(finalNonProcess.bytecode, TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE + 88,
+        TALOS_RT_DESIGN_FUNCTION_FINAL);
   rejected(finalNonProcess);
 
   auto connected = [](Fixture &fixture) {
@@ -15010,13 +15010,13 @@ TEST(DesignBytecode, InitializationBitsetsCoverWordBoundariesAndCFGJoins) {
     fixture.entry = {&fixture.execution, 0, 0};
     uint64_t scratchSize = 0;
     uint64_t scratchAlignment = 0;
-    return obelisk_rt_validate_design_bytecode(fixture.entry, nullptr,
+    return talos_rt_validate_design_bytecode(fixture.entry, nullptr,
                                                &scratchSize, &scratchAlignment);
   };
 
-  EXPECT_EQ(validate(makeInitializationBoundaryBytecode(false)), OBELISK_RT_OK);
+  EXPECT_EQ(validate(makeInitializationBoundaryBytecode(false)), TALOS_RT_OK);
   EXPECT_EQ(validate(makeInitializationBoundaryBytecode(true)),
-            OBELISK_RT_INVALID_BYTECODE);
+            TALOS_RT_INVALID_BYTECODE);
 }
 
 TEST(DesignBytecode, ValidatesComparisonResultDomains) {
@@ -15028,22 +15028,22 @@ TEST(DesignBytecode, ValidatesComparisonResultDomains) {
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
     uint64_t scratchSize = 0;
     uint64_t scratchAlignment = 0;
-    return obelisk_rt_validate_design_bytecode(fixture.entry, nullptr,
+    return talos_rt_validate_design_bytecode(fixture.entry, nullptr,
                                                &scratchSize, &scratchAlignment);
   };
 
-  EXPECT_EQ(validate(OBELISK_RT_DBREG_LOGIC, OBELISK_RT_DB_CMP_WILD_EQ),
-            OBELISK_RT_OK);
-  EXPECT_EQ(validate(OBELISK_RT_DBREG_BITS, OBELISK_RT_DB_CMP_WILD_EQ),
-            OBELISK_RT_OK);
-  EXPECT_EQ(validate(OBELISK_RT_DBREG_BITS, OBELISK_RT_DB_CMP_CASEZ_EQ),
-            OBELISK_RT_OK);
-  EXPECT_EQ(validate(OBELISK_RT_DBREG_LOGIC, OBELISK_RT_DB_CMP_CASEZ_EQ),
-            OBELISK_RT_INVALID_BYTECODE);
+  EXPECT_EQ(validate(TALOS_RT_DBREG_LOGIC, TALOS_RT_DB_CMP_WILD_EQ),
+            TALOS_RT_OK);
+  EXPECT_EQ(validate(TALOS_RT_DBREG_BITS, TALOS_RT_DB_CMP_WILD_EQ),
+            TALOS_RT_OK);
+  EXPECT_EQ(validate(TALOS_RT_DBREG_BITS, TALOS_RT_DB_CMP_CASEZ_EQ),
+            TALOS_RT_OK);
+  EXPECT_EQ(validate(TALOS_RT_DBREG_LOGIC, TALOS_RT_DB_CMP_CASEZ_EQ),
+            TALOS_RT_INVALID_BYTECODE);
 }
 
 TEST(DesignBytecode, RejectsCorruptDynamicScanIntrinsicSignatures) {
-  constexpr size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+  constexpr size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
   constexpr size_t layoutOffset = functionOffset + 96;
   constexpr size_t codeOffset = layoutOffset + 3 * 40;
   constexpr size_t operandOffset = codeOffset + 2 * 32;
@@ -15058,40 +15058,40 @@ TEST(DesignBytecode, RejectsCorruptDynamicScanIntrinsicSignatures) {
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
     uint64_t scratchSize = 0;
     uint64_t scratchAlignment = 0;
-    return obelisk_rt_validate_design_bytecode(fixture.entry, nullptr,
+    return talos_rt_validate_design_bytecode(fixture.entry, nullptr,
                                                &scratchSize, &scratchAlignment);
   };
   std::array<uint32_t, 3> ids{{
-      OBELISK_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC,
-      OBELISK_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC,
-      OBELISK_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE,
+      TALOS_RT_INTRINSIC_V1_STRING_SCAN_DYNAMIC,
+      TALOS_RT_INTRINSIC_V1_FILE_SCAN_DYNAMIC,
+      TALOS_RT_INTRINSIC_V1_SCAN_DYNAMIC_VALIDATE,
   }};
   for (uint32_t id : ids) {
     std::vector<uint8_t> valid = makeDynamicScanIntrinsicBytecode(id);
-    EXPECT_EQ(validate(valid), OBELISK_RT_OK) << id;
+    EXPECT_EQ(validate(valid), TALOS_RT_OK) << id;
 
     std::vector<uint8_t> arity = valid;
     put32(arity, intrinsicOffset + 4, 1);
-    EXPECT_EQ(validate(std::move(arity)), OBELISK_RT_INVALID_BYTECODE) << id;
+    EXPECT_EQ(validate(std::move(arity)), TALOS_RT_INVALID_BYTECODE) << id;
 
     std::vector<uint8_t> flags = valid;
     put32(flags, intrinsicOffset + 12, 1);
-    EXPECT_EQ(validate(std::move(flags)), OBELISK_RT_INVALID_BYTECODE) << id;
+    EXPECT_EQ(validate(std::move(flags)), TALOS_RT_INVALID_BYTECODE) << id;
 
     std::vector<uint8_t> stringKind = valid;
-    stringKind[layoutOffset] = OBELISK_RT_DBREG_BITS;
-    EXPECT_EQ(validate(std::move(stringKind)), OBELISK_RT_INVALID_BYTECODE)
+    stringKind[layoutOffset] = TALOS_RT_DBREG_BITS;
+    EXPECT_EQ(validate(std::move(stringKind)), TALOS_RT_INVALID_BYTECODE)
         << id;
 
     std::vector<uint8_t> scalarKind = valid;
-    scalarKind[layoutOffset + 40] = OBELISK_RT_DBREG_STRING;
-    EXPECT_EQ(validate(std::move(scalarKind)), OBELISK_RT_INVALID_BYTECODE)
+    scalarKind[layoutOffset + 40] = TALOS_RT_DBREG_STRING;
+    EXPECT_EQ(validate(std::move(scalarKind)), TALOS_RT_INVALID_BYTECODE)
         << id;
   }
 }
 
 TEST(DesignBytecode, RejectsTruncatedCoverageClockEventOperandsAtExecution) {
-  using namespace obelisk::designbytecode;
+  using namespace talos::designbytecode;
   constexpr uint32_t inputCount = 5;
   constexpr size_t layoutOffset = 0;
   constexpr size_t intrinsicOffset = inputCount * 40;
@@ -15100,14 +15100,14 @@ TEST(DesignBytecode, RejectsTruncatedCoverageClockEventOperandsAtExecution) {
   std::vector<uint8_t> bytes(operandOffset + inputCount * 8, 0);
   for (uint32_t index = 0; index != inputCount; ++index) {
     size_t layout = layoutOffset + uint64_t{index} * 40;
-    bytes[layout] = OBELISK_RT_DBREG_BITS;
+    bytes[layout] = TALOS_RT_DBREG_BITS;
     put32(bytes, layout + 4, 64);
     put64(bytes, layout + 8, uint64_t{index} * 8);
     put64(bytes, layout + 16, 8);
     put32(bytes, operandOffset + uint64_t{index} * 8 + 4, index);
   }
   put32(bytes, intrinsicOffset,
-        OBELISK_RT_INTRINSIC_V1_COVERGROUP_CLOCK_EVENT_REGISTER);
+        TALOS_RT_INTRINSIC_V1_COVERGROUP_CLOCK_EVENT_REGISTER);
   put32(bytes, intrinsicOffset + 4, inputCount);
   put32(bytes, siteOffset + 8, inputCount);
 
@@ -15127,7 +15127,7 @@ TEST(DesignBytecode, RejectsTruncatedCoverageClockEventOperandsAtExecution) {
   std::array<uint64_t, inputCount> data{{1, 0, 0, 1, 0}};
   Frame frame{function, 0, reinterpret_cast<uint8_t *>(data.data()), 0};
   EXPECT_EQ(invokeIntrinsic(image, frame, nullptr, 0),
-            OBELISK_RT_INVALID_BYTECODE);
+            TALOS_RT_INVALID_BYTECODE);
 }
 
 TEST(DesignBytecode, ValidatesContainerCreatePatternSignature) {
@@ -15142,13 +15142,13 @@ TEST(DesignBytecode, ValidatesContainerCreatePatternSignature) {
     put32(bytes, record + 4, width);
   };
   for (uint32_t index = 0; index != 7; ++index)
-    layout(index, OBELISK_RT_DBREG_BITS, 64);
-  layout(7, OBELISK_RT_DBREG_BYTES);
-  layout(8, OBELISK_RT_DBREG_BYTES);
-  layout(9, OBELISK_RT_DBREG_BITS, 64);
-  layout(10, OBELISK_RT_DBREG_BITS, 64);
-  layout(11, OBELISK_RT_DBREG_MANAGED);
-  put32(bytes, intrinsicOffset, OBELISK_RT_INTRINSIC_V1_CONTAINER_CREATE);
+    layout(index, TALOS_RT_DBREG_BITS, 64);
+  layout(7, TALOS_RT_DBREG_BYTES);
+  layout(8, TALOS_RT_DBREG_BYTES);
+  layout(9, TALOS_RT_DBREG_BITS, 64);
+  layout(10, TALOS_RT_DBREG_BITS, 64);
+  layout(11, TALOS_RT_DBREG_MANAGED);
+  put32(bytes, intrinsicOffset, TALOS_RT_INTRINSIC_V1_CONTAINER_CREATE);
   put32(bytes, intrinsicOffset + 4, 11);
   put32(bytes, intrinsicOffset + 8, 1);
   put32(bytes, siteOffset + 8, 11);
@@ -15157,7 +15157,7 @@ TEST(DesignBytecode, ValidatesContainerCreatePatternSignature) {
     put32(bytes, operandOffset + uint64_t{index} * 8 + 4, index);
   put32(bytes, operandOffset + 11 * 8, 11);
 
-  obelisk::designbytecode::Image image{};
+  talos::designbytecode::Image image{};
   image.data = bytes.data();
   image.size = bytes.size();
   image.layouts = layoutOffset;
@@ -15168,31 +15168,31 @@ TEST(DesignBytecode, ValidatesContainerCreatePatternSignature) {
   image.siteCount = 1;
   image.operands = operandOffset;
   image.operandCount = 12;
-  obelisk::designbytecode::Function function{};
+  talos::designbytecode::Function function{};
   function.layoutCount = 12;
 
-  EXPECT_TRUE(obelisk::designbytecode::validIntrinsic(image, function, 0));
-  bytes[8 * 40] = OBELISK_RT_DBREG_BITS;
-  EXPECT_FALSE(obelisk::designbytecode::validIntrinsic(image, function, 0));
+  EXPECT_TRUE(talos::designbytecode::validIntrinsic(image, function, 0));
+  bytes[8 * 40] = TALOS_RT_DBREG_BITS;
+  EXPECT_FALSE(talos::designbytecode::validIntrinsic(image, function, 0));
 }
 
 TEST(DesignBytecode, ValidatesManagedAggregateExtractionBounds) {
   auto validate = [](uint64_t bitOffset) {
     Fixture fixture;
     fixture.bytecode =
-        makeComparisonBytecode(OBELISK_RT_DBREG_MANAGED, OBELISK_RT_DB_CMP_EQ);
-    size_t functionOffset = OBELISK_RT_DESIGN_BYTECODE_HEADER_SIZE;
+        makeComparisonBytecode(TALOS_RT_DBREG_MANAGED, TALOS_RT_DB_CMP_EQ);
+    size_t functionOffset = TALOS_RT_DESIGN_BYTECODE_HEADER_SIZE;
     size_t layoutOffset = get64(fixture.bytecode, 56);
     size_t codeOffset = get64(fixture.bytecode, 72);
-    fixture.bytecode[layoutOffset] = OBELISK_RT_DBREG_BITS;
+    fixture.bytecode[layoutOffset] = TALOS_RT_DBREG_BITS;
     put32(fixture.bytecode, layoutOffset + 4, 128);
     put64(fixture.bytecode, layoutOffset + 16, 16);
-    fixture.bytecode[layoutOffset + 80] = OBELISK_RT_DBREG_MANAGED;
+    fixture.bytecode[layoutOffset + 80] = TALOS_RT_DBREG_MANAGED;
     put32(fixture.bytecode, layoutOffset + 84, 64);
     put64(fixture.bytecode, layoutOffset + 96, 8);
     put32(fixture.bytecode, functionOffset + 48, 2);
-    instruction(fixture.bytecode, codeOffset, 0, OBELISK_RT_DB_EXTRACT,
-                OBELISK_RT_DB_AGGREGATE_MANAGED, 2, 0, UINT32_MAX, 0, 0,
+    instruction(fixture.bytecode, codeOffset, 0, TALOS_RT_DB_EXTRACT,
+                TALOS_RT_DB_AGGREGATE_MANAGED, 2, 0, UINT32_MAX, 0, 0,
                 bitOffset);
     put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
     fixture.execution.bytecode = fixture.bytecode.data();
@@ -15200,44 +15200,44 @@ TEST(DesignBytecode, ValidatesManagedAggregateExtractionBounds) {
     fixture.execution.checksum = imageChecksum(fixture.bytecode);
     uint64_t scratchSize = 0;
     uint64_t scratchAlignment = 0;
-    return obelisk_rt_validate_design_bytecode(fixture.entry, nullptr,
+    return talos_rt_validate_design_bytecode(fixture.entry, nullptr,
                                                &scratchSize, &scratchAlignment);
   };
 
-  EXPECT_EQ(validate(64), OBELISK_RT_OK);
-  EXPECT_EQ(validate(1), OBELISK_RT_INVALID_BYTECODE);
-  EXPECT_EQ(validate(128), OBELISK_RT_INVALID_BYTECODE);
+  EXPECT_EQ(validate(64), TALOS_RT_OK);
+  EXPECT_EQ(validate(1), TALOS_RT_INVALID_BYTECODE);
+  EXPECT_EQ(validate(128), TALOS_RT_INVALID_BYTECODE);
 }
 
 TEST(DesignBytecode, ContextTrustIsLimitedToItsValidatedExecutionImage) {
   Fixture trusted;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&trusted.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&trusted.execution, &context),
+      TALOS_RT_OK);
   std::array<uint8_t, 32> frame{};
-  obelisk_rt_fragment_action_v1 action{};
+  talos_rt_fragment_action_v1 action{};
 
   Fixture untrusted;
   untrusted.bytecode[0] ^= 1;
-  EXPECT_EQ(obelisk_rt_execute_design_bytecode(untrusted.entry, context,
+  EXPECT_EQ(talos_rt_execute_design_bytecode(untrusted.entry, context,
                                                frame.data(), frame.size(), 0,
                                                frame.size(), 0, 0, &action),
-            OBELISK_RT_INVALID_BYTECODE);
-  obelisk_rt_v1_context_destroy(context);
+            TALOS_RT_INVALID_BYTECODE);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignBytecode, NativeAndBytecodeShareCanonicalDesignState) {
   Fixture fixture;
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_design_cursor_v1 object{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_design_cursor_v1 object{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>("top.value"), 9, &object),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   std::array<uint8_t, 9> nativeValue{
       {0xf0, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12, 0x01}};
@@ -15245,38 +15245,38 @@ TEST(DesignBytecode, NativeAndBytecodeShareCanonicalDesignState) {
   std::array<uint8_t, 9> nativeGlobalValue{};
   std::array<uint8_t, 9> nativeGlobalUnknown{};
   uint8_t changed = 0;
-  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+  ASSERT_EQ(talos_rt_v1_native_state_store_plane(
                 context, nativeGlobalValue.data(), 65, 0, 65, 0,
                 nativeValue.data(), &changed),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(changed, 1);
-  ASSERT_EQ(obelisk_rt_v1_native_state_store_plane(
+  ASSERT_EQ(talos_rt_v1_native_state_store_plane(
                 context, nativeGlobalUnknown.data(), 65, 0, 65, 1,
                 nativeUnknown.data(), &changed),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
   std::array<uint64_t, 2> value{}, unknown{};
-  ASSERT_EQ(obelisk_rt_v1_design_read(context, object, value.data(),
+  ASSERT_EQ(talos_rt_v1_design_read(context, object, value.data(),
                                       unknown.data(), 65),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(value[0], UINT64_C(0x123456789abcdef0));
   EXPECT_EQ(value[1], 1u);
   EXPECT_EQ(unknown[0], UINT64_C(0x30));
 
   value = {UINT64_C(0x0fedcba987654321), 0};
   unknown = {UINT64_C(0x0c), 1};
-  ASSERT_EQ(obelisk_rt_v1_design_write(context, object, value.data(),
+  ASSERT_EQ(talos_rt_v1_design_write(context, object, value.data(),
                                        unknown.data(), 65),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint8_t, 9> loadedValue{}, loadedUnknown{};
-  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+  ASSERT_EQ(talos_rt_v1_native_state_load_plane(
                 context, nativeGlobalValue.data(), 65, 0, 65, 0, 0,
                 loadedValue.data()),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_native_state_load_plane(
                 context, nativeGlobalUnknown.data(), 65, 0, 65, 1, 0,
                 loadedUnknown.data()),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(loadedValue[0], 0x21);
   EXPECT_EQ(loadedValue[7], 0x0f);
   EXPECT_EQ(loadedValue[8], 0x00);
@@ -15284,151 +15284,151 @@ TEST(DesignBytecode, NativeAndBytecodeShareCanonicalDesignState) {
   EXPECT_EQ(loadedUnknown[8], 0x01);
 
   std::array<uint8_t, 1> nbaValue{{0x5a}}, nbaUnknown{{0xa0}};
-  ASSERT_EQ(obelisk_rt_v1_scheduler_nba(context, nativeGlobalValue.data(),
+  ASSERT_EQ(talos_rt_v1_scheduler_nba(context, nativeGlobalValue.data(),
                                         nativeGlobalUnknown.data(), 65, 0, 8, 0,
                                         nbaValue.data(), nbaUnknown.data()),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_design_read(context, object, value.data(),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_read(context, object, value.data(),
                                       unknown.data(), 65),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(value[0] & UINT64_C(0xff), UINT64_C(0x5a));
   EXPECT_EQ(unknown[0] & UINT64_C(0xff), UINT64_C(0xa0));
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignDatabase, TraversesLooksUpAndAccessesLiveState) {
   Fixture fixture;
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
-  obelisk_rt_design_cursor_v1 root{}, object{}, found{};
-  ASSERT_EQ(obelisk_rt_v1_design_root(&fixture.execution, &root),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_design_child(&fixture.execution, root, &object),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
+  talos_rt_design_cursor_v1 root{}, object{}, found{};
+  ASSERT_EQ(talos_rt_v1_design_root(&fixture.execution, &root),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_child(&fixture.execution, root, &object),
+            TALOS_RT_OK);
   constexpr std::string_view name = "top.value";
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>(name.data()), name.size(),
                 &found),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(found.offset, object.offset);
-  obelisk_rt_design_info_v1 info{};
-  ASSERT_EQ(obelisk_rt_v1_design_info(&fixture.execution, found, &info),
-            OBELISK_RT_OK);
-  EXPECT_EQ(info.kind, OBELISK_RT_DESIGN_RECORD_STORAGE);
-  EXPECT_EQ(info.handle.kind, OBELISK_RT_DESCRIPTOR_STORAGE);
+  talos_rt_design_info_v1 info{};
+  ASSERT_EQ(talos_rt_v1_design_info(&fixture.execution, found, &info),
+            TALOS_RT_OK);
+  EXPECT_EQ(info.kind, TALOS_RT_DESIGN_RECORD_STORAGE);
+  EXPECT_EQ(info.handle.kind, TALOS_RT_DESCRIPTOR_STORAGE);
   EXPECT_EQ(info.handle.id, 7u);
   EXPECT_EQ(info.bit_width, 65u);
-  obelisk_rt_design_cursor_v1 indexed{};
+  talos_rt_design_cursor_v1 indexed{};
   ASSERT_EQ(
-      obelisk_rt_v1_design_child_at(&fixture.execution, root, 0, &indexed),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_child_at(&fixture.execution, root, 0, &indexed),
+      TALOS_RT_OK);
   EXPECT_EQ(indexed.offset, object.offset);
   EXPECT_EQ(
-      obelisk_rt_v1_design_child_at(&fixture.execution, root, 1, &indexed),
-      OBELISK_RT_EOF);
-  obelisk_rt_design_type_info_v1 typeInfo{};
-  ASSERT_EQ(obelisk_rt_v1_design_type_info(&fixture.execution,
+      talos_rt_v1_design_child_at(&fixture.execution, root, 1, &indexed),
+      TALOS_RT_EOF);
+  talos_rt_design_type_info_v1 typeInfo{};
+  ASSERT_EQ(talos_rt_v1_design_type_info(&fixture.execution,
                                            {info.type_offset}, &typeInfo),
-            OBELISK_RT_OK);
-  EXPECT_EQ(typeInfo.kind, OBELISK_RT_DESIGN_TYPE_SCALAR);
+            TALOS_RT_OK);
+  EXPECT_EQ(typeInfo.kind, TALOS_RT_DESIGN_TYPE_SCALAR);
   EXPECT_EQ(typeInfo.flags,
-            OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED);
+            TALOS_RT_DESIGN_TYPE_FOUR_STATE | TALOS_RT_DESIGN_TYPE_PACKED);
   EXPECT_EQ(typeInfo.bit_width, 65u);
   EXPECT_EQ(typeInfo.range_left, 64);
   EXPECT_EQ(typeInfo.range_right, 0);
-  EXPECT_EQ(obelisk_rt_v1_design_type_child(&fixture.execution,
+  EXPECT_EQ(talos_rt_v1_design_type_child(&fixture.execution,
                                             {info.type_offset}, 0, &indexed),
-            OBELISK_RT_EOF);
+            TALOS_RT_EOF);
   const uint8_t *typeName = nullptr;
   uint64_t typeNameSize = 0;
-  ASSERT_EQ(obelisk_rt_v1_design_name(&fixture.execution, {info.type_offset},
+  ASSERT_EQ(talos_rt_v1_design_name(&fixture.execution, {info.type_offset},
                                       &typeName, &typeNameSize),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(
       std::string_view(reinterpret_cast<const char *>(typeName), typeNameSize),
       "logic");
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   std::array<uint64_t, 2> value{{UINT64_C(0x123456789abcdef0), 1}};
   std::array<uint64_t, 2> unknown{{UINT64_C(0x30), 0}};
-  ASSERT_EQ(obelisk_rt_v1_design_write(context, found, value.data(),
+  ASSERT_EQ(talos_rt_v1_design_write(context, found, value.data(),
                                        unknown.data(), 65),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint64_t, 2> readValue{}, readUnknown{};
-  ASSERT_EQ(obelisk_rt_v1_design_read(context, found, readValue.data(),
+  ASSERT_EQ(talos_rt_v1_design_read(context, found, readValue.data(),
                                       readUnknown.data(), 65),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(readValue, value);
   EXPECT_EQ(readUnknown, unknown);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignDatabase, LooksUpPhysicalScopeIDsWithoutAssumingTableOrder) {
   Fixture fixture;
   installStatementDatabase(fixture);
   const uint64_t scopes = get64(fixture.database, 48);
-  const uint64_t second = scopes + obelisk::reflection::ScopeLayout.size;
+  const uint64_t second = scopes + talos::reflection::ScopeLayout.size;
   put64(fixture.database, scopes + 8, 101);
   put64(fixture.database, second + 8, 7);
   put64(fixture.database, 32, imageChecksum(fixture.database));
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
-  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_design_cursor_v1 cursor{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_scope(context, 101, &cursor), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(talos_rt_cached_vpi_scope(context, 101, &cursor), TALOS_RT_OK);
   EXPECT_EQ(cursor.offset, scopes);
-  ASSERT_EQ(obelisk_rt_cached_vpi_scope(context, 7, &cursor), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_cached_vpi_scope(context, 7, &cursor), TALOS_RT_OK);
   EXPECT_EQ(cursor.offset, second);
   // Zero is a null virtual interface; the process's ID is a different
   // identity namespace and must not resolve as a scope.
   for (uint64_t missing : {UINT64_C(0), UINT64_C(10), UINT64_MAX}) {
     cursor.offset = scopes;
-    EXPECT_EQ(obelisk_rt_cached_vpi_scope(context, missing, &cursor),
-              OBELISK_RT_EOF);
+    EXPECT_EQ(talos_rt_cached_vpi_scope(context, missing, &cursor),
+              TALOS_RT_EOF);
     EXPECT_EQ(cursor.offset, 0u);
   }
   cursor.offset = scopes;
-  EXPECT_EQ(obelisk_rt_cached_vpi_scope(nullptr, 101, &cursor),
-            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(talos_rt_cached_vpi_scope(nullptr, 101, &cursor),
+            TALOS_RT_INVALID_HANDLE);
   EXPECT_EQ(cursor.offset, 0u);
-  EXPECT_EQ(obelisk_rt_cached_vpi_scope(context, 101, nullptr),
-            OBELISK_RT_INVALID_ARGUMENT);
-  obelisk_rt_v1_context_destroy(context);
+  EXPECT_EQ(talos_rt_cached_vpi_scope(context, 101, nullptr),
+            TALOS_RT_INVALID_ARGUMENT);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignDatabase, ValidatedCacheTracksContextLifetime) {
   Fixture fixture;
-  obelisk_rt_context *first = nullptr;
-  obelisk_rt_context *second = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution, &first),
-            OBELISK_RT_OK);
+  talos_rt_context *first = nullptr;
+  talos_rt_context *second = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&fixture.execution, &first),
+            TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &second),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &second),
+      TALOS_RT_OK);
 
   constexpr std::string_view name = "top.value";
-  obelisk_rt_design_cursor_v1 found{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+  talos_rt_design_cursor_v1 found{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>(name.data()), name.size(),
                 &found),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
-  obelisk_rt_v1_context_destroy(first);
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
-  obelisk_rt_v1_context_destroy(second);
+  talos_rt_v1_context_destroy(first);
+  ASSERT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
+  talos_rt_v1_context_destroy(second);
 
   // The final context must remove the registered view. A subsequent checked
   // call must inspect the image rather than accepting stale validated state.
   fixture.database[224 + 16] ^= 1;
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+            TALOS_RT_INVALID_DESIGN);
 }
 
 TEST(DesignDatabase, TraversesStableProcessAndFunctionRecords) {
@@ -15436,42 +15436,42 @@ TEST(DesignDatabase, TraversesStableProcessAndFunctionRecords) {
   fixture.database = makeCodeUnitDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
+  ASSERT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
 
-  obelisk_rt_design_cursor_v1 root{}, process{}, function{};
-  ASSERT_EQ(obelisk_rt_v1_design_root(&fixture.execution, &root),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_design_child(&fixture.execution, root, &process),
-            OBELISK_RT_OK);
+  talos_rt_design_cursor_v1 root{}, process{}, function{};
+  ASSERT_EQ(talos_rt_v1_design_root(&fixture.execution, &root),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_child(&fixture.execution, root, &process),
+            TALOS_RT_OK);
   ASSERT_EQ(
-      obelisk_rt_v1_design_sibling(&fixture.execution, process, &function),
-      OBELISK_RT_OK);
-  EXPECT_EQ(obelisk_rt_v1_design_sibling(&fixture.execution, function, &root),
-            OBELISK_RT_EOF);
+      talos_rt_v1_design_sibling(&fixture.execution, process, &function),
+      TALOS_RT_OK);
+  EXPECT_EQ(talos_rt_v1_design_sibling(&fixture.execution, function, &root),
+            TALOS_RT_EOF);
 
-  obelisk_rt_design_info_v1 info{};
-  ASSERT_EQ(obelisk_rt_v1_design_info(&fixture.execution, process, &info),
-            OBELISK_RT_OK);
-  EXPECT_EQ(info.kind, OBELISK_RT_DESIGN_RECORD_PROCESS);
-  EXPECT_EQ(info.handle.kind, OBELISK_RT_DESCRIPTOR_PROCESS);
+  talos_rt_design_info_v1 info{};
+  ASSERT_EQ(talos_rt_v1_design_info(&fixture.execution, process, &info),
+            TALOS_RT_OK);
+  EXPECT_EQ(info.kind, TALOS_RT_DESIGN_RECORD_PROCESS);
+  EXPECT_EQ(info.handle.kind, TALOS_RT_DESCRIPTOR_PROCESS);
   EXPECT_EQ(info.handle.id, 71u);
   EXPECT_EQ(info.type_offset, 0u);
-  ASSERT_EQ(obelisk_rt_v1_design_info(&fixture.execution, function, &info),
-            OBELISK_RT_OK);
-  EXPECT_EQ(info.kind, OBELISK_RT_DESIGN_RECORD_FUNCTION);
-  EXPECT_EQ(info.handle.kind, OBELISK_RT_DESCRIPTOR_FUNCTION);
+  ASSERT_EQ(talos_rt_v1_design_info(&fixture.execution, function, &info),
+            TALOS_RT_OK);
+  EXPECT_EQ(info.kind, TALOS_RT_DESIGN_RECORD_FUNCTION);
+  EXPECT_EQ(info.handle.kind, TALOS_RT_DESCRIPTOR_FUNCTION);
   EXPECT_EQ(info.handle.id, 72u);
 
   constexpr std::string_view functionName = "top.fn";
-  obelisk_rt_design_cursor_v1 found{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+  talos_rt_design_cursor_v1 found{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>(functionName.data()),
                 functionName.size(), &found),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(found.offset, function.offset);
 
   // Version 1 code-unit records must remain pointer-free and state-free.
@@ -15479,18 +15479,18 @@ TEST(DesignDatabase, TraversesStableProcessAndFunctionRecords) {
   put64(malformed, 336 + 48, 432);
   put64(malformed, 32, imageChecksum(malformed));
   fixture.execution.design_database = malformed.data();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+            TALOS_RT_INVALID_DESIGN);
   put64(malformed, 336 + 48, 0);
   put32(malformed, 8, 2);
   put64(malformed, 32, imageChecksum(malformed));
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-            OBELISK_RT_INVALID_DESIGN);
-  put32(malformed, 8, OBELISK_RT_VERSION);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+            TALOS_RT_INVALID_DESIGN);
+  put32(malformed, 8, TALOS_RT_VERSION);
   put32(malformed, 12, 1);
   put64(malformed, 32, imageChecksum(malformed));
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+            TALOS_RT_INVALID_DESIGN);
 }
 
 TEST(DesignDatabase, TraversesCompactStaticObjectsWithoutRuntimeState) {
@@ -15498,81 +15498,81 @@ TEST(DesignDatabase, TraversesCompactStaticObjectsWithoutRuntimeState) {
   fixture.database = makeCompactStaticObjectDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+  fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
 
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
   constexpr std::string_view typespecName = "logic";
-  obelisk_rt_design_cursor_v1 enumTypespec{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+  talos_rt_design_cursor_v1 enumTypespec{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>(typespecName.data()),
                 typespecName.size(), &enumTypespec),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
 
-  obelisk_rt_design_info_v1 info{};
-  ASSERT_EQ(obelisk_rt_v1_design_info(&fixture.execution, enumTypespec, &info),
-            OBELISK_RT_OK);
-  EXPECT_EQ(info.kind, OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT);
-  EXPECT_EQ(info.capabilities, OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC);
-  EXPECT_EQ(info.handle.kind, OBELISK_RT_DESCRIPTOR_INVALID);
+  talos_rt_design_info_v1 info{};
+  ASSERT_EQ(talos_rt_v1_design_info(&fixture.execution, enumTypespec, &info),
+            TALOS_RT_OK);
+  EXPECT_EQ(info.kind, TALOS_RT_DESIGN_RECORD_STATIC_OBJECT);
+  EXPECT_EQ(info.capabilities, TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC);
+  EXPECT_EQ(info.handle.kind, TALOS_RT_DESCRIPTOR_INVALID);
   EXPECT_EQ(info.handle.id, 0u);
   EXPECT_EQ(info.type_offset, 0u);
   EXPECT_EQ(info.bit_width, 0u);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   uint32_t exactType = 0;
-  ASSERT_EQ(obelisk_rt_cached_vpi_type(context, enumTypespec, &exactType),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_cached_vpi_type(context, enumTypespec, &exactType),
+            TALOS_RT_OK);
   EXPECT_EQ(exactType, vpiEnumTypespec);
 
   const uint8_t *name = nullptr;
   uint64_t nameSize = 0;
   ASSERT_EQ(
-      obelisk_rt_cached_design_name(context, enumTypespec, &name, &nameSize),
-      OBELISK_RT_OK);
+      talos_rt_cached_design_name(context, enumTypespec, &name, &nameSize),
+      TALOS_RT_OK);
   EXPECT_EQ(std::string_view(reinterpret_cast<const char *>(name), nameSize),
             typespecName);
 
   const uint8_t *file = nullptr;
   uint64_t fileSize = 0;
   uint32_t line = 0, column = 0;
-  ASSERT_EQ(obelisk_rt_cached_design_source(context, enumTypespec, &file,
+  ASSERT_EQ(talos_rt_cached_design_source(context, enumTypespec, &file,
                                             &fileSize, &line, &column),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(std::string_view(reinterpret_cast<const char *>(file), fileSize),
             "test.sv");
   EXPECT_EQ(line, 11u);
   EXPECT_EQ(column, 3u);
 
-  obelisk_rt_design_cursor_v1 parent{};
-  ASSERT_EQ(obelisk_rt_cached_design_parent(context, enumTypespec, &parent),
-            OBELISK_RT_OK);
+  talos_rt_design_cursor_v1 parent{};
+  ASSERT_EQ(talos_rt_cached_design_parent(context, enumTypespec, &parent),
+            TALOS_RT_OK);
   EXPECT_EQ(parent.offset, 176u);
 
   VPIRelationRange range{};
-  ASSERT_EQ(obelisk_rt_cached_vpi_relation_range(
+  ASSERT_EQ(talos_rt_cached_vpi_relation_range(
                 context, enumTypespec, vpiBaseTypespec, false, &range),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_EQ(range.count, 1u);
-  obelisk_rt_design_cursor_v1 baseTypespec{};
+  talos_rt_design_cursor_v1 baseTypespec{};
   bool statement = true;
-  ASSERT_EQ(obelisk_rt_cached_vpi_relation_target(
+  ASSERT_EQ(talos_rt_cached_vpi_relation_target(
                 context, range.first, &baseTypespec, &exactType, &statement),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(exactType, vpiIntTypespec);
   EXPECT_FALSE(statement);
   ASSERT_EQ(
-      obelisk_rt_cached_design_name(context, baseTypespec, &name, &nameSize),
-      OBELISK_RT_OK);
+      talos_rt_cached_design_name(context, baseTypespec, &name, &nameSize),
+      TALOS_RT_OK);
   EXPECT_EQ(name, nullptr);
   EXPECT_EQ(nameSize, 0u);
 
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char mutableName[] = "logic";
   vpiHandle enumTypespecHandle = vpi_handle_by_name(mutableName, nullptr);
   ASSERT_NE(enumTypespecHandle, nullptr);
@@ -15585,7 +15585,7 @@ TEST(DesignDatabase, TraversesCompactStaticObjectsWithoutRuntimeState) {
   EXPECT_EQ(vpi_get_str(vpiName, baseTypespecHandle), nullptr);
   EXPECT_EQ(vpi_release_handle(baseTypespecHandle), 1);
   EXPECT_EQ(vpi_release_handle(enumTypespecHandle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ResolvesCompactStaticSemanticEndpoints) {
@@ -15595,15 +15595,15 @@ TEST(VPI, ResolvesCompactStaticSemanticEndpoints) {
     fixture.database = makeStaticSemanticEndpointDatabase(classIdentity);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+    fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
 
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
     char sourceName[] = "top.value";
     vpiHandle source = vpi_handle_by_name(sourceName, nullptr);
@@ -15625,7 +15625,7 @@ TEST(VPI, ResolvesCompactStaticSemanticEndpoints) {
     EXPECT_EQ(vpi_compare_objects(source, endpoint), 0);
     EXPECT_EQ(vpi_release_handle(endpoint), 1);
     EXPECT_EQ(vpi_release_handle(source), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -15642,29 +15642,29 @@ TEST(VPI, ClassVariableTypespecDoesNotDependOnLiveValue) {
     constexpr uint64_t objectOffset = 240;
     constexpr uint64_t physicalTypeOffset = 336;
     put32(fixture.database, objectOffset,
-          designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiClassVar));
-    put32(fixture.database, objectOffset + 4, OBELISK_RT_DESIGN_CAP_READ);
+          designRecordKind(TALOS_RT_DESIGN_RECORD_STORAGE, vpiClassVar));
+    put32(fixture.database, objectOffset + 4, TALOS_RT_DESIGN_CAP_READ);
     put64(fixture.database, objectOffset + 56, 64);
     put64(fixture.database, objectOffset + 64, 63);
     put64(fixture.database, objectOffset + 72, 0);
     put64(fixture.database, objectOffset + 80, 0);
     put32(fixture.database, physicalTypeOffset + 4,
-          OBELISK_RT_DESIGN_TYPE_SCALAR);
+          TALOS_RT_DESIGN_TYPE_SCALAR);
     put64(fixture.database, physicalTypeOffset + 8, 64);
     put64(fixture.database, physicalTypeOffset + 16, 63);
     put64(fixture.database, physicalTypeOffset + 24, 0);
     put64(fixture.database, 32, imageChecksum(fixture.database));
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+    fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
 
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char name[] = "top.value";
     vpiHandle variable = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(variable, nullptr);
@@ -15690,7 +15690,7 @@ TEST(VPI, ClassVariableTypespecDoesNotDependOnLiveValue) {
     EXPECT_EQ(vpi_release_handle(again), 1);
     EXPECT_EQ(vpi_release_handle(typespec), 1);
     EXPECT_EQ(vpi_release_handle(variable), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -15707,8 +15707,8 @@ TEST(DesignDatabase, RejectsOutOfBoundsCompactStaticSemanticEndpoints) {
     put64(malformed, 32, imageChecksum(malformed));
     fixture.execution.design_database = malformed.data();
     fixture.execution.design_database_size = malformed.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+              TALOS_RT_INVALID_DESIGN);
   }
 }
 
@@ -15725,8 +15725,8 @@ TEST(DesignDatabase, RejectsMalformedCompactStaticObjects) {
     put64(malformed, 32, imageChecksum(malformed));
     fixture.execution.design_database = malformed.data();
     fixture.execution.design_database_size = malformed.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+              TALOS_RT_INVALID_DESIGN);
   };
 
   std::vector<uint8_t> malformed = makeCompactStaticObjectDatabase();
@@ -15806,7 +15806,7 @@ TEST(DesignDatabase, RejectsMalformedCompactStaticObjects) {
 
 TEST(DesignDatabase,
      ResolvesPackedSemanticWidthsWithoutOptionalScalarPayloads) {
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   for (bool genericIntegral : {false, true}) {
     SCOPED_TRACE(genericIntegral);
     Fixture fixture;
@@ -15820,9 +15820,9 @@ TEST(DesignDatabase,
       uint64_t offset =
           directory.getSemanticTypeOffset() + 3 * SemanticTypeLayout.size;
       put32(fixture.database, offset,
-            OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL |
+            TALOS_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL |
                 (vpiBitTypespec
-                 << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+                 << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
       put64(fixture.database, offset + 32, 22);
       put64(fixture.database, offset + 40, 0);
       put64(fixture.database, field::HeaderChecksum,
@@ -15830,17 +15830,17 @@ TEST(DesignDatabase,
     }
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
-    ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
-    obelisk_rt_context *context = nullptr;
+    fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
+    ASSERT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
     auto expectWidth = [&](uint64_t cursor, uint64_t expected) {
       uint64_t width = UINT64_MAX;
-      EXPECT_EQ(obelisk_rt_cached_design_semantic_bit_width(context, {cursor},
+      EXPECT_EQ(talos_rt_cached_design_semantic_bit_width(context, {cursor},
                                                             &width),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
       EXPECT_EQ(width, expected);
     };
     expectWidth(6, 8); // Four packed elements, each a two-bit struct.
@@ -15851,23 +15851,23 @@ TEST(DesignDatabase,
       expectWidth(4, 23);
     for (uint64_t cursor : {UINT64_C(1), UINT64_C(2), UINT64_C(11)}) {
       uint64_t width = UINT64_MAX;
-      EXPECT_EQ(obelisk_rt_cached_design_semantic_bit_width(context, {cursor},
+      EXPECT_EQ(talos_rt_cached_design_semantic_bit_width(context, {cursor},
                                                             &width),
-                OBELISK_RT_EOF);
+                TALOS_RT_EOF);
       EXPECT_EQ(width, 0u);
     }
     for (uint64_t cursor :
          {UINT64_C(0), directory.getSemanticTypeCount() + 1}) {
       uint64_t width = UINT64_MAX;
-      EXPECT_EQ(obelisk_rt_cached_design_semantic_bit_width(context, {cursor},
+      EXPECT_EQ(talos_rt_cached_design_semantic_bit_width(context, {cursor},
                                                             &width),
-                OBELISK_RT_INVALID_HANDLE);
+                TALOS_RT_INVALID_HANDLE);
       EXPECT_EQ(width, 0u);
     }
     EXPECT_EQ(
-        obelisk_rt_cached_design_semantic_bit_width(context, {9}, nullptr),
-        OBELISK_RT_INVALID_ARGUMENT);
-    obelisk_rt_v1_context_destroy(context);
+        talos_rt_cached_design_semantic_bit_width(context, {9}, nullptr),
+        TALOS_RT_INVALID_ARGUMENT);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -15876,7 +15876,7 @@ TEST(DesignDatabase, SupportsImmutableSourceOnlyVPIObjects) {
   fixture.database = makeSemanticTraversalDatabase();
   constexpr uint64_t objectOffset = 240;
   put32(fixture.database, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT,
                          vpiEnumTypespec));
   put32(fixture.database, objectOffset + 4, 0);
   // Static type metadata is independent of the 65-bit executable state image.
@@ -15891,66 +15891,66 @@ TEST(DesignDatabase, SupportsImmutableSourceOnlyVPIObjects) {
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+  fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
 
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
-  obelisk_rt_design_cursor_v1 object{};
+  ASSERT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
+  talos_rt_design_cursor_v1 object{};
   constexpr std::string_view name = "top.value";
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>(name.data()), name.size(),
                 &object),
-            OBELISK_RT_OK);
-  obelisk_rt_design_info_v1 info{};
-  ASSERT_EQ(obelisk_rt_v1_design_info(&fixture.execution, object, &info),
-            OBELISK_RT_OK);
-  EXPECT_EQ(info.kind, OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT);
-  EXPECT_EQ(info.handle.kind, OBELISK_RT_DESCRIPTOR_INVALID);
+            TALOS_RT_OK);
+  talos_rt_design_info_v1 info{};
+  ASSERT_EQ(talos_rt_v1_design_info(&fixture.execution, object, &info),
+            TALOS_RT_OK);
+  EXPECT_EQ(info.kind, TALOS_RT_DESIGN_RECORD_STATIC_OBJECT);
+  EXPECT_EQ(info.handle.kind, TALOS_RT_DESCRIPTOR_INVALID);
   EXPECT_EQ(info.bit_width, 130u);
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
   uint32_t exactType = 0;
-  ASSERT_EQ(obelisk_rt_cached_vpi_type(context, object, &exactType),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_cached_vpi_type(context, object, &exactType),
+            TALOS_RT_OK);
   EXPECT_EQ(exactType, vpiEnumTypespec);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   char mutableName[] = "top.value";
   vpiHandle handle = vpi_handle_by_name(mutableName, nullptr);
   ASSERT_NE(handle, nullptr);
   EXPECT_EQ(vpi_get(vpiType, handle), vpiEnumTypespec);
   EXPECT_EQ(vpi_get_str(vpiName, handle), nullptr);
   EXPECT_EQ(vpi_release_handle(handle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   put32(fixture.database, objectOffset + 4,
-        OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC);
+        TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC);
   put64(fixture.database, 32, imageChecksum(fixture.database));
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
   handle = vpi_handle_by_name(mutableName, nullptr);
   ASSERT_NE(handle, nullptr);
   EXPECT_STREQ(vpi_get_str(vpiName, handle), "value");
   EXPECT_EQ(vpi_release_handle(handle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 
   for (uint32_t forbiddenKind : {vpiClassObj, vpiCallback, vpiIterator}) {
     std::vector<uint8_t> malformed = fixture.database;
     put32(malformed, objectOffset,
-          designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+          designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT,
                            forbiddenKind));
     put64(malformed, 32, imageChecksum(malformed));
     fixture.execution.design_database = malformed.data();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+              TALOS_RT_INVALID_DESIGN);
   }
 }
 
@@ -15959,10 +15959,10 @@ TEST(DesignDatabase, RejectsMalformedSemanticTraversalInventory) {
   fixture.database = makeSemanticTraversalDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
+  ASSERT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
 
   constexpr uint64_t directoryOffset = 496;
   constexpr uint64_t semanticTypeOffset =
@@ -15973,8 +15973,8 @@ TEST(DesignDatabase, RejectsMalformedSemanticTraversalInventory) {
     put64(malformed, 32, imageChecksum(malformed));
     fixture.execution.design_database = malformed.data();
     fixture.execution.design_database_size = malformed.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+              TALOS_RT_INVALID_DESIGN);
   };
 
   std::vector<uint8_t> malformed = fixture.database;
@@ -15996,15 +15996,15 @@ TEST(DesignDatabase, RejectsMalformedSemanticTraversalInventory) {
 
   malformed = fixture.database;
   put32(malformed, semanticTypeOffset,
-        OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY);
+        TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY);
   reject(std::move(malformed));
 
   malformed = fixture.database;
   put32(
       malformed, semanticTypeOffset,
-      OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY |
-          OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
-          (vpiBitTypespec << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+      TALOS_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY |
+          TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE |
+          (vpiBitTypespec << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   reject(std::move(malformed));
 
   malformed = fixture.database;
@@ -16029,45 +16029,45 @@ TEST(DesignDatabase, RejectsMalformedSemanticTraversalInventory) {
 
   malformed = fixture.database;
   put32(malformed, semanticTypeOffset + 2 * 64,
-        OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY |
-            OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX);
+        TALOS_RT_DESIGN_SEMANTIC_ASSOC_ARRAY |
+            TALOS_RT_DESIGN_SEMANTIC_WILDCARD_INDEX);
   reject(std::move(malformed));
 
   malformed = fixture.database;
   put32(malformed, semanticTypeOffset + 3 * 64,
-        OBELISK_RT_DESIGN_SEMANTIC_UNTYPED);
+        TALOS_RT_DESIGN_SEMANTIC_UNTYPED);
   reject(std::move(malformed));
 
   malformed = fixture.database;
   put32(
       malformed, semanticTypeOffset + 9 * 64,
-      OBELISK_RT_DESIGN_SEMANTIC_BIT | OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
-          (vpiBitTypespec << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+      TALOS_RT_DESIGN_SEMANTIC_BIT | TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE |
+          (vpiBitTypespec << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   reject(std::move(malformed));
 
   malformed = fixture.database;
   put32(malformed, semanticTypeOffset + 6 * 64,
-        OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT |
-            OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
-            OBELISK_RT_DESIGN_SEMANTIC_TAGGED |
+        TALOS_RT_DESIGN_SEMANTIC_PACKED_STRUCT |
+            TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE |
+            TALOS_RT_DESIGN_SEMANTIC_TAGGED |
             (vpiStructTypespec
-             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+             << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   reject(std::move(malformed));
 
   malformed = fixture.database;
   put32(malformed, semanticTypeOffset + 5 * 64,
-        OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY |
-            OBELISK_RT_DESIGN_SEMANTIC_SIGNED |
-            OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE |
-            OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
+        TALOS_RT_DESIGN_SEMANTIC_PACKED_ARRAY |
+            TALOS_RT_DESIGN_SEMANTIC_SIGNED |
+            TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE |
+            TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE |
             (vpiPackedArrayTypespec
-             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+             << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   reject(std::move(malformed));
 
   malformed = makeNamedSemanticTypespecDatabase();
   put32(
       malformed, 240,
-      designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiIntTypespec));
+      designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, vpiIntTypespec));
   reject(std::move(malformed));
 }
 
@@ -16078,7 +16078,7 @@ TEST(VPI, StaticObjectsRequireExplicitTraversalRelations) {
   constexpr uint64_t stringOffset = 416;
   constexpr uint64_t indexOffset = 448;
   put32(fixture.database, objectOffset,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, vpiClassDefn));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, vpiClassDefn));
   put32(fixture.database, objectOffset + 4, 0);
   put64(fixture.database, objectOffset + 80, 0);
   std::memcpy(fixture.database.data() + stringOffset + 4, "pkg::Name", 9);
@@ -16104,15 +16104,15 @@ TEST(VPI, StaticObjectsRequireExplicitTraversalRelations) {
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+  fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char moduleName[] = "top";
   char className[] = "pkg::Name";
@@ -16129,7 +16129,7 @@ TEST(VPI, StaticObjectsRequireExplicitTraversalRelations) {
 
   EXPECT_EQ(vpi_release_handle(classDefinition), 1);
   EXPECT_EQ(vpi_release_handle(module), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, TraversesExplicitStaticRelationsFromNullRoot) {
@@ -16137,15 +16137,15 @@ TEST(VPI, TraversesExplicitStaticRelationsFromNullRoot) {
   fixture.database = makeRootStaticRelationDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+  fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   vpiHandle iterator = vpi_iterate(vpiInstance, nullptr);
   ASSERT_NE(iterator, nullptr);
@@ -16211,7 +16211,7 @@ TEST(VPI, TraversesExplicitStaticRelationsFromNullRoot) {
   EXPECT_EQ(vpi_release_handle(classDefinition), 1);
   EXPECT_EQ(vpi_release_handle(byName), 1);
   EXPECT_EQ(vpi_release_handle(package), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, ReadsPackageDefinitionLocationFromFixedImage) {
@@ -16219,14 +16219,14 @@ TEST(VPI, ReadsPackageDefinitionLocationFromFixedImage) {
   fixture.database = makePackageDefinitionLocationDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+  fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   vpiHandle iterator = vpi_iterate(vpiInstance, nullptr);
   ASSERT_NE(iterator, nullptr);
@@ -16239,7 +16239,7 @@ TEST(VPI, ReadsPackageDefinitionLocationFromFixedImage) {
   EXPECT_EQ(vpi_scan(iterator), nullptr);
 
   EXPECT_EQ(vpi_release_handle(package), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, LexicalMethodDoesNotLeakThroughItsPhysicalModule) {
@@ -16247,15 +16247,15 @@ TEST(VPI, LexicalMethodDoesNotLeakThroughItsPhysicalModule) {
   fixture.database = makeClassMethodRelationDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+  fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
 
   char moduleName[] = "top";
   char className[] = "pkg::C";
@@ -16291,7 +16291,7 @@ TEST(VPI, LexicalMethodDoesNotLeakThroughItsPhysicalModule) {
   EXPECT_EQ(vpi_release_handle(internalMethod), 1);
   EXPECT_EQ(vpi_release_handle(classDefinition), 1);
   EXPECT_EQ(vpi_release_handle(module), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(DesignDatabase, DoesNotTreatDerivedClassesAsLexicalContainment) {
@@ -16312,8 +16312,8 @@ TEST(DesignDatabase, DoesNotTreatDerivedClassesAsLexicalContainment) {
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
 }
 
 TEST(DesignDatabase, RejectsMalformedIntrinsicVPIKinds) {
@@ -16323,26 +16323,26 @@ TEST(DesignDatabase, RejectsMalformedIntrinsicVPIKinds) {
     fixture.database = std::move(database);
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+              TALOS_RT_INVALID_DESIGN);
   };
 
   std::vector<uint8_t> missingStorageKind = makeDatabase();
-  put32(missingStorageKind, 240, OBELISK_RT_DESIGN_RECORD_STORAGE);
+  put32(missingStorageKind, 240, TALOS_RT_DESIGN_RECORD_STORAGE);
   expectRejected(std::move(missingStorageKind));
 
   std::vector<uint8_t> nonConcreteStorageKind = makeDatabase();
   put32(nonConcreteStorageKind, 240,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiMemory));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_STORAGE, vpiMemory));
   expectRejected(std::move(nonConcreteStorageKind));
 
   std::vector<uint8_t> reservedTypePayload = makeDatabase();
   put32(reservedTypePayload, 336,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_TYPE, vpiReg));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_TYPE, vpiReg));
   expectRejected(std::move(reservedTypePayload));
 
   std::vector<uint8_t> missingNestedScopeKind = makeStatementDatabase();
-  put32(missingNestedScopeKind, 240, OBELISK_RT_DESIGN_RECORD_SCOPE);
+  put32(missingNestedScopeKind, 240, TALOS_RT_DESIGN_RECORD_SCOPE);
   expectRejected(std::move(missingNestedScopeKind));
 
   std::vector<uint8_t> missingRelationSourceKind = makeStatementDatabase();
@@ -16366,7 +16366,7 @@ TEST(DesignDatabase, RejectsMalformedIntrinsicVPIKinds) {
 
   std::vector<uint8_t> unmarkedInternalProcess = makeCodeUnitDatabase();
   put32(unmarkedInternalProcess, 240,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_PROCESS, 0));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_PROCESS, 0));
   expectRejected(std::move(unmarkedInternalProcess));
 }
 
@@ -16375,10 +16375,10 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   fixture.database = makeStatementDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_VPI_READ;
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_VPI_READ;
+  ASSERT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
   constexpr size_t statements = 400;
   constexpr size_t sites = 520;
   constexpr size_t relations = 568;
@@ -16406,7 +16406,7 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   put64(dualMode, 136, 2);
   put64(dualMode, 32, imageChecksum(dualMode));
   fixture.execution.design_database = dualMode.data();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
 
   // Scope-owned records use the exact module traversal selectors rather than
   // the behavioral vpiStmt relation. Cover a dense module continuous-assign
@@ -16438,7 +16438,7 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   scopeRelation(2, 2, 0, vpiAliasStmt);
   put64(scopeRelations, 32, imageChecksum(scopeRelations));
   fixture.execution.design_database = scopeRelations.data();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
 
   // Continuous assignments and alias statements are owned by their hierarchy
   // scope rather than by a process/function object.
@@ -16452,7 +16452,7 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
     put16(scopeOwned, 400 + 40 + 36, kind);
     put64(scopeOwned, 32, imageChecksum(scopeOwned));
     fixture.execution.design_database = scopeOwned.data();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK)
+    EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK)
         << kind;
   }
 
@@ -16460,8 +16460,8 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   put32(scopeOwnedWithProcess, 400 + 40 + 8, 0);
   put64(scopeOwnedWithProcess, 32, imageChecksum(scopeOwnedWithProcess));
   fixture.execution.design_database = scopeOwnedWithProcess.data();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+            TALOS_RT_INVALID_DESIGN);
 
   std::vector<uint8_t> crossScopeParent = fixture.database;
   put32(crossScopeParent, 400 + 8, UINT32_MAX);
@@ -16473,15 +16473,15 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   put64(crossScopeParent, 152, 0);
   put64(crossScopeParent, 32, imageChecksum(crossScopeParent));
   fixture.execution.design_database = crossScopeParent.data();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+            TALOS_RT_INVALID_DESIGN);
 
   std::vector<uint8_t> behavioralWithoutProcess = fixture.database;
   put32(behavioralWithoutProcess, 400 + 40 + 8, UINT32_MAX);
   put64(behavioralWithoutProcess, 32, imageChecksum(behavioralWithoutProcess));
   fixture.execution.design_database = behavioralWithoutProcess.data();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+            TALOS_RT_INVALID_DESIGN);
 
   // Static traversal inventory includes statement kinds that are not eligible
   // for cbStmt, provided they have no semantic callback sites.
@@ -16495,7 +16495,7 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   put64(nonCallback, 152, 1);
   put64(nonCallback, 32, imageChecksum(nonCallback));
   fixture.execution.design_database = nonCallback.data();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
 
   std::vector<uint8_t> foreachWithoutScope = fixture.database;
   put16(foreachWithoutScope, statements + 40 + 36, vpiForeachStmt);
@@ -16503,8 +16503,8 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
         designRelationSource(2, vpiForeachStmt, true));
   put64(foreachWithoutScope, 32, imageChecksum(foreachWithoutScope));
   fixture.execution.design_database = foreachWithoutScope.data();
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+            TALOS_RT_INVALID_DESIGN);
 
   auto rejected = [&](size_t offset, uint64_t value, unsigned width = 4) {
     std::vector<uint8_t> malformed = fixture.database;
@@ -16516,8 +16516,8 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
       put32(malformed, offset, static_cast<uint32_t>(value));
     put64(malformed, 32, imageChecksum(malformed));
     fixture.execution.design_database = malformed.data();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+              TALOS_RT_INVALID_DESIGN);
   };
   rejected(statements, 0, 8);                     // zero statement ID
   rejected(statements + 40, 50, 8);               // unsorted statement IDs
@@ -16572,8 +16572,8 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
                      malformed.begin() + relations + 32);
     put64(malformed, 32, imageChecksum(malformed));
     fixture.execution.design_database = malformed.data();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+              TALOS_RT_INVALID_DESIGN);
   }
   rejected(160, 176, 8);                         // relation/header overlap
   rejected(160, statements, 8);                  // relation/statement overlap
@@ -16582,11 +16582,11 @@ TEST(DesignDatabase, ValidatesCompactStatementAndSemanticSiteInventory) {
   rejected(168, uint64_t{UINT32_MAX} + 1, 8);    // relation index cap
 
   fixture.execution.design_database = fixture.database.data();
-  fixture.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                            OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                            OBELISK_RT_EXECUTION_WAVEFORM_METADATA;
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  fixture.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                            TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                            TALOS_RT_EXECUTION_WAVEFORM_METADATA;
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+            TALOS_RT_INVALID_DESIGN);
 }
 
 TEST(DesignDatabase, TraversesRecursiveAggregateTypesAndRejectsCycles) {
@@ -16594,50 +16594,50 @@ TEST(DesignDatabase, TraversesRecursiveAggregateTypesAndRejectsCycles) {
   fixture.database = makeAggregateDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&fixture.execution), TALOS_RT_OK);
 
-  obelisk_rt_design_cursor_v1 object{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+  talos_rt_design_cursor_v1 object{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &fixture.execution,
                 reinterpret_cast<const uint8_t *>("top.value"), 9, &object),
-            OBELISK_RT_OK);
-  obelisk_rt_design_info_v1 objectInfo{};
-  ASSERT_EQ(obelisk_rt_v1_design_info(&fixture.execution, object, &objectInfo),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
+  talos_rt_design_info_v1 objectInfo{};
+  ASSERT_EQ(talos_rt_v1_design_info(&fixture.execution, object, &objectInfo),
+            TALOS_RT_OK);
 
-  obelisk_rt_design_type_info_v1 structInfo{};
-  ASSERT_EQ(obelisk_rt_v1_design_type_info(
+  talos_rt_design_type_info_v1 structInfo{};
+  ASSERT_EQ(talos_rt_v1_design_type_info(
                 &fixture.execution, {objectInfo.type_offset}, &structInfo),
-            OBELISK_RT_OK);
-  EXPECT_EQ(structInfo.kind, OBELISK_RT_DESIGN_TYPE_STRUCT);
+            TALOS_RT_OK);
+  EXPECT_EQ(structInfo.kind, TALOS_RT_DESIGN_TYPE_STRUCT);
   EXPECT_EQ(structInfo.flags,
-            OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED);
+            TALOS_RT_DESIGN_TYPE_FOUR_STATE | TALOS_RT_DESIGN_TYPE_PACKED);
   EXPECT_EQ(structInfo.child_count, 1u);
 
-  obelisk_rt_design_cursor_v1 field{};
-  ASSERT_EQ(obelisk_rt_v1_design_type_child(
+  talos_rt_design_cursor_v1 field{};
+  ASSERT_EQ(talos_rt_v1_design_type_child(
                 &fixture.execution, {objectInfo.type_offset}, 0, &field),
-            OBELISK_RT_OK);
-  obelisk_rt_design_type_info_v1 fieldInfo{};
+            TALOS_RT_OK);
+  talos_rt_design_type_info_v1 fieldInfo{};
   ASSERT_EQ(
-      obelisk_rt_v1_design_type_info(&fixture.execution, field, &fieldInfo),
-      OBELISK_RT_OK);
-  EXPECT_EQ(fieldInfo.kind, OBELISK_RT_DESIGN_TYPE_FIELD);
+      talos_rt_v1_design_type_info(&fixture.execution, field, &fieldInfo),
+      TALOS_RT_OK);
+  EXPECT_EQ(fieldInfo.kind, TALOS_RT_DESIGN_TYPE_FIELD);
   EXPECT_EQ(fieldInfo.ordinal, 0u);
   EXPECT_EQ(fieldInfo.packed_offset, 0u);
 
   const uint8_t *name = nullptr;
   uint64_t nameSize = 0;
   ASSERT_EQ(
-      obelisk_rt_v1_design_name(&fixture.execution, field, &name, &nameSize),
-      OBELISK_RT_OK);
+      talos_rt_v1_design_name(&fixture.execution, field, &name, &nameSize),
+      TALOS_RT_OK);
   EXPECT_EQ(std::string_view(reinterpret_cast<const char *>(name), nameSize),
             "value");
-  obelisk_rt_design_type_info_v1 scalarInfo{};
-  ASSERT_EQ(obelisk_rt_v1_design_type_info(&fixture.execution,
+  talos_rt_design_type_info_v1 scalarInfo{};
+  ASSERT_EQ(talos_rt_v1_design_type_info(&fixture.execution,
                                            fieldInfo.element_type, &scalarInfo),
-            OBELISK_RT_OK);
-  EXPECT_EQ(scalarInfo.kind, OBELISK_RT_DESIGN_TYPE_SCALAR);
+            TALOS_RT_OK);
+  EXPECT_EQ(scalarInfo.kind, TALOS_RT_DESIGN_TYPE_SCALAR);
   EXPECT_EQ(scalarInfo.bit_width, 65u);
   EXPECT_EQ(scalarInfo.range_left, 64);
 
@@ -16645,8 +16645,8 @@ TEST(DesignDatabase, TraversesRecursiveAggregateTypesAndRejectsCycles) {
   constexpr uint64_t rootTypeOffset = 336;
   put64(fixture.database, fieldTypeOffset + 32, rootTypeOffset);
   put64(fixture.database, 32, imageChecksum(fixture.database));
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+            TALOS_RT_INVALID_DESIGN);
 }
 
 TEST(DesignDatabase, UnpackedStructPaddingStillChecksFieldBounds) {
@@ -16657,8 +16657,8 @@ TEST(DesignDatabase, UnpackedStructPaddingStillChecksFieldBounds) {
   fixture.execution.state_bit_count = 128;
   constexpr uint64_t object = 240, structure = 336, field = 416;
   put32(fixture.database, structure + 4,
-        OBELISK_RT_DESIGN_TYPE_STRUCT |
-            (OBELISK_RT_DESIGN_TYPE_FOUR_STATE << 8));
+        TALOS_RT_DESIGN_TYPE_STRUCT |
+            (TALOS_RT_DESIGN_TYPE_FOUR_STATE << 8));
   put64(fixture.database, object + 56, 128);
   put64(fixture.database, structure + 8, 128);
   put64(fixture.database, structure + 16, 127);
@@ -16666,18 +16666,18 @@ TEST(DesignDatabase, UnpackedStructPaddingStillChecksFieldBounds) {
   for (uint64_t offset : {0u, 32u, 63u, 64u}) {
     put64(fixture.database, field + 64, offset);
     put64(fixture.database, 32, imageChecksum(fixture.database));
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-              offset <= 63 ? OBELISK_RT_OK : OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+              offset <= 63 ? TALOS_RT_OK : TALOS_RT_INVALID_DESIGN);
   }
   // The same gap is still forbidden for packed structs.
   put32(fixture.database, structure + 4,
-        OBELISK_RT_DESIGN_TYPE_STRUCT |
-            ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE | OBELISK_RT_DESIGN_TYPE_PACKED)
+        TALOS_RT_DESIGN_TYPE_STRUCT |
+            ((TALOS_RT_DESIGN_TYPE_FOUR_STATE | TALOS_RT_DESIGN_TYPE_PACKED)
              << 8));
   put64(fixture.database, field + 64, 0);
   put64(fixture.database, 32, imageChecksum(fixture.database));
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&fixture.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&fixture.execution),
+            TALOS_RT_INVALID_DESIGN);
 }
 
 TEST(DesignDatabase, RejectsCorruptionAndUnauthorizedWrites) {
@@ -16687,84 +16687,84 @@ TEST(DesignDatabase, RejectsCorruptionAndUnauthorizedWrites) {
   put64(sourceMetadata.database, scopeOffset + 48, stringOffset);
   put64(sourceMetadata.database, scopeOffset + 56, (UINT64_C(12) << 32) | 7);
   put64(sourceMetadata.database, 32, imageChecksum(sourceMetadata.database));
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&sourceMetadata.execution),
-            OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_v1_design_validate(&sourceMetadata.execution),
+            TALOS_RT_OK);
   put64(sourceMetadata.database, scopeOffset + 56, UINT64_C(12) << 32);
   put64(sourceMetadata.database, 32, imageChecksum(sourceMetadata.database));
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&sourceMetadata.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&sourceMetadata.execution),
+            TALOS_RT_INVALID_DESIGN);
 
   Fixture inconsistentScalarRange;
   constexpr uint64_t typeOffset = 336;
   put64(inconsistentScalarRange.database, typeOffset + 16, 63);
   put64(inconsistentScalarRange.database, 32,
         imageChecksum(inconsistentScalarRange.database));
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&inconsistentScalarRange.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&inconsistentScalarRange.execution),
+            TALOS_RT_INVALID_DESIGN);
 
   Fixture corrupt;
   corrupt.database[240 + 16] ^= 1;
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&corrupt.execution),
-            OBELISK_RT_INVALID_DESIGN);
-  obelisk_rt_context *context = nullptr;
+  EXPECT_EQ(talos_rt_v1_design_validate(&corrupt.execution),
+            TALOS_RT_INVALID_DESIGN);
+  talos_rt_context *context = nullptr;
   EXPECT_EQ(
-      obelisk_rt_v1_context_create_for_design(&corrupt.execution, &context),
-      OBELISK_RT_INVALID_DESIGN);
+      talos_rt_v1_context_create_for_design(&corrupt.execution, &context),
+      TALOS_RT_INVALID_DESIGN);
   EXPECT_EQ(context, nullptr);
 
   Fixture outOfBounds;
   outOfBounds.execution.state_bit_count = 64;
-  EXPECT_EQ(obelisk_rt_v1_design_validate(&outOfBounds.execution),
-            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(talos_rt_v1_design_validate(&outOfBounds.execution),
+            TALOS_RT_INVALID_DESIGN);
 
   Fixture twoState;
   put32(twoState.database, typeOffset + 4,
-        OBELISK_RT_DESIGN_TYPE_SCALAR | (OBELISK_RT_DESIGN_TYPE_PACKED << 8));
+        TALOS_RT_DESIGN_TYPE_SCALAR | (TALOS_RT_DESIGN_TYPE_PACKED << 8));
   put64(twoState.database, 32, imageChecksum(twoState.database));
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&twoState.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_design_cursor_v1 twoStateObject{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+      talos_rt_v1_context_create_for_design(&twoState.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_design_cursor_v1 twoStateObject{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &twoState.execution,
                 reinterpret_cast<const uint8_t *>("top.value"), 9,
                 &twoStateObject),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint64_t, 2> twoStateValue{{UINT64_MAX, 1}};
   std::array<uint64_t, 2> ignoredUnknown{{UINT64_MAX, 1}};
-  ASSERT_EQ(obelisk_rt_v1_design_write(context, twoStateObject,
+  ASSERT_EQ(talos_rt_v1_design_write(context, twoStateObject,
                                        twoStateValue.data(),
                                        ignoredUnknown.data(), 65),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint64_t, 2> readValue{}, readUnknown{{UINT64_MAX, UINT64_MAX}};
-  ASSERT_EQ(obelisk_rt_v1_design_read(context, twoStateObject, readValue.data(),
+  ASSERT_EQ(talos_rt_v1_design_read(context, twoStateObject, readValue.data(),
                                       readUnknown.data(), 65),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(readValue, twoStateValue);
   EXPECT_EQ(readUnknown, (std::array<uint64_t, 2>{0, 0}));
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
   context = nullptr;
 
   Fixture readOnly;
   readOnly.database = makeDatabase(false);
   readOnly.execution.design_database = readOnly.database.data();
   readOnly.execution.design_database_size = readOnly.database.size();
-  readOnly.execution.flags = OBELISK_RT_EXECUTION_HAS_BYTECODE |
-                             OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE |
-                             OBELISK_RT_EXECUTION_VPI_READ;
+  readOnly.execution.flags = TALOS_RT_EXECUTION_HAS_BYTECODE |
+                             TALOS_RT_EXECUTION_HAS_DESIGN_DATABASE |
+                             TALOS_RT_EXECUTION_VPI_READ;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&readOnly.execution, &context),
-      OBELISK_RT_OK);
-  obelisk_rt_design_cursor_v1 object{};
-  ASSERT_EQ(obelisk_rt_v1_design_lookup(
+      talos_rt_v1_context_create_for_design(&readOnly.execution, &context),
+      TALOS_RT_OK);
+  talos_rt_design_cursor_v1 object{};
+  ASSERT_EQ(talos_rt_v1_design_lookup(
                 &readOnly.execution,
                 reinterpret_cast<const uint8_t *>("top.value"), 9, &object),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   std::array<uint64_t, 2> value{};
   EXPECT_EQ(
-      obelisk_rt_v1_design_write(context, object, value.data(), nullptr, 65),
-      OBELISK_RT_PERMISSION_DENIED);
-  obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_design_write(context, object, value.data(), nullptr, 65),
+      TALOS_RT_PERMISSION_DENIED);
+  talos_rt_v1_context_destroy(context);
 }
 
 
@@ -16773,12 +16773,12 @@ TEST(VPI, DoesNotInferImportsFromPhysicalChildren) {
   fixture.database = makeCodeUnitDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   char moduleName[] = "top";
   vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
@@ -16800,7 +16800,7 @@ TEST(VPI, DoesNotInferImportsFromPhysicalChildren) {
   EXPECT_EQ(vpi_release_handle(owner), 1);
   EXPECT_EQ(vpi_release_handle(method), 1);
   EXPECT_EQ(vpi_release_handle(module), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, RootDiscoveryDoesNotInventModuleScopeRelations) {
@@ -16808,12 +16808,12 @@ TEST(VPI, RootDiscoveryDoesNotInventModuleScopeRelations) {
   fixture.database = makeStatementDatabase();
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
   vpiHandle modules = vpi_iterate(vpiModule, nullptr);
   ASSERT_NE(modules, nullptr);
@@ -16826,7 +16826,7 @@ TEST(VPI, RootDiscoveryDoesNotInventModuleScopeRelations) {
   EXPECT_EQ(vpi_handle(vpiScope, module), nullptr);
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   EXPECT_EQ(vpi_release_handle(module), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, LexicalObjectsRequireExplicitParentRelations) {
@@ -16835,22 +16835,22 @@ TEST(VPI, LexicalObjectsRequireExplicitParentRelations) {
     Fixture fixture;
     fixture.database = codeUnit ? makeCodeUnitDatabase() : makeDatabase(false);
     if (codeUnit) {
-      put32(fixture.database, 336 + 4, OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR);
+      put32(fixture.database, 336 + 4, TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR);
     } else {
       put32(fixture.database, 240,
-            designRecordKind(OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+            designRecordKind(TALOS_RT_DESIGN_RECORD_STATIC_OBJECT,
                              vpiClassDefn));
       put32(fixture.database, 240 + 4, 0);
     }
     put64(fixture.database, 32, imageChecksum(fixture.database));
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
-    obelisk_rt_context *context = nullptr;
-    ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-              OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    fixture.execution.flags &= ~TALOS_RT_EXECUTION_VPI_WRITE;
+    talos_rt_context *context = nullptr;
+    ASSERT_EQ(talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+              TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
 
     char methodName[] = "top.fn";
     char className[] = "top.value";
@@ -16860,7 +16860,7 @@ TEST(VPI, LexicalObjectsRequireExplicitParentRelations) {
     EXPECT_EQ(vpi_handle(vpiScope, object), nullptr);
     EXPECT_EQ(vpi_chk_error(nullptr), 0);
     EXPECT_EQ(vpi_release_handle(object), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 
@@ -16868,18 +16868,18 @@ TEST(VPI, LexicalObjectsRequireExplicitParentRelations) {
 TEST(VPI, PhysicalArraysRetainTheirDeclaredContainmentQueries) {
   Fixture fixture;
   fixture.database = makeVPITypedArrayDatabase(
-      vpiLogicTypespec, OBELISK_RT_DESIGN_SEMANTIC_LOGIC, 1,
-      OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE);
+      vpiLogicTypespec, TALOS_RT_DESIGN_SEMANTIC_LOGIC, 1,
+      TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE);
   put32(fixture.database, 176,
-        designRecordKind(OBELISK_RT_DESIGN_RECORD_SCOPE, vpiModule));
+        designRecordKind(TALOS_RT_DESIGN_RECORD_SCOPE, vpiModule));
   put64(fixture.database, 32, imageChecksum(fixture.database));
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  talos_rt_context *context = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   char moduleName[] = "top";
   char arrayName[] = "top.value";
   vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
@@ -16898,7 +16898,7 @@ TEST(VPI, PhysicalArraysRetainTheirDeclaredContainmentQueries) {
   }
   EXPECT_EQ(vpi_release_handle(array), 1);
   EXPECT_EQ(vpi_release_handle(module), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 TEST(VPI, VirtualInterfaceIterationDoesNotRequireOptionalVariableIndex) {
@@ -16907,12 +16907,12 @@ TEST(VPI, VirtualInterfaceIterationDoesNotRequireOptionalVariableIndex) {
                                                false, vpiModule);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   ASSERT_EQ(
-      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-      OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+      talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+      TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
   char moduleName[] = "top";
   char variableName[] = "top.value";
   vpiHandle module = vpi_handle_by_name(moduleName, nullptr);
@@ -16935,15 +16935,15 @@ TEST(VPI, VirtualInterfaceIterationDoesNotRequireOptionalVariableIndex) {
   EXPECT_EQ(vpi_chk_error(nullptr), 0);
   for (vpiHandle handle : {scope, child, use, variable, module})
     EXPECT_EQ(vpi_release_handle(handle), 1);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_context_destroy(context);
 }
 
 // Append within the anonymous namespace in DesignBytecodeTest.cpp. This uses
 // its existing valid builtin semantic image and frame-checksum helpers.
 struct VPIThreadQueryProbe {
-  obelisk_rt_object_v1 *object = nullptr;
+  talos_rt_object_v1 *object = nullptr;
   uint32_t waitKind = 0;
-  std::array<const obelisk_rt_process_descriptor_v1 *, 2> childDescriptors{};
+  std::array<const talos_rt_process_descriptor_v1 *, 2> childDescriptors{};
   std::array<uint64_t, 3> processTokens{};
   std::vector<vpiHandle> threads;
   unsigned activeQueries = 0;
@@ -16951,57 +16951,57 @@ struct VPIThreadQueryProbe {
 
 VPIThreadQueryProbe *activeThreadQueryProbe = nullptr;
 
-obelisk_rt_status threadQueryRequirements(uint64_t *size, uint64_t *alignment) {
+talos_rt_status threadQueryRequirements(uint64_t *size, uint64_t *alignment) {
   if (!size || !alignment)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *size = 0;
   *alignment = 1;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status threadQueryExecute(obelisk_rt_process_instance_v1 *instance) {
+talos_rt_status threadQueryExecute(talos_rt_process_instance_v1 *instance) {
   if (!instance || !instance->context || !instance->action ||
       !activeThreadQueryProbe)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   auto &probe = *activeThreadQueryProbe;
   instance->native_handle = instance;
-  const uint64_t self = obelisk_rt_v1_process_current(instance->context);
+  const uint64_t self = talos_rt_v1_process_current(instance->context);
   const uint64_t id = instance->descriptor->handle.id;
   if (instance->continuation == 0) {
     probe.processTokens[id - 1] = self;
     if (id == 1) {
       for (const auto *descriptor : probe.childDescriptors) {
-        obelisk_rt_process_instance_v1 *child = nullptr;
-        auto status = obelisk_rt_v1_process_instance_create_for_context(
+        talos_rt_process_instance_v1 *child = nullptr;
+        auto status = talos_rt_v1_process_instance_create_for_context(
             instance->context, descriptor, &child);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
-        status = obelisk_rt_v1_scheduler_add(instance->context, child, 0);
-        if (status != OBELISK_RT_OK) {
-          obelisk_rt_v1_process_instance_destroy(child);
+        status = talos_rt_v1_scheduler_add(instance->context, child, 0);
+        if (status != TALOS_RT_OK) {
+          talos_rt_v1_process_instance_destroy(child);
           return status;
         }
       }
     }
-    auto *wait = static_cast<obelisk_rt_wait_record_v1 *>(instance->frame);
-    auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
-    *wait = {OBELISK_RT_VERSION,
+    auto *wait = static_cast<talos_rt_wait_record_v1 *>(instance->frame);
+    auto *entry = reinterpret_cast<talos_rt_wait_entry_v1 *>(wait + 1);
+    *wait = {TALOS_RT_VERSION,
              probe.waitKind,
-             probe.waitKind == OBELISK_RT_SUSPEND_MAILBOX
-                 ? uint32_t{OBELISK_RT_WAIT_MAILBOX_NOT_EMPTY}
+             probe.waitKind == TALOS_RT_SUSPEND_MAILBOX
+                 ? uint32_t{TALOS_RT_WAIT_MAILBOX_NOT_EMPTY}
                  : 0u,
              1,
-             probe.waitKind == OBELISK_RT_SUSPEND_SEMAPHORE ? UINT64_C(1) : 0,
+             probe.waitKind == TALOS_RT_SUSPEND_SEMAPHORE ? UINT64_C(1) : 0,
              0};
-    *entry = {obelisk_rt_managed_word_from_object(probe.object),
-              OBELISK_RT_WAIT_EDGE_NONE, 0};
-    *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+    *entry = {talos_rt_managed_word_from_object(probe.object),
+              TALOS_RT_WAIT_EDGE_NONE, 0};
+    *instance->action = {TALOS_RT_FRAGMENT_SUSPEND,
                          probe.waitKind,
                          1,
-                         OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                         TALOS_RT_ACTION_FRAME_WAIT_RECORD,
                          0,
                          sizeof(*wait) + sizeof(*entry)};
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
   // The scheduler invokes this native execution callback while its actual
@@ -17013,34 +17013,34 @@ obelisk_rt_status threadQueryExecute(obelisk_rt_process_instance_v1 *instance) {
     if (vpi_get(vpiActive, thread)) {
       ++active;
       EXPECT_EQ(vpi_get(vpiAllocScheme, thread), vpiAutomaticScheme);
-      EXPECT_EQ(obelisk_rt_v1_process_current(instance->context), self);
+      EXPECT_EQ(talos_rt_v1_process_current(instance->context), self);
     }
   }
   EXPECT_EQ(active, 1u);
   ++probe.activeQueries;
   *instance->action = {
-      OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
-  return OBELISK_RT_OK;
+      TALOS_RT_FRAGMENT_TERMINATE, TALOS_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  return TALOS_RT_OK;
 }
 
-void threadQueryDestroy(obelisk_rt_process_instance_v1 *instance) {
+void threadQueryDestroy(talos_rt_process_instance_v1 *instance) {
   instance->native_handle = nullptr;
 }
 
 struct VPIThreadNativeFixture {
-  const obelisk_rt_frame_field_v1 field{OBELISK_RT_FRAME_WAIT,
-                                        OBELISK_RT_FRAME_FIELD_FLAGS_NONE,
+  const talos_rt_frame_field_v1 field{TALOS_RT_FRAME_WAIT,
+                                        TALOS_RT_FRAME_FIELD_FLAGS_NONE,
                                         0,
-                                        sizeof(obelisk_rt_wait_record_v1) +
-                                            sizeof(obelisk_rt_wait_entry_v1),
+                                        sizeof(talos_rt_wait_record_v1) +
+                                            sizeof(talos_rt_wait_entry_v1),
                                         8,
                                         0};
   std::array<uint32_t, 2> continuations{0, 1};
-  obelisk_rt_frame_layout_v1 layout{};
-  obelisk_rt_process_descriptor_v1 descriptor{};
+  talos_rt_frame_layout_v1 layout{};
+  talos_rt_process_descriptor_v1 descriptor{};
 
   explicit VPIThreadNativeFixture(uint64_t id) {
-    layout = {OBELISK_RT_VERSION,
+    layout = {TALOS_RT_VERSION,
               0,
               field.size,
               8,
@@ -17050,10 +17050,10 @@ struct VPIThreadNativeFixture {
               continuations.data(),
               0};
     layout.checksum = frameChecksum(layout);
-    descriptor = {{OBELISK_RT_DESCRIPTOR_PROCESS, 0, id},
-                  OBELISK_RT_VERSION,
+    descriptor = {{TALOS_RT_DESCRIPTOR_PROCESS, 0, id},
+                  TALOS_RT_VERSION,
                   0,
-                  OBELISK_RT_TIER_MASK_NATIVE,
+                  TALOS_RT_TIER_MASK_NATIVE,
                   0,
                   &layout,
                   threadQueryRequirements,
@@ -17066,8 +17066,8 @@ struct VPIThreadNativeFixture {
 };
 
 TEST(VPI, WaitingThreadsUseRealSchedulerIdentityAndExpireWithExecution) {
-  for (uint32_t semanticKind : {OBELISK_RT_DESIGN_SEMANTIC_MAILBOX,
-                                OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE}) {
+  for (uint32_t semanticKind : {TALOS_RT_DESIGN_SEMANTIC_MAILBOX,
+                                TALOS_RT_DESIGN_SEMANTIC_SEMAPHORE}) {
     for (bool derived : {false, true}) {
       SCOPED_TRACE(semanticKind);
       SCOPED_TRACE(derived);
@@ -17075,53 +17075,53 @@ TEST(VPI, WaitingThreadsUseRealSchedulerIdentityAndExpireWithExecution) {
       fixture.database = makeBuiltinClassVariableDatabase(semanticKind);
       fixture.execution.design_database = fixture.database.data();
       fixture.execution.design_database_size = fixture.database.size();
-      obelisk_rt_context *context = nullptr;
+      talos_rt_context *context = nullptr;
       ASSERT_EQ(
-          obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-          OBELISK_RT_OK);
-      obelisk_rt_gc_lane_v1 *lane = nullptr;
-      ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+          talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+          TALOS_RT_OK);
+      talos_rt_gc_lane_v1 *lane = nullptr;
+      ASSERT_EQ(talos_rt_v1_gc_lane_create(context, &lane), TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_gc_lane_enter(lane), TALOS_RT_OK);
       VPIThreadQueryProbe probe;
       activeThreadQueryProbe = &probe;
-      const bool mailbox = semanticKind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX;
+      const bool mailbox = semanticKind == TALOS_RT_DESIGN_SEMANTIC_MAILBOX;
       probe.waitKind =
-          mailbox ? OBELISK_RT_SUSPEND_MAILBOX : OBELISK_RT_SUSPEND_SEMAPHORE;
+          mailbox ? TALOS_RT_SUSPEND_MAILBOX : TALOS_RT_SUSPEND_SEMAPHORE;
       if (mailbox) {
-        ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
-                      lane, 41, OBELISK_RT_ELEMENT_BITS, 0, 4, 4, 32, nullptr,
+        ASSERT_EQ(talos_rt_v1_mailbox_create_typed(
+                      lane, 41, TALOS_RT_ELEMENT_BITS, 0, 4, 4, 32, nullptr,
                       0, 0, &probe.object),
-                  OBELISK_RT_OK);
+                  TALOS_RT_OK);
       } else {
-        ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 0, &probe.object),
-                  OBELISK_RT_OK);
+        ASSERT_EQ(talos_rt_v1_semaphore_create(lane, 0, &probe.object),
+                  TALOS_RT_OK);
       }
-      obelisk_rt_gc_root_v1 objectRoot{};
-      ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &objectRoot, &probe.object),
-                OBELISK_RT_OK);
-      const uint64_t payloadOffset = sizeof(obelisk_rt_managed_word_v1);
-      obelisk_rt_trace_entry_v1 payloadTrace{};
+      talos_rt_gc_root_v1 objectRoot{};
+      ASSERT_EQ(talos_rt_v1_gc_root_push(lane, &objectRoot, &probe.object),
+                TALOS_RT_OK);
+      const uint64_t payloadOffset = sizeof(talos_rt_managed_word_v1);
+      talos_rt_trace_entry_v1 payloadTrace{};
       payloadTrace.offset = payloadOffset;
       payloadTrace.count = 1;
-      payloadTrace.kind = OBELISK_RT_TRACE_STRONG;
-      payloadTrace.slot_kind = mailbox ? OBELISK_RT_MANAGED_SLOT_MAILBOX
-                                       : OBELISK_RT_MANAGED_SLOT_SEMAPHORE;
-      obelisk_rt_trace_layout_v1 baseLayout{
-          OBELISK_RT_VERSION,
+      payloadTrace.kind = TALOS_RT_TRACE_STRONG;
+      payloadTrace.slot_kind = mailbox ? TALOS_RT_MANAGED_SLOT_MAILBOX
+                                       : TALOS_RT_MANAGED_SLOT_SEMAPHORE;
+      talos_rt_trace_layout_v1 baseLayout{
+          TALOS_RT_VERSION,
           0,
-          payloadOffset + sizeof(obelisk_rt_managed_word_v1),
-          alignof(obelisk_rt_managed_word_v1),
+          payloadOffset + sizeof(talos_rt_managed_word_v1),
+          alignof(talos_rt_managed_word_v1),
           &payloadTrace,
           1};
-      obelisk_rt_trace_entry_v1 embedded{};
-      embedded.kind = OBELISK_RT_TRACE_EMBEDDED;
+      talos_rt_trace_entry_v1 embedded{};
+      embedded.kind = TALOS_RT_TRACE_EMBEDDED;
       embedded.count = 1;
       embedded.child_layout = &baseLayout;
-      obelisk_rt_trace_layout_v1 derivedLayout{
-          OBELISK_RT_VERSION,   0,         baseLayout.size,
+      talos_rt_trace_layout_v1 derivedLayout{
+          TALOS_RT_VERSION,   0,         baseLayout.size,
           baseLayout.alignment, &embedded, 1};
-      obelisk_rt_class_descriptor_v1 base{}, descendant{};
-      base.version = descendant.version = OBELISK_RT_VERSION;
+      talos_rt_class_descriptor_v1 base{}, descendant{};
+      base.version = descendant.version = TALOS_RT_VERSION;
       base.class_id = 1;
       descendant.class_id = 2;
       base.instance_size = descendant.instance_size = baseLayout.size;
@@ -17130,43 +17130,43 @@ TEST(VPI, WaitingThreadsUseRealSchedulerIdentityAndExpireWithExecution) {
       base.layout = &baseLayout;
       descendant.layout = &derivedLayout;
       descendant.base = &base;
-      base.builtin_base_kind = mailbox ? OBELISK_RT_BUILTIN_CLASS_MAILBOX
-                                       : OBELISK_RT_BUILTIN_CLASS_SEMAPHORE;
+      base.builtin_base_kind = mailbox ? TALOS_RT_BUILTIN_CLASS_MAILBOX
+                                       : TALOS_RT_BUILTIN_CLASS_SEMAPHORE;
       base.builtin_base_offset = payloadOffset;
-      const uint64_t payloadIdentity = obelisk_rt_v1_object_id(probe.object);
+      const uint64_t payloadIdentity = talos_rt_v1_object_id(probe.object);
       if (derived) {
-        ASSERT_EQ(obelisk_rt_v1_class_register(context, &base), OBELISK_RT_OK);
-        ASSERT_EQ(obelisk_rt_v1_class_register(context, &descendant),
-                  OBELISK_RT_OK);
-        obelisk_rt_object_v1 *outer = nullptr;
-        ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descendant, &outer),
-                  OBELISK_RT_OK);
+        ASSERT_EQ(talos_rt_v1_class_register(context, &base), TALOS_RT_OK);
+        ASSERT_EQ(talos_rt_v1_class_register(context, &descendant),
+                  TALOS_RT_OK);
+        talos_rt_object_v1 *outer = nullptr;
+        ASSERT_EQ(talos_rt_v1_object_allocate(lane, &descendant, &outer),
+                  TALOS_RT_OK);
         const uint64_t payload =
-            obelisk_rt_managed_word_from_object(probe.object);
-        ASSERT_EQ(obelisk_rt_v1_object_write(outer, payloadOffset, &payload,
+            talos_rt_managed_word_from_object(probe.object);
+        ASSERT_EQ(talos_rt_v1_object_write(outer, payloadOffset, &payload,
                                              sizeof(payload)),
-                  OBELISK_RT_OK);
+                  TALOS_RT_OK);
         probe.object = outer;
       }
-      obelisk_rt_design_cursor_v1 storage{};
+      talos_rt_design_cursor_v1 storage{};
       char name[] = "top.value";
-      ASSERT_EQ(obelisk_rt_v1_design_lookup(
+      ASSERT_EQ(talos_rt_v1_design_lookup(
                     &fixture.execution, reinterpret_cast<const uint8_t *>(name),
                     std::strlen(name), &storage),
-                OBELISK_RT_OK);
-      const uint64_t word = obelisk_rt_managed_word_from_object(probe.object);
+                TALOS_RT_OK);
+      const uint64_t word = talos_rt_managed_word_from_object(probe.object);
       ASSERT_EQ(
-          obelisk_rt_v1_design_write(context, storage, &word, nullptr, 64),
-          OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+          talos_rt_v1_design_write(context, storage, &word, nullptr, 64),
+          TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
       vpiHandle variable = vpi_handle_by_name(name, nullptr);
       ASSERT_NE(variable, nullptr);
       vpiHandle object = vpi_handle(vpiClassObj, variable);
       ASSERT_NE(object, nullptr);
       EXPECT_EQ(vpi_get64(vpiObjId, object),
-                static_cast<PLI_INT64>(obelisk_rt_v1_object_id(probe.object)));
+                static_cast<PLI_INT64>(talos_rt_v1_object_id(probe.object)));
       if (derived) {
         EXPECT_NE(vpi_get64(vpiObjId, object),
                   static_cast<PLI_INT64>(payloadIdentity));
@@ -17178,19 +17178,19 @@ TEST(VPI, WaitingThreadsUseRealSchedulerIdentityAndExpireWithExecution) {
           secondFixture(3);
       probe.childDescriptors = {&firstFixture.descriptor,
                                 &secondFixture.descriptor};
-      obelisk_rt_process_instance_v1 *parentInstance = nullptr;
-      ASSERT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+      talos_rt_process_instance_v1 *parentInstance = nullptr;
+      ASSERT_EQ(talos_rt_v1_process_instance_create_for_context(
                     context, &parentFixture.descriptor, &parentInstance),
-                OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, parentInstance, 0),
-                OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+                TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_scheduler_add(context, parentInstance, 0),
+                TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
       for (uint64_t token : probe.processTokens) {
         ASSERT_NE(token, 0u);
-        obelisk_rt_process_state status{};
-        ASSERT_EQ(obelisk_rt_v1_process_status(context, token, &status),
-                  OBELISK_RT_OK);
-        EXPECT_EQ(status, OBELISK_RT_PROCESS_WAITING);
+        talos_rt_process_state status{};
+        ASSERT_EQ(talos_rt_v1_process_status(context, token, &status),
+                  TALOS_RT_OK);
+        EXPECT_EQ(status, TALOS_RT_PROCESS_WAITING);
       }
       vpiHandle waiting = vpi_iterate(vpiWaitingProcesses, object);
       ASSERT_NE(waiting, nullptr);
@@ -17256,11 +17256,11 @@ TEST(VPI, WaitingThreadsUseRealSchedulerIdentityAndExpireWithExecution) {
       ASSERT_NE(finishedSnapshot, nullptr);
       ASSERT_NE(expiredUse, nullptr);
       ASSERT_NE(weakSnapshot, nullptr);
-      obelisk_rt_process_control_disposition disposition{};
-      ASSERT_EQ(obelisk_rt_v1_process_control(context, probe.processTokens[1],
-                                              OBELISK_RT_PROCESS_CONTROL_KILL,
+      talos_rt_process_control_disposition disposition{};
+      ASSERT_EQ(talos_rt_v1_process_control(context, probe.processTokens[1],
+                                              TALOS_RT_PROCESS_CONTROL_KILL,
                                               &disposition),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
       unsigned remaining = 0, expired = 0;
       for (vpiHandle thread : probe.threads)
         expired += vpi_get(vpiType, thread) == vpiUndefined;
@@ -17274,15 +17274,15 @@ TEST(VPI, WaitingThreadsUseRealSchedulerIdentityAndExpireWithExecution) {
 
       if (mailbox) {
         uint32_t message = 9, success = 0;
-        ASSERT_EQ(obelisk_rt_v1_mailbox_try_put(lane, probe.object, &message,
+        ASSERT_EQ(talos_rt_v1_mailbox_try_put(lane, probe.object, &message,
                                                 nullptr, &success),
-                  OBELISK_RT_OK);
+                  TALOS_RT_OK);
         ASSERT_EQ(success, 1u);
       } else {
-        ASSERT_EQ(obelisk_rt_v1_semaphore_put(probe.object, 2), OBELISK_RT_OK);
+        ASSERT_EQ(talos_rt_v1_semaphore_put(probe.object, 2), TALOS_RT_OK);
       }
-      obelisk_rt_v1_scheduler_notify(context);
-      ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+      talos_rt_v1_scheduler_notify(context);
+      ASSERT_EQ(talos_rt_v1_scheduler_run(context), TALOS_RT_OK);
       EXPECT_EQ(probe.activeQueries, 2u);
       EXPECT_EQ(vpi_scan(finishedSnapshot), nullptr);
       EXPECT_EQ(vpi_chk_error(nullptr), 0);
@@ -17295,22 +17295,22 @@ TEST(VPI, WaitingThreadsUseRealSchedulerIdentityAndExpireWithExecution) {
       }
       const uint64_t zero = 0;
       ASSERT_EQ(
-          obelisk_rt_v1_design_write(context, storage, &zero, nullptr, 64),
-          OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &objectRoot), OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+          talos_rt_v1_design_write(context, storage, &zero, nullptr, 64),
+          TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_gc_root_pop(lane, &objectRoot), TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_gc_collect(lane), TALOS_RT_OK);
       EXPECT_EQ(vpi_scan(weakSnapshot), nullptr);
       EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
       EXPECT_EQ(vpi_get(vpiType, object), vpiUndefined);
       EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
-      obelisk_rt_gc_statistics_v1 statistics{};
-      ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics),
-                OBELISK_RT_OK);
+      talos_rt_gc_statistics_v1 statistics{};
+      ASSERT_EQ(talos_rt_v1_gc_statistics(context, &statistics),
+                TALOS_RT_OK);
       EXPECT_EQ(statistics.live_objects, 0u);
       EXPECT_EQ(vpi_release_handle(variable), 1);
-      ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
-      ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
-      obelisk_rt_v1_context_destroy(context);
+      ASSERT_EQ(talos_rt_v1_gc_lane_leave(lane), TALOS_RT_OK);
+      ASSERT_EQ(talos_rt_v1_gc_lane_destroy(lane), TALOS_RT_OK);
+      talos_rt_v1_context_destroy(context);
       activeThreadQueryProbe = nullptr;
     }
   }
@@ -17326,37 +17326,37 @@ TEST(VPI, IntValueSignExtendsNarrowSignedValues) {
     put64(fixture.database, typeOffset + 8, 9);
     put64(fixture.database, typeOffset + 16, 8);
     put32(fixture.database, typeOffset + 4,
-          OBELISK_RT_DESIGN_TYPE_SCALAR |
-              ((OBELISK_RT_DESIGN_TYPE_FOUR_STATE |
-                OBELISK_RT_DESIGN_TYPE_PACKED |
-                (signedValue ? OBELISK_RT_DESIGN_TYPE_SIGNED : 0))
+          TALOS_RT_DESIGN_TYPE_SCALAR |
+              ((TALOS_RT_DESIGN_TYPE_FOUR_STATE |
+                TALOS_RT_DESIGN_TYPE_PACKED |
+                (signedValue ? TALOS_RT_DESIGN_TYPE_SIGNED : 0))
                << 8));
     put64(fixture.database, 32, imageChecksum(fixture.database));
     fixture.execution.design_database = fixture.database.data();
     fixture.execution.design_database_size = fixture.database.size();
-    obelisk_rt_context *context = nullptr;
+    talos_rt_context *context = nullptr;
     ASSERT_EQ(
-        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
-        OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+        talos_rt_v1_context_create_for_design(&fixture.execution, &context),
+        TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_startup(context, nullptr, 0), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_end_compile(context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_vpi_start_simulation(context), TALOS_RT_OK);
     char name[] = "top.value";
     vpiHandle value = vpi_handle_by_name(name, nullptr);
     ASSERT_NE(value, nullptr);
     EXPECT_EQ(vpi_get(vpiSigned, value), signedValue);
-    obelisk_rt_design_cursor_v1 cursor{};
-    ASSERT_EQ(obelisk_rt_v1_design_lookup(
+    talos_rt_design_cursor_v1 cursor{};
+    ASSERT_EQ(talos_rt_v1_design_lookup(
                   &fixture.execution, reinterpret_cast<const uint8_t *>(name),
                   9, &cursor),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     for (auto [bits, unknown, expected] :
          {std::tuple<uint64_t, uint64_t, int32_t>{510, 0,
                                                   signedValue ? -2 : 510},
           {2, 0, 2},
           {256, 256, 0}}) {
-      ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &bits, &unknown, 9),
-                OBELISK_RT_OK);
+      ASSERT_EQ(talos_rt_v1_design_write(context, cursor, &bits, &unknown, 9),
+                TALOS_RT_OK);
       s_vpi_value read{};
       read.format = vpiIntVal;
       vpi_get_value(value, &read);
@@ -17364,7 +17364,7 @@ TEST(VPI, IntValueSignExtendsNarrowSignedValues) {
       EXPECT_EQ(read.value.integer, expected);
     }
     EXPECT_EQ(vpi_release_handle(value), 1);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
   }
 }
 

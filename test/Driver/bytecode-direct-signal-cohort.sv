@@ -1,10 +1,10 @@
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: FileCheck %s < %t.bytecode.out
-// RUN: obelisk -O3 --vpi=off --native-scheduler=generic %s -o %t.native
+// RUN: talos -O3 --vpi=off --native-scheduler=generic %s -o %t.native
 // RUN: %t.native | diff -u %t.bytecode.out -
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode -G N=17 -G SLOW=1024 -G CYCLES=3 %s -o %t.slow-dominant
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.slow-dominant 2> %t.slow-dominant.diag | FileCheck %s --check-prefix=SLOW
+// RUN: talos -O3 --vpi=off --execution-tier=bytecode -G N=17 -G SLOW=1024 -G CYCLES=3 %s -o %t.slow-dominant
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.slow-dominant 2> %t.slow-dominant.diag | FileCheck %s --check-prefix=SLOW
 // RUN: FileCheck %s --check-prefix=SLOW-DIAG < %t.slow-dominant.diag
 
 // More than the bytecode scheduler's cohort threshold of independent direct

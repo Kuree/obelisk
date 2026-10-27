@@ -1,11 +1,11 @@
-// RUN: obelisk -O3 %s -o %t.hybrid
+// RUN: talos -O3 %s -o %t.hybrid
 // RUN: %t.hybrid | FileCheck %s
-// RUN: obelisk --no-two-state-specialization -O3 %s -o %t.four
+// RUN: talos --no-two-state-specialization -O3 %s -o %t.four
 // RUN: %t.four | FileCheck %s
-// RUN: obelisk --no-two-state-specialization --execution-tier=bytecode -O3 %s -o %t.bytecode
+// RUN: talos --no-two-state-specialization --execution-tier=bytecode -O3 %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
-// RUN: obelisk --no-two-state-specialization -emit-slang %s | FileCheck %s --check-prefix=FLAG
-// RUN: obelisk --no-two-state-specialization -O3 -emit-llvm %s | FileCheck %s --check-prefix=LLVM --implicit-check-not='__obelisk_two_state' --implicit-check-not='__obelisk_known' --implicit-check-not='__obelisk_eval_kernel_promotion_scan'
+// RUN: talos --no-two-state-specialization -emit-slang %s | FileCheck %s --check-prefix=FLAG
+// RUN: talos --no-two-state-specialization -O3 -emit-llvm %s | FileCheck %s --check-prefix=LLVM --implicit-check-not='__talos_two_state' --implicit-check-not='__talos_known' --implicit-check-not='__talos_eval_kernel_promotion_scan'
 
 // FLAG: native.disable_two_state_specialization
 // FLAG: !slang.integral<1, false, true,

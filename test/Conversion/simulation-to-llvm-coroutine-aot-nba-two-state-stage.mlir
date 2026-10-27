@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN: talos-opt %s --split-input-file \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s
 
 // Eval-scheduled variants of simulation-to-llvm-coroutine-aot-nba.mlir whose
@@ -12,7 +12,7 @@
 // shared accumulator.
 // CHECK-LABEL: module @inductive
 // CHECK-LABEL: llvm.func @process(
-// CHECK: %[[ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
+// CHECK: %[[ACC:.*]] = llvm.mlir.addressof @__talos_aot_nba_accumulator_0
 // CHECK: %[[VALUE:.*]] = llvm.getelementptr %[[ACC]][0]
 // CHECK: llvm.store {{.*}}, %[[VALUE]]
 // CHECK: %[[STAGE_UNKNOWN:.*]] = llvm.getelementptr %[[ACC]][32]
@@ -21,11 +21,11 @@
 // CHECK-NOT: llvm.getelementptr %[[ACC]][64]
 // CHECK-NOT: llvm.getelementptr %[[ACC]][96]
 // CHECK-NOT: llvm.getelementptr %[[ACC]][100]
-// CHECK: %[[DIRTY:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// CHECK: %[[DIRTY:.*]] = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // CHECK: %[[DIRTY_WORD:.*]] = llvm.getelementptr %[[DIRTY]][0]
 // CHECK: llvm.store {{.*}}, %[[DIRTY_WORD]]
-// CHECK-NOT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1
-// CHECK-LABEL: llvm.func @process.__obelisk_native_execute
+// CHECK-NOT: llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1
+// CHECK-LABEL: llvm.func @process.__talos_native_execute
 
 module @inductive attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -166,7 +166,7 @@ module @inductive attributes {
 // CHECK: llvm.mlir.constant(0 : i8)
 // CHECK: %[[ZERO8:.*]] = llvm.mlir.constant(0 : i8)
 // CHECK: %[[ZERO64:.*]] = llvm.zext %[[ZERO8]] : i8 to i64
-// CHECK: %[[SELECTED_ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
+// CHECK: %[[SELECTED_ACC:.*]] = llvm.mlir.addressof @__talos_aot_nba_accumulator_0
 // CHECK: %[[SELECTED_VALUE:.*]] = llvm.getelementptr %[[SELECTED_ACC]][0]
 // CHECK: llvm.store {{.*}}, %[[SELECTED_VALUE]]
 // CHECK: %[[SELECTED_UNKNOWN:.*]] = llvm.getelementptr %[[SELECTED_ACC]][32]
@@ -175,11 +175,11 @@ module @inductive attributes {
 // CHECK-NOT: llvm.getelementptr %[[SELECTED_ACC]][64]
 // CHECK-NOT: llvm.getelementptr %[[SELECTED_ACC]][96]
 // CHECK-NOT: llvm.getelementptr %[[SELECTED_ACC]][100]
-// CHECK: %[[SELECTED_DIRTY:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
+// CHECK: %[[SELECTED_DIRTY:.*]] = llvm.mlir.addressof @__talos_aot_nba_dirty_roots_v1
 // CHECK: %[[SELECTED_DIRTY_WORD:.*]] = llvm.getelementptr %[[SELECTED_DIRTY]][0]
 // CHECK: llvm.store {{.*}}, %[[SELECTED_DIRTY_WORD]]
-// CHECK-NOT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1
-// CHECK-LABEL: llvm.func @process.__obelisk_native_execute
+// CHECK-NOT: llvm.mlir.addressof @__talos_aot_nba_dirty_summary_v1
+// CHECK-LABEL: llvm.func @process.__talos_native_execute
 
 module @selected attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

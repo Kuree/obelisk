@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-captures))'
-// RUN: not obelisk-opt %s --split-input-file --mlir-disable-threading --mlir-print-ir-after-failure --pass-pipeline='builtin.module(simulation.design(obelisk-sim-eliminate-dead-captures))' -o /dev/null 2>&1 | FileCheck %s --check-prefix=PREFLIGHT
+// RUN: talos-opt %s --split-input-file --verify-diagnostics --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-captures))'
+// RUN: not talos-opt %s --split-input-file --mlir-disable-threading --mlir-print-ir-after-failure --pass-pipeline='builtin.module(simulation.design(talos-sim-eliminate-dead-captures))' -o /dev/null 2>&1 | FileCheck %s --check-prefix=PREFLIGHT
 
 module {
   simulation.design @malformed_call_metadata {

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // IEEE 1800-2023 9.2.2.2: the original always_comb actor executes its
 // time-zero path during bootstrap. The eval body executes only the resumed
@@ -23,7 +23,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
     // CHECK-LABEL: simulation.func @folded(
-    // CHECK-SAME: schedule.eval.body = @[[FOLDED:folded.__obelisk_eval_body_[0-9]+]]
+    // CHECK-SAME: schedule.eval.body = @[[FOLDED:folded.__talos_eval_body_[0-9]+]]
     simulation.func @folded(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %in: !simulation.ref<i8> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64},
@@ -49,7 +49,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
     // CHECK-LABEL: simulation.func @different(
-    // CHECK-SAME: schedule.eval.body = @[[DIFFERENT:different.__obelisk_eval_body_[0-9]+]]
+    // CHECK-SAME: schedule.eval.body = @[[DIFFERENT:different.__talos_eval_body_[0-9]+]]
     simulation.func @different(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %in: !simulation.ref<i8> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64},
@@ -75,7 +75,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
 
     // CHECK-LABEL: simulation.func @effectful(
-    // CHECK-SAME: schedule.eval.body = @[[EFFECTFUL:effectful.__obelisk_eval_body_[0-9]+]]
+    // CHECK-SAME: schedule.eval.body = @[[EFFECTFUL:effectful.__talos_eval_body_[0-9]+]]
     simulation.func @effectful(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %in: !simulation.ref<i8> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64},

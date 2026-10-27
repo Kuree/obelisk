@@ -1,11 +1,11 @@
 // XFAIL: *
 // Upstream Slang v11.0 has no decryption or protected-source redaction API.
 // Keep this source case visible without downstream Slang patches.
-// RUN: %obelisk -emit-slang %s | FileCheck %s --check-prefix=SLANG
-// RUN: %obelisk -emit-obelisk %s | obelisk-opt --verify-each | FileCheck %s --check-prefix=OBELISK
-// RUN: %obelisk -O3 %s -o %t.native
+// RUN: %talos -emit-slang %s | FileCheck %s --check-prefix=SLANG
+// RUN: %talos -emit-talos %s | talos-opt --verify-each | FileCheck %s --check-prefix=TALOS
+// RUN: %talos -O3 %s -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=OUTPUT
-// RUN: %obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: %talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s --check-prefix=OUTPUT
 
 // IEEE 1800-2017 34.2 makes these envelope descriptors effective in source
@@ -25,7 +25,7 @@ raqzbqhyr
 `pragma protect end_protected
 
 // SLANG: slang.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "protected_hook"
-// OBELISK: obelisk.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "protected_hook"
-// OBELISK-NOT: data_block
-// OBELISK-NOT: cebgrpgrq_ubbx
+// TALOS: talos.sv.symbol.definition @{{[^ ]+}} attributes {{.*}}name = "protected_hook"
+// TALOS-NOT: data_block
+// TALOS-NOT: cebgrpgrq_ubbx
 // OUTPUT: PROTECT_OK

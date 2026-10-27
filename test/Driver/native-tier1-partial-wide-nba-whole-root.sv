@@ -1,9 +1,9 @@
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.auto.ll 2> %t.timing
+// RUN: talos --clocked-kernels=immediate -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.auto.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
 // RUN: FileCheck %s --check-prefix=GENERATED < %t.auto.ll
 // RUN: FileCheck %s --check-prefix=NO-CHECKPOINT < %t.auto.ll
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: talos --clocked-kernels=immediate -O3 --native-scheduler=auto %s -o %t.auto
+// RUN: talos --clocked-kernels=immediate -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.auto > %t.auto.out
 // RUN: %t.generic | diff -u %t.auto.out -
 
@@ -50,6 +50,6 @@ endmodule
 
 // ADMISSION: native eligibility: eligible=1 fully_eligible=0 cost_effective=1
 // ADMISSION-NOT: partial eval disabled
-// NO-CHECKPOINT-NOT: call i32 @obelisk_rt_v1_scheduler_execute_aot_actor
-// GENERATED: @__obelisk_eval_ordered_nba_queue_v1
-// GENERATED: define {{.*}}i32 @__obelisk_eval_dispatch_v1
+// NO-CHECKPOINT-NOT: call i32 @talos_rt_v1_scheduler_execute_aot_actor
+// GENERATED: @__talos_eval_ordered_nba_queue_v1
+// GENERATED: define {{.*}}i32 @__talos_eval_dispatch_v1

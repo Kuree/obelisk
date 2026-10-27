@@ -2,15 +2,15 @@
 
 #include "../SimulationToLLVMCoroutine/SimulationAOTPlanning.h"
 #include "../SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Analysis/ActivationRegionAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
-#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
+#include "talos/Analysis/ActivationRegionAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/Transforms/NativeTransforms.h"
 
-#include "obelisk/Runtime/ActivationOrder.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Runtime/ActivationOrder.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
@@ -21,7 +21,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 /// Change ready-bit identities before any executable tables or NBA taint masks
@@ -60,8 +60,8 @@ void reorderOwners(ResolvedNativeEvalPlan &plan, ArrayRef<uint32_t> order) {
     mask = std::move(mapped);
   }
   for (auto &entry : plan.fanoutEntries)
-    if ((entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK) ==
-        OBELISK_RT_FANOUT_DIRECT)
+    if ((entry.reserved & TALOS_RT_FANOUT_ROUTE_MASK) ==
+        TALOS_RT_FANOUT_DIRECT)
       entry.merged_bit = remap[entry.merged_bit];
   for (uint32_t &bit : plan.periodicOwnerBits)
     if (bit != UINT32_MAX)
@@ -112,7 +112,7 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
     return {};
   const auto &sparseWires = stateLayout.isolatedSparseDriverRanges;
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk sparse scheduling nets: " << sparseWires.size()
+    llvm::errs() << "talos sparse scheduling nets: " << sparseWires.size()
                  << '\n';
   llvm::StringMap<sim::SimFuncOp> functions;
   module.walk([&](sim::SimFuncOp function) {
@@ -170,15 +170,15 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
   DenseSet<uint32_t> multipleClocks;
   for (const auto &entry : plan.fanoutEntries) {
     if (entry.merged_bit >= clocks.size() ||
-        (entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK) !=
-            OBELISK_RT_FANOUT_DIRECT)
+        (entry.reserved & TALOS_RT_FANOUT_ROUTE_MASK) !=
+            TALOS_RT_FANOUT_DIRECT)
       continue;
     ClockKey key{entry.static_state, entry.edge, entry.low_bit,
                  entry.bit_width};
     auto &clock = clocks[entry.merged_bit];
     if ((clock && *clock != key) ||
-        (entry.edge != OBELISK_RT_WAIT_EDGE_POSEDGE &&
-         entry.edge != OBELISK_RT_WAIT_EDGE_NEGEDGE))
+        (entry.edge != TALOS_RT_WAIT_EDGE_POSEDGE &&
+         entry.edge != TALOS_RT_WAIT_EDGE_NEGEDGE))
       multipleClocks.insert(entry.merged_bit);
     clock = key;
   }
@@ -205,9 +205,9 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
     StringRef twoStateBody = direct.twoStateBody;
     if (sim::SimFuncOp variant = functions.lookup(twoStateBody);
         variant &&
-        ::obelisk::schedule::has<schedule::metadata::evalPathGuardedTwoState>(
+        ::talos::schedule::has<schedule::metadata::evalPathGuardedTwoState>(
             variant) &&
-        !::obelisk::schedule::has<
+        !::talos::schedule::has<
             schedule::metadata::evalPathGuardedKnownPreserving>(variant))
       twoStateBody = {};
     Node node{{record.bit, direct.body, twoStateBody.str(), {}}, {}, {}};
@@ -318,10 +318,10 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
           return false;
         const auto &handles = net ? stateLayout.nets : stateLayout.storage;
         auto handle = handles.find(effect.getDescriptor());
-        obelisk_rt_stable_handle_v1 decoded{};
+        talos_rt_stable_handle_v1 decoded{};
         if (handle == handles.end() ||
-            !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-            decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.offset)
+            !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+            decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC || decoded.offset)
           return false;
         if (net && (!stateLayout.directHandles.contains(decoded.id) ||
                     stateLayout.guardedHandles.contains(decoded.id)))
@@ -334,10 +334,10 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
             effect.getEffect() == schedule::ComputeEffectKind::Watch) {
           uint32_t edge =
               effect.getTrigger() == schedule::ComputeTriggerKind::Posedge
-                  ? OBELISK_RT_WAIT_EDGE_POSEDGE
+                  ? TALOS_RT_WAIT_EDGE_POSEDGE
               : effect.getTrigger() == schedule::ComputeTriggerKind::Negedge
-                  ? OBELISK_RT_WAIT_EDGE_NEGEDGE
-                  : OBELISK_RT_WAIT_EDGE_CHANGE;
+                  ? TALOS_RT_WAIT_EDGE_NEGEDGE
+                  : TALOS_RT_WAIT_EDGE_CHANGE;
           if (effect.getDynamic() ||
               ClockKey{decoded.id, edge, effect.getLow(), effect.getWidth()} !=
                   *clocks[record.bit])
@@ -378,10 +378,10 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
             const auto &handles =
                 range.root & netTag ? stateLayout.nets : stateLayout.storage;
             auto handle = handles.find(range.root & ~netTag);
-            obelisk_rt_stable_handle_v1 decoded{};
+            talos_rt_stable_handle_v1 decoded{};
             if (handle == handles.end() ||
-                !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-                decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+                !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+                decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC ||
                 decoded.offset)
               return false;
             auto width = widths.find(decoded.id);
@@ -440,10 +440,10 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
               const auto &handles =
                   range.root & netTag ? stateLayout.nets : stateLayout.storage;
               auto handle = handles.find(range.root & ~netTag);
-              obelisk_rt_stable_handle_v1 decoded{};
+              talos_rt_stable_handle_v1 decoded{};
               if (handle == handles.end() ||
-                  !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-                  decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+                  !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+                  decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC ||
                   decoded.offset) {
                 node.opaqueMemory = true;
                 continue;
@@ -492,10 +492,10 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
                                     ? stateLayout.nets
                                     : stateLayout.storage;
           auto handle = handles.find(effect.getDescriptor());
-          obelisk_rt_stable_handle_v1 decoded{};
+          talos_rt_stable_handle_v1 decoded{};
           if (handle == handles.end() ||
-              !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-              decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+              !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+              decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC ||
               decoded.offset) {
             node.opaqueMemory = true;
             continue;
@@ -526,7 +526,7 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
   };
   if (native::has<native::DebugTiming>(module))
     for (const auto &node : nodes)
-      llvm::errs() << "obelisk ranked memory: body=" << node.plan.body
+      llvm::errs() << "talos ranked memory: body=" << node.plan.body
                    << " reads=" << node.reads.size()
                    << " writes=" << node.writes.size() << '\n';
   DenseMap<uint32_t, SmallVector<Reader>> readers;
@@ -633,7 +633,7 @@ NativeActivationInputs collectNativeActivationInputs(sim::SimDesignOp design,
   result.repeatable =
       schedule::collectRepeatableCombinationalActivations(design, handles);
   if (explain)
-    llvm::errs() << "obelisk repeatable activations: "
+    llvm::errs() << "talos repeatable activations: "
                  << result.repeatable.size() << '\n';
   result.completeNBAWriters = true;
   SymbolTable symbols(design);
@@ -687,7 +687,7 @@ NativeActivationInputs collectNativeActivationInputs(sim::SimDesignOp design,
         analysis::ActivationMemoryAnalysis::DependencyMode::Inputs);
     if (explain)
       llvm::errs()
-          << "obelisk ranked activation: " << function.getSymName()
+          << "talos ranked activation: " << function.getSymName()
           << " valid=" << activation.isValid()
           << " complete=" << activation.getMemory().hasCompleteWrites()
           << " inputs=" << activation.getMemory().hasInputDependencies()
@@ -709,7 +709,7 @@ NativeActivationInputs collectNativeActivationInputs(sim::SimDesignOp design,
 
 FailureOr<ResolvedNativeEvalPlan>
 resolveNativeEvalPlan(ModuleOp module,
-                      ArrayRef<obelisk_rt_native_schedule_node> executableNodes,
+                      ArrayRef<talos_rt_native_schedule_node> executableNodes,
                       const NativeStateLayout &stateLayout,
                       const NativeStaticNBAPlan &staticNBAPlan,
                       const NativeStaticFanoutPlan &staticFanoutPlan,
@@ -724,22 +724,22 @@ resolveNativeEvalPlan(ModuleOp module,
     return result;
   result.fanoutEntries.assign(staticFanoutPlan.entries.begin(),
                               staticFanoutPlan.entries.end());
-  auto setFanoutRoute = [](obelisk_rt_static_fanout_entry &entry,
+  auto setFanoutRoute = [](talos_rt_static_fanout_entry &entry,
                            uint32_t route) {
-    entry.reserved = (entry.reserved & ~OBELISK_RT_FANOUT_ROUTE_MASK) | route;
+    entry.reserved = (entry.reserved & ~TALOS_RT_FANOUT_ROUTE_MASK) | route;
   };
   // The first executable node of each physical continuation.
   DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> nodeByContinuation;
   for (auto [index, node] : llvm::enumerate(executableNodes))
     nodeByContinuation.try_emplace({node.actor_slot, node.continuation},
                                    static_cast<uint32_t>(index));
-  for (obelisk_rt_static_fanout_entry &entry : result.fanoutEntries) {
+  for (talos_rt_static_fanout_entry &entry : result.fanoutEntries) {
     auto node = nodeByContinuation.find({entry.actor_slot, entry.continuation});
     if (node == nodeByContinuation.end())
       return module.emitError("static fanout has no indexed compute fragment"),
              failure();
     entry.compute_node = node->second;
-    setFanoutRoute(entry, OBELISK_RT_FANOUT_RUNTIME);
+    setFanoutRoute(entry, TALOS_RT_FANOUT_RUNTIME);
     result.clockKernels.push_back(
         {entry.static_state, entry.edge, entry.low_bit, entry.bit_width});
   }
@@ -754,7 +754,7 @@ resolveNativeEvalPlan(ModuleOp module,
                             result.clockKernels.end());
   for (auto [index, kernel] : llvm::enumerate(result.clockKernels))
     kernel.activeName =
-        (Twine("__obelisk_aot_model_active_v1_") + Twine(index)).str();
+        (Twine("__talos_aot_model_active_v1_") + Twine(index)).str();
 
   if (evalOwnership.fanoutOwners.size() != result.fanoutEntries.size() ||
       evalOwnership.periodicFanoutOwners.size() != result.fanoutEntries.size())
@@ -765,7 +765,7 @@ resolveNativeEvalPlan(ModuleOp module,
   llvm::StringMap<SmallVector<uint32_t, 1>> mergedByExecutor;
   auto resolveOwner =
       [&](const NativeEvalFanoutOwner &plannedOwner,
-          const obelisk_rt_static_fanout_entry &entry) -> FailureOr<uint32_t> {
+          const talos_rt_static_fanout_entry &entry) -> FailureOr<uint32_t> {
     if (plannedOwner.kind != NativeEvalFanoutOwnerKind::Direct ||
         plannedOwner.directFragment >= directFragments.size())
       return module.emitError(
@@ -815,7 +815,7 @@ resolveNativeEvalPlan(ModuleOp module,
     const NativeEvalFanoutOwner &plannedOwner =
         evalOwnership.fanoutOwners[entryIndex];
     if (plannedOwner.kind == NativeEvalFanoutOwnerKind::PeriodicAlias) {
-      setFanoutRoute(entry, OBELISK_RT_FANOUT_PERIODIC_ALIAS);
+      setFanoutRoute(entry, TALOS_RT_FANOUT_PERIODIC_ALIAS);
       entry.merged_bit = 0;
       continue;
     }
@@ -826,7 +826,7 @@ resolveNativeEvalPlan(ModuleOp module,
     // null executor here would make the hot coordinator's ownership model
     // incomplete after handoff.
     if (plannedOwner.kind == NativeEvalFanoutOwnerKind::Runtime) {
-      setFanoutRoute(entry, OBELISK_RT_FANOUT_RUNTIME);
+      setFanoutRoute(entry, TALOS_RT_FANOUT_RUNTIME);
       entry.merged_bit = 0;
       continue;
     }
@@ -834,7 +834,7 @@ resolveNativeEvalPlan(ModuleOp module,
     if (failed(genericBit))
       return failure();
     entry.merged_bit = *genericBit;
-    setFanoutRoute(entry, OBELISK_RT_FANOUT_DIRECT);
+    setFanoutRoute(entry, TALOS_RT_FANOUT_DIRECT);
 
     const NativeEvalFanoutOwner &periodicOwner =
         evalOwnership.periodicFanoutOwners[entryIndex];
@@ -866,13 +866,13 @@ resolveNativeEvalPlan(ModuleOp module,
   if (!result.mergedFragments.empty() && computeGraph) {
     llvm::SmallDenseSet<unsigned, 32> closure;
     auto periodicBitTouches = [](uint64_t bit,
-                                 const obelisk_rt_static_fanout_entry &entry) {
+                                 const talos_rt_static_fanout_entry &entry) {
       if (entry.bit_width == 0 || entry.low_bit > bit ||
           bit - entry.low_bit >= entry.bit_width)
         return false;
       // IEEE 1800 edge events on a vector observe only the expression's least
       // significant bit. Ordinary change events observe the complete range.
-      return entry.edge == OBELISK_RT_WAIT_EDGE_CHANGE || entry.low_bit == bit;
+      return entry.edge == TALOS_RT_WAIT_EDGE_CHANGE || entry.low_bit == bit;
     };
     // The state-local bit of a periodic source, if it lies in its state.
     auto localBit = [&](uint64_t state,
@@ -891,23 +891,23 @@ resolveNativeEvalPlan(ModuleOp module,
       aliasBits.push_back(
           localBit(alias.getTargetStaticState(), alias.getTargetBitOffset()));
     auto clockTouches = [&](size_t index,
-                            const obelisk_rt_static_fanout_entry &entry) {
+                            const talos_rt_static_fanout_entry &entry) {
       if (entry.static_state != periodicClocks[index].getStaticState() ||
           entry.bit_width == 0 || !clockBits[index])
         return false;
       return periodicBitTouches(*clockBits[index], entry);
     };
     auto aliasTouches = [&](size_t index,
-                            const obelisk_rt_static_fanout_entry &entry) {
+                            const talos_rt_static_fanout_entry &entry) {
       if (entry.static_state != periodicAliases[index].getTargetStaticState() ||
           entry.bit_width == 0 || !aliasBits[index])
         return false;
       return periodicBitTouches(*aliasBits[index], entry);
     };
     for (auto [entryIndex, entry] : llvm::enumerate(result.fanoutEntries)) {
-      uint32_t route = entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK;
-      if (route == OBELISK_RT_FANOUT_RUNTIME ||
-          route == OBELISK_RT_FANOUT_PERIODIC_ALIAS ||
+      uint32_t route = entry.reserved & TALOS_RT_FANOUT_ROUTE_MASK;
+      if (route == TALOS_RT_FANOUT_RUNTIME ||
+          route == TALOS_RT_FANOUT_PERIODIC_ALIAS ||
           entry.merged_bit >= result.mergedFragments.size())
         continue;
       bool periodic = false;
@@ -1164,7 +1164,7 @@ resolveNativeEvalPlan(ModuleOp module,
   }
 
   // Project graph-level NBA reachability onto exclusive generated owners.
-  ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;
+  ArrayRef<talos_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;
   result.nbaTaintWordCount = static_cast<uint32_t>((nbaRoots.size() + 63) / 64);
   result.recordNBATaintMasks.assign(
       result.mergedFragments.size(),
@@ -1198,10 +1198,10 @@ resolveNativeEvalPlan(ModuleOp module,
       if (effect.getEffect() != schedule::ComputeEffectKind::NBA)
         continue;
       auto handle = stateLayout.storage.find(effect.getDescriptor());
-      obelisk_rt_stable_handle_v1 decoded{};
+      talos_rt_stable_handle_v1 decoded{};
       if (handle == stateLayout.storage.end() ||
-          !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-          decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC) {
+          !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+          decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC) {
         fillAllRoots(mask);
         continue;
       }
@@ -1310,7 +1310,7 @@ resolveNativeEvalPlan(ModuleOp module,
           staticNBAPlan.generatedOffsets[index],
           root.bit_width,
           staticNBAPlan.generatedFixedWriteMasks[index],
-          OBELISK_RT_REGION_NBA,
+          TALOS_RT_REGION_NBA,
           staticNBAPlan.trackTransients[index],
           writers->second,
           {},
@@ -1363,7 +1363,7 @@ resolveNativeEvalPlan(ModuleOp module,
     }
   }
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk eval transaction source roots: "
+    llvm::errs() << "talos eval transaction source roots: "
                  << result.transaction.roots.size() << "/"
                  << staticNBAPlan.roots.size()
                  << " graph=" << (activationInputs.sourceGraph == computeGraph)
@@ -1380,4 +1380,4 @@ resolveNativeEvalPlan(ModuleOp module,
   return result;
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

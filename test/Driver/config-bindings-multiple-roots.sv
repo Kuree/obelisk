@@ -1,6 +1,6 @@
 // A single configuration can elaborate multiple design roots. Each instance
 // rule is rooted independently, and the report remains globally lexical.
-// RUN: obelisk -emit-bindings --top=multi %s \
+// RUN: talos -emit-bindings --top=multi %s \
 // RUN:   | FileCheck %s --check-prefix=REPORT
 
 module replacement_a;

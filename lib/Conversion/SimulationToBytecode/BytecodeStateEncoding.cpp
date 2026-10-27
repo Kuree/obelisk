@@ -2,11 +2,11 @@
 
 #include "BytecodeEncoder.h"
 #include "BytecodeSerialization.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 std::optional<LogicalResult>
 Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
@@ -19,7 +19,7 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
       return operation->emitOpError(
           "event null requires the canonical handle layout");
     SmallVector<uint8_t, 32> bytes(layout.size, 0);
-    write32(bytes, 0, OBELISK_RT_DESCRIPTOR_EVENT);
+    write32(bytes, 0, TALOS_RT_DESCRIPTOR_EVENT);
     write64(bytes, 8, UINT64_MAX);
     write64(bytes, 16, UINT64_MAX);
     emit({Constant, 0, destination, 0, 0, 0, 0, addRawConstant(bytes)});
@@ -27,15 +27,15 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
   }
   if (auto op = dyn_cast<sim::SimContextStorageOp>(operation))
     return encodeHandle(plan, op.getResult(), op.getId(), state.storage,
-                        OBELISK_RT_DESCRIPTOR_STORAGE);
+                        TALOS_RT_DESCRIPTOR_STORAGE);
   if (auto op = dyn_cast<sim::SimContextNetOp>(operation))
     return encodeHandle(plan, op.getResult(), op.getId(), state.nets,
-                        OBELISK_RT_DESCRIPTOR_NET);
+                        TALOS_RT_DESCRIPTOR_NET);
   if (auto op = dyn_cast<sim::SimContextDriverOp>(operation))
     return encodeHandle(plan, op.getResult(), op.getId(), state.drivers,
-                        OBELISK_RT_DESCRIPTOR_DRIVER);
+                        TALOS_RT_DESCRIPTOR_DRIVER);
   if (auto op = dyn_cast<sim::SimContextEventOp>(operation)) {
-    emit({MakeHandle, 0, reg(plan, op.getResult()), OBELISK_RT_DESCRIPTOR_EVENT,
+    emit({MakeHandle, 0, reg(plan, op.getResult()), TALOS_RT_DESCRIPTOR_EVENT,
           0, 0, 0, op.getId()});
     return success();
   }
@@ -96,7 +96,7 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
                        entryKind == sim::EntryKind::PortOutput);
     emit({StoreState,
           static_cast<uint16_t>(
-              continuous ? OBELISK_RT_DB_STORE_STATE_CONTINUOUS : 0),
+              continuous ? TALOS_RT_DB_STORE_STATE_CONTINUOUS : 0),
           0, reference, value});
     return success();
   }
@@ -121,8 +121,8 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
     }
     emit(
         {OverrideState,
-         static_cast<uint16_t>(op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
-                                                : OBELISK_RT_DB_OVERRIDE_FORCE),
+         static_cast<uint16_t>(op.getIsAssign() ? TALOS_RT_DB_OVERRIDE_ASSIGN
+                                                : TALOS_RT_DB_OVERRIDE_FORCE),
          0, reg(plan, op.getTarget()), reg(plan, op.getValue())});
     return success();
   }
@@ -142,11 +142,11 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
            emitU64Constant(plan, flags), reg(plan, op.getOwner())},
           {});
     }
-    uint16_t flags = op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
-                                      : OBELISK_RT_DB_OVERRIDE_FORCE;
-    flags |= OBELISK_RT_DB_OVERRIDE_DYNAMIC;
+    uint16_t flags = op.getIsAssign() ? TALOS_RT_DB_OVERRIDE_ASSIGN
+                                      : TALOS_RT_DB_OVERRIDE_FORCE;
+    flags |= TALOS_RT_DB_OVERRIDE_DYNAMIC;
     if (op.getClaim())
-      flags |= OBELISK_RT_DB_OVERRIDE_CLAIM;
+      flags |= TALOS_RT_DB_OVERRIDE_CLAIM;
     emit({OverrideState, flags, 0, reg(plan, op.getTarget()),
           reg(plan, op.getValue()), reg(plan, op.getOwner())});
     return success();
@@ -168,15 +168,15 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
     }
     emit(
         {ReleaseState,
-         static_cast<uint16_t>(op.getIsAssign() ? OBELISK_RT_DB_OVERRIDE_ASSIGN
-                                                : OBELISK_RT_DB_OVERRIDE_FORCE),
+         static_cast<uint16_t>(op.getIsAssign() ? TALOS_RT_DB_OVERRIDE_ASSIGN
+                                                : TALOS_RT_DB_OVERRIDE_FORCE),
          0, reg(plan, op.getTarget())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimDriverDriveOp>(operation)) {
-    uint16_t flags = ::obelisk::schedule::has<
-                         ::obelisk::schedule::Field::DeferNetResolution>(op)
-                         ? OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION
+    uint16_t flags = ::talos::schedule::has<
+                         ::talos::schedule::Field::DeferNetResolution>(op)
+                         ? TALOS_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION
                          : 0;
     emit({StoreState, flags, 0, reg(plan, op.getDriver()),
           reg(plan, op.getValue())});
@@ -184,17 +184,17 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
   }
   if (auto op = dyn_cast<sim::SimDriverDriveDelayedNetOp>(operation)) {
     uint16_t flags = op.getDeferResolution()
-                         ? OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION
+                         ? TALOS_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION
                          : 0;
     emit({StoreState, flags, 0, reg(plan, op.getDriver()),
           reg(plan, op.getValue())});
     return success();
   }
   if (auto op = dyn_cast<sim::SimDriverDriveChangedOp>(operation)) {
-    uint16_t flags = OBELISK_RT_DB_STORE_STATE_CHANGED;
-    if (::obelisk::schedule::has<
-            ::obelisk::schedule::Field::DeferNetResolution>(op))
-      flags |= OBELISK_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION;
+    uint16_t flags = TALOS_RT_DB_STORE_STATE_CHANGED;
+    if (::talos::schedule::has<
+            ::talos::schedule::Field::DeferNetResolution>(op))
+      flags |= TALOS_RT_DB_STORE_STATE_DEFER_NET_RESOLUTION;
     emit({StoreState, flags, reg(plan, op.getChanged()),
           reg(plan, op.getDriver()), reg(plan, op.getValue())});
     return success();
@@ -202,4 +202,4 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
   return std::nullopt;
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

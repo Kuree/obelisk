@@ -7,11 +7,11 @@ from pathlib import Path
 BENCHMARK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_DIR))
 
-from obelisk_bench import icarus  # noqa: E402
+from talos_bench import icarus  # noqa: E402
 
 
 class TranslateArgsTest(unittest.TestCase):
-    def test_min_typ_max_modes_use_the_public_obelisk_option(self):
+    def test_min_typ_max_modes_use_the_public_talos_option(self):
         for source, expected in (
             (["-Tmin"], "--timing=min"),
             (["-T", "typ"], "--timing=typ"),

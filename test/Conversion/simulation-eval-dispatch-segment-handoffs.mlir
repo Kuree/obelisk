@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.priority erase},test-obelisk-replicate,simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.sparse.mlir 2> %t.sparse.trace
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-edit-attributes{has=test.priority erase},test-talos-replicate,simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.sparse.mlir 2> %t.sparse.trace
 // RUN: FileCheck %s --check-prefix=SPARSE < %t.sparse.mlir
 // RUN: FileCheck %s --check-prefix=SPARSE-PLAN < %t.sparse.trace
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{has=test.priority erase},test-obelisk-edit-attributes{has=test.deferred set="{resume_region = 3 : i32}"},test-obelisk-replicate,simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.deferred.mlir 2> %t.deferred.trace
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-edit-attributes{has=test.priority erase},test-talos-edit-attributes{has=test.deferred set="{resume_region = 3 : i32}"},test-talos-replicate,simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.deferred.mlir 2> %t.deferred.trace
 // RUN: FileCheck %s --check-prefix=DEFERRED < %t.deferred.mlir
 // RUN: FileCheck %s --check-prefix=DEFERRED-PLAN < %t.deferred.trace
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-replicate,simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.priority.mlir 2> %t.priority.trace
+// RUN: talos-opt %s --pass-pipeline='builtin.module(test-talos-replicate,simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.priority.mlir 2> %t.priority.trace
 // RUN: FileCheck %s --check-prefix=PRIORITY < %t.priority.mlir
 
 // The counter owners cannot fuse because they may terminate. The pure `aaa`
@@ -16,14 +16,14 @@
 // statement/NBA ordering; the particular order between Active owners is chosen
 // by the implementation.
 
-// SPARSE-PLAN: obelisk eval owner: bit=0 {{.*}} group=__obelisk_eval_ranked_group_0
-// SPARSE-PLAN: obelisk eval owner: bit=513 {{.*}} group=-
+// SPARSE-PLAN: talos eval owner: bit=0 {{.*}} group=__talos_eval_ranked_group_0
+// SPARSE-PLAN: talos eval owner: bit=513 {{.*}} group=-
 
 // The outer coordinator owns bit zero. A local encounter with that bit must
 // return OK without consuming it, while an invalid initial selection fails.
-// SPARSE-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// SPARSE: llvm.call @__obelisk_eval_ranked_group_0(
-// SPARSE-LABEL: llvm.func @__obelisk_eval_dispatch_v1.segment_0(
+// SPARSE-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// SPARSE: llvm.call @__talos_eval_ranked_group_0(
+// SPARSE-LABEL: llvm.func @__talos_eval_dispatch_v1.segment_0(
 // SPARSE: llvm.switch %arg1 : i64, ^[[INVALID:bb[0-9]+]] [
 // SPARSE-NEXT: 1: ^[[FIRST:bb[0-9]+]],
 // SPARSE: 511:
@@ -43,20 +43,20 @@
 // SPARSE-NEXT: llvm.br ^[[RETURN]](%[[OK]] : i32)
 // SPARSE: ^[[RETURN]](%[[STATUS:.*]]: i32):
 // SPARSE-NEXT: llvm.return %[[STATUS]]
-// SPARSE-LABEL: llvm.func @__obelisk_eval_dispatch_v1.segment_1(
+// SPARSE-LABEL: llvm.func @__talos_eval_dispatch_v1.segment_1(
 
-// DEFERRED-PLAN: obelisk eval owner: bit=512 {{.*}} group=- {{.*}}{{$}}
-// DEFERRED-PLAN-NEXT: obelisk eval owner: bit=513 {{.*}} deferred{{$}}
+// DEFERRED-PLAN: talos eval owner: bit=512 {{.*}} group=- {{.*}}{{$}}
+// DEFERRED-PLAN-NEXT: talos eval owner: bit=513 {{.*}} deferred{{$}}
 
 // The wholly Active segment can loop. The mixed segment must return after
 // each owner so the outer coordinator checks the Inactive boundary again.
-// DEFERRED-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
+// DEFERRED-LABEL: llvm.func @__talos_eval_dispatch_v1(
 // DEFERRED: %[[FIRST_DEFERRED:.*]] = llvm.mlir.constant(513 : i64)
 // DEFERRED: llvm.icmp "uge" %{{.*}}, %[[FIRST_DEFERRED]]
-// DEFERRED: llvm.call @obelisk_rt_v1_scheduler_termination_requested(
-// DEFERRED-LABEL: llvm.func @__obelisk_eval_dispatch_v1.segment_0(
+// DEFERRED: llvm.call @talos_rt_v1_scheduler_termination_requested(
+// DEFERRED-LABEL: llvm.func @__talos_eval_dispatch_v1.segment_0(
 // DEFERRED: "llvm.intr.cttz"
-// DEFERRED-LABEL: llvm.func @__obelisk_eval_dispatch_v1.segment_1(
+// DEFERRED-LABEL: llvm.func @__talos_eval_dispatch_v1.segment_1(
 // DEFERRED: llvm.switch %arg1 : i64,
 // DEFERRED-NEXT: 512:
 // DEFERRED-NEXT: 513:
@@ -74,13 +74,13 @@
 // DEFERRED-NEXT: }
 
 // Priority work is polled between owners, including owners in the same segment.
-// PRIORITY-LABEL: llvm.func internal @__obelisk_eval_dispatch_v1.__obelisk_pending(
-// PRIORITY: llvm.call @obelisk_rt_v1_scheduler_priority_signal_pending(
-// PRIORITY-LABEL: llvm.func @__obelisk_eval_dispatch_v1.segment_0(
+// PRIORITY-LABEL: llvm.func internal @__talos_eval_dispatch_v1.__talos_pending(
+// PRIORITY: llvm.call @talos_rt_v1_scheduler_priority_signal_pending(
+// PRIORITY-LABEL: llvm.func @__talos_eval_dispatch_v1.segment_0(
 // PRIORITY: llvm.switch %arg1 : i64,
 // PRIORITY-NOT: llvm.switch
 // PRIORITY-NOT: llvm.intr.cttz
-// PRIORITY-LABEL: llvm.func @__obelisk_eval_dispatch_v1.segment_1(
+// PRIORITY-LABEL: llvm.func @__talos_eval_dispatch_v1.segment_1(
 // PRIORITY: llvm.switch %arg1 : i64,
 // PRIORITY-NOT: llvm.switch
 // PRIORITY-NOT: llvm.intr.cttz

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
@@ -77,49 +77,49 @@ module attributes {
   }
 }
 
-// CHECK-LABEL: llvm.func internal @Base_run.__obelisk_native_thunk(
+// CHECK-LABEL: llvm.func internal @Base_run.__talos_native_thunk(
 // CHECK-COUNT-5: llvm.icmp "ne"
 // CHECK: llvm.icmp "eq"
-// CHECK: llvm.call @base_run.__obelisk_activate_checked
+// CHECK: llvm.call @base_run.__talos_activate_checked
 // CHECK-NOT: llvm.mlir.constant(13 : i32)
 // CHECK: llvm.return
-// CHECK: llvm.func @obelisk_rt_v1_method_task_activate
+// CHECK: llvm.func @talos_rt_v1_method_task_activate
 // Base introduces Runner through the shared signature table; its sparse
 // method table binds signature 17 to the task thunk.
-// CHECK-LABEL: llvm.mlir.global internal constant @Base.__obelisk_interfaces
+// CHECK-LABEL: llvm.mlir.global internal constant @Base.__talos_interfaces
 // CHECK-SAME: !llvm.array<1 x
-// CHECK: llvm.mlir.addressof @Runner.__obelisk_interface_signatures
-// CHECK-LABEL: llvm.mlir.global internal constant @Base.__obelisk_methods
+// CHECK: llvm.mlir.addressof @Runner.__talos_interface_signatures
+// CHECK-LABEL: llvm.mlir.global internal constant @Base.__talos_methods
 // CHECK-SAME: !llvm.array<1 x
 // CHECK: llvm.mlir.constant(17 : i64)
 // CHECK: llvm.mlir.constant(1 : i32)
-// CHECK: llvm.mlir.addressof @Base_run.__obelisk_native_thunk
-// CHECK-LABEL: llvm.mlir.global internal constant @Runner.__obelisk_interface_signatures
+// CHECK: llvm.mlir.addressof @Base_run.__talos_native_thunk
+// CHECK-LABEL: llvm.mlir.global internal constant @Runner.__talos_interface_signatures
 // CHECK-SAME: !llvm.array<1 x i64>
 // CHECK: llvm.mlir.constant(17 : i64)
-// CHECK-LABEL: llvm.func internal @base_run.__obelisk_activate_checked(
-// CHECK: llvm.call @obelisk_rt_v1_process_instance_create_for_context
+// CHECK-LABEL: llvm.func internal @base_run.__talos_activate_checked(
+// CHECK: llvm.call @talos_rt_v1_process_instance_create_for_context
 // CHECK: llvm.store {{.*}} : i64, !llvm.ptr
 // CHECK: llvm.return {{.*}} : i32
-// CHECK-LABEL: llvm.func @base_run.__obelisk_activate(
-// CHECK: llvm.call @base_run.__obelisk_activate_checked
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
-// CHECK-LABEL: llvm.func @caller.__obelisk_coro_ramp(
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_retain
+// CHECK-LABEL: llvm.func @base_run.__talos_activate(
+// CHECK: llvm.call @base_run.__talos_activate_checked
+// CHECK: llvm.call @talos_rt_v1_scheduler_fail
+// CHECK-LABEL: llvm.func @caller.__talos_coro_ramp(
+// CHECK-COUNT-2: llvm.call @talos_rt_v1_native_state_retain
 // CHECK-NOT: llvm.alloca
 // CHECK: %[[ROOT:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
 // CHECK: llvm.store %[[ROOT]], {{.*}} : i64, !llvm.ptr
 // CHECK-NOT: llvm.alloca
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
+// CHECK: llvm.call @talos_rt_v1_gc_managed_root_range_push
 // CHECK: llvm.mlir.constant(1 : i64)
 // CHECK: llvm.mlir.constant(0 : i64)
-// CHECK: %[[STATUS:.*]] = llvm.call @obelisk_rt_v1_interface_method_task_activate
-// CHECK: llvm.call @obelisk_rt_v1_gc_managed_root_range_pop
+// CHECK: %[[STATUS:.*]] = llvm.call @talos_rt_v1_interface_method_task_activate
+// CHECK: llvm.call @talos_rt_v1_gc_managed_root_range_pop
 // CHECK: llvm.cond_br {{.*}}, ^[[SUCCESS:bb[0-9]+]], ^[[FAILURE:bb[0-9]+]](%[[STATUS]] : i32)
 // CHECK: ^[[SUCCESS]]:
 // CHECK: llvm.mlir.constant(3 : i32)
 // CHECK: llvm.intr.coro.suspend
 // CHECK: ^[[FAILURE]]
-// CHECK-COUNT-2: llvm.call @obelisk_rt_v1_native_state_release
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_fail
+// CHECK-COUNT-2: llvm.call @talos_rt_v1_native_state_release
+// CHECK: llvm.call @talos_rt_v1_scheduler_fail
 // CHECK-NOT: simulation.class.virtual_task_call

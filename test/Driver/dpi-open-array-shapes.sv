@@ -1,8 +1,8 @@
 // RUN: %target_clang %target_pic -c \
 // RUN:   %S/Inputs/dpi_open_array_shapes_impl.c -I%resource_dir/include -o %t.o
-// RUN: %obelisk --target=native -o %t.native %s %t.o
+// RUN: %talos --target=native -o %t.native %s %t.o
 // RUN: %t.native | FileCheck %s
-// RUN: %obelisk --execution-tier=bytecode -o %t.bytecode %s %t.o
+// RUN: %talos --execution-tier=bytecode -o %t.bytecode %s %t.o
 // RUN: %t.bytecode | FileCheck %s
 
 module dpi_open_array_shapes;

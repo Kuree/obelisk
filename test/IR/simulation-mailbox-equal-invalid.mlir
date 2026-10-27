@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --verify-diagnostics
+// RUN: talos-opt %s --verify-diagnostics
 
 func.func @different_specializations(%a: !simulation.mailbox<i32, 1>,
                                     %b: !simulation.mailbox<i32, 2>) -> i1 {

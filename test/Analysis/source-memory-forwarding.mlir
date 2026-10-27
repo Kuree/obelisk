@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-source-memory-forwarding | FileCheck %s
+// RUN: talos-opt %s --test-talos-source-memory-forwarding | FileCheck %s
 !tagged = !simulation.packed_union<fields = [#simulation.field<name = "a", type = i8, ordinal = 0, packedOffset = 0>, #simulation.field<name = "b", type = i8, ordinal = 1, packedOffset = 0>], isTagged = true, tagBits = 1>
 module {
   simulation.design @forwarding {

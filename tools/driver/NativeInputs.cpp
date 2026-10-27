@@ -28,11 +28,11 @@
 using namespace llvm;
 using namespace mlir;
 
-namespace obelisk::driver {
+namespace talos::driver {
 namespace {
 
 void error(const Twine &message) {
-  WithColor::error(errs(), "obelisk") << message << '\n';
+  WithColor::error(errs(), "talos") << message << '\n';
 }
 
 bool isTextual(StringRef contents) {
@@ -58,7 +58,7 @@ Expected<std::optional<std::string>> readELFSoname(StringRef path) {
       object::ELFFile<object::ELF64LE>::create((*buffer)->getBuffer());
   if (!elf)
     return elf.takeError();
-  Triple targetTriple(OBELISK_NATIVE_TARGET_TRIPLE);
+  Triple targetTriple(TALOS_NATIVE_TARGET_TRIPLE);
   // ELF64LE covers every Linux target in the pinned LLVM distribution.
   if (elf->getHeader().e_machine !=
       ELF::convertArchNameToEMachine(targetTriple.getArchName()))
@@ -146,7 +146,7 @@ Expected<MachODylib> readMachODylib(StringRef path) {
     macho = slice.get();
   }
   if (!macho || !macho->is64Bit() ||
-      macho->getArch() != Triple(OBELISK_NATIVE_TARGET_TRIPLE).getArch() ||
+      macho->getArch() != Triple(TALOS_NATIVE_TARGET_TRIPLE).getArch() ||
       macho->getHeader64().cpusubtype != MachO::CPU_SUBTYPE_ARM64_ALL)
     return createStringError(inconvertibleErrorCode(),
                              "Mach-O library is not for the native ARM64 target");
@@ -248,7 +248,7 @@ LogicalResult classifySharedLibrary(StringRef suppliedPath, file_magic magic,
             "'");
       return failure();
     }
-    Triple target(OBELISK_NATIVE_TARGET_TRIPLE);
+    Triple target(TALOS_NATIVE_TARGET_TRIPLE);
     // ARM64EC and ARM64X use a hybrid ABI, distinct from native ARM64.
     if (!(*object)->is64() || (*object)->getArch() != target.getArch() ||
         (*object)->getMachine() == COFF::IMAGE_FILE_MACHINE_ARM64EC ||
@@ -370,7 +370,7 @@ LogicalResult classifySharedLibrary(StringRef suppliedPath, file_magic magic,
 // The registered native backend links one object format. Native inputs in
 // the other format are rejected like any other unsupported binary.
 bool matchesNativeObjectFormat(file_magic magic) {
-  static const Triple target(OBELISK_NATIVE_TARGET_TRIPLE);
+  static const Triple target(TALOS_NATIVE_TARGET_TRIPLE);
   switch (magic) {
   case file_magic::elf_relocatable:
   case file_magic::elf_shared_object:
@@ -482,4 +482,4 @@ LogicalResult classifyDirectInputs(ArrayRef<std::string> inputs,
   return success();
 }
 
-} // namespace obelisk::driver
+} // namespace talos::driver

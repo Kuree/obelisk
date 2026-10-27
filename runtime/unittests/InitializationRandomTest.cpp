@@ -2,35 +2,35 @@
 
 #include "../lib/ProcessValidation.h"
 #include "../lib/RuntimeInternal.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 #include "gtest/gtest.h"
 
 namespace {
 
-obelisk_rt_status requirements(uint64_t *size, uint64_t *alignment) {
+talos_rt_status requirements(uint64_t *size, uint64_t *alignment) {
   *size = 0;
   *alignment = 8;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status execute(obelisk_rt_process_instance_v1 *instance) {
-  *instance->action = {OBELISK_RT_FRAGMENT_TERMINATE, 0, 0, 0, 0, 0};
-  return OBELISK_RT_OK;
+talos_rt_status execute(talos_rt_process_instance_v1 *instance) {
+  *instance->action = {TALOS_RT_FRAGMENT_TERMINATE, 0, 0, 0, 0, 0};
+  return TALOS_RT_OK;
 }
 
-void destroy(obelisk_rt_process_instance_v1 *) {}
+void destroy(talos_rt_process_instance_v1 *) {}
 
 class InitializationRandomTest : public ::testing::Test {
 protected:
   void SetUp() override {
-    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
-    ASSERT_EQ(obelisk_rt_v1_context_seed(context, 9876), OBELISK_RT_OK);
-    layout = {OBELISK_RT_VERSION, 0, 0, 8, nullptr, 0, 1, &continuation, 0};
-    layout.checksum = obelisk::process::layoutChecksum(layout);
-    descriptor = {{OBELISK_RT_DESCRIPTOR_PROCESS, 0, 17},
-                  OBELISK_RT_VERSION,
+    ASSERT_EQ(talos_rt_v1_context_create(&context), TALOS_RT_OK);
+    ASSERT_EQ(talos_rt_v1_context_seed(context, 9876), TALOS_RT_OK);
+    layout = {TALOS_RT_VERSION, 0, 0, 8, nullptr, 0, 1, &continuation, 0};
+    layout.checksum = talos::process::layoutChecksum(layout);
+    descriptor = {{TALOS_RT_DESCRIPTOR_PROCESS, 0, 17},
+                  TALOS_RT_VERSION,
                   0,
-                  OBELISK_RT_TIER_MASK_NATIVE,
+                  TALOS_RT_TIER_MASK_NATIVE,
                   0,
                   &layout,
                   requirements,
@@ -40,56 +40,56 @@ protected:
                   nullptr,
                   nullptr};
   }
-  void TearDown() override { obelisk_rt_v1_context_destroy(context); }
+  void TearDown() override { talos_rt_v1_context_destroy(context); }
 
   uint64_t enter(uint64_t scope) {
     uint64_t activation = 0;
     EXPECT_EQ(
-        obelisk_rt_v1_random_initialization_enter(context, scope, &activation),
-        OBELISK_RT_OK);
+        talos_rt_v1_random_initialization_enter(context, scope, &activation),
+        TALOS_RT_OK);
     return activation;
   }
   void leave(uint64_t activation) {
-    EXPECT_EQ(obelisk_rt_v1_random_initialization_leave(context, activation),
-              OBELISK_RT_OK);
+    EXPECT_EQ(talos_rt_v1_random_initialization_leave(context, activation),
+              TALOS_RT_OK);
   }
   uint64_t next() {
     uint64_t value = 0;
-    EXPECT_EQ(obelisk_rt_v1_random_next(context, &value), OBELISK_RT_OK);
+    EXPECT_EQ(talos_rt_v1_random_next(context, &value), TALOS_RT_OK);
     return value;
   }
   size_t add() {
-    obelisk_rt_process_instance_v1 *instance = nullptr;
-    EXPECT_EQ(obelisk_rt_v1_process_instance_create(&descriptor, &instance),
-              OBELISK_RT_OK);
-    EXPECT_EQ(obelisk_rt_v1_scheduler_add_planned(context, instance, 0, 0,
+    talos_rt_process_instance_v1 *instance = nullptr;
+    EXPECT_EQ(talos_rt_v1_process_instance_create(&descriptor, &instance),
+              TALOS_RT_OK);
+    EXPECT_EQ(talos_rt_v1_scheduler_add_planned(context, instance, 0, 0,
                                                   nullptr, nullptr, 0),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     return context->scheduledProcesses.size() - 1;
   }
-  static void same(const obelisk_rt_random_state_v1 &left,
-                   const obelisk_rt_random_state_v1 &right) {
+  static void same(const talos_rt_random_state_v1 &left,
+                   const talos_rt_random_state_v1 &right) {
     EXPECT_EQ(left.state, right.state);
     EXPECT_EQ(left.increment, right.increment);
   }
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
   uint32_t continuation = 0;
-  obelisk_rt_frame_layout_v1 layout{};
-  obelisk_rt_process_descriptor_v1 descriptor{};
+  talos_rt_frame_layout_v1 layout{};
+  talos_rt_process_descriptor_v1 descriptor{};
 };
 
 TEST_F(InitializationRandomTest,
        ScopesStartWithDefaultSeedAndResumeIndependently) {
-  obelisk_rt_random_state_v1 reference{};
-  obelisk_rt_v1_random_state_seed(&reference, 9876,
-                                  OBELISK_RT_RANDOM_DEFAULT_INCREMENT >> 1);
-  uint64_t expectedFirst = obelisk_rt_v1_random_state_next64(&reference);
+  talos_rt_random_state_v1 reference{};
+  talos_rt_v1_random_state_seed(&reference, 9876,
+                                  TALOS_RT_RANDOM_DEFAULT_INCREMENT >> 1);
+  uint64_t expectedFirst = talos_rt_v1_random_state_next64(&reference);
   uint64_t a = enter(100);
   EXPECT_EQ(next(), expectedFirst);
   leave(a);
   a = enter(100);
-  EXPECT_EQ(next(), obelisk_rt_v1_random_state_next64(&reference));
+  EXPECT_EQ(next(), talos_rt_v1_random_state_next64(&reference));
   for (unsigned i = 0; i != 40; ++i)
     (void)next();
   leave(a);
@@ -102,7 +102,7 @@ TEST_F(InitializationRandomTest,
 
 TEST_F(InitializationRandomTest,
        NestedBindingsRestoreStartupProcessAndStreams) {
-  obelisk_rt_random_state_v1 startup = context->random;
+  talos_rt_random_state_v1 startup = context->random;
   context->activeRandom = &startup;
   context->activeLogicalProcessToken = 42;
   uint64_t a = enter(10);
@@ -112,8 +112,8 @@ TEST_F(InitializationRandomTest,
   auto aState = *aStream;
   uint64_t b = enter(20);
   (void)next();
-  EXPECT_EQ(obelisk_rt_v1_random_initialization_leave(context, a),
-            OBELISK_RT_INVALID_LIFECYCLE);
+  EXPECT_EQ(talos_rt_v1_random_initialization_leave(context, a),
+            TALOS_RT_INVALID_LIFECYCLE);
   leave(b);
   EXPECT_EQ(context->activeRandom, aStream);
   same(*aStream, aState);
@@ -141,33 +141,33 @@ TEST_F(InitializationRandomTest, StaticRegistrationUsesContainingScope) {
 }
 
 TEST_F(InitializationRandomTest, SpawnTableRowsBindTheirScopes) {
-  obelisk_rt_process_spawn_plan_v1 plan{
+  talos_rt_process_spawn_plan_v1 plan{
       &descriptor, 0, nullptr, nullptr, nullptr, 0, 0, UINT32_MAX, 0, 0, 0,
       0};
-  const obelisk_rt_process_spawn_entry_v1 entries[] = {
+  const talos_rt_process_spawn_entry_v1 entries[] = {
       {&plan, 0, 10}, {&plan, 0, 0}, {&plan, 0, 20}, {&plan, 0, 10}};
   auto *activeRandom = context->activeRandom;
-  ASSERT_EQ(obelisk_rt_v1_process_spawn_batch(context, entries, nullptr, 4),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_spawn_batch(context, entries, nullptr, 4),
+            TALOS_RT_OK);
   EXPECT_EQ(context->initializationRandomScopes->activeScope, 0u);
   EXPECT_TRUE(context->initializationRandomScopes->activations.empty());
   EXPECT_EQ(context->activeRandom, activeRandom);
 
   // The same rows as separate enter/spawn/leave sequences.
-  obelisk_rt_context *reference = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create(&reference), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_context_seed(reference, 9876), OBELISK_RT_OK);
+  talos_rt_context *reference = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create(&reference), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_context_seed(reference, 9876), TALOS_RT_OK);
   for (const auto &entry : entries) {
     uint64_t activation = 0;
     if (entry.initialization_scope)
-      ASSERT_EQ(obelisk_rt_v1_random_initialization_enter(
+      ASSERT_EQ(talos_rt_v1_random_initialization_enter(
                     reference, entry.initialization_scope, &activation),
-                OBELISK_RT_OK);
-    EXPECT_NE(obelisk_rt_v1_process_spawn(reference, &plan, nullptr), 0u);
+                TALOS_RT_OK);
+    EXPECT_NE(talos_rt_v1_process_spawn(reference, &plan, nullptr), 0u);
     if (entry.initialization_scope)
-      ASSERT_EQ(obelisk_rt_v1_random_initialization_leave(reference,
+      ASSERT_EQ(talos_rt_v1_random_initialization_leave(reference,
                                                           activation),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
   }
   ASSERT_EQ(context->scheduledProcesses.size(), 4u);
   ASSERT_EQ(reference->scheduledProcesses.size(), 4u);
@@ -178,23 +178,23 @@ TEST_F(InitializationRandomTest, SpawnTableRowsBindTheirScopes) {
     same(process.random, reference->scheduledProcesses[index].random);
   }
   same(context->random, reference->random);
-  obelisk_rt_v1_context_destroy(reference);
+  talos_rt_v1_context_destroy(reference);
 }
 
 TEST_F(InitializationRandomTest, SpawnTableStopsAtAFailedBinding) {
-  obelisk_rt_process_spawn_plan_v1 plan{
+  talos_rt_process_spawn_plan_v1 plan{
       &descriptor, 0, nullptr, nullptr, nullptr, 0, 0, UINT32_MAX, 0, 0, 0,
       0};
-  const obelisk_rt_process_spawn_entry_v1 entries[] = {{&plan, 0, 10},
+  const talos_rt_process_spawn_entry_v1 entries[] = {{&plan, 0, 10},
                                                        {&plan, 0, 20}};
-  ASSERT_EQ(obelisk_rt_v1_process_spawn_batch(context, entries, nullptr, 1),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_process_spawn_batch(context, entries, nullptr, 1),
+            TALOS_RT_OK);
   context->initializationRandomScopes->nextToken = 0;
-  EXPECT_EQ(obelisk_rt_v1_process_spawn_batch(context, entries + 1, nullptr, 1),
-            OBELISK_RT_OUT_OF_RESOURCES);
+  EXPECT_EQ(talos_rt_v1_process_spawn_batch(context, entries + 1, nullptr, 1),
+            TALOS_RT_OUT_OF_RESOURCES);
   EXPECT_EQ(context->scheduledProcesses.size(), 1u);
-  EXPECT_EQ(obelisk_rt_v1_process_spawn_batch(nullptr, entries, nullptr, 1),
-            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(talos_rt_v1_process_spawn_batch(nullptr, entries, nullptr, 1),
+            TALOS_RT_INVALID_ARGUMENT);
 }
 
 TEST_F(InitializationRandomTest,
@@ -204,7 +204,7 @@ TEST_F(InitializationRandomTest,
   auto parentState = context->scheduledProcesses[parent].random;
   context->activeLogicalProcessToken =
       context->scheduledProcesses[parent].token |
-      OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+      TALOS_RT_LOGICAL_PROCESS_NATIVE_TAG;
   context->activeRandom = nullptr;
   size_t child = add();
   EXPECT_EQ(context->scheduledProcesses[child].initializationRandomScope, 0u);
@@ -212,7 +212,7 @@ TEST_F(InitializationRandomTest,
             context->activeLogicalProcessToken);
   EXPECT_NE(context->scheduledProcesses[parent].random.state,
             parentState.state);
-  EXPECT_EQ(obelisk_rt_v1_random_seed(context, 123), OBELISK_RT_OK);
+  EXPECT_EQ(talos_rt_v1_random_seed(context, 123), TALOS_RT_OK);
   // Restore the scheduler binding that the primed startup actor borrowed.
   context->activeLogicalProcessToken = 0;
   context->activeRandom = &context->initializationRandomScopes->streams.at(10);
@@ -240,22 +240,22 @@ TEST_F(InitializationRandomTest,
   running.id = 3;
   running.started = true;
   running.random = {11, 13};
-  ASSERT_EQ(obelisk_rt_v1_context_seed(context, 4567), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_context_seed(context, 4567), TALOS_RT_OK);
   same(context->scheduledProcesses[first].random,
        context->scheduledProcesses[other].random);
   same(context->scheduledProcesses[second].random,
        context->scheduledDesignTasks[1].random);
   auto &scope = context->initializationRandomScopes->streams.at(10);
   auto scopeState = scope;
-  obelisk_rt_random_state_v1 nextChild{};
-  obelisk_rt_random_split_initialization_unlocked(context, 10, nextChild);
+  talos_rt_random_state_v1 nextChild{};
+  talos_rt_random_split_initialization_unlocked(context, 10, nextChild);
   EXPECT_NE(nextChild.state, context->scheduledDesignTasks[0].random.state);
   same(context->scheduledDesignTasks[2].random, running.random);
   // The next child is the fourth scope-10 split after the two native and one
   // bytecode roots, and entering the scope resumes that advanced stream.
   scope = scopeState;
   a = enter(10);
-  EXPECT_EQ(next(), obelisk_rt_v1_random_state_next64(&scopeState));
+  EXPECT_EQ(next(), talos_rt_v1_random_state_next64(&scopeState));
   leave(a);
 }
 
@@ -263,9 +263,9 @@ TEST_F(InitializationRandomTest,
        ExplicitUrRandomSeedWorksInStaticInitialization) {
   uint64_t a = enter(10);
   auto initial = *context->activeRandom;
-  ASSERT_EQ(obelisk_rt_v1_random_seed(context, 99), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_random_seed(context, 99), TALOS_RT_OK);
   uint64_t seeded = next();
-  ASSERT_EQ(obelisk_rt_v1_random_seed(context, 99), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_random_seed(context, 99), TALOS_RT_OK);
   EXPECT_EQ(next(), seeded);
   leave(a);
   uint64_t b = enter(20);
@@ -282,16 +282,16 @@ TEST_F(InitializationRandomTest, ManualSeedReplacesInheritedThreadSequence) {
   auto untouched = right.random;
   auto contextState = context->random;
   context->activeLogicalProcessToken =
-      left.token | OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+      left.token | TALOS_RT_LOGICAL_PROCESS_NATIVE_TAG;
   context->activeRandom = &left.random;
-  ASSERT_EQ(obelisk_rt_v1_random_seed(context, 123), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_random_seed(context, 123), TALOS_RT_OK);
   auto seeded = left.random;
   same(right.random, untouched);
   same(context->random, contextState);
   context->activeLogicalProcessToken =
-      right.token | OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+      right.token | TALOS_RT_LOGICAL_PROCESS_NATIVE_TAG;
   context->activeRandom = &right.random;
-  ASSERT_EQ(obelisk_rt_v1_random_seed(context, 123), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_random_seed(context, 123), TALOS_RT_OK);
   same(right.random, seeded);
 
   // Bytecode tasks use exactly the same mapping, including a running task
@@ -299,13 +299,13 @@ TEST_F(InitializationRandomTest, ManualSeedReplacesInheritedThreadSequence) {
   context->scheduledDesignTasks.emplace_back();
   auto &task = context->scheduledDesignTasks.back();
   task.id = 1;
-  obelisk_rt_v1_random_state_seed(&task.random, 987, 654);
+  talos_rt_v1_random_state_seed(&task.random, 987, 654);
   context->activeLogicalProcessToken = task.id;
   context->activeRandom = &task.random;
-  ASSERT_EQ(obelisk_rt_v1_random_seed(context, 123), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_random_seed(context, 123), TALOS_RT_OK);
   same(task.random, seeded);
   for (unsigned index = 0; index != 16; ++index)
-    EXPECT_EQ(next(), obelisk_rt_v1_random_state_next64(&seeded));
+    EXPECT_EQ(next(), talos_rt_v1_random_state_next64(&seeded));
 
   context->activeLogicalProcessToken = 0;
   context->activeRandom = nullptr;
@@ -314,20 +314,20 @@ TEST_F(InitializationRandomTest, ManualSeedReplacesInheritedThreadSequence) {
 TEST_F(InitializationRandomTest, MalformedBindingsDoNotChangeTheActiveStream) {
   uint64_t activation = 999;
   auto before = context->random;
-  EXPECT_EQ(obelisk_rt_v1_random_initialization_enter(nullptr, 1, &activation),
-            OBELISK_RT_INVALID_ARGUMENT);
-  EXPECT_EQ(obelisk_rt_v1_random_initialization_enter(context, 0, &activation),
-            OBELISK_RT_INVALID_ARGUMENT);
-  EXPECT_EQ(obelisk_rt_v1_random_initialization_enter(context, 1, nullptr),
-            OBELISK_RT_INVALID_ARGUMENT);
-  EXPECT_EQ(obelisk_rt_v1_random_initialization_leave(context, 9),
-            OBELISK_RT_INVALID_LIFECYCLE);
+  EXPECT_EQ(talos_rt_v1_random_initialization_enter(nullptr, 1, &activation),
+            TALOS_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(talos_rt_v1_random_initialization_enter(context, 0, &activation),
+            TALOS_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(talos_rt_v1_random_initialization_enter(context, 1, nullptr),
+            TALOS_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(talos_rt_v1_random_initialization_leave(context, 9),
+            TALOS_RT_INVALID_LIFECYCLE);
   EXPECT_EQ(activation, 999u);
   same(context->random, before);
   uint64_t a = enter(1);
   leave(a);
-  EXPECT_EQ(obelisk_rt_v1_random_initialization_leave(context, a),
-            OBELISK_RT_INVALID_LIFECYCLE);
+  EXPECT_EQ(talos_rt_v1_random_initialization_leave(context, a),
+            TALOS_RT_INVALID_LIFECYCLE);
   uint64_t b = enter(1);
   EXPECT_NE(a, b);
   leave(b);

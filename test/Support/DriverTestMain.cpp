@@ -34,10 +34,10 @@ bool parseLimit(llvm::StringRef argument, llvm::StringRef prefix,
 
 int main(int argc, char **argv) {
   llvm::InitLLVM initLLVM(argc, argv);
-  obelisk::driver::DriverConfiguration config;
+  talos::driver::DriverConfiguration config;
   if (argc == 2 && llvm::StringRef(argv[1]) == "--test-print-sdf-limits") {
     // The production driver runs with these defaults.
-    const obelisk::frontend::SDFResourceLimits &limits = config.sdfLimits;
+    const talos::frontend::SDFResourceLimits &limits = config.sdfLimits;
     llvm::outs() << "file-bytes=" << limits.maxFileBytes << '\n'
                  << "cache-bytes=" << limits.maxCacheBytes << '\n'
                  << "cache-files=" << limits.maxCacheFiles << '\n'
@@ -66,6 +66,6 @@ int main(int argc, char **argv) {
       continue;
     forwarded.push_back(argv[index]);
   }
-  return obelisk::driver::runObeliskDriver(static_cast<int>(forwarded.size()),
+  return talos::driver::runTalosDriver(static_cast<int>(forwarded.size()),
                                            forwarded.data(), config);
 }

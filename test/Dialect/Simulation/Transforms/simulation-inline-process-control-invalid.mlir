@@ -1,4 +1,4 @@
-// RUN: not obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=0}))' 2>&1 | FileCheck %s
+// RUN: not talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=0}))' 2>&1 | FileCheck %s
 
 module {
   simulation.design @invalid_process_control_boundaries {

@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep))' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep))' \
 // RUN:   -o %t.planned.mlir
-// RUN: obelisk-opt %t.planned.mlir \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %t.planned.mlir \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   -o %t.llvm.mlir
 // RUN: FileCheck %s < %t.llvm.mlir
 
@@ -103,11 +103,11 @@ module attributes {
 }
 
 // CHECK-LABEL: module attributes
-// CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
-// CHECK: llvm.mlir.global internal @__obelisk_eval_nba_valid_
-// CHECK-NOT: llvm.mlir.global internal @__obelisk_eval_ordered_nba_queue_v1
-// CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_{{(static_)?}}nba
+// CHECK-NOT: llvm.mlir.global internal @__talos_eval_ordered_nba_queue_v1
+// CHECK: llvm.mlir.global internal @__talos_eval_nba_valid_
+// CHECK-NOT: llvm.mlir.global internal @__talos_eval_ordered_nba_queue_v1
+// CHECK-LABEL: llvm.func @update.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_{{(static_)?}}nba
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK: llvm.call @__obelisk_eval_dispatch_v1
+// CHECK-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// CHECK: llvm.call @__talos_eval_dispatch_v1

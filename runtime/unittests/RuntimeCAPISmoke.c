@@ -1,7 +1,7 @@
 //===- RuntimeCAPISmoke.c - Compile and exercise the runtime C ABI --------===//
 
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHandle.h"
 #include "svdpi.h"
 
 #if defined(DPI_EXTERN) || defined(DPI_PROTOTYPES) || defined(XXTERN) ||       \
@@ -21,431 +21,431 @@
 #define SMOKE_PTR(Wide, Narrow) Narrow
 #endif
 
-_Static_assert(sizeof(obelisk_rt_status) == 4, "status ABI changed");
-_Static_assert(sizeof(obelisk_rt_arg_kind) == 4, "argument kind ABI changed");
-_Static_assert(sizeof(obelisk_rt_arg_flags) == 4, "argument flags ABI changed");
-_Static_assert(OBELISK_RT_ARG_MANAGED_CONTAINER == 6,
+_Static_assert(sizeof(talos_rt_status) == 4, "status ABI changed");
+_Static_assert(sizeof(talos_rt_arg_kind) == 4, "argument kind ABI changed");
+_Static_assert(sizeof(talos_rt_arg_flags) == 4, "argument flags ABI changed");
+_Static_assert(TALOS_RT_ARG_MANAGED_CONTAINER == 6,
                "managed container argument kind ABI changed");
-_Static_assert(offsetof(obelisk_rt_arg_v1, kind) == 0,
+_Static_assert(offsetof(talos_rt_arg_v1, kind) == 0,
                "argument kind offset changed");
-_Static_assert(offsetof(obelisk_rt_arg_v1, flags) == 4,
+_Static_assert(offsetof(talos_rt_arg_v1, flags) == 4,
                "argument flags offset changed");
-_Static_assert(offsetof(obelisk_rt_arg_v1, size) == 8,
+_Static_assert(offsetof(talos_rt_arg_v1, size) == 8,
                "argument size offset changed");
-_Static_assert(offsetof(obelisk_rt_arg_v1, data) == 16,
+_Static_assert(offsetof(talos_rt_arg_v1, data) == 16,
                "argument data offset changed");
-_Static_assert(offsetof(obelisk_rt_arg_v1, unknown) == 16 + sizeof(void *),
+_Static_assert(offsetof(talos_rt_arg_v1, unknown) == 16 + sizeof(void *),
                "argument unknown offset changed");
-_Static_assert(offsetof(obelisk_rt_buffer_v1, data) == 0,
+_Static_assert(offsetof(talos_rt_buffer_v1, data) == 0,
                "buffer data offset changed");
-_Static_assert(sizeof(obelisk_rt_trace_entry_v1) == 40,
+_Static_assert(sizeof(talos_rt_trace_entry_v1) == 40,
                "managed trace entry size changed");
-_Static_assert(sizeof(obelisk_rt_trace_layout_v1) == 40,
+_Static_assert(sizeof(talos_rt_trace_layout_v1) == 40,
                "managed trace layout size changed");
-_Static_assert(sizeof(obelisk_rt_method_descriptor_v1) == SMOKE_PTR(40, 32),
+_Static_assert(sizeof(talos_rt_method_descriptor_v1) == SMOKE_PTR(40, 32),
                "managed method descriptor size changed");
-_Static_assert(sizeof(obelisk_rt_random_edge_v1) == 24,
+_Static_assert(sizeof(talos_rt_random_edge_v1) == 24,
                "managed random edge size changed");
-_Static_assert(sizeof(obelisk_rt_random_variable_v1) == 48,
+_Static_assert(sizeof(talos_rt_random_variable_v1) == 48,
                "managed random variable size changed");
-_Static_assert(sizeof(obelisk_rt_random_variable_reference_v1) == 32,
+_Static_assert(sizeof(talos_rt_random_variable_reference_v1) == 32,
                "managed random variable reference size changed");
-_Static_assert(sizeof(obelisk_rt_random_layout_v1) == 40,
+_Static_assert(sizeof(talos_rt_random_layout_v1) == 40,
                "managed random layout size changed");
-_Static_assert(sizeof(obelisk_rt_byte_range_v1) == 16,
+_Static_assert(sizeof(talos_rt_byte_range_v1) == 16,
                "byte range size changed");
-_Static_assert(sizeof(obelisk_rt_class_descriptor_v1) == SMOKE_PTR(136, 112),
+_Static_assert(sizeof(talos_rt_class_descriptor_v1) == SMOKE_PTR(136, 112),
                "managed class descriptor size changed");
-_Static_assert(offsetof(obelisk_rt_class_descriptor_v1, base) == 32,
+_Static_assert(offsetof(talos_rt_class_descriptor_v1, base) == 32,
                "managed class base offset changed");
-_Static_assert(offsetof(obelisk_rt_class_descriptor_v1, methods) ==
+_Static_assert(offsetof(talos_rt_class_descriptor_v1, methods) ==
                    SMOKE_PTR(64, 52),
                "managed class method table offset changed");
-_Static_assert(offsetof(obelisk_rt_class_descriptor_v1, random_layout) ==
+_Static_assert(offsetof(talos_rt_class_descriptor_v1, random_layout) ==
                    SMOKE_PTR(96, 80),
                "managed class random layout offset changed");
-_Static_assert(offsetof(obelisk_rt_class_descriptor_v1, copy_resets) ==
+_Static_assert(offsetof(talos_rt_class_descriptor_v1, copy_resets) ==
                    SMOKE_PTR(104, 84),
                "managed class copy reset offset changed");
-_Static_assert(sizeof(obelisk_rt_gc_root_v1) == SMOKE_PTR(24, 16),
+_Static_assert(sizeof(talos_rt_gc_root_v1) == SMOKE_PTR(24, 16),
                "managed root size changed");
-_Static_assert(sizeof(obelisk_rt_gc_statistics_v1) == 72,
+_Static_assert(sizeof(talos_rt_gc_statistics_v1) == 72,
                "managed statistics size changed");
-_Static_assert(offsetof(obelisk_rt_format_env_v1, scope) == 0,
+_Static_assert(offsetof(talos_rt_format_env_v1, scope) == 0,
                "environment scope offset changed");
-_Static_assert(sizeof(obelisk_rt_format_env_v1) == 64,
+_Static_assert(sizeof(talos_rt_format_env_v1) == 64,
                "format environment size changed");
-_Static_assert(offsetof(obelisk_rt_format_env_v1, library_cell) == 16,
+_Static_assert(offsetof(talos_rt_format_env_v1, library_cell) == 16,
                "environment library.cell offset changed");
-_Static_assert(offsetof(obelisk_rt_format_env_v1, time_multiplier) == 56,
+_Static_assert(offsetof(talos_rt_format_env_v1, time_multiplier) == 56,
                "environment time multiplier offset changed");
-_Static_assert(sizeof(obelisk_rt_handle_v1) == 16, "stable handle ABI changed");
-_Static_assert(offsetof(obelisk_rt_handle_v1, kind) == 0,
+_Static_assert(sizeof(talos_rt_handle_v1) == 16, "stable handle ABI changed");
+_Static_assert(offsetof(talos_rt_handle_v1, kind) == 0,
                "stable handle kind offset changed");
-_Static_assert(offsetof(obelisk_rt_handle_v1, generation) == 4,
+_Static_assert(offsetof(talos_rt_handle_v1, generation) == 4,
                "stable handle generation offset changed");
-_Static_assert(offsetof(obelisk_rt_handle_v1, id) == 8,
+_Static_assert(offsetof(talos_rt_handle_v1, id) == 8,
                "stable handle ID offset changed");
-_Static_assert(sizeof(obelisk_rt_fragment_action_v1) == 32,
+_Static_assert(sizeof(talos_rt_fragment_action_v1) == 32,
                "fragment action size changed");
-_Static_assert(offsetof(obelisk_rt_fragment_action_v1, kind) == 0,
+_Static_assert(offsetof(talos_rt_fragment_action_v1, kind) == 0,
                "fragment action kind offset changed");
-_Static_assert(offsetof(obelisk_rt_fragment_action_v1, suspend_kind) == 4,
+_Static_assert(offsetof(talos_rt_fragment_action_v1, suspend_kind) == 4,
                "fragment suspend kind offset changed");
-_Static_assert(offsetof(obelisk_rt_fragment_action_v1, continuation) == 8,
+_Static_assert(offsetof(talos_rt_fragment_action_v1, continuation) == 8,
                "fragment continuation offset changed");
-_Static_assert(offsetof(obelisk_rt_fragment_action_v1, flags) == 12,
+_Static_assert(offsetof(talos_rt_fragment_action_v1, flags) == 12,
                "fragment action flags offset changed");
-_Static_assert(offsetof(obelisk_rt_fragment_action_v1, payload) == 16,
+_Static_assert(offsetof(talos_rt_fragment_action_v1, payload) == 16,
                "fragment action ABI changed");
-_Static_assert(offsetof(obelisk_rt_fragment_action_v1, auxiliary) == 24,
+_Static_assert(offsetof(talos_rt_fragment_action_v1, auxiliary) == 24,
                "fragment auxiliary offset changed");
-_Static_assert(sizeof(obelisk_rt_frame_field_v1) == 32,
+_Static_assert(sizeof(talos_rt_frame_field_v1) == 32,
                "process frame field size changed");
-_Static_assert(sizeof(obelisk_rt_frame_layout_v1) == SMOKE_PTR(56, 48),
+_Static_assert(sizeof(talos_rt_frame_layout_v1) == SMOKE_PTR(56, 48),
                "process frame layout size changed");
-_Static_assert(offsetof(obelisk_rt_frame_layout_v1, fields) == 24,
+_Static_assert(offsetof(talos_rt_frame_layout_v1, fields) == 24,
                "process frame fields offset changed");
-_Static_assert(offsetof(obelisk_rt_frame_layout_v1, continuations) ==
+_Static_assert(offsetof(talos_rt_frame_layout_v1, continuations) ==
                    SMOKE_PTR(40, 36),
                "process frame continuations offset changed");
-_Static_assert(offsetof(obelisk_rt_frame_layout_v1, checksum) ==
+_Static_assert(offsetof(talos_rt_frame_layout_v1, checksum) ==
                    SMOKE_PTR(48, 40),
                "process frame checksum offset changed");
-_Static_assert(sizeof(obelisk_rt_wait_record_v1) == 32,
+_Static_assert(sizeof(talos_rt_wait_record_v1) == 32,
                "process wait record size changed");
-_Static_assert(sizeof(obelisk_rt_wait_entry_v1) == 16,
+_Static_assert(sizeof(talos_rt_wait_entry_v1) == 16,
                "process wait entry size changed");
-_Static_assert(offsetof(obelisk_rt_wait_entry_v1, edge) == 8,
+_Static_assert(offsetof(talos_rt_wait_entry_v1, edge) == 8,
                "process wait entry edge offset changed");
-_Static_assert(sizeof(obelisk_rt_process_descriptor_v1) == SMOKE_PTR(88, 64),
+_Static_assert(sizeof(talos_rt_process_descriptor_v1) == SMOKE_PTR(88, 64),
                "process descriptor size changed");
-_Static_assert(sizeof(obelisk_rt_table_watch_v1) == 16,
+_Static_assert(sizeof(talos_rt_table_watch_v1) == 16,
                "table watch size changed");
-_Static_assert(offsetof(obelisk_rt_table_wait_v1, record) == 24,
+_Static_assert(offsetof(talos_rt_table_wait_v1, record) == 24,
                "table wait header offset changed");
-_Static_assert(offsetof(obelisk_rt_table_wait_v1, watches) == 56,
+_Static_assert(offsetof(talos_rt_table_wait_v1, watches) == 56,
                "table wait watches offset changed");
-_Static_assert(sizeof(obelisk_rt_table_wait_v1) == 64,
+_Static_assert(sizeof(talos_rt_table_wait_v1) == 64,
                "table wait size changed");
-_Static_assert(offsetof(obelisk_rt_table_process_plan_v1, entry) == 8,
+_Static_assert(offsetof(talos_rt_table_process_plan_v1, entry) == 8,
                "table entry offset changed");
-_Static_assert(offsetof(obelisk_rt_table_process_plan_v1, waits) ==
+_Static_assert(offsetof(talos_rt_table_process_plan_v1, waits) ==
                    SMOKE_PTR(16, 12),
                "table waits offset changed");
-_Static_assert(offsetof(obelisk_rt_table_process_descriptor_v1, plan) ==
-                   sizeof(obelisk_rt_process_descriptor_v1),
+_Static_assert(offsetof(talos_rt_table_process_descriptor_v1, plan) ==
+                   sizeof(talos_rt_process_descriptor_v1),
                "table descriptor extension offset changed");
-_Static_assert(offsetof(obelisk_rt_process_descriptor_v1, frame_layout) == 32,
+_Static_assert(offsetof(talos_rt_process_descriptor_v1, frame_layout) == 32,
                "process frame layout pointer offset changed");
-_Static_assert(offsetof(obelisk_rt_process_descriptor_v1, bytecode) ==
+_Static_assert(offsetof(talos_rt_process_descriptor_v1, bytecode) ==
                    SMOKE_PTR(64, 48),
                "process bytecode pointer offset changed");
-_Static_assert(offsetof(obelisk_rt_process_descriptor_v1, execution) ==
+_Static_assert(offsetof(talos_rt_process_descriptor_v1, execution) ==
                    SMOKE_PTR(72, 52),
                "process execution descriptor offset changed");
-_Static_assert(offsetof(obelisk_rt_process_descriptor_v1, design_bytecode) ==
+_Static_assert(offsetof(talos_rt_process_descriptor_v1, design_bytecode) ==
                    SMOKE_PTR(80, 56),
                "process design bytecode offset changed");
-_Static_assert(sizeof(obelisk_rt_dpi_scope_v1) == 48,
+_Static_assert(sizeof(talos_rt_dpi_scope_v1) == 48,
                "DPI scope descriptor size changed");
-_Static_assert(offsetof(obelisk_rt_dpi_scope_v1, name) == 16,
+_Static_assert(offsetof(talos_rt_dpi_scope_v1, name) == 16,
                "DPI scope name offset changed");
-_Static_assert(sizeof(obelisk_rt_dpi_dimension_v1) == 24,
+_Static_assert(sizeof(talos_rt_dpi_dimension_v1) == 24,
                "DPI open-array dimension size changed");
-_Static_assert(offsetof(obelisk_rt_dpi_dimension_v1, byte_stride) == 8,
+_Static_assert(offsetof(talos_rt_dpi_dimension_v1, byte_stride) == 8,
                "DPI open-array dimension stride offset changed");
-_Static_assert(offsetof(obelisk_rt_dpi_dimension_v1, flags) == 16,
+_Static_assert(offsetof(talos_rt_dpi_dimension_v1, flags) == 16,
                "DPI open-array dimension flags offset changed");
-_Static_assert(sizeof(obelisk_rt_dpi_open_array_v1) == 64,
+_Static_assert(sizeof(talos_rt_dpi_open_array_v1) == 64,
                "DPI open-array descriptor size changed");
-_Static_assert(offsetof(obelisk_rt_dpi_open_array_v1, data) == 32,
+_Static_assert(offsetof(talos_rt_dpi_open_array_v1, data) == 32,
                "DPI open-array data offset changed");
-_Static_assert(offsetof(obelisk_rt_dpi_open_array_v1, data_size) == 40,
+_Static_assert(offsetof(talos_rt_dpi_open_array_v1, data_size) == 40,
                "DPI open-array data size offset changed");
-_Static_assert(offsetof(obelisk_rt_dpi_open_array_v1, ranges) == 48,
+_Static_assert(offsetof(talos_rt_dpi_open_array_v1, ranges) == 48,
                "DPI open-array ranges offset changed");
-_Static_assert(offsetof(obelisk_rt_dpi_open_array_v1, reserved) == 56,
+_Static_assert(offsetof(talos_rt_dpi_open_array_v1, reserved) == 56,
                "DPI open-array reserved offset changed");
-_Static_assert(sizeof(obelisk_rt_activation_descriptor_v1) == 24,
+_Static_assert(sizeof(talos_rt_activation_descriptor_v1) == 24,
                "activation descriptor size changed");
-_Static_assert(offsetof(obelisk_rt_activation_descriptor_v1, native_entry) == 8,
+_Static_assert(offsetof(talos_rt_activation_descriptor_v1, native_entry) == 8,
                "activation native entry offset changed");
-_Static_assert(offsetof(obelisk_rt_activation_descriptor_v1,
+_Static_assert(offsetof(talos_rt_activation_descriptor_v1,
                         bytecode_function) == SMOKE_PTR(16, 12),
                "activation bytecode entry offset changed");
-_Static_assert(sizeof(obelisk_rt_observer_capture_abi_v1) == 8,
+_Static_assert(sizeof(talos_rt_observer_capture_abi_v1) == 8,
                "observer capture ABI size changed");
-_Static_assert(sizeof(obelisk_rt_observer_descriptor_v1) == SMOKE_PTR(48, 40),
+_Static_assert(sizeof(talos_rt_observer_descriptor_v1) == SMOKE_PTR(48, 40),
                "observer descriptor size changed");
-_Static_assert(offsetof(obelisk_rt_observer_descriptor_v1, native_evaluator) ==
+_Static_assert(offsetof(talos_rt_observer_descriptor_v1, native_evaluator) ==
                    SMOKE_PTR(32, 28),
                "observer native evaluator offset changed");
-_Static_assert(sizeof(obelisk_rt_sampled_range_v1) == 24,
+_Static_assert(sizeof(talos_rt_sampled_range_v1) == 24,
                "sampled range size changed");
-_Static_assert(offsetof(obelisk_rt_sampled_range_v1, snapshot_byte_offset) == 8,
+_Static_assert(offsetof(talos_rt_sampled_range_v1, snapshot_byte_offset) == 8,
                "sampled snapshot offset changed");
-_Static_assert(sizeof(obelisk_rt_execution_extension_v1) == 72,
+_Static_assert(sizeof(talos_rt_execution_extension_v1) == 72,
                "execution extension size changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v1, sampled_ranges) == 8,
+_Static_assert(offsetof(talos_rt_execution_extension_v1, sampled_ranges) == 8,
                "execution extension sampled ranges offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v1,
+_Static_assert(offsetof(talos_rt_execution_extension_v1,
                         sampled_range_count) == 16,
                "execution extension sampled count offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v1, exports) == 24,
+_Static_assert(offsetof(talos_rt_execution_extension_v1, exports) == 24,
                "execution extension exports offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v1, export_count) == 32,
+_Static_assert(offsetof(talos_rt_execution_extension_v1, export_count) == 32,
                "execution extension export count offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v1, class_bitstream) ==
+_Static_assert(offsetof(talos_rt_execution_extension_v1, class_bitstream) ==
                    40,
                "execution extension class image offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v1,
+_Static_assert(offsetof(talos_rt_execution_extension_v1,
                         class_bitstream_size) == 48,
                "execution extension class image size offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_extension_v1, coverage_schema) ==
+_Static_assert(offsetof(talos_rt_execution_extension_v1, coverage_schema) ==
                    56,
                "execution extension coverage schema offset changed");
-_Static_assert(sizeof(obelisk_rt_class_bitstream_header_v1) == 128,
+_Static_assert(sizeof(talos_rt_class_bitstream_header_v1) == 128,
                "class bit-stream header size changed");
-_Static_assert(sizeof(obelisk_rt_class_bitstream_site_v1) == 40,
+_Static_assert(sizeof(talos_rt_class_bitstream_site_v1) == 40,
                "class bit-stream site size changed");
-_Static_assert(sizeof(obelisk_rt_class_bitstream_group_v1) == 40,
+_Static_assert(sizeof(talos_rt_class_bitstream_group_v1) == 40,
                "class bit-stream group size changed");
-_Static_assert(sizeof(obelisk_rt_class_bitstream_schema_v1) == 48,
+_Static_assert(sizeof(talos_rt_class_bitstream_schema_v1) == 48,
                "class bit-stream schema size changed");
-_Static_assert(sizeof(obelisk_rt_class_bitstream_field_v1) == 48,
+_Static_assert(sizeof(talos_rt_class_bitstream_field_v1) == 48,
                "class bit-stream field size changed");
-_Static_assert(offsetof(obelisk_rt_class_bitstream_field_v1, value_alignment) ==
+_Static_assert(offsetof(talos_rt_class_bitstream_field_v1, value_alignment) ==
                    44,
                "class bit-stream field alignment offset changed");
-_Static_assert(sizeof(obelisk_rt_execution_descriptor_v1) == 120,
+_Static_assert(sizeof(talos_rt_execution_descriptor_v1) == 120,
                "execution descriptor size changed");
-_Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, version) == 0,
+_Static_assert(offsetof(talos_rt_execution_descriptor_v1, version) == 0,
                "execution version offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, flags) == 4,
+_Static_assert(offsetof(talos_rt_execution_descriptor_v1, flags) == 4,
                "execution flags offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, reserved) == 8,
+_Static_assert(offsetof(talos_rt_execution_descriptor_v1, reserved) == 8,
                "execution reserved offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, dpi_scopes) == 64,
+_Static_assert(offsetof(talos_rt_execution_descriptor_v1, dpi_scopes) == 64,
                "execution DPI scope offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, activations) == 88,
+_Static_assert(offsetof(talos_rt_execution_descriptor_v1, activations) == 88,
                "execution activation table offset changed");
-_Static_assert(offsetof(obelisk_rt_execution_descriptor_v1, observers) == 104,
+_Static_assert(offsetof(talos_rt_execution_descriptor_v1, observers) == 104,
                "execution observer table offset changed");
-_Static_assert(sizeof(obelisk_rt_computed_wait_record_v1) == 96,
+_Static_assert(sizeof(talos_rt_computed_wait_record_v1) == 96,
                "computed wait record size changed");
-_Static_assert(sizeof(obelisk_rt_computed_observer_v1) == 32,
+_Static_assert(sizeof(talos_rt_computed_observer_v1) == 32,
                "computed observer binding size changed");
-_Static_assert(sizeof(obelisk_rt_computed_capture_v1) == 32,
+_Static_assert(sizeof(talos_rt_computed_capture_v1) == 32,
                "computed observer capture size changed");
-_Static_assert(sizeof(obelisk_rt_computed_dependency_v1) == 16,
+_Static_assert(sizeof(talos_rt_computed_dependency_v1) == 16,
                "computed observer dependency size changed");
-_Static_assert(sizeof(obelisk_rt_computed_clause_v1) == 16,
+_Static_assert(sizeof(talos_rt_computed_clause_v1) == 16,
                "computed observer clause size changed");
-_Static_assert(sizeof(obelisk_rt_import_site_v1) == 56,
+_Static_assert(sizeof(talos_rt_import_site_v1) == 56,
                "DPI import site size changed");
-_Static_assert(sizeof(obelisk_rt_design_bytecode_entry_v1) == SMOKE_PTR(16, 12),
+_Static_assert(sizeof(talos_rt_design_bytecode_entry_v1) == SMOKE_PTR(16, 12),
                "design bytecode entry size changed");
-_Static_assert(sizeof(obelisk_rt_design_info_v1) == 56,
+_Static_assert(sizeof(talos_rt_design_info_v1) == 56,
                "design info size changed");
-_Static_assert(sizeof(obelisk_rt_process_instance_v1) == SMOKE_PTR(104, 80),
+_Static_assert(sizeof(talos_rt_process_instance_v1) == SMOKE_PTR(104, 80),
                "process instance size changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, allocation) ==
+_Static_assert(offsetof(talos_rt_process_instance_v1, allocation) ==
                    SMOKE_PTR(8, 4),
                "process allocation offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, frame) ==
+_Static_assert(offsetof(talos_rt_process_instance_v1, frame) ==
                    SMOKE_PTR(16, 8),
                "process instance frame offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, scratch_offset) ==
+_Static_assert(offsetof(talos_rt_process_instance_v1, scratch_offset) ==
                    SMOKE_PTR(32, 24),
                "process scratch offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, native_handle) ==
+_Static_assert(offsetof(talos_rt_process_instance_v1, native_handle) ==
                    SMOKE_PTR(48, 40),
                "process native handle offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, continuation) ==
+_Static_assert(offsetof(talos_rt_process_instance_v1, continuation) ==
                    SMOKE_PTR(56, 44),
                "process continuation offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, status) ==
+_Static_assert(offsetof(talos_rt_process_instance_v1, status) ==
                    SMOKE_PTR(68, 56),
                "process status offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, context) ==
+_Static_assert(offsetof(talos_rt_process_instance_v1, context) ==
                    SMOKE_PTR(72, 60),
                "process transient context offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, action) ==
+_Static_assert(offsetof(talos_rt_process_instance_v1, action) ==
                    SMOKE_PTR(80, 64),
                "process transient action offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, ownership_context) ==
+_Static_assert(offsetof(talos_rt_process_instance_v1, ownership_context) ==
                    SMOKE_PTR(88, 68),
                "process ownership context offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1, observer_pin_count) ==
+_Static_assert(offsetof(talos_rt_process_instance_v1, observer_pin_count) ==
                    SMOKE_PTR(96, 72),
                "process observer pin offset changed");
-_Static_assert(offsetof(obelisk_rt_process_instance_v1,
+_Static_assert(offsetof(talos_rt_process_instance_v1,
                         observer_destroy_pending) == SMOKE_PTR(100, 76),
                "process observer pending-destroy offset changed");
-_Static_assert(sizeof(obelisk_rt_bytecode_entry_v1) == 8,
+_Static_assert(sizeof(talos_rt_bytecode_entry_v1) == 8,
                "bytecode entry size changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_entry_v1, continuation) == 0,
+_Static_assert(offsetof(talos_rt_bytecode_entry_v1, continuation) == 0,
                "bytecode continuation offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_entry_v1, instruction) == 4,
+_Static_assert(offsetof(talos_rt_bytecode_entry_v1, instruction) == 4,
                "bytecode instruction offset changed");
-_Static_assert(sizeof(obelisk_rt_bytecode_v1) == SMOKE_PTR(96, 80),
+_Static_assert(sizeof(talos_rt_bytecode_v1) == SMOKE_PTR(96, 80),
                "bytecode descriptor size changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, code) == 0,
+_Static_assert(offsetof(talos_rt_bytecode_v1, code) == 0,
                "bytecode code offset changed");
 /* Both offsets are the same under either pointer width: the uint64_t after the
    leading pointer forces 8-byte alignment, so the narrow pointer only buys
    padding. Spelling them as sizeof(void *) would be wrong on a 32-bit
    target. */
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, code_size) == 8,
+_Static_assert(offsetof(talos_rt_bytecode_v1, code_size) == 8,
                "bytecode size offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, entries) == 16,
+_Static_assert(offsetof(talos_rt_bytecode_v1, entries) == 16,
                "bytecode entries offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, entry_count) ==
+_Static_assert(offsetof(talos_rt_bytecode_v1, entry_count) ==
                    SMOKE_PTR(24, 20),
                "bytecode entry count offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, register_count) ==
+_Static_assert(offsetof(talos_rt_bytecode_v1, register_count) ==
                    SMOKE_PTR(28, 24),
                "bytecode register count offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, register_offset) == 32,
+_Static_assert(offsetof(talos_rt_bytecode_v1, register_offset) == 32,
                "bytecode register offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, validation) == 40,
+_Static_assert(offsetof(talos_rt_bytecode_v1, validation) == 40,
                "bytecode validation offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, constants) == SMOKE_PTR(48, 44),
+_Static_assert(offsetof(talos_rt_bytecode_v1, constants) == SMOKE_PTR(48, 44),
                "bytecode constants offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, constant_size) ==
+_Static_assert(offsetof(talos_rt_bytecode_v1, constant_size) ==
                    SMOKE_PTR(56, 48),
                "bytecode constant size offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, service_sites) ==
+_Static_assert(offsetof(talos_rt_bytecode_v1, service_sites) ==
                    SMOKE_PTR(64, 56),
                "bytecode service sites offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, service_site_count) ==
+_Static_assert(offsetof(talos_rt_bytecode_v1, service_site_count) ==
                    SMOKE_PTR(72, 60),
                "bytecode service count offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, reserved) == SMOKE_PTR(76, 64),
+_Static_assert(offsetof(talos_rt_bytecode_v1, reserved) == SMOKE_PTR(76, 64),
                "bytecode reserved offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, operands) == SMOKE_PTR(80, 68),
+_Static_assert(offsetof(talos_rt_bytecode_v1, operands) == SMOKE_PTR(80, 68),
                "bytecode operands offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_v1, operand_count) ==
+_Static_assert(offsetof(talos_rt_bytecode_v1, operand_count) ==
                    SMOKE_PTR(88, 72),
                "bytecode operand count offset changed");
-_Static_assert(sizeof(obelisk_rt_bytecode_validation_v1) == 8,
+_Static_assert(sizeof(talos_rt_bytecode_validation_v1) == 8,
                "bytecode validation record size changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_validation_v1, state) == 0,
+_Static_assert(offsetof(talos_rt_bytecode_validation_v1, state) == 0,
                "bytecode validation state offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_validation_v1, reserved) == 4,
+_Static_assert(offsetof(talos_rt_bytecode_validation_v1, reserved) == 4,
                "bytecode validation reserved offset changed");
-_Static_assert(sizeof(obelisk_rt_bytecode_operand_v1) == 32,
+_Static_assert(sizeof(talos_rt_bytecode_operand_v1) == 32,
                "bytecode operand size changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, kind) == 0,
+_Static_assert(offsetof(talos_rt_bytecode_operand_v1, kind) == 0,
                "bytecode operand kind offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, direction) == 1,
+_Static_assert(offsetof(talos_rt_bytecode_operand_v1, direction) == 1,
                "bytecode operand direction offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, value_kind) == 2,
+_Static_assert(offsetof(talos_rt_bytecode_operand_v1, value_kind) == 2,
                "bytecode operand value kind offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, flags) == 3,
+_Static_assert(offsetof(talos_rt_bytecode_operand_v1, flags) == 3,
                "bytecode operand flags offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, reserved) == 4,
+_Static_assert(offsetof(talos_rt_bytecode_operand_v1, reserved) == 4,
                "bytecode operand reserved offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, value) == 8,
+_Static_assert(offsetof(talos_rt_bytecode_operand_v1, value) == 8,
                "bytecode operand value offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, size) == 16,
+_Static_assert(offsetof(talos_rt_bytecode_operand_v1, size) == 16,
                "bytecode operand size offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_operand_v1, auxiliary) == 24,
+_Static_assert(offsetof(talos_rt_bytecode_operand_v1, auxiliary) == 24,
                "bytecode operand auxiliary offset changed");
-_Static_assert(sizeof(obelisk_rt_bytecode_service_site_v1) == 16,
+_Static_assert(sizeof(talos_rt_bytecode_service_site_v1) == 16,
                "bytecode service site size changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_service_site_v1, service) == 0,
+_Static_assert(offsetof(talos_rt_bytecode_service_site_v1, service) == 0,
                "bytecode service offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_service_site_v1, first_operand) ==
+_Static_assert(offsetof(talos_rt_bytecode_service_site_v1, first_operand) ==
                    4,
                "bytecode first operand offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_service_site_v1, operand_count) ==
+_Static_assert(offsetof(talos_rt_bytecode_service_site_v1, operand_count) ==
                    8,
                "bytecode operand count offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_service_site_v1, flags) == 10,
+_Static_assert(offsetof(talos_rt_bytecode_service_site_v1, flags) == 10,
                "bytecode service flags offset changed");
-_Static_assert(offsetof(obelisk_rt_bytecode_service_site_v1, reserved) == 12,
+_Static_assert(offsetof(talos_rt_bytecode_service_site_v1, reserved) == 12,
                "bytecode service reserved offset changed");
-_Static_assert(sizeof(obelisk_rt_fragment_descriptor_v1) == SMOKE_PTR(120, 104),
+_Static_assert(sizeof(talos_rt_fragment_descriptor_v1) == SMOKE_PTR(120, 104),
                "fragment descriptor size changed");
-_Static_assert(offsetof(obelisk_rt_fragment_descriptor_v1, handle) == 0,
+_Static_assert(offsetof(talos_rt_fragment_descriptor_v1, handle) == 0,
                "fragment handle offset changed");
-_Static_assert(offsetof(obelisk_rt_fragment_descriptor_v1, code_kind) == 16,
+_Static_assert(offsetof(talos_rt_fragment_descriptor_v1, code_kind) == 16,
                "fragment code kind offset changed");
-_Static_assert(offsetof(obelisk_rt_fragment_descriptor_v1, flags) == 20,
+_Static_assert(offsetof(talos_rt_fragment_descriptor_v1, flags) == 20,
                "fragment flags offset changed");
-_Static_assert(offsetof(obelisk_rt_fragment_descriptor_v1, code) == 24,
+_Static_assert(offsetof(talos_rt_fragment_descriptor_v1, code) == 24,
                "fragment code offset changed");
-_Static_assert(OBELISK_RT_BYTECODE_INSTRUCTION_SIZE == 16u,
+_Static_assert(TALOS_RT_BYTECODE_INSTRUCTION_SIZE == 16u,
                "bytecode instruction size changed");
 
-static obelisk_rt_status
-c_native_fragment(obelisk_rt_context *context, void *frame, uint64_t frame_size,
+static talos_rt_status
+c_native_fragment(talos_rt_context *context, void *frame, uint64_t frame_size,
                   uint32_t continuation,
-                  obelisk_rt_fragment_action_v1 *out_action) {
+                  talos_rt_fragment_action_v1 *out_action) {
   uint64_t *counter = (uint64_t *)frame;
   (void)context;
   if (frame_size != sizeof(*counter))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ++*counter;
-  *out_action = (obelisk_rt_fragment_action_v1){OBELISK_RT_FRAGMENT_CONTINUE,
-                                                OBELISK_RT_SUSPEND_NONE,
+  *out_action = (talos_rt_fragment_action_v1){TALOS_RT_FRAGMENT_CONTINUE,
+                                                TALOS_RT_SUSPEND_NONE,
                                                 continuation + 1,
-                                                OBELISK_RT_FRAGMENT_FLAGS_NONE,
+                                                TALOS_RT_FRAGMENT_FLAGS_NONE,
                                                 0,
                                                 0};
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-int obelisk_runtime_c_api_smoke(void) {
-  obelisk_rt_context *context = NULL;
-  obelisk_rt_buffer_v1 output = {NULL, 0};
-  obelisk_rt_arg_v1 empty_string = {OBELISK_RT_ARG_STRING, 0, 0, NULL, NULL};
-  obelisk_rt_fragment_descriptor_v1 fragment = {0};
-  obelisk_rt_fragment_action_v1 action = {0};
+int talos_runtime_c_api_smoke(void) {
+  talos_rt_context *context = NULL;
+  talos_rt_buffer_v1 output = {NULL, 0};
+  talos_rt_arg_v1 empty_string = {TALOS_RT_ARG_STRING, 0, 0, NULL, NULL};
+  talos_rt_fragment_descriptor_v1 fragment = {0};
+  talos_rt_fragment_action_v1 action = {0};
   uint64_t frame = 41;
-  obelisk_rt_stable_handle_v1 decoded = {0};
+  talos_rt_stable_handle_v1 decoded = {0};
   uint64_t stable =
-      obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, 7, -3);
+      talos_rt_stable_handle_encode(TALOS_RT_STABLE_HANDLE_STATIC, 7, -3);
   svLogicVecVal logic[2] = {{0, 0}, {0, 0}};
   svLogicVecVal selected = {0, 0};
 
   /* Keep every prototype in the C compilation surface even when this smoke
      test does not have a meaningful schema with which to execute it. */
-  (void)&obelisk_rt_v1_coverage_finalize;
-  (void)&obelisk_rt_v1_coverage_point_hit;
-  (void)&obelisk_rt_v1_coverage_toggle_transition;
-  (void)&obelisk_rt_v1_coverage_toggle_bind;
-  (void)&obelisk_rt_v1_coverage_toggle_seal;
-  (void)&obelisk_rt_v1_coverage_reset;
-  (void)&obelisk_rt_v1_coverage_query;
-  (void)&obelisk_rt_v1_coverage_control_definition;
-  (void)&obelisk_rt_v1_coverage_control_instance;
-  (void)&obelisk_rt_v1_coverage_query_definition;
-  (void)&obelisk_rt_v1_coverage_query_instance;
-  (void)&obelisk_rt_v1_coverage_database_save;
-  (void)&obelisk_rt_v1_coverage_database_merge;
-  (void)&obelisk_rt_v1_coverage_load;
-  (void)&obelisk_rt_v1_coverage_save;
-  (void)&obelisk_rt_v1_coverage_snapshot;
-  (void)&obelisk_rt_v1_covergroup_prepare;
-  (void)&obelisk_rt_v1_covergroup_candidates;
-  (void)&obelisk_rt_v1_covergroup_bind_with;
-  (void)&obelisk_rt_v1_covergroup_release_preparation;
-  (void)&obelisk_rt_v1_covergroup_create;
-  (void)&obelisk_rt_v1_covergroup_set_enabled;
-  (void)&obelisk_rt_v1_covergroup_set_name;
-  (void)&obelisk_rt_v1_covergroup_sample_enabled;
-  (void)&obelisk_rt_v1_covergroup_clock_event_register;
-  (void)&obelisk_rt_v1_covergroup_block_event_register;
-  (void)&obelisk_rt_v1_covergroup_block_event_fire;
-  (void)&obelisk_rt_v1_covergroup_formal_read;
-  (void)&obelisk_rt_v1_covergroup_sample;
-  (void)&obelisk_rt_v1_covergroup_instance_query;
-  (void)&obelisk_rt_v1_covergroup_type_query;
+  (void)&talos_rt_v1_coverage_finalize;
+  (void)&talos_rt_v1_coverage_point_hit;
+  (void)&talos_rt_v1_coverage_toggle_transition;
+  (void)&talos_rt_v1_coverage_toggle_bind;
+  (void)&talos_rt_v1_coverage_toggle_seal;
+  (void)&talos_rt_v1_coverage_reset;
+  (void)&talos_rt_v1_coverage_query;
+  (void)&talos_rt_v1_coverage_control_definition;
+  (void)&talos_rt_v1_coverage_control_instance;
+  (void)&talos_rt_v1_coverage_query_definition;
+  (void)&talos_rt_v1_coverage_query_instance;
+  (void)&talos_rt_v1_coverage_database_save;
+  (void)&talos_rt_v1_coverage_database_merge;
+  (void)&talos_rt_v1_coverage_load;
+  (void)&talos_rt_v1_coverage_save;
+  (void)&talos_rt_v1_coverage_snapshot;
+  (void)&talos_rt_v1_covergroup_prepare;
+  (void)&talos_rt_v1_covergroup_candidates;
+  (void)&talos_rt_v1_covergroup_bind_with;
+  (void)&talos_rt_v1_covergroup_release_preparation;
+  (void)&talos_rt_v1_covergroup_create;
+  (void)&talos_rt_v1_covergroup_set_enabled;
+  (void)&talos_rt_v1_covergroup_set_name;
+  (void)&talos_rt_v1_covergroup_sample_enabled;
+  (void)&talos_rt_v1_covergroup_clock_event_register;
+  (void)&talos_rt_v1_covergroup_block_event_register;
+  (void)&talos_rt_v1_covergroup_block_event_fire;
+  (void)&talos_rt_v1_covergroup_formal_read;
+  (void)&talos_rt_v1_covergroup_sample;
+  (void)&talos_rt_v1_covergroup_instance_query;
+  (void)&talos_rt_v1_covergroup_type_query;
 
-  if (OBELISK_RT_VERSION != 1u)
+  if (TALOS_RT_VERSION != 1u)
     return 1;
   if (strcmp(svDpiVersion(), "1800-2005") != 0 ||
       SV_PACKED_DATA_NELEMS(33) != 2 ||
@@ -456,42 +456,42 @@ int obelisk_runtime_c_api_smoke(void) {
   svGetPartselLogic(&selected, logic, 31, 2);
   if (selected.aval != UINT32_C(2) || selected.bval != UINT32_C(3))
     return 22;
-  if (!obelisk_rt_stable_handle_decode(stable, &decoded) ||
-      decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC || decoded.id != 7 ||
+  if (!talos_rt_stable_handle_decode(stable, &decoded) ||
+      decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC || decoded.id != 7 ||
       decoded.offset != -3 ||
-      obelisk_rt_stable_handle_offset(stable, 5) == UINT64_MAX ||
-      !obelisk_rt_stable_handle_same_object(
-          stable, obelisk_rt_stable_handle_offset(stable, 5)))
+      talos_rt_stable_handle_offset(stable, 5) == UINT64_MAX ||
+      !talos_rt_stable_handle_same_object(
+          stable, talos_rt_stable_handle_offset(stable, 5)))
     return 20;
-  if (obelisk_rt_v1_context_create(&context) != OBELISK_RT_OK || !context)
+  if (talos_rt_v1_context_create(&context) != TALOS_RT_OK || !context)
     return 2;
-  if (obelisk_rt_v1_format(context, "%s", 2, &empty_string, 1, NULL, &output) !=
-      OBELISK_RT_OK) {
-    obelisk_rt_v1_context_destroy(context);
+  if (talos_rt_v1_format(context, "%s", 2, &empty_string, 1, NULL, &output) !=
+      TALOS_RT_OK) {
+    talos_rt_v1_context_destroy(context);
     return 3;
   }
   if (output.data != NULL || output.size != 0) {
-    obelisk_rt_v1_buffer_release(&output);
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_buffer_release(&output);
+    talos_rt_v1_context_destroy(context);
     return 4;
   }
-  if (strcmp(obelisk_rt_v1_status_string(OBELISK_RT_OK), "ok") != 0) {
-    obelisk_rt_v1_context_destroy(context);
+  if (strcmp(talos_rt_v1_status_string(TALOS_RT_OK), "ok") != 0) {
+    talos_rt_v1_context_destroy(context);
     return 5;
   }
   fragment.handle =
-      (obelisk_rt_handle_v1){OBELISK_RT_DESCRIPTOR_FRAGMENT, 0, 9};
-  fragment.code_kind = OBELISK_RT_FRAGMENT_NATIVE;
+      (talos_rt_handle_v1){TALOS_RT_DESCRIPTOR_FRAGMENT, 0, 9};
+  fragment.code_kind = TALOS_RT_FRAGMENT_NATIVE;
   fragment.code.native_entry = c_native_fragment;
-  if (obelisk_rt_v1_fragment_execute(&fragment, context, &frame, sizeof(frame),
-                                     17, &action) != OBELISK_RT_OK ||
-      frame != 42 || action.kind != OBELISK_RT_FRAGMENT_CONTINUE ||
+  if (talos_rt_v1_fragment_execute(&fragment, context, &frame, sizeof(frame),
+                                     17, &action) != TALOS_RT_OK ||
+      frame != 42 || action.kind != TALOS_RT_FRAGMENT_CONTINUE ||
       action.continuation != 18) {
-    obelisk_rt_v1_context_destroy(context);
+    talos_rt_v1_context_destroy(context);
     return 6;
   }
 
-  obelisk_rt_v1_buffer_release(&output);
-  obelisk_rt_v1_context_destroy(context);
+  talos_rt_v1_buffer_release(&output);
+  talos_rt_v1_context_destroy(context);
   return 0;
 }

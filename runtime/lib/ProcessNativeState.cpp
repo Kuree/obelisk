@@ -17,8 +17,8 @@
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
 #include "SignalSemantics.h"
-#include "obelisk/Runtime/StableHandle.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Runtime/StableHandle.h"
+#include "talos/Runtime/StableHash.h"
 
 #include <algorithm>
 #include <atomic>
@@ -33,11 +33,11 @@
 #include <optional>
 #include <tuple>
 
-using namespace obelisk::process;
-using namespace obelisk::runtime;
+using namespace talos::process;
+using namespace talos::runtime;
 
 const NativeStaticState *
-findNativeStaticState(const obelisk_rt_context *context, uint32_t id) {
+findNativeStaticState(const talos_rt_context *context, uint32_t id) {
   if (id < context->nativeScheduleStaticStateIndex.size() &&
       context->nativeScheduleStaticStateIndex[id].bitWidth != 0)
     return &context->nativeScheduleStaticStateIndex[id];
@@ -45,8 +45,8 @@ findNativeStaticState(const obelisk_rt_context *context, uint32_t id) {
   return found == context->nativeStaticStates.end() ? nullptr : &found->second;
 }
 
-static obelisk_rt_status resolveCheckedNativePackedRangeUnlocked(
-    obelisk_rt_context *context, uint64_t handle, uint64_t globalBitCount,
+static talos_rt_status resolveCheckedNativePackedRangeUnlocked(
+    talos_rt_context *context, uint64_t handle, uint64_t globalBitCount,
     uint64_t &rootOffset, uint64_t &rootWidth, int64_t &coordinate) {
   rootOffset = 0;
   rootWidth = globalBitCount;
@@ -55,66 +55,66 @@ static obelisk_rt_status resolveCheckedNativePackedRangeUnlocked(
     const NativeStaticState *state = findNativeStaticState(context, staticID);
     if (!state || state->bitOffset > globalBitCount ||
         state->bitWidth > globalBitCount - state->bitOffset)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     rootOffset = state->bitOffset;
     rootWidth = state->bitWidth;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  return decodeNativeGlobal(handle, coordinate) ? OBELISK_RT_OK
-                                                : OBELISK_RT_INVALID_HANDLE;
+  return decodeNativeGlobal(handle, coordinate) ? TALOS_RT_OK
+                                                : TALOS_RT_INVALID_HANDLE;
 }
 
-obelisk_rt_status obelisk_rt_vpi_state_validate(obelisk_rt_context *context,
+talos_rt_status talos_rt_vpi_state_validate(talos_rt_context *context,
                                                 uint64_t reference,
                                                 uint64_t bitWidth) noexcept {
   if (!context || !bitWidth || bitWidth > UINT64_MAX - 7)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  obelisk_rt_stable_handle_v1 decoded{};
-  if (!obelisk_rt_stable_handle_decode(reference, &decoded))
-    return OBELISK_RT_INVALID_HANDLE;
-  if (decoded.kind == OBELISK_RT_STABLE_HANDLE_AUTOMATIC)
-    return obelisk_rt_vpi_automatic_validate(context, reference, bitWidth);
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  talos_rt_stable_handle_v1 decoded{};
+  if (!talos_rt_stable_handle_decode(reference, &decoded))
+    return TALOS_RT_INVALID_HANDLE;
+  if (decoded.kind == TALOS_RT_STABLE_HANDLE_AUTOMATIC)
+    return talos_rt_vpi_automatic_validate(context, reference, bitWidth);
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     if (!context->execution)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     uint64_t root = 0, width = 0;
     int64_t coordinate = 0;
     auto status = resolveCheckedNativePackedRangeUnlocked(
         context, reference, context->execution->state_bit_count, root, width,
         coordinate);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     if (coordinate < 0 || uint64_t(coordinate) > width ||
         bitWidth > width - uint64_t(coordinate))
-      return OBELISK_RT_INVALID_ARGUMENT;
-    return OBELISK_RT_OK;
+      return TALOS_RT_INVALID_ARGUMENT;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-obelisk_rt_status
-obelisk_rt_vpi_state_read(obelisk_rt_context *context, uint64_t reference,
+talos_rt_status
+talos_rt_vpi_state_read(talos_rt_context *context, uint64_t reference,
                           uint64_t bitOffset, uint64_t bitWidth,
                           uint8_t *outValue, uint8_t *outUnknown) noexcept {
   if (!context || !outValue || !outUnknown || bitOffset > INT64_MAX ||
       !bitWidth || bitWidth > UINT64_MAX - 7)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const uint64_t bytes = (bitWidth + 7) / 8;
   if (bytes > SIZE_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   std::memset(outValue, 0, bytes);
   std::memset(outUnknown, 0, bytes);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
-    reference = obelisk_rt_stable_handle_offset(reference, bitOffset);
-    auto status = obelisk_rt_vpi_state_validate(context, reference, bitWidth);
-    if (status != OBELISK_RT_OK)
+    reference = talos_rt_stable_handle_offset(reference, bitOffset);
+    auto status = talos_rt_vpi_state_validate(context, reference, bitWidth);
+    if (status != TALOS_RT_OK)
       return status;
-    obelisk_rt_stable_handle_v1 decoded{};
-    obelisk_rt_stable_handle_decode(reference, &decoded);
-    if (decoded.kind == OBELISK_RT_STABLE_HANDLE_AUTOMATIC)
-      return obelisk_rt_vpi_automatic_read(context, reference, 0, bitWidth,
+    talos_rt_stable_handle_v1 decoded{};
+    talos_rt_stable_handle_decode(reference, &decoded);
+    if (decoded.kind == TALOS_RT_STABLE_HANDLE_AUTOMATIC)
+      return talos_rt_vpi_automatic_read(context, reference, 0, bitWidth,
                                            outValue, outUnknown);
     const uint64_t bits = context->execution->state_bit_count;
     const uint8_t *value =
@@ -125,18 +125,18 @@ obelisk_rt_vpi_state_read(obelisk_rt_context *context, uint64_t reference,
         context->nativeStateUnknown
             ? context->nativeStateUnknown
             : reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
-    status = obelisk_rt_v1_native_state_load_plane(
+    status = talos_rt_v1_native_state_load_plane(
         context, value, bits, reference, bitWidth, 0, 0, outValue);
-    if (status == OBELISK_RT_OK)
-      status = obelisk_rt_v1_native_state_load_plane(
+    if (status == TALOS_RT_OK)
+      status = talos_rt_v1_native_state_load_plane(
           context, unknown, bits, reference, bitWidth, 1, 0, outUnknown);
     return status;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-void releaseOwnedNativeStates(obelisk_rt_context *context,
-                              obelisk_rt_process_instance_v1 *instance) {
+void releaseOwnedNativeStates(talos_rt_context *context,
+                              talos_rt_process_instance_v1 *instance) {
   if (!context || !instance)
     return;
   ContextMutexLock lock(context);
@@ -148,7 +148,7 @@ void releaseOwnedNativeStates(obelisk_rt_context *context,
     }
     state->second.owner = nullptr;
     if (state->second.referenceCount <= 1) {
-      obelisk_rt_erase_automatic_bookkeeping_unlocked(context, state->first);
+      talos_rt_erase_automatic_bookkeeping_unlocked(context, state->first);
       state = context->nativeAutomaticStates.erase(state);
     } else {
       --state->second.referenceCount;
@@ -158,26 +158,26 @@ void releaseOwnedNativeStates(obelisk_rt_context *context,
   instance->ownership_context = nullptr;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_native_state_initialize(
-    obelisk_rt_context *context, uint8_t *value, uint8_t *unknown,
-    uint64_t bitCount, const obelisk_rt_native_state_fill_v1 *fills,
+extern "C" talos_rt_status talos_rt_v1_native_state_initialize(
+    talos_rt_context *context, uint8_t *value, uint8_t *unknown,
+    uint64_t bitCount, const talos_rt_native_state_fill_v1 *fills,
     uint64_t fillCount) {
   if (!context || !value || (!unknown && !context->twoState()) ||
       value == unknown ||
       (reinterpret_cast<uintptr_t>(value) % alignof(uint64_t)) ||
       (reinterpret_cast<uintptr_t>(unknown) % alignof(uint64_t)) ||
       (fillCount && !fills) ||
-      fillCount > SIZE_MAX / sizeof(obelisk_rt_native_state_fill_v1) ||
+      fillCount > SIZE_MAX / sizeof(talos_rt_native_state_fill_v1) ||
       bitCount > UINT64_MAX - 7 || (bitCount + 7) / 8 > SIZE_MAX - 8)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
   ContextMutexLock lock(context);
   if (context->nativeStateInitialized || context->nativeStateValue ||
       context->nativeSchedulePlan || !context->nativeStaticStates.empty() ||
       !context->scheduledProcesses.empty())
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   if (context->execution && context->execution->state_bit_count != bitCount)
-    return OBELISK_RT_LAYOUT_MISMATCH;
+    return TALOS_RT_LAYOUT_MISMATCH;
   uint64_t end = 0;
   for (uint64_t i = 0; i < fillCount; ++i) {
     const auto &fill = fills[i];
@@ -185,7 +185,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_initialize(
         fill.bit_offset > bitCount ||
         fill.bit_width > bitCount - fill.bit_offset || fill.value > 1 ||
         fill.unknown > 1)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     end = fill.bit_offset + fill.bit_width;
   }
   // IEEE 1800-2023 4.5, 6.7.1, 6.8: initialize before design activation,
@@ -217,7 +217,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_initialize(
       set(unknown, fill.bit_offset, fill.bit_width);
   }
   context->nativeStateInitialized = true;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 //===----------------------------------------------------------------------===//
@@ -238,7 +238,7 @@ uint64_t lowBits(uint64_t width) {
 /// `bit`, scanning its ranges from `*cursor`, which advances past ranges that
 /// end before `bit`.
 uint64_t patternBits(const NativeUnknownSummary &summary,
-                     const obelisk_rt_native_unknown_root_v1 &entry,
+                     const talos_rt_native_unknown_root_v1 &entry,
                      uint64_t bit, uint64_t width, uint32_t *cursor) {
   const uint64_t *ranges = &summary.patterns[2 * entry.first_pattern];
   uint32_t index = cursor ? *cursor : 0;
@@ -260,7 +260,7 @@ uint64_t patternBits(const NativeUnknownSummary &summary,
 
 /// Whether `root`'s unknown plane matches its pattern.
 bool unknownRootClean(const NativeUnknownSummary &summary, uint32_t root) {
-  const obelisk_rt_native_unknown_root_v1 &entry = summary.roots[root];
+  const talos_rt_native_unknown_root_v1 &entry = summary.roots[root];
   uint64_t end = entry.bit_offset + entry.bit_width;
   uint32_t cursor = 0;
   for (uint64_t bit = entry.bit_offset; bit < end;) {
@@ -280,7 +280,7 @@ bool unknownRootClean(const NativeUnknownSummary &summary, uint32_t root) {
 /// the whole root. Otherwise the full scan decides and records the first
 /// differing chunk again.
 bool refreshUnknownRoot(NativeUnknownSummary &summary, uint32_t root) {
-  const obelisk_rt_native_unknown_root_v1 &entry = summary.roots[root];
+  const talos_rt_native_unknown_root_v1 &entry = summary.roots[root];
   NativeUnknownSummary::Mismatch &mismatch = summary.mismatches[root];
   uint64_t end = entry.bit_offset + entry.bit_width;
   auto differs = [&](uint64_t bit, uint32_t *cursor) {
@@ -329,10 +329,10 @@ void markUnknownRoot(NativeUnknownSummary &summary, uint32_t root) {
 
 } // namespace
 
-/// With OBELISK_RT_VERIFY_UNKNOWN_SUMMARY, check that every root whose bit is
+/// With TALOS_RT_VERIFY_UNKNOWN_SUMMARY, check that every root whose bit is
 /// clear matches its pattern, so a writer that skipped its report fails at
 /// the next check instead of letting generated code read a stale pattern.
-void verifyNativeUnknownSummaryUnlocked(const obelisk_rt_context *context) {
+void verifyNativeUnknownSummaryUnlocked(const talos_rt_context *context) {
   NativeUnknownSummary *summary =
       context ? context->nativeUnknownSummary.get() : nullptr;
   if (!summary || !summary->verify)
@@ -342,7 +342,7 @@ void verifyNativeUnknownSummaryUnlocked(const obelisk_rt_context *context) {
         !unknownRootClean(*summary, root)) {
       std::fprintf(
           stderr,
-          "obelisk: unknown summary reports root %u (state bits "
+          "talos: unknown summary reports root %u (state bits "
           "%llu+%llu) matching its pattern while it differs\n",
           root,
           static_cast<unsigned long long>(summary->roots[root].bit_offset),
@@ -351,7 +351,7 @@ void verifyNativeUnknownSummaryUnlocked(const obelisk_rt_context *context) {
     }
 }
 
-void markNativeUnknownRangeUnlocked(const obelisk_rt_context *context,
+void markNativeUnknownRangeUnlocked(const talos_rt_context *context,
                                     uint64_t bitOffset, uint64_t bitWidth) {
   NativeUnknownSummary *summary =
       context ? context->nativeUnknownSummary.get() : nullptr;
@@ -361,7 +361,7 @@ void markNativeUnknownRangeUnlocked(const obelisk_rt_context *context,
                      [&](uint32_t root) { markUnknownRoot(*summary, root); });
 }
 
-void markNativeUnknownBitsUnlocked(const obelisk_rt_context *context,
+void markNativeUnknownBitsUnlocked(const talos_rt_context *context,
                                    uint64_t bitOffset, uint64_t bitWidth,
                                    uint64_t unknown, uint64_t written) {
   NativeUnknownSummary *summary =
@@ -375,7 +375,7 @@ void markNativeUnknownBitsUnlocked(const obelisk_rt_context *context,
       !(unknown & written & lowBits(bitWidth)))
     return;
   forEachUnknownRoot(*summary, bitOffset, bitWidth, [&](uint32_t root) {
-    const obelisk_rt_native_unknown_root_v1 &entry = summary->roots[root];
+    const talos_rt_native_unknown_root_v1 &entry = summary->roots[root];
     // The written bits inside this root, relative to `bitOffset`.
     uint64_t begin = std::max(entry.bit_offset, bitOffset);
     uint64_t end =
@@ -390,7 +390,7 @@ void markNativeUnknownBitsUnlocked(const obelisk_rt_context *context,
   });
 }
 
-void markNativeUnknownAllUnlocked(const obelisk_rt_context *context) {
+void markNativeUnknownAllUnlocked(const talos_rt_context *context) {
   NativeUnknownSummary *summary =
       context ? context->nativeUnknownSummary.get() : nullptr;
   if (!summary)
@@ -400,18 +400,18 @@ void markNativeUnknownAllUnlocked(const obelisk_rt_context *context) {
     summary->generated[root / 64] = lowBits(summary->roots.size() - root);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_native_state_bind_unknown_summary(
-    obelisk_rt_context *context, uint8_t *unknown, uint64_t bitCount,
-    uint64_t *summary, const obelisk_rt_native_unknown_root_v1 *roots,
+extern "C" talos_rt_status talos_rt_v1_native_state_bind_unknown_summary(
+    talos_rt_context *context, uint8_t *unknown, uint64_t bitCount,
+    uint64_t *summary, const talos_rt_native_unknown_root_v1 *roots,
     uint64_t rootCount, const uint64_t *patterns, uint64_t patternCount) {
   if (!context || !unknown || !summary || (rootCount && !roots) ||
       (patternCount && !patterns) || rootCount > UINT32_MAX ||
       patternCount > UINT32_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     if (context->nativeUnknownSummary)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     auto bound = std::make_unique<NativeUnknownSummary>();
     bound->generated = summary;
     bound->plane = unknown;
@@ -420,19 +420,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_bind_unknown_summary(
     bound->patterns.assign(patterns, patterns + 2 * patternCount);
     // Each root lies inside the plane; its pattern ranges are sorted,
     // disjoint and inside it.
-    for (const obelisk_rt_native_unknown_root_v1 &root : bound->roots) {
+    for (const talos_rt_native_unknown_root_v1 &root : bound->roots) {
       if (!root.bit_width || root.bit_offset > bitCount ||
           root.bit_width > bitCount - root.bit_offset ||
           root.first_pattern > patternCount ||
           root.pattern_count > patternCount - root.first_pattern)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
       uint64_t position = root.bit_offset;
       for (uint32_t index = 0; index != root.pattern_count; ++index) {
         const uint64_t *range = &patterns[2 * (root.first_pattern + index)];
         if (!range[1] || range[0] < position ||
             range[0] > root.bit_offset + root.bit_width ||
             range[1] > root.bit_offset + root.bit_width - range[0])
-          return OBELISK_RT_INVALID_ARGUMENT;
+          return TALOS_RT_INVALID_ARGUMENT;
         position = range[0] + range[1];
       }
     }
@@ -448,25 +448,25 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_bind_unknown_summary(
       const auto &previous = roots[bound->byOffset[index - 1]];
       if (previous.bit_offset + previous.bit_width >
           roots[bound->byOffset[index]].bit_offset)
-        return OBELISK_RT_INVALID_ARGUMENT;
+        return TALOS_RT_INVALID_ARGUMENT;
     }
-    const char *verify = std::getenv("OBELISK_RT_VERIFY_UNKNOWN_SUMMARY");
+    const char *verify = std::getenv("TALOS_RT_VERIFY_UNKNOWN_SUMMARY");
     bound->verify = verify && *verify && std::strcmp(verify, "0") != 0;
     context->nativeUnknownSummary = std::move(bound);
     // Initialization may have stored X/Z anywhere (IEEE 1800-2023 6.8).
     markNativeUnknownAllUnlocked(context);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-extern "C" uint32_t obelisk_rt_v1_native_state_refresh_unknown_summary(
-    obelisk_rt_context *context, const uint64_t *gate, uint64_t wordCount,
+extern "C" uint32_t talos_rt_v1_native_state_refresh_unknown_summary(
+    talos_rt_context *context, const uint64_t *gate, uint64_t wordCount,
     uint64_t *backoff) {
   if (!context || (wordCount && !gate))
     return 0;
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     NativeUnknownSummary *summary = context->nativeUnknownSummary.get();
     if (!summary)
@@ -503,11 +503,11 @@ extern "C" uint32_t obelisk_rt_v1_native_state_refresh_unknown_summary(
     }
     return clean;
   }
-  OBELISK_RT_CATCH_ALL { return 0; }
+  TALOS_RT_CATCH_ALL { return 0; }
 }
 
 extern "C" void
-obelisk_rt_v1_native_state_mark_unknown(obelisk_rt_context *context,
+talos_rt_v1_native_state_mark_unknown(talos_rt_context *context,
                                         uint64_t bitOffset, uint64_t bitWidth) {
   if (!context)
     return;
@@ -515,7 +515,7 @@ obelisk_rt_v1_native_state_mark_unknown(obelisk_rt_context *context,
   markNativeUnknownRangeUnlocked(context, bitOffset, bitWidth);
 }
 
-bool validNativeStatePlanesUnlocked(const obelisk_rt_context *context,
+bool validNativeStatePlanesUnlocked(const talos_rt_context *context,
                                     const uint8_t *value,
                                     const uint8_t *unknown, uint64_t bitCount) {
   return context && value && (unknown || context->twoState()) &&
@@ -530,19 +530,19 @@ bool validNativeStatePlanesUnlocked(const obelisk_rt_context *context,
                           context->stateUnknown.data())));
 }
 
-static bool executionHasBytecodeState(const obelisk_rt_context *context) {
+static bool executionHasBytecodeState(const talos_rt_context *context) {
   return context->execution &&
-         (context->execution->flags & OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0;
+         (context->execution->flags & TALOS_RT_EXECUTION_HAS_BYTECODE) != 0;
 }
 
-static bool hasBoundNativeStatePlanes(const obelisk_rt_context *context,
+static bool hasBoundNativeStatePlanes(const talos_rt_context *context,
                                       uint64_t bitCount) {
   return context->nativeStateValue &&
          (context->nativeStateUnknown || context->twoState()) &&
          context->nativeStateBitCount >= bitCount;
 }
 
-bool importNativeStatePlanesUnlocked(obelisk_rt_context *context,
+bool importNativeStatePlanesUnlocked(talos_rt_context *context,
                                      const uint8_t *value,
                                      const uint8_t *unknown,
                                      uint64_t bitCount) {
@@ -577,7 +577,7 @@ bool importNativeStatePlanesUnlocked(obelisk_rt_context *context,
   return true;
 }
 
-bool importNativeRootInitializerPlanesUnlocked(obelisk_rt_context *context) {
+bool importNativeRootInitializerPlanesUnlocked(talos_rt_context *context) {
   if (!context || !context->nativeStateValue ||
       (!context->nativeStateUnknown && !context->twoState()))
     return true;
@@ -594,7 +594,7 @@ bool importNativeRootInitializerPlanesUnlocked(obelisk_rt_context *context) {
                                          context->execution->state_bit_count);
 }
 
-bool exportNativeStatePlanesUnlocked(const obelisk_rt_context *context,
+bool exportNativeStatePlanesUnlocked(const talos_rt_context *context,
                                      uint8_t *value, uint8_t *unknown,
                                      uint64_t bitCount) {
   if (!validNativeStatePlanesUnlocked(context, value, unknown, bitCount))
@@ -634,8 +634,8 @@ bool exportNativeStatePlanesUnlocked(const obelisk_rt_context *context,
 }
 
 bool reconcileNativeRootToPlanesUnlocked(
-    const obelisk_rt_context *context,
-    const obelisk_rt_native_schedule_plan *plan, uint32_t id) {
+    const talos_rt_context *context,
+    const talos_rt_native_schedule_plan *plan, uint32_t id) {
   if (!context || !plan ||
       !validNativeStatePlanesUnlocked(context, plan->state_value,
                                       plan->state_unknown,
@@ -670,8 +670,8 @@ bool reconcileNativeRootToPlanesUnlocked(
 }
 
 bool reconcileNativeDirtyRootsToPlanesUnlocked(
-    const obelisk_rt_context *context,
-    const obelisk_rt_native_schedule_plan *plan) {
+    const talos_rt_context *context,
+    const talos_rt_native_schedule_plan *plan) {
   if (!context || !plan)
     return false;
   for (uint32_t id : context->nativeScheduleTransientDirtyRoots)
@@ -705,7 +705,7 @@ bool nativeMaskIntersectsRange(const std::vector<uint64_t> &mask,
   return false;
 }
 
-void obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
+void talos_rt_sync_native_state_range_unlocked(talos_rt_context *context,
                                                  uint64_t begin,
                                                  uint64_t width) {
   if (!context || !context->nativeStateValue ||
@@ -735,13 +735,13 @@ void obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
   }
 }
 
-bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
+bool storeNativeScheduleStateUnlocked(talos_rt_context *context,
                                       uint64_t bitOffset, uint64_t bitWidth,
                                       uint64_t value, uint64_t unknown,
                                       std::optional<uint64_t> previousUnknown) {
   if (!context || bitWidth == 0 || bitWidth > 64)
     return false;
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   if (plan && plan->state_bit_count != 0) {
     if (!plan->state_value || (!plan->state_unknown && !context->twoState()) ||
         bitOffset > plan->state_bit_count ||
@@ -792,7 +792,7 @@ bool storeNativeScheduleStateUnlocked(obelisk_rt_context *context,
 
 namespace {
 
-bool staticOverrideRange(obelisk_rt_context *context, uint64_t handle,
+bool staticOverrideRange(talos_rt_context *context, uint64_t handle,
                          uint64_t width, uint64_t &absolute) {
   uint32_t id = 0;
   int64_t offset = 0;
@@ -814,8 +814,8 @@ bool staticOverrideRange(obelisk_rt_context *context, uint64_t handle,
 
 } // namespace
 
-void obelisk_rt_claim_override_range_unlocked(
-    obelisk_rt_context *context, uint64_t begin, uint64_t width, bool assign,
+void talos_rt_claim_override_range_unlocked(
+    talos_rt_context *context, uint64_t begin, uint64_t width, bool assign,
     uint64_t owner, std::vector<uint64_t> &retiredOwners) {
   auto &owners =
       assign ? context->dynamicAssignOwners : context->dynamicForceOwners;
@@ -831,15 +831,15 @@ void obelisk_rt_claim_override_range_unlocked(
   }
 }
 
-void obelisk_rt_release_override_range_unlocked(
-    obelisk_rt_context *context, uint64_t begin, uint64_t width, bool assign,
+void talos_rt_release_override_range_unlocked(
+    talos_rt_context *context, uint64_t begin, uint64_t width, bool assign,
     std::vector<uint64_t> &retiredOwners) {
-  obelisk_rt_claim_override_range_unlocked(context, begin, width, assign, 0,
+  talos_rt_claim_override_range_unlocked(context, begin, width, assign, 0,
                                            retiredOwners);
 }
 
-bool obelisk_rt_override_owner_matches_unlocked(
-    const obelisk_rt_context *context, uint64_t bit, bool assign,
+bool talos_rt_override_owner_matches_unlocked(
+    const talos_rt_context *context, uint64_t bit, bool assign,
     uint64_t owner) {
   const auto &owners =
       assign ? context->dynamicAssignOwners : context->dynamicForceOwners;
@@ -847,8 +847,8 @@ bool obelisk_rt_override_owner_matches_unlocked(
   return found != owners.end() && found->second == owner;
 }
 
-obelisk_rt_status
-obelisk_rt_retire_override_owners(obelisk_rt_context *context,
+talos_rt_status
+talos_rt_retire_override_owners(talos_rt_context *context,
                                   std::vector<uint64_t> retiredOwners) {
   std::sort(retiredOwners.begin(), retiredOwners.end());
   retiredOwners.erase(std::unique(retiredOwners.begin(), retiredOwners.end()),
@@ -882,18 +882,18 @@ obelisk_rt_retire_override_owners(obelisk_rt_context *context,
       if (managedOwned)
         continue;
     }
-    obelisk_rt_process_control_disposition disposition =
-        OBELISK_RT_PROCESS_CONTROL_CONTINUE;
-    obelisk_rt_status status = obelisk_rt_v1_process_control(
-        context, owner, OBELISK_RT_PROCESS_CONTROL_KILL, &disposition);
-    if (status != OBELISK_RT_OK && status != OBELISK_RT_INVALID_HANDLE)
+    talos_rt_process_control_disposition disposition =
+        TALOS_RT_PROCESS_CONTROL_CONTINUE;
+    talos_rt_status status = talos_rt_v1_process_control(
+        context, owner, TALOS_RT_PROCESS_CONTROL_KILL, &disposition);
+    if (status != TALOS_RT_OK && status != TALOS_RT_INVALID_HANDLE)
       return status;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-bool obelisk_rt_publish_native_signal_transition_unlocked(
-    obelisk_rt_context *context, uint64_t stableID, uint64_t bitWidth,
+bool talos_rt_publish_native_signal_transition_unlocked(
+    talos_rt_context *context, uint64_t stableID, uint64_t bitWidth,
     const uint8_t *changed, const uint8_t *posedge, const uint8_t *negedge,
     const uint8_t *oldValue, const uint8_t *oldUnknown, const uint8_t *newValue,
     const uint8_t *newUnknown, bool indexedExternalDeposit,
@@ -906,21 +906,21 @@ bool obelisk_rt_publish_native_signal_transition_unlocked(
     // publisher. Keep coverage at the same semantic commit point as every
     // other transition observer.
     if (context->coverage)
-      obelisk_rt_coverage_record_transition_unlocked(
+      talos_rt_coverage_record_transition_unlocked(
           context, stableID, bitWidth, changed, newValue, newUnknown);
-    obelisk_rt_invalidate_signal_snapshots_unlocked(context, stableID,
+    talos_rt_invalidate_signal_snapshots_unlocked(context, stableID,
                                                     bitWidth);
     if (++context->schedulerEpoch == 0)
       context->schedulerEpoch = 1;
-    return context->schedulerStatus == OBELISK_RT_OK;
+    return context->schedulerStatus == TALOS_RT_OK;
   }
   return publishNativeSignalTransitionUnlocked(
       context, stableID, bitWidth, changed, posedge, negedge, oldValue,
       oldUnknown, newValue, newUnknown, establishesOverride);
 }
 
-static obelisk_rt_status
-nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
+static talos_rt_status
+nativeOverride(talos_rt_context *context, uint8_t *globalValue,
                uint8_t *globalUnknown, uint64_t globalBitCount, uint64_t handle,
                uint64_t bitWidth, uint32_t descriptorKind, uint32_t assign,
                bool dynamic, uint64_t ownerProcess, bool claim,
@@ -928,36 +928,36 @@ nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
   if (!context || !globalValue || (!globalUnknown && !context->twoState()) ||
       !value || bitWidth == 0 || bitWidth > UINT64_MAX - 7 || assign > 1 ||
       (dynamic && ownerProcess == 0) ||
-      (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE &&
-       descriptorKind != OBELISK_RT_DESCRIPTOR_NET) ||
-      (assign && descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE) ||
+      (descriptorKind != TALOS_RT_DESCRIPTOR_STORAGE &&
+       descriptorKind != TALOS_RT_DESCRIPTOR_NET) ||
+      (assign && descriptorKind != TALOS_RT_DESCRIPTOR_STORAGE) ||
       !context->execution ||
       context->execution->state_bit_count != globalBitCount)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   context->managedValueOverridePossible.store(true, std::memory_order_relaxed);
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     uint64_t absolute = 0;
     std::vector<uint64_t> retiredOwners;
     uint64_t byteCount = (bitWidth + 7) / 8;
     if (byteCount > std::numeric_limits<size_t>::max())
-      return OBELISK_RT_INVALID_ARGUMENT;
-    if (descriptorKind == OBELISK_RT_DESCRIPTOR_NET) {
+      return TALOS_RT_INVALID_ARGUMENT;
+    if (descriptorKind == TALOS_RT_DESCRIPTOR_NET) {
       {
         ContextMutexLock lock(context);
         if (!staticOverrideRange(context, handle, bitWidth, absolute))
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
       }
-      obelisk_rt_status status = OBELISK_RT_OK;
+      talos_rt_status status = TALOS_RT_OK;
       if (!dynamic || claim) {
-        status = obelisk_rt_force_design_nets(context, absolute, bitWidth,
+        status = talos_rt_force_design_nets(context, absolute, bitWidth,
                                               value, unknown);
-        if (status == OBELISK_RT_OK) {
+        if (status == TALOS_RT_OK) {
           ContextMutexLock lock(context);
           for (uint64_t offset = 0; offset != bitWidth; ++offset)
-            obelisk_rt_claim_override_range_unlocked(
+            talos_rt_claim_override_range_unlocked(
                 context,
-                obelisk_rt_canonical_net_bit_unlocked(context,
+                talos_rt_canonical_net_bit_unlocked(context,
                                                       absolute + offset),
                 1, assign != 0, dynamic ? ownerProcess : 0, retiredOwners);
         }
@@ -967,9 +967,9 @@ nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
           {
             ContextMutexLock lock(context);
             while (offset != bitWidth &&
-                   !obelisk_rt_override_owner_matches_unlocked(
+                   !talos_rt_override_owner_matches_unlocked(
                        context,
-                       obelisk_rt_canonical_net_bit_unlocked(context,
+                       talos_rt_canonical_net_bit_unlocked(context,
                                                              absolute + offset),
                        assign != 0, ownerProcess))
               ++offset;
@@ -980,9 +980,9 @@ nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
           {
             ContextMutexLock lock(context);
             while (offset != bitWidth &&
-                   obelisk_rt_override_owner_matches_unlocked(
+                   talos_rt_override_owner_matches_unlocked(
                        context,
-                       obelisk_rt_canonical_net_bit_unlocked(context,
+                       talos_rt_canonical_net_bit_unlocked(context,
                                                              absolute + offset),
                        assign != 0, ownerProcess))
               ++offset;
@@ -998,16 +998,16 @@ nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
               setByteBit(runUnknown.data(), bit,
                          byteBit(unknown, runBegin + bit));
           }
-          status = obelisk_rt_force_design_nets(
+          status = talos_rt_force_design_nets(
               context, absolute + runBegin, runWidth, runValue.data(),
               unknown ? runUnknown.data() : nullptr);
-          if (status != OBELISK_RT_OK)
+          if (status != TALOS_RT_OK)
             break;
         }
       }
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
-      return obelisk_rt_retire_override_owners(context,
+      return talos_rt_retire_override_owners(context,
                                                std::move(retiredOwners));
     }
     std::vector<uint8_t> oldValue(static_cast<size_t>(byteCount), 0);
@@ -1017,9 +1017,9 @@ nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
     {
       ContextMutexLock lock(context);
       if (!staticOverrideRange(context, handle, bitWidth, absolute))
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       if (!dynamic || claim)
-        obelisk_rt_claim_override_range_unlocked(
+        talos_rt_claim_override_range_unlocked(
             context, absolute, bitWidth, assign != 0,
             dynamic ? ownerProcess : 0, retiredOwners);
       size_t limbs = context->stateValue.size();
@@ -1046,7 +1046,7 @@ nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
         setByteBit(oldValue.data(), bit, oldV);
         setByteBit(oldUnknown.data(), bit, oldU);
         if (dynamic && !claim &&
-            !obelisk_rt_override_owner_matches_unlocked(
+            !talos_rt_override_owner_matches_unlocked(
                 context, destination, assign != 0, ownerProcess)) {
           setByteBit(publishedValue.data(), bit, oldV);
           setByteBit(publishedUnknown.data(), bit, oldU);
@@ -1078,20 +1078,20 @@ nativeOverride(obelisk_rt_context *context, uint8_t *globalValue,
         setByteBit(publishedValue.data(), bit, nextV);
         setByteBit(publishedUnknown.data(), bit, nextU);
       }
-      obelisk_rt_aot_external_write_range_unlocked(context, absolute, bitWidth,
+      talos_rt_aot_external_write_range_unlocked(context, absolute, bitWidth,
                                                    true);
     }
     publishOverrideTransition(context, handle, bitWidth, oldValue.data(),
                               oldUnknown.data(), publishedValue.data(),
                               publishedUnknown.data());
-    return obelisk_rt_retire_override_owners(context, std::move(retiredOwners));
+    return talos_rt_retire_override_owners(context, std::move(retiredOwners));
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_native_override(obelisk_rt_context *context, uint8_t *globalValue,
+extern "C" talos_rt_status
+talos_rt_v1_native_override(talos_rt_context *context, uint8_t *globalValue,
                               uint8_t *globalUnknown, uint64_t globalBitCount,
                               uint64_t handle, uint64_t bitWidth,
                               uint32_t descriptorKind, uint32_t assign,
@@ -1101,53 +1101,53 @@ obelisk_rt_v1_native_override(obelisk_rt_context *context, uint8_t *globalValue,
                         true, value, unknown);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_native_dynamic_override(
-    obelisk_rt_context *context, uint8_t *globalValue, uint8_t *globalUnknown,
+extern "C" talos_rt_status talos_rt_v1_native_dynamic_override(
+    talos_rt_context *context, uint8_t *globalValue, uint8_t *globalUnknown,
     uint64_t globalBitCount, uint64_t handle, uint64_t bitWidth,
     uint32_t descriptorKind, uint32_t assign, uint64_t ownerProcess,
     uint32_t claim, const uint8_t *value, const uint8_t *unknown) {
   if (claim > 1)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   return nativeOverride(context, globalValue, globalUnknown, globalBitCount,
                         handle, bitWidth, descriptorKind, assign, true,
                         ownerProcess, claim != 0, value, unknown);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
-    obelisk_rt_context *context, uint8_t *globalValue, uint8_t *globalUnknown,
+extern "C" talos_rt_status talos_rt_v1_native_release_override(
+    talos_rt_context *context, uint8_t *globalValue, uint8_t *globalUnknown,
     uint64_t globalBitCount, uint64_t handle, uint64_t bitWidth,
     uint32_t descriptorKind, uint32_t assign) {
   if (!context || !globalValue || (!globalUnknown && !context->twoState()) ||
       bitWidth == 0 || bitWidth > UINT64_MAX - 7 || assign > 1 ||
-      (descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE &&
-       descriptorKind != OBELISK_RT_DESCRIPTOR_NET) ||
-      (assign && descriptorKind != OBELISK_RT_DESCRIPTOR_STORAGE) ||
+      (descriptorKind != TALOS_RT_DESCRIPTOR_STORAGE &&
+       descriptorKind != TALOS_RT_DESCRIPTOR_NET) ||
+      (assign && descriptorKind != TALOS_RT_DESCRIPTOR_STORAGE) ||
       !context->execution ||
       context->execution->state_bit_count != globalBitCount)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     uint64_t absolute = 0;
     std::vector<uint64_t> retiredOwners;
     uint64_t byteCount = (bitWidth + 7) / 8;
     if (byteCount > std::numeric_limits<size_t>::max())
-      return OBELISK_RT_INVALID_ARGUMENT;
-    if (descriptorKind == OBELISK_RT_DESCRIPTOR_NET) {
+      return TALOS_RT_INVALID_ARGUMENT;
+    if (descriptorKind == TALOS_RT_DESCRIPTOR_NET) {
       {
         ContextMutexLock lock(context);
         if (!staticOverrideRange(context, handle, bitWidth, absolute))
-          return OBELISK_RT_INVALID_HANDLE;
+          return TALOS_RT_INVALID_HANDLE;
         for (uint64_t offset = 0; offset != bitWidth; ++offset)
-          obelisk_rt_release_override_range_unlocked(
+          talos_rt_release_override_range_unlocked(
               context,
-              obelisk_rt_canonical_net_bit_unlocked(context, absolute + offset),
+              talos_rt_canonical_net_bit_unlocked(context, absolute + offset),
               1, assign != 0, retiredOwners);
       }
-      obelisk_rt_status status =
-          obelisk_rt_release_design_nets(context, absolute, bitWidth);
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status =
+          talos_rt_release_design_nets(context, absolute, bitWidth);
+      if (status != TALOS_RT_OK)
         return status;
-      return obelisk_rt_retire_override_owners(context,
+      return talos_rt_retire_override_owners(context,
                                                std::move(retiredOwners));
     }
     std::vector<uint8_t> oldValue(static_cast<size_t>(byteCount), 0);
@@ -1158,8 +1158,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
     {
       ContextMutexLock lock(context);
       if (!staticOverrideRange(context, handle, bitWidth, absolute))
-        return OBELISK_RT_INVALID_HANDLE;
-      obelisk_rt_release_override_range_unlocked(context, absolute, bitWidth,
+        return TALOS_RT_INVALID_HANDLE;
+      talos_rt_release_override_range_unlocked(context, absolute, bitWidth,
                                                  assign != 0, retiredOwners);
       for (uint64_t bit = 0; bit != bitWidth; ++bit) {
         uint64_t destination = absolute + bit;
@@ -1204,19 +1204,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_release_override(
         setByteBit(publishedValue.data(), bit, nextV);
         setByteBit(publishedUnknown.data(), bit, nextU);
       }
-      obelisk_rt_aot_release_range_unlocked(context, absolute, bitWidth);
+      talos_rt_aot_release_range_unlocked(context, absolute, bitWidth);
     }
     if (changed)
       publishOverrideTransition(context, handle, bitWidth, oldValue.data(),
                                 oldUnknown.data(), publishedValue.data(),
                                 publishedUnknown.data());
-    return obelisk_rt_retire_override_owners(context, std::move(retiredOwners));
+    return talos_rt_retire_override_owners(context, std::move(retiredOwners));
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_DESIGN; }
 }
 
-static void applyClockConditionPublicationView(obelisk_rt_context *context,
+static void applyClockConditionPublicationView(talos_rt_context *context,
                                                uint64_t handle,
                                                uint64_t bitWidth,
                                                bool unknownPlane,
@@ -1229,26 +1229,26 @@ static void applyClockConditionPublicationView(obelisk_rt_context *context,
   for (uint64_t bit = 0; bit != bitWidth; ++bit) {
     bool value = false;
     bool unknown = false;
-    if (obelisk_rt_read_clock_condition_publication_bit_unlocked(
+    if (talos_rt_read_clock_condition_publication_bit_unlocked(
             context, handle, bit, value, unknown))
       setByteBit(outValue, bit, unknownPlane ? unknown : value);
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
-    obelisk_rt_context *context, const uint8_t *globalPlane,
+extern "C" talos_rt_status talos_rt_v1_native_state_load_plane(
+    talos_rt_context *context, const uint8_t *globalPlane,
     uint64_t globalBitCount, uint64_t handle, uint64_t bitWidth,
     uint32_t unknownPlane, uint32_t fallback, uint8_t *outValue) {
   if (!context || (!globalPlane && !(unknownPlane && context->twoState())) ||
       !outValue || bitWidth == 0 || bitWidth > UINT64_MAX - 7 ||
       unknownPlane > 1 || fallback > 1)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint64_t byteCount = (bitWidth + 7) / 8;
   if (byteCount > std::numeric_limits<size_t>::max())
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (unknownPlane && context->twoState()) {
     std::memset(outValue, 0, static_cast<size_t>(byteCount));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   std::memset(outValue, fallback ? UINT8_MAX : 0,
               static_cast<size_t>(byteCount));
@@ -1258,26 +1258,26 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
   };
   if (handle == UINT64_MAX) {
     maskPadding();
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     uint32_t id = 0;
     int64_t offset = 0;
     if (decodeNativeAutomatic(handle, id, offset)) {
       auto found = context->nativeAutomaticStates.find(id);
       if (found == context->nativeAutomaticStates.end()) {
-        context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
-        return OBELISK_RT_INVALID_HANDLE;
+        context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       }
       const NativeAutomaticState &state = found->second;
       if (state.managedRootRegistered) {
         if (unknownPlane != 0 || offset != 0 || bitWidth != 64)
-          return OBELISK_RT_INVALID_HANDLE;
-        obelisk_rt_managed_word_v1 word =
-            obelisk_rt_managed_word_from_object(state.managedValue);
+          return TALOS_RT_INVALID_HANDLE;
+        talos_rt_managed_word_v1 word =
+            talos_rt_managed_word_from_object(state.managedValue);
         std::memcpy(outValue, &word, sizeof(word));
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       const std::vector<uint8_t> &plane =
           unknownPlane ? state.unknown : state.value;
@@ -1289,14 +1289,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
                      byteBit(plane.data(), static_cast<uint64_t>(source)));
       }
       maskPadding();
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     uint64_t rootOffset = 0;
     uint64_t rootWidth = 0;
     int64_t globalOffset = 0;
-    obelisk_rt_status rangeStatus = resolveCheckedNativePackedRangeUnlocked(
+    talos_rt_status rangeStatus = resolveCheckedNativePackedRangeUnlocked(
         context, handle, globalBitCount, rootOffset, rootWidth, globalOffset);
-    if (rangeStatus != OBELISK_RT_OK) {
+    if (rangeStatus != TALOS_RT_OK) {
       context->schedulerStatus = rangeStatus;
       return rangeStatus;
     }
@@ -1314,7 +1314,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
       canonicalPlane =
           unknownPlane ? &context->stateUnknown : &context->stateValue;
       if (canonicalPlane->size() != (globalBitCount + 63) / 64)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
     }
     // A generated native schedule owns the current planes. Its unwatched
     // writes need not update the canonical mirror before an event sampler
@@ -1328,7 +1328,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
     // generated globals are authoritative even during synchronous observers.
     bool nativeOnlyGeneric =
         layoutMatches && context->activeNativeProcess &&
-        context->activeNativeProcess->tier == OBELISK_RT_TIER_NATIVE && !plan &&
+        context->activeNativeProcess->tier == TALOS_RT_TIER_NATIVE && !plan &&
         !executionHasBytecodeState(context) &&
         !hasBoundNativeStatePlanes(context, globalBitCount);
     bool readGlobalPlane =
@@ -1355,7 +1355,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
         storePackedBytes(outValue, bit, width, value);
       }
       maskPadding();
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (canonical && bitWidth <= 64 && globalOffset >= 0 &&
         static_cast<uint64_t>(globalOffset) <= rootWidth &&
@@ -1383,7 +1383,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
         applyClockConditionPublicationView(context, handle, bitWidth,
                                            unknownPlane != 0, outValue);
       maskPadding();
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
       int64_t coordinate = 0;
@@ -1407,39 +1407,39 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
       applyClockConditionPublicationView(context, handle, bitWidth,
                                          unknownPlane != 0, outValue);
     maskPadding();
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
-    return OBELISK_RT_OUT_OF_MEMORY;
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_OUT_OF_MEMORY);
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
-    return OBELISK_RT_INVALID_ARGUMENT;
+  TALOS_RT_CATCH_ALL {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_INVALID_ARGUMENT);
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
-static obelisk_rt_status nativeStateStorePlane(
-    obelisk_rt_context *context, uint8_t *globalPlane, uint64_t globalBitCount,
+static talos_rt_status nativeStateStorePlane(
+    talos_rt_context *context, uint8_t *globalPlane, uint64_t globalBitCount,
     uint64_t handle, uint64_t bitWidth, uint32_t unknownPlane,
     const uint8_t *value, uint8_t *outChanged, bool continuous) {
   if (!context || (!globalPlane && !(unknownPlane && context->twoState())) ||
       !value || !outChanged || bitWidth == 0 || bitWidth > UINT64_MAX - 7 ||
       unknownPlane > 1)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint64_t byteCount = (bitWidth + 7) / 8;
   if (byteCount > std::numeric_limits<size_t>::max())
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   *outChanged = 0;
   if (unknownPlane && context->twoState())
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (handle == UINT64_MAX)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
-    if (context->activeExecRegion == OBELISK_RT_REGION_POSTPONED) {
-      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+    if (context->activeExecRegion == TALOS_RT_REGION_POSTPONED) {
+      context->schedulerStatus = TALOS_RT_INVALID_LIFECYCLE;
       return context->schedulerStatus;
     }
     uint32_t id = 0;
@@ -1447,28 +1447,28 @@ static obelisk_rt_status nativeStateStorePlane(
     if (decodeNativeAutomatic(handle, id, offset)) {
       auto found = context->nativeAutomaticStates.find(id);
       if (found == context->nativeAutomaticStates.end()) {
-        context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
-        return OBELISK_RT_INVALID_HANDLE;
+        context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       }
       NativeAutomaticState &state = found->second;
       if (state.managedRootRegistered) {
         if (unknownPlane != 0 || offset != 0 || bitWidth != 64)
-          return OBELISK_RT_INVALID_HANDLE;
-        obelisk_rt_managed_word_v1 word = 0;
+          return TALOS_RT_INVALID_HANDLE;
+        talos_rt_managed_word_v1 word = 0;
         std::memcpy(&word, value, sizeof(word));
-        obelisk_rt_object_v1 *managed =
-            obelisk_rt_object_from_managed_word(word);
-        if (word != obelisk_rt_managed_word_from_object(managed))
-          return OBELISK_RT_INVALID_HANDLE;
-        if (!obelisk_rt_managed_object_belongs_to(context, managed))
-          return OBELISK_RT_INVALID_HANDLE;
+        talos_rt_object_v1 *managed =
+            talos_rt_object_from_managed_word(word);
+        if (word != talos_rt_managed_word_from_object(managed))
+          return TALOS_RT_INVALID_HANDLE;
+        if (!talos_rt_managed_object_belongs_to(context, managed))
+          return TALOS_RT_INVALID_HANDLE;
         *outChanged = managed != state.managedValue;
         state.managedValue = managed;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
       std::vector<uint8_t> &plane = unknownPlane ? state.unknown : state.value;
       if (plane.empty())
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       for (uint64_t bit = 0; bit != bitWidth; ++bit) {
         int64_t coordinate = 0;
         if (!addHandleOffset(offset, bit, coordinate) || coordinate < 0 ||
@@ -1480,14 +1480,14 @@ static obelisk_rt_status nativeStateStorePlane(
         *outChanged |= old != next;
         setByteBit(plane.data(), destination, next);
       }
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     uint64_t rootOffset = 0;
     uint64_t rootWidth = 0;
     int64_t globalOffset = 0;
-    obelisk_rt_status rangeStatus = resolveCheckedNativePackedRangeUnlocked(
+    talos_rt_status rangeStatus = resolveCheckedNativePackedRangeUnlocked(
         context, handle, globalBitCount, rootOffset, rootWidth, globalOffset);
-    if (rangeStatus != OBELISK_RT_OK) {
+    if (rangeStatus != TALOS_RT_OK) {
       context->schedulerStatus = rangeStatus;
       return rangeStatus;
     }
@@ -1504,7 +1504,7 @@ static obelisk_rt_status nativeStateStorePlane(
       canonicalPlane =
           unknownPlane ? &context->stateUnknown : &context->stateValue;
       if (canonicalPlane->size() != (globalBitCount + 63) / 64)
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       if (continuous && context->continuousMask.empty()) {
         context->continuousMask.assign(canonicalPlane->size(), 0);
         context->continuousValue.assign(canonicalPlane->size(), 0);
@@ -1560,7 +1560,7 @@ static obelisk_rt_status nativeStateStorePlane(
         if (canonical)
           storePackedBits(*canonicalPlane, destination + bit, width, next);
       }
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     if (canonical && bitWidth <= 64 && globalOffset >= 0 &&
         static_cast<uint64_t>(globalOffset) <= rootWidth &&
@@ -1591,7 +1591,7 @@ static obelisk_rt_status nativeStateStorePlane(
         publishKnownness(destination, bitWidth, next);
         storePackedBytes(globalPlane, destination, bitWidth, next);
         storePackedBits(*canonicalPlane, destination, bitWidth, next);
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
     }
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
@@ -1632,20 +1632,20 @@ static obelisk_rt_status nativeStateStorePlane(
         limb = next ? limb | mask : limb & ~mask;
       }
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
-    return OBELISK_RT_OUT_OF_MEMORY;
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_OUT_OF_MEMORY);
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
-    return OBELISK_RT_INVALID_ARGUMENT;
+  TALOS_RT_CATCH_ALL {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_INVALID_ARGUMENT);
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
-    obelisk_rt_context *context, uint8_t *globalPlane, uint64_t globalBitCount,
+extern "C" talos_rt_status talos_rt_v1_native_state_store_plane(
+    talos_rt_context *context, uint8_t *globalPlane, uint64_t globalBitCount,
     uint64_t handle, uint64_t bitWidth, uint32_t unknownPlane,
     const uint8_t *value, uint8_t *outChanged) {
   return nativeStateStorePlane(context, globalPlane, globalBitCount, handle,
@@ -1653,8 +1653,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_plane(
                                false);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_native_state_store_continuous_plane(
-    obelisk_rt_context *context, uint8_t *globalPlane, uint64_t globalBitCount,
+extern "C" talos_rt_status talos_rt_v1_native_state_store_continuous_plane(
+    talos_rt_context *context, uint8_t *globalPlane, uint64_t globalBitCount,
     uint64_t handle, uint64_t bitWidth, uint32_t unknownPlane,
     const uint8_t *value, uint8_t *outChanged) {
   return nativeStateStorePlane(context, globalPlane, globalBitCount, handle,

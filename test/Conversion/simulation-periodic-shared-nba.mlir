@@ -1,29 +1,29 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // IEEE 1800-2023 4.4.2.2-4.4.2.4, 4.5 and 10.4.2: writers on one periodic
 // clock share the generated clock plan, and each stages its NBA in a generated
 // accumulator without a runtime call or per-writer checkpoint. The second
 // section adds a timed observation after the clock edge.
-// CHECK: __obelisk_periodic_clock_plan_v1
-// CHECK-LABEL: llvm.func @writer0.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK: __talos_periodic_clock_plan_v1
+// CHECK-LABEL: llvm.func @writer0.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @writer1.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @writer1.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @writer2.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @writer2.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @writer3.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @writer3.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
 
 !word = !simulation.logic<32>
@@ -159,26 +159,26 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // -----
 
-// CHECK: __obelisk_periodic_clock_plan_v1
-// CHECK-LABEL: llvm.func @writer0.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK: __talos_periodic_clock_plan_v1
+// CHECK-LABEL: llvm.func @writer0.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @writer1.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @writer1.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @writer2.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @writer2.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @writer3.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_
-// CHECK: llvm.mlir.addressof @__obelisk_aot_nba_accumulator_
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @writer3.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_
+// CHECK: llvm.mlir.addressof @__talos_aot_nba_accumulator_
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
 
 !word = !simulation.logic<32>

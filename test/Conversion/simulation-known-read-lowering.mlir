@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // A read whose location the executing path proved known loads only the value
 // plane; the same read without the proof also loads the unknown plane.
@@ -48,8 +48,8 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @known(
-// CHECK-NOT: __obelisk_state_unknown
+// CHECK-NOT: __talos_state_unknown
 // CHECK: llvm.return
 // CHECK-LABEL: llvm.func @canonical(
-// CHECK: __obelisk_state_unknown
+// CHECK: __talos_state_unknown
 // CHECK: llvm.return

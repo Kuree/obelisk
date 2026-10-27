@@ -6,13 +6,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "SimulationVerifiers.h"
-#include "obelisk/Coverage/CoverageLimits.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationVPI.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Coverage/CoverageLimits.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationVPI.h"
+#include "talos/Reflection/VPIObjectModel.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -41,7 +41,7 @@
 
 using namespace mlir;
 
-namespace obelisk::sim {
+namespace talos::sim {
 
 static constexpr uint64_t interfaceDispatchSlot =
     std::numeric_limits<uint32_t>::max();
@@ -2056,7 +2056,7 @@ SimVPIEventBindingOp::verifySymbolUses(SymbolTableCollection &symbols) {
   if (!anchor || anchor->getParentOp() != (*this)->getParentOp() ||
       anchor.getVpiKind() !=
           static_cast<uint32_t>(
-              obelisk::reflection::VPIObjectKind::NamedEvent) ||
+              talos::reflection::VPIObjectKind::NamedEvent) ||
       anchor.getBackingAttr() || anchor.getVpiTypeAttr() ||
       anchor.getMemberIndicesAttr())
     return emitOpError("event must name an unbacked scalar named-event anchor "
@@ -7072,7 +7072,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   llvm::DenseMap<uint64_t, SimFuncOp> executableCodeUnits;
   for (SimFuncOp function : functions) {
     bool pendingClockedSamplePlan = static_cast<bool>(
-        ::obelisk::schedule::get<::obelisk::schedule::Field::ClockedSamplePlan>(
+        ::talos::schedule::get<::talos::schedule::Field::ClockedSamplePlan>(
             function));
     if (!function.isExternal() &&
         function.getEntryKind() != EntryKind::RootInitializer &&
@@ -7275,4 +7275,4 @@ LogicalResult SimDesignOp::verifyRegions() {
   return success();
 }
 
-} // namespace obelisk::sim
+} // namespace talos::sim

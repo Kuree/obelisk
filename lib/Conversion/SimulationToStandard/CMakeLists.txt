@@ -1,17 +1,17 @@
-add_mlir_library(ObeliskSimulationToStandard
+add_mlir_library(TalosSimulationToStandard
   SimulationTimeLowering.cpp
   SimulationToStandard.cpp
   NativeWordLowering.cpp
 
   DEPENDS
-  ObeliskConversionPassIncGen
-  ObeliskSimulationOpsIncGen
-  ObeliskScheduleOpsIncGen
+  TalosConversionPassIncGen
+  TalosSimulationOpsIncGen
+  TalosScheduleOpsIncGen
 
   LINK_LIBS PUBLIC
-  ObeliskSimulationAnalysis
-  ObeliskSimulationIR
-  ObeliskScheduleIR
+  TalosSimulationAnalysis
+  TalosSimulationIR
+  TalosScheduleIR
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRFuncDialect

@@ -7,13 +7,13 @@
 
 #include "BytecodeSerialization.h"
 
-#include "obelisk/Analysis/ClassDispatchAnalysis.h"
-#include "obelisk/Analysis/NetConnectivityAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationVPI.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Reflection/VPIObjectModel.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Analysis/ClassDispatchAnalysis.h"
+#include "talos/Analysis/NetConnectivityAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationVPI.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Reflection/VPIObjectModel.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
 
@@ -29,14 +29,14 @@
 
 using namespace mlir;
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 namespace {
 
-constexpr uint32_t kDatabaseProfileWrite = OBELISK_RT_DESIGN_PROFILE_WRITE;
+constexpr uint32_t kDatabaseProfileWrite = TALOS_RT_DESIGN_PROFILE_WRITE;
 constexpr uint32_t kDefinitionMemberRefObjectFlag = UINT32_C(1) << 31;
 constexpr uint32_t kDefinitionMemberInstanceTargetFlag = UINT32_C(1) << 31;
 constexpr uint32_t kVirtualBindingLimit = UINT32_C(1) << 30;
-using namespace obelisk::reflection;
+using namespace talos::reflection;
 static_assert(RelationLayout.size == 16);
 static_assert(SemanticRootBindingLayout.size == 8);
 static_assert(FrozenValueLayout.size == 32);
@@ -506,11 +506,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
   };
   auto addPortMetadata = [](sim::SimPortDeclOp port, uint32_t caps) {
     if (port.getDirection() != sim::PortDirection::Output)
-      caps |= OBELISK_RT_DESIGN_CAP_PORT_INPUT;
+      caps |= TALOS_RT_DESIGN_CAP_PORT_INPUT;
     if (port.getDirection() != sim::PortDirection::Input)
-      caps |= OBELISK_RT_DESIGN_CAP_PORT_OUTPUT;
+      caps |= TALOS_RT_DESIGN_CAP_PORT_OUTPUT;
     caps |= static_cast<uint32_t>(port.getOrdinal())
-            << OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT;
+            << TALOS_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT;
     return caps;
   };
   std::function<bool(Type)> isReflectableType = [&](Type type) {
@@ -802,7 +802,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       if (auto port = directNetIdentityPorts.lookup(identity.getId()))
         caps = addPortMetadata(port, caps);
       objects.push_back(
-          {OBELISK_RT_DESIGN_RECORD_NET,
+          {TALOS_RT_DESIGN_RECORD_NET,
            sim::vpiKindForNet(identity.getVpiTypeAttr()), caps, stableID,
            identity.getScopeId(), identity.getHierarchicalName().str(),
            identity.getType(), netOffsets.lookup(identity.getBackingNetId()),
@@ -849,21 +849,21 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint16_t staticFlags =
           anchor.getHasExplicitParameterRangeAttr()
               ? static_cast<uint16_t>(
-                    OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE)
+                    TALOS_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE)
               : 0;
       if (anchor.getUnresolvedTypeParameterAttr())
-        staticFlags |= OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER;
+        staticFlags |= TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER;
       if (anchor.getUnavailableDefaultAttr())
-        staticFlags |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT;
+        staticFlags |= TALOS_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT;
       if (anchor.getUnresolvedValueParameterAttr())
-        staticFlags |= OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER;
+        staticFlags |= TALOS_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER;
       if (compact)
         staticObjects.push_back({*id, anchor.getEnclosingScopeId(),
                                  std::move(name), anchor.getVpiKind(),
                                  staticFlags, sourceFor(anchor), anchor});
       else
         objects.push_back(
-            {OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, anchor.getVpiKind(),
+            {TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, anchor.getVpiKind(),
              staticFlags, *id, anchor.getEnclosingScopeId(), std::move(name),
              Type{}, 0, sourceFor(anchor),
              !specializedOwner && !sourceExpression && !primitiveTerminal,
@@ -879,8 +879,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       bool specialized = typespecsBySymbol.contains(member.getOwner());
       bool indexName =
           !field || (field.getIsStatic() ? specialized : !specialized);
-      uint32_t flags = field ? 0 : OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY;
-      objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+      uint32_t flags = field ? 0 : TALOS_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY;
+      objects.push_back({TALOS_RT_DESIGN_RECORD_STATIC_OBJECT,
                          sim::vpiKindForClassMember(member.getVpiType()), flags,
                          *id, member.getScopeId(),
                          member.getHierarchicalName().str(),
@@ -892,7 +892,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       auto id = staticInventoryID(nettype, nettype.getId(), 3);
       if (!id)
         return {};
-      objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+      objects.push_back({TALOS_RT_DESIGN_RECORD_STATIC_OBJECT,
                          static_cast<uint16_t>(VPIObjectKind::NettypeDecl), 0,
                          *id, nettype.getScopeId(),
                          nettype.getHierarchicalName().str(), Type{}, 0,
@@ -915,22 +915,22 @@ SmallVector<uint8_t> serializeDesignDatabase(
                                 : clause ? VPIObjectKind::Extends
                                          : VPIObjectKind::ParamAssign);
       uint32_t caps =
-          type     ? OBELISK_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC
+          type     ? TALOS_RT_DESIGN_CAP_LEXICAL_CLASS_TYPESPEC
           : clause ? 0
-                   : OBELISK_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT;
+                   : TALOS_RT_DESIGN_CAP_DEFAULT_CLASS_PARAMETER_ASSIGNMENT;
       if (assignment &&
           (assignment.getRhsAttr() || assignment.getUnavailableRhsAttr()))
-        caps = OBELISK_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT;
+        caps = TALOS_RT_DESIGN_CAP_EXPLICIT_CLASS_PARAMETER_ASSIGNMENT;
       if (assignment && assignment.getUnavailableRhsAttr())
-        caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS;
+        caps |= TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETER_RHS;
       if (type && type.getUnavailableParametersAttr())
-        caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS;
+        caps |= TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_PARAMETERS;
       if (clause && clause.getUnavailableBaseAttr())
-        caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE;
+        caps |= TALOS_RT_DESIGN_CAP_UNAVAILABLE_CLASS_BASE;
       if (clause && clause.getUnavailableArgumentsAttr())
-        caps |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS;
+        caps |= TALOS_RT_DESIGN_CAP_UNAVAILABLE_CONSTRUCTOR_ARGUMENTS;
       objects.push_back(
-          {OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, kind, caps, *id,
+          {TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, kind, caps, *id,
            static_cast<uint64_t>(
                cast<IntegerAttr>(operation.getAttr("scope_id")).getInt()),
            type ? type.getDebugName().str() : std::string{}, Type{}, 0,
@@ -942,10 +942,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
       auto id = staticInventoryID(alias, alias.getId(), 1);
       if (!id)
         return {};
-      objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+      objects.push_back({TALOS_RT_DESIGN_RECORD_STATIC_OBJECT,
                          static_cast<uint16_t>(VPIObjectKind::TypeParameter),
-                         OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
-                             OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC,
+                         TALOS_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
+                             TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC,
                          *id, alias.getScopeId(),
                          alias.getHierarchicalName().str(), Type{}, 0,
                          sourceFor(alias), true, alias});
@@ -963,10 +963,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
       }
       uint32_t caps =
           typespec.getOrigin() == sim::VPITypespecOrigin::Typedef
-              ? static_cast<uint32_t>(OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC)
+              ? static_cast<uint32_t>(TALOS_RT_DESIGN_CAP_NAMED_TYPESPEC)
               : 0;
       objects.push_back(
-          {OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, *vpiKind, caps, *id,
+          {TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, *vpiKind, caps, *id,
            typespec.getScopeId(), typespec.getHierarchicalName().str(), Type{},
            0, sourceFor(typespec),
            typespec.getOrigin() == sim::VPITypespecOrigin::Typedef &&
@@ -989,7 +989,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       std::string name =
           (owner->second.getHierarchicalName() + "::" + enumConstant.getName())
               .str();
-      objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+      objects.push_back({TALOS_RT_DESIGN_RECORD_STATIC_OBJECT,
                          static_cast<uint16_t>(VPIObjectKind::EnumConst), 0,
                          *id, owner->second.getScopeId(), std::move(name),
                          Type{}, 0, sourceFor(enumConstant),
@@ -1100,15 +1100,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
         direct = directNetIdentityPorts.lookup(declared->second);
       if (direct == port && !includeStatements)
         continue;
-      uint32_t caps = OBELISK_RT_DESIGN_CAP_READ;
+      uint32_t caps = TALOS_RT_DESIGN_CAP_READ;
       caps = addPortMetadata(port, caps);
       bool wholeSource = wholePortConnections.count(port.getId()) != 0;
       if (wholeSource)
-        caps |= OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE;
+        caps |= TALOS_RT_DESIGN_CAP_PORT_WHOLE_SOURCE;
       uint64_t sourceOffset = port.getSourceIsNet()
                                   ? netOffsets.lookup(port.getSourceId())
                                   : storageOffsets.lookup(port.getSourceId());
-      objects.push_back({OBELISK_RT_DESIGN_RECORD_PORT,
+      objects.push_back({TALOS_RT_DESIGN_RECORD_PORT,
                          static_cast<uint16_t>(VPIObjectKind::Port), caps,
                          port.getId(), port.getScopeId(),
                          port.getHierarchicalName().str(), port.getType(),
@@ -1122,7 +1122,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
                ? 7u
                : 5u,
            sim::vpiKindForCodeUnit(codeUnit),
-           internal ? static_cast<uint32_t>(OBELISK_RT_DESIGN_CAP_INTERNAL) : 0,
+           internal ? static_cast<uint32_t>(TALOS_RT_DESIGN_CAP_INTERNAL) : 0,
            codeUnit.getId(), codeUnit.getScopeId(),
            codeUnit.getHierarchicalName().str(), Type{}, 0, sourceFor(codeUnit),
            !internal, codeUnit});
@@ -1137,7 +1137,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   });
   uint64_t nextCallObjectID = 0;
   for (const Record &object : objects)
-    if (object.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT)
+    if (object.kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT)
       nextCallObjectID = std::max(nextCallObjectID, object.id);
   for (const StaticObjectRecord &object : staticObjects)
     nextCallObjectID = std::max(nextCallObjectID, object.id);
@@ -1149,9 +1149,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
       local.emitOpError("local declaration object identity cannot be encoded");
       return {};
     }
-    objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+    objects.push_back({TALOS_RT_DESIGN_RECORD_STATIC_OBJECT,
                        sim::vpiKindForClassMember(local.getVpiType()),
-                       OBELISK_RT_DESIGN_CAP_FRAME_LOCAL, ++nextCallObjectID,
+                       TALOS_RT_DESIGN_CAP_FRAME_LOCAL, ++nextCallObjectID,
                        local.getScopeId(), local.getHierarchicalName().str(),
                        local.getValueType(), 0, sourceFor(local), false,
                        local});
@@ -1169,7 +1169,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       call.emitOpError("call occurrence object identity cannot be encoded");
       return {};
     }
-    objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+    objects.push_back({TALOS_RT_DESIGN_RECORD_STATIC_OBJECT,
                        static_cast<uint32_t>(call.getVpiKind()), 0,
                        ++nextCallObjectID, call.getScopeId(),
                        call.getName().str(), Type{}, 0, sourceFor(call), false,
@@ -1209,20 +1209,20 @@ SmallVector<uint8_t> serializeDesignDatabase(
         storage && (classStaticStorage.contains(storage.getId()) ||
                     eventArrayStorage.contains(storage))) {
       object.indexName = false;
-      object.caps |= OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR;
+      object.caps |= TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR;
     }
   for (Record &object : objects)
     if (auto storage =
             dyn_cast_if_present<sim::SimStorageDeclOp>(object.identity);
         storage && staticLocalBindings.contains(storage.getId()))
-      object.caps |= OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR;
+      object.caps |= TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR;
   // The compact format uses Name != 0 as its global-lookup root. Preserve
   // ambiguous static names in the full object table, where the existing
   // relation-only representation can retain a display name without indexing
   // it.
   llvm::StringMap<uint32_t> staticNameCounts;
   for (const Record &object : objects)
-    if (object.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT)
+    if (object.kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT)
       ++staticNameCounts[object.name];
   for (const StaticObjectRecord &object : staticObjects)
     ++staticNameCounts[object.name];
@@ -1233,7 +1233,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uniqueStaticObjects.push_back(std::move(object));
       continue;
     }
-    objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT, object.vpiKind,
+    objects.push_back({TALOS_RT_DESIGN_RECORD_STATIC_OBJECT, object.vpiKind,
                        object.flags, object.id, object.scope,
                        std::move(object.name), Type{}, 0,
                        std::move(object.source), true, object.identity});
@@ -1258,7 +1258,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
   llvm::StringMap<uint32_t> firstStaticName;
   for (auto [index, object] : llvm::enumerate(objects)) {
-    if (object.kind != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+    if (object.kind != TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
         !object.indexName)
       continue;
     auto [entry, inserted] =
@@ -1602,18 +1602,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
   }
   for (auto [index, object] : llvm::enumerate(objects)) {
-    if (object.kind == OBELISK_RT_DESIGN_RECORD_PROCESS ||
-        object.kind == OBELISK_RT_DESIGN_RECORD_FUNCTION)
+    if (object.kind == TALOS_RT_DESIGN_RECORD_PROCESS ||
+        object.kind == TALOS_RT_DESIGN_RECORD_FUNCTION)
       codeUnitObjectIndices[object.id] = static_cast<uint32_t>(index);
     if (isa_and_present<sim::SimNetDeclOp>(object.identity))
       physicalNetObjectIndices[object.id] = static_cast<uint32_t>(index);
     if (isa_and_present<sim::SimStorageDeclOp>(object.identity))
       physicalStorageObjectIndices[object.id] = static_cast<uint32_t>(index);
-    if (includeStatements && object.kind == OBELISK_RT_DESIGN_RECORD_STORAGE &&
+    if (includeStatements && object.kind == TALOS_RT_DESIGN_RECORD_STORAGE &&
         wholeStoragePortSources.contains(object.id))
       canonicalStorageTargetIndices.try_emplace(object.id,
                                                 static_cast<uint32_t>(index));
-    if (includeStatements && object.kind == OBELISK_RT_DESIGN_RECORD_NET &&
+    if (includeStatements && object.kind == TALOS_RT_DESIGN_RECORD_NET &&
         wholeNetPortSources.contains(object.id))
       canonicalNetTargetIndices.try_emplace(object.id,
                                             static_cast<uint32_t>(index));
@@ -1846,7 +1846,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
         }
         uint32_t index = found->second;
         objects[index].vpiKind = anchor.getVpiKind();
-        objects[index].caps |= OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR;
+        objects[index].caps |= TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR;
         anchorRefs[anchor] = {TableKind::Object, index, anchor.getVpiKind()};
         lexicallyAnchoredObjectIndices.insert(index);
         continue;
@@ -1854,7 +1854,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       uint64_t id = backing.getId().getValue().getZExtValue();
       uint32_t index = codeUnitObjectIndices.lookup(id);
       anchorRefs[anchor] = {TableKind::Object, index, objects[index].vpiKind};
-      objects[index].caps |= OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR;
+      objects[index].caps |= TALOS_RT_DESIGN_CAP_LEXICAL_ANCHOR;
       if (anchor.getParentAttr() &&
           typespecsBySymbol.contains(anchor.getParentAttr().getValue()))
         objects[index].indexName = false;
@@ -2003,15 +2003,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
     for (auto [index, object] : llvm::enumerate(objects)) {
       ImageObjectRef reference{TableKind::Object, static_cast<uint32_t>(index),
                                object.vpiKind};
-      if (object.kind == OBELISK_RT_DESIGN_RECORD_STORAGE)
+      if (object.kind == TALOS_RT_DESIGN_RECORD_STORAGE)
         storageRefs.try_emplace(object.id, reference);
-      else if (object.kind == OBELISK_RT_DESIGN_RECORD_NET) {
+      else if (object.kind == TALOS_RT_DESIGN_RECORD_NET) {
         if (auto identity = dyn_cast_if_present<sim::SimVPINetIdentityDeclOp>(
                 object.identity))
           netIdentityRefs.try_emplace(identity.getId(), reference);
         else
           netRefs.try_emplace(object.id, reference);
-      } else if (object.kind == OBELISK_RT_DESIGN_RECORD_PORT)
+      } else if (object.kind == TALOS_RT_DESIGN_RECORD_PORT)
         portRefs.try_emplace(object.id, reference);
     }
 
@@ -2365,8 +2365,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     // whole ports keep the canonical net/variable connection below.
     for (uint32_t packedPort : refLowConnectionPorts) {
       Record &port = objects[unpackTableIndex(packedPort)];
-      port.caps &= ~OBELISK_RT_DESIGN_CAP_PORT_WHOLE_SOURCE;
-      port.caps |= OBELISK_RT_DESIGN_CAP_PORT_REF;
+      port.caps &= ~TALOS_RT_DESIGN_CAP_PORT_WHOLE_SOURCE;
+      port.caps |= TALOS_RT_DESIGN_CAP_PORT_REF;
       wholePortConnections.erase(port.id);
     }
   }
@@ -2376,7 +2376,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     // Same-name ports have a distinct, deliberately unindexed vpiPort
     // identity; explicitly renamed ports retain their indexed formal name.
     for (auto [sourceIndex, object] : llvm::enumerate(objects)) {
-      if (object.kind != OBELISK_RT_DESIGN_RECORD_PORT)
+      if (object.kind != TALOS_RT_DESIGN_RECORD_PORT)
         continue;
       auto connection = wholePortConnections.find(object.id);
       if (connection == wholePortConnections.end())
@@ -2422,7 +2422,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       // Static records use explicit lexical and declaration relations below;
       // their physical owner exists only to keep the pointer-free record
       // reachable and is not necessarily their IEEE lexical owner.
-      if (object.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+      if (object.kind == TALOS_RT_DESIGN_RECORD_STATIC_OBJECT ||
           lexicallyAnchoredObjectIndices.contains(
               static_cast<uint32_t>(targetIndex)))
         continue;
@@ -4697,17 +4697,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
       edge.ordinal = static_cast<uint32_t>(ordinal);
       switch (semantic.getKind()) {
       case Kind::Enum:
-        edge.role = OBELISK_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE;
+        edge.role = TALOS_RT_DESIGN_SEMANTIC_EDGE_ENUM_BASE;
         break;
       case Kind::AssocArray:
-        edge.role = ordinal == 0 ? OBELISK_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX
-                                 : OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT;
+        edge.role = ordinal == 0 ? TALOS_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX
+                                 : TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT;
         break;
       case Kind::PackedStruct:
       case Kind::UnpackedStruct:
       case Kind::PackedUnion:
       case Kind::UnpackedUnion:
-        edge.role = OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER;
+        edge.role = TALOS_RT_DESIGN_SEMANTIC_EDGE_MEMBER;
         edge.name = cast<StringAttr>(semantic.getChildNames()[ordinal])
                         .getValue()
                         .str();
@@ -4720,10 +4720,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
                 ? static_cast<uint32_t>(
                       semantic.getChildRandTypes().asArrayRef()[ordinal])
                 : static_cast<uint32_t>(
-                      OBELISK_RT_DESIGN_SEMANTIC_EDGE_NOT_RANDOM);
+                      TALOS_RT_DESIGN_SEMANTIC_EDGE_NOT_RANDOM);
         break;
       default:
-        edge.role = OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT;
+        edge.role = TALOS_RT_DESIGN_SEMANTIC_EDGE_ELEMENT;
         break;
       }
     }
@@ -5870,7 +5870,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     analysis::NetConnectivityAnalysis connectivity(design);
     DenseMap<uint64_t, std::pair<sim::SimNetDeclOp, uint32_t>> netObjects;
     for (auto [objectIndex, object] : llvm::enumerate(objects))
-      if (object.kind == OBELISK_RT_DESIGN_RECORD_NET)
+      if (object.kind == TALOS_RT_DESIGN_RECORD_NET)
         if (auto net = dyn_cast_if_present<sim::SimNetDeclOp>(object.identity))
           netObjects[net.getId()] = {net, static_cast<uint32_t>(objectIndex)};
     auto declaredNetType = [&](uint64_t netID) -> std::optional<uint32_t> {
@@ -5978,7 +5978,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       netDelayRuns.push_back({objectIndex, firstBit, bitCount, delays});
     };
     for (auto [objectIndex, object] : llvm::enumerate(objects)) {
-      if (object.kind != OBELISK_RT_DESIGN_RECORD_NET)
+      if (object.kind != TALOS_RT_DESIGN_RECORD_NET)
         continue;
       auto net = dyn_cast_if_present<sim::SimNetDeclOp>(object.identity);
       std::optional<uint64_t> width = simulationWidth(object.type);
@@ -6308,7 +6308,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return {};
     }
     writer.setKindAndVPIKind(packedKind);
-    writer.setCaps(OBELISK_RT_DESIGN_CAP_ITERATE);
+    writer.setCaps(TALOS_RT_DESIGN_CAP_ITERATE);
     writer.setID(scope.getId());
     writer.setParent(scope.getParent() ? scopeOffsets.lookup(*scope.getParent())
                                        : 0);
@@ -6491,9 +6491,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setVPIKind(static_cast<uint16_t>(statement.getVpiKind()));
     uint16_t flags = 0;
     if (statement.getIsProtected())
-      flags |= OBELISK_RT_DESIGN_STATEMENT_PROTECTED;
+      flags |= TALOS_RT_DESIGN_STATEMENT_PROTECTED;
     if (statement.getIsScope())
-      flags |= OBELISK_RT_DESIGN_STATEMENT_SCOPE;
+      flags |= TALOS_RT_DESIGN_STATEMENT_SCOPE;
     writer.setFlags(flags);
   }
   for (auto [index, entry] : llvm::enumerate(statementSites)) {
@@ -6654,12 +6654,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
                               index * SemanticTypeLayout.size);
     uint32_t flags = static_cast<uint32_t>(entry.semantic.getKind());
     if (entry.semantic.getIsSigned())
-      flags |= OBELISK_RT_DESIGN_SEMANTIC_SIGNED;
+      flags |= TALOS_RT_DESIGN_SEMANTIC_SIGNED;
     if (entry.semantic.getIsFourState())
-      flags |= OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE;
+      flags |= TALOS_RT_DESIGN_SEMANTIC_FOUR_STATE;
     if (entry.semantic.getProjected() &&
         entry.semantic.getProjected().getValue())
-      flags |= OBELISK_RT_DESIGN_SEMANTIC_PROJECTED;
+      flags |= TALOS_RT_DESIGN_SEMANTIC_PROJECTED;
     // Scalar bit/logic/reg types have a one-bit intrinsic [0:0] range. Wider
     // direct integral nodes retain an explicit source packed dimension; an
     // explicitly ranged one-bit type remains a PackedArray node.
@@ -6678,16 +6678,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
     if (entry.semantic.getKind() == sim::VPITypeKind::PackedArray ||
         entry.semantic.getKind() == sim::VPITypeKind::UnpackedArray ||
         directIntegralDimension)
-      flags |= OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE;
+      flags |= TALOS_RT_DESIGN_SEMANTIC_HAS_RANGE;
     if (entry.semantic.getIsTagged() && entry.semantic.getIsTagged().getValue())
-      flags |= OBELISK_RT_DESIGN_SEMANTIC_TAGGED;
+      flags |= TALOS_RT_DESIGN_SEMANTIC_TAGGED;
     if (entry.semantic.getIsSoft() && entry.semantic.getIsSoft().getValue())
-      flags |= OBELISK_RT_DESIGN_SEMANTIC_SOFT;
+      flags |= TALOS_RT_DESIGN_SEMANTIC_SOFT;
     if (entry.semantic.getWildcardIndex() &&
         entry.semantic.getWildcardIndex().getValue())
-      flags |= OBELISK_RT_DESIGN_SEMANTIC_WILDCARD_INDEX;
+      flags |= TALOS_RT_DESIGN_SEMANTIC_WILDCARD_INDEX;
     flags |= entry.publicVPIKind
-             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
+             << TALOS_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
     writer.setKindAndFlags(flags);
     writer.setFirstEdge(entry.firstEdge);
     writer.setEdgeCount(entry.edgeCount);
@@ -7246,12 +7246,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setName(entry.name);
     writer.setRecord(entry.record);
   }
-  using Header = obelisk_rt_design_database_header_v1;
-  static constexpr char magic[] = OBELISK_RT_DESIGN_DATABASE_MAGIC;
+  using Header = talos_rt_design_database_header_v1;
+  static constexpr char magic[] = TALOS_RT_DESIGN_DATABASE_MAGIC;
   static_assert(sizeof(magic) == sizeof(Header::magic));
   HeaderWriter writer(output.data());
   writer.setMagic(reinterpret_cast<const uint8_t *>(magic));
-  writer.setVersion(OBELISK_RT_VERSION);
+  writer.setVersion(TALOS_RT_VERSION);
   writer.setReserved(static_cast<uint32_t>(semanticDirectoryOffset));
   writer.setProfile(profile);
   writer.setHeaderSize(HeaderLayout.size);
@@ -7277,4 +7277,4 @@ SmallVector<uint8_t> serializeDesignDatabase(
   return output;
 }
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode

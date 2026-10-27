@@ -10,7 +10,7 @@
 
 #include "ProcessContext.h"
 #include "RuntimeInternal.h"
-#include "obelisk/Reflection/DesignReflection.h"
+#include "talos/Reflection/DesignReflection.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -99,7 +99,7 @@ bool getRecord(const DesignDatabaseCache &database, uint64_t offset,
   else
     return false;
   kind = static_cast<uint32_t>(
-      obelisk::reflection::unpackRecordKind(read32(record)));
+      talos::reflection::unpackRecordKind(read32(record)));
   return true;
 }
 
@@ -123,7 +123,7 @@ bool getString(const DesignDatabaseCache &database, uint64_t offset,
 uint64_t firstChildOffset(const uint8_t *record) { return read64(record + 24); }
 
 uint64_t nextSiblingOffset(const uint8_t *record, uint32_t kind) {
-  return read64(record + (kind == OBELISK_RT_DESIGN_RECORD_SCOPE ? 32 : 24));
+  return read64(record + (kind == TALOS_RT_DESIGN_RECORD_SCOPE ? 32 : 24));
 }
 
 uint64_t parentOffset(const uint8_t *record) { return read64(record + 16); }
@@ -207,24 +207,24 @@ std::string identifierCode(uint64_t index) {
 // are authoritative when one exists; otherwise the context's canonical store
 // is, in every execution tier. `nativeStateValue` is only a lazily synced
 // mirror -- reading it makes bytecode designs dump a waveform frozen at X.
-obelisk_rt_status dumpPlanes(const obelisk_rt_context *context,
+talos_rt_status dumpPlanes(const talos_rt_context *context,
                              const uint8_t *&value, const uint8_t *&unknown) {
-  const obelisk_rt_execution_descriptor_v1 &execution = *context->execution;
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const talos_rt_execution_descriptor_v1 &execution = *context->execution;
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   if (plan && plan->state_bit_count == execution.state_bit_count &&
       plan->state_value && (plan->state_unknown || context->twoState())) {
     value = plan->state_value;
     unknown = plan->state_unknown;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   size_t stateWords =
       static_cast<size_t>((execution.state_bit_count + 63) / 64);
   if (context->stateValue.size() != stateWords ||
       context->stateUnknown.size() != stateWords)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   value = reinterpret_cast<const uint8_t *>(context->stateValue.data());
   unknown = reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 // One traced canonical bit range. Several declared names may map onto it; the
@@ -417,7 +417,7 @@ void finishLimit(VCDTraceState &state) {
 }
 
 template <typename State>
-int32_t resolveTimescale(const obelisk_rt_context *context,
+int32_t resolveTimescale(const talos_rt_context *context,
                          const State &state) {
   if (state.timescaleSet)
     return state.timescaleExponent;
@@ -460,7 +460,7 @@ bool resolveSelection(const DesignDatabaseCache &database,
                       uint32_t &kind) {
   if (path.empty()) {
     offset = database.root;
-    kind = OBELISK_RT_DESIGN_RECORD_SCOPE;
+    kind = TALOS_RT_DESIGN_RECORD_SCOPE;
     return true;
   }
   std::string_view wanted(path);
@@ -475,7 +475,7 @@ bool resolveSelection(const DesignDatabaseCache &database,
       if (!getRecord(database, candidate, record, candidateKind) ||
           !getString(database, nameOffset(record), name) || name != wanted)
         continue;
-      if (candidateKind != OBELISK_RT_DESIGN_RECORD_SCOPE &&
+      if (candidateKind != TALOS_RT_DESIGN_RECORD_SCOPE &&
           !traceableObject(database, candidateKind, record))
         continue;
       offset = candidate;
@@ -504,7 +504,7 @@ void collectScope(const DesignDatabaseCache &database, uint64_t scopeOffset,
     const uint8_t *record;
     uint32_t kind;
     if (!getRecord(database, frame.offset, record, kind) ||
-        kind != OBELISK_RT_DESIGN_RECORD_SCOPE)
+        kind != TALOS_RT_DESIGN_RECORD_SCOPE)
       continue;
     uint64_t child = firstChildOffset(record);
     while (child != 0) {
@@ -512,7 +512,7 @@ void collectScope(const DesignDatabaseCache &database, uint64_t scopeOffset,
       uint32_t childKind;
       if (!getRecord(database, child, childRecord, childKind))
         break;
-      if (childKind == OBELISK_RT_DESIGN_RECORD_SCOPE) {
+      if (childKind == TALOS_RT_DESIGN_RECORD_SCOPE) {
         if (levels == 0 || frame.depth < levels)
           pending.push_back({child, frame.depth + 1});
       } else if (traceableObject(database, childKind, childRecord)) {
@@ -568,7 +568,7 @@ bool typeFourState(const DesignDatabaseCache &database, uint64_t typeOffset) {
   if (!isTypeOffset(database, typeOffset))
     return true;
   return (typeFlags(database, typeOffset) &
-          OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+          TALOS_RT_DESIGN_TYPE_FOUR_STATE) != 0;
 }
 
 // An unpacked array occupies a contiguous canonical range but is not a value:
@@ -577,8 +577,8 @@ bool typeFourState(const DesignDatabaseCache &database, uint64_t typeOffset) {
 bool typeIsUnpackedArray(const DesignDatabaseCache &database,
                          uint64_t typeOffset) {
   return isTypeOffset(database, typeOffset) &&
-         typeKind(database, typeOffset) == OBELISK_RT_DESIGN_TYPE_ARRAY &&
-         (typeFlags(database, typeOffset) & OBELISK_RT_DESIGN_TYPE_PACKED) == 0;
+         typeKind(database, typeOffset) == TALOS_RT_DESIGN_TYPE_ARRAY &&
+         (typeFlags(database, typeOffset) & TALOS_RT_DESIGN_TYPE_PACKED) == 0;
 }
 
 // A managed SystemVerilog string occupies a 64-bit GC word in the canonical
@@ -591,19 +591,19 @@ bool typeContainsManagedString(const DesignDatabaseCache &database,
   if (!isTypeOffset(database, typeOffset) || depth > database.typeCount)
     return true;
   const uint32_t kind = typeKind(database, typeOffset);
-  if (kind == OBELISK_RT_DESIGN_TYPE_SCALAR) {
+  if (kind == TALOS_RT_DESIGN_TYPE_SCALAR) {
     std::string_view name;
     if (!getString(database, read64(database.data + typeOffset + 72), name))
       return true;
     return name == "string";
   }
   switch (kind) {
-  case OBELISK_RT_DESIGN_TYPE_ARRAY:
-  case OBELISK_RT_DESIGN_TYPE_FIELD:
+  case TALOS_RT_DESIGN_TYPE_ARRAY:
+  case TALOS_RT_DESIGN_TYPE_FIELD:
     return typeContainsManagedString(
         database, typeElement(database, typeOffset), depth + 1);
-  case OBELISK_RT_DESIGN_TYPE_STRUCT:
-  case OBELISK_RT_DESIGN_TYPE_UNION: {
+  case TALOS_RT_DESIGN_TYPE_STRUCT:
+  case TALOS_RT_DESIGN_TYPE_UNION: {
     uint64_t firstChild = read64(database.data + typeOffset + 40);
     uint64_t childCount = read64(database.data + typeOffset + 48);
     for (uint64_t child = 0; child != childCount; ++child)
@@ -619,10 +619,10 @@ bool typeContainsManagedString(const DesignDatabaseCache &database,
 
 bool traceableObject(const DesignDatabaseCache &database, uint32_t kind,
                      const uint8_t *record) {
-  if (kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
-      kind != OBELISK_RT_DESIGN_RECORD_NET)
+  if (kind != TALOS_RT_DESIGN_RECORD_STORAGE &&
+      kind != TALOS_RT_DESIGN_RECORD_NET)
     return false;
-  return (read32(record + 4) & OBELISK_RT_DESIGN_CAP_READ) != 0 &&
+  return (read32(record + 4) & TALOS_RT_DESIGN_CAP_READ) != 0 &&
          objectBitWidth(record) != 0 &&
          !typeContainsManagedString(database, objectTypeOffset(record));
 }
@@ -637,7 +637,7 @@ bool traceableObject(const DesignDatabaseCache &database, uint32_t kind,
 // folded: that needs connectivity metadata only the bytecode tier carries, and
 // would make one design dump differently per execution tier.
 struct PlanBuilder {
-  const obelisk_rt_context *context;
+  const talos_rt_context *context;
   VCDTraceState &state;
   const DesignDatabaseCache &database;
   const std::unordered_set<uint64_t> &selected;
@@ -793,17 +793,17 @@ struct PlanBuilder {
       // that silently presents several independent signals as one value, with
       // nothing in the file to say so.
       std::fprintf(stderr,
-                   "obelisk: not dumping %s: the unpacked array exceeds the "
+                   "talos: not dumping %s: the unpacked array exceeds the "
                    "waveform array limit of %llu "
-                   "(raise OBELISK_RT_DUMP_MAX_ARRAY to include it)\n",
+                   "(raise TALOS_RT_DUMP_MAX_ARRAY to include it)\n",
                    leaf.c_str(),
                    static_cast<unsigned long long>(state.maxExpandedElements));
       return;
     }
     declareType(objectTypeOffset(record), objectStateBit(record),
                 objectBitWidth(record), leaf,
-                static_cast<uint32_t>(obelisk::reflection::unpackRecordKind(
-                    read32(record))) == OBELISK_RT_DESIGN_RECORD_NET,
+                static_cast<uint32_t>(talos::reflection::unpackRecordKind(
+                    read32(record))) == TALOS_RT_DESIGN_RECORD_NET,
                 0);
   }
 
@@ -811,7 +811,7 @@ struct PlanBuilder {
     const uint8_t *record;
     uint32_t kind;
     if (!getRecord(database, scopeOffset, record, kind) ||
-        kind != OBELISK_RT_DESIGN_RECORD_SCOPE)
+        kind != TALOS_RT_DESIGN_RECORD_SCOPE)
       return;
     std::string_view name;
     if (!getString(database, nameOffset(record), name))
@@ -825,7 +825,7 @@ struct PlanBuilder {
       uint32_t childKind;
       if (!getRecord(database, child, childRecord, childKind))
         break;
-      if (childKind == OBELISK_RT_DESIGN_RECORD_SCOPE) {
+      if (childKind == TALOS_RT_DESIGN_RECORD_SCOPE) {
         if (liveScopes.count(child) != 0)
           emitScope(child, name);
       } else if (selected.count(child) != 0) {
@@ -848,7 +848,7 @@ struct PlanBuilder {
     uint32_t rootKind;
     std::string_view rootName;
     if (!getRecord(database, database.root, rootRecord, rootKind) ||
-        rootKind != OBELISK_RT_DESIGN_RECORD_SCOPE ||
+        rootKind != TALOS_RT_DESIGN_RECORD_SCOPE ||
         !getString(database, nameOffset(rootRecord), rootName))
       return;
     if (rootName != "$root" && rootName != "\\$root ") {
@@ -862,7 +862,7 @@ struct PlanBuilder {
       uint32_t childKind;
       if (!getRecord(database, child, childRecord, childKind))
         break;
-      if (childKind == OBELISK_RT_DESIGN_RECORD_SCOPE) {
+      if (childKind == TALOS_RT_DESIGN_RECORD_SCOPE) {
         if (liveScopes.count(child) != 0)
           emitScope(child, rootName);
       } else if (selected.count(child) != 0) {
@@ -1029,17 +1029,17 @@ void updateShadow(VCDTraceState &state, const uint8_t *valuePlane,
 // settled-slot differencer: `$dumpall` is observable even while ordinary
 // dumping is off, and a call before the pending initial sample must not consume
 // that end-of-slot `$dumpvars` sample.
-obelisk_rt_status emitDumpAll(obelisk_rt_context *context,
+talos_rt_status emitDumpAll(talos_rt_context *context,
                               VCDTraceState &state) {
   if (!state.file || !state.planBuilt)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   finishLimit(state);
   if (!state.file)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   const uint8_t *valuePlane = nullptr;
   const uint8_t *unknownPlane = nullptr;
-  obelisk_rt_status status = dumpPlanes(context, valuePlane, unknownPlane);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status = dumpPlanes(context, valuePlane, unknownPlane);
+  if (status != TALOS_RT_OK)
     return status;
   emitTime(state, context->schedulerTime);
   append(state, "$dumpall\n");
@@ -1049,7 +1049,7 @@ obelisk_rt_status emitDumpAll(obelisk_rt_context *context,
   if (!state.pendingInitial)
     updateShadow(state, valuePlane, unknownPlane);
   finishLimit(state);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 } // namespace
@@ -1060,21 +1060,21 @@ obelisk_rt_status emitDumpAll(obelisk_rt_context *context,
 
 namespace {
 
-VCDTraceState *traceState(obelisk_rt_context *context) {
+VCDTraceState *traceState(talos_rt_context *context) {
   return context ? context->vcdState : nullptr;
 }
 
-obelisk_rt_status ensureState(obelisk_rt_context *context,
+talos_rt_status ensureState(talos_rt_context *context,
                               VCDTraceState *&state) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (!context->vcdState) {
     context->vcdState = new (std::nothrow) VCDTraceState();
     if (!context->vcdState)
-      return OBELISK_RT_OUT_OF_MEMORY;
+      return TALOS_RT_OUT_OF_MEMORY;
     // The traced shape is chosen at run time by $dumpvars, so the bound on
     // array expansion belongs here rather than in the compiled image.
-    if (const char *limit = std::getenv("OBELISK_RT_DUMP_MAX_ARRAY")) {
+    if (const char *limit = std::getenv("TALOS_RT_DUMP_MAX_ARRAY")) {
       char *end = nullptr;
       unsigned long long parsed = std::strtoull(limit, &end, 10);
       if (end && *end == '\0')
@@ -1082,26 +1082,26 @@ obelisk_rt_status ensureState(obelisk_rt_context *context,
     }
   }
   state = context->vcdState;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 template <typename State>
-obelisk_rt_status openFile(obelisk_rt_context *context, State &state,
+talos_rt_status openFile(talos_rt_context *context, State &state,
                            const std::string &path) {
   closeFile(state);
   state.file = std::fopen(path.c_str(), "wb");
   if (!state.file)
-    return OBELISK_RT_IO_ERROR;
+    return TALOS_RT_IO_ERROR;
   state.path = path;
   state.writtenBytes = 0;
   state.limitReached = false;
   state.buffer.clear();
   (void)context;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 template <typename State>
-void writeHeader(obelisk_rt_context *context, State &state) {
+void writeHeader(talos_rt_context *context, State &state) {
   if (state.headerWritten)
     return;
   state.headerWritten = true;
@@ -1118,32 +1118,32 @@ void writeHeader(obelisk_rt_context *context, State &state) {
   append(state, "$date\n\t");
   append(state, stamp);
   append(state, "\n$end\n");
-  append(state, "$version\n\tObelisk\n$end\n");
+  append(state, "$version\n\tTalos\n$end\n");
   append(state, "$timescale\n\t");
   append(state, timescaleText(resolveTimescale(context, state)));
   append(state, "\n$end\n");
 }
 
 // Materialize the traced set, its VCD declarations, and the shadow planes.
-obelisk_rt_status buildPlan(obelisk_rt_context *context, VCDTraceState &state) {
+talos_rt_status buildPlan(talos_rt_context *context, VCDTraceState &state) {
   if (state.planBuilt)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   const DesignDatabaseCache &database = context->designDatabase;
   if (!database.validated || !context->execution)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
 
   std::unordered_set<uint64_t> selected;
   for (const TraceSelection &selection : state.selections) {
     uint64_t offset = 0;
-    uint32_t kind = OBELISK_RT_DESIGN_RECORD_INVALID;
+    uint32_t kind = TALOS_RT_DESIGN_RECORD_INVALID;
     if (!resolveSelection(database, selection.scope, offset, kind)) {
       std::fprintf(stderr,
-                   "obelisk: $dumpvars selection '%s' does not name a design "
+                   "talos: $dumpvars selection '%s' does not name a design "
                    "scope or variable; no waveform will be written\n",
                    selection.scope.c_str());
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     }
-    if (kind == OBELISK_RT_DESIGN_RECORD_SCOPE)
+    if (kind == TALOS_RT_DESIGN_RECORD_SCOPE)
       collectScope(database, offset, selection.levels, selected);
     else
       selected.insert(offset);
@@ -1159,20 +1159,20 @@ obelisk_rt_status buildPlan(obelisk_rt_context *context, VCDTraceState &state) {
   state.planBuilt = true;
   state.pendingInitial = true;
   finishLimit(state);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 // Difference the traced windows against the shadow and emit what moved.
-obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state) {
+talos_rt_status emitSlot(talos_rt_context *context, VCDTraceState &state) {
   if (!state.file || !state.planBuilt)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   finishLimit(state);
   if (!state.file)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   const uint8_t *valuePlane = nullptr;
   const uint8_t *unknownPlane = nullptr;
-  obelisk_rt_status status = dumpPlanes(context, valuePlane, unknownPlane);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status = dumpPlanes(context, valuePlane, unknownPlane);
+  if (status != TALOS_RT_OK)
     return status;
 
   uint64_t time = context->schedulerTime;
@@ -1186,11 +1186,11 @@ obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state) {
     updateShadow(state, valuePlane, unknownPlane);
     state.pendingInitial = false;
     finishLimit(state);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
   if (!state.enabled)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
 
   for (const TraceRange &range : state.ranges) {
     size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
@@ -1222,12 +1222,12 @@ obelisk_rt_status emitSlot(obelisk_rt_context *context, VCDTraceState &state) {
                   unknownPlane + range.byteBegin, length);
   }
   finishLimit(state);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 char evcdValueChar(const TraceVariable &variable, bool value, bool unknown) {
-  bool input = (variable.portCaps & OBELISK_RT_DESIGN_CAP_PORT_INPUT) != 0;
-  bool output = (variable.portCaps & OBELISK_RT_DESIGN_CAP_PORT_OUTPUT) != 0;
+  bool input = (variable.portCaps & TALOS_RT_DESIGN_CAP_PORT_INPUT) != 0;
+  bool output = (variable.portCaps & TALOS_RT_DESIGN_CAP_PORT_OUTPUT) != 0;
   if (input && !output) {
     if (unknown)
       return value ? 'Z' : 'N';
@@ -1288,22 +1288,22 @@ void emitEVCDOff(EVCDSession &state, const TraceVariable &variable) {
   append(state, state.scratch);
 }
 
-obelisk_rt_status buildEVCDPlan(obelisk_rt_context *context,
+talos_rt_status buildEVCDPlan(talos_rt_context *context,
                                 EVCDSession &state) {
   if (state.planBuilt)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   const DesignDatabaseCache &database = context->designDatabase;
   if (!database.validated || !context->execution)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
 
   std::unordered_set<uint64_t> selectedScopes;
   std::unordered_set<uint64_t> liveScopes;
   for (const std::string &selection : state.selections) {
     uint64_t scope = 0;
-    uint32_t kind = OBELISK_RT_DESIGN_RECORD_INVALID;
+    uint32_t kind = TALOS_RT_DESIGN_RECORD_INVALID;
     if (!resolveSelection(database, selection, scope, kind) ||
-        kind != OBELISK_RT_DESIGN_RECORD_SCOPE)
-      return OBELISK_RT_INVALID_HANDLE;
+        kind != TALOS_RT_DESIGN_RECORD_SCOPE)
+      return TALOS_RT_INVALID_HANDLE;
     if (!selectedScopes.insert(scope).second)
       continue;
     for (uint64_t ancestor = scope; ancestor != 0;) {
@@ -1312,20 +1312,20 @@ obelisk_rt_status buildEVCDPlan(obelisk_rt_context *context,
       const uint8_t *record;
       uint32_t ancestorKind;
       if (!getRecord(database, ancestor, record, ancestorKind) ||
-          ancestorKind != OBELISK_RT_DESIGN_RECORD_SCOPE)
-        return OBELISK_RT_INVALID_DESIGN;
+          ancestorKind != TALOS_RT_DESIGN_RECORD_SCOPE)
+        return TALOS_RT_INVALID_DESIGN;
       ancestor = parentOffset(record);
     }
   }
 
   writeHeader(context, state);
   uint32_t nextCode = 0;
-  std::function<obelisk_rt_status(uint64_t, std::string_view)> emitScope =
-      [&](uint64_t scope, std::string_view parentName) -> obelisk_rt_status {
+  std::function<talos_rt_status(uint64_t, std::string_view)> emitScope =
+      [&](uint64_t scope, std::string_view parentName) -> talos_rt_status {
     const uint8_t *scopeRecord = database.data + scope;
     std::string_view scopeName;
     if (!getString(database, nameOffset(scopeRecord), scopeName))
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     append(state, "$scope module ");
     append(state, leafName(scopeName, parentName));
     append(state, " $end\n");
@@ -1334,12 +1334,12 @@ obelisk_rt_status buildEVCDPlan(obelisk_rt_context *context,
       const uint8_t *record;
       uint32_t childKind;
       if (!getRecord(database, child, record, childKind))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       uint32_t caps = read32(record + 4);
       if (selectedScopes.count(scope) != 0 &&
-          (childKind == OBELISK_RT_DESIGN_RECORD_PORT ||
-           (caps & (OBELISK_RT_DESIGN_CAP_PORT_INPUT |
-                    OBELISK_RT_DESIGN_CAP_PORT_OUTPUT)) != 0))
+          (childKind == TALOS_RT_DESIGN_RECORD_PORT ||
+           (caps & (TALOS_RT_DESIGN_CAP_PORT_INPUT |
+                    TALOS_RT_DESIGN_CAP_PORT_OUTPUT)) != 0))
         ports.push_back(child);
       child = nextSiblingOffset(record, childKind);
     }
@@ -1347,11 +1347,11 @@ obelisk_rt_status buildEVCDPlan(obelisk_rt_context *context,
       uint32_t lhsCaps = read32(database.data + lhs + 4);
       uint32_t rhsCaps = read32(database.data + rhs + 4);
       uint32_t lhsOrdinal =
-          (lhsCaps & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
-          OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT;
+          (lhsCaps & TALOS_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
+          TALOS_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT;
       uint32_t rhsOrdinal =
-          (rhsCaps & OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
-          OBELISK_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT;
+          (rhsCaps & TALOS_RT_DESIGN_CAP_PORT_ORDINAL_MASK) >>
+          TALOS_RT_DESIGN_CAP_PORT_ORDINAL_SHIFT;
       return std::tie(lhsOrdinal, lhs) < std::tie(rhsOrdinal, rhs);
     });
     for (uint64_t offset : ports) {
@@ -1361,7 +1361,7 @@ obelisk_rt_status buildEVCDPlan(obelisk_rt_context *context,
         continue;
       std::string_view name;
       if (!getString(database, nameOffset(record), name))
-        return OBELISK_RT_INVALID_DESIGN;
+        return TALOS_RT_INVALID_DESIGN;
       TraceVariable variable;
       variable.sourceBit = objectStateBit(record);
       variable.width = width;
@@ -1390,39 +1390,39 @@ obelisk_rt_status buildEVCDPlan(obelisk_rt_context *context,
       const uint8_t *record;
       uint32_t childKind;
       if (!getRecord(database, child, record, childKind))
-        return OBELISK_RT_INVALID_DESIGN;
-      if (childKind == OBELISK_RT_DESIGN_RECORD_SCOPE &&
+        return TALOS_RT_INVALID_DESIGN;
+      if (childKind == TALOS_RT_DESIGN_RECORD_SCOPE &&
           liveScopes.count(child) != 0) {
-        obelisk_rt_status status = emitScope(child, scopeName);
-        if (status != OBELISK_RT_OK)
+        talos_rt_status status = emitScope(child, scopeName);
+        if (status != TALOS_RT_OK)
           return status;
       }
       child = nextSiblingOffset(record, childKind);
     }
     append(state, "$upscope $end\n");
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   };
   const uint8_t *rootRecord;
   uint32_t rootKind;
   std::string_view rootName;
   if (!getRecord(database, database.root, rootRecord, rootKind) ||
-      rootKind != OBELISK_RT_DESIGN_RECORD_SCOPE ||
+      rootKind != TALOS_RT_DESIGN_RECORD_SCOPE ||
       !getString(database, nameOffset(rootRecord), rootName))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   if (rootName != "$root" && rootName != "\\$root ") {
-    obelisk_rt_status status = emitScope(database.root, {});
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = emitScope(database.root, {});
+    if (status != TALOS_RT_OK)
       return status;
   } else {
     for (uint64_t child = firstChildOffset(rootRecord); child != 0;) {
       const uint8_t *record;
       uint32_t childKind;
       if (!getRecord(database, child, record, childKind))
-        return OBELISK_RT_INVALID_DESIGN;
-      if (childKind == OBELISK_RT_DESIGN_RECORD_SCOPE &&
+        return TALOS_RT_INVALID_DESIGN;
+      if (childKind == TALOS_RT_DESIGN_RECORD_SCOPE &&
           liveScopes.count(child) != 0) {
-        obelisk_rt_status status = emitScope(child, rootName);
-        if (status != OBELISK_RT_OK)
+        talos_rt_status status = emitScope(child, rootName);
+        if (status != TALOS_RT_OK)
           return status;
       }
       child = nextSiblingOffset(record, childKind);
@@ -1432,18 +1432,18 @@ obelisk_rt_status buildEVCDPlan(obelisk_rt_context *context,
   buildRanges(state, context->execution->state_bit_count, context->twoState());
   state.planBuilt = true;
   state.pendingInitial = true;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status emitEVCDSlot(obelisk_rt_context *context, EVCDSession &state,
+talos_rt_status emitEVCDSlot(talos_rt_context *context, EVCDSession &state,
                                bool forceAll,
                                std::string_view checkpoint = {}) {
   if (!state.file || state.limitReached || !state.planBuilt)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   const uint8_t *valuePlane = nullptr;
   const uint8_t *unknownPlane = nullptr;
-  obelisk_rt_status status = dumpPlanes(context, valuePlane, unknownPlane);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status = dumpPlanes(context, valuePlane, unknownPlane);
+  if (status != TALOS_RT_OK)
     return status;
   if (state.pendingInitial) {
     emitTime(state, context->schedulerTime);
@@ -1460,7 +1460,7 @@ obelisk_rt_status emitEVCDSlot(obelisk_rt_context *context, EVCDSession &state,
         std::memcpy(state.shadowUnknown.data() + range.byteBegin,
                     unknownPlane + range.byteBegin, length);
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   } else if (!checkpoint.empty()) {
     emitTime(state, context->schedulerTime);
     append(state, checkpoint);
@@ -1476,10 +1476,10 @@ obelisk_rt_status emitEVCDSlot(obelisk_rt_context *context, EVCDSession &state,
         std::memcpy(state.shadowUnknown.data() + range.byteBegin,
                     unknownPlane + range.byteBegin, length);
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
   if (!state.enabled)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   for (const TraceRange &range : state.ranges) {
     size_t length = static_cast<size_t>(range.byteEnd - range.byteBegin);
     bool moved = forceAll ||
@@ -1512,17 +1512,17 @@ obelisk_rt_status emitEVCDSlot(obelisk_rt_context *context, EVCDSession &state,
   }
   if (state.limitReached)
     closeFile(state);
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status prepareEVCDSession(obelisk_rt_context *context,
+talos_rt_status prepareEVCDSession(talos_rt_context *context,
                                      EVCDSession &session) {
   if (session.planBuilt)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (session.planFailed || session.selections.empty())
-    return OBELISK_RT_OK;
-  obelisk_rt_status status = buildEVCDPlan(context, session);
-  if (status != OBELISK_RT_OK) {
+    return TALOS_RT_OK;
+  talos_rt_status status = buildEVCDPlan(context, session);
+  if (status != TALOS_RT_OK) {
     session.planFailed = true;
     closeFile(session);
   }
@@ -1531,7 +1531,7 @@ obelisk_rt_status prepareEVCDSession(obelisk_rt_context *context,
 
 } // namespace
 
-obelisk_rt_status obelisk_rt_dump_slot_unlocked(obelisk_rt_context *context) {
+talos_rt_status talos_rt_dump_slot_unlocked(talos_rt_context *context) {
   VCDTraceState *state = traceState(context);
   if (state && state->file) {
     // The plan is materialized at the end of the slot that made the first
@@ -1539,8 +1539,8 @@ obelisk_rt_status obelisk_rt_dump_slot_unlocked(obelisk_rt_context *context) {
     // before the header is closed.
     if (!state->planBuilt) {
       if (!state->planFailed && !state->selections.empty()) {
-        obelisk_rt_status status = buildPlan(context, *state);
-        if (status != OBELISK_RT_OK) {
+        talos_rt_status status = buildPlan(context, *state);
+        if (status != TALOS_RT_OK) {
           state->planFailed = true;
           closeFile(*state);
           return status;
@@ -1548,31 +1548,31 @@ obelisk_rt_status obelisk_rt_dump_slot_unlocked(obelisk_rt_context *context) {
       }
     }
     if (state->planBuilt) {
-      obelisk_rt_status status = emitSlot(context, *state);
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status = emitSlot(context, *state);
+      if (status != TALOS_RT_OK)
         return status;
     }
   }
   if (context && context->evcdState)
     for (const std::unique_ptr<EVCDSession> &session :
          context->evcdState->sessions) {
-      obelisk_rt_status status = prepareEVCDSession(context, *session);
-      if (status != OBELISK_RT_OK)
+      talos_rt_status status = prepareEVCDSession(context, *session);
+      if (status != TALOS_RT_OK)
         return status;
       status = emitEVCDSlot(context, *session, false);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
     }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-uint64_t obelisk_rt_dump_traced_range_count(const obelisk_rt_context *context) {
+uint64_t talos_rt_dump_traced_range_count(const talos_rt_context *context) {
   if (!context || !context->vcdState)
     return 0;
   return context->vcdState->variables.size();
 }
 
-bool obelisk_rt_dump_active_unlocked(const obelisk_rt_context *context) {
+bool talos_rt_dump_active_unlocked(const talos_rt_context *context) {
   if (!context)
     return false;
   if (context->vcdState && context->vcdState->file)
@@ -1585,19 +1585,19 @@ bool obelisk_rt_dump_active_unlocked(const obelisk_rt_context *context) {
   return false;
 }
 
-void obelisk_rt_dump_destroy(obelisk_rt_context *context) noexcept {
+void talos_rt_dump_destroy(talos_rt_context *context) noexcept {
   if (!context)
     return;
   if (context->vcdState) {
     VCDTraceState *state = context->vcdState;
-    OBELISK_RT_TRY {
+    TALOS_RT_TRY {
       if (state->file && !state->planBuilt && !state->planFailed &&
           !state->selections.empty())
         (void)buildPlan(context, *state);
       if (state->file && state->planBuilt)
         (void)emitSlot(context, *state);
     }
-    OBELISK_RT_CATCH_ALL {
+    TALOS_RT_CATCH_ALL {
       // Teardown must not propagate; the file is still closed below.
     }
     closeFile(*state);
@@ -1607,13 +1607,13 @@ void obelisk_rt_dump_destroy(obelisk_rt_context *context) noexcept {
   if (context->evcdState) {
     for (const std::unique_ptr<EVCDSession> &session :
          context->evcdState->sessions) {
-      OBELISK_RT_TRY {
+      TALOS_RT_TRY {
         if (session->file && !session->planBuilt)
           (void)prepareEVCDSession(context, *session);
         if (session->file && session->planBuilt)
           (void)emitEVCDSlot(context, *session, false);
       }
-      OBELISK_RT_CATCH_ALL {}
+      TALOS_RT_CATCH_ALL {}
       closeFile(*session);
     }
     delete context->evcdState;
@@ -1621,93 +1621,93 @@ void obelisk_rt_dump_destroy(obelisk_rt_context *context) noexcept {
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dump_open(obelisk_rt_context *context, const uint8_t *path,
+extern "C" talos_rt_status
+talos_rt_v1_dump_open(talos_rt_context *context, const uint8_t *path,
                         uint64_t pathSize) {
   if (!context || (!path && pathSize != 0) || pathSize == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = nullptr;
-    obelisk_rt_status status = ensureState(context, state);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = ensureState(context, state);
+    if (status != TALOS_RT_OK)
       return status;
     // IEEE 1800 leaves a second $dumpfile after dumping has started
     // unspecified; reject it rather than silently splitting the waveform.
     if (state->planBuilt)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     status = openFile(context, *state,
                       std::string(reinterpret_cast<const char *>(path),
                                   static_cast<size_t>(pathSize)));
-    if (status == OBELISK_RT_OK)
+    if (status == TALOS_RT_OK)
       finishLimit(*state);
     return status;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_IO_ERROR; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dump_open_string(obelisk_rt_context *context,
-                               obelisk_rt_string_v1 path) {
+extern "C" talos_rt_status
+talos_rt_v1_dump_open_string(talos_rt_context *context,
+                               talos_rt_string_v1 path) {
   char scratch[8] = {};
   const char *bytes = nullptr;
   uint64_t size = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(path, scratch, &bytes, &size);
-  return status == OBELISK_RT_OK
-             ? obelisk_rt_v1_dump_open(
+  talos_rt_status status =
+      talos_rt_v1_string_view(path, scratch, &bytes, &size);
+  return status == TALOS_RT_OK
+             ? talos_rt_v1_dump_open(
                    context, reinterpret_cast<const uint8_t *>(bytes), size)
              : status;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dump_timescale(obelisk_rt_context *context, int32_t exponent) {
+extern "C" talos_rt_status
+talos_rt_v1_dump_timescale(talos_rt_context *context, int32_t exponent) {
   if (!context || exponent > 2 || exponent < -15)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = nullptr;
-    obelisk_rt_status status = ensureState(context, state);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = ensureState(context, state);
+    if (status != TALOS_RT_OK)
       return status;
     // Lowered dump tasks carry the design timescale at each call site. Once
     // the header exists, repeating that same annotation is idempotent; only a
     // conflicting late change is invalid.
     if (state->headerWritten)
       return state->timescaleSet && state->timescaleExponent == exponent
-                 ? OBELISK_RT_OK
-                 : OBELISK_RT_INVALID_LIFECYCLE;
+                 ? TALOS_RT_OK
+                 : TALOS_RT_INVALID_LIFECYCLE;
     state->timescaleSet = true;
     state->timescaleExponent = exponent;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dump_vars(obelisk_rt_context *context, uint64_t levels,
+extern "C" talos_rt_status
+talos_rt_v1_dump_vars(talos_rt_context *context, uint64_t levels,
                         const uint8_t *scope, uint64_t scopeSize) {
   if (!context || (!scope && scopeSize != 0))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = nullptr;
-    obelisk_rt_status status = ensureState(context, state);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = ensureState(context, state);
+    if (status != TALOS_RT_OK)
       return status;
     if (!context->designDatabase.validated)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     // Every selection must be registered before the plan is materialized,
     // because a VCD header is complete before the first value record.
     if (state->planBuilt)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     if (!state->file && !state->limitReached) {
       status = openFile(context, *state, "dump.vcd");
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       finishLimit(*state);
     }
@@ -1717,55 +1717,55 @@ obelisk_rt_v1_dump_vars(obelisk_rt_context *context, uint64_t levels,
       selection.scope.assign(reinterpret_cast<const char *>(scope),
                              static_cast<size_t>(scopeSize));
     state->selections.push_back(std::move(selection));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dump_all(obelisk_rt_context *context) {
+extern "C" talos_rt_status
+talos_rt_v1_dump_all(talos_rt_context *context) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = traceState(context);
     if (!state || !state->file ||
         (!state->planBuilt && state->selections.empty()))
-      return OBELISK_RT_OK;
-    obelisk_rt_status status = buildPlan(context, *state);
-    if (status != OBELISK_RT_OK)
+      return TALOS_RT_OK;
+    talos_rt_status status = buildPlan(context, *state);
+    if (status != TALOS_RT_OK)
       return status;
     return emitDumpAll(context, *state);
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_IO_ERROR; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dump_control(obelisk_rt_context *context, uint32_t enabled) {
+extern "C" talos_rt_status
+talos_rt_v1_dump_control(talos_rt_context *context, uint32_t enabled) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = traceState(context);
     if (!state || !state->file ||
         (!state->planBuilt && state->selections.empty()))
-      return OBELISK_RT_OK;
-    obelisk_rt_status status = buildPlan(context, *state);
-    if (status != OBELISK_RT_OK)
+      return TALOS_RT_OK;
+    talos_rt_status status = buildPlan(context, *state);
+    if (status != TALOS_RT_OK)
       return status;
     bool wanted = enabled != 0;
     if (wanted == state->enabled)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     // Settle the slot under the previous mode before switching.
     status = emitSlot(context, *state);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     if (!state->file)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     state->enabled = wanted;
     emitTime(*state, context->schedulerTime);
     if (!wanted) {
@@ -1773,12 +1773,12 @@ obelisk_rt_v1_dump_control(obelisk_rt_context *context, uint32_t enabled) {
       emitAllX(*state);
       append(*state, "$end\n");
       finishLimit(*state);
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     const uint8_t *valuePlane = nullptr;
     const uint8_t *unknownPlane = nullptr;
     status = dumpPlanes(context, valuePlane, unknownPlane);
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
     append(*state, "$dumpon\n");
     for (const TraceVariable &variable : state->variables)
@@ -1786,105 +1786,105 @@ obelisk_rt_v1_dump_control(obelisk_rt_context *context, uint32_t enabled) {
     append(*state, "$end\n");
     updateShadow(*state, valuePlane, unknownPlane);
     finishLimit(*state);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_IO_ERROR; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dump_limit(obelisk_rt_context *context, uint64_t bytes) {
+extern "C" talos_rt_status
+talos_rt_v1_dump_limit(talos_rt_context *context, uint64_t bytes) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = nullptr;
-    obelisk_rt_status status = ensureState(context, state);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status = ensureState(context, state);
+    if (status != TALOS_RT_OK)
       return status;
     state->limitSet = true;
     state->limitBytes = bytes;
     if (state->file && state->writtenBytes >= bytes)
       state->limitReached = true;
     finishLimit(*state);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dump_flush(obelisk_rt_context *context) {
+extern "C" talos_rt_status
+talos_rt_v1_dump_flush(talos_rt_context *context) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = traceState(context);
     if (!state)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     flushBuffer(*state);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_IO_ERROR; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dump_close(obelisk_rt_context *context) {
+extern "C" talos_rt_status
+talos_rt_v1_dump_close(talos_rt_context *context) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextMutexLock lock(context);
     VCDTraceState *state = traceState(context);
     if (!state)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     if (state->file && state->planBuilt)
       (void)emitSlot(context, *state);
     closeFile(*state);
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_IO_ERROR; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports(
-    obelisk_rt_context *context, obelisk_rt_string_v1 pathValue,
-    obelisk_rt_string_v1 scopeValue, int32_t timescaleExponent) {
+extern "C" talos_rt_status talos_rt_v1_dump_ports(
+    talos_rt_context *context, talos_rt_string_v1 pathValue,
+    talos_rt_string_v1 scopeValue, int32_t timescaleExponent) {
   if (!context || timescaleExponent > 2 || timescaleExponent < -15)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   char pathScratch[8] = {};
   char scopeScratch[8] = {};
   const char *pathBytes = nullptr;
   const char *scopeBytes = nullptr;
   uint64_t pathSize = 0;
   uint64_t scopeSize = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(pathValue, pathScratch, &pathBytes, &pathSize);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(pathValue, pathScratch, &pathBytes, &pathSize);
+  if (status != TALOS_RT_OK)
     return status;
-  status = obelisk_rt_v1_string_view(scopeValue, scopeScratch, &scopeBytes,
+  status = talos_rt_v1_string_view(scopeValue, scopeScratch, &scopeBytes,
                                      &scopeSize);
-  if (status != OBELISK_RT_OK || pathSize == 0 || scopeSize == 0)
-    return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  if (status != TALOS_RT_OK || pathSize == 0 || scopeSize == 0)
+    return status == TALOS_RT_OK ? TALOS_RT_INVALID_ARGUMENT : status;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::string path;
     if (pathSize != 0)
       path.assign(pathBytes, static_cast<size_t>(pathSize));
     std::string scope(scopeBytes, static_cast<size_t>(scopeSize));
     ContextMutexLock lock(context);
     if (!context->designDatabase.validated)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     uint64_t selectedScope = 0;
-    uint32_t selectedKind = OBELISK_RT_DESIGN_RECORD_INVALID;
+    uint32_t selectedKind = TALOS_RT_DESIGN_RECORD_INVALID;
     if (!resolveSelection(context->designDatabase, scope, selectedScope,
                           selectedKind) ||
-        selectedKind != OBELISK_RT_DESIGN_RECORD_SCOPE)
-      return OBELISK_RT_INVALID_HANDLE;
+        selectedKind != TALOS_RT_DESIGN_RECORD_SCOPE)
+      return TALOS_RT_INVALID_HANDLE;
     if (!context->evcdState) {
       context->evcdState = new (std::nothrow) EVCDTraceState();
       if (!context->evcdState)
-        return OBELISK_RT_OUT_OF_MEMORY;
+        return TALOS_RT_OUT_OF_MEMORY;
     }
     EVCDTraceState &state = *context->evcdState;
     EVCDSession *session = nullptr;
@@ -1900,50 +1900,50 @@ extern "C" obelisk_rt_status obelisk_rt_v1_dump_ports(
       created->timescaleExponent = timescaleExponent;
       created->startTime = context->schedulerTime;
       status = openFile(context, *created, path);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       session = created.get();
       state.sessions.push_back(std::move(created));
     } else if (session->startTime != context->schedulerTime ||
                session->timescaleExponent != timescaleExponent) {
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     }
     // Selections are unique per output file. The same module may be present
     // in several independent EVCD sessions, and repeating it for one file is
     // idempotent while the initial selection slot is still open.
     if (std::find(session->selections.begin(), session->selections.end(),
                   scope) != session->selections.end())
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     if (session->planBuilt)
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     session->selections.push_back(std::move(scope));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_IO_ERROR; }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_dump_ports_control(obelisk_rt_context *context,
-                                 obelisk_rt_string_v1 pathValue,
+extern "C" talos_rt_status
+talos_rt_v1_dump_ports_control(talos_rt_context *context,
+                                 talos_rt_string_v1 pathValue,
                                  uint32_t action, uint64_t value) {
   if (!context || action > 4)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   char scratch[8] = {};
   const char *pathBytes = nullptr;
   uint64_t pathSize = 0;
-  obelisk_rt_status status =
-      obelisk_rt_v1_string_view(pathValue, scratch, &pathBytes, &pathSize);
-  if (status != OBELISK_RT_OK)
+  talos_rt_status status =
+      talos_rt_v1_string_view(pathValue, scratch, &pathBytes, &pathSize);
+  if (status != TALOS_RT_OK)
     return status;
   ContextTransaction transaction(context);
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     std::string path;
     if (pathSize != 0)
       path.assign(pathBytes, static_cast<size_t>(pathSize));
     ContextMutexLock lock(context);
     if (!context->evcdState)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     for (const std::unique_ptr<EVCDSession> &candidate :
          context->evcdState->sessions) {
       EVCDSession &session = *candidate;
@@ -1958,13 +1958,13 @@ obelisk_rt_v1_dump_ports_control(obelisk_rt_context *context,
         continue;
       }
       status = prepareEVCDSession(context, session);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       if (!session.file)
         continue;
       if (action == 2) {
         status = emitEVCDSlot(context, session, true, "$dumpportsall");
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
         continue;
       }
@@ -1972,7 +1972,7 @@ obelisk_rt_v1_dump_ports_control(obelisk_rt_context *context,
       if (wanted == session.enabled)
         continue;
       status = emitEVCDSlot(context, session, false);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       session.enabled = wanted;
       emitTime(session, context->schedulerTime);
@@ -1981,7 +1981,7 @@ obelisk_rt_v1_dump_ports_control(obelisk_rt_context *context,
         const uint8_t *valuePlane = nullptr;
         const uint8_t *unknownPlane = nullptr;
         status = dumpPlanes(context, valuePlane, unknownPlane);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
         for (const TraceVariable &variable : session.variables)
           emitEVCDValue(session, variable, valuePlane, unknownPlane);
@@ -1999,8 +1999,8 @@ obelisk_rt_v1_dump_ports_control(obelisk_rt_context *context,
       }
       append(session, "$end\n");
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_IO_ERROR; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_IO_ERROR; }
 }

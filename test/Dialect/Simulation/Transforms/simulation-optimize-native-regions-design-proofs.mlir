@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --obelisk-sim-optimize-native-regions -o %t.threaded
-// RUN: obelisk-opt %s --obelisk-sim-optimize-native-regions --mlir-disable-threading -o %t.serial
+// RUN: talos-opt %s --talos-sim-optimize-native-regions -o %t.threaded
+// RUN: talos-opt %s --talos-sim-optimize-native-regions --mlir-disable-threading -o %t.serial
 // RUN: diff %t.threaded %t.serial
 // RUN: FileCheck %s < %t.threaded
 

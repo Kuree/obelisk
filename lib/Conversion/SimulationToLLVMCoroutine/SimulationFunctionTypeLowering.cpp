@@ -1,10 +1,10 @@
 //===- SimulationFunctionTypeLowering.cpp - Function type rewrites -------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -13,7 +13,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 
 class ContextRuntimeLowering final : public ConversionPattern {
@@ -326,4 +326,4 @@ void populateContextRuntimeToLLVMConversionPattern(
   patterns.add<ContextRuntimeLowering>(converter, patterns.getContext());
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

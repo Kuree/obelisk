@@ -1,5 +1,5 @@
-// RUN: env OBELISK_TEST_INPUT=%s OBELISK_TEST_OUTPUT=%t.dump \
-// RUN:   %obj_root/test/obelisk-design-database-dump-test \
+// RUN: env TALOS_TEST_INPUT=%s TALOS_TEST_OUTPUT=%t.dump \
+// RUN:   %obj_root/test/talos-design-database-dump-test \
 // RUN:   --gtest_filter=GeneratedDesignDatabase.Dump
 // RUN: FileCheck %s < %t.dump
 

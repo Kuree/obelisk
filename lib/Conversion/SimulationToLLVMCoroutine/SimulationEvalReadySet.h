@@ -1,18 +1,18 @@
 //===- SimulationEvalReadySet.h - Word-wise generated owner sets -*- C++
 //-*-===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_EVAL_READY_SET_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_EVAL_READY_SET_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_EVAL_READY_SET_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOLLVMCOROUTINE_EVAL_READY_SET_H
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
-#include "obelisk/Runtime/ClockKernelReadySet.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Runtime/ClockKernelReadySet.h"
 #include <map>
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 /// Whether a direct call to `callee` can neither inspect nor change any ready
 /// set: it executes no actor and does not enter the scheduler. Pending ready
@@ -366,5 +366,5 @@ findEvalReadyWord(mlir::OpBuilder &builder, mlir::Location loc,
   return {join->getArgument(0), join->getArgument(1)};
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 #endif

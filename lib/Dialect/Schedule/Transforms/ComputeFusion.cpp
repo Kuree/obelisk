@@ -1,15 +1,15 @@
 //===- ComputeFusion.cpp - Static process-body fusion helpers ------------===//
 
 #include "ComputeFusion.h"
-#include "obelisk/Analysis/ActivationIdempotenceAnalysis.h"
-#include "obelisk/Analysis/DPIEffectAnalysis.h"
-#include "obelisk/Analysis/SimulationEffectAnalysis.h"
+#include "talos/Analysis/ActivationIdempotenceAnalysis.h"
+#include "talos/Analysis/DPIEffectAnalysis.h"
+#include "talos/Analysis/SimulationEffectAnalysis.h"
 #include "llvm/ADT/TypeSwitch.h"
 
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/Transforms/NativeTransforms.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Dominance.h"
@@ -27,7 +27,7 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 namespace {
 
 bool isStaticDigitalType(Type type) {
@@ -854,7 +854,7 @@ llvm::DenseSet<StringAttr> schedule::collectRepeatableCombinationalActivations(
              std::make_pair(rejections.lookup(lhs), lhs);
     });
     for (StringRef reason : ordered)
-      llvm::errs() << "obelisk repeatable rejection: count="
+      llvm::errs() << "talos repeatable rejection: count="
                    << rejections.lookup(reason) << " reason=" << reason
                    << '\n';
   }
@@ -1824,4 +1824,4 @@ computeNBATransientObservers(sim::SimDesignOp design, bool guardedVPI) {
   return result;
 }
 
-} // namespace obelisk
+} // namespace talos

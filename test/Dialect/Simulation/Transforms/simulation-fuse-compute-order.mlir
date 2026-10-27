@@ -1,10 +1,10 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O3 -emit-sim %t/order.sv -o %t/order.mlir
+// RUN: talos -O3 -emit-sim %t/order.sv -o %t/order.mlir
 // RUN: FileCheck %s --check-prefix=COHORT < %t/order.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-order.test.
 
-// COHORT: __obelisk_fused_
+// COHORT: __talos_fused_
 
 //--- order.sv
 module activation_order;

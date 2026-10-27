@@ -10,12 +10,12 @@ from unittest import mock
 BENCHMARK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARK_DIR))
 
-from obelisk_bench import runner  # noqa: E402
+from talos_bench import runner  # noqa: E402
 
 
 class NativeObjectsTest(unittest.TestCase):
     def test_dpi_source_remains_an_object_for_the_final_link(self):
-        with tempfile.TemporaryDirectory(prefix="obelisk-runner-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-runner-test-") as tmp:
             directory = Path(tmp)
             source = directory / "implementation.cpp"
             source.write_text("extern int exported();\n", encoding="utf-8")
@@ -30,7 +30,7 @@ class NativeObjectsTest(unittest.TestCase):
                       runner, "_run_with_retry",
                       side_effect=[resource, compiled]) as run):
                 result = runner.build_native_objects(
-                    "obelisk", [str(source)], tmp,
+                    "talos", [str(source)], tmp,
                     compiler_flags=["-DTEST"], module_name="dpi")
 
             self.assertTrue(result.ok)
@@ -42,9 +42,9 @@ class NativeObjectsTest(unittest.TestCase):
             self.assertIn("/resource/include", command)
 
     def test_build_tree_cxx_uses_the_matching_libcxx_toolchain(self):
-        with tempfile.TemporaryDirectory(prefix="obelisk-runner-test-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="talos-runner-test-") as tmp:
             build = Path(tmp) / "build"
-            driver = build / "tools" / "driver" / "obelisk"
+            driver = build / "tools" / "driver" / "talos"
             driver.parent.mkdir(parents=True)
             driver.touch()
             clang = build / "llvm-mlir" / "dist" / "bin" / "clang++"

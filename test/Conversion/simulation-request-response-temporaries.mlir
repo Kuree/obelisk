@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},obelisk-sim-materialize-compute-fusion))' -verify-diagnostics | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},talos-sim-materialize-compute-fusion))' -verify-diagnostics | FileCheck %s
 
 // The producer and responder form one observer-closed cohort that runs once in
 // data-dependence order (IEEE 1800-2023 4.3), while the clocked observer stays
 // a separate activation.
 // CHECK-NOT: simulation.spawn @producer_and_consumer
 // CHECK-NOT: simulation.spawn @transform
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK: simulation.spawn @__talos_region_kernel_0_0
 // CHECK: simulation.spawn @sample
 
 // A cyclic request/response cohort publishes through an isolated wire.

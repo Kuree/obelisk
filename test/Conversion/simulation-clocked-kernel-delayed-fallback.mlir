@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-clocked-kernels))' | FileCheck %s
 
 // IEEE 1800-2023 4.9.4: a read after an NBA site of its root sees the
 // incoming value. The kernel normally delays such updates to its end, keeping
@@ -20,7 +20,7 @@ module attributes {
   schedule.native_scheduler = 1 : i32
 } {
   // CHECK-LABEL: simulation.design @loop
-  // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+  // CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
   // CHECK: simulation.suspend.edge posedge %{{.*}} to ^[[START:bb[0-9]+]]
   // CHECK: ^[[START]]:
   // CHECK-NEXT: %[[OLD:.*]] = simulation.ref.load %[[ARRAY:arg[0-9]+]] : !simulation.ref<!simulation.unpacked_array

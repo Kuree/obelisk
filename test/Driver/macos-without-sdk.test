@@ -1,7 +1,7 @@
 // REQUIRES: native-macho
-// Deny access to both Xcode and Command Line Tools, and allow only the Obelisk
+// Deny access to both Xcode and Command Line Tools, and allow only the Talos
 // executable to run. This also rejects spawning clang, ld, xcrun, or codesign.
-// RUN: env PATH=/nonexistent SDKROOT=/nonexistent DEVELOPER_DIR=/nonexistent /usr/bin/sandbox-exec -p '(version 1)(allow default)(deny file-read* (subpath "/Applications") (subpath "/Library/Developer"))(deny process-exec)(allow process-exec (literal "%obelisk"))' %obelisk %S/macos-native.sv -o %t.exe
+// RUN: env PATH=/nonexistent SDKROOT=/nonexistent DEVELOPER_DIR=/nonexistent /usr/bin/sandbox-exec -p '(version 1)(allow default)(deny file-read* (subpath "/Applications") (subpath "/Library/Developer"))(deny process-exec)(allow process-exec (literal "%talos"))' %talos %S/macos-native.sv -o %t.exe
 // RUN: codesign --verify %t.exe && %t.exe | FileCheck %S/macos-native.sv --check-prefix=OUTPUT
-// RUN: env PATH=/nonexistent SDKROOT=/nonexistent DEVELOPER_DIR=/nonexistent /usr/bin/sandbox-exec -p '(version 1)(allow default)(deny file-read* (subpath "/Applications") (subpath "/Library/Developer"))(deny process-exec)(allow process-exec (literal "%obelisk"))' %obelisk -flto %S/macos-native.sv -o %t.lto
+// RUN: env PATH=/nonexistent SDKROOT=/nonexistent DEVELOPER_DIR=/nonexistent /usr/bin/sandbox-exec -p '(version 1)(allow default)(deny file-read* (subpath "/Applications") (subpath "/Library/Developer"))(deny process-exec)(allow process-exec (literal "%talos"))' %talos -flto %S/macos-native.sv -o %t.lto
 // RUN: codesign --verify %t.lto && %t.lto | FileCheck %S/macos-native.sv --check-prefix=OUTPUT

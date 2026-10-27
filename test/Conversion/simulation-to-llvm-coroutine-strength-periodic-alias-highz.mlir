@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // A highz1 driver under the automatic scheduler.
-// CHECK-NOT: @__obelisk_periodic_alias_plan_v1
-// CHECK: llvm.mlir.global internal constant @__obelisk_periodic_clock_plan_v1
-// CHECK-NOT: @__obelisk_periodic_alias_plan_v1
+// CHECK-NOT: @__talos_periodic_alias_plan_v1
+// CHECK: llvm.mlir.global internal constant @__talos_periodic_clock_plan_v1
+// CHECK-NOT: @__talos_periodic_alias_plan_v1
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

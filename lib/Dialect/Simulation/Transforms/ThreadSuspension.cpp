@@ -7,10 +7,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "obelisk/Conversion/SimulationToSchedule/Utils.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Conversion/SimulationToSchedule/Utils.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
 
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
@@ -29,18 +29,18 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMTHREADSUSPENSIONPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMTHREADSUSPENSIONPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
 
-using namespace obelisk::simlowering;
+using namespace talos::simlowering;
 
-class ObeliskSimThreadSuspensionPass
-    : public impl::ObeliskSimThreadSuspensionPassBase<
-          ObeliskSimThreadSuspensionPass> {
+class TalosSimThreadSuspensionPass
+    : public impl::TalosSimThreadSuspensionPassBase<
+          TalosSimThreadSuspensionPass> {
 public:
   void runOnOperation() override {
     sim::SimFuncOp function = getOperation();
@@ -53,7 +53,7 @@ public:
     // capture. Narrow that wait here, after value optimization but before the
     // compute graph is frozen. This keeps generated gate arrays from waking
     // every instance for a change to one unrelated vector bit.
-    if (::obelisk::schedule::has<::obelisk::schedule::Field::PrimitiveName>(
+    if (::talos::schedule::has<::talos::schedule::Field::PrimitiveName>(
             function)) {
       Block &entry = function.getBody().front();
       auto isStableDesignHandle = [&](Value handle) {
@@ -277,8 +277,8 @@ public:
       auto bridge = cf::BranchOp::create(
           builder, suspension->getLoc(), continuation,
           resume->getArguments().take_front(forwarded.size()));
-      ::obelisk::schedule::set<
-          ::obelisk::schedule::Field::ObserverCaptureBridge>(
+      ::talos::schedule::set<
+          ::talos::schedule::Field::ObserverCaptureBridge>(
           bridge, builder.getUnitAttr());
     }
 
@@ -669,4 +669,4 @@ public:
 };
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s | FileCheck %s --check-prefix=SIM
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=INSTRUCTIONS
+// RUN: talos-opt %s | FileCheck %s --check-prefix=SIM
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' --test-talos-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=INSTRUCTIONS
 
 !choice = !simulation.unpacked_union<fields = [
   #simulation.field<name = "object", type = !simulation.class_handle<@Node>, ordinal = 0, packedOffset = 0>,
@@ -15,7 +15,7 @@ module attributes {
 } {
   simulation.design @untagged_managed_union {
     simulation.scope.decl 0 hierarchy "top"
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.storage.decl 0 in 0 : !choice design hierarchy "top.shared"
 
     simulation.class.decl @Node id 1 {
@@ -28,7 +28,7 @@ module attributes {
       is_static = false, is_weak = false
     }
 
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %holder = simulation.class.alloc %ctx :
@@ -89,13 +89,13 @@ module attributes {
 
 // The same conditional slot is used by the class descriptor, static design
 // state, SSA shadow root, and automatic state allocation.
-// NATIVE-LABEL: llvm.func @__obelisk_root(
-// NATIVE: llvm.call @obelisk_rt_v1_native_state_alloc_with_typed_roots
-// NATIVE: llvm.call @obelisk_rt_v1_gc_candidate_root
-// NATIVE: llvm.call @obelisk_rt_v1_gc_safepoint
-// NATIVE: llvm.call @obelisk_rt_v1_object_cast
+// NATIVE-LABEL: llvm.func @__talos_root(
+// NATIVE: llvm.call @talos_rt_v1_native_state_alloc_with_typed_roots
+// NATIVE: llvm.call @talos_rt_v1_gc_candidate_root
+// NATIVE: llvm.call @talos_rt_v1_gc_safepoint
+// NATIVE: llvm.call @talos_rt_v1_object_cast
 // NATIVE-LABEL: llvm.func @main(
-// NATIVE: llvm.call @obelisk_rt_v1_gc_candidate_static_root_register
+// NATIVE: llvm.call @talos_rt_v1_gc_candidate_static_root_register
 
 // The encoded image retains the class field and the candidate static root.
 // Automatic state uses the append-only typed allocation intrinsic.

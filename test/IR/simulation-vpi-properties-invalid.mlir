@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 // A FixedImage property and an independent definition site are valid static
 // inventory. Neither attribute changes executable scheduling.

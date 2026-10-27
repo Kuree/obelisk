@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-values-to-standard | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-values-to-standard | FileCheck %s
 // Lane conversion uses ordinary LLVM vector integer conversions. Both logic
 // planes preserve their independent bits, including Z, as in LRM 11.4.8.
 

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels))' -o %t.mlir 2> %t.log
+// RUN: talos-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-clocked-kernels))' -o %t.mlir 2> %t.log
 // RUN: FileCheck %s --check-prefix=REPORT < %t.log
 // RUN: FileCheck %s < %t.mlir
 
@@ -12,18 +12,18 @@
 // the nets share a kernel; negedge members of the nets and the posedge member
 // of the complement share another; the variable's negedge member stays apart.
 
-// REPORT-DAG: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=2
-// REPORT-DAG: obelisk clocked kernel: __obelisk_clocked_0_2_0 members=2
-// REPORT-DAG: obelisk clocked kernel: __obelisk_clocked_0_258_0 members=1
+// REPORT-DAG: talos clocked kernel: __talos_clocked_0_1_0 members=2
+// REPORT-DAG: talos clocked kernel: __talos_clocked_0_2_0 members=2
+// REPORT-DAG: talos clocked kernel: __talos_clocked_0_258_0 members=1
 
 // A kernel waits on one member's own root and edge.
 // CHECK-LABEL: simulation.design @late
 // CHECK-NOT: simulation.func private @pos_net
-// CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
+// CHECK-LABEL: simulation.func private @__talos_clocked_0_1_0
 // CHECK: simulation.suspend.edge posedge %{{.*}} : !simulation.ref<i1>
-// CHECK-LABEL: simulation.func private @__obelisk_clocked_0_2_0
+// CHECK-LABEL: simulation.func private @__talos_clocked_0_2_0
 // CHECK: simulation.suspend.edge negedge %{{.*}} : !simulation.net<!simulation.logic<1>>
-// CHECK-LABEL: simulation.func private @__obelisk_clocked_0_258_0
+// CHECK-LABEL: simulation.func private @__talos_clocked_0_258_0
 // CHECK: simulation.suspend.edge negedge %{{.*}} : !simulation.ref<i1>
 !bit = !simulation.logic<1>
 !byte = !simulation.logic<8>
@@ -169,13 +169,13 @@ module attributes {
 // When the variable also changes at time zero, a copy can change twice in
 // that phase (z, 0, then 1) and the complement, evaluated after both updates
 // (10.3.2, 4.7), may never be 1: the net groups are not equivalent.
-// REPORT: obelisk clocked kernel rejection: net clock source changes at time zero = 2
+// REPORT: talos clocked kernel rejection: net clock source changes at time zero = 2
 // CHECK-LABEL: simulation.design @early
 // CHECK: simulation.func private @pos_net
 // CHECK: simulation.func private @inv_pos
 // CHECK: simulation.func private @neg_net
-// CHECK-NOT: __obelisk_clocked_0_1_0
-// CHECK: simulation.func private @__obelisk_clocked_0_258_0
+// CHECK-NOT: __talos_clocked_0_1_0
+// CHECK: simulation.func private @__talos_clocked_0_258_0
 !bit = !simulation.logic<1>
 !byte = !simulation.logic<8>
 !byteref = !simulation.ref<!byte>

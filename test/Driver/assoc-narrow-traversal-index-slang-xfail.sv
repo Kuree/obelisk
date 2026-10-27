@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: %obelisk -emit-slang %s -o /dev/null
+// RUN: %talos -emit-slang %s -o /dev/null
 
 // IEEE 1800-2023 7.9.8 allows a traversal argument narrower than the index
 // type: the method truncates the index and returns -1. Slang v11 binds the

@@ -1,7 +1,7 @@
 //===- BackendUtils.h - Helpers shared by target backends -------*- C++ -*-===//
 
-#ifndef OBELISK_TOOLS_DRIVER_BACKENDUTILS_H
-#define OBELISK_TOOLS_DRIVER_BACKENDUTILS_H
+#ifndef TALOS_TOOLS_DRIVER_BACKENDUTILS_H
+#define TALOS_TOOLS_DRIVER_BACKENDUTILS_H
 
 #include "mlir/Support/LogicalResult.h"
 
@@ -13,7 +13,7 @@
 #include <cstdint>
 #include <string>
 
-namespace obelisk::driver {
+namespace talos::driver {
 
 llvm::CodeGenOptLevel getCodeGenOptLevel(uint32_t level);
 
@@ -39,6 +39,6 @@ getSharedLibraryRunpath(llvm::StringRef outputPath,
 llvm::ArrayRef<llvm::StringLiteral> getRuntimeDPIEntryPoints();
 llvm::ArrayRef<llvm::StringLiteral> getRuntimeVPIEntryPoints();
 
-} // namespace obelisk::driver
+} // namespace talos::driver
 
-#endif // OBELISK_TOOLS_DRIVER_BACKENDUTILS_H
+#endif // TALOS_TOOLS_DRIVER_BACKENDUTILS_H

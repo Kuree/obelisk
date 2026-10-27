@@ -1,10 +1,10 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
 // The crossing value is a mixed known/unknown constant instead of a load.
-// CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK: llvm.call @__obelisk_direct_fragment_3_9.__obelisk_execute(
-// CHECK-NOT: llvm.call @body0.__obelisk_two_state_0
-// CHECK: %[[PENDING:.*]] = llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
+// CHECK-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// CHECK: llvm.call @__talos_direct_fragment_3_9.__talos_execute(
+// CHECK-NOT: llvm.call @body0.__talos_two_state_0
+// CHECK: %[[PENDING:.*]] = llvm.mlir.addressof @__talos_eval_promotion_pending_mask_v1
 // CHECK-NEXT: %[[BITS:.*]] = llvm.load %[[PENDING]] {{.*}} : !llvm.ptr -> i64
 // CHECK-NEXT: %[[BIT:.*]] = llvm.mlir.constant(2 : i64)
 // CHECK-NEXT: %[[LOCAL:.*]] = llvm.and %[[BITS]], %[[BIT]] : i64
@@ -15,11 +15,11 @@
 // CHECK-NEXT: llvm.cond_br %[[KNOWN]], ^[[FAST:bb[0-9]+]], ^[[SCAN:bb[0-9]+]]
 // CHECK: ^[[SCAN]]:
 // CHECK-NEXT: %[[OWNER:.*]] = llvm.mlir.constant(1 : i64)
-// CHECK-NEXT: %[[READY:.*]] = llvm.call @__obelisk_eval_kernel_promotion_ready_v1(%[[OWNER]])
+// CHECK-NEXT: %[[READY:.*]] = llvm.call @__talos_eval_kernel_promotion_ready_v1(%[[OWNER]])
 // CHECK-NEXT: llvm.cond_br %[[READY]], ^[[FAST]], ^{{bb[0-9]+}}
 // CHECK: ^[[FAST]]:
 // CHECK: llvm.store
-// CHECK-NEXT: llvm.call @body1.__obelisk_two_state_0(
+// CHECK-NEXT: llvm.call @body1.__talos_two_state_0(
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

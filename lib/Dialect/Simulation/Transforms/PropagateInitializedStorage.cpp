@@ -2,11 +2,11 @@
 //-------------------------------------===//
 
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Analysis/StorageWriteAnalysis.h"
-#include "obelisk/Dialect/Schedule/ScheduleEnums.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Analysis/StorageWriteAnalysis.h"
+#include "talos/Dialect/Schedule/ScheduleEnums.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -20,13 +20,13 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 
-#define GEN_PASS_DEF_OBELISKSIMPROPAGATEINITIALIZEDSTORAGEPASS
-#include "obelisk/Dialect/Simulation/Transforms/Passes.h.inc"
+#define GEN_PASS_DEF_TALOSSIMPROPAGATEINITIALIZEDSTORAGEPASS
+#include "talos/Dialect/Simulation/Transforms/Passes.h.inc"
 
 namespace {
-namespace sim = ::obelisk::sim;
+namespace sim = ::talos::sim;
 
 struct StorageAccess {
   Operation *operation;
@@ -59,7 +59,7 @@ public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
       PropagateInitializedStorageFunctionPass)
   StringRef getArgument() const final {
-    return "obelisk-sim-propagate-initialized-storage-function";
+    return "talos-sim-propagate-initialized-storage-function";
   }
   void runOnOperation() override {
     auto function = getOperation();
@@ -94,9 +94,9 @@ public:
   }
 };
 
-class ObeliskSimPropagateInitializedStoragePass
-    : public impl::ObeliskSimPropagateInitializedStoragePassBase<
-          ObeliskSimPropagateInitializedStoragePass> {
+class TalosSimPropagateInitializedStoragePass
+    : public impl::TalosSimPropagateInitializedStoragePassBase<
+          TalosSimPropagateInitializedStoragePass> {
 public:
   using Base::Base;
 
@@ -381,4 +381,4 @@ private:
 };
 
 } // namespace
-} // namespace obelisk
+} // namespace talos

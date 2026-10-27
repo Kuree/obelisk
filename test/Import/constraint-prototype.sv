@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s | FileCheck %s
-// RUN: obelisk -emit-sim %s | FileCheck %s --check-prefix=RANDOMIZE
+// RUN: talos -emit-slang %s | FileCheck %s
+// RUN: talos -emit-sim %s | FileCheck %s --check-prefix=RANDOMIZE
 
 // A constraint prototype declares no body of its own: a `pure` constraint never
 // has one, and an implicit extern prototype leaves it out of block. slang models

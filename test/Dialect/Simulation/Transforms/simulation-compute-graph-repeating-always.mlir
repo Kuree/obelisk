@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph))' | FileCheck %s
 
 // IEEE 1800-2017 9.2.2 requires an always procedure to repeat continuously,
 // and 4.9.3 requires a blocking update to enable dependent events. Preserve

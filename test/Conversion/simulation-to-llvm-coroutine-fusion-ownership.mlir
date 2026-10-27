@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: obelisk-translate --mlir-to-llvmir %t.mlir -o /dev/null
+// RUN: talos-translate --mlir-to-llvmir %t.mlir -o /dev/null
 
 // A generated Tier-1 body may contain a source continuation whose exact
 // Tier-2 body survived fusion. This fixture is frozen after planning so the
@@ -27,14 +27,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       %5 = simulation.spawn @clock_outside(%arg0, %1) : !simulation.context, !simulation.ref<!simulation.logic<1>> -> !simulation.process
       simulation.return
     }
-    simulation.func @fused(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 2 : i64, domain = 0 : i32, entry_kind = 3 : i32, home_region = 2 : i32, schedule.eval.body = @fused.__obelisk_eval_body_0, schedule.eval.fusion_group = 0 : i32, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 2 : i64, continuation = 1 : i32>, #schedule.source_owner<codeUnit = 3 : i64, continuation = 2 : i32>], schedule.native.region_body} {
+    simulation.func @fused(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 2 : i64, domain = 0 : i32, entry_kind = 3 : i32, home_region = 2 : i32, schedule.eval.body = @fused.__talos_eval_body_0, schedule.eval.fusion_group = 0 : i32, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 2 : i64, continuation = 1 : i32>, #schedule.source_owner<codeUnit = 3 : i64, continuation = 2 : i32>], schedule.native.region_body} {
       cf.br ^bb1
     ^bb1:  // 2 preds: ^bb0, ^bb2
       simulation.suspend.change %arg1 to ^bb2 {schedule.procedural_event_wait, site = #schedule.continuation<id = 1>} : !simulation.ref<!simulation.logic<1>>
     ^bb2:  // pred: ^bb1
       cf.br ^bb1
     }
-    simulation.func @boundary(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 3 : i64, domain = 0 : i32, entry_kind = 3 : i32, home_region = 2 : i32, schedule.eval.body = @boundary.__obelisk_eval_body_0, schedule.native.region_body} {
+    simulation.func @boundary(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 3 : i64, domain = 0 : i32, entry_kind = 3 : i32, home_region = 2 : i32, schedule.eval.body = @boundary.__talos_eval_body_0, schedule.native.region_body} {
       cf.br ^bb1
     ^bb1:  // 2 preds: ^bb0, ^bb2
       simulation.suspend.change %arg1 to ^bb2 {schedule.procedural_event_wait, site = #schedule.continuation<id = 2>} : !simulation.ref<!simulation.logic<1>>
@@ -63,8 +63,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.ref.store %2 to %arg1 : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
       cf.br ^bb1
     }
-    simulation.code_unit.decl 6 in 0 function hierarchy "fused.__obelisk_eval_body_0" debug "generated native eval body" {internal}
-    simulation.func private @fused.__obelisk_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 6 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 1 : i32, schedule.eval.fusion_group = 0 : i32, schedule.eval.instance_coordinator, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 2 : i64, continuation = 1 : i32>, #schedule.source_owner<codeUnit = 3 : i64, continuation = 2 : i32>]} {
+    simulation.code_unit.decl 6 in 0 function hierarchy "fused.__talos_eval_body_0" debug "generated native eval body" {internal}
+    simulation.func private @fused.__talos_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %arg2: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 6 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 1 : i32, schedule.eval.fusion_group = 0 : i32, schedule.eval.instance_coordinator, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 2 : i64, continuation = 1 : i32>, #schedule.source_owner<codeUnit = 3 : i64, continuation = 2 : i32>]} {
       cf.br ^bb1
     ^bb1:  // pred: ^bb0
       %0 = simulation.ref.load %arg1 : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
@@ -81,8 +81,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.ref.store %7 to %arg1 {schedule.eval.source_owner = #schedule.source_owner<codeUnit = 3 : i64, continuation = 2 : i32>} : !simulation.logic<1>, !simulation.ref<!simulation.logic<1>>
       simulation.return
     }
-    simulation.code_unit.decl 7 in 0 function hierarchy "boundary.__obelisk_eval_body_0" debug "generated native eval body" {internal}
-    simulation.func private @boundary.__obelisk_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 7 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 2 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 3 : i64, continuation = 2 : i32>]} {
+    simulation.code_unit.decl 7 in 0 function hierarchy "boundary.__talos_eval_body_0" debug "generated native eval body" {internal}
+    simulation.func private @boundary.__talos_eval_body_0(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}, %arg1: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {code_unit_id = 7 : i64, domain = 0 : i32, entry_kind = 8 : i32, home_region = 2 : i32, schedule.eval.borrowed_captures, schedule.eval.continuation = 2 : i32, schedule.eval.raw_captures, schedule.eval.source_owners = [#schedule.source_owner<codeUnit = 3 : i64, continuation = 2 : i32>]} {
       cf.br ^bb1
     ^bb1:  // pred: ^bb0
       %0 = simulation.ref.load %arg1 : !simulation.ref<!simulation.logic<1>> -> !simulation.logic<1>
@@ -100,13 +100,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // second store cross-sensitive. Logical provenance suppresses the former but
 // publishes both cross-owner activations even though one physical Tier-1 body
 // executes the two source processes.
-// CHECK-LABEL: llvm.func @fused.__obelisk_eval_body_0(
-// CHECK-COUNT-2: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// CHECK-LABEL: llvm.func @fused.__talos_eval_body_0(
+// CHECK-COUNT-2: llvm.mlir.addressof @__talos_aot_model_ingress_v1
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute(
-// CHECK-LABEL: llvm.func @__obelisk_direct_fragment_2_2.__obelisk_execute(
-// CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1
-// CHECK: llvm.call @__obelisk_direct_fragment_1_1.__obelisk_execute
+// CHECK-LABEL: llvm.func @__talos_direct_fragment_1_1.__talos_execute(
+// CHECK-LABEL: llvm.func @__talos_direct_fragment_2_2.__talos_execute(
+// CHECK-LABEL: llvm.func @__talos_aot_schedule_run_v1
+// CHECK: llvm.call @__talos_direct_fragment_1_1.__talos_execute
 // The consumed owner bits travel as a pending mask inside the run body and
 // reach the ready word before the next observation point.
 // CHECK: %[[DIRECT_OWNER:.*]] = llvm.mlir.constant(3 : i64)
@@ -114,7 +114,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NEXT: %[[DIRECT_REMAINING:.*]] = llvm.and {{.*}}, %[[DIRECT_INVERSE]]
 // CHECK-NEXT: %[[DIRECT_NEXT:.*]] = llvm.or %[[DIRECT_REMAINING]], %{{.*}}
 // CHECK-NEXT: llvm.store %[[DIRECT_NEXT]],
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1
 // CHECK: %[[PENDING:.*]] = llvm.and %[[READY:.*]], %[[COORD_MASK:.*]]
 // CHECK: llvm.icmp "ne" %[[PENDING]], %[[ZERO:.*]]
 // CHECK: %[[MEMBER_INVERSE:.*]] = llvm.mlir.constant(-3 : i64)
@@ -122,6 +122,6 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: %[[NORMALIZED:.*]] = llvm.select {{.*}}, %[[WITHOUT_MEMBER]], %[[READY]]
 // CHECK: "llvm.intr.cttz"(%[[NORMALIZED]])
 // Unresolved compound owners retain direct fragment boundaries and masks.
-// CHECK: llvm.call @__obelisk_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__obelisk_execute
+// CHECK: llvm.call @__talos_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__talos_execute
 // CHECK: llvm.mlir.constant(3 : i64)
-// CHECK: llvm.call @__obelisk_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__obelisk_execute
+// CHECK: llvm.call @__talos_direct_fragment_{{[0-9]+}}_{{[0-9]+}}.__talos_execute

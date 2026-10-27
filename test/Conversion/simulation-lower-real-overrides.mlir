@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // Procedural assign/deassign applies to variables of integral or real type.
 // Keep the source-to-simulation boundary honest for the real-valued case.
@@ -30,28 +30,28 @@ module {
           code_unit_id = 9930001 : i64,
           simulation.void_function
         } {
-      obelisk.sv.statement.procedural_assign attributes {
+      talos.sv.statement.procedural_assign attributes {
           is_force = false, node_id = 1 : i64} {
-        obelisk.sv.expression.assignment attributes {
+        talos.sv.expression.assignment attributes {
             assignment_kind = 0 : i32, node_id = 2 : i64,
-            semantic_type = !obelisk.real} {
-          obelisk.sv.expression.named_value attributes {
+            semantic_type = !talos.real} {
+          talos.sv.expression.named_value attributes {
               node_id = 3 : i64, referenced_path = "top.real_state",
               referenced_symbol = @real_state,
-              semantic_type = !obelisk.real} {
+              semantic_type = !talos.real} {
           }
-          obelisk.sv.expression.real_literal attributes {
+          talos.sv.expression.real_literal attributes {
               constant_value = "1.25", node_id = 4 : i64,
-              semantic_type = !obelisk.real} {
+              semantic_type = !talos.real} {
           }
         }
       }
-      obelisk.sv.statement.procedural_deassign attributes {
+      talos.sv.statement.procedural_deassign attributes {
           is_release = false, node_id = 5 : i64} {
-        obelisk.sv.expression.named_value attributes {
+        talos.sv.expression.named_value attributes {
             node_id = 6 : i64, referenced_path = "top.real_state",
             referenced_symbol = @real_state,
-            semantic_type = !obelisk.real} {
+            semantic_type = !talos.real} {
         }
       }
       simulation.return

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-compute-fusion))' | FileCheck %s
 
 // IEEE 1800-2017 13.2: a task may contain time-controlling statements, and a
 // function cannot enable a task. An `always` activation that calls a task
@@ -60,7 +60,7 @@ module attributes {
 
 // The activation keeps its task call, and no zero-time eval body is cloned
 // out of it.
-// CHECK-NOT: __obelisk_eval_body
+// CHECK-NOT: __talos_eval_body
 // CHECK: simulation.func private @driver
 // CHECK: simulation.task.call @step
-// CHECK-NOT: __obelisk_eval_body
+// CHECK-NOT: __talos_eval_body

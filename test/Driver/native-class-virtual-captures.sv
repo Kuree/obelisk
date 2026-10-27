@@ -1,6 +1,6 @@
-// RUN: obelisk --std=1800-2023 -O0 %s -o %t.native
+// RUN: talos --std=1800-2023 -O0 %s -o %t.native
 // RUN: %t.native > %t.native.out
-// RUN: obelisk --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: diff -u %t.native.out %t.bytecode.out
 // RUN: FileCheck %s < %t.native.out

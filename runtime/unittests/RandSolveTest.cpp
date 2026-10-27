@@ -1,5 +1,5 @@
 #include "../lib/RuntimeInternal.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "gtest/gtest.h"
 
@@ -37,7 +37,7 @@ struct EncodedInstruction {
 struct EncodedSolveBeforeEdge {
   uint64_t beforeMask;
   uint64_t afterMask;
-  uint32_t constraintBlock = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
+  uint32_t constraintBlock = TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
   bool functionPriority = false;
 };
 
@@ -77,30 +77,30 @@ program(uint32_t width, uint32_t captures,
         std::initializer_list<EncodedDomainPattern> domainPatterns = {},
         std::initializer_list<EncodedPriorityInput> priorityInputs = {}) {
   std::vector<uint8_t> bytes;
-  append32(bytes, OBELISK_RT_RANDOM_PROGRAM_MAGIC);
-  append16(bytes, OBELISK_RT_RANDOM_PROGRAM_VERSION);
-  append16(bytes, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE);
+  append32(bytes, TALOS_RT_RANDOM_PROGRAM_MAGIC);
+  append16(bytes, TALOS_RT_RANDOM_PROGRAM_VERSION);
+  append16(bytes, TALOS_RT_RANDOM_PROGRAM_HEADER_SIZE);
   append32(bytes, width);
   append32(bytes, static_cast<uint32_t>(instructions.size()));
   append32(bytes, captures);
-  uint32_t flags = hasSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0;
+  uint32_t flags = hasSoft ? TALOS_RT_RANDOM_PROGRAM_HAS_SOFT : 0;
   if (solveEdges.size() != 0)
-    flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE;
+    flags |= TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE;
   if (distRanges.size() != 0)
-    flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DIST;
+    flags |= TALOS_RT_RANDOM_PROGRAM_HAS_DIST;
   if (domainPatterns.size() != 0)
-    flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS;
+    flags |= TALOS_RT_RANDOM_PROGRAM_HAS_DOMAINS;
   for (const auto &edge : solveEdges)
     if (edge.functionPriority)
-      flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY |
-               OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
+      flags |= TALOS_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY |
+               TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   if (priorityInputs.size() != 0)
-    flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY |
-             OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
-             OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
+    flags |= TALOS_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY |
+             TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
+             TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   for (const auto &range : distRanges)
-    if (range.flags & OBELISK_RT_RANDOM_DIST_RAW_WEIGHT)
-      flags |= OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED;
+    if (range.flags & TALOS_RT_RANDOM_DIST_RAW_WEIGHT)
+      flags |= TALOS_RT_RANDOM_PROGRAM_EXACT_WEIGHTED;
   append32(bytes, flags);
   for (const EncodedInstruction &instruction : instructions) {
     bytes.push_back(instruction.opcode);
@@ -110,18 +110,18 @@ program(uint32_t width, uint32_t captures,
     append32(bytes, instruction.operand);
     append64(bytes, instruction.immediate);
   }
-  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) {
+  if (flags & TALOS_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) {
     append32(bytes, static_cast<uint32_t>(solveEdges.size()));
     for (const EncodedSolveBeforeEdge &edge : solveEdges) {
       append64(bytes, edge.beforeMask);
       append64(bytes, edge.afterMask);
       append32(bytes, edge.constraintBlock);
       append32(bytes, edge.functionPriority
-                          ? OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY
+                          ? TALOS_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY
                           : 0u);
     }
   }
-  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) {
+  if (flags & TALOS_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) {
     append32(bytes, static_cast<uint32_t>(priorityInputs.size()));
     for (const auto &input : priorityInputs) {
       append32(bytes, input.instruction);
@@ -172,30 +172,30 @@ program(uint32_t width, uint32_t captures,
 class RandSolveTest : public testing::Test {
 protected:
   void SetUp() override {
-    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_context_create(&context), TALOS_RT_OK);
   }
 
   void TearDown() override {
     if (context)
-      obelisk_rt_v1_context_destroy(context);
+      talos_rt_v1_context_destroy(context);
   }
 
-  obelisk_rt_context *context = nullptr;
+  talos_rt_context *context = nullptr;
 };
 
 TEST_F(RandSolveTest, SolvesHardConstraintWithDynamicCapture) {
   std::vector<uint8_t> bytes =
       program(4, 1,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 4, 0, 0},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1}});
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 4, 0, 0},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1}});
   uint64_t capture = 7;
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
                                        16, &capture, 1, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 7u);
 }
@@ -206,26 +206,26 @@ TEST_F(RandSolveTest, ExecutesConcatenationAndReplicationEncoding) {
   // Exercise those exact residual-program shapes end to end.
   std::vector<uint8_t> bytes =
       program(10, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 2},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
-               {OBELISK_RT_RANDOM_CAST_V1, 4},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 2},
-               {OBELISK_RT_RANDOM_SHIFT_LEFT_V1, 4},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
-               {OBELISK_RT_RANDOM_BIT_OR_V1, 4},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 6},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 5},
-               {OBELISK_RT_RANDOM_MUL_V1, 4},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1}});
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 2},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
+               {TALOS_RT_RANDOM_CAST_V1, 4},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 2},
+               {TALOS_RT_RANDOM_SHIFT_LEFT_V1, 4},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
+               {TALOS_RT_RANDOM_BIT_OR_V1, 4},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4, 0, 6},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 5},
+               {TALOS_RT_RANDOM_MUL_V1, 4},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
                                        1024, nullptr, 0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_EQ(success, 1u);
   uint64_t x = assignment & 3;
   EXPECT_EQ((assignment >> 2) & 15, (x << 2) | 1);
@@ -235,19 +235,19 @@ TEST_F(RandSolveTest, ExecutesConcatenationAndReplicationEncoding) {
 TEST_F(RandSolveTest, TraversesSparseFiniteDomainInsteadOfUnderlyingBits) {
   std::vector<uint8_t> bytes = program(
       32, 0,
-      {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, UINT32_C(0xdeadbeef)},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, UINT32_C(0xdeadbeef)},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1}},
       false, {}, {},
       {{0, 0, 32, UINT32_MAX, 7},
        {0, 0, 32, UINT32_MAX, UINT32_C(0xdeadbeef)},
        {0, 0, 32, UINT32_MAX, UINT32_C(0xf00d)}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 7,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 7,
                                        3, nullptr, 0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, UINT32_C(0xdeadbeef));
 }
@@ -257,17 +257,17 @@ TEST_F(RandSolveTest, MaterializesTaggedUnionPatternDomain) {
   // a two-bit payload, arm one a four-bit payload, and arm two is void.
   std::vector<uint8_t> bytes =
       program(6, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1}},
               false, {}, {},
               {{0, 0, 6, UINT64_C(0x3c), 0},
                {0, 0, 6, UINT64_C(0x30), UINT64_C(0x10)},
                {0, 0, 6, UINT64_C(0x3f), UINT64_C(0x20)}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 63,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 63,
                                        1, nullptr, 0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   bool arm0 = (assignment & UINT64_C(0x3c)) == 0;
   bool arm1 = (assignment & UINT64_C(0x30)) == UINT64_C(0x10);
@@ -281,17 +281,17 @@ TEST_F(RandSolveTest, TraversesCartesianProductOfFiniteSubdomains) {
   // including the final assignment in that domain.
   std::vector<uint8_t> bytes = program(
       5, 0,
-      {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 5},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 5, 0, 0, 30},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 5},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 5, 0, 0, 30},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1}},
       false, {}, {},
       {{0, 0, 2, 3, 1}, {0, 0, 2, 3, 2}, {1, 2, 2, 3, 0}, {1, 2, 2, 3, 3}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
                                        8, nullptr, 0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 30u);
 }
@@ -302,27 +302,27 @@ TEST_F(RandSolveTest, ReportsSolveOrderCycleOnlyAmongActiveBlocks) {
   // legal; with both enabled randomize() fails and records an error.
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1}},
               false, {{0b01, 0b10, 0}, {0b10, 0b01, 1}});
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 7, 11);
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 7, 11);
   uint64_t assignment = 0;
   uint64_t nextState = 0;
   uint32_t success = 0;
-  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 0, 3, 0b10, 4, state.state,
                 state.increment, nullptr, 0, &assignment, &success, &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
-  EXPECT_EQ(context->schedulerFinishStatus, OBELISK_RT_OK);
+  EXPECT_EQ(context->schedulerFinishStatus, TALOS_RT_OK);
 
-  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 0, 3, 0, 4, state.state,
                 state.increment, nullptr, 0, &assignment, &success, &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 0u);
-  EXPECT_EQ(context->schedulerFinishStatus, OBELISK_RT_FATAL);
+  EXPECT_EQ(context->schedulerFinishStatus, TALOS_RT_FATAL);
 }
 
 TEST_F(RandSolveTest, SamplesDistAcrossSparseFiniteDomain) {
@@ -331,25 +331,25 @@ TEST_F(RandSolveTest, SamplesDistAcrossSparseFiniteDomain) {
   // gives each value the same mass as the singleton value 9 with weight three.
   std::vector<uint8_t> bytes =
       program(4, 2,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1}},
               false, {},
-              {{0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 4, 0, 5, 1, 0},
-               {0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 4, 9, 1, 2, 1}},
+              {{0, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 4, 0, 5, 1, 0},
+               {0, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 4, 9, 1, 2, 1}},
               {{0, 0, 4, 15, 1}, {0, 0, 4, 15, 4}, {0, 0, 4, 15, 9}});
   uint64_t captures[] = {6, 3};
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 313, 41);
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 313, 41);
   unsigned counts[3] = {};
   for (unsigned iteration = 0; iteration != 6000; ++iteration) {
     uint64_t assignment = 0;
     uint64_t nextState = 0;
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 15, 0, 3, state.state,
                   state.increment, captures, 2, &assignment, &success,
                   &nextState),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     if (assignment == 1)
       ++counts[0];
@@ -370,34 +370,34 @@ TEST_F(RandSolveTest, SamplesDistAcrossSparseFiniteDomain) {
 TEST_F(RandSolveTest, AllowsInvalidFixedDomainValueButRejectsPartialMutation) {
   std::vector<uint8_t> bytes =
       program(4, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1}},
               false, {}, {}, {{0, 0, 4, 15, 1}, {0, 0, 4, 15, 9}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 4, 0, 0, 2, nullptr,
                                              0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 4u);
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 1, 3, 0, 2, nullptr,
                                              0, &assignment, &success),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
 }
 
 TEST_F(RandSolveTest, RejectsMalformedFiniteDomainMetadata) {
   auto rejects = [&](std::vector<uint8_t> bytes) {
     uint64_t assignment = 0;
     uint32_t success = 0;
-    EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+    EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
                                          4, nullptr, 0, &assignment, &success),
-              OBELISK_RT_INVALID_ARGUMENT);
+              TALOS_RT_INVALID_ARGUMENT);
   };
   auto truth = std::initializer_list<EncodedInstruction>{
-      {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-      {OBELISK_RT_RANDOM_END_HARD_V1, 1}};
+      {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+      {TALOS_RT_RANDOM_END_HARD_V1, 1}};
 
   rejects(
       program(4, 0, truth, false, {}, {}, {{0, 0, 2, 3, 1}, {1, 1, 2, 3, 2}}));
@@ -417,17 +417,17 @@ TEST_F(RandSolveTest, PreservesFixedWidthSignedArithmetic) {
   // truncated before the signed comparison rather than widened as host C++.
   std::vector<uint8_t> bytes = program(
       4, 0,
-      {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 1},
-       {OBELISK_RT_RANDOM_ADD_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0},
-       {OBELISK_RT_RANDOM_LT_V1, 1, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1}});
+      {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 1},
+       {TALOS_RT_RANDOM_ADD_V1, 4, TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0},
+       {TALOS_RT_RANDOM_LT_V1, 1, TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
                                        16, nullptr, 0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 7u);
 }
@@ -437,39 +437,39 @@ TEST_F(RandSolveTest, ResizesSignedOperandsBeforeEvaluation) {
   // inputs before evaluating, matching the compiler's SMT and MLIR paths.
   std::vector<uint8_t> bytes = program(
       1, 0,
-      {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0},
-       {OBELISK_RT_RANDOM_SELECT_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 15},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
-       {OBELISK_RT_RANDOM_POS_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 15},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
-       {OBELISK_RT_RANDOM_NEG_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 1},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
-       {OBELISK_RT_RANDOM_BIT_NOT_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 3},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
-       {OBELISK_RT_RANDOM_MUL_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 2},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1}});
+      {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0},
+       {TALOS_RT_RANDOM_SELECT_V1, 4, TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 15},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+       {TALOS_RT_RANDOM_POS_V1, 4, TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 15},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+       {TALOS_RT_RANDOM_NEG_V1, 4, TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 1},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+       {TALOS_RT_RANDOM_BIT_NOT_V1, 4, TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 3},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
+       {TALOS_RT_RANDOM_MUL_V1, 4, TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 2},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
                                        2, nullptr, 0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 1u);
 }
@@ -477,73 +477,73 @@ TEST_F(RandSolveTest, ResizesSignedOperandsBeforeEvaluation) {
 TEST_F(RandSolveTest, EvaluatesDivisionShiftsAndPowerAtFixedWidth) {
   std::vector<uint8_t> bytes = program(
       1, 0,
-      {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 13},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 3},
-       {OBELISK_RT_RANDOM_DIV_V1, 4},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 4},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 13},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 3},
-       {OBELISK_RT_RANDOM_MOD_V1, 4},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 1},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 9},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 2},
-       {OBELISK_RT_RANDOM_DIV_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 13},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 9},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 2},
-       {OBELISK_RT_RANDOM_MOD_V1, 4, OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 15},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 3},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 1},
-       {OBELISK_RT_RANDOM_SHIFT_LEFT_V1, 4},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 6},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 12},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 2},
-       {OBELISK_RT_RANDOM_SHIFT_RIGHT_V1, 4},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 3},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 8},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 2},
-       {OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1, 4,
-        OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 14},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 8},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 7},
-       {OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1, 4,
-        OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 15},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 3},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 3},
-       {OBELISK_RT_RANDOM_POWER_V1, 4},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 11},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 0},
-       {OBELISK_RT_RANDOM_POWER_V1, 4},
-       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 1},
-       {OBELISK_RT_RANDOM_EQ_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1}});
+      {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 13},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 3},
+       {TALOS_RT_RANDOM_DIV_V1, 4},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 4},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 13},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 3},
+       {TALOS_RT_RANDOM_MOD_V1, 4},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 1},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 9},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 2},
+       {TALOS_RT_RANDOM_DIV_V1, 4, TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 13},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 9},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 2},
+       {TALOS_RT_RANDOM_MOD_V1, 4, TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 15},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 3},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 1},
+       {TALOS_RT_RANDOM_SHIFT_LEFT_V1, 4},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 6},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 12},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 2},
+       {TALOS_RT_RANDOM_SHIFT_RIGHT_V1, 4},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 3},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 8},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 2},
+       {TALOS_RT_RANDOM_SHIFT_RIGHT_ARITH_V1, 4,
+        TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 14},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 8},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 7},
+       {TALOS_RT_RANDOM_SHIFT_RIGHT_ARITH_V1, 4,
+        TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 15},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 3},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 3},
+       {TALOS_RT_RANDOM_POWER_V1, 4},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 11},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 0},
+       {TALOS_RT_RANDOM_POWER_V1, 4},
+       {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 1},
+       {TALOS_RT_RANDOM_EQ_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
                                        2, nullptr, 0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 0u);
 }
@@ -551,21 +551,21 @@ TEST_F(RandSolveTest, EvaluatesDivisionShiftsAndPowerAtFixedWidth) {
 TEST_F(RandSolveTest, PrefersSoftSolution) {
   std::vector<uint8_t> bytes =
       program(4, 2,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 4, 0, 0},
-               {OBELISK_RT_RANDOM_LE_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 4, 0, 1},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1}},
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 4, 0, 0},
+               {TALOS_RT_RANDOM_LE_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 4, 0, 1},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1}},
               true);
   uint64_t captures[] = {3, 2};
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 3,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 3,
                                        16, captures, 2, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 2u);
 }
@@ -573,29 +573,29 @@ TEST_F(RandSolveTest, PrefersSoftSolution) {
 TEST_F(RandSolveTest, DropsUnsatisfiableSoftOnlyAfterCompleteSearch) {
   std::vector<uint8_t> bytes =
       program(4, 2,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 4, 0, 0},
-               {OBELISK_RT_RANDOM_LE_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 4, 0, 1},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1}},
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 4, 0, 0},
+               {TALOS_RT_RANDOM_LE_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 4, 0, 1},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1}},
               true);
   uint64_t captures[] = {3, 7};
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 4,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 4,
                                        16, captures, 2, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 0u);
 
   assignment = 99;
   success = 1;
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 4,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 4,
                                        4, captures, 2, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 0u);
   EXPECT_EQ(assignment, 0u);
 }
@@ -603,16 +603,16 @@ TEST_F(RandSolveTest, DropsUnsatisfiableSoftOnlyAfterCompleteSearch) {
 TEST_F(RandSolveTest, MaskedSolvePreservesFixedAssignmentBits) {
   std::vector<uint8_t> bytes =
       program(4, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 15},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1}});
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 15},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_masked(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_masked(context, bytes.data(),
                                               bytes.size(), 10, 5, 4, nullptr,
                                               0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 15u);
   EXPECT_EQ(assignment & ~uint64_t{5}, uint64_t{10});
@@ -621,19 +621,19 @@ TEST_F(RandSolveTest, MaskedSolvePreservesFixedAssignmentBits) {
 TEST_F(RandSolveTest, MaskedSoftSearchUsesMutableDomainSize) {
   std::vector<uint8_t> bytes =
       program(4, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1}},
               true);
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_masked(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_masked(context, bytes.data(),
                                               bytes.size(), 10, 1, 2, nullptr,
                                               0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 10u);
 }
@@ -641,45 +641,45 @@ TEST_F(RandSolveTest, MaskedSoftSearchUsesMutableDomainSize) {
 TEST_F(RandSolveTest, ConstraintModesDisableOnlySelectedBlocks) {
   std::vector<uint8_t> bytes =
       program(4, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 3},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 7},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 5},
-               {OBELISK_RT_RANDOM_NE_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 3},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 7},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 5},
+               {TALOS_RT_RANDOM_NE_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 5, UINT64_MAX, 0, 16,
                                              nullptr, 0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 0u);
 
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 5, UINT64_MAX, 1, 16,
                                              nullptr, 0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 7u);
 
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 5, UINT64_MAX, 2, 16,
                                              nullptr, 0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 3u);
 
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 5, UINT64_MAX, 3, 16,
                                              nullptr, 0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 6u);
 }
@@ -687,24 +687,24 @@ TEST_F(RandSolveTest, ConstraintModesDisableOnlySelectedBlocks) {
 TEST_F(RandSolveTest, SamplesResidualCandidatesByDistWeight) {
   std::vector<uint8_t> bytes = program(
       1, 2,
-      {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1}},
       false, {},
-      {{0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 0, 1, 1, 0},
-       {0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 1, 1, 1, 1}});
+      {{0, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 0, 1, 1, 0},
+       {0, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 1, 1, 1, 1}});
   uint64_t captures[] = {1, 3};
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 123, 17);
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 123, 17);
   unsigned ones = 0;
   for (unsigned iteration = 0; iteration != 4096; ++iteration) {
     uint64_t assignment = 0;
     uint64_t nextState = 0;
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 1, 0, 2, state.state,
                   state.increment, captures, 2, &assignment, &success,
                   &nextState),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     ones += assignment == 1;
     state.state = nextState;
@@ -719,27 +719,27 @@ TEST_F(RandSolveTest, DistTargetWeightIgnoresCompanionSolutionMultiplicity) {
   // equal x probability rather than weighting each complete assignment.
   std::vector<uint8_t> bytes = program(
       2, 1,
-      {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0, 0},
-       {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1, 0},
-       {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-       {OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0, 0},
+       {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+       {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1, 0},
+       {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+       {TALOS_RT_RANDOM_LOGICAL_OR_V1, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1}},
       false, {},
-      {{0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 0, 2, 1, 0}});
+      {{0, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 0, 2, 1, 0}});
   uint64_t capture = 1;
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 123, 17);
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 123, 17);
   unsigned ones = 0;
   for (unsigned iteration = 0; iteration != 4096; ++iteration) {
     uint64_t assignment = 0;
     uint64_t nextState = 0;
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 3, 0, 4, state.state,
                   state.increment, &capture, 1, &assignment, &success,
                   &nextState),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     ones += assignment & 1;
     state.state = nextState;
@@ -751,24 +751,24 @@ TEST_F(RandSolveTest, DistTargetWeightIgnoresCompanionSolutionMultiplicity) {
 TEST_F(RandSolveTest, OverlappingDistRangesAccumulatePerValueWeight) {
   std::vector<uint8_t> bytes = program(
       2, 1,
-      {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1}},
       false, {},
-      {{0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 2, 0, 3, 1, 0},
-       {0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 2, 1, 3, 1, 0}});
+      {{0, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 2, 0, 3, 1, 0},
+       {0, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 2, 1, 3, 1, 0}});
   uint64_t capture = 1;
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 71, 29);
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 71, 29);
   unsigned middle = 0;
   for (unsigned iteration = 0; iteration != 4096; ++iteration) {
     uint64_t assignment = 0;
     uint64_t nextState = 0;
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 3, 0, 4, state.state,
                   state.increment, &capture, 1, &assignment, &success,
                   &nextState),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     middle += assignment == 1 || assignment == 2;
     state.state = nextState;
@@ -780,26 +780,26 @@ TEST_F(RandSolveTest, OverlappingDistRangesAccumulatePerValueWeight) {
 TEST_F(RandSolveTest, SignedDistRangesUseBiasedCoordinates) {
   std::vector<uint8_t> bytes =
       program(2, 2,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1}},
               false, {},
-              {{0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 2, 0, 2, 1, 0,
-                OBELISK_RT_RANDOM_DIST_TARGET_SIGNED},
-               {0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 2, 2, 2, 1, 1,
-                OBELISK_RT_RANDOM_DIST_TARGET_SIGNED}});
+              {{0, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 2, 0, 2, 1, 0,
+                TALOS_RT_RANDOM_DIST_TARGET_SIGNED},
+               {0, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 2, 2, 2, 1, 1,
+                TALOS_RT_RANDOM_DIST_TARGET_SIGNED}});
   uint64_t captures[] = {3, 1};
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 91, 7);
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 91, 7);
   unsigned negative = 0;
   for (unsigned iteration = 0; iteration != 4096; ++iteration) {
     uint64_t assignment = 0;
     uint64_t nextState = 0;
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 3, 0, 4, state.state,
                   state.increment, captures, 2, &assignment, &success,
                   &nextState),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     negative += (assignment & 2) != 0;
     state.state = nextState;
@@ -811,16 +811,16 @@ TEST_F(RandSolveTest, SignedDistRangesUseBiasedCoordinates) {
 TEST_F(RandSolveTest, DisabledConstraintDisablesItsDistGroup) {
   std::vector<uint8_t> bytes =
       program(1, 1,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1}},
               false, {}, {{0, 0, 0, 1, 1, 1, 1, 0}});
   uint64_t capture = 1;
   uint64_t assignment = 1;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 0, 1, 1, 2, &capture,
                                              1, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 0u);
 }
@@ -828,22 +828,22 @@ TEST_F(RandSolveTest, DisabledConstraintDisablesItsDistGroup) {
 TEST_F(RandSolveTest, RejectsNegativeDynamicDistWeight) {
   std::vector<uint8_t> bytes =
       program(1, 1,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1}},
               false, {},
-              {{0, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 0, 2, 1, 0,
-                OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED}});
+              {{0, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 0, 2, 1, 0,
+                TALOS_RT_RANDOM_DIST_WEIGHT_SIGNED}});
   uint64_t capture = UINT64_MAX;
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 9, 5);
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 9, 5);
   uint64_t assignment = 0;
   uint64_t nextState = 0;
   uint32_t success = 1;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 0, 1, 0, 2, state.state,
                 state.increment, &capture, 1, &assignment, &success,
                 &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 0u);
   EXPECT_EQ(nextState, state.state);
 }
@@ -851,50 +851,50 @@ TEST_F(RandSolveTest, RejectsNegativeDynamicDistWeight) {
 TEST_F(RandSolveTest, RejectsMalformedDistGroupInventory) {
   std::vector<uint8_t> bytes = program(
       1, 1,
-      {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+      {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1}},
       false, {},
-      {{1, OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 0, 1, 1, 0}});
+      {{1, TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0, 1, 0, 1, 1, 0}});
   uint64_t capture = 1;
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 9, 5);
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 9, 5);
   uint64_t assignment = 0;
   uint64_t nextState = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 0, 1, 0, 2, state.state,
                 state.increment, &capture, 1, &assignment, &success,
                 &nextState),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
 }
 
 TEST_F(RandSolveTest, DisabledSoftConstraintAcceptsFirstHardSolution) {
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
-               {OBELISK_RT_RANDOM_GE_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0, 0}},
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
+               {TALOS_RT_RANDOM_GE_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0, 0}},
               true);
   uint64_t assignment = 0;
   uint32_t success = 0;
 
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 1, 3, 0, 4, nullptr,
                                              0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 2u);
 
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 1, 3, 1, 4, nullptr,
                                              0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 1u);
 }
@@ -902,27 +902,27 @@ TEST_F(RandSolveTest, DisabledSoftConstraintAcceptsFirstHardSolution) {
 TEST_F(RandSolveTest, HonorsMultipleSoftConstraintPriorities) {
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 1}},
               true);
   uint64_t assignment = 0;
   uint32_t success = 0;
 
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 0, 3, 0, 4, nullptr,
                                              0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 2u);
 }
@@ -930,43 +930,43 @@ TEST_F(RandSolveTest, HonorsMultipleSoftConstraintPriorities) {
 TEST_F(RandSolveTest, GuardedSoftPredicatesAreVacuouslySatisfied) {
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
-               {OBELISK_RT_RANDOM_GE_V1, 1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
-               {OBELISK_RT_RANDOM_LE_V1, 1},
-               {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 1},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_SELECT_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 2}},
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
+               {TALOS_RT_RANDOM_GE_V1, 1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
+               {TALOS_RT_RANDOM_LE_V1, 1},
+               {TALOS_RT_RANDOM_LOGICAL_AND_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 1},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_SELECT_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 2}},
               true);
   uint64_t assignment = 0;
   uint32_t success = 0;
 
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 0, 3, 0, 4, nullptr,
                                              0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 2u);
 }
@@ -974,24 +974,24 @@ TEST_F(RandSolveTest, GuardedSoftPredicatesAreVacuouslySatisfied) {
 TEST_F(RandSolveTest, DisableSoftUsesLiveConstraintMask) {
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0, 63},
-               {OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0, 63},
+               {TALOS_RT_RANDOM_LOGICAL_OR_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0}},
               true);
   for (uint64_t disabled : {UINT64_C(0), UINT64_C(1) << 63}) {
     uint64_t assignment = 0;
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes(
                   context, bytes.data(), bytes.size(), 2, 3, disabled, 4,
                   nullptr, 0, &assignment, &success),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(success, 1u);
     EXPECT_EQ(assignment, disabled == 0 ? 2u : 1u);
   }
@@ -1007,25 +1007,25 @@ TEST_F(RandSolveTest, IntegralSystemFunctionsKeepUnsignedSourcePrecision) {
                     Case{UINT64_C(1) << 63, 1, 63}, Case{UINT64_MAX, 64, 64}}) {
     std::vector<uint8_t> bytes =
         program(64, 0,
-                {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 64,
-                  OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-                 {OBELISK_RT_RANDOM_COUNT_ONES_V1, 32},
-                 {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, test.ones},
-                 {OBELISK_RT_RANDOM_EQ_V1, 1},
-                 {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 64,
-                  OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-                 {OBELISK_RT_RANDOM_CLOG2_V1, 32},
-                 {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, test.logarithm},
-                 {OBELISK_RT_RANDOM_EQ_V1, 1},
-                 {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
-                 {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                  OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+                {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 64,
+                  TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+                 {TALOS_RT_RANDOM_COUNT_ONES_V1, 32},
+                 {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, test.ones},
+                 {TALOS_RT_RANDOM_EQ_V1, 1},
+                 {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 64,
+                  TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+                 {TALOS_RT_RANDOM_CLOG2_V1, 32},
+                 {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, test.logarithm},
+                 {TALOS_RT_RANDOM_EQ_V1, 1},
+                 {TALOS_RT_RANDOM_LOGICAL_AND_V1, 1},
+                 {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                  TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
     uint64_t assignment = 0;
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes(
                   context, bytes.data(), bytes.size(), test.value, 0, 0, 1,
                   nullptr, 0, &assignment, &success),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(success, 1u);
     EXPECT_EQ(assignment, test.value);
   }
@@ -1033,23 +1033,23 @@ TEST_F(RandSolveTest, IntegralSystemFunctionsKeepUnsignedSourcePrecision) {
 
 TEST_F(RandSolveTest, RejectsMalformedConstraintEnabledInstructions) {
   for (EncodedInstruction instruction :
-       {EncodedInstruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 2},
-        EncodedInstruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1,
-                           OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
-        EncodedInstruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0,
+       {EncodedInstruction{TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 2},
+        EncodedInstruction{TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1,
+                           TALOS_RT_RANDOM_INSTRUCTION_SIGNED},
+        EncodedInstruction{TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0,
                            64},
-        EncodedInstruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0,
+        EncodedInstruction{TALOS_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0,
                            0, 1}}) {
     std::vector<uint8_t> bytes =
         program(2, 0,
                 {instruction,
-                 {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                  OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+                 {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                  TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
     uint64_t assignment = 7;
     uint32_t success = 1;
-    EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+    EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
                                          4, nullptr, 0, &assignment, &success),
-              OBELISK_RT_INVALID_ARGUMENT);
+              TALOS_RT_INVALID_ARGUMENT);
     EXPECT_EQ(success, 0u);
   }
 }
@@ -1057,19 +1057,19 @@ TEST_F(RandSolveTest, RejectsMalformedConstraintEnabledInstructions) {
 TEST_F(RandSolveTest, RejectsNoncontiguousSoftPriorities) {
   std::vector<uint8_t> bytes =
       program(1, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 1}},
               true);
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 0, 1, 0, 2, nullptr,
                                              0, &assignment, &success),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
 }
 
 TEST_F(RandSolveTest, PreservesSolveBeforeConditionalDistribution) {
@@ -1077,31 +1077,31 @@ TEST_F(RandSolveTest, PreservesSolveBeforeConditionalDistribution) {
   // first selects x uniformly and then y uniformly from compatible values.
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-               {OBELISK_RT_RANDOM_LE_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+               {TALOS_RT_RANDOM_LE_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{1, 2}});
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 23, 11);
-  obelisk_rt_random_state_v1 expectedState = state;
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 23, 11);
+  talos_rt_random_state_v1 expectedState = state;
   uint64_t expectedX = 0;
-  ASSERT_EQ(obelisk_rt_v1_random_state_bounded(&expectedState, 2, &expectedX),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_random_state_bounded(&expectedState, 2, &expectedX),
+            TALOS_RT_OK);
   uint64_t expectedY = 1;
   if (expectedX == 0) {
-    ASSERT_EQ(obelisk_rt_v1_random_state_bounded(&expectedState, 2, &expectedY),
-              OBELISK_RT_OK);
+    ASSERT_EQ(talos_rt_v1_random_state_bounded(&expectedState, 2, &expectedY),
+              TALOS_RT_OK);
   }
 
   uint64_t assignment = 0;
   uint64_t nextState = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 1, 3, 0, 4, state.state,
                 state.increment, nullptr, 0, &assignment, &success, &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, expectedX | (expectedY << 1));
   EXPECT_EQ(nextState, expectedState.state);
@@ -1115,30 +1115,30 @@ TEST_F(RandSolveTest,
   // though the bias property itself is randomized to a different value.
   std::vector<uint8_t> bytes =
       program(6, 1,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 2},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 2, 0, 0},
-               {OBELISK_RT_RANDOM_ADD_V1, 2},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 4},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 3},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 2},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 2, 0, 0},
+               {TALOS_RT_RANDOM_ADD_V1, 2},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 4},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 3},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{UINT64_C(0x0c), UINT64_C(0x03)}});
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 41, 17);
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 41, 17);
   uint64_t oldBias = 1;
   uint64_t assignment = 0;
   uint64_t nextState = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 0, UINT64_C(0x3f), 0, 64,
                 state.state, state.increment, &oldBias, 1, &assignment,
                 &success, &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_EQ(success, 1u);
   EXPECT_EQ((assignment >> 4) & 3, 3u);
   EXPECT_EQ(assignment & 3, (((assignment >> 2) & 3) + oldBias) & 3);
@@ -1148,33 +1148,33 @@ TEST_F(RandSolveTest,
 TEST_F(RandSolveTest, StatelessEntryRejectsActiveSolveBefore) {
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{1, 2}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 0, 3, 0, 4, nullptr,
                                              0, &assignment, &success),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
 }
 
 TEST_F(RandSolveTest, ConstraintModeDisablesSolveBeforeEdge) {
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-               {OBELISK_RT_RANDOM_LE_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+               {TALOS_RT_RANDOM_LE_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{1, 2, 0}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 1, 3, 1, 4, nullptr,
                                              0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 2u);
 }
@@ -1184,31 +1184,31 @@ TEST_F(RandSolveTest, StatefulSolveBeforeUsesUnbiasedBoundedDraw) {
   // by x. The stateful entry must use the PCG rejection-based bounded draw.
   std::vector<uint8_t> bytes =
       program(4, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 3},
-               {OBELISK_RT_RANDOM_LT_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 2},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 3},
+               {TALOS_RT_RANDOM_LT_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 2},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 0},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{3, 12}});
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 17, 9);
-  obelisk_rt_random_state_v1 expectedState = state;
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 17, 9);
+  talos_rt_random_state_v1 expectedState = state;
   uint64_t expectedX = 0;
-  ASSERT_EQ(obelisk_rt_v1_random_state_bounded(&expectedState, 3, &expectedX),
-            OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_random_state_bounded(&expectedState, 3, &expectedX),
+            TALOS_RT_OK);
 
   uint64_t assignment = 0;
   uint64_t nextState = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 0, 15, 0, 16, state.state,
                 state.increment, nullptr, 0, &assignment, &success, &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment & 3, expectedX);
   EXPECT_EQ((assignment >> 2) & 3, expectedX);
@@ -1218,55 +1218,55 @@ TEST_F(RandSolveTest, StatefulSolveBeforeUsesUnbiasedBoundedDraw) {
 TEST_F(RandSolveTest, StatefulSolveBeforeRequiresOddIncrement) {
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{1, 2}});
   uint64_t assignment = 0;
   uint64_t nextState = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 0, 3, 0, 4, 17, 2, nullptr,
                 0, &assignment, &success, &nextState),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
   EXPECT_EQ(nextState, 17u);
 }
 
 TEST_F(RandSolveTest, HandlesManyDistinctSolveLayerValues) {
   std::vector<uint8_t> bytes =
       program(16, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{(uint64_t{1} << 15) - 1, uint64_t{1} << 15}});
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 29, 13);
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 29, 13);
   uint64_t assignment = 0;
   uint64_t nextState = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 0, UINT16_MAX, 0,
                 uint64_t{1} << 16, state.state, state.increment, nullptr, 0,
                 &assignment, &success, &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
 }
 
 TEST_F(RandSolveTest, SolveBeforeTreatsDisabledPropertyAsFixed) {
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-               {OBELISK_RT_RANDOM_LE_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+               {TALOS_RT_RANDOM_LE_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{1, 2}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 1, 2, 0, 2, nullptr,
                                              0, &assignment, &success),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 3u);
 }
@@ -1274,26 +1274,26 @@ TEST_F(RandSolveTest, SolveBeforeTreatsDisabledPropertyAsFixed) {
 TEST_F(RandSolveTest, SolveBeforeHonorsSoftPriority) {
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-               {OBELISK_RT_RANDOM_LE_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0}},
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+               {TALOS_RT_RANDOM_LE_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0}},
               true, {{1, 2}});
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 31, 15);
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 31, 15);
   uint64_t assignment = 0;
   uint64_t nextState = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 3, 3, 0, 4, state.state,
                 state.increment, nullptr, 0, &assignment, &success, &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment & 1, 0u);
 }
@@ -1301,36 +1301,36 @@ TEST_F(RandSolveTest, SolveBeforeHonorsSoftPriority) {
 TEST_F(RandSolveTest, SolveBeforeRefusesIncompleteDomainTraversal) {
   std::vector<uint8_t> bytes =
       program(21, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{1, 2}});
-  obelisk_rt_random_state_v1 state;
-  obelisk_rt_v1_random_state_seed(&state, 37, 17);
+  talos_rt_random_state_v1 state;
+  talos_rt_v1_random_state_seed(&state, 37, 17);
   uint64_t assignment = 0;
   uint64_t nextState = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  EXPECT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 0, (uint64_t{1} << 21) - 1,
                 0, 1, state.state, state.increment, nullptr, 0, &assignment,
                 &success, &nextState),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 0u);
 }
 
 TEST_F(RandSolveTest, RejectsCyclicSolveBeforeMetadata) {
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{1, 2}, {2, 1}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 0, 3, 0, 4, nullptr,
                                              0, &assignment, &success),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
 }
 
 TEST_F(RandSolveTest, RejectsOverlappingPathSolveBeforeCycle) {
@@ -1340,44 +1340,44 @@ TEST_F(RandSolveTest, RejectsOverlappingPathSolveBeforeCycle) {
   // nodes are not pairwise identical.
   std::vector<uint8_t> bytes = program(
       4, 0,
-      {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-       {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-        OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+      {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+       {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+        TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
       false, {{UINT64_C(0x3), UINT64_C(0x4)}, {UINT64_C(0x4), UINT64_C(0x2)}});
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(
                 context, bytes.data(), bytes.size(), 0, UINT64_C(0xf), 0, 16,
                 nullptr, 0, &assignment, &success),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
 }
 
 TEST_F(RandSolveTest, RejectsTruncatedSolveBeforeMetadata) {
   std::vector<uint8_t> bytes =
       program(2, 0,
-              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{1, 2}});
   bytes.pop_back();
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve_modes(context, bytes.data(),
+  EXPECT_EQ(talos_rt_v1_random_solve_modes(context, bytes.data(),
                                              bytes.size(), 0, 3, 0, 4, nullptr,
                                              0, &assignment, &success),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
 }
 
 TEST_F(RandSolveTest, RejectsMalformedPrograms) {
   std::vector<uint8_t> bytes = program(4, 0,
-                                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
-                                        {OBELISK_RT_RANDOM_END_HARD_V1, 1}});
+                                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+                                        {TALOS_RT_RANDOM_END_HARD_V1, 1}});
   bytes[0] ^= 0xff;
   uint64_t assignment = 0;
   uint32_t success = 0;
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
                                        16, nullptr, 0, &assignment, &success),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
 }
 
 TEST_F(RandSolveTest, PartialAndUnorderedFieldsJoinTheLatestLegalLayer) {
@@ -1390,11 +1390,11 @@ TEST_F(RandSolveTest, PartialAndUnorderedFieldsJoinTheLatestLegalLayer) {
     uint32_t success = 0;
     unsigned selected = 0;
     for (unsigned iteration = 0; iteration != 6000; ++iteration) {
-      ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+      ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                     context, bytes.data(), bytes.size(), 0,
                     (uint64_t{1} << width) - 1, 0, uint64_t{1} << width, state,
                     15, nullptr, 0, &assignment, &success, &state),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
       ASSERT_EQ(success, 1u);
       selected += (assignment & observedMask) != 0;
     }
@@ -1402,16 +1402,16 @@ TEST_F(RandSolveTest, PartialAndUnorderedFieldsJoinTheLatestLegalLayer) {
     // antecedent has probability 1/3. Solving it earlier gives probability 1/2.
     EXPECT_GT(selected, 1800u);
     EXPECT_LT(selected, 2200u);
-#ifdef OBELISK_TEST_COMPILED_SAMPLER
-    bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
+#ifdef TALOS_TEST_COMPILED_SAMPLER
+    bytes[20] |= TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
     appendTestSamplerPlan(bytes);
     selected = 0;
     for (unsigned iteration = 0; iteration != 768; ++iteration) {
-      ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+      ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                     context, bytes.data(), bytes.size(), 0,
                     (uint64_t{1} << width) - 1, 0, 1, state, 15, nullptr, 0,
                     &assignment, &success, &state),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
       ASSERT_EQ(success, 1u);
       selected += (assignment & observedMask) != 0;
     }
@@ -1421,50 +1421,50 @@ TEST_F(RandSolveTest, PartialAndUnorderedFieldsJoinTheLatestLegalLayer) {
   };
   // a before b, a before c, c before d: b is deferred to join d.
   check(4,
-        {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-         {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 3},
-         {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-         {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
-         {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+        {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+         {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 3},
+         {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+         {TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+         {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+          TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
         {{1, 2}, {1, 4}, {4, 8}}, 2);
   // a before b, with c unspecified: c joins b instead of following it.
   check(3,
-        {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-         {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 2},
-         {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-         {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
-         {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+        {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+         {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 2},
+         {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+         {TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+         {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+          TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
         {{1, 2}}, 2);
 }
 
-#ifdef OBELISK_TEST_COMPILED_SAMPLER
+#ifdef TALOS_TEST_COMPILED_SAMPLER
 TEST_F(RandSolveTest, FunctionPriorityPreservesSimplifiedSourceReferences) {
   auto bytes = program(2, 0,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_AND_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
                        false, {{2, 1, 0, true}}, {}, {}, {{3, 3, 2}, {10, 3}});
   unsigned accepted = 0;
   for (unsigned seed = 0; seed != 256; ++seed) {
-    obelisk_rt_random_state_v1 state;
-    obelisk_rt_v1_random_state_seed(&state, seed, 17);
+    talos_rt_random_state_v1 state;
+    talos_rt_v1_random_state_seed(&state, seed, 17);
     uint64_t original = state.state, assignment = 7;
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 3, 0, 1, state.state,
                   state.increment, nullptr, 0, &assignment, &success,
                   &state.state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(assignment, 0u);
     if (success)
       ++accepted;
@@ -1480,25 +1480,25 @@ TEST_F(RandSolveTest, FunctionPriorityPreservesSimplifiedSourceReferences) {
 TEST_F(RandSolveTest,
        FunctionReturnOnlyConstraintsHaveAnIndependentArgumentStage) {
   auto bytes = program(2, 0,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
                        false, {}, {}, {}, {{2, 2, 2}, {6, 3}});
   unsigned accepted = 0;
   for (unsigned seed = 0; seed != 256; ++seed) {
-    obelisk_rt_random_state_v1 state;
-    obelisk_rt_v1_random_state_seed(&state, seed, 17);
+    talos_rt_random_state_v1 state;
+    talos_rt_v1_random_state_seed(&state, seed, 17);
     uint64_t original = state.state, assignment = 7;
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 3, 0, 1, state.state,
                   state.increment, nullptr, 0, &assignment, &success,
                   &state.state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(assignment, 0u);
     if (success)
       ++accepted;
@@ -1513,10 +1513,10 @@ TEST_F(RandSolveTest,
   // an ordinary uniform joint distribution, including x=y=1.
   unsigned ones = 0;
   for (unsigned iteration = 0; iteration != 64; ++iteration) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 3, 1, 1, state, 15,
                   nullptr, 0, &assignment, &success, &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     EXPECT_TRUE(assignment == 0 || assignment == 3);
     ones += assignment == 3;
@@ -1525,26 +1525,26 @@ TEST_F(RandSolveTest,
   EXPECT_LT(ones, 48u);
   // A frozen argument is already state. Its failed return check draws no RNG.
   uint64_t original = state;
-  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 2, 1, 0, 1, state, 15,
                 nullptr, 0, &assignment, &success, &state),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 0u);
   EXPECT_EQ(state, original);
 }
 
 TEST_F(RandSolveTest, FunctionPriorityRejectsMalformedSourceRecords) {
   auto bytes = program(2, 0,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
                        false, {}, {}, {}, {{2, 2, 2}, {6, 3}});
-  obelisk::random::SamplerPlanView plan;
-  ASSERT_TRUE(obelisk::random::readSamplerPlan(bytes.data(), bytes.size(),
+  talos::random::SamplerPlanView plan;
+  ASSERT_TRUE(talos::random::readSamplerPlan(bytes.data(), bytes.size(),
                                                nullptr, plan));
   size_t first = plan.coreSize - 48;
   auto reject = [&](size_t offset, uint8_t value) {
@@ -1552,10 +1552,10 @@ TEST_F(RandSolveTest, FunctionPriorityRejectsMalformedSourceRecords) {
     malformed[offset] = value;
     uint64_t assignment = 0, state = 71;
     uint32_t success = 0;
-    EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    EXPECT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, malformed.data(), malformed.size(), 0, 3, 0, 1,
                   state, 15, nullptr, 0, &assignment, &success, &state),
-              OBELISK_RT_INVALID_ARGUMENT);
+              TALOS_RT_INVALID_ARGUMENT);
     EXPECT_EQ(state, 71u);
   };
   reject(first, 7);      // Index outside the instruction stream.
@@ -1570,25 +1570,25 @@ TEST_F(RandSolveTest, FunctionPriorityRejectsMalformedSourceRecords) {
 
 TEST_F(RandSolveTest, FunctionPriorityCanFailAfterAnIndependentHigherSolve) {
   auto bytes = program(2, 0,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
                        false, {{2, 1, 0, true}});
   unsigned accepted = 0;
   for (unsigned seed = 0; seed != 256; ++seed) {
-    obelisk_rt_random_state_v1 state;
-    obelisk_rt_v1_random_state_seed(&state, seed, 17);
+    talos_rt_random_state_v1 state;
+    talos_rt_v1_random_state_seed(&state, seed, 17);
     uint64_t original = state.state, assignment = UINT64_MAX;
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 3, 0, 1, state.state,
                   state.increment, nullptr, 0, &assignment, &success,
                   &state.state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     EXPECT_EQ(assignment, 0u);
     if (success)
       ++accepted;
@@ -1601,10 +1601,10 @@ TEST_F(RandSolveTest, FunctionPriorityCanFailAfterAnIndependentHigherSolve) {
   EXPECT_LT(accepted, 160u);
   uint64_t assignment = 0, state = 71;
   uint32_t success = 0;
-  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 0, 3, 1, 1, state, 15,
                 nullptr, 0, &assignment, &success, &state),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment & 1, 0u);
 }
@@ -1612,61 +1612,61 @@ TEST_F(RandSolveTest, FunctionPriorityCanFailAfterAnIndependentHigherSolve) {
 TEST_F(RandSolveTest,
        FunctionStagesResolveSoftPreferencesBeforeLowerConstraints) {
   auto bytes = program(2, 0,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-                        {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0, 2, 0}},
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 1},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0, 2, 0}},
                        true, {{2, 1, 0, true}});
   uint64_t assignment = 7, state = 71;
   uint32_t success = 1;
   auto solve = [&](uint64_t disabled) {
-    return obelisk_rt_v1_random_solve_modes_state(
+    return talos_rt_v1_random_solve_modes_state(
         context, bytes.data(), bytes.size(), 0, 3, disabled, 1, state, 15,
         nullptr, 0, &assignment, &success, &state);
   };
-  ASSERT_EQ(solve(0), OBELISK_RT_OK);
+  ASSERT_EQ(solve(0), TALOS_RT_OK);
   // The higher preference selects y=1, so later hard constraints fail. It is
   // not discarded merely because the lower relation would prefer y=0.
   EXPECT_EQ(success, 0u);
   EXPECT_EQ(assignment, 0u);
   EXPECT_EQ(state, 71u);
-  ASSERT_EQ(solve(1), OBELISK_RT_OK);
+  ASSERT_EQ(solve(1), TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 2u);
-  ASSERT_EQ(solve(2), OBELISK_RT_OK);
+  ASSERT_EQ(solve(2), TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 3u);
 }
 
 TEST_F(RandSolveTest, ExplicitOrderingRemainsConditionalWithinAFunctionStage) {
   auto bytes = program(3, 0,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 2},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 2},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                         TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
                        false, {{2, 4, 0, true}, {1, 2}});
   unsigned beforeTrue = 0, argumentTrue = 0;
   for (unsigned seed = 0; seed != 512; ++seed) {
-    obelisk_rt_random_state_v1 state;
-    obelisk_rt_v1_random_state_seed(&state, seed, 17);
+    talos_rt_random_state_v1 state;
+    talos_rt_v1_random_state_seed(&state, seed, 17);
     uint64_t assignment = 0;
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 7, 0, 1, state.state,
                   state.increment, nullptr, 0, &assignment, &success,
                   &state.state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     EXPECT_EQ((assignment >> 2) & 1, (assignment >> 1) & 1);
     EXPECT_NE(assignment & 3, 3u);
@@ -1682,26 +1682,26 @@ TEST_F(RandSolveTest, ExplicitOrderingRemainsConditionalWithinAFunctionStage) {
 TEST_F(RandSolveTest, FunctionPathConstraintsUseOnlyTheSelectedBits) {
   auto bytes =
       program(3, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 1},
-               {OBELISK_RT_RANDOM_CAST_V1, 1},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
-               {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 1},
-               {OBELISK_RT_RANDOM_CAST_V1, 1},
-               {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 2}},
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 1},
+               {TALOS_RT_RANDOM_CAST_V1, 1},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+               {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 1},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 1},
+               {TALOS_RT_RANDOM_CAST_V1, 1},
+               {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0, 2}},
               false, {{2, 1, 0, true}}, {}, {{0, 1, 2, 3, 1}, {0, 1, 2, 3, 2}});
   for (unsigned seed = 0; seed != 32; ++seed) {
     uint64_t state = seed + 71, assignment = 0;
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 7, 0, 1, state, 15,
                   nullptr, 0, &assignment, &success, &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     EXPECT_EQ(assignment, 4u);
     EXPECT_EQ(state, seed + 71u);
@@ -1712,20 +1712,20 @@ TEST_F(RandSolveTest, OrderedResidualCountsProjectedValuesWithLiveModes) {
   constexpr uint64_t guardMask = uint64_t{1} << 32;
   std::vector<uint8_t> bytes =
       program(33, 1,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 32},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 32},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+               {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{guardMask, UINT32_MAX, 0}});
-  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
+  bytes[20] |= TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   appendTestSamplerPlan(bytes);
   uint64_t assignment = 0, state = 71, endpoint = 7;
   uint32_t success = 0;
   auto solve = [&](uint64_t disabled, uint64_t mutableBits, uint64_t start) {
-    return obelisk_rt_v1_random_solve_modes_state(
+    return talos_rt_v1_random_solve_modes_state(
         context, bytes.data(), bytes.size(), start, mutableBits, disabled, 1,
         state, 15, &endpoint, 1, &assignment, &success, &state);
   };
@@ -1733,7 +1733,7 @@ TEST_F(RandSolveTest, OrderedResidualCountsProjectedValuesWithLiveModes) {
   uint32_t dataOnes = 0, dataZeros = 0;
   for (unsigned iteration = 0; iteration != 128; ++iteration) {
     endpoint = iteration & 1 ? 11 : 7;
-    ASSERT_EQ(solve(0, guardMask | UINT32_MAX, 0), OBELISK_RT_OK);
+    ASSERT_EQ(solve(0, guardMask | UINT32_MAX, 0), TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     if (assignment & guardMask) {
       EXPECT_EQ(uint32_t(assignment), endpoint);
@@ -1750,14 +1750,14 @@ TEST_F(RandSolveTest, OrderedResidualCountsProjectedValuesWithLiveModes) {
   // Disabling only the order restores the full joint distribution. A true
   // guard now has probability 1/(2^32+1) instead of 1/2.
   for (unsigned iteration = 0; iteration != 32; ++iteration) {
-    ASSERT_EQ(solve(1, guardMask | UINT32_MAX, 0), OBELISK_RT_OK);
+    ASSERT_EQ(solve(1, guardMask | UINT32_MAX, 0), TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     EXPECT_EQ(assignment & guardMask, 0u);
   }
   // A frozen guard is state, not a projected choice. Its unique completion
   // requires no extra draw and preserves the original upper bits.
   uint64_t originalState = state;
-  ASSERT_EQ(solve(0, UINT32_MAX, guardMask), OBELISK_RT_OK);
+  ASSERT_EQ(solve(0, UINT32_MAX, guardMask), TALOS_RT_OK);
   ASSERT_EQ(success, 1u);
   EXPECT_EQ(assignment, guardMask | endpoint);
   EXPECT_EQ(state, originalState);
@@ -1766,25 +1766,25 @@ TEST_F(RandSolveTest, OrderedResidualCountsProjectedValuesWithLiveModes) {
 TEST_F(RandSolveTest, OrderedResidualParsesDomainsAfterSolveEdges) {
   constexpr uint64_t guardMask = uint64_t{1} << 32;
   auto bytes = program(33, 1,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 32},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
-                        {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 32},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+                        {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                         TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
                        false, {{guardMask, UINT32_MAX}}, {},
                        {{0, 0, 32, UINT32_MAX, 7}, {0, 0, 32, UINT32_MAX, 11}});
-  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
+  bytes[20] |= TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   appendTestSamplerPlan(bytes);
   uint64_t assignment = 0, state = 71, endpoint = 7;
   uint32_t success = 0;
   for (unsigned iteration = 0; iteration != 32; ++iteration) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0,
                   guardMask | UINT32_MAX, 0, 1, state, 15, &endpoint, 1,
                   &assignment, &success, &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     EXPECT_TRUE(uint32_t(assignment) == 7 || uint32_t(assignment) == 11);
     if (assignment & guardMask) {
@@ -1796,36 +1796,36 @@ TEST_F(RandSolveTest, OrderedResidualParsesDomainsAfterSolveEdges) {
 TEST_F(RandSolveTest, OrderedResidualResolvesSoftPrioritiesBeforeProjection) {
   constexpr uint64_t guardMask = uint64_t{1} << 32;
   auto bytes = program(33, 2,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 32},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
-                        {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
-                        {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 1},
-                        {OBELISK_RT_RANDOM_EQ_V1, 1},
-                        {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0, 1, 0}},
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 32},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+                        {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                         TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+                        {TALOS_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 1},
+                        {TALOS_RT_RANDOM_EQ_V1, 1},
+                        {TALOS_RT_RANDOM_END_SOFT_V1, 1, 0, 1, 0}},
                        true, {{guardMask, UINT32_MAX}});
-  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
+  bytes[20] |= TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   appendTestSamplerPlan(bytes);
   uint64_t captures[] = {7, 11}, assignment = 0, state = 71;
   uint32_t success = 0;
-  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 0, guardMask | UINT32_MAX,
                 0, 1, state, 15, captures, 2, &assignment, &success, &state),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   ASSERT_EQ(success, 1u);
   EXPECT_EQ(assignment, 11u);
   EXPECT_EQ(state, 71u);
   unsigned guardTrue = 0;
   for (unsigned iteration = 0; iteration != 64; ++iteration) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0,
                   guardMask | UINT32_MAX, 2, 1, state, 15, captures, 2,
                   &assignment, &success, &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     if (assignment & guardMask) {
       EXPECT_EQ(uint32_t(assignment), 7u);
@@ -1839,24 +1839,24 @@ TEST_F(RandSolveTest, OrderedResidualResolvesSoftPrioritiesBeforeProjection) {
 TEST_F(RandSolveTest, UniformResidualUsesWholeJointSetInsteadOfCyclicGaps) {
   std::vector<uint8_t> bytes =
       program(9, 0,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 8},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 8},
-               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 0},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
-                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
-  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
+              {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 8},
+               {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 8},
+               {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 0},
+               {TALOS_RT_RANDOM_EQ_V1, 1},
+               {TALOS_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+               {TALOS_RT_RANDOM_END_HARD_V1, 1, 0,
+                TALOS_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+  bytes[20] |= TALOS_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   appendTestSamplerPlan(bytes);
   uint64_t assignment = 0, state = 71;
   uint32_t success = 0;
   std::vector<bool> seen(256, false);
   unsigned guardTrue = 0;
   for (unsigned iteration = 0; iteration != 128; ++iteration) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 256, 511, 0, 1, state,
                   15, nullptr, 0, &assignment, &success, &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     ASSERT_LT(assignment, 512u);
     if (assignment & 256) {
@@ -1870,15 +1870,15 @@ TEST_F(RandSolveTest, UniformResidualUsesWholeJointSetInsteadOfCyclicGaps) {
   EXPECT_GT(std::count(seen.begin(), seen.end(), true), 64);
   // No attempt, no draw; stateless callers cannot request unbiased sampling.
   uint64_t original = state;
-  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 256, 511, 0, 0, state, 15,
                 nullptr, 0, &assignment, &success, &state),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 0u);
   EXPECT_EQ(state, original);
-  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+  EXPECT_EQ(talos_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
                                        1, nullptr, 0, &assignment, &success),
-            OBELISK_RT_INVALID_ARGUMENT);
+            TALOS_RT_INVALID_ARGUMENT);
 }
 
 TEST_F(RandSolveTest, WeightedRangesRetainOriginalMassAfterFiltering) {
@@ -1886,17 +1886,17 @@ TEST_F(RandSolveTest, WeightedRangesRetainOriginalMassAfterFiltering) {
   // three times 103's mass. With :/ the two items have equal mass.
   uint64_t capture = 1;
   for (bool perRange : {false, true}) {
-    uint32_t flags = OBELISK_RT_RANDOM_DIST_RAW_WEIGHT |
-                     (perRange ? OBELISK_RT_RANDOM_DIST_PER_RANGE : 0u);
+    uint32_t flags = TALOS_RT_RANDOM_DIST_RAW_WEIGHT |
+                     (perRange ? TALOS_RT_RANDOM_DIST_PER_RANGE : 0u);
     auto bytes = program(8, 1,
-                         {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 8},
-                          {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 101},
-                          {OBELISK_RT_RANDOM_GT_V1, 1},
-                          {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 8},
-                          {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 103},
-                          {OBELISK_RT_RANDOM_LE_V1, 1},
-                          {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
-                          {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+                         {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 8},
+                          {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 101},
+                          {TALOS_RT_RANDOM_GT_V1, 1},
+                          {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 8},
+                          {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 103},
+                          {TALOS_RT_RANDOM_LE_V1, 1},
+                          {TALOS_RT_RANDOM_LOGICAL_AND_V1, 1},
+                          {TALOS_RT_RANDOM_END_HARD_V1, 1}},
                          false, {},
                          {{0, UINT32_MAX, 0, 8, 100, 3, 0, 0, flags},
                           {0, UINT32_MAX, 0, 8, 103, 1, 1, 0, flags}});
@@ -1904,10 +1904,10 @@ TEST_F(RandSolveTest, WeightedRangesRetainOriginalMassAfterFiltering) {
     unsigned first = 0;
     for (unsigned draw = 0; draw != 192; ++draw) {
       uint32_t success = 0;
-      ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+      ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                     context, bytes.data(), bytes.size(), 0, 255, 0, 1, state,
                     15, &capture, 1, &assignment, &success, &state),
-                OBELISK_RT_OK);
+                TALOS_RT_OK);
       ASSERT_EQ(success, 1u);
       ASSERT_TRUE(assignment == 102 || assignment == 103);
       first += assignment == 102;
@@ -1921,16 +1921,16 @@ TEST_F(RandSolveTest, WeightedDefaultComplementRemainsOneItem) {
   // default :/ 1 is the noncontiguous set {0,2}. Filtering out 0 leaves
   // its entire mass at 2, matching the explicit singleton 1's mass.
   uint32_t raw =
-      OBELISK_RT_RANDOM_DIST_RAW_WEIGHT | OBELISK_RT_RANDOM_DIST_PER_RANGE;
+      TALOS_RT_RANDOM_DIST_RAW_WEIGHT | TALOS_RT_RANDOM_DIST_PER_RANGE;
   auto bytes = program(2, 1,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
-                        {OBELISK_RT_RANDOM_GE_V1, 1},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
-                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
-                        {OBELISK_RT_RANDOM_LE_V1, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+                        {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
+                        {TALOS_RT_RANDOM_GE_V1, 1},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+                        {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
+                        {TALOS_RT_RANDOM_LE_V1, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_AND_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1}},
                        false, {},
                        {{0, UINT32_MAX, 0, 2, 1, 1, 0, 0, raw},
                         {0, UINT32_MAX, 0, 2, 0, 1, 1, 0, raw},
@@ -1939,10 +1939,10 @@ TEST_F(RandSolveTest, WeightedDefaultComplementRemainsOneItem) {
   unsigned twos = 0;
   for (unsigned draw = 0; draw != 192; ++draw) {
     uint32_t success = 0;
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 3, 0, 1, state, 15,
                   &capture, 1, &assignment, &success, &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     ASSERT_TRUE(assignment == 1 || assignment == 2);
     twos += assignment == 2;
@@ -1952,35 +1952,35 @@ TEST_F(RandSolveTest, WeightedDefaultComplementRemainsOneItem) {
 }
 
 TEST_F(RandSolveTest, WeightedSoftAndDisabledGuardsDoNotRestrictAssignments) {
-  uint32_t raw = OBELISK_RT_RANDOM_DIST_RAW_WEIGHT;
+  uint32_t raw = TALOS_RT_RANDOM_DIST_RAW_WEIGHT;
   auto bytes = program(1, 1,
-                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
-                        {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
-                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
-                        {OBELISK_RT_RANDOM_END_SOFT_V1, 1}},
+                       {{TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+                        {TALOS_RT_RANDOM_END_HARD_V1, 1},
+                        {TALOS_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+                        {TALOS_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {TALOS_RT_RANDOM_END_SOFT_V1, 1}},
                        true, {}, {{0, UINT32_MAX, 0, 1, 0, 1, 0, 0, raw, 1}});
   uint64_t capture = UINT64_MAX, state = 713, assignment = 0;
   uint32_t success = 0;
-  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+  ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                 context, bytes.data(), bytes.size(), 0, 1, 0, 1, state, 15,
                 &capture, 1, &assignment, &success, &state),
-            OBELISK_RT_OK);
+            TALOS_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 1u);
 
   bytes = program(1, 1,
-                  {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
-                   {OBELISK_RT_RANDOM_END_HARD_V1, 1},
-                   {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0},
-                   {OBELISK_RT_RANDOM_END_DIST_GUARD_V1, 1}},
+                  {{TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+                   {TALOS_RT_RANDOM_END_HARD_V1, 1},
+                   {TALOS_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0},
+                   {TALOS_RT_RANDOM_END_DIST_GUARD_V1, 1}},
                   false, {}, {{0, UINT32_MAX, 0, 1, 0, 1, 0, 0, raw}});
   unsigned seen = 0;
   for (unsigned draw = 0; draw != 24; ++draw) {
-    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+    ASSERT_EQ(talos_rt_v1_random_solve_modes_state(
                   context, bytes.data(), bytes.size(), 0, 1, 0, 1, state, 15,
                   &capture, 1, &assignment, &success, &state),
-              OBELISK_RT_OK);
+              TALOS_RT_OK);
     ASSERT_EQ(success, 1u);
     seen |= 1u << assignment;
   }

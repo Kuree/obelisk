@@ -6,11 +6,11 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Conversion/RuntimeToLLVM.h"
-#include "obelisk/Dialect/Runtime/RuntimeOps.h"
-#include "obelisk/Dialect/Schedule/ScheduleDialect.h"
-#include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Conversion/RuntimeToLLVM.h"
+#include "talos/Dialect/Runtime/RuntimeOps.h"
+#include "talos/Dialect/Schedule/ScheduleDialect.h"
+#include "talos/Dialect/Schedule/ScheduleOps.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/IR/DataLayout.h"
@@ -19,10 +19,10 @@
 
 using namespace mlir;
 
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_PREPARERUNTIMETOLLVMPASS
 #define GEN_PASS_DEF_MATERIALIZERUNTIMEBYTEGLOBALSPASS
-#include "obelisk/Conversion/Passes.h.inc"
+#include "talos/Conversion/Passes.h.inc"
 
 namespace {
 class PrepareRuntimeToLLVMPass
@@ -70,7 +70,7 @@ LogicalResult prepareRuntimeToLLVMByteGlobals(ModuleOp module) {
   auto allocateName = [&]() {
     std::string name;
     do {
-      name = (Twine("__obelisk_rt_bytes.") + Twine(ordinal++)).str();
+      name = (Twine("__talos_rt_bytes.") + Twine(ordinal++)).str();
     } while (!reservedSymbols.insert(name).second);
     return StringAttr::get(context, name);
   };
@@ -154,8 +154,8 @@ void buildRuntimeToLLVMPipeline(OpPassManager &manager) {
 
 void registerRuntimeToLLVMPipeline() {
   PassPipelineRegistration<>(
-      "convert-obelisk-runtime-to-llvm",
+      "convert-talos-runtime-to-llvm",
       "Prepare and convert runtime operations to the in-tree LLVM C ABI",
       buildRuntimeToLLVMPipeline);
 }
-} // namespace obelisk
+} // namespace talos

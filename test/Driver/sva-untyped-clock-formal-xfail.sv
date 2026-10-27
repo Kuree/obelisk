@@ -1,5 +1,5 @@
 // XFAIL: *
-// RUN: obelisk --std=1800-2023 -emit-obelisk %s -o /dev/null
+// RUN: talos --std=1800-2023 -emit-talos %s -o /dev/null
 
 // IEEE clock-flow permits an untyped assertion formal to carry a clocking
 // event. The current Slang semantic AST replaces this legal expansion with an

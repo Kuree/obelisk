@@ -1,13 +1,13 @@
 // REQUIRES: native-macho
 // RUN: mkdir -p %t.dir
 // RUN: %target_clang -dynamiclib -Wl,-undefined,dynamic_lookup -Wl,-install_name,@rpath/libdpi.dylib %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.dir/libdpi.dylib
-// RUN: %obelisk -O1 -flto --compile-threads=2 --mlir-timing %s %t.dir/libdpi.dylib -o %t.dir/simulator 2> %t.log
+// RUN: %talos -O1 -flto --compile-threads=2 --mlir-timing %s %t.dir/libdpi.dylib -o %t.dir/simulator 2> %t.log
 // RUN: FileCheck %s --check-prefix=PARTITIONS < %t.log
 // RUN: %t.dir/simulator | FileCheck %s
 // RUN: test -d %t.dir/simulator.thinlto-cache
 
-// PARTITIONS: obelisk backend timing: partition 0
-// PARTITIONS: obelisk backend timing: partition 1
+// PARTITIONS: talos backend timing: partition 0
+// PARTITIONS: talos backend timing: partition 1
 // CHECK: sum=656
 
 module macos_dpi_leaf #(parameter int ID = 0)(output int value);

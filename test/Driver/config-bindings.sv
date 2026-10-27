@@ -1,15 +1,15 @@
 // Configuration and bind selection are frontend concerns, so the semantic IR
 // is the primary executable specification. The two runtime invocations only
 // prove that the frozen hierarchy reaches both execution tiers unchanged.
-// RUN: obelisk -emit-slang --top=outer \
+// RUN: talos -emit-slang --top=outer \
 // RUN:   -v liba=%S/Inputs/config_bindings/liba.sv \
 // RUN:   -v libb=%S/Inputs/config_bindings/libb.sv %s \
 // RUN:   | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-bindings --top=outer \
+// RUN: talos -emit-bindings --top=outer \
 // RUN:   -v liba=%S/Inputs/config_bindings/liba.sv \
 // RUN:   -v libb=%S/Inputs/config_bindings/libb.sv %s \
 // RUN:   | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk -emit-sim --top=outer \
+// RUN: talos -emit-sim --top=outer \
 // RUN:   -v liba=%S/Inputs/config_bindings/liba.sv \
 // RUN:   -v libb=%S/Inputs/config_bindings/libb.sv %s \
 // RUN:   | FileCheck %s --check-prefix=SIM \
@@ -19,11 +19,11 @@
 // RUN:       --implicit-check-not=selected_cell \
 // RUN:       --implicit-check-not=configuration_rule_kind \
 // RUN:       --implicit-check-not=configuration_rule_source_range
-// RUN: obelisk -O0 --native-scheduler=generic --top=outer \
+// RUN: talos -O0 --native-scheduler=generic --top=outer \
 // RUN:   -v liba=%S/Inputs/config_bindings/liba.sv \
 // RUN:   -v libb=%S/Inputs/config_bindings/libb.sv %s -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=RUNTIME
-// RUN: obelisk -O0 --native-scheduler=generic \
+// RUN: talos -O0 --native-scheduler=generic \
 // RUN:   --execution-tier=bytecode --top=outer \
 // RUN:   -v liba=%S/Inputs/config_bindings/liba.sv \
 // RUN:   -v libb=%S/Inputs/config_bindings/libb.sv %s -o %t.bytecode

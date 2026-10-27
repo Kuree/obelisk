@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -o /dev/null --pass-pipeline='builtin.module(test-obelisk-sim-state-domain)' 2>&1 | FileCheck %s
+// RUN: talos-opt %s -o /dev/null --pass-pipeline='builtin.module(test-talos-sim-state-domain)' 2>&1 | FileCheck %s
 
 // An X/Z index makes an array selection invalid, and an invalid read yields
 // the element default (IEEE 1800-2023 7.4.6). A four-bit index addresses all

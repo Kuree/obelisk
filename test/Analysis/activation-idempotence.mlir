@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=idempotence=true' -o %t.analyzed 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=idempotence=true reaching-values=true' -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s '--test-obelisk-activation-regions=idempotence=true idempotence-maximum-operations=1' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BUDGET
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s '--test-talos-activation-regions=idempotence=true' -o %t.analyzed 2>&1 | FileCheck %s
+// RUN: talos-opt %s '--test-talos-activation-regions=idempotence=true reaching-values=true' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s '--test-talos-activation-regions=idempotence=true idempotence-maximum-operations=1' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BUDGET
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
 // A conditional hold may use incoming state only on paths that preserve that
 // state. Updates, branch decisions, and every final output participate in the

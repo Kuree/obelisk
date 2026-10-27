@@ -1,10 +1,10 @@
 // RUN: %split-file %s %t
-// RUN: obelisk --clocked-kernels=immediate -O3 -emit-sim %t/fused-four-state.sv -o %t/fused-four-state.mlir
+// RUN: talos --clocked-kernels=immediate -O3 -emit-sim %t/fused-four-state.sv -o %t/fused-four-state.mlir
 // RUN: FileCheck %s --check-prefix=FOUR-STATE < %t/fused-four-state.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-fused-four-state.test.
 
-// FOUR-STATE: simulation.func private @__obelisk_fused_
+// FOUR-STATE: simulation.func private @__talos_fused_
 // FOUR-STATE-NOT: simulation.ref.store
 // FOUR-STATE: simulation.aggregate.extract
 // FOUR-STATE: simulation.logic.is_true

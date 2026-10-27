@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true}))' -o %t.plan
-// RUN: obelisk-opt %t.plan --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true}))' -o %t.plan
+// RUN: talos-opt %t.plan --pass-pipeline='builtin.module(simulation.design(talos-sim-materialize-compute-fusion))' | FileCheck %s
 // Coverage effects retain Tier-1 fusion. Entry hits execute only at bootstrap,
 // wait hits on each rearm, body hits once per activation. Keepalives follow
 // the fused symbol instead of referencing erased original owners.
-// CHECK: simulation.coverage.keepalive @[[FUSED:__obelisk_fused_[0-9_]+]]
+// CHECK: simulation.coverage.keepalive @[[FUSED:__talos_fused_[0-9_]+]]
 // CHECK: simulation.coverage.keepalive @[[FUSED]]
 // CHECK: simulation.spawn @[[FUSED]]
 // CHECK: simulation.func private @[[FUSED]](
@@ -14,7 +14,7 @@
 // CHECK: simulation.suspend.edge posedge
 // CHECK: simulation.coverage.point_hit {{.*}}[2]
 // CHECK: simulation.coverage.point_hit {{.*}}[5]
-// CHECK: simulation.func private @[[FUSED]].__obelisk_eval_body_{{[0-9]+}}(
+// CHECK: simulation.func private @[[FUSED]].__talos_eval_body_{{[0-9]+}}(
 // CHECK-NOT: simulation.coverage.point_hit {{.*}}[0]
 // CHECK-NOT: simulation.coverage.point_hit {{.*}}[3]
 // CHECK: simulation.coverage.point_hit {{.*}}[2]

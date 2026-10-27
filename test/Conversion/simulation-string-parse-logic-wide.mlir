@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' \
+// RUN:   --test-talos-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
 // Exact-width scan parsing shares the established arbitrary-width integral
@@ -28,6 +28,6 @@ module attributes {
 // NATIVE-LABEL: llvm.func @parse
 // NATIVE-DAG: llvm.mlir.constant(4096 : i64)
 // NATIVE-DAG: llvm.mlir.constant(512 : i64)
-// NATIVE-COUNT-1: llvm.call @obelisk_rt_v1_plusarg_parse_logic
+// NATIVE-COUNT-1: llvm.call @talos_rt_v1_plusarg_parse_logic
 
 // BYTECODE-COUNT-1: intrinsic 1: id=0x00010116 inputs=2 outputs=1 flags=0

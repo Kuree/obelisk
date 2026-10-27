@@ -1,8 +1,8 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion))' -o %t.fused.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-suspension),talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion))' -o %t.fused.mlir
 // RUN: FileCheck %s < %t.fused.mlir
-// RUN: obelisk-opt %t.fused.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o /dev/null
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=VPI --implicit-check-not=__obelisk_region_kernel_
+// RUN: talos-opt %t.fused.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' -o /dev/null
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph{vpi=full},schedule-plan-combinational-statements,talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=VPI --implicit-check-not=__talos_region_kernel_
 // VPI: simulation.spawn @producer_and_consumer
 // VPI: simulation.spawn @transform
 
@@ -66,11 +66,11 @@ module {
   }
 }
 
-// CHECK: simulation.spawn @__obelisk_region_kernel_
+// CHECK: simulation.spawn @__talos_region_kernel_
 // CHECK: simulation.spawn @sample
 // CHECK-NOT: simulation.func @producer_and_consumer
 // CHECK-NOT: simulation.func @transform
-// CHECK: simulation.func private @__obelisk_region_kernel_
+// CHECK: simulation.func private @__talos_region_kernel_
 // CHECK: %[[INPUT:.*]] = simulation.context.storage %arg0[0]
 // CHECK: %[[ADDR:.*]] = simulation.context.storage %arg0[1]
 // CHECK: %[[DATA:.*]] = simulation.context.storage %arg0[2]

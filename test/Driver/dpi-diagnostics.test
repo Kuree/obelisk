@@ -1,18 +1,18 @@
 // REQUIRES: native-elf
 // RUN: %target_clang -fPIC -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.o
-// RUN: not obelisk --dpi-link=%t.o %S/dpi.sv -o %t.removed 2>&1 | FileCheck %s --check-prefix=REMOVED
-// RUN: not obelisk %t.o -o %t.native-only 2>&1 | FileCheck %s --check-prefix=NATIVE-ONLY
+// RUN: not talos --dpi-link=%t.o %S/dpi.sv -o %t.removed 2>&1 | FileCheck %s --check-prefix=REMOVED
+// RUN: not talos %t.o -o %t.native-only 2>&1 | FileCheck %s --check-prefix=NATIVE-ONLY
 // RUN: %target_clang -fPIC -flto=full -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.incompatible.bc
-// RUN: not obelisk -flto %S/dpi.sv %t.incompatible.bc -o %t.incompatible 2>&1 | FileCheck %s --check-prefix=INCOMPATIBLE
+// RUN: not talos -flto %S/dpi.sv %t.incompatible.bc -o %t.incompatible 2>&1 | FileCheck %s --check-prefix=INCOMPATIBLE
 // RUN: %target_clang -nostdlib -shared %t.o -Wl,-soname,bad/name.so -o %t.bad-soname.so
-// RUN: not obelisk %S/dpi.sv %t.bad-soname.so -o %t.bad-soname 2>&1 | FileCheck %s --check-prefix=BAD-SONAME
-// RUN: not obelisk %S/dpi.sv -o %t.missing 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not talos %S/dpi.sv %t.bad-soname.so -o %t.bad-soname 2>&1 | FileCheck %s --check-prefix=BAD-SONAME
+// RUN: not talos %S/dpi.sv -o %t.missing 2>&1 | FileCheck %s --check-prefix=MISSING
 
 // Shared-library loader identities are diagnosed in
 // dpi-shared-library-diagnostics.test.
 // LTO bitcode that is not unified LTO bitcode is rejected before the link
 // spends time optimizing the whole program.
-// INCOMPATIBLE: obelisk: error: LTO input '{{.*}}.incompatible.bc' is not unified LTO bitcode; compile it with -funified-lto
+// INCOMPATIBLE: talos: error: LTO input '{{.*}}.incompatible.bc' is not unified LTO bitcode; compile it with -funified-lto
 // INCOMPATIBLE-NOT: ld.lld
 // BAD-SONAME: has a DT_SONAME containing '/'
 // REMOVED: unknown argument '--dpi-link=

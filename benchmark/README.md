@@ -1,27 +1,27 @@
 # Conformance benchmark
 
-This directory measures Obelisk against external SystemVerilog test suites and
-records the result over time. It is not part of `check-obelisk` — that suite is
+This directory measures Talos against external SystemVerilog test suites and
+records the result over time. It is not part of `check-talos` — that suite is
 hermetic and gates the build; this one is a measurement instrument that answers
-two questions: *how much of real-world SystemVerilog does Obelisk run today*, and
+two questions: *how much of real-world SystemVerilog does Talos run today*, and
 *what should be built next*.
 
 ## How it works
 
 The harness owns its run loop — it does **not** invoke the upstream test drivers
 (`driver.py`, `vvp_reg`) or any reference simulator. For each test it compiles the
-design with Obelisk directly, runs the resulting native executable, and judges it
+design with Talos directly, runs the resulting native executable, and judges it
 three ways:
 
 - a test that expects a **failure** (`_bad`/`_unsup`, or ivtest type `CE`) passes
-  iff Obelisk fails on it. For Verilator the test's own descriptor says which
+  iff Talos fails on it. For Verilator the test's own descriptor says which
   stage that is: `fails=True` on `test.compile`/`test.lint` wants a rejected
   compile, while `fails=True` on `test.execute` wants a design that builds and
   then fails at run time;
 - a test with a **gold file** passes iff its stdout matches the gold;
 - a Verilator test whose descriptor never calls `test.execute()` is compile-only
   upstream, so it passes iff it builds and is never simulated here either;
-- an ivtest `CO` or `CN` descriptor is compile-only upstream, so Obelisk stops
+- an ivtest `CO` or `CN` descriptor is compile-only upstream, so Talos stops
   after emitting elaborated frontend MLIR instead of lowering or linking a
   simulator that the test never runs;
 - otherwise the test **self-checks** and must print its success marker
@@ -57,7 +57,7 @@ python3 benchmark/run.py ivtest --suite-root /path/to/iverilog
 python3 benchmark/run.py verilator --fetch
 
 # ivtest list selection (default: the full regress-sv + regress-vlg corpus):
-python3 benchmark/run.py ivtest --suite-root /path/to/iverilog --lists obelisk-smoke.list
+python3 benchmark/run.py ivtest --suite-root /path/to/iverilog --lists talos-smoke.list
 
 # Compile and attach VPI code to every test. Source/object/archive/bitcode
 # components are linked into a DSO; an existing .so/.vpi is retained directly.
@@ -67,7 +67,7 @@ python3 benchmark/run.py verilator --suite-root /path/to/verilator \
 # Run an ivtest VPI-format list. Each entry supplies its own C/C++ module and
 # vpi_gold expectation; --vpi=full is selected automatically.
 python3 benchmark/run.py ivtest --suite-root /path/to/iverilog \
-  --lists obelisk-vpi-smoke.list
+  --lists talos-vpi-smoke.list
 
 # Record the run into the tracked history, and view the curve:
 python3 benchmark/run.py verilator --suite-root /path/to/verilator --record
@@ -78,7 +78,7 @@ python3 benchmark/run.py verilator --suite-root /path/to/verilator --greedy
 ```
 
 Useful flags: `-j` (parallel workers, default all CPUs available to the
-process), `--timeout` (per-test execution timeout, default 10s), `--obelisk
+process), `--timeout` (per-test execution timeout, default 10s), `--talos
 PATH` (driver binary),
 `--vpi-code PATH` (repeatable native module components), and
 `--vpi=off|read|full`. VPI defaults to `full` when code is supplied and `off`
@@ -94,15 +94,15 @@ test inputs, and timeout are unchanged. Failures always run again. Runs with
 `--vpi-code` conservatively bypass reuse because arbitrary transitive C/C++
 headers cannot be identified without a depfile. Use `--no-resume` for a fresh
 audit or `--result-cache PATH` to select a different checkpoint file.
-The Obelisk binary is otherwise resolved from `OBELISK_BENCH_COMPILER`, then
-the repo-relative `build/tools/driver/obelisk`. A suite checkout is resolved
-from `--suite-root`, then `OBELISK_BENCH_<SUITE>_ROOT`, then
+The Talos binary is otherwise resolved from `TALOS_BENCH_COMPILER`, then
+the repo-relative `build/tools/driver/talos`. A suite checkout is resolved
+from `--suite-root`, then `TALOS_BENCH_<SUITE>_ROOT`, then
 `benchmark/cache/`, then `--fetch`.
 
 ## Reading the output
 
 Pass counts split genuine passes from *expected-error* passes: a test named
-`*_bad`/`*_unsup` (Verilator) or typed `CE` (ivtest) "passes" whenever Obelisk
+`*_bad`/`*_unsup` (Verilator) or typed `CE` (ivtest) "passes" whenever Talos
 errors for any reason, which is real conformance but not a completed simulation.
 Only `passed` counts a run that actually finished; `xfail_passed` is tracked
 separately, and those tests' diagnostics are kept out of the blocker table.
@@ -118,7 +118,7 @@ chapter in the **Area** column and has three counters:
 Two kinds of row mark classifier gaps rather than described features. `unnamed
 construct <x>` / `unnamed type <x>` / `unnamed symbol <x>` are diagnostics that
 matched only the generic fallback rules, so the bucket is named after the
-construct mnemonic Obelisk printed — grouped and countable, but not yet given a
+construct mnemonic Talos printed — grouped and countable, but not yet given a
 feature name or an IEEE area. `Unclassified long tail` is what is left: compile
 failures whose diagnostics match no rule at all, typically a parse or
 elaboration message with no construct in it. Both are the honest measure of what
@@ -151,7 +151,7 @@ stays a failure, because that one is the harness's to fix.
 
 ## Adding a suite
 
-Write one module under `obelisk_bench/suites/` exposing `NAME`, a pinned
+Write one module under `talos_bench/suites/` exposing `NAME`, a pinned
 `SOURCE = GitSource(...)`, and `run(root, args) -> dict[str, Outcome]`; add it to
 the `REGISTRY` dict in `suites/__init__.py`. There is no base class to subclass
 and no framework to configure. Reuse the shared pieces — `runner.py` to compile
@@ -176,9 +176,9 @@ suite-specific in the module.
 run.py                     CLI entry point
 lists/ivtest/*.list        curated ivtest lists (rescued from the Icarus tree)
 history/*.jsonl            tracked progress records, one JSON object per run
-obelisk_bench/
+talos_bench/
   runner.py                compile a design / run a binary (shared)
-  icarus.py                Icarus-arg -> Obelisk-flag translation (shared)
+  icarus.py                Icarus-arg -> Talos-flag translation (shared)
   classify.py              diagnostic -> feature rules (shared)
   history.py               append/render run records
   model.py                 shared data types (GitSource, Outcome, statuses)

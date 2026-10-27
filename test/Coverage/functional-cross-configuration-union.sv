@@ -1,10 +1,10 @@
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.forward.obcov --coverage-test=cross-forward +producer
 // RUN: %t --coverage-output=%t.reverse.obcov --coverage-test=cross-reverse +producer +reverse
-// RUN: obelisk-cov merge -o %t.orders.obcov %t.forward.obcov %t.reverse.obcov
-// RUN: obelisk-cov inspect %t.orders.obcov | FileCheck %s --check-prefix=ORDERS
+// RUN: talos-cov merge -o %t.orders.obcov %t.forward.obcov %t.reverse.obcov
+// RUN: talos-cov inspect %t.orders.obcov | FileCheck %s --check-prefix=ORDERS
 // RUN: %t --coverage-load=%t.forward.obcov --coverage-output=%t.loaded.obcov --coverage-test=cross-loaded | FileCheck %s --check-prefix=QUERY
-// RUN: obelisk-cov report --format=text %t.loaded.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=text %t.loaded.obcov | FileCheck %s --check-prefix=REPORT
 
 // Merging the runs that construct the covergroup instances in opposite orders
 // succeeds only when their schemas and configurations are identical: the merge

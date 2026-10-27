@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-native-state-layout-analysis 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-native-state-layout-analysis 2>&1 | FileCheck %s
 
 // IEEE 1800-2017 Table 23-1 makes a supply net dominate a collapsed uwire.
 // The resulting component has supply resolution and therefore permits the

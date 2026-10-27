@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep))' \
+// RUN: talos-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep))' \
 // RUN:   -o %t.planned.mlir
-// RUN: obelisk-opt %t.planned.mlir \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %t.planned.mlir \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
 // RUN: FileCheck %s --check-prefix=ORIGIN < %t.planned.mlir
-// RUN: obelisk-opt %t.planned.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph))' | FileCheck %s --check-prefix=ORIGIN
+// RUN: talos-opt %t.planned.mlir --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph))' | FileCheck %s --check-prefix=ORIGIN
 
 // Byte lanes from different semantic NBA sites cannot overlap even when their
 // array indices differ. Keep a separate once-per-edge latch for each lane;
@@ -15,7 +15,7 @@
 // ORIGIN-LABEL: simulation.func @update(
 // ORIGIN: simulation.nba.enqueue {{.*}}schedule.eval.origin_nba_site = [[LO:[0-9]+]] : i64
 // ORIGIN: simulation.nba.enqueue {{.*}}schedule.eval.origin_nba_site = [[HI:[0-9]+]] : i64
-// ORIGIN-LABEL: simulation.func private @update.__obelisk_eval_body_0(
+// ORIGIN-LABEL: simulation.func private @update.__talos_eval_body_0(
 // ORIGIN: simulation.nba.enqueue {{.*}}schedule.eval.origin_nba_site = [[LO]] : i64
 // ORIGIN: simulation.nba.enqueue {{.*}}schedule.eval.origin_nba_site = [[HI]] : i64
 !words = !simulation.unpacked_array<0 : 31 x !simulation.logic<32>>
@@ -127,16 +127,16 @@ module attributes {
   }
 }
 
-// CHECK-COUNT-2: llvm.mlir.global internal @__obelisk_eval_nba_valid_
-// CHECK-LABEL: llvm.func @update.__obelisk_eval_body_0(
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_nba
+// CHECK-COUNT-2: llvm.mlir.global internal @__talos_eval_nba_valid_
+// CHECK-LABEL: llvm.func @update.__talos_eval_body_0(
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_nba
 // CHECK: llvm.mlir.constant(2147483647 : i64)
 // CHECK: {{.*}} llvm.icmp "sle"
 // CHECK: llvm.mlir.constant(-2147483648 : i64)
 // CHECK: {{.*}} llvm.icmp "sge"
-// CHECK: llvm.mlir.addressof @__obelisk_eval_nba_offset_
-// CHECK: llvm.mlir.addressof @__obelisk_eval_nba_offset_
-// CHECK-NOT: llvm.call @obelisk_rt_v1_scheduler_static_nba
+// CHECK: llvm.mlir.addressof @__talos_eval_nba_offset_
+// CHECK: llvm.mlir.addressof @__talos_eval_nba_offset_
+// CHECK-NOT: llvm.call @talos_rt_v1_scheduler_static_nba
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// CHECK-LABEL: llvm.func @__talos_aot_schedule_run_v1(
+// CHECK: llvm.call @talos_rt_v1_scheduler_prepare_periodic_aot

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-activation-regions='publications=true reaching-values=true' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-activation-regions='publications=true reaching-values=true' -o /dev/null 2>&1 | FileCheck %s
 // Storage and net descriptor zero are distinct roots. Reading resolved net
 // state does not imply permission to reorder its drivers or resolution.
 module {

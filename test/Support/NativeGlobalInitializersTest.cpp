@@ -62,7 +62,7 @@ TEST(NativeGlobalInitializers, PreservesOffsetsPointersZerosAndLastAssignment) {
   LLVM::ReturnOp::create(builder, location, value);
   llvm::DataLayout layout("e-p:64:64-i64:64-n8:16:32:64");
   ASSERT_EQ(
-      obelisk::driver::detail::balanceNativeGlobalInitializers(*module, layout),
+      talos::driver::detail::balanceNativeGlobalInitializers(*module, layout),
       1u);
   ASSERT_TRUE(succeeded(verify(*module)));
   llvm::LLVMContext llvmContext;
@@ -136,7 +136,7 @@ TEST(NativeGlobalInitializers, PreservesArrayWithStrongerStructAlignment) {
   LLVM::ReturnOp::create(builder, location, value);
   llvm::DataLayout layout("e-p:64:64-i64:64-a:64:64");
   EXPECT_EQ(
-      obelisk::driver::detail::balanceNativeGlobalInitializers(*module, layout),
+      talos::driver::detail::balanceNativeGlobalInitializers(*module, layout),
       0u);
   EXPECT_EQ(global.getGlobalType(), array);
   EXPECT_TRUE(succeeded(verify(*module)));

@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-native-state-layout-analysis 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-native-state-layout-analysis 2>&1 | FileCheck %s
 
 // IEEE 1800-2023 19.3 constructs each covergroup array element separately, so
 // aggregate storage reserves one whole 64-bit runtime handle per element, as it

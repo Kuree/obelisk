@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s '--pass-pipeline=builtin.module(simulation.design(simulation.func(schedule-specialize-reference-joins)))' -o %t
+// RUN: talos-opt %s '--pass-pipeline=builtin.module(simulation.design(simulation.func(schedule-specialize-reference-joins)))' -o %t
 // RUN: FileCheck %s < %t
-// RUN: obelisk-opt %t '--pass-pipeline=builtin.module(simulation.design(simulation.func(schedule-specialize-reference-joins)))' -o %t.again
+// RUN: talos-opt %t '--pass-pipeline=builtin.module(simulation.design(simulation.func(schedule-specialize-reference-joins)))' -o %t.again
 // RUN: diff %t %t.again
 
 // Two edges from the same predecessor remain distinct. Each selected block

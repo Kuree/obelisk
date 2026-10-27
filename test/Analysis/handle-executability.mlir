@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --test-obelisk-access-footprints='print-handles' -o /dev/null 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-access-footprints='print-handles' -o /dev/null 2>&1 | FileCheck %s
 
 // A missing lattice in a dead block is not an opaque reference in a live
 // block. Keep both cases visible in the analysis test interface.

@@ -2,15 +2,15 @@
 
 #include "SimulationNBALowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
-#include "obelisk/Dialect/Schedule/ScheduleFields.h"
-#include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "talos/Dialect/Schedule/ScheduleAttrs.h"
+#include "talos/Dialect/Schedule/ScheduleFields.h"
+#include "talos/Dialect/Schedule/ScheduleMetadata.h"
 
-#include "obelisk/Conversion/SimulationRuntime.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/Runtime.h"
-#include "obelisk/Runtime/StableHandle.h"
+#include "talos/Conversion/SimulationRuntime.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/Runtime.h"
+#include "talos/Runtime/StableHandle.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -23,7 +23,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 namespace {
 // LRM 4.3 permits an unobservable immediate update to disappear, but 4.9.4
 // still evaluates its RHS and target. Those are independent SSA producers;
@@ -68,7 +68,7 @@ public:
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value runtimeContext =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     auto savePlane = [&](Value value) {
@@ -82,28 +82,28 @@ public:
     if (adaptor.getValue().size() == 2) {
       unknown = savePlane(adaptor.getValue()[1]);
       unknownPlane = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                               "__obelisk_state_unknown");
+                                               "__talos_state_unknown");
     }
     uint32_t flags = 0;
     if (op.getVectorDelay())
-      flags |= OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY;
+      flags |= TALOS_RT_INERTIAL_DRIVER_VECTOR_DELAY;
     if (op.getDeferResolution())
-      flags |= OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
+      flags |= TALOS_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
     if (sim::has<sim::metadata::UserNetRawDrive>(op))
-      flags |= OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW;
+      flags |= TALOS_RT_INERTIAL_DRIVER_PUBLISH_RAW;
     if (op.getValue().getType().isF32())
-      flags |= OBELISK_RT_INERTIAL_DRIVER_REAL32;
+      flags |= TALOS_RT_INERTIAL_DRIVER_REAL32;
     if (op.getValue().getType().isF64())
-      flags |= OBELISK_RT_INERTIAL_DRIVER_REAL64;
+      flags |= TALOS_RT_INERTIAL_DRIVER_REAL64;
     Value status =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_scheduler_inertial_driver"),
+                               "talos_rt_v1_scheduler_inertial_driver"),
             ValueRange{
                 runtimeContext,
                 LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                          "__obelisk_state_value"),
+                                          "__talos_state_value"),
                 unknownPlane,
                 llvmConstant(rewriter, location, i64, stateBitCount),
                 adaptor.getDriver().front(),
@@ -116,7 +116,7 @@ public:
             .getResult();
     LLVM::CallOp::create(rewriter, location, TypeRange{},
                          SymbolRefAttr::get(rewriter.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
+                                            "talos_rt_v1_scheduler_fail"),
                          ValueRange{runtimeContext, status});
     rewriter.eraseOp(op);
     return success();
@@ -155,7 +155,7 @@ public:
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value runtimeContext =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     auto savePlane = [&](Value value) {
@@ -169,24 +169,24 @@ public:
     if (adaptor.getValue().size() == 2) {
       unknown = savePlane(adaptor.getValue()[1]);
       unknownPlane = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                               "__obelisk_state_unknown");
+                                               "__talos_state_unknown");
     }
     bool pulseControlled = !adaptor.getPulseTransitionMasks().empty();
     uint32_t flags = 0;
     if (op.getDeferResolution())
-      flags |= OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
+      flags |= TALOS_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
     if (sim::has<sim::metadata::UserNetRawDrive>(op))
-      flags |= OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW;
+      flags |= TALOS_RT_INERTIAL_DRIVER_PUBLISH_RAW;
     if (op.getPulseOnDetect())
-      flags |= OBELISK_RT_INERTIAL_PATH_ON_DETECT;
+      flags |= TALOS_RT_INERTIAL_PATH_ON_DETECT;
     if (op.getPulseShowCancelled())
-      flags |= OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED;
+      flags |= TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED;
     if (op.getPulseTransitionMasks())
-      flags |= OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS;
+      flags |= TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS;
     SmallVector<Value, 23> arguments{
         runtimeContext,
         LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                  "__obelisk_state_value"),
+                                  "__talos_state_value"),
         unknownPlane,
         llvmConstant(rewriter, location, i64, stateBitCount),
         adaptor.getDriver().front(),
@@ -219,13 +219,13 @@ public:
             SymbolRefAttr::get(
                 rewriter.getContext(),
                 pulseControlled
-                    ? "obelisk_rt_v1_scheduler_inertial_path_driver_pulse"
-                    : "obelisk_rt_v1_scheduler_inertial_path_driver"),
+                    ? "talos_rt_v1_scheduler_inertial_path_driver_pulse"
+                    : "talos_rt_v1_scheduler_inertial_path_driver"),
             arguments)
             .getResult();
     LLVM::CallOp::create(rewriter, location, TypeRange{},
                          SymbolRefAttr::get(rewriter.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
+                                            "talos_rt_v1_scheduler_fail"),
                          ValueRange{runtimeContext, status});
     rewriter.eraseOp(op);
     return success();
@@ -264,7 +264,7 @@ public:
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value runtimeContext =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     auto savePlane = [&](Value value) {
@@ -278,13 +278,13 @@ public:
     if (adaptor.getValue().size() == 2) {
       unknown = savePlane(adaptor.getValue()[1]);
       unknownPlane = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                               "__obelisk_state_unknown");
+                                               "__talos_state_unknown");
     }
     bool pulseControlled = !adaptor.getPulseTransitionMasks().empty();
     SmallVector<Value, 24> arguments{
         runtimeContext,
         LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                  "__obelisk_state_value"),
+                                  "__talos_state_value"),
         unknownPlane,
         llvmConstant(rewriter, location, i64, stateBitCount),
         adaptor.getReference().front(),
@@ -297,12 +297,12 @@ public:
     if (pulseControlled) {
       arguments.push_back(llvmConstant(
           rewriter, location, i32,
-          (op.getPulseOnDetect() ? OBELISK_RT_INERTIAL_PATH_ON_DETECT : 0) |
+          (op.getPulseOnDetect() ? TALOS_RT_INERTIAL_PATH_ON_DETECT : 0) |
               (op.getPulseShowCancelled()
-                   ? OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED
+                   ? TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED
                    : 0) |
               (op.getPulseTransitionMasks()
-                   ? OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS
+                   ? TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS
                    : 0)));
     }
     arguments.push_back(adaptor.getRiseDelay().front());
@@ -329,13 +329,13 @@ public:
             SymbolRefAttr::get(
                 rewriter.getContext(),
                 pulseControlled
-                    ? "obelisk_rt_v1_scheduler_inertial_path_storage_pulse"
-                    : "obelisk_rt_v1_scheduler_inertial_path_storage"),
+                    ? "talos_rt_v1_scheduler_inertial_path_storage_pulse"
+                    : "talos_rt_v1_scheduler_inertial_path_storage"),
             arguments)
             .getResult();
     LLVM::CallOp::create(rewriter, location, TypeRange{},
                          SymbolRefAttr::get(rewriter.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
+                                            "talos_rt_v1_scheduler_fail"),
                          ValueRange{runtimeContext, status});
     rewriter.eraseOp(op);
     return success();
@@ -375,7 +375,7 @@ public:
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value runtimeContext =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     auto savePlane = [&](Value value) {
@@ -394,13 +394,13 @@ public:
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(
                 rewriter.getContext(),
-                "obelisk_rt_v1_scheduler_inertial_driver_strength_pair"),
+                "talos_rt_v1_scheduler_inertial_driver_strength_pair"),
             ValueRange{
                 runtimeContext,
                 LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                          "__obelisk_state_value"),
+                                          "__talos_state_value"),
                 LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                          "__obelisk_state_unknown"),
+                                          "__talos_state_unknown"),
                 llvmConstant(rewriter, location, i64, stateBitCount),
                 adaptor.getLowDriver().front(), adaptor.getHighDriver().front(),
                 llvmConstant(rewriter, location, i64, *width),
@@ -412,7 +412,7 @@ public:
             .getResult();
     LLVM::CallOp::create(rewriter, location, TypeRange{},
                          SymbolRefAttr::get(rewriter.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
+                                            "talos_rt_v1_scheduler_fail"),
                          ValueRange{runtimeContext, status});
     rewriter.eraseOp(op);
     return success();
@@ -457,7 +457,7 @@ public:
     Type i32 = rewriter.getI32Type();
     Type i64 = rewriter.getI64Type();
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value runtimeContext =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     auto savePlane = [&](Value value) {
@@ -468,9 +468,9 @@ public:
     SmallVector<Value> arguments{
         runtimeContext,
         LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                  "__obelisk_state_value"),
+                                  "__talos_state_value"),
         LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                  "__obelisk_state_unknown"),
+                                  "__talos_state_unknown"),
         llvmConstant(rewriter, location, i64, stateBitCount),
         adaptor.getLowDriver().front(),
         adaptor.getHighDriver().front(),
@@ -482,9 +482,9 @@ public:
     bool pulseControlled = !adaptor.getPulseTransitionMasks().empty();
     if (pulseControlled) {
       uint32_t flags =
-          OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS |
-          (op.getPulseOnDetect() ? OBELISK_RT_INERTIAL_PATH_ON_DETECT : 0) |
-          (op.getPulseShowCancelled() ? OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED
+          TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS |
+          (op.getPulseOnDetect() ? TALOS_RT_INERTIAL_PATH_ON_DETECT : 0) |
+          (op.getPulseShowCancelled() ? TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED
                                       : 0);
       arguments.push_back(llvmConstant(rewriter, location, i32, flags));
     }
@@ -513,8 +513,8 @@ public:
       arguments.push_back(savePlane(adaptor.getPulseTransitionMasks().front()));
     StringRef function =
         pulseControlled
-            ? "obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse"
-            : "obelisk_rt_v1_scheduler_inertial_path_strength_pair";
+            ? "talos_rt_v1_scheduler_inertial_path_strength_pair_pulse"
+            : "talos_rt_v1_scheduler_inertial_path_strength_pair";
     Value status =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
@@ -522,7 +522,7 @@ public:
             .getResult();
     LLVM::CallOp::create(rewriter, location, TypeRange{},
                          SymbolRefAttr::get(rewriter.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
+                                            "talos_rt_v1_scheduler_fail"),
                          ValueRange{runtimeContext, status});
     rewriter.eraseOp(op);
     return success();
@@ -653,8 +653,8 @@ public:
         auto owner =
             dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
         if (!owner || argument.getOwner() != &owner.getBody().front() ||
-            !::obelisk::schedule::has<
-                ::obelisk::schedule::Field::EvalRawCaptures>(owner) ||
+            !::talos::schedule::has<
+                ::talos::schedule::Field::EvalRawCaptures>(owner) ||
             !stateLayout || rootIndex == UINT32_MAX || !staticPlan ||
             rootIndex >= staticPlan->roots.size())
           return std::nullopt;
@@ -663,10 +663,10 @@ public:
         auto handle = descriptor
                           ? stateLayout->storage.find(descriptor.getInt())
                           : stateLayout->storage.end();
-        obelisk_rt_stable_handle_v1 decoded{};
+        talos_rt_stable_handle_v1 decoded{};
         if (handle == stateLayout->storage.end() ||
-            !obelisk_rt_stable_handle_decode(handle->second, &decoded) ||
-            decoded.kind != OBELISK_RT_STABLE_HANDLE_STATIC ||
+            !talos_rt_stable_handle_decode(handle->second, &decoded) ||
+            decoded.kind != TALOS_RT_STABLE_HANDLE_STATIC ||
             decoded.id != staticPlan->roots[rootIndex].static_state ||
             decoded.offset < 0)
           return std::nullopt;
@@ -719,8 +719,8 @@ public:
     sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
     uint32_t homeRegion =
         function ? getRuntimeEventRegion(function.getHomeRegion()) : UINT32_MAX;
-    uint32_t commitRegion = homeRegion == OBELISK_RT_REGION_ACTIVE ||
-                                    homeRegion == OBELISK_RT_REGION_REACTIVE
+    uint32_t commitRegion = homeRegion == TALOS_RT_REGION_ACTIVE ||
+                                    homeRegion == TALOS_RT_REGION_REACTIVE
                                 ? homeRegion + 2
                                 : UINT32_MAX;
     bool scalarValue =
@@ -838,13 +838,13 @@ public:
             positioned);
         LLVM::StoreOp::create(rewriter, location, merged, address, 8);
       };
-      mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256, value),
+      mergeField(offsetof(talos_rt_generated_nba_accumulator_256, value),
                  position(sourceValue));
-      mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
+      mergeField(offsetof(talos_rt_generated_nba_accumulator_256, unknown),
                  position(sourceUnknown));
       Value maskAddress = nbaFieldGEP(
           rewriter, location, accumulator,
-          offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask));
+          offsetof(talos_rt_generated_nba_accumulator_256, write_mask));
       Value previousMask =
           LLVM::LoadOp::create(rewriter, location, i64, maskAddress, 8);
       LLVM::StoreOp::create(
@@ -853,7 +853,7 @@ public:
           maskAddress, 8);
       Value validAddress = nbaFieldGEP(
           rewriter, location, accumulator,
-          offsetof(obelisk_rt_generated_nba_accumulator_256, valid));
+          offsetof(talos_rt_generated_nba_accumulator_256, valid));
       Value previousValid =
           LLVM::LoadOp::create(rewriter, location, i32, validAddress, 4);
       LLVM::StoreOp::create(
@@ -867,7 +867,7 @@ public:
           llvmConstant(rewriter, location, i32, commitRegion),
           nbaFieldGEP(
               rewriter, location, accumulator,
-              offsetof(obelisk_rt_generated_nba_accumulator_256, exec_region)),
+              offsetof(talos_rt_generated_nba_accumulator_256, exec_region)),
           4);
       Value dirtyBit =
           arith::SelectOp::create(rewriter, location, overlaps,
@@ -875,7 +875,7 @@ public:
                                                uint64_t{1} << (rootIndex % 64)),
                                   zero);
       Value dirtyBase = LLVM::AddressOfOp::create(
-          rewriter, location, pointer, "__obelisk_aot_nba_dirty_roots_v1");
+          rewriter, location, pointer, "__talos_aot_nba_dirty_roots_v1");
       Value dirtyAddress =
           byteGEP(rewriter, location, dirtyBase,
                   static_cast<uint64_t>(rootIndex / 64) * sizeof(uint64_t));
@@ -895,7 +895,7 @@ public:
                                                              rootRole);
       uint32_t dirtyWord = rootIndex / 64;
       Value summaryBase = LLVM::AddressOfOp::create(
-          rewriter, location, pointer, "__obelisk_aot_nba_dirty_summary_v1");
+          rewriter, location, pointer, "__talos_aot_nba_dirty_summary_v1");
       Value summaryAddress =
           byteGEP(rewriter, location, summaryBase,
                   static_cast<uint64_t>(dirtyWord / 64) * sizeof(uint64_t));
@@ -919,7 +919,7 @@ public:
     Block *guardContinuation = nullptr;
     if (directGeneratedStage) {
       bool assumeClean =
-          ::obelisk::schedule::has<assumeCleanSpecializationAttr>(op);
+          ::talos::schedule::has<assumeCleanSpecializationAttr>(op);
       bool useGuardedClaim = !assumeClean && guardedClaims;
       if (!useGuardedClaim) {
         emitDirectGeneratedStage();
@@ -970,10 +970,10 @@ public:
     if (adaptor.getValue().size() == 2) {
       unknown = savePlane(adaptor.getValue()[1]);
       unknownPlane = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                               "__obelisk_state_unknown");
+                                               "__talos_state_unknown");
     }
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value runtimeContext =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     Value delay = adaptor.getDelay().empty()
@@ -990,10 +990,10 @@ public:
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_scheduler_packed_slice_nba"),
+                               "talos_rt_v1_scheduler_packed_slice_nba"),
             ValueRange{runtimeContext,
                        LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                 "__obelisk_state_value"),
+                                                 "__talos_state_value"),
                        unknownPlane,
                        llvmConstant(rewriter, location, i64, stateBitCount),
                        base, llvmConstant(rewriter, location, i64, *baseWidth),
@@ -1003,7 +1003,7 @@ public:
             .getResult();
     LLVM::CallOp::create(rewriter, location, TypeRange{},
                          SymbolRefAttr::get(rewriter.getContext(),
-                                            "obelisk_rt_v1_scheduler_fail"),
+                                            "talos_rt_v1_scheduler_fail"),
                          ValueRange{runtimeContext, status});
     if (guardContinuation) {
       cf::BranchOp::create(rewriter, location, guardContinuation);
@@ -1051,9 +1051,9 @@ Value buildGeneratedNBAChange(OpBuilder &builder, Location location,
   Value changed = arith::OrIOp::create(
       builder, location,
       arith::XOrIOp::create(builder, location, value,
-                            loadCurrent("__obelisk_state_value")),
+                            loadCurrent("__talos_state_value")),
       arith::XOrIOp::create(builder, location, unknown,
-                            loadCurrent("__obelisk_state_unknown")));
+                            loadCurrent("__talos_state_unknown")));
   return arith::AndIOp::create(
       builder, location, changed,
       llvmConstant(builder, location, i64,
@@ -1090,8 +1090,8 @@ public:
     sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
     bool driverDestination =
         isa<sim::DriverType>(op.getDestination().getType());
-    bool inductiveTwoStateAccess = ::obelisk::schedule::has<
-        ::obelisk::schedule::Field::EvalInductiveTwoStateAccess>(op);
+    bool inductiveTwoStateAccess = ::talos::schedule::has<
+        ::talos::schedule::Field::EvalInductiveTwoStateAccess>(op);
     // Selected eval bodies execute only after their complete closure crosses
     // a known quiescent boundary, so they can use fixed root/region metadata.
     // That function-level fact does not prove exclusive ownership of an NBA
@@ -1101,11 +1101,11 @@ public:
     // IEEE 1800-2023 4.4.2.4, 4.5: a shared runtime NBA barrier must see
     // validity, masks and region even when all payload bits are known.
     bool compactEvalMetadata =
-        !::obelisk::schedule::has<
-            ::obelisk::schedule::Field::EvalRuntimeCalendar>(
+        !::talos::schedule::has<
+            ::talos::schedule::Field::EvalRuntimeCalendar>(
             op->getParentOfType<ModuleOp>()) &&
         (inductiveTwoStateAccess ||
-         ::obelisk::schedule::has<schedule::metadata::evalCompactNBAMetadata>(
+         ::talos::schedule::has<schedule::metadata::evalCompactNBAMetadata>(
              op));
 
     schedule::NBASiteAttr site = op.getSiteAttr();
@@ -1115,7 +1115,7 @@ public:
             : llvm::DenseMap<uint64_t, uint32_t>::const_iterator{};
     std::optional<uint64_t> destinationValue =
         resolveCFGConstantInteger(adaptor.getDestination().front());
-    obelisk_rt_stable_handle_v1 decoded{};
+    talos_rt_stable_handle_v1 decoded{};
     bool packedStaticStage =
         !op.getClockingOutputAttr() && !driverDestination && site &&
         staticPlan && staticRoot != staticPlan->siteRoots.end() &&
@@ -1124,8 +1124,8 @@ public:
         adaptor.getDelay().empty() && !site.getTiming() &&
         site.getStorage() != schedule::ComputeNBAStorageKind::DynamicFrontier &&
         *width <= 64 && destinationValue &&
-        obelisk_rt_stable_handle_decode(*destinationValue, &decoded) &&
-        decoded.kind == OBELISK_RT_STABLE_HANDLE_STATIC &&
+        talos_rt_stable_handle_decode(*destinationValue, &decoded) &&
+        decoded.kind == TALOS_RT_STABLE_HANDLE_STATIC &&
         decoded.id == staticPlan->roots[staticRoot->second].static_state &&
         decoded.offset >= 0 &&
         static_cast<uint64_t>(decoded.offset) <=
@@ -1142,12 +1142,12 @@ public:
     // the ordinary actor still uses the existing accumulator/claim route.
     bool wideEvalSite =
         packedStaticStage && function &&
-        ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRawCaptures>(
+        ::talos::schedule::has<::talos::schedule::Field::EvalRawCaptures>(
             function) &&
         staticPlan->roots[staticRoot->second].bit_width > 64;
     if (packedStaticStage && !wideEvalSite) {
       bool assumeClean =
-          ::obelisk::schedule::has<assumeCleanSpecializationAttr>(op);
+          ::talos::schedule::has<assumeCleanSpecializationAttr>(op);
       StringRef generatedAccumulator =
           staticRoot->second < staticPlan->generatedAccumulators.size()
               ? staticPlan->generatedAccumulators[staticRoot->second]
@@ -1179,8 +1179,8 @@ public:
       // the root so it is not committed as fast two-state data.
       if (!inductiveTwoStateAccess && !generatedAccumulator.empty() &&
           adaptor.getValue().size() == 2 && function &&
-          ::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalInductiveTwoState>(function)) {
+          ::talos::schedule::has<
+              ::talos::schedule::Field::EvalInductiveTwoState>(function)) {
         Block *head = rewriter.getInsertionBlock();
         Block *continuation =
             rewriter.splitBlock(head, rewriter.getInsertionPoint());
@@ -1220,8 +1220,8 @@ public:
       uint32_t homeRegion =
           function ? getRuntimeEventRegion(function.getHomeRegion())
                    : UINT32_MAX;
-      uint32_t commitRegion = homeRegion == OBELISK_RT_REGION_ACTIVE ||
-                                      homeRegion == OBELISK_RT_REGION_REACTIVE
+      uint32_t commitRegion = homeRegion == TALOS_RT_REGION_ACTIVE ||
+                                      homeRegion == TALOS_RT_REGION_REACTIVE
                                   ? homeRegion + 2
                                   : UINT32_MAX;
       uint64_t rootWidth = staticPlan->roots[staticRoot->second].bit_width;
@@ -1271,7 +1271,7 @@ public:
               byteGEP(
                   rewriter, location,
                   LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                            "__obelisk_aot_nba_dirty_roots_v1"),
+                                            "__talos_aot_nba_dirty_roots_v1"),
                   uint64_t{staticRoot->second / 64} * 8),
               8);
           schedule::set<schedule::Field::EvalPendingDirtyRoot>(
@@ -1366,7 +1366,7 @@ public:
                   byteGEP(rewriter, location,
                           LLVM::AddressOfOp::create(
                               rewriter, location, pointer,
-                              "__obelisk_aot_nba_dirty_roots_v1"),
+                              "__talos_aot_nba_dirty_roots_v1"),
                           static_cast<uint64_t>(staticRoot->second / 64) *
                               sizeof(uint64_t)),
                   8);
@@ -1390,7 +1390,7 @@ public:
                 llvmConstant(rewriter, location, i64, mask), position(value),
                 position(unknown), staged);
           }
-          mergeField(offsetof(obelisk_rt_generated_nba_accumulator_256, value),
+          mergeField(offsetof(talos_rt_generated_nba_accumulator_256, value),
                      value);
           // A promoted body can share the generated accumulator with a
           // four-state bootstrap or fallback body.  Explicitly overwrite its
@@ -1398,13 +1398,13 @@ public:
           // checkpoint barrier can replay stale X/Z data from the prior
           // phase into canonical state.
           mergeField(
-              offsetof(obelisk_rt_generated_nba_accumulator_256, unknown),
+              offsetof(talos_rt_generated_nba_accumulator_256, unknown),
               unknown);
           if (!compactEvalMetadata ||
               (!fullRootEvalStage && fixedWriteMask == 0)) {
             Value maskAddress = nbaFieldGEP(
                 rewriter, location, base,
-                offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask));
+                offsetof(talos_rt_generated_nba_accumulator_256, write_mask));
             Value oldMask =
                 LLVM::LoadOp::create(rewriter, location, i64, maskAddress, 8);
             LLVM::StoreOp::create(
@@ -1422,7 +1422,7 @@ public:
               rewriter, location, laneValue,
               nbaFieldGEP(
                   rewriter, location, base,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, value) +
+                  offsetof(talos_rt_generated_nba_accumulator_256, value) +
                       laneOffset),
               4);
           // This lane form is restricted to two-state values, but the same
@@ -1433,7 +1433,7 @@ public:
               rewriter, location,
               llvmConstant(rewriter, location, i32, UINT32_MAX),
               nbaFieldGEP(rewriter, location, base,
-                          offsetof(obelisk_rt_generated_nba_accumulator_256,
+                          offsetof(talos_rt_generated_nba_accumulator_256,
                                    write_mask) +
                               laneOffset),
               4);
@@ -1441,7 +1441,7 @@ public:
               rewriter, location, llvmConstant(rewriter, location, i32, 0),
               nbaFieldGEP(
                   rewriter, location, base,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, unknown) +
+                  offsetof(talos_rt_generated_nba_accumulator_256, unknown) +
                       laneOffset),
               4);
         }
@@ -1450,18 +1450,18 @@ public:
               rewriter, location, llvmConstant(rewriter, location, i32, 1),
               nbaFieldGEP(
                   rewriter, location, base,
-                  offsetof(obelisk_rt_generated_nba_accumulator_256, valid)),
+                  offsetof(talos_rt_generated_nba_accumulator_256, valid)),
               4);
           LLVM::StoreOp::create(
               rewriter, location,
               llvmConstant(rewriter, location, i32, commitRegion),
               nbaFieldGEP(rewriter, location, base,
-                          offsetof(obelisk_rt_generated_nba_accumulator_256,
+                          offsetof(talos_rt_generated_nba_accumulator_256,
                                    exec_region)),
               4);
         }
         Value dirtyBase = LLVM::AddressOfOp::create(
-            rewriter, location, pointer, "__obelisk_aot_nba_dirty_roots_v1");
+            rewriter, location, pointer, "__talos_aot_nba_dirty_roots_v1");
         Value dirtyWord = byteGEP(
             rewriter, location, dirtyBase,
             static_cast<uint64_t>(staticRoot->second / 64) * sizeof(uint64_t));
@@ -1482,7 +1482,7 @@ public:
         if (!compactEvalMetadata) {
           Value summaryBase =
               LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                        "__obelisk_aot_nba_dirty_summary_v1");
+                                        "__talos_aot_nba_dirty_summary_v1");
           uint32_t dirtyWordIndex = staticRoot->second / 64;
           Value summaryWord = byteGEP(
               rewriter, location, summaryBase,
@@ -1539,19 +1539,19 @@ public:
 
         rewriter.setInsertionPointToEnd(claimBlock);
         Value contextAddress = LLVM::AddressOfOp::create(
-            rewriter, location, pointer, "__obelisk_current_context");
+            rewriter, location, pointer, "__talos_current_context");
         Value runtimeContext = LLVM::LoadOp::create(rewriter, location, pointer,
                                                     contextAddress, 8);
         Value status =
             LLVM::CallOp::create(
                 rewriter, location, TypeRange{i32},
                 SymbolRefAttr::get(rewriter.getContext(),
-                                   "obelisk_rt_v1_static_nba_claim"),
+                                   "talos_rt_v1_static_nba_claim"),
                 ValueRange{
                     runtimeContext,
                     llvmConstant(rewriter, location, i32, staticRoot->second),
                     LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                              "__obelisk_state_value"),
+                                              "__talos_state_value"),
                     LLVM::ZeroOp::create(rewriter, location, pointer),
                     llvmConstant(rewriter, location, i64, stateBitCount),
                     llvmConstant(rewriter, location, i64,
@@ -1562,7 +1562,7 @@ public:
         certifyCapture(status.getDefiningOp());
         LLVM::CallOp::create(rewriter, location, TypeRange{},
                              SymbolRefAttr::get(rewriter.getContext(),
-                                                "obelisk_rt_v1_scheduler_fail"),
+                                                "talos_rt_v1_scheduler_fail"),
                              ValueRange{runtimeContext, status});
         cf::BranchOp::create(rewriter, location, continuation);
 
@@ -1571,14 +1571,14 @@ public:
         return success();
       }
       Value contextAddress = LLVM::AddressOfOp::create(
-          rewriter, location, pointer, "__obelisk_current_context");
+          rewriter, location, pointer, "__talos_current_context");
       Value runtimeContext =
           LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
       if (!useGuardedClaim) {
         LLVM::CallOp::create(
             rewriter, location, TypeRange{},
             SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_static_nba_stage_wide"),
+                               "talos_rt_v1_static_nba_stage_wide"),
             ValueRange{
                 runtimeContext,
                 llvmConstant(rewriter, location, i32, staticRoot->second),
@@ -1594,15 +1594,15 @@ public:
           LLVM::CallOp::create(
               rewriter, location, TypeRange{i32},
               SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v1_static_nba_claim"),
+                                 "talos_rt_v1_static_nba_claim"),
               ValueRange{
                   runtimeContext,
                   llvmConstant(rewriter, location, i32, staticRoot->second),
                   LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                            "__obelisk_state_value"),
+                                            "__talos_state_value"),
                   adaptor.getValue().size() == 2
                       ? LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                  "__obelisk_state_unknown")
+                                                  "__talos_state_unknown")
                             .getResult()
                       : LLVM::ZeroOp::create(rewriter, location, pointer)
                             .getResult(),
@@ -1614,14 +1614,14 @@ public:
               .getResult();
       LLVM::CallOp::create(rewriter, location, TypeRange{},
                            SymbolRefAttr::get(rewriter.getContext(),
-                                              "obelisk_rt_v1_scheduler_fail"),
+                                              "talos_rt_v1_scheduler_fail"),
                            ValueRange{runtimeContext, status});
       rewriter.eraseOp(op);
       return success();
     }
 
     Value contextAddress = LLVM::AddressOfOp::create(
-        rewriter, location, pointer, "__obelisk_current_context");
+        rewriter, location, pointer, "__talos_current_context");
     Value runtimeContext =
         LLVM::LoadOp::create(rewriter, location, pointer, contextAddress, 8);
     auto savePlane = [&](Value value) {
@@ -1635,10 +1635,10 @@ public:
     if (adaptor.getValue().size() == 2) {
       unknown = savePlane(adaptor.getValue()[1]);
       unknownPlane = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                               "__obelisk_state_unknown");
+                                               "__talos_state_unknown");
     }
     Value valuePlane = LLVM::AddressOfOp::create(rewriter, location, pointer,
-                                                 "__obelisk_state_value");
+                                                 "__talos_state_value");
     Value delay = adaptor.getDelay().empty()
                       ? llvmConstant(rewriter, location, i64, 0)
                       : adaptor.getDelay().front();
@@ -1647,7 +1647,7 @@ public:
           LLVM::CallOp::create(
               rewriter, location, TypeRange{i32},
               SymbolRefAttr::get(rewriter.getContext(),
-                                 "obelisk_rt_v1_scheduler_string_nba"),
+                                 "talos_rt_v1_scheduler_string_nba"),
               ValueRange{runtimeContext, valuePlane,
                          llvmConstant(rewriter, location, i64, stateBitCount),
                          adaptor.getDestination().front(), delay,
@@ -1655,7 +1655,7 @@ public:
               .getResult();
       LLVM::CallOp::create(rewriter, location, TypeRange{},
                            SymbolRefAttr::get(rewriter.getContext(),
-                                              "obelisk_rt_v1_scheduler_fail"),
+                                              "talos_rt_v1_scheduler_fail"),
                            ValueRange{runtimeContext, status});
     } else {
       bool mappedSite =
@@ -1664,8 +1664,8 @@ public:
           mappedSite ? staticPlan->siteRoots.lookup(site.getId()) : UINT32_MAX;
       bool orderedEvalQueue =
           function &&
-          ::obelisk::schedule::has<
-              ::obelisk::schedule::Field::EvalOrderedNbaQueue>(function);
+          ::talos::schedule::has<
+              ::talos::schedule::Field::EvalOrderedNbaQueue>(function);
       bool staticallyStaged =
           !op.getClockingOutputAttr() && !driverDestination &&
           staticSitesEnabled && mappedSite &&
@@ -1696,11 +1696,11 @@ public:
                   rewriter.getContext(),
                   op.getClockingOutputAttr()
                       ? driverDestination
-                            ? "obelisk_rt_v1_scheduler_clocking_driver_nba"
-                            : "obelisk_rt_v1_scheduler_clocking_nba"
-                  : driverDestination ? "obelisk_rt_v1_scheduler_driver_nba"
-                  : staticallyStaged  ? "obelisk_rt_v1_scheduler_static_nba"
-                                      : "obelisk_rt_v1_scheduler_nba"),
+                            ? "talos_rt_v1_scheduler_clocking_driver_nba"
+                            : "talos_rt_v1_scheduler_clocking_nba"
+                  : driverDestination ? "talos_rt_v1_scheduler_driver_nba"
+                  : staticallyStaged  ? "talos_rt_v1_scheduler_static_nba"
+                                      : "talos_rt_v1_scheduler_nba"),
               arguments)
               .getResult();
       if (mappedSite)
@@ -1708,7 +1708,7 @@ public:
             status.getDefiningOp(), rewriter.getI32IntegerAttr(rootIndex));
       LLVM::CallOp::create(rewriter, location, TypeRange{},
                            SymbolRefAttr::get(rewriter.getContext(),
-                                              "obelisk_rt_v1_scheduler_fail"),
+                                              "talos_rt_v1_scheduler_fail"),
                            ValueRange{runtimeContext, status});
     }
     rewriter.eraseOp(op);
@@ -1739,20 +1739,20 @@ void emitGeneratedNBATransient(OpBuilder &builder, Location location,
   if (!staged)
     staged = arith::AndIOp::create(
         builder, location,
-        load(offsetof(obelisk_rt_generated_nba_accumulator_256, write_mask)),
+        load(offsetof(talos_rt_generated_nba_accumulator_256, write_mask)),
         mask);
   Value differs = arith::OrIOp::create(
       builder, location,
       arith::XOrIOp::create(
           builder, location,
-          load(offsetof(obelisk_rt_generated_nba_accumulator_256, value)),
+          load(offsetof(talos_rt_generated_nba_accumulator_256, value)),
           newValue),
       arith::XOrIOp::create(
           builder, location,
-          load(offsetof(obelisk_rt_generated_nba_accumulator_256, unknown)),
+          load(offsetof(talos_rt_generated_nba_accumulator_256, unknown)),
           newUnknown));
   Value transientAddress =
-      field(offsetof(obelisk_rt_generated_nba_accumulator_256, transient));
+      field(offsetof(talos_rt_generated_nba_accumulator_256, transient));
   Value transient =
       LLVM::LoadOp::create(builder, location, i64, transientAddress, 8);
   LLVM::StoreOp::create(
@@ -1798,4 +1798,4 @@ void populateNBAToLLVMConversionPatterns(RewritePatternSet &patterns,
                                        staticSitesEnabled, guardedClaims);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

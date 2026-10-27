@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 !record = !simulation.unpacked_struct<[
   #simulation.field<name = "byte", type = i8, ordinal = 0, packedOffset = 0>,

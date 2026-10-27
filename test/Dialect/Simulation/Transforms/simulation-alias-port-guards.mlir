@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-alias-port-connections{vpi=off}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-alias-port-connections{vpi=off}))' | FileCheck %s
 
 module {
 // LRM 6.8 also applies to reads in the initializer call closure.

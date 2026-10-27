@@ -1,7 +1,7 @@
-// RUN: obelisk-opt %s --test-obelisk-scoped-integer-ranges -o %t.threaded 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --mlir-disable-threading --test-obelisk-scoped-integer-ranges -o %t.serial 2>&1 | FileCheck %s
+// RUN: talos-opt %s --test-talos-scoped-integer-ranges -o %t.threaded 2>&1 | FileCheck %s
+// RUN: talos-opt %s --mlir-disable-threading --test-talos-scoped-integer-ranges -o %t.serial 2>&1 | FileCheck %s
 // RUN: diff %t.threaded %t.serial
-// RUN: obelisk-opt %s -o %t.original
+// RUN: talos-opt %s -o %t.original
 // RUN: diff %t.original %t.threaded
 
 !array = !simulation.unpacked_array<0 : 15 x i8>

@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-slang %s | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-slang %s | FileCheck %s --check-prefix=SLANG
 
 module dpi_export_leaf;
   function int exported(input int value);

@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=0}))' | FileCheck %s --check-prefix=O0
-// RUN: obelisk-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3 missed-remarks=true}))' > %t.threaded 2> %t.remarks
-// RUN: obelisk-opt %s --mlir-disable-threading --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3 missed-remarks=true}))' > %t.serial 2> %t.serial-remarks
+// RUN: talos-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=0}))' | FileCheck %s --check-prefix=O0
+// RUN: talos-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=3 missed-remarks=true}))' > %t.threaded 2> %t.remarks
+// RUN: talos-opt %s --mlir-disable-threading --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(talos-sim-inline{opt-level=3 missed-remarks=true}))' > %t.serial 2> %t.serial-remarks
 // RUN: diff -u %t.serial %t.threaded
 // RUN: diff -u %t.serial-remarks %t.remarks
 // RUN: FileCheck %s --check-prefix=O3 < %t.threaded
@@ -24,7 +24,7 @@ module {
     simulation.code_unit.decl 22 in 1 function hierarchy "top.child.void_caller"
     simulation.code_unit.decl 23 in 1 function hierarchy "top.child.io_caller"
     simulation.code_unit.decl 24 in 1 function hierarchy "top.child.blocked_caller"
-    simulation.code_unit.decl 25 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 25 in 0 root_initializer hierarchy "__talos_root"
     simulation.code_unit.decl 26 in 1 function hierarchy "top.child.nested_leaf"
     simulation.code_unit.decl 27 in 1 function hierarchy "top.child.nested_middle"
     simulation.code_unit.decl 28 in 1 function hierarchy "top.child.nested_caller"

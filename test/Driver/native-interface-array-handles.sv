@@ -1,6 +1,6 @@
-// RUN: obelisk -O3 --top=native_interface_array_handles %s -o %t.o3.native
+// RUN: talos -O3 --top=native_interface_array_handles %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode --top=native_interface_array_handles %s -o %t.o3.bytecode
+// RUN: talos -O3 --execution-tier=bytecode --top=native_interface_array_handles %s -o %t.o3.bytecode
 // RUN: %t.o3.bytecode | FileCheck %s
 
 interface array_handle_if;

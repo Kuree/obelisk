@@ -1,8 +1,8 @@
-// RUN: obelisk --vpi=read -O0 --top=top %s -o %t.read-o0
+// RUN: talos --vpi=read -O0 --top=top %s -o %t.read-o0
 // RUN: %t.read-o0 | FileCheck %s
-// RUN: obelisk --vpi=read -O3 --top=top %s -o %t.read-o3
+// RUN: talos --vpi=read -O3 --top=top %s -o %t.read-o3
 // RUN: %t.read-o3 | FileCheck %s
-// RUN: obelisk --vpi=full -O3 --top=top %s -o %t.full
+// RUN: talos --vpi=full -O3 --top=top %s -o %t.full
 // RUN: %t.full | FileCheck %s
 
 // A generated scope is a lexical VPI record, not an execution scope. Its

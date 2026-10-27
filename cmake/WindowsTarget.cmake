@@ -1,6 +1,6 @@
 # Translate LLVM's target spelling only where Windows tools require their own
 # machine names. Keep these in one place for SDK repairs and integration tests.
-function(obelisk_windows_target triple prefix)
+function(talos_windows_target triple prefix)
   if(NOT triple MATCHES "-windows-msvc")
     message(FATAL_ERROR "Windows native target requires the Microsoft ABI: ${triple}")
   endif()

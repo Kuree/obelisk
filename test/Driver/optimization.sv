@@ -1,10 +1,10 @@
-// RUN: obelisk -O0 -emit-sim %s | FileCheck %s --check-prefix=O0
-// RUN: obelisk -O1 -emit-sim %s | FileCheck %s --check-prefix=INLINE
-// RUN: obelisk -O2 -emit-sim %s | FileCheck %s --check-prefix=INLINE
-// RUN: obelisk -O3 -emit-sim %s | FileCheck %s --check-prefix=INLINE
-// RUN: obelisk -emit-sim %s | FileCheck %s --check-prefix=INLINE
-// RUN: obelisk -O3 -O0 -emit-sim %s | FileCheck %s --check-prefix=O0
-// RUN: obelisk -O0 -O1 -emit-sim %s | FileCheck %s --check-prefix=INLINE
+// RUN: talos -O0 -emit-sim %s | FileCheck %s --check-prefix=O0
+// RUN: talos -O1 -emit-sim %s | FileCheck %s --check-prefix=INLINE
+// RUN: talos -O2 -emit-sim %s | FileCheck %s --check-prefix=INLINE
+// RUN: talos -O3 -emit-sim %s | FileCheck %s --check-prefix=INLINE
+// RUN: talos -emit-sim %s | FileCheck %s --check-prefix=INLINE
+// RUN: talos -O3 -O0 -emit-sim %s | FileCheck %s --check-prefix=O0
+// RUN: talos -O0 -O1 -emit-sim %s | FileCheck %s --check-prefix=INLINE
 
 module optimization_levels;
   logic [7:0] result;
@@ -38,8 +38,8 @@ endmodule
 // INLINE-SAME: simulation.descriptor_id = 0 : i64}) attributes
 
 // The selected level also reaches LLVM's optimization pipeline.
-// LLVM-O0: define i32 @__obelisk_root(ptr
-// LLVM-OPT: define noundef i32 @__obelisk_root(ptr
+// LLVM-O0: define i32 @__talos_root(ptr
+// LLVM-OPT: define noundef i32 @__talos_root(ptr
 // LLVM-OPT-SAME: local_unnamed_addr
-// LLVM-O3: define noundef i32 @__obelisk_root(ptr
+// LLVM-O3: define noundef i32 @__talos_root(ptr
 // LLVM-O3-SAME: local_unnamed_addr

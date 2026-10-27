@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s -split-input-file --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s -split-input-file --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
 
 // A module made entirely of shared transfers still needs descriptor support.
 !ref = !simulation.ref<i8>
@@ -24,9 +24,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"} {
     simulation.suspend.change %src to ^loop : !ref
   }
 }
-// CHECK-DAG: llvm.func internal @__obelisk_native_noop_destroy_v1
-// CHECK-DAG: llvm.func internal @__obelisk_native_zero_requirements_v1
-// CHECK-DAG: llvm.func @__obelisk_transfer_kernel_0.impl.__obelisk_table_body
+// CHECK-DAG: llvm.func internal @__talos_native_noop_destroy_v1
+// CHECK-DAG: llvm.func internal @__talos_native_zero_requirements_v1
+// CHECK-DAG: llvm.func @__talos_transfer_kernel_0.impl.__talos_table_body
 
 // -----
 
@@ -44,5 +44,5 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"} {
     simulation.suspend.change %src to ^loop : !ref
   }
 }
-// CHECK-LABEL: llvm.func @singleton.__obelisk_table_body
-// CHECK-NOT: llvm.func @__obelisk_transfer_kernel
+// CHECK-LABEL: llvm.func @singleton.__talos_table_body
+// CHECK-NOT: llvm.func @__talos_transfer_kernel

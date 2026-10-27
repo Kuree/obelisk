@@ -6,10 +6,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "SimulationVerifiers.h"
-#include "obelisk/Analysis/SimulationAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Analysis/SimulationAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Runtime/StableHash.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -37,29 +37,29 @@
 
 using namespace mlir;
 
-namespace obelisk::sim {
+namespace talos::sim {
 
 uint64_t getStableStorageTypeID(Type type, uint32_t descriptorFlags) {
   uint64_t hash;
   if (auto mailbox = dyn_cast<MailboxType>(type);
       mailbox && mailbox.getSpecialization()) {
-    constexpr StringLiteral domain = "obelisk.mailbox.handle";
-    hash = obelisk_stable_hash(domain.data(), domain.size());
-    hash = obelisk_stable_hash_append_uint_le(hash, mailbox.getSpecialization(),
+    constexpr StringLiteral domain = "talos.mailbox.handle";
+    hash = talos_stable_hash(domain.data(), domain.size());
+    hash = talos_stable_hash_append_uint_le(hash, mailbox.getSpecialization(),
                                               8);
   } else {
     std::string spelling;
     llvm::raw_string_ostream stream(spelling);
     type.print(stream);
     stream.flush();
-    hash = obelisk_stable_hash(spelling.data(), spelling.size());
+    hash = talos_stable_hash(spelling.data(), spelling.size());
   }
   // Keep the established IDs for ordinary type descriptors, but distinguish
   // context-dependent ABI flags such as signed wildcard keys. Type spellings
   // cannot contain NUL, so the sentinel keeps this suffix unambiguous.
   if (descriptorFlags != 0) {
-    hash = obelisk_stable_hash_append_byte(hash, 0);
-    hash = obelisk_stable_hash_append_uint_le(hash, descriptorFlags, 4);
+    hash = talos_stable_hash_append_byte(hash, 0);
+    hash = talos_stable_hash_append_uint_le(hash, descriptorFlags, 4);
   }
   return hash ? hash : 1;
 }
@@ -67,9 +67,9 @@ uint64_t getStableStorageTypeID(Type type, uint32_t descriptorFlags) {
 uint64_t MailboxType::getMessageTypeID() const {
   if (!getSpecialization())
     return getStableStorageTypeID(getElementType());
-  constexpr StringLiteral domain = "obelisk.mailbox.message";
-  uint64_t hash = obelisk_stable_hash(domain.data(), domain.size());
-  hash = obelisk_stable_hash_append_uint_le(hash, getSpecialization(), 8);
+  constexpr StringLiteral domain = "talos.mailbox.message";
+  uint64_t hash = talos_stable_hash(domain.data(), domain.size());
+  hash = talos_stable_hash_append_uint_le(hash, getSpecialization(), 8);
   return hash ? hash : 1;
 }
 
@@ -710,33 +710,33 @@ static Type getTypeAtSubelementIndex(Type type, Attribute index) {
   return getAggregateElementType(type, static_cast<unsigned>(integer.getInt()));
 }
 
-#define OBELISK_DEFINE_ARRAY_DESTRUCTURABLE(TypeName)                          \
+#define TALOS_DEFINE_ARRAY_DESTRUCTURABLE(TypeName)                          \
   std::optional<DenseMap<Attribute, Type>> TypeName::getSubelementIndexMap()   \
       const {                                                                  \
-    return ::obelisk::sim::getSubelementIndexMap(*this, true);                 \
+    return ::talos::sim::getSubelementIndexMap(*this, true);                 \
   }                                                                            \
   Type TypeName::getTypeAtIndex(Attribute index) const {                       \
     return getTypeAtSubelementIndex(*this, index);                             \
   }
 
-#define OBELISK_DEFINE_RECORD_DESTRUCTURABLE(TypeName)                         \
+#define TALOS_DEFINE_RECORD_DESTRUCTURABLE(TypeName)                         \
   std::optional<DenseMap<Attribute, Type>> TypeName::getSubelementIndexMap()   \
       const {                                                                  \
-    return ::obelisk::sim::getSubelementIndexMap(*this, false);                \
+    return ::talos::sim::getSubelementIndexMap(*this, false);                \
   }                                                                            \
   Type TypeName::getTypeAtIndex(Attribute index) const {                       \
     return getTypeAtSubelementIndex(*this, index);                             \
   }
 
-OBELISK_DEFINE_ARRAY_DESTRUCTURABLE(PackedArrayType)
-OBELISK_DEFINE_ARRAY_DESTRUCTURABLE(UnpackedArrayType)
-OBELISK_DEFINE_RECORD_DESTRUCTURABLE(PackedStructType)
-OBELISK_DEFINE_RECORD_DESTRUCTURABLE(UnpackedStructType)
-OBELISK_DEFINE_RECORD_DESTRUCTURABLE(PackedUnionType)
-OBELISK_DEFINE_RECORD_DESTRUCTURABLE(UnpackedUnionType)
+TALOS_DEFINE_ARRAY_DESTRUCTURABLE(PackedArrayType)
+TALOS_DEFINE_ARRAY_DESTRUCTURABLE(UnpackedArrayType)
+TALOS_DEFINE_RECORD_DESTRUCTURABLE(PackedStructType)
+TALOS_DEFINE_RECORD_DESTRUCTURABLE(UnpackedStructType)
+TALOS_DEFINE_RECORD_DESTRUCTURABLE(PackedUnionType)
+TALOS_DEFINE_RECORD_DESTRUCTURABLE(UnpackedUnionType)
 
-#undef OBELISK_DEFINE_ARRAY_DESTRUCTURABLE
-#undef OBELISK_DEFINE_RECORD_DESTRUCTURABLE
+#undef TALOS_DEFINE_ARRAY_DESTRUCTURABLE
+#undef TALOS_DEFINE_RECORD_DESTRUCTURABLE
 
 LogicalResult
 LogicType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
@@ -842,4 +842,4 @@ std::optional<CaptureKind> getCaptureKind(DictionaryAttr attrs) {
   return value.getValue();
 }
 
-} // namespace obelisk::sim
+} // namespace talos::sim

@@ -1,5 +1,5 @@
-// RUN: obelisk -O3 --execution-tier=native --native-scheduler=auto %s -o %t.auto
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto 2> %t.auto.diag | FileCheck %s
+// RUN: talos -O3 --execution-tier=native --native-scheduler=auto %s -o %t.auto
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t.auto 2> %t.auto.diag | FileCheck %s
 // RUN: FileCheck %s --check-prefix=DIAG < %t.auto.diag
 
 // Finite runtime waiters keep periodic bootstrap active among generated
@@ -49,6 +49,6 @@ endmodule
 // CHECK-NEXT: child 3
 // CHECK-NEXT: bootstrap second 4
 // CHECK-NEXT: final 4
-// DIAG: obelisk-signal-diagnostics
+// DIAG: talos-signal-diagnostics
 // DIAG-SAME: periodic_preparations={{[1-9][0-9]*}}
 // DIAG-SAME: periodic_clocks_high_water=1

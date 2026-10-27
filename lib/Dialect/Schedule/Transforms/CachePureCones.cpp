@@ -6,14 +6,14 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "obelisk/Analysis/ParallelWalk.h"
-#include "obelisk/Dialect/Native/NativeDialect.h"
-#include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h"
-#include "obelisk/Dialect/Simulation/SimulationMetadata.h"
+#include "talos/Analysis/ParallelWalk.h"
+#include "talos/Dialect/Native/NativeDialect.h"
+#include "talos/Dialect/Schedule/Transforms/NativeTransforms.h"
+#include "talos/Dialect/Schedule/Transforms/Passes.h"
+#include "talos/Dialect/Simulation/SimulationMetadata.h"
 
 using namespace mlir;
-namespace obelisk::schedule {
+namespace talos::schedule {
 namespace {
 std::optional<unsigned> cacheWidth(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
@@ -155,7 +155,7 @@ unsigned outlineCones(ModuleOp module, uint64_t minimumCost,
           types.push_back(input.getType());
         auto helper = LLVM::LLVMFuncOp::create(
             builder, definition->getLoc(),
-            (function.getSymName() + ".__obelisk_pure_cone").str(),
+            (function.getSymName() + ".__talos_pure_cone").str(),
             LLVM::LLVMFunctionType::get(root.getType(), types));
         symbols.insert(helper);
         helper.setLinkage(LLVM::Linkage::Internal);
@@ -204,7 +204,7 @@ void cacheFunction(ModuleOp module, LLVM::LLVMFuncOp function,
   builder.setInsertionPointToStart(module.getBody());
   auto global = LLVM::GlobalOp::create(
       builder, loc, cacheType, false, LLVM::Linkage::Internal,
-      ("__obelisk_pure_cache." + function.getSymName()).str(), Attribute{}, 8,
+      ("__talos_pure_cache." + function.getSymName()).str(), Attribute{}, 8,
       0, false, /*thread_local_=*/true);
   symbols.insert(global);
   if (StringAttr partition = native::get<native::Partition>(function))
@@ -332,14 +332,14 @@ void cacheNativePureCones(ModuleOp module, uint64_t minimumCost,
   for (auto &[function, keys] : candidates)
     cacheFunction(module, function, keys);
   if (native::has<native::DebugTiming>(module))
-    llvm::errs() << "obelisk pure cones: outlined=" << outlined
+    llvm::errs() << "talos pure cones: outlined=" << outlined
                  << " cached=" << candidates.size() << '\n';
 }
-} // namespace obelisk::schedule
+} // namespace talos::schedule
 
-namespace obelisk {
+namespace talos {
 #define GEN_PASS_DEF_CACHENATIVEPURECONESPASS
-#include "obelisk/Dialect/Schedule/Transforms/Passes.h.inc"
+#include "talos/Dialect/Schedule/Transforms/Passes.h.inc"
 namespace {
 struct CacheNativePureConesPass
     : impl::CacheNativePureConesPassBase<CacheNativePureConesPass> {
@@ -350,4 +350,4 @@ struct CacheNativePureConesPass
   }
 };
 } // namespace
-} // namespace obelisk
+} // namespace talos

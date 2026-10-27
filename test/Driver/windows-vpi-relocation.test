@@ -1,9 +1,9 @@
 // REQUIRES: windows
 // RUN: %split-file %S/Inputs/windows-pi.defs %t.dir
-// RUN: %llvm_dist/bin/llvm-dlltool -m %dlltool_machine -D simulator.exe -d %native_support/obelisk-pi.def -l %t.dir/host.lib
+// RUN: %llvm_dist/bin/llvm-dlltool -m %dlltool_machine -D simulator.exe -d %native_support/talos-pi.def -l %t.dir/host.lib
 // RUN: mkdir -p %t.dir/input %t.dir/bin %t.dir/relocated
 // RUN: %target_clang -fuse-ld=lld -shared %S/Inputs/vpi_startup.c -I%resource_dir/include %t.dir/host.lib -Xlinker /def:%t.dir/vpi.def -o %t.dir/input/first.dll
 // RUN: %target_clang -fuse-ld=lld -shared %S/Inputs/vpi_startup_second.c -I%resource_dir/include %t.dir/host.lib -Xlinker /export:vlog_startup_routines,data -o %t.dir/input/second.dll
-// RUN: obelisk --vpi=full %S/vpi.sv %t.dir/input/first.dll %t.dir/input/second.dll -o %t.dir/bin/simulator.exe
+// RUN: talos --vpi=full %S/vpi.sv %t.dir/input/first.dll %t.dir/input/second.dll -o %t.dir/bin/simulator.exe
 // RUN: cp %t.dir/bin/simulator.exe %t.dir/bin/first.dll %t.dir/bin/second.dll %t.dir/relocated
 // RUN: %t.dir/relocated/simulator.exe | FileCheck %S/vpi.sv --check-prefix=OUTPUT

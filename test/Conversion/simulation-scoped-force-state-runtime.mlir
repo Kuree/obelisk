@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba))' -o %t.sim.mlir
-// RUN: obelisk-opt %t.sim.mlir --encode-obelisk-sim-to-bytecode --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.native.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-specialize-static-state-nba))' -o %t.sim.mlir
+// RUN: talos-opt %t.sim.mlir --encode-talos-sim-to-bytecode --convert-talos-sim-processes-to-llvm-coroutines -o %t.native.mlir
 // RUN: FileCheck %s --check-prefix=IR < %t.native.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-scoped-force-state-runtime.test.
@@ -8,12 +8,12 @@
 // forced value on release until the next procedural assignment. The unrelated
 // root must remain directly addressable during and after the force.
 // IR-LABEL: llvm.func @unrelated(
-// IR-NOT: llvm.call @obelisk_rt_v1_native_state_{{load|store}}_plane
-// IR-NOT: llvm.call @obelisk_rt_v1_static_specialization_guard
+// IR-NOT: llvm.call @talos_rt_v1_native_state_{{load|store}}_plane
+// IR-NOT: llvm.call @talos_rt_v1_static_specialization_guard
 // IR: llvm.return
 // IR-LABEL: llvm.func @read_guarded(
-// IR: llvm.call @obelisk_rt_v1_static_specialization_guard
-// IR: llvm.call @obelisk_rt_v1_native_state_load_plane
+// IR: llvm.call @talos_rt_v1_static_specialization_guard
+// IR: llvm.call @talos_rt_v1_native_state_load_plane
 // IR: llvm.return
 
 !word = !simulation.logic<4>

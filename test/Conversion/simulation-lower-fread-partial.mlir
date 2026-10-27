@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(talos-sim-prepare-unit-lowering,simulation.design(simulation.func(talos-sim-lower-unit)))' | FileCheck %s
 
 // IEEE 1800-2017 21.3.4.4: a partial $fread updates only the bits
 // represented by bytes actually read. Drive unit lowering directly so this
 // test covers exactly the pass responsible for preserving the other bits.
 
-!logic9 = !obelisk.integral<9, false, true, 8 : 0, logic>
-!integer = !obelisk.integral<32, true, true, 31 : 0, integer>
+!logic9 = !talos.integral<9, false, true, 8 : 0, logic>
+!integer = !talos.integral<32, true, true, 31 : 0, integer>
 
 module {
   simulation.design @fread_partial {
@@ -51,15 +51,15 @@ module {
           code_unit_id = 9901001 : i64,
           simulation.void_function
         } {
-      obelisk.sv.statement.expression_statement attributes {node_id = 1 : i64} {
-        obelisk.sv.expression.assignment attributes {
+      talos.sv.statement.expression_statement attributes {node_id = 1 : i64} {
+        talos.sv.expression.assignment attributes {
             assignment_kind = 0 : i32, node_id = 2 : i64,
             semantic_type = !integer} {
-          obelisk.sv.expression.named_value attributes {
+          talos.sv.expression.named_value attributes {
               node_id = 3 : i64, referenced_path = "top.count",
               referenced_symbol = @count, semantic_type = !integer} {
           }
-          obelisk.sv.expression.call attributes {
+          talos.sv.expression.call attributes {
               argument_count = 2 : i64, callee_name = "$fread",
               constraint_restrictions = [],
               defaulted_arguments = array<i64: 0, 0>,
@@ -69,20 +69,20 @@ module {
               node_id = 4 : i64, semantic_type = !integer,
               subroutine_kind = 0 : i32, system_library_cell = "work.top",
               system_scope_path = "top"} {
-            obelisk.sv.expression.assignment attributes {
+            talos.sv.expression.assignment attributes {
                 assignment_kind = 0 : i32, is_signed = false,
                 node_id = 5 : i64, semantic_type = !logic9} {
-              obelisk.sv.expression.named_value attributes {
+              talos.sv.expression.named_value attributes {
                   is_signed = false, node_id = 6 : i64,
                   referenced_path = "top.value", referenced_symbol = @value,
                   semantic_type = !logic9} {
               }
-              obelisk.sv.expression.empty_argument attributes {
+              talos.sv.expression.empty_argument attributes {
                   is_signed = false, node_id = 7 : i64,
                   semantic_type = !logic9} {
               }
             }
-            obelisk.sv.expression.named_value attributes {
+            talos.sv.expression.named_value attributes {
                 is_signed = true, node_id = 8 : i64,
                 referenced_path = "top.fd", referenced_symbol = @fd,
                 semantic_type = !integer} {

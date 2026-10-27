@@ -1,12 +1,12 @@
-// RUN: %obelisk --std=1800-2023 -O3 --target=native \
+// RUN: %talos --std=1800-2023 -O3 --target=native \
 // RUN:   --native-scheduler=eval --coverage=functional --compile-threads=12 \
 // RUN:   -o %t %s
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t --coverage-output=%t.obcov \
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t --coverage-output=%t.obcov \
 // RUN:   > %t.out 2> %t.diag
 // RUN: FileCheck %s --check-prefix=QUERY < %t.out
 // RUN: FileCheck %s --check-prefix=DIAG \
-// RUN:   --implicit-check-not=obelisk-periodic-reject < %t.diag
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN:   --implicit-check-not=talos-periodic-reject < %t.diag
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 
 module functional_clocking_event_strobe_aot;
   bit clock = 0;
@@ -43,6 +43,6 @@ endmodule
 
 // QUERY: strobe periodic done edges=5
 // REPORT: functional: 100.00% (1/1)
-// DIAG: obelisk-signal-diagnostics
+// DIAG: talos-signal-diagnostics
 // DIAG-SAME: aot_node_executions={{[1-9][0-9]*}}
 // DIAG-SAME: aot_fallbacks=0

@@ -4,4 +4,4 @@
 // RUN: %target_clang -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.dir/arm64.o && %llvm_dist/bin/llvm-ar rcs %t.dir/arm64.a %t.dir/arm64.o
 // RUN: %target_clang --target=x86_64-apple-macosx15.0 -c %S/Inputs/dpi_impl.c -I%resource_dir/include -o %t.dir/x64.o && %llvm_dist/bin/llvm-ar rcs %t.dir/x64.a %t.dir/x64.o
 // RUN: %llvm_dist/bin/llvm-lipo -create %t.dir/arm64.a %t.dir/x64.a -output %t.dir/universal.a
-// RUN: %obelisk %S/dpi.sv %t.dir/universal.a -o %t.dir/simulator && %t.dir/simulator | FileCheck %S/dpi-shared.test --check-prefix=OUTPUT
+// RUN: %talos %S/dpi.sv %t.dir/universal.a -o %t.dir/simulator && %t.dir/simulator | FileCheck %S/dpi-shared.test --check-prefix=OUTPUT

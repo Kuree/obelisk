@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -41,18 +41,18 @@ module attributes {
   }
 }
 
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_process_random_get(!llvm.ptr, i64, !llvm.ptr) -> i32
-// NATIVE-DAG: llvm.func @obelisk_rt_v1_process_random_set(!llvm.ptr, i64, !llvm.ptr) -> i32
+// NATIVE-DAG: llvm.func @talos_rt_v1_process_random_get(!llvm.ptr, i64, !llvm.ptr) -> i32
+// NATIVE-DAG: llvm.func @talos_rt_v1_process_random_set(!llvm.ptr, i64, !llvm.ptr) -> i32
 // NATIVE-LABEL: llvm.func @parent
 // NATIVE: ^{{.*}}(%[[PROCESS:.*]]: i64):
-// NATIVE: %[[GET_STATUS:.*]] = llvm.call @obelisk_rt_v1_process_random_get({{.*}}, %[[PROCESS]], {{.*}}) : (!llvm.ptr, i64, !llvm.ptr) -> i32
-// NATIVE: llvm.call @obelisk_rt_v1_scheduler_fail({{.*}}, %[[GET_STATUS]])
+// NATIVE: %[[GET_STATUS:.*]] = llvm.call @talos_rt_v1_process_random_get({{.*}}, %[[PROCESS]], {{.*}}) : (!llvm.ptr, i64, !llvm.ptr) -> i32
+// NATIVE: llvm.call @talos_rt_v1_scheduler_fail({{.*}}, %[[GET_STATUS]])
 // NATIVE: %[[STATE:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
 // NATIVE: %[[INCREMENT:.*]] = llvm.load {{.*}} : !llvm.ptr -> i64
 // NATIVE: llvm.store %[[STATE]], {{.*}} : i64, !llvm.ptr
 // NATIVE: llvm.store %[[INCREMENT]], {{.*}} : i64, !llvm.ptr
-// NATIVE: %[[SET_STATUS:.*]] = llvm.call @obelisk_rt_v1_process_random_set({{.*}}, %[[PROCESS]], {{.*}}) : (!llvm.ptr, i64, !llvm.ptr) -> i32
-// NATIVE: llvm.call @obelisk_rt_v1_scheduler_fail({{.*}}, %[[SET_STATUS]])
+// NATIVE: %[[SET_STATUS:.*]] = llvm.call @talos_rt_v1_process_random_set({{.*}}, %[[PROCESS]], {{.*}}) : (!llvm.ptr, i64, !llvm.ptr) -> i32
+// NATIVE: llvm.call @talos_rt_v1_scheduler_fail({{.*}}, %[[SET_STATUS]])
 
 // The append-only process RNG intrinsic IDs are 0x1022e and 0x1022f.
 // Their serialized signatures pin the typed two-state ABI:

@@ -4,7 +4,7 @@
 // RUN: %target_clang -fPIC -shared %S/Inputs/dpi_annex_j_bootstrap.c -Wl,-soname,bootstrap.so -o %t.dir/root/bootstrap.so
 // RUN: %target_clang -fPIC -shared %S/Inputs/dpi_annex_j_direct.c -Wl,-soname,direct.so -o %t.dir/root/direct.so
 // RUN: cp %S/Inputs/dpi_annex_j.libs %t.dir/root/libraries.list
-// RUN: obelisk %s -sv_root %t.dir/root -sv_liblist libraries.list -sv_lib direct -o %t
+// RUN: talos %s -sv_root %t.dir/root -sv_liblist libraries.list -sv_lib direct -o %t
 // RUN: %t | FileCheck %s
 // RUN: %llvm_dist/bin/llvm-readelf -d %t | FileCheck %s --check-prefix=ELF
 

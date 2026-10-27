@@ -1,4 +1,4 @@
-// RUN: obelisk-opt --split-input-file --verify-diagnostics %s
+// RUN: talos-opt --split-input-file --verify-diagnostics %s
 
 // Every diagnostic below is produced by a SymbolUserOpInterface
 // verifySymbolUses hook rather than by the operation's own verify(). Those
@@ -37,8 +37,8 @@ module {
 module {
   simulation.design @unknown_alloc_class {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
-    simulation.func @__obelisk_root(
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       // expected-error @below {{result type references an unknown class}}
@@ -54,11 +54,11 @@ module {
 module {
   simulation.design @abstract_alloc {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @A id 1 {
       is_abstract = true, is_final = false, is_interface = false
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       // expected-error @below {{cannot allocate an abstract or interface class}}
@@ -74,11 +74,11 @@ module {
 module {
   simulation.design @unknown_field_reference {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :
@@ -97,14 +97,14 @@ module {
 module {
   simulation.design @static_field_reference {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
     simulation.class.field @C_value of @C at 0 : i64 {
       is_static = true, is_weak = false
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :
@@ -123,7 +123,7 @@ module {
 module {
   simulation.design @foreign_field_reference {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
@@ -133,7 +133,7 @@ module {
     simulation.class.field @D_value of @D at 0 offset 0 : i64 {
       is_static = false, is_weak = false
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :
@@ -152,11 +152,11 @@ module {
 module {
   simulation.design @unknown_is_instance_target {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :
@@ -174,14 +174,14 @@ module {
 module {
   simulation.design @unrelated_cast {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
     simulation.class.decl @D id 2 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :
@@ -199,11 +199,11 @@ module {
 module {
   simulation.design @unknown_direct_callee {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :
@@ -221,11 +221,11 @@ module {
 module {
   simulation.design @unknown_cast_class {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :
@@ -243,14 +243,14 @@ module {
 module {
   simulation.design @mismatched_field_ref_type {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
     simulation.class.field @C_value of @C at 0 offset 0 : i64 {
       is_static = false, is_weak = false
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :
@@ -302,14 +302,14 @@ module {
 module {
   simulation.design @weak_wrapper_not_declared {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @Referent id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
     simulation.class.decl @NotAWrapper id 2 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %referent = simulation.class.alloc %ctx :
@@ -328,7 +328,7 @@ module {
 module {
   simulation.design @weak_get_result_mismatch {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @Referent id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
@@ -339,7 +339,7 @@ module {
       is_abstract = false, is_final = false, is_interface = false,
       weak_referent = @Referent
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %referent = simulation.class.alloc %ctx :
@@ -360,11 +360,11 @@ module {
 module {
   simulation.design @weak_clear_not_wrapper {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :
@@ -381,11 +381,11 @@ module {
 module {
   simulation.design @unknown_virtual_slot {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :
@@ -404,7 +404,7 @@ module {
 module {
   simulation.design @virtual_call_signature_mismatch {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.code_unit.decl 2 in 0 function hierarchy "C.get"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
@@ -423,7 +423,7 @@ module {
       %zero = arith.constant 0 : i64
       simulation.return %zero : i64
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :
@@ -442,7 +442,7 @@ module {
 module {
   simulation.design @virtual_call_operand_mismatch {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.code_unit.decl 2 in 0 function hierarchy "C.get"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
@@ -461,7 +461,7 @@ module {
       %zero = arith.constant 0 : i64
       simulation.return %zero : i64
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :
@@ -480,7 +480,7 @@ module {
 module {
   simulation.design @direct_call_operand_mismatch {
     simulation.scope.decl 0
-    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__obelisk_root"
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "__talos_root"
     simulation.code_unit.decl 2 in 0 function hierarchy "C.get"
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
@@ -493,7 +493,7 @@ module {
       %zero = arith.constant 0 : i64
       simulation.return %zero : i64
     }
-    simulation.func @__obelisk_root(
+    simulation.func @__talos_root(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 0 : i32} {
       %object = simulation.class.alloc %ctx :

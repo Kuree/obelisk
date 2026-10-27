@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' | FileCheck %s
 
 !packed_record = !simulation.packed_struct<[
   #simulation.field<name = "payload", type = !simulation.packed_array<3 : 0 x i1>, ordinal = 0, packedOffset = 1>,

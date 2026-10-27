@@ -12,53 +12,53 @@
 // Mach-O extracts archive members even for weak references, and native code
 // calls the public entry point directly, so a fallback cannot take its name.
 // Reach the recursive service through a private name defined only beside it.
-__attribute__((weak)) obelisk_rt_status
-obelisk_rt_recursive_export_bitstream_service(
-    obelisk_rt_context *, const void *, const void *, uint64_t, uint64_t,
+__attribute__((weak)) talos_rt_status
+talos_rt_recursive_export_bitstream_service(
+    talos_rt_context *, const void *, const void *, uint64_t, uint64_t,
     uint32_t, void *, void *, uint64_t, uint64_t, uint32_t, const void *,
     uint64_t, uint32_t, uint32_t *, uint64_t *) {
-  return OBELISK_RT_INVALID_BYTECODE;
+  return TALOS_RT_INVALID_BYTECODE;
 }
-#define OBELISK_RT_RECURSIVE_EXPORT_BITSTREAM                                  \
-  obelisk_rt_recursive_export_bitstream_service
+#define TALOS_RT_RECURSIVE_EXPORT_BITSTREAM                                  \
+  talos_rt_recursive_export_bitstream_service
 #else
 #if defined(__clang__) || defined(__GNUC__)
-extern "C" __attribute__((weak)) obelisk_rt_status
-obelisk_rt_v1_recursive_export_bitstream(
-    obelisk_rt_context *context, const void *inputValue,
+extern "C" __attribute__((weak)) talos_rt_status
+talos_rt_v1_recursive_export_bitstream(
+    talos_rt_context *context, const void *inputValue,
     const void *inputUnknown, uint64_t inputPlaneSize, uint64_t inputBitWidth,
     uint32_t inputFourState, void *outValue, void *outUnknown,
     uint64_t outputPlaneSize, uint64_t outputBitWidth, uint32_t outputFourState,
     const void *plan, uint64_t planSize, uint32_t observe, uint32_t *outMatched,
     uint64_t *outWatch);
 #endif
-#define OBELISK_RT_RECURSIVE_EXPORT_BITSTREAM                                  \
-  obelisk_rt_v1_recursive_export_bitstream
+#define TALOS_RT_RECURSIVE_EXPORT_BITSTREAM                                  \
+  talos_rt_v1_recursive_export_bitstream
 #endif
 
-namespace obelisk::designbytecode {
+namespace talos::designbytecode {
 
 #if defined(__clang__) || defined(__GNUC__)
 __attribute__((weak))
 #endif
-obelisk_rt_status
+talos_rt_status
 invokeClassBitstreamIntrinsic(const Image &image, Frame &frame,
-                              obelisk_rt_context *context, IntrinsicSite site,
+                              talos_rt_context *context, IntrinsicSite site,
                               uint32_t siteIndex, uint32_t intrinsicId);
 
 #if defined(__APPLE__)
 // ClassBitstreamBytecode.cpp's strong definition replaces this when a design
 // references its link anchor.
-obelisk_rt_status invokeClassBitstreamIntrinsic(const Image &, Frame &,
-                                                obelisk_rt_context *,
+talos_rt_status invokeClassBitstreamIntrinsic(const Image &, Frame &,
+                                                talos_rt_context *,
                                                 IntrinsicSite, uint32_t,
                                                 uint32_t) {
-  return OBELISK_RT_INVALID_BYTECODE;
+  return TALOS_RT_INVALID_BYTECODE;
 }
 #endif
 
-extern "C" OBELISK_RT_FEATURE_TEXT void
-obelisk_rt_v1_container_bitstream_link_anchor() {}
+extern "C" TALOS_RT_FEATURE_TEXT void
+talos_rt_v1_container_bitstream_link_anchor() {}
 
 namespace {
 
@@ -67,12 +67,12 @@ struct ByteSpan {
   uint64_t size;
 };
 
-OBELISK_RT_FEATURE_HELPER std::optional<ByteSpan>
+TALOS_RT_FEATURE_HELPER std::optional<ByteSpan>
 readBytes(const Image &image, const Frame &frame, uint32_t reg) {
   if (!validRegister(frame.function, reg))
     return std::nullopt;
   Layout layout = layoutAt(image, frame.function, reg);
-  if (layout.kind != OBELISK_RT_DBREG_BYTES || layout.size != 16)
+  if (layout.kind != TALOS_RT_DBREG_BYTES || layout.size != 16)
     return std::nullopt;
   uint64_t offset = read64(frame.data + layout.offset);
   uint64_t size = read64(frame.data + layout.offset + 8);
@@ -81,19 +81,19 @@ readBytes(const Image &image, const Frame &frame, uint32_t reg) {
   return ByteSpan{image.data + image.constants + offset, size};
 }
 
-OBELISK_RT_FEATURE_HELPER std::optional<uint64_t>
+TALOS_RT_FEATURE_HELPER std::optional<uint64_t>
 readScalar(const Image &image, const Frame &frame, uint32_t reg) {
   if (!validRegister(frame.function, reg))
     return std::nullopt;
   Layout layout = layoutAt(image, frame.function, reg);
-  if ((layout.kind != OBELISK_RT_DBREG_BITS &&
-       layout.kind != OBELISK_RT_DBREG_LOGIC) ||
+  if ((layout.kind != TALOS_RT_DBREG_BITS &&
+       layout.kind != TALOS_RT_DBREG_LOGIC) ||
       layout.width > 64)
     return std::nullopt;
   uint64_t value = 0;
   std::memcpy(&value, frame.data + layout.offset,
               static_cast<size_t>(std::min<uint64_t>(layout.size, 8)));
-  if (layout.kind == OBELISK_RT_DBREG_LOGIC) {
+  if (layout.kind == TALOS_RT_DBREG_LOGIC) {
     uint64_t unknown = 0;
     std::memcpy(&unknown, frame.data + layout.offset + 8, sizeof(unknown));
     if (unknown != 0)
@@ -102,33 +102,33 @@ readScalar(const Image &image, const Frame &frame, uint32_t reg) {
   return value & finalMask(layout.width);
 }
 
-OBELISK_RT_FEATURE_HELPER obelisk_rt_object_v1 *
+TALOS_RT_FEATURE_HELPER talos_rt_object_v1 *
 readManaged(const Image &image, const Frame &frame, uint32_t reg) {
   if (!validRegister(frame.function, reg))
     return nullptr;
   Layout layout = layoutAt(image, frame.function, reg);
-  if (layout.kind != OBELISK_RT_DBREG_MANAGED || layout.size != sizeof(void *))
+  if (layout.kind != TALOS_RT_DBREG_MANAGED || layout.size != sizeof(void *))
     return nullptr;
-  obelisk_rt_object_v1 *value = nullptr;
+  talos_rt_object_v1 *value = nullptr;
   std::memcpy(&value, frame.data + layout.offset, sizeof(value));
   return value;
 }
 
 } // namespace
 
-OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
-    const Image &image, Frame &frame, obelisk_rt_context *context,
+TALOS_RT_FEATURE_TEXT talos_rt_status invokeContainerBitstreamIntrinsic(
+    const Image &image, Frame &frame, talos_rt_context *context,
     IntrinsicSite site, uint32_t siteIndex, uint32_t intrinsicId) {
   bool container =
-      intrinsicId == OBELISK_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM;
+      intrinsicId == TALOS_RT_INTRINSIC_V1_CONTAINER_EXPORT_BITSTREAM;
   bool aggregate =
-      intrinsicId == OBELISK_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM;
+      intrinsicId == TALOS_RT_INTRINSIC_V1_AGGREGATE_EXPORT_BITSTREAM;
   bool aggregateImport =
-      intrinsicId == OBELISK_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM;
+      intrinsicId == TALOS_RT_INTRINSIC_V1_AGGREGATE_IMPORT_BITSTREAM;
   IntrinsicSignature signature = intrinsicAt(image, site.intrinsic);
   if (container && (signature.flags == 3 || signature.flags == 4)) {
     if (!invokeClassBitstreamIntrinsic)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     return invokeClassBitstreamIntrinsic(image, frame, context, site, siteIndex,
                                          intrinsicId);
   }
@@ -140,7 +140,7 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
       (recursive && (site.inputCount != 2 || site.outputCount != 3)) ||
       (!recursive &&
        (site.outputCount != 1 || site.inputCount != (container ? 8u : 2u))))
-    return OBELISK_RT_INVALID_BYTECODE;
+    return TALOS_RT_INVALID_BYTECODE;
   auto inputRegister = [&](uint32_t index) {
     return operandAt(image, site.firstOperand + index).second;
   };
@@ -148,8 +148,8 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
     return operandAt(image, site.firstOperand + site.inputCount + index).first;
   };
   if (recursive) {
-    if (!OBELISK_RT_RECURSIVE_EXPORT_BITSTREAM)
-      return OBELISK_RT_INVALID_BYTECODE;
+    if (!TALOS_RT_RECURSIVE_EXPORT_BITSTREAM)
+      return TALOS_RT_INVALID_BYTECODE;
     if (inputRegister(0) == outputRegister(0) ||
         inputRegister(0) == outputRegister(1) ||
         inputRegister(0) == outputRegister(2) ||
@@ -160,27 +160,27 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
         !validRegister(frame.function, outputRegister(0)) ||
         !validRegister(frame.function, outputRegister(1)) ||
         !validRegister(frame.function, outputRegister(2)))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::optional<ByteSpan> plan = readBytes(image, frame, inputRegister(1));
     Layout input = layoutAt(image, frame.function, inputRegister(0));
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     Layout matched = layoutAt(image, frame.function, outputRegister(1));
     Layout watch = layoutAt(image, frame.function, outputRegister(2));
-    bool inputFourState = input.kind == OBELISK_RT_DBREG_LOGIC;
-    bool outputFourState = output.kind == OBELISK_RT_DBREG_LOGIC;
-    bool inputManaged = input.kind == OBELISK_RT_DBREG_MANAGED;
-    bool inputString = input.kind == OBELISK_RT_DBREG_STRING;
+    bool inputFourState = input.kind == TALOS_RT_DBREG_LOGIC;
+    bool outputFourState = output.kind == TALOS_RT_DBREG_LOGIC;
+    bool inputManaged = input.kind == TALOS_RT_DBREG_MANAGED;
+    bool inputString = input.kind == TALOS_RT_DBREG_STRING;
     if (!plan ||
-        (!inputManaged && !inputString && input.kind != OBELISK_RT_DBREG_BITS &&
+        (!inputManaged && !inputString && input.kind != TALOS_RT_DBREG_BITS &&
          !inputFourState) ||
-        (output.kind != OBELISK_RT_DBREG_BITS && !outputFourState) ||
+        (output.kind != TALOS_RT_DBREG_BITS && !outputFourState) ||
         (inputFourState && (input.size & 1)) ||
         (outputFourState && (output.size & 1)) ||
-        matched.kind != OBELISK_RT_DBREG_BITS || matched.width != 1 ||
+        matched.kind != TALOS_RT_DBREG_BITS || matched.width != 1 ||
         matched.size < sizeof(uint32_t) ||
-        watch.kind != OBELISK_RT_DBREG_BITS || watch.width != 64 ||
+        watch.kind != TALOS_RT_DBREG_BITS || watch.width != 64 ||
         watch.size < sizeof(uint64_t) || plan->size < 32)
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t inputPlaneSize = inputFourState ? input.size / 2 : input.size;
     uint64_t outputPlaneSize = outputFourState ? output.size / 2 : output.size;
     uint64_t inputWidth = read64(plan->data + 16);
@@ -190,14 +190,14 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
     uint8_t *outputValue = frame.data + output.offset;
     uint32_t matchedValue = 0;
     uint64_t watchValue = 0;
-    obelisk_rt_status status = OBELISK_RT_RECURSIVE_EXPORT_BITSTREAM(
+    talos_rt_status status = TALOS_RT_RECURSIVE_EXPORT_BITSTREAM(
         context, inputValue,
         inputFourState ? inputValue + inputPlaneSize : nullptr, inputPlaneSize,
         inputWidth, inputFourState, outputValue,
         outputFourState ? outputValue + outputPlaneSize : nullptr,
         outputPlaneSize, output.width, outputFourState, plan->data, plan->size,
         observeRecursive, &matchedValue, &watchValue);
-    if (status == OBELISK_RT_OK) {
+    if (status == TALOS_RT_OK) {
       std::memcpy(frame.data + matched.offset, &matchedValue,
                   sizeof(matchedValue));
       std::memcpy(frame.data + watch.offset, &watchValue, sizeof(watchValue));
@@ -208,30 +208,30 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
     if (inputRegister(0) == outputRegister(0) ||
         !validRegister(frame.function, inputRegister(0)) ||
         !validRegister(frame.function, outputRegister(0)))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     std::optional<ByteSpan> plan = readBytes(image, frame, inputRegister(1));
     Layout input = layoutAt(image, frame.function, inputRegister(0));
     Layout output = layoutAt(image, frame.function, outputRegister(0));
-    bool inputFourState = input.kind == OBELISK_RT_DBREG_LOGIC;
-    bool outputFourState = output.kind == OBELISK_RT_DBREG_LOGIC;
-    if (!plan || (input.kind != OBELISK_RT_DBREG_BITS && !inputFourState) ||
-        (output.kind != OBELISK_RT_DBREG_BITS && !outputFourState) ||
+    bool inputFourState = input.kind == TALOS_RT_DBREG_LOGIC;
+    bool outputFourState = output.kind == TALOS_RT_DBREG_LOGIC;
+    if (!plan || (input.kind != TALOS_RT_DBREG_BITS && !inputFourState) ||
+        (output.kind != TALOS_RT_DBREG_BITS && !outputFourState) ||
         (inputFourState && (input.size & 1)) ||
         (outputFourState && (output.size & 1)))
-      return OBELISK_RT_INVALID_BYTECODE;
+      return TALOS_RT_INVALID_BYTECODE;
     uint64_t inputPlaneSize = inputFourState ? input.size / 2 : input.size;
     uint64_t outputPlaneSize = outputFourState ? output.size / 2 : output.size;
     uint8_t *inputValue = frame.data + input.offset;
     uint8_t *outputValue = frame.data + output.offset;
-    auto transfer = aggregateImport ? obelisk_rt_v1_aggregate_import_bitstream
-                                    : obelisk_rt_v1_aggregate_export_bitstream;
+    auto transfer = aggregateImport ? talos_rt_v1_aggregate_import_bitstream
+                                    : talos_rt_v1_aggregate_export_bitstream;
     return transfer(
         inputValue, inputFourState ? inputValue + inputPlaneSize : nullptr,
         inputPlaneSize, input.width, inputFourState, outputValue,
         outputFourState ? outputValue + outputPlaneSize : nullptr,
         outputPlaneSize, output.width, outputFourState, plan->data, plan->size);
   }
-  obelisk_rt_object_v1 *containerValue =
+  talos_rt_object_v1 *containerValue =
       readManaged(image, frame, inputRegister(0));
   std::array<std::optional<uint64_t>, 7> inputs;
   for (uint32_t index = 1; index != 8; ++index)
@@ -240,21 +240,21 @@ OBELISK_RT_FEATURE_TEXT obelisk_rt_status invokeContainerBitstreamIntrinsic(
       std::any_of(inputs.begin(), inputs.end(),
                   [](const auto &value) { return !value; }) ||
       !validRegister(frame.function, outputRegister(0)))
-    return OBELISK_RT_INVALID_BYTECODE;
+    return TALOS_RT_INVALID_BYTECODE;
   Layout output = layoutAt(image, frame.function, outputRegister(0));
-  bool fourState = output.kind == OBELISK_RT_DBREG_LOGIC;
+  bool fourState = output.kind == TALOS_RT_DBREG_LOGIC;
   uint64_t outputPlaneSize = fourState ? output.size / 2 : output.size;
-  if ((output.kind != OBELISK_RT_DBREG_BITS && !fourState) ||
+  if ((output.kind != TALOS_RT_DBREG_BITS && !fourState) ||
       *inputs[0] > outputPlaneSize || *inputs[1] != output.width ||
       *inputs[2] != fourState)
-    return OBELISK_RT_INVALID_BYTECODE;
+    return TALOS_RT_INVALID_BYTECODE;
   std::memset(frame.data + output.offset, 0, output.size);
   uint8_t *value = frame.data + output.offset;
   void *unknown = fourState ? value + outputPlaneSize : nullptr;
-  return obelisk_rt_v1_container_export_bitstream(
+  return talos_rt_v1_container_export_bitstream(
       containerValue, value, unknown, *inputs[0], *inputs[1],
       static_cast<uint32_t>(*inputs[2]), *inputs[3], *inputs[4], *inputs[5],
       static_cast<uint32_t>(*inputs[6]));
 }
 
-} // namespace obelisk::designbytecode
+} // namespace talos::designbytecode

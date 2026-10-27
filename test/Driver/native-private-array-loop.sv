@@ -1,5 +1,5 @@
-// RUN: obelisk -O3 --execution-tier=native %s -o %t.native
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=native %s -o %t.native
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.native > %t.native.out
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: diff -u %t.bytecode.out %t.native.out

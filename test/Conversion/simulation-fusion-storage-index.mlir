@@ -1,15 +1,15 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SHARED
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-fuse-compute-fragments{body-fusion=true},talos-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SHARED
 
 // Two consecutive fusions share the incremental identity/escape index.
 // Removing old actors and replacing their root spawns makes each temporary
 // exclusive to its new group. An independent accessor must still prevent
 // deleting the second group's canonical store. Removing that accessor permits
 // promotion in both groups, including the one indexed before it was fused.
-// SHARED-LABEL: simulation.func private @__obelisk_fused_0
+// SHARED-LABEL: simulation.func private @__talos_fused_0
 // SHARED-NOT: simulation.ref.store
 // SHARED-NOT: simulation.ref.load
 // SHARED: simulation.nba.enqueue
-// SHARED-LABEL: simulation.func private @__obelisk_fused_1
+// SHARED-LABEL: simulation.func private @__talos_fused_1
 // SHARED: simulation.ref.store
 // SHARED: simulation.ref.load
 // SHARED: simulation.nba.enqueue

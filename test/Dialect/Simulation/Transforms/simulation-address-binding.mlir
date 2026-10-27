@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=off}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-simplify-bodies{vpi=off}))' | FileCheck %s
 // LRM 7.4.5: bounds and address identity are independent proofs. A reference
 // remains bound through a diamond, but is recomputed on an outer backedge.
 !array = !simulation.unpacked_array<0 : 3 x i32>

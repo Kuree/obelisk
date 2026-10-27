@@ -1,14 +1,14 @@
 //===- SDF.h - Static Standard Delay Format annotation --------*- C++ -*-===//
 //
 // Private frontend support for compiling statically named SDF files into the
-// elaborated timing metadata imported into Obelisk IR.
+// elaborated timing metadata imported into Talos IR.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef OBELISK_LIB_FRONTEND_SDF_H
-#define OBELISK_LIB_FRONTEND_SDF_H
+#ifndef TALOS_LIB_FRONTEND_SDF_H
+#define TALOS_LIB_FRONTEND_SDF_H
 
-#include "obelisk/Frontend/SDF.h"
+#include "talos/Frontend/SDF.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -28,7 +28,7 @@ class TimingPathSymbol;
 } // namespace ast
 } // namespace slang
 
-namespace obelisk::frontend {
+namespace talos::frontend {
 
 class SDFAnnotationDatabase {
 public:
@@ -65,6 +65,6 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
                            const slang::SourceManager &sourceManager,
                            const SDFResourceLimits &limits);
 
-} // namespace obelisk::frontend
+} // namespace talos::frontend
 
-#endif // OBELISK_LIB_FRONTEND_SDF_H
+#endif // TALOS_LIB_FRONTEND_SDF_H

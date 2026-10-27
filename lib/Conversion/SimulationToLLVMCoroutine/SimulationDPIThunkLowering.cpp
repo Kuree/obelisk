@@ -2,9 +2,9 @@
 
 #include "SimulationDPILowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/PatternMatch.h"
@@ -20,7 +20,7 @@
 
 using namespace mlir;
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 namespace {
 
@@ -70,16 +70,16 @@ bool isDPIAggregate(uint32_t category) {
 
 uint8_t dpiDescriptorKind(const DPIOperandABI &abi) {
   if (isDPIString(abi.category))
-    return OBELISK_RT_DBREG_STRING;
+    return TALOS_RT_DBREG_STRING;
   if (isDPIOpenArray(abi.category))
-    return OBELISK_RT_DBREG_OPEN_ARRAY;
+    return TALOS_RT_DBREG_OPEN_ARRAY;
   if (isDPIAggregate(abi.category))
-    return OBELISK_RT_DBREG_AGGREGATE;
+    return TALOS_RT_DBREG_AGGREGATE;
   if (abi.category == static_cast<uint32_t>(dpi::ABIKind::ShortReal))
-    return OBELISK_RT_DBREG_REAL32;
+    return TALOS_RT_DBREG_REAL32;
   if (abi.category == static_cast<uint32_t>(dpi::ABIKind::Real))
-    return OBELISK_RT_DBREG_REAL64;
-  return abi.fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS;
+    return TALOS_RT_DBREG_REAL64;
+  return abi.fourState ? TALOS_RT_DBREG_LOGIC : TALOS_RT_DBREG_BITS;
 }
 
 struct DPIWriteback {
@@ -111,8 +111,8 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   if (logicalInputs > spec.abiSignature.size())
     return spec.operation->emitError("has invalid DPI thunk operand metadata");
   StringRef cIdentifier = spec.cIdentifier.getValue();
-  if (cIdentifier == "main" || cIdentifier.starts_with("obelisk_rt_") ||
-      cIdentifier.starts_with("__obelisk_"))
+  if (cIdentifier == "main" || cIdentifier.starts_with("talos_rt_") ||
+      cIdentifier.starts_with("__talos_"))
     return spec.operation->emitError()
            << "DPI C identifier '" << cIdentifier
            << "' collides with a reserved generated/runtime symbol";
@@ -126,7 +126,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
     abi.push_back(*parsed);
   }
 
-  std::string thunkName = ("__obelisk_dpi_thunk_" + Twine(spec.importID)).str();
+  std::string thunkName = ("__talos_dpi_thunk_" + Twine(spec.importID)).str();
   if (auto existing = module.lookupSymbol<LLVM::LLVMFuncOp>(thunkName)) {
     auto cIdentifier = dpi::get<dpi::CIdentifier>(existing);
     auto signature = dpi::get<dpi::ABISignature>(existing);
@@ -189,7 +189,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   builder.setInsertionPointToStart(invalid);
   LLVM::ReturnOp::create(
       builder, location,
-      llvmConstant(builder, location, i32, OBELISK_RT_INVALID_ARGUMENT));
+      llvmConstant(builder, location, i32, TALOS_RT_INVALID_ARGUMENT));
 
   builder.setInsertionPointToStart(validate);
   Value null = LLVM::ZeroOp::create(builder, location, pointer);
@@ -223,7 +223,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
     requireEqual(LLVM::LoadOp::create(builder, location, i8,
                                       descriptorPointer(base, index, 1), 1),
                  llvmConstant(builder, location, i8,
-                              entryABI.isSigned ? OBELISK_RT_DBREG_SIGNED : 0));
+                              entryABI.isSigned ? TALOS_RT_DBREG_SIGNED : 0));
     requireEqual(LLVM::LoadOp::create(builder, location, builder.getI16Type(),
                                       descriptorPointer(base, index, 2), 2),
                  llvmConstant(builder, location, builder.getI16Type(), 0));
@@ -288,7 +288,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
     Value size = entryAlloca(builder, location, i64, 1, 8);
     LLVM::CallOp::create(
         builder, location, TypeRange{i32},
-        SymbolRefAttr::get(context, "obelisk_rt_v1_string_view"),
+        SymbolRefAttr::get(context, "talos_rt_v1_string_view"),
         ValueRange{readOpaqueWord(inputIndex), scratch, bytes, size});
     return LLVM::LoadOp::create(builder, location, pointer, bytes, 8);
   };
@@ -444,11 +444,11 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   if (!cFunction)
     cFunction = getOrDeclareLLVMFunction(module, spec.cIdentifier.getValue(),
                                          cResultType, cArgumentTypes);
-  Value callbackStatus = llvmConstant(builder, location, i32, OBELISK_RT_OK);
+  Value callbackStatus = llvmConstant(builder, location, i32, TALOS_RT_OK);
   auto mergeStatus = [&](Value next) {
     Value succeeded = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, callbackStatus,
-        llvmConstant(builder, location, i32, OBELISK_RT_OK));
+        llvmConstant(builder, location, i32, TALOS_RT_OK));
     callbackStatus = arith::SelectOp::create(builder, location, succeeded, next,
                                              callbackStatus);
   };
@@ -484,14 +484,14 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
     stringRootLane =
         LLVM::CallOp::create(
             builder, location, TypeRange{pointer},
-            SymbolRefAttr::get(context, "obelisk_rt_v1_gc_current_lane"),
+            SymbolRefAttr::get(context, "talos_rt_v1_gc_current_lane"),
             entry->getArgument(0))
             .getResult();
     Value pushStatus =
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
             SymbolRefAttr::get(context,
-                               "obelisk_rt_v1_gc_managed_root_range_push"),
+                               "talos_rt_v1_gc_managed_root_range_push"),
             ValueRange{stringRootLane, stringRootRecord, slots,
                        llvmConstant(builder, location, i64, stringOutputCount)})
             .getResult();
@@ -511,7 +511,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
       Value status =
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
-              SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_string_copy"),
+              SymbolRefAttr::get(context, "talos_rt_v1_dpi_string_copy"),
               ValueRange{entry->getArgument(0), result, stringOutputSlots[0]})
               .getResult();
       mergeStatus(status);
@@ -555,7 +555,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
       Value status =
           LLVM::CallOp::create(
               builder, location, TypeRange{i32},
-              SymbolRefAttr::get(context, "obelisk_rt_v1_dpi_string_copy"),
+              SymbolRefAttr::get(context, "talos_rt_v1_dpi_string_copy"),
               ValueRange{entry->getArgument(0), string,
                          stringOutputSlots[writeback.outputIndex]})
               .getResult();
@@ -645,8 +645,8 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
     Value failureStatus = arith::SelectOp::create(
         builder, location, disabled,
         llvmConstant(builder, location, i32,
-                     OBELISK_RT_DPI_DISABLE_UNSUPPORTED),
-        llvmConstant(builder, location, i32, OBELISK_RT_FATAL));
+                     TALOS_RT_DPI_DISABLE_UNSUPPORTED),
+        llvmConstant(builder, location, i32, TALOS_RT_FATAL));
     Value taskStatus = arith::SelectOp::create(builder, location, succeeded,
                                                zero, failureStatus);
     mergeStatus(taskStatus);
@@ -664,7 +664,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
         LLVM::CallOp::create(
             builder, location, TypeRange{i32},
             SymbolRefAttr::get(context,
-                               "obelisk_rt_v1_gc_managed_root_range_pop"),
+                               "talos_rt_v1_gc_managed_root_range_pop"),
             ValueRange{stringRootLane, stringRootRecord})
             .getResult();
     mergeStatus(popStatus);
@@ -673,15 +673,15 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   if (llvm::any_of(abi, [](const DPIOperandABI &entry) {
         return isDPIString(entry.category);
       })) {
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_string_view", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_string_view", i32,
                              {i64, pointer, pointer, pointer});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_dpi_string_copy", i32,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_dpi_string_copy", i32,
                              {pointer, pointer, pointer});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_current_lane", pointer,
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_gc_current_lane", pointer,
                              {pointer});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_managed_root_range_push",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_gc_managed_root_range_push",
                              i32, {pointer, pointer, pointer, i64});
-    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_managed_root_range_pop",
+    getOrDeclareLLVMFunction(module, "talos_rt_v1_gc_managed_root_range_pop",
                              i32, {pointer, pointer});
   }
   return success();
@@ -734,4 +734,4 @@ LogicalResult materializeDPIThunks(ModuleOp module) {
   return materializeDPIExportWrappers(module);
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail

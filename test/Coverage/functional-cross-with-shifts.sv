@@ -1,9 +1,9 @@
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %s | obelisk-opt --lower-obelisk-to-sim=opt-level=0 --test-obelisk-print-coverage-schema -o %t.mlir 2>&1 | FileCheck %s --check-prefix=SCHEMA
+// RUN: %talos --std=1800-2023 -emit-talos %s | talos-opt --lower-talos-to-sim=opt-level=0 --test-talos-print-coverage-schema -o %t.mlir 2>&1 | FileCheck %s --check-prefix=SCHEMA
 // RUN: FileCheck %s --check-prefix=SIM < %t.mlir
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %talos --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
-// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
-// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: talos-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: talos-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
 
 // Compiler (11.4.10): each shift is one binary node (kinds 33-36 for <<, >>,
 // <<<, >>>) over the left operand's context width, so the 65-bit result is

@@ -1,13 +1,13 @@
 #include "AnalysisTestPasses.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
-#include "obelisk/Analysis/ActivationPhaseAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Analysis/ActivationPhaseAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 #include "llvm/ADT/StringExtras.h"
 
 using namespace mlir;
 namespace {
-using Analysis = obelisk::analysis::ActivationPhaseAnalysis;
+using Analysis = talos::analysis::ActivationPhaseAnalysis;
 
 /// Print a phase set as `-`, `any`, or a comma list where `32+` covers phase
 /// 32 and every later phase.
@@ -40,15 +40,15 @@ class ActivationPhaseAnalysisTestPass
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ActivationPhaseAnalysisTestPass)
   StringRef getArgument() const final {
-    return "test-obelisk-activation-phases";
+    return "test-talos-activation-phases";
   }
   StringRef getDescription() const final {
     return "print time-slot phases of activations and root changes";
   }
   void runOnOperation() final {
-    namespace sim = obelisk::sim;
+    namespace sim = talos::sim;
     getOperation().walk([&](sim::SimDesignOp design) {
-      obelisk::analysis::HandleDataflowAnalysis handles(design);
+      talos::analysis::HandleDataflowAnalysis handles(design);
       Analysis analysis(design, handles);
       llvm::errs() << "phases " << design.getSymName()
                    << " valid=" << analysis.isValid() << '\n';
@@ -77,6 +77,6 @@ public:
 };
 } // namespace
 
-void obelisk::registerActivationPhaseAnalysisTestPass() {
+void talos::registerActivationPhaseAnalysisTestPass() {
   PassRegistration<ActivationPhaseAnalysisTestPass>();
 }

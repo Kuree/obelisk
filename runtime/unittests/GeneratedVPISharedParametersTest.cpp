@@ -2,10 +2,10 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Parser/Parser.h"
-#include "obelisk/Conversion/SimulationToBytecode.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Reflection/DesignReflection.h"
-#include "obelisk/Runtime/Runtime.h"
+#include "talos/Conversion/SimulationToBytecode.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Reflection/DesignReflection.h"
+#include "talos/Runtime/Runtime.h"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 #include "gtest/gtest.h"
@@ -15,23 +15,23 @@
 
 namespace {
 TEST(GeneratedDesignDatabase, SharedInstanceParameters) {
-  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  const char *input = std::getenv("TALOS_TEST_INPUT");
   ASSERT_NE(input, nullptr);
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+                  talos::sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
   ASSERT_TRUE(module);
-  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
-  obelisk::SimulationBytecodeOptions options;
+  auto design = *module->getOps<talos::sim::SimDesignOp>().begin();
+  talos::SimulationBytecodeOptions options;
   options.vpi = "read";
-  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  auto encoded = talos::encodeSimulationDesign(design, options);
   ASSERT_TRUE(mlir::succeeded(encoded));
   uint64_t checksum = 0;
   for (unsigned byte = 0; byte != 8; ++byte)
     checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+  talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                encoded->executionFlags,
                                                0,
                                                encoded->bytecode.data(),
@@ -48,13 +48,13 @@ TEST(GeneratedDesignDatabase, SharedInstanceParameters) {
                                                0,
                                                nullptr,
                                                0};
-  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
-  obelisk_rt_context *runtime = nullptr;
-  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
-            OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
-  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
+  talos_rt_context *runtime = nullptr;
+  ASSERT_EQ(talos_rt_v1_context_create_for_design(&execution, &runtime),
+            TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_startup(runtime, nullptr, 0), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_end_compile(runtime), TALOS_RT_OK);
+  ASSERT_EQ(talos_rt_v1_vpi_start_simulation(runtime), TALOS_RT_OK);
   std::vector<vpiHandle> handles;
   auto keep = [&](vpiHandle handle) {
     if (handle)
@@ -166,9 +166,9 @@ TEST(GeneratedDesignDatabase, SharedInstanceParameters) {
   EXPECT_EQ(vpi_compare_objects(named("bus.K"), busParameters[0]), 1);
   for (auto handle : handles)
     vpi_free_object(handle);
-  obelisk_rt_v1_context_destroy(runtime);
+  talos_rt_v1_context_destroy(runtime);
 
-  using namespace obelisk::reflection;
+  using namespace talos::reflection;
   const auto &original = encoded->designDatabase;
   HeaderView header(original.data());
   SemanticDirectoryView directory(original.data() + header.getReserved());
@@ -197,8 +197,8 @@ TEST(GeneratedDesignDatabase, SharedInstanceParameters) {
     HeaderWriter(bytes.data()).setChecksum(hash);
     execution.design_database = bytes.data();
     execution.design_database_size = bytes.size();
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
-              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(talos_rt_v1_design_validate(&execution),
+              TALOS_RT_INVALID_DESIGN);
   };
   auto memberNamed = [&](const char *name) {
     for (uint32_t index = 0; index != directory.getDefinitionMemberCount();
@@ -300,11 +300,11 @@ TEST(GeneratedDesignDatabase, SharedInstanceParameters) {
   rejected(std::move(bytes));
 }
 TEST(GeneratedDesignDatabase, SharedParameterImageSize) {
-  using namespace obelisk;
-  using namespace obelisk::reflection;
+  using namespace talos;
+  using namespace talos::reflection;
   mlir::DialectRegistry registry;
   registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
-                  sim::ObeliskSimulationDialect>();
+                  sim::TalosSimulationDialect>();
   mlir::MLIRContext context(registry);
   struct Measurement {
     size_t bytes;
@@ -365,7 +365,7 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
     uint64_t checksum = 0;
     for (unsigned byte = 0; byte != 8; ++byte)
       checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
-    obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+    talos_rt_execution_descriptor_v1 execution{TALOS_RT_VERSION,
                                                  encoded->executionFlags,
                                                  0,
                                                  encoded->bytecode.data(),
@@ -382,7 +382,7 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
                                                  0,
                                                  nullptr,
                                                  0};
-    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+    EXPECT_EQ(talos_rt_v1_design_validate(&execution), TALOS_RT_OK);
     HeaderView header(image.data());
     SemanticDirectoryView directory(image.data() + header.getReserved());
     return {image.size(),

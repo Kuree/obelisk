@@ -1,14 +1,14 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o %t 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},talos-sim-materialize-compute-fusion,talos-sim-build-compute-graph,talos-sim-verify-compute-graph))' -o %t 2>&1 | FileCheck %s --check-prefix=PLAN
 // RUN: FileCheck %s < %t
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp,simulation.func(canonicalize,cse),obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true}))' -o /dev/null 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-sccp,simulation.func(canonicalize,cse),talos-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true}))' -o /dev/null 2>&1 | FileCheck %s --check-prefix=PLAN
 
 // A reference in an unreachable arm has no handle lattice. It cannot make
 // the owner opaque and thereby destroy dataflow scheduling for the cohort.
 // Exercise both defensive admission and structural SCCP cleanup.
 // PLAN: 1 plans (1 data-dependence order)
-// CHECK: simulation.spawn @__obelisk_region_kernel_0_0
+// CHECK: simulation.spawn @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.spawn
-// CHECK: simulation.func private @__obelisk_region_kernel_0_0
+// CHECK: simulation.func private @__talos_region_kernel_0_0
 // CHECK-NOT: simulation.ref.subelement
 // CHECK: simulation.suspend.any
 module {

@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-slang %s | FileCheck %s --check-prefix=SLANG
-// RUN: obelisk -emit-obelisk %s | FileCheck %s --check-prefix=OBELISK
+// RUN: talos -emit-slang %s | FileCheck %s --check-prefix=SLANG
+// RUN: talos -emit-talos %s | FileCheck %s --check-prefix=TALOS
 
 module covergroup_metadata;
   covergroup cg with function sample(input logic [2:0] value);
@@ -31,15 +31,15 @@ endmodule
 // SLANG: slang.expression.call attributes {{.*}}callee_name = "get_inst_coverage"
 // SLANG-SAME: defaulted_arguments = array<i64: 1, 1>
 
-// OBELISK: obelisk.sv.type.covergroup_type
-// OBELISK-SAME: constructor_argument_count = 0
-// OBELISK-SAME: has_coverage_event = false
-// OBELISK-SAME: sample_formal_count = 1
-// OBELISK: obelisk.sv.symbol.coverpoint
-// OBELISK-SAME: has_iff = true
-// OBELISK: obelisk.sv.symbol.coverage_bin
-// OBELISK-SAME: value_count = 2
-// OBELISK: obelisk.sv.expression.new_covergroup
-// OBELISK-SAME: argument_count = 0
-// OBELISK: obelisk.sv.expression.call attributes {{.*}}callee_name = "get_inst_coverage"
-// OBELISK-SAME: defaulted_arguments = array<i64: 1, 1>
+// TALOS: talos.sv.type.covergroup_type
+// TALOS-SAME: constructor_argument_count = 0
+// TALOS-SAME: has_coverage_event = false
+// TALOS-SAME: sample_formal_count = 1
+// TALOS: talos.sv.symbol.coverpoint
+// TALOS-SAME: has_iff = true
+// TALOS: talos.sv.symbol.coverage_bin
+// TALOS-SAME: value_count = 2
+// TALOS: talos.sv.expression.new_covergroup
+// TALOS-SAME: argument_count = 0
+// TALOS: talos.sv.expression.call attributes {{.*}}callee_name = "get_inst_coverage"
+// TALOS-SAME: defaulted_arguments = array<i64: 1, 1>

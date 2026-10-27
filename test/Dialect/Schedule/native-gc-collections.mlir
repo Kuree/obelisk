@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --schedule-thin-gc-collections | FileCheck %s --check-prefix=THIN
-// RUN: obelisk-opt %s --schedule-thin-gc-collections --schedule-lower-gc-collections | FileCheck %s --check-prefix=LOWER
+// RUN: talos-opt %s --schedule-thin-gc-collections | FileCheck %s --check-prefix=THIN
+// RUN: talos-opt %s --schedule-thin-gc-collections --schedule-lower-gc-collections | FileCheck %s --check-prefix=LOWER
 
 // A generated periodic loop designates a collection point after every edge of
 // every proven periodic clock and at every slot end. IEEE 1800-2023 8.29

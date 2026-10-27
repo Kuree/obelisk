@@ -1,12 +1,12 @@
 // REQUIRES: native-elf
 // RUN: %split-file %s %t
 // RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -Wl,-soname,libnative_aot_vpi_transition.so -o %t/libnative_aot_vpi_transition.so
-// RUN: cd %t && obelisk --vpi=full --native-scheduler=aot %t/design.sv libnative_aot_vpi_transition.so -o simulator
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t/simulator 2>&1 | FileCheck %s
-// RUN: obelisk -O2 --vpi=full --native-scheduler=aot -emit-llvm %t/design.sv -o - | FileCheck %s --check-prefix=GUARD
-// RUN: cd %t && obelisk -O3 --vpi=full --native-scheduler=generic %t/design.sv libnative_aot_vpi_transition.so -o generic
+// RUN: cd %t && talos --vpi=full --native-scheduler=aot %t/design.sv libnative_aot_vpi_transition.so -o simulator
+// RUN: env TALOS_RT_SIGNAL_DIAGNOSTICS=1 %t/simulator 2>&1 | FileCheck %s
+// RUN: talos -O2 --vpi=full --native-scheduler=aot -emit-llvm %t/design.sv -o - | FileCheck %s --check-prefix=GUARD
+// RUN: cd %t && talos -O3 --vpi=full --native-scheduler=generic %t/design.sv libnative_aot_vpi_transition.so -o generic
 // RUN: %t/generic | FileCheck %s --check-prefix=GENERIC
-// RUN: obelisk -O3 --vpi=full --native-scheduler=generic -emit-llvm %t/design.sv -o - | FileCheck %s --check-prefix=GENERIC-IR
+// RUN: talos -O3 --vpi=full --native-scheduler=generic -emit-llvm %t/design.sv -o - | FileCheck %s --check-prefix=GENERIC-IR
 
 // The readonly plugin, local reads, and mixed NBA cases are in
 // native-aot-vpi-transition-{readonly,local-read,mixed-nba}.test.
@@ -33,8 +33,8 @@ endmodule
 
 // CHECK: seed=7 total=14
 // GENERIC: seed=7 total=14
-// GENERIC-IR: call i32 @obelisk_rt_v1_native_state_bind_specialization
-// CHECK: obelisk-signal-diagnostics
+// GENERIC-IR: call i32 @talos_rt_v1_native_state_bind_specialization
+// CHECK: talos-signal-diagnostics
 // A startup force remains active until a vpiReleaseFlag operation.  The
 // generated schedule therefore keeps ownership in the fine scheduler, whose
 // direct native waits still use its candidate set. Their validated publication
@@ -71,12 +71,12 @@ endmodule
 
 // LOCAL-READ: local=14 published=14
 
-// GUARD-DAG: @__obelisk_aot_schedule_plan_v1 = internal constant {{.*}} i32 895, ptr @__obelisk_state_value
+// GUARD-DAG: @__talos_aot_schedule_plan_v1 = internal constant {{.*}} i32 895, ptr @__talos_state_value
 // GUARD-DAG: br i1
-// GUARD-DAG: load {{.*}} @__obelisk_state_value
-// GUARD-DAG: call i32 @obelisk_rt_v1_native_state_load_plane
-// GUARD-DAG: store {{.*}} @__obelisk_state_value
-// GUARD-DAG: call i32 @obelisk_rt_v1_native_state_store_plane
+// GUARD-DAG: load {{.*}} @__talos_state_value
+// GUARD-DAG: call i32 @talos_rt_v1_native_state_load_plane
+// GUARD-DAG: store {{.*}} @__talos_state_value
+// GUARD-DAG: call i32 @talos_rt_v1_native_state_store_plane
 // Cold root initialization may still query the writable-VPI specialization
 // guard. Generated Tier-1/Tier-2 closures are checked separately by the eval
 // call-closure verifier and emitted-LLVM scheduler tests.
@@ -106,7 +106,7 @@ module native_aot_vpi_mixed_nba;
 endmodule
 
 // MIXED-NBA: mixed=0123456789abcdeffedcba98deadbeef
-// MIXED-IR: simulation.func private @__obelisk_fused_
+// MIXED-IR: simulation.func private @__talos_fused_
 // MIXED-IR-SAME: schedule.native.guarded_specialization_body
 
 //--- plugin.c

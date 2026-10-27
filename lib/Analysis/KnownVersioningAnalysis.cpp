@@ -1,6 +1,6 @@
 //===- KnownVersioningAnalysis.cpp - Regions that can run on value planes -===//
 
-#include "obelisk/Analysis/KnownVersioningAnalysis.h"
+#include "talos/Analysis/KnownVersioningAnalysis.h"
 #include "mlir/Analysis/CFGLoopInfo.h"
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -11,16 +11,16 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
-#include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
-#include "obelisk/Analysis/StateDomainAnalysis.h"
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
-#include "obelisk/Dialect/Simulation/SimulationTypes.h"
+#include "talos/Analysis/ScopedIntegerRangeAnalysis.h"
+#include "talos/Analysis/StateDomainAnalysis.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationTypes.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/SetVector.h"
 
 using namespace mlir;
-namespace obelisk::analysis {
+namespace talos::analysis {
 namespace {
 
 bool isUnknownConstant(Value value) {
@@ -960,4 +960,4 @@ KnownVersioningAnalysis::KnownVersioningAnalysis(
   }
 }
 
-} // namespace obelisk::analysis
+} // namespace talos::analysis

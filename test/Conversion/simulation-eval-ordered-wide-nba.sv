@@ -1,6 +1,6 @@
-// RUN: obelisk -emit-slang %s | obelisk-opt --test-obelisk-native-backend='scheduler=eval timing=true' -o %t.mlir 2> %t.trace
+// RUN: talos -emit-slang %s | talos-opt --test-talos-native-backend='scheduler=eval timing=true' -o %t.mlir 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
-// RUN: FileCheck %s --implicit-check-not='llvm.call @obelisk_rt_v1_scheduler_execute_aot_actor' < %t.mlir
+// RUN: FileCheck %s --implicit-check-not='llvm.call @talos_rt_v1_scheduler_execute_aot_actor' < %t.mlir
 
 // Two whole-root NBAs with a 128-bit payload write the same root in one
 // activation. IEEE 1800-2023 4.6(b) and 10.4.2 perform both updates in order,
@@ -10,18 +10,18 @@
 // reserves an entry in the generated ordered NBA queue, which the commit hands
 // to the runtime's ordered entry point at the barrier. The datapath still runs
 // through the generated evaluator, without a runtime actor checkpoint.
-// TRACE: obelisk NBA root keeps ordered commits: root=0 width=128 semantic-sites=2
-// CHECK-LABEL: llvm.func @unit_10.__obelisk_eval_body_0(
-// CHECK: %[[QUEUE:.*]] = llvm.mlir.addressof @__obelisk_eval_ordered_nba_queue_v1
+// TRACE: talos NBA root keeps ordered commits: root=0 width=128 semantic-sites=2
+// CHECK-LABEL: llvm.func @unit_10.__talos_eval_body_0(
+// CHECK: %[[QUEUE:.*]] = llvm.mlir.addressof @__talos_eval_ordered_nba_queue_v1
 // CHECK: llvm.store %{{.*}}, %{{.*}} {alignment = 1 : i64} : i128, !llvm.ptr
 // CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} {alignment = 1 : i64} : i128, !llvm.ptr
-// CHECK: llvm.call @obelisk_rt_v1_eval_nba_reserve(%{{.*}}, %[[QUEUE]])
+// CHECK: llvm.call @talos_rt_v1_eval_nba_reserve(%{{.*}}, %[[QUEUE]])
 // CHECK: llvm.store %{{.*}}, %{{.*}} {alignment = 1 : i64} : i128, !llvm.ptr
 // CHECK-NEXT: llvm.store %{{.*}}, %{{.*}} {alignment = 1 : i64} : i128, !llvm.ptr
-// CHECK: llvm.call @obelisk_rt_v1_eval_nba_reserve(%{{.*}}, %[[QUEUE]])
-// CHECK-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// CHECK-LABEL: llvm.func internal @__obelisk_eval_ordered_nba_commit_v1(
-// CHECK: llvm.call @obelisk_rt_v1_static_nba_commit_ordered(
+// CHECK: llvm.call @talos_rt_v1_eval_nba_reserve(%{{.*}}, %[[QUEUE]])
+// CHECK-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// CHECK-LABEL: llvm.func internal @__talos_eval_ordered_nba_commit_v1(
+// CHECK: llvm.call @talos_rt_v1_static_nba_commit_ordered(
 
 module native_tier1_partial_wide_payload_nba_ordered;
   logic clk = 0;

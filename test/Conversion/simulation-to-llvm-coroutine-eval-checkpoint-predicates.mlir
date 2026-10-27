@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep))' -o %t.planned.mlir
-// RUN: obelisk-opt %t.planned.mlir --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep))' -o %t.planned.mlir
+// RUN: talos-opt %t.planned.mlir --convert-talos-sim-processes-to-llvm-coroutines -o %t.llvm.mlir
 // RUN: FileCheck %s < %t.llvm.mlir
 
 // The coroutine conversion must rewrite both checkpoint predicates as part
@@ -29,17 +29,17 @@ module attributes {
 
     // Existing declarations must reserve names across variant and predicate
     // creation. These functions are distinct from the generated definitions.
-    simulation.func @consume.__obelisk_eval_body_0.__obelisk_two_state_0(
+    simulation.func @consume.__talos_eval_body_0.__talos_two_state_0(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 4 : i64} {
       simulation.return
     }
-    simulation.func @consume.__obelisk_eval_body_0.__obelisk_path_known_0(
+    simulation.func @consume.__talos_eval_body_0.__talos_path_known_0(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 5 : i64} {
       simulation.return
     }
-    simulation.func @consume.__obelisk_eval_body_0.__obelisk_checkpoint_path_0(
+    simulation.func @consume.__talos_eval_body_0.__talos_checkpoint_path_0(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 6 : i64} {
       simulation.return
@@ -136,17 +136,17 @@ module attributes {
   }
 }
 
-// CHECK-DAG: llvm.func @consume.__obelisk_eval_body_0.__obelisk_two_state_0(
-// CHECK-DAG: llvm.func @consume.__obelisk_eval_body_0.__obelisk_path_known_0(
-// CHECK-DAG: llvm.func @consume.__obelisk_eval_body_0.__obelisk_checkpoint_path_0(
-// CHECK-DAG: llvm.func @consume.__obelisk_eval_body_0.__obelisk_two_state_1(
-// CHECK-LABEL: llvm.func @consume.__obelisk_eval_body_0.__obelisk_path_known_1(
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-DAG: llvm.func @consume.__talos_eval_body_0.__talos_two_state_0(
+// CHECK-DAG: llvm.func @consume.__talos_eval_body_0.__talos_path_known_0(
+// CHECK-DAG: llvm.func @consume.__talos_eval_body_0.__talos_checkpoint_path_0(
+// CHECK-DAG: llvm.func @consume.__talos_eval_body_0.__talos_two_state_1(
+// CHECK-LABEL: llvm.func @consume.__talos_eval_body_0.__talos_path_known_1(
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
-// CHECK-LABEL: llvm.func @consume.__obelisk_eval_body_0.__obelisk_checkpoint_path_1(
-// CHECK-NOT: llvm.call @obelisk_rt_
+// CHECK-LABEL: llvm.func @consume.__talos_eval_body_0.__talos_checkpoint_path_1(
+// CHECK-NOT: llvm.call @talos_rt_
 // CHECK: llvm.return
-// CHECK: llvm.func @__obelisk_eval_four_state_fallback_v1_
-// CHECK: llvm.call @__obelisk_eval_checkpoint_body_v1_
-// CHECK: llvm.call @__obelisk_eval_dispatch_v1
-// CHECK: llvm.call @obelisk_rt_v1_native_state_sync
+// CHECK: llvm.func @__talos_eval_four_state_fallback_v1_
+// CHECK: llvm.call @__talos_eval_checkpoint_body_v1_
+// CHECK: llvm.call @__talos_eval_dispatch_v1
+// CHECK: llvm.call @talos_rt_v1_native_state_sync

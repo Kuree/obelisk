@@ -1,0 +1,49 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+
+module {
+  talos.sv.symbol.definition @s0.simulation_dynamic_delay attributes {definition_kind = 0 : i32, hierarchical_name = "simulation_dynamic_delay", name = "simulation_dynamic_delay", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.simulation_dynamic_delay attributes {hierarchical_name = "simulation_dynamic_delay", is_uninstantiated = false, name = "simulation_dynamic_delay", node_id = 3 : i64, referenced_path = "simulation_dynamic_delay", referenced_symbol = @s0.simulation_dynamic_delay} {
+      talos.sv.symbol.instance_body @s4.simulation_dynamic_delay attributes {hierarchical_name = "simulation_dynamic_delay", name = "simulation_dynamic_delay", node_id = 4 : i64} {
+        talos.sv.symbol.variable @s5.value attributes {hierarchical_name = "simulation_dynamic_delay.value", lifetime = 1 : i32, name = "value", node_id = 5 : i64, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+        }
+        talos.sv.symbol.variable @s6.amount attributes {hierarchical_name = "simulation_dynamic_delay.amount", lifetime = 1 : i32, name = "amount", node_id = 6 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+        }
+        talos.sv.symbol.procedural_block @s7 attributes {hierarchical_name = "simulation_dynamic_delay", node_id = 7 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.block attributes {node_id = 8 : i64} {
+            talos.sv.statement.timed attributes {node_id = 9 : i64} {
+              talos.sv.timing.delay attributes {node_id = 10 : i64} {
+                talos.sv.expression.named_value attributes {node_id = 11 : i64, referenced_path = "simulation_dynamic_delay.amount", referenced_symbol = @s1.$root::@s3.simulation_dynamic_delay::@s4.simulation_dynamic_delay::@s6.amount, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 12 : i64} {
+                talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 13 : i64, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                  talos.sv.expression.named_value attributes {node_id = 14 : i64, referenced_path = "simulation_dynamic_delay.value", referenced_symbol = @s1.$root::@s3.simulation_dynamic_delay::@s4.simulation_dynamic_delay::@s5.value, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                  }
+                  talos.sv.expression.conversion attributes {node_id = 15 : i64, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, true, 0 : 0, logic>>} {
+                    talos.sv.expression.integer_literal attributes {constant_value = "8'd1", node_id = 16 : i64, semantic_type = !talos.ranged_packed_array<7 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// IEEE 1800-2023 9.4.1: a negative delay is the unsigned value of its 64-bit
+// two's complement, so the signed amount sign-extends and then saturates.
+// CHECK-DAG: %[[MAX:.*]] = arith.constant 9223372036854775807 : i64
+// CHECK: %[[AMOUNT:.*]] = simulation.ref.load {{.*}} -> i32
+// CHECK: %[[WIDENED:.*]] = arith.extsi %[[AMOUNT]] : i32 to i64
+// CHECK: %[[IN_RANGE:.*]] = arith.cmpi ule, %[[WIDENED]], %[[MAX]] : i64
+// CHECK: %[[CLAMPED_HIGH:.*]] = arith.select %[[IN_RANGE]], %[[WIDENED]], %[[MAX]] : i64
+// CHECK: %[[DELAY:.*]] = simulation.time.scale %[[CLAMPED_HIGH]] by 1 signed = false : i64
+// CHECK: simulation.suspend.delay %[[DELAY]]
+// CHECK-NOT: talos.sv.

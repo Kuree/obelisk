@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode \
-// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s
+// RUN: talos-opt %s --encode-talos-sim-to-bytecode \
+// RUN:   --test-talos-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
 module attributes {
@@ -30,15 +30,15 @@ module attributes {
   }
 }
 
-// CHECK-DAG: llvm.func @obelisk_rt_v1_scheduler_event_after
-// CHECK-DAG: llvm.func @obelisk_rt_v1_scheduler_event_replace_after
-// CHECK-DAG: llvm.func @obelisk_rt_v1_scheduler_event_triggered
+// CHECK-DAG: llvm.func @talos_rt_v1_scheduler_event_after
+// CHECK-DAG: llvm.func @talos_rt_v1_scheduler_event_replace_after
+// CHECK-DAG: llvm.func @talos_rt_v1_scheduler_event_triggered
 // CHECK-LABEL: llvm.func @process
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_event_after
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_event_after
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_event_replace_after
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_event_replace_after
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_event_triggered
+// CHECK: llvm.call @talos_rt_v1_scheduler_event_after
+// CHECK: llvm.call @talos_rt_v1_scheduler_event_after
+// CHECK: llvm.call @talos_rt_v1_scheduler_event_replace_after
+// CHECK: llvm.call @talos_rt_v1_scheduler_event_replace_after
+// CHECK: llvm.call @talos_rt_v1_scheduler_event_triggered
 // CHECK: llvm.return
 // CHECK-NOT: simulation.event
 // Ordinary blocking/nonblocking event triggers retain IDs and flags exactly;

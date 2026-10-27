@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s --talos-sim-plan-native-partitions \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s
-// RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions \
-// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | obelisk-translate --mlir-to-llvmir | opt -passes=verify -disable-output
+// RUN: talos-opt %s --talos-sim-plan-native-partitions \
+// RUN:   --convert-talos-sim-processes-to-llvm-coroutines \
+// RUN:   | talos-translate --mlir-to-llvmir | opt -passes=verify -disable-output
 
 // Native module assembly has textual symbol ownership that the semantic
 // planner cannot rewrite safely. Keep compiling on the unsplit path, but do

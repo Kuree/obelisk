@@ -4,20 +4,20 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEREGISTERPLANNING_H
-#define OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEREGISTERPLANNING_H
+#ifndef TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEREGISTERPLANNING_H
+#define TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEREGISTERPLANNING_H
 
-#include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "talos/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Support/LogicalResult.h"
 
 #include "llvm/ADT/DenseSet.h"
 
-namespace obelisk::bytecode {
+namespace talos::bytecode {
 
 mlir::FailureOr<llvm::DenseSet<mlir::Value>>
 planTwoStateRegisters(sim::SimDesignOp design);
 
-} // namespace obelisk::bytecode
+} // namespace talos::bytecode
 
-#endif // OBELISK_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEREGISTERPLANNING_H
+#endif // TALOS_LIB_CONVERSION_SIMULATIONTOBYTECODE_BYTECODEREGISTERPLANNING_H

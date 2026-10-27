@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --split-input-file --verify-diagnostics
+// RUN: talos-opt %s --split-input-file --verify-diagnostics
 module {
   simulation.design @bad {
     // expected-error @+1 {{VPI definition kind must be a module, interface, program, gate, or switch}}

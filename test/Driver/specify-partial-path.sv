@@ -1,9 +1,9 @@
-// RUN: obelisk -O3 %s -o %t.native
+// RUN: talos -O3 %s -o %t.native
 // RUN: %t.native > %t.native.out
 // RUN: FileCheck %s < %t.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: talos -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | diff -u %t.native.out -
-// RUN: obelisk -O0 -emit-sim %s -o %t.sim.mlir
+// RUN: talos -O0 -emit-sim %s -o %t.sim.mlir
 // RUN: FileCheck %s --check-prefix=SIM < %t.sim.mlir
 
 `timescale 1ns / 1ns

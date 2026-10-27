@@ -1,8 +1,8 @@
-// RUN: obelisk -O0 --execution-tier=native %s -o %t.o0
+// RUN: talos -O0 --execution-tier=native %s -o %t.o0
 // RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=native %s -o %t.o3
+// RUN: talos -O3 --execution-tier=native %s -o %t.o3
 // RUN: %t.o3 | FileCheck %s
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bc
+// RUN: talos -O0 --execution-tier=bytecode %s -o %t.bc
 // RUN: %t.bc | FileCheck %s
 
 // LRM 6.21, 7.4.5 and 11.5.1: initialization is per invocation; indexed

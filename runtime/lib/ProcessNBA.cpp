@@ -17,9 +17,9 @@
 #include "ProcessValidation.h"
 #include "RuntimeInternal.h"
 #include "SignalSemantics.h"
-#include "obelisk/Runtime/ClockKernelReadySet.h"
-#include "obelisk/Runtime/StableHandle.h"
-#include "obelisk/Runtime/StableHash.h"
+#include "talos/Runtime/ClockKernelReadySet.h"
+#include "talos/Runtime/StableHandle.h"
+#include "talos/Runtime/StableHash.h"
 
 #include <algorithm>
 #include <atomic>
@@ -38,8 +38,8 @@
 #include <immintrin.h>
 #endif
 
-using namespace obelisk::process;
-using namespace obelisk::runtime;
+using namespace talos::process;
+using namespace talos::runtime;
 
 std::optional<uint64_t>
 countGeneratedNBAStages(const GeneratedNBAStorage &generated) {
@@ -62,7 +62,7 @@ bool hasGeneratedNBAStages(const GeneratedNBAStorage &generated) {
   return generated.valid != 0;
 }
 
-bool hasGeneratedNBASlots(const obelisk_rt_static_nba_root &root) {
+bool hasGeneratedNBASlots(const talos_rt_static_nba_root &root) {
   for (uint64_t index = 0; index != root.generated_slot_count; ++index)
     if (*root.generated_slots[index].valid)
       return true;
@@ -72,8 +72,8 @@ bool hasGeneratedNBASlots(const obelisk_rt_static_nba_root &root) {
 // The source index may select a partially overlapping range. Clip before
 // shifting, including INT64_MIN, so an invalid selection never touches state.
 template <typename Consume>
-static obelisk_rt_status
-consumeGeneratedNBASlots(const obelisk_rt_static_nba_root &root,
+static talos_rt_status
+consumeGeneratedNBASlots(const talos_rt_static_nba_root &root,
                          Consume consume, bool clearValidity = true) {
   for (uint64_t index = 0; index != root.generated_slot_count; ++index) {
     const auto &slot = root.generated_slots[index];
@@ -85,18 +85,18 @@ consumeGeneratedNBASlots(const obelisk_rt_static_nba_root &root,
     if (source < slot.bit_width && destination < root.bit_width) {
       uint64_t width =
           std::min(slot.bit_width - source, root.bit_width - destination);
-      obelisk_rt_status status = consume(
+      talos_rt_status status = consume(
           destination, width, (*slot.value >> source) & packedWidthMask(width),
           ((slot.unknown ? *slot.unknown : 0) >> source) &
               packedWidthMask(width),
           slot);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
     }
     if (clearValidity)
       *slot.valid = 0;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 // Record staged bits that a new write replaces with a different value before
@@ -112,7 +112,7 @@ static void recordStaticNBATransient(StaticNBAAccumulator &accumulator,
 }
 
 uint32_t
-nextDueNativeNBABarrierRegionUnlocked(const obelisk_rt_context *context,
+nextDueNativeNBABarrierRegionUnlocked(const talos_rt_context *context,
                                       bool includeGenerated) {
   uint32_t region = UINT32_MAX;
   // IEEE 1800-2023 4.4.2.4, 4.4.2.8, 4.5: static accumulators commit
@@ -131,8 +131,8 @@ nextDueNativeNBABarrierRegionUnlocked(const obelisk_rt_context *context,
         context->nativeScheduleHasGeneratedNBAAccumulators &&
         root < context->nativeScheduleNBARootCount) {
       if (hasGeneratedNBASlots(context->nativeScheduleNBARoots[root]) &&
-          schedulerRegionEligible(context, OBELISK_RT_REGION_NBA))
-        region = std::min(region, uint32_t{OBELISK_RT_REGION_NBA});
+          schedulerRegionEligible(context, TALOS_RT_REGION_NBA))
+        region = std::min(region, uint32_t{TALOS_RT_REGION_NBA});
       GeneratedNBAStorage generated(
           context->nativeScheduleNBARoots[root].generated_accumulator,
           context->twoState());
@@ -144,8 +144,8 @@ nextDueNativeNBABarrierRegionUnlocked(const obelisk_rt_context *context,
   const auto *plan = context->nativeSchedulePlan;
   if (includeGenerated && plan && plan->nba_ordered_count &&
       *plan->nba_ordered_count != 0 &&
-      schedulerRegionEligible(context, OBELISK_RT_REGION_NBA))
-    region = std::min(region, uint32_t{OBELISK_RT_REGION_NBA});
+      schedulerRegionEligible(context, TALOS_RT_REGION_NBA))
+    region = std::min(region, uint32_t{TALOS_RT_REGION_NBA});
   if (plan && plan->nba_dirty_roots && plan->nba_dirty_summary) {
     // Both runtime staging and generated staging maintain this hierarchy.
     // A consumed fixed-site payload may retain valid/mask fields; only its
@@ -187,7 +187,7 @@ nextDueNativeNBABarrierRegionUnlocked(const obelisk_rt_context *context,
   return region;
 }
 
-static bool validInertialStatePlanesUnlocked(const obelisk_rt_context *context,
+static bool validInertialStatePlanesUnlocked(const talos_rt_context *context,
                                              const uint8_t *valuePlane,
                                              const uint8_t * /*unknownPlane*/,
                                              uint64_t planeBitCount) {
@@ -218,7 +218,7 @@ static bool validInertialStatePlanesUnlocked(const obelisk_rt_context *context,
 }
 
 static bool validInertialStrengthPairUnlocked(
-    obelisk_rt_context *context, const NativeStaticState &lowState,
+    talos_rt_context *context, const NativeStaticState &lowState,
     int64_t lowOffset, const NativeStaticState &highState, int64_t highOffset,
     uint64_t width) {
   if (!context || !context->designBytecodeImage.data || lowOffset < 0 ||
@@ -228,18 +228,18 @@ static bool validInertialStrengthPairUnlocked(
   uint64_t lowAbsolute = lowState.bitOffset + static_cast<uint64_t>(lowOffset);
   uint64_t highAbsolute =
       highState.bitOffset + static_cast<uint64_t>(highOffset);
-  return obelisk::designbytecode::isComplementaryDriverPair(
+  return talos::designbytecode::isComplementaryDriverPair(
       image, context, lowAbsolute, highAbsolute, width);
 }
 
-void markStaticNBAAccumulatorPending(obelisk_rt_context *context,
+void markStaticNBAAccumulatorPending(talos_rt_context *context,
                                      uint32_t rootIndex,
                                      StaticNBAAccumulator &accumulator) {
   if (!accumulator.valid)
     ++context->staticNBAPendingAccumulatorCount;
   accumulator.valid = true;
   context->staticNBAAccumulatorsPending = true;
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   if (plan && plan->nba_dirty_roots && rootIndex < plan->nba_root_count) {
     uint32_t word = rootIndex / 64;
     if (word < plan->nba_dirty_word_count) {
@@ -252,29 +252,29 @@ void markStaticNBAAccumulatorPending(obelisk_rt_context *context,
   }
 }
 
-void refreshStaticNBAAccumulatorsPending(obelisk_rt_context *context) {
+void refreshStaticNBAAccumulatorsPending(talos_rt_context *context) {
   context->staticNBAAccumulatorsPending =
       context->staticNBAPendingAccumulatorCount != 0;
 }
 
-static obelisk_rt_status schedulerNBA(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+static talos_rt_status schedulerNBA(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t delay, const uint8_t *value, const uint8_t *unknown,
     bool stringValue, uint64_t staticSite = UINT64_MAX, bool driver = false,
     uint64_t clockingOutput = UINT64_MAX, uint64_t sourceBitOffset = 0) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  auto fail = [&](obelisk_rt_status status) {
-    obelisk_rt_v1_scheduler_fail(context, status);
+    return TALOS_RT_INVALID_ARGUMENT;
+  auto fail = [&](talos_rt_status status) {
+    talos_rt_v1_scheduler_fail(context, status);
     return status;
   };
   if (!valuePlane || bitWidth == 0 || (bitWidth + 7) < bitWidth ||
       sourceBitOffset > UINT64_MAX - bitWidth ||
       (stringValue && (bitWidth != 64 || unknownPlane || sourceBitOffset != 0)))
-    return fail(OBELISK_RT_INVALID_ARGUMENT);
+    return fail(TALOS_RT_INVALID_ARGUMENT);
   if (bitOffset == UINT64_MAX)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   ContextTransaction transaction(context);
   uint32_t automaticID = 0;
   uint32_t staticID = 0;
@@ -283,27 +283,27 @@ static obelisk_rt_status schedulerNBA(
   bool boundedStatic =
       !automatic && decodeNativeStatic(bitOffset, staticID, offset);
   if (!automatic && !boundedStatic && !decodeNativeGlobal(bitOffset, offset))
-    return fail(OBELISK_RT_INVALID_ARGUMENT);
+    return fail(TALOS_RT_INVALID_ARGUMENT);
   if (!automatic && !boundedStatic &&
       (offset >= static_cast<__int128>(planeBitCount) ||
        static_cast<__int128>(offset) + bitWidth <= 0))
-    return fail(OBELISK_RT_INVALID_ARGUMENT);
+    return fail(TALOS_RT_INVALID_ARGUMENT);
   uint64_t byteCount = (bitWidth + 7) / 8;
   if (!value || (unknownPlane && !unknown) ||
       byteCount > std::numeric_limits<size_t>::max())
-    return fail(OBELISK_RT_INVALID_ARGUMENT);
+    return fail(TALOS_RT_INVALID_ARGUMENT);
   auto sourceBit = [&](const uint8_t *plane, uint64_t bit) {
     return byteBit(plane, sourceBitOffset + bit);
   };
-  obelisk_rt_string_v1 queuedString = 0;
+  talos_rt_string_v1 queuedString = 0;
   if (stringValue) {
     std::memcpy(&queuedString, value, sizeof(queuedString));
-    obelisk_rt_status status =
-        obelisk_rt_validate_string(context, queuedString);
-    if (status != OBELISK_RT_OK)
+    talos_rt_status status =
+        talos_rt_validate_string(context, queuedString);
+    if (status != TALOS_RT_OK)
       return fail(status);
   }
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ScheduledNBA update;
     update.valuePlane = valuePlane;
     update.unknownPlane = unknownPlane;
@@ -321,12 +321,12 @@ static obelisk_rt_status schedulerNBA(
       if (found == context->nativeAutomaticStates.end() ||
           offset >= static_cast<__int128>(found->second.bitWidth) ||
           static_cast<__int128>(offset) + bitWidth <= 0) {
-        context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
-        return OBELISK_RT_INVALID_HANDLE;
+        context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       }
       if (found->second.referenceCount == UINT64_MAX) {
-        context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        context->schedulerStatus = TALOS_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       }
       update.retainedAutomaticID = automaticID;
     } else if (boundedStatic) {
@@ -335,21 +335,21 @@ static obelisk_rt_status schedulerNBA(
           staticState->bitWidth > planeBitCount - staticState->bitOffset ||
           offset >= static_cast<__int128>(staticState->bitWidth) ||
           static_cast<__int128>(offset) + bitWidth <= 0) {
-        context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
-        return OBELISK_RT_INVALID_HANDLE;
+        context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       }
     }
-    update.execRegion = obelisk_rt_commit_region(
+    update.execRegion = talos_rt_commit_region(
         context->activeHomeRegion == UINT32_MAX
-            ? static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE)
+            ? static_cast<uint32_t>(TALOS_RT_REGION_ACTIVE)
             : context->activeHomeRegion);
     if (update.execRegion == UINT32_MAX) {
-      context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      context->schedulerStatus = TALOS_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     }
     if (context->nextSchedulerSequence == 0) {
-      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      context->schedulerStatus = TALOS_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     }
     // LRM 4.6(b), 10.4.2: capture runtime initializer/fallback writes in the
     // generated batch at their execution point, preserving order even when
@@ -359,7 +359,7 @@ static obelisk_rt_status schedulerNBA(
     const auto *bridge = plan ? plan->nba_ordered_bridge : nullptr;
     if (bridge && bridge->queue && bridge->roots && !driver && !stringValue &&
         staticSite != UINT64_MAX && boundedStatic && delay == 0 &&
-        update.execRegion == OBELISK_RT_REGION_NBA) {
+        update.execRegion == TALOS_RT_REGION_NBA) {
       const auto *begin = context->nativeScheduleNBASites;
       const auto *end = begin + context->nativeScheduleNBASiteCount;
       const auto *site = std::lower_bound(
@@ -372,15 +372,15 @@ static obelisk_rt_status schedulerNBA(
         if (root.static_state != staticID ||
             root.bit_width != staticState->bitWidth ||
             planeBitCount != plan->state_bit_count)
-          return fail(OBELISK_RT_LAYOUT_MISMATCH);
+          return fail(TALOS_RT_LAYOUT_MISMATCH);
         auto *queue = static_cast<EvalNBAQueue *>(bridge->queue);
         uint64_t chunks = (bitWidth + 63) / 64;
         if (chunks > 1 && (staticSite >= (uint64_t{1} << 48) ||
                            chunks >= (uint64_t{1} << 15)))
-          return fail(OBELISK_RT_INVALID_ARGUMENT);
+          return fail(TALOS_RT_INVALID_ARGUMENT);
         for (uint64_t chunk = 0; chunk != chunks; ++chunk) {
-          auto status = obelisk_rt_v1_eval_nba_reserve(context, queue);
-          if (status != OBELISK_RT_OK) {
+          auto status = talos_rt_v1_eval_nba_reserve(context, queue);
+          if (status != TALOS_RT_OK) {
             queue->error = status;
             return fail(status);
           }
@@ -403,7 +403,7 @@ static obelisk_rt_status schedulerNBA(
               word / 64 < plan->nba_dirty_summary_word_count)
             plan->nba_dirty_summary[word / 64] |= uint64_t{1} << (word % 64);
         }
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
     }
     if (!driver && staticSite != UINT64_MAX && boundedStatic && !stringValue &&
@@ -414,11 +414,11 @@ static obelisk_rt_status schedulerNBA(
       if (staticSite < context->nativeScheduleNBASiteIndex.size()) {
         staticRoot = context->nativeScheduleNBASiteIndex[staticSite];
       } else {
-        const obelisk_rt_static_nba_site *begin =
+        const talos_rt_static_nba_site *begin =
             context->nativeScheduleNBASites;
-        const obelisk_rt_static_nba_site *end =
+        const talos_rt_static_nba_site *end =
             begin + context->nativeScheduleNBASiteCount;
-        const obelisk_rt_static_nba_site *found = std::lower_bound(
+        const talos_rt_static_nba_site *found = std::lower_bound(
             begin, end, staticSite,
             [](const auto &entry, uint64_t id) { return entry.site < id; });
         if (found != end && found->site == staticSite)
@@ -427,24 +427,24 @@ static obelisk_rt_status schedulerNBA(
       if (staticRoot == UINT32_MAX ||
           staticRoot >= context->staticNBAAccumulators.size() ||
           staticRoot >= context->nativeScheduleNBARootCount)
-        return fail(OBELISK_RT_INVALID_DESIGN);
-      const obelisk_rt_static_nba_root &root =
+        return fail(TALOS_RT_INVALID_DESIGN);
+      const talos_rt_static_nba_root &root =
           context->nativeScheduleNBARoots[staticRoot];
       if (root.static_state != staticID ||
           root.bit_width != staticState->bitWidth)
-        return fail(OBELISK_RT_LAYOUT_MISMATCH);
+        return fail(TALOS_RT_LAYOUT_MISMATCH);
       if (root.generated_accumulator || root.generated_slot_count) {
         // A source-ordered generic site may follow generated direct stages for
         // the same root. Materialize first so the generic write remains the
         // last write at the barrier.
-        if (obelisk_rt_status status =
+        if (talos_rt_status status =
                 materializeGeneratedNBAAccumulatorUnlocked(context, staticRoot,
                                                            update.execRegion);
-            status != OBELISK_RT_OK)
+            status != TALOS_RT_OK)
           return fail(status);
       }
       if (staticRoot >= context->staticNBASlowRoots.size())
-        return fail(OBELISK_RT_INVALID_DESIGN);
+        return fail(TALOS_RT_INVALID_DESIGN);
       bool rootDirty =
           context->nativeScheduleTransientDirtyRoots.find(root.static_state) !=
               context->nativeScheduleTransientDirtyRoots.end() ||
@@ -461,8 +461,8 @@ static obelisk_rt_status schedulerNBA(
              accumulator.unknownPlane != unknownPlane ||
              accumulator.planeBitCount != planeBitCount ||
              accumulator.execRegion != update.execRegion)) {
-          context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
-          return OBELISK_RT_INVALID_LIFECYCLE;
+          context->schedulerStatus = TALOS_RT_INVALID_LIFECYCLE;
+          return TALOS_RT_INVALID_LIFECYCLE;
         }
         accumulator.valuePlane = valuePlane;
         accumulator.unknownPlane = unknownPlane;
@@ -515,8 +515,8 @@ static obelisk_rt_status schedulerNBA(
           __int128 lastWide = std::min<__int128>(
               bitWidth, static_cast<__int128>(root.bit_width) - offset);
           if (firstWide >= lastWide) {
-            context->schedulerStatus = OBELISK_RT_INVALID_HANDLE;
-            return OBELISK_RT_INVALID_HANDLE;
+            context->schedulerStatus = TALOS_RT_INVALID_HANDLE;
+            return TALOS_RT_INVALID_HANDLE;
           }
           uint64_t first = static_cast<uint64_t>(firstWide);
           uint64_t last = static_cast<uint64_t>(lastWide);
@@ -551,18 +551,18 @@ static obelisk_rt_status schedulerNBA(
         }
         accumulator.sequence = context->nextSchedulerSequence++;
         ++context->signalDiagnostics.aotNBAStages;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       }
     }
     if (boundedStatic && !stringValue && delay == 0 &&
         context->nativeSchedulePlan) {
-      auto markSlowRoot = [&](uint32_t root) -> obelisk_rt_status {
+      auto markSlowRoot = [&](uint32_t root) -> talos_rt_status {
         if (root >= context->staticNBASlowRoots.size())
-          return fail(OBELISK_RT_INVALID_DESIGN);
-        if (obelisk_rt_status status =
+          return fail(TALOS_RT_INVALID_DESIGN);
+        if (talos_rt_status status =
                 materializeGeneratedNBAAccumulatorUnlocked(context, root,
                                                            update.execRegion);
-            status != OBELISK_RT_OK)
+            status != TALOS_RT_OK)
           return fail(status);
         context->staticNBASlowRoots[root] = 1;
         context->staticNBASlowRootsPresent = true;
@@ -570,20 +570,20 @@ static obelisk_rt_status schedulerNBA(
         // protocol without changing the current state-addressing proof.
         if (context->nativeSchedulePlan->specialization_fast)
           *context->nativeSchedulePlan->specialization_fast = 0;
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
       };
       uint32_t root = staticID < context->nativeScheduleNBARootIndex.size()
                           ? context->nativeScheduleNBARootIndex[staticID]
                           : UINT32_MAX;
       if (root != UINT32_MAX) {
-        if (obelisk_rt_status status = markSlowRoot(root);
-            status != OBELISK_RT_OK)
+        if (talos_rt_status status = markSlowRoot(root);
+            status != TALOS_RT_OK)
           return status;
       } else if (context->nativeScheduleNBARootIndex.empty()) {
         for (root = 0; root != context->nativeScheduleNBARootCount; ++root)
           if (context->nativeScheduleNBARoots[root].static_state == staticID) {
-            if (obelisk_rt_status status = markSlowRoot(root);
-                status != OBELISK_RT_OK)
+            if (talos_rt_status status = markSlowRoot(root);
+                status != TALOS_RT_OK)
               return status;
             break;
           }
@@ -596,7 +596,7 @@ static obelisk_rt_status schedulerNBA(
         bitWidth <= staticState->bitWidth - static_cast<uint64_t>(offset) &&
         context->nativeSchedulePlan && !context->nativeScheduleDeoptimized &&
         (context->nativeSchedulePlan->flags &
-         OBELISK_RT_NATIVE_SCHEDULE_FULLY_STATIC) != 0;
+         TALOS_RT_NATIVE_SCHEDULE_FULLY_STATIC) != 0;
     if (update.inlinePacked) {
       update.inlineValue = loadPackedBytes(value, sourceBitOffset, bitWidth);
       if (unknownPlane)
@@ -620,63 +620,63 @@ static obelisk_rt_status schedulerNBA(
     context->scheduledNBAs.push_back(std::move(update));
     if (automatic)
       ++context->nativeAutomaticStates.find(automaticID)->second.referenceCount;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
-    return OBELISK_RT_OUT_OF_MEMORY;
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_OUT_OF_MEMORY);
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
-    return OBELISK_RT_INVALID_ARGUMENT;
+  TALOS_RT_CATCH_ALL {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_INVALID_ARGUMENT);
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_nba(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status talos_rt_v1_scheduler_nba(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t delay, const uint8_t *value, const uint8_t *unknown) {
   return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
                       bitOffset, bitWidth, delay, value, unknown, false);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_packed_slice_nba(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status talos_rt_v1_scheduler_packed_slice_nba(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t baseHandle, uint64_t baseBitWidth,
     int64_t lowBit, uint32_t lowBitValid, uint64_t sourceBitWidth,
     uint64_t delay, uint64_t staticSite, uint64_t clockingOutput,
     const uint8_t *value, const uint8_t *unknown) {
   if (!context)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (!lowBitValid || baseHandle == UINT64_MAX)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (baseBitWidth == 0 || sourceBitWidth == 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   __int128 low = lowBit;
   __int128 first = std::max<__int128>(0, -low);
   __int128 last = std::min<__int128>(sourceBitWidth,
                                      static_cast<__int128>(baseBitWidth) - low);
   if (first >= last)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   __int128 destinationOffset = low + first;
   if (destinationOffset < 0 || destinationOffset > INT64_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   uint64_t selectedWidth = static_cast<uint64_t>(last - first);
   uint64_t sourceOffset = static_cast<uint64_t>(first);
   if (sourceOffset > sourceBitWidth ||
       selectedWidth > sourceBitWidth - sourceOffset)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  uint64_t destination = obelisk_rt_stable_handle_offset(
+    return TALOS_RT_INVALID_ARGUMENT;
+  uint64_t destination = talos_rt_stable_handle_offset(
       baseHandle, static_cast<int64_t>(destinationOffset));
   if (destination == UINT64_MAX)
-    return OBELISK_RT_INVALID_HANDLE;
+    return TALOS_RT_INVALID_HANDLE;
   return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
                       destination, selectedWidth, delay, value, unknown, false,
                       staticSite, false, clockingOutput, sourceOffset);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_driver_nba(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status talos_rt_v1_scheduler_driver_nba(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t delay, const uint8_t *value, const uint8_t *unknown) {
   return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
@@ -684,36 +684,36 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_driver_nba(
                       UINT64_MAX, true);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status talos_rt_v1_scheduler_inertial_driver(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t codeUnit, uint32_t component, uint32_t flags, uint64_t riseDelay,
     uint64_t fallDelay, uint64_t turnoffDelay, const uint8_t *value,
     const uint8_t *unknown) {
   if (!context || !context->execution || !valuePlane || bitWidth == 0 ||
       codeUnit == UINT64_MAX ||
-      (flags & ~(OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY |
-                 OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION |
-                 OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW |
-                 OBELISK_RT_INERTIAL_DRIVER_REAL32 |
-                 OBELISK_RT_INERTIAL_DRIVER_REAL64)) != 0 ||
-      ((flags & OBELISK_RT_INERTIAL_DRIVER_REAL32) != 0 && bitWidth != 32) ||
-      ((flags & OBELISK_RT_INERTIAL_DRIVER_REAL64) != 0 && bitWidth != 64) ||
-      (flags & (OBELISK_RT_INERTIAL_DRIVER_REAL32 |
-                OBELISK_RT_INERTIAL_DRIVER_REAL64)) ==
-          (OBELISK_RT_INERTIAL_DRIVER_REAL32 |
-           OBELISK_RT_INERTIAL_DRIVER_REAL64) ||
-      ((flags & (OBELISK_RT_INERTIAL_DRIVER_REAL32 |
-                 OBELISK_RT_INERTIAL_DRIVER_REAL64)) != 0 &&
-       ((flags & OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY) == 0 ||
+      (flags & ~(TALOS_RT_INERTIAL_DRIVER_VECTOR_DELAY |
+                 TALOS_RT_INERTIAL_DRIVER_DEFER_RESOLUTION |
+                 TALOS_RT_INERTIAL_DRIVER_PUBLISH_RAW |
+                 TALOS_RT_INERTIAL_DRIVER_REAL32 |
+                 TALOS_RT_INERTIAL_DRIVER_REAL64)) != 0 ||
+      ((flags & TALOS_RT_INERTIAL_DRIVER_REAL32) != 0 && bitWidth != 32) ||
+      ((flags & TALOS_RT_INERTIAL_DRIVER_REAL64) != 0 && bitWidth != 64) ||
+      (flags & (TALOS_RT_INERTIAL_DRIVER_REAL32 |
+                TALOS_RT_INERTIAL_DRIVER_REAL64)) ==
+          (TALOS_RT_INERTIAL_DRIVER_REAL32 |
+           TALOS_RT_INERTIAL_DRIVER_REAL64) ||
+      ((flags & (TALOS_RT_INERTIAL_DRIVER_REAL32 |
+                 TALOS_RT_INERTIAL_DRIVER_REAL64)) != 0 &&
+       ((flags & TALOS_RT_INERTIAL_DRIVER_VECTOR_DELAY) == 0 ||
         riseDelay != fallDelay || riseDelay != turnoffDelay)))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextTransaction transaction(context);
     ContextMutexLock lock(context);
     if (!validInertialStatePlanesUnlocked(context, valuePlane, unknownPlane,
                                           planeBitCount))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     InertialDriverSite site{codeUnit, component};
     auto cancelPending = [&] {
       context->scheduledNBAs.erase(
@@ -740,7 +740,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     // Re-evaluation still rejects an older pulse from this assignment site.
     if (bitOffset == UINT64_MAX) {
       cancelPending();
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
 
     uint32_t staticID = 0;
@@ -748,40 +748,40 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     uint64_t rootHandle = bitOffset;
     bool boundedStatic = decodeNativeStatic(bitOffset, staticID, offset);
     if (!boundedStatic && !decodeNativeGlobal(bitOffset, offset))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     const NativeStaticState *state =
         boundedStatic ? findNativeStaticState(context, staticID) : nullptr;
     if (boundedStatic && !state)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t availableWidth = boundedStatic ? state->bitWidth : planeBitCount;
     __int128 firstWide = std::max<__int128>(0, -static_cast<__int128>(offset));
     __int128 lastWide = std::min<__int128>(
         bitWidth, static_cast<__int128>(availableWidth) - offset);
     if (firstWide >= lastWide) {
       cancelPending();
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     }
     uint64_t sourceFirst = static_cast<uint64_t>(firstWide);
     uint64_t selectedWidth = static_cast<uint64_t>(lastWide - firstWide);
-    bool realValue = (flags & (OBELISK_RT_INERTIAL_DRIVER_REAL32 |
-                               OBELISK_RT_INERTIAL_DRIVER_REAL64)) != 0;
+    bool realValue = (flags & (TALOS_RT_INERTIAL_DRIVER_REAL32 |
+                               TALOS_RT_INERTIAL_DRIVER_REAL64)) != 0;
     // A real is one atomic user-defined-net value (6.6.7), never a clipped
     // packed slice. Continuous assignments to a UDNT also admit one delay
     // only (10.3.3), which the validation above preserves in this ABI.
     if (realValue && (sourceFirst != 0 || selectedWidth != bitWidth))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     __int128 selectedOffsetWide = static_cast<__int128>(offset) + firstWide;
     if (selectedOffsetWide < 0 || selectedOffsetWide > INT64_MAX)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     int64_t selectedOffset = static_cast<int64_t>(selectedOffsetWide);
     uint64_t selectedHandle =
         nativeHandleOffset(rootHandle, static_cast<int64_t>(sourceFirst));
     if (selectedHandle == UINT64_MAX)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t byteCount = (bitWidth - 1) / 8 + 1;
     if (!value || (unknownPlane && !unknown) ||
         byteCount > std::numeric_limits<size_t>::max())
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
 
     uint64_t selectedBytes = (selectedWidth - 1) / 8 + 1;
     std::vector<uint8_t> targetValue(static_cast<size_t>(selectedBytes), 0);
@@ -800,7 +800,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     auto realBitsAreNaN = [&](const std::vector<uint8_t> &bytes) {
       if (!realValue)
         return false;
-      if ((flags & OBELISK_RT_INERTIAL_DRIVER_REAL32) != 0) {
+      if ((flags & TALOS_RT_INERTIAL_DRIVER_REAL32) != 0) {
         float value = 0.0f;
         std::memcpy(&value, bytes.data(), sizeof(value));
         return std::isnan(value);
@@ -816,7 +816,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
         pending->second.value == targetValue &&
         pending->second.unknown == targetUnknown &&
         !realBitsAreNaN(targetValue))
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
 
     auto sourceBit = [](const std::vector<uint8_t> &plane, uint64_t bit) {
       return bit / 8 < plane.size() && byteBit(plane.data(), bit);
@@ -849,27 +849,27 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
       update.planeBitCount = planeBitCount;
       update.bitOffset =
           boundedStatic
-              ? obelisk::designbytecode::encodeStaticHandle(
+              ? talos::designbytecode::encodeStaticHandle(
                     staticID,
                     static_cast<int64_t>(static_cast<uint64_t>(offset) + first))
               : nativeHandleOffset(rootHandle, static_cast<int64_t>(first));
       update.bitWidth = width;
       update.driver = true;
       update.deferDriverResolution =
-          (flags & OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION) != 0;
+          (flags & TALOS_RT_INERTIAL_DRIVER_DEFER_RESOLUTION) != 0;
       update.publishDriverTransition =
-          (flags & OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW) != 0;
-      update.realWidth = (flags & OBELISK_RT_INERTIAL_DRIVER_REAL32) != 0   ? 32
-                         : (flags & OBELISK_RT_INERTIAL_DRIVER_REAL64) != 0 ? 64
+          (flags & TALOS_RT_INERTIAL_DRIVER_PUBLISH_RAW) != 0;
+      update.realWidth = (flags & TALOS_RT_INERTIAL_DRIVER_REAL32) != 0   ? 32
+                         : (flags & TALOS_RT_INERTIAL_DRIVER_REAL64) != 0 ? 64
                                                                             : 0;
-      update.execRegion = OBELISK_RT_REGION_ACTIVE;
+      update.execRegion = TALOS_RT_REGION_ACTIVE;
       update.sequence = context->nextSchedulerSequence++;
       update.dueTime = delay > UINT64_MAX - context->schedulerTime
                            ? UINT64_MAX
                            : context->schedulerTime + delay;
       update.inertialSite = site;
       update.inertialDriverVector =
-          (flags & OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY) != 0;
+          (flags & TALOS_RT_INERTIAL_DRIVER_VECTOR_DELAY) != 0;
       update.inertialDriverInitialProjection = initialProjection;
       uint64_t bytes = (width - 1) / 8 + 1;
       update.value.assign(static_cast<size_t>(bytes), 0);
@@ -886,7 +886,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
     };
 
     uint64_t scheduled = 0;
-    if ((flags & OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY) != 0) {
+    if ((flags & TALOS_RT_INERTIAL_DRIVER_VECTOR_DELAY) != 0) {
       bool changed = false;
       bool oldHighZ = !realValue;
       bool newZero = true;
@@ -898,7 +898,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
           oldBits |= static_cast<uint64_t>(currentBit(false, bit)) << bit;
           newBits |= static_cast<uint64_t>(sourceBit(targetValue, bit)) << bit;
         }
-        if ((flags & OBELISK_RT_INERTIAL_DRIVER_REAL32) != 0) {
+        if ((flags & TALOS_RT_INERTIAL_DRIVER_REAL32) != 0) {
           uint32_t oldNarrow = static_cast<uint32_t>(oldBits);
           uint32_t newNarrow = static_cast<uint32_t>(newBits);
           float oldReal = 0.0f;
@@ -942,13 +942,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
           cancelPending();
         if (context->nextSchedulerSequence == 0 ||
             context->nextSchedulerSequence == UINT64_MAX)
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         uint64_t delay = realValue  ? riseDelay
                          : newHighZ ? turnoffDelay
                          : newZero  ? fallDelay
                                     : riseDelay;
         if (!enqueue(0, bitWidth, delay, oldHighZ && !hasInitialProjection))
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         scheduled = 1;
       } else
         cancelPending();
@@ -964,7 +964,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
                              static_cast<__uint128_t>(scheduled) >
                                  static_cast<__uint128_t>(UINT64_MAX) -
                                      context->nextSchedulerSequence))
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       for (uint64_t bit = 0; bit != bitWidth; ++bit) {
         bool newValue = sourceBit(targetValue, bit);
         bool newUnknown = sourceBit(targetUnknown, bit);
@@ -972,7 +972,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
             currentBit(true, bit) == newUnknown)
           continue;
         if (!enqueue(bit, 1, delayFor(newValue, newUnknown), false))
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
       }
     }
     if (scheduled != 0)
@@ -980,21 +980,21 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_driver(
           site,
           InertialDriverPending{bitOffset, bitWidth, std::move(targetValue),
                                 std::move(targetUnknown), scheduled});
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
-    return OBELISK_RT_OUT_OF_MEMORY;
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_OUT_OF_MEMORY);
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
-    return OBELISK_RT_INVALID_ARGUMENT;
+  TALOS_RT_CATCH_ALL {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_INVALID_ARGUMENT);
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
 template <bool Storage>
-static obelisk_rt_status schedulerInertialPath(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+static talos_rt_status schedulerInertialPath(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t codeUnit, uint32_t component, uint32_t group, uint32_t groupCount,
     uint32_t flags, uint64_t riseDelay, uint64_t fallDelay,
@@ -1005,49 +1005,49 @@ static obelisk_rt_status schedulerInertialPath(
     bool nonblocking) {
   if (!context || !context->execution || !valuePlane || bitWidth == 0 ||
       codeUnit == UINT64_MAX || groupCount == 0 || group >= groupCount ||
-      (flags & ~(OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION |
-                 OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW |
-                 OBELISK_RT_INERTIAL_PATH_ON_DETECT |
-                 OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED |
-                 OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS)) != 0 ||
+      (flags & ~(TALOS_RT_INERTIAL_DRIVER_DEFER_RESOLUTION |
+                 TALOS_RT_INERTIAL_DRIVER_PUBLISH_RAW |
+                 TALOS_RT_INERTIAL_PATH_ON_DETECT |
+                 TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED |
+                 TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS)) != 0 ||
       !value || (unknownPlane && !unknown) || !activeMask || !riseMask ||
       !fallMask || !turnoffMask ||
-      (((flags & OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS) != 0) !=
+      (((flags & TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS) != 0) !=
        (pulseTransitionMasks != nullptr)) ||
       (((pulseReject != UINT64_MAX || pulseError != UINT64_MAX ||
-         (flags & (OBELISK_RT_INERTIAL_PATH_ON_DETECT |
-                   OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED)) != 0)) &&
+         (flags & (TALOS_RT_INERTIAL_PATH_ON_DETECT |
+                   TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED)) != 0)) &&
        pulseTransitionMasks == nullptr) ||
       (Storage && !writeMask))
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextTransaction transaction(context);
     ContextMutexLock lock(context);
     if (!validInertialStatePlanesUnlocked(context, valuePlane, unknownPlane,
                                           planeBitCount))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
 
     uint32_t staticID = 0;
     int64_t offset = 0;
     uint64_t rootHandle = bitOffset;
     bool boundedStatic = decodeNativeStatic(bitOffset, staticID, offset);
     if (!boundedStatic && !decodeNativeGlobal(bitOffset, offset))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     const NativeStaticState *nativeState =
         boundedStatic ? findNativeStaticState(context, staticID) : nullptr;
     if (boundedStatic && !nativeState)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t availableWidth =
         boundedStatic ? nativeState->bitWidth : planeBitCount;
     if (offset < 0 || static_cast<uint64_t>(offset) > availableWidth ||
         bitWidth > availableWidth - static_cast<uint64_t>(offset))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     uint64_t selectedHandle =
         boundedStatic
-            ? obelisk::designbytecode::encodeStaticHandle(staticID, offset)
+            ? talos::designbytecode::encodeStaticHandle(staticID, offset)
             : rootHandle;
     if (selectedHandle == UINT64_MAX)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
 
     InertialDriverSite site{codeUnit, component, Storage};
     InertialPathPending &pending = context->inertialPathPending[site];
@@ -1105,7 +1105,7 @@ static obelisk_rt_status schedulerInertialPath(
                pending.width != bitWidth || pending.groupCount != groupCount ||
                pending.nextGroup != group ||
                pending.pulseControlled != pulseControlled)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
 
     auto currentBit = [&](bool unknownBit, uint64_t bit) {
       uint64_t absolute = (boundedStatic ? nativeState->bitOffset : 0) +
@@ -1132,28 +1132,28 @@ static obelisk_rt_status schedulerInertialPath(
       uint64_t handle =
           nativeHandleOffset(selectedHandle, static_cast<int64_t>(bit));
       if (handle == UINT64_MAX)
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       uint8_t oldValue = currentBit(false, bit) ? 1 : 0;
       uint8_t oldUnknown = currentBit(true, bit) ? 1 : 0;
       uint8_t storedValue = nextValue ? 1 : 0;
       uint8_t storedUnknown = nextUnknown ? 1 : 0;
       uint8_t changed = 0;
-      obelisk_rt_status status = obelisk_rt_v1_native_state_store_plane(
+      talos_rt_status status = talos_rt_v1_native_state_store_plane(
           context, valuePlane, planeBitCount, handle, 1, 0, &storedValue,
           &changed);
-      if (status != OBELISK_RT_OK)
+      if (status != TALOS_RT_OK)
         return status;
       if (unknownPlane) {
-        status = obelisk_rt_v1_native_state_store_plane(
+        status = talos_rt_v1_native_state_store_plane(
             context, unknownPlane, planeBitCount, handle, 1, 1, &storedUnknown,
             &changed);
-        if (status != OBELISK_RT_OK)
+        if (status != TALOS_RT_OK)
           return status;
       }
       uint8_t finalValue = currentBit(false, bit) ? 1 : 0;
       uint8_t finalUnknown = currentBit(true, bit) ? 1 : 0;
       if (oldValue != finalValue || oldUnknown != finalUnknown)
-        obelisk_rt_v1_scheduler_signal_transition(context, handle, 1, &oldValue,
+        talos_rt_v1_scheduler_signal_transition(context, handle, 1, &oldValue,
                                                   &oldUnknown, &finalValue,
                                                   &finalUnknown);
       return context->schedulerStatus;
@@ -1163,7 +1163,7 @@ static obelisk_rt_status schedulerInertialPath(
       if constexpr (Storage)
         if (!nonblocking && dueTime == context->schedulerTime)
           return commitImmediateStorage(bit, targetValue, targetUnknown) ==
-                 OBELISK_RT_OK;
+                 TALOS_RT_OK;
       if (context->nextSchedulerSequence == 0 ||
           context->nextSchedulerSequence == UINT64_MAX)
         return false;
@@ -1178,11 +1178,11 @@ static obelisk_rt_status schedulerInertialPath(
       update.bitWidth = 1;
       update.driver = !Storage;
       update.deferDriverResolution =
-          (flags & OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION) != 0;
+          (flags & TALOS_RT_INERTIAL_DRIVER_DEFER_RESOLUTION) != 0;
       update.publishDriverTransition =
-          (flags & OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW) != 0;
-      update.execRegion = Storage && nonblocking ? OBELISK_RT_REGION_NBA
-                                                 : OBELISK_RT_REGION_ACTIVE;
+          (flags & TALOS_RT_INERTIAL_DRIVER_PUBLISH_RAW) != 0;
+      update.execRegion = Storage && nonblocking ? TALOS_RT_REGION_NBA
+                                                 : TALOS_RT_REGION_ACTIVE;
       update.sequence = context->nextSchedulerSequence++;
       update.dueTime = dueTime;
       update.inertialSite = site;
@@ -1278,7 +1278,7 @@ static obelisk_rt_status schedulerInertialPath(
         } else {
           cancelScheduled(bit);
           if (changed && !enqueue(bit, 0))
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           if (Storage && !nonblocking) {
             pending.valid[static_cast<size_t>(bit)] = 0;
             pending.delayed[static_cast<size_t>(bit)] = 0;
@@ -1293,7 +1293,7 @@ static obelisk_rt_status schedulerInertialPath(
       bool targetValue = byteBit(value, bit);
       bool targetUnknown = unknownPlane && byteBit(unknown, bit);
       uint64_t candidate = UINT64_MAX;
-      if ((flags & OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS) != 0) {
+      if ((flags & TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS) != 0) {
         // IEEE 1800-2017 30.5.1 assigns distinct delays (and therefore 30.7
         // pulse limits) to all twelve four-state transitions.  While a
         // leading edge is pending, its target is the old symbol; consulting
@@ -1335,8 +1335,8 @@ static obelisk_rt_status schedulerInertialPath(
           pending.candidatePulseError[index] =
               pulseError == UINT64_MAX ? candidate : pulseError;
           pending.candidatePulseFlags[index] = static_cast<uint8_t>(
-              flags & (OBELISK_RT_INERTIAL_PATH_ON_DETECT |
-                       OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED));
+              flags & (TALOS_RT_INERTIAL_PATH_ON_DETECT |
+                       TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED));
         }
       }
     }
@@ -1349,10 +1349,10 @@ static obelisk_rt_status schedulerInertialPath(
         uint64_t delay = pending.candidateDelay[index];
         if (!pending.pulseControlled) {
           if (delay == UINT64_MAX)
-            return OBELISK_RT_INVALID_ARGUMENT;
+            return TALOS_RT_INVALID_ARGUMENT;
           cancelScheduled(bit);
           if (!enqueue(bit, delay))
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           if (Storage && !nonblocking && delay == 0) {
             pending.valid[index] = 0;
             pending.delayed[index] = 0;
@@ -1365,7 +1365,7 @@ static obelisk_rt_status schedulerInertialPath(
         uint8_t pulseFlags = pending.candidatePulseFlags[index];
         if (delay == UINT64_MAX || reject == UINT64_MAX ||
             error == UINT64_MAX || error < reject)
-          return OBELISK_RT_INVALID_ARGUMENT;
+          return TALOS_RT_INVALID_ARGUMENT;
         uint64_t dueTime = delay > UINT64_MAX - context->schedulerTime
                                ? UINT64_MAX
                                : context->schedulerTime + delay;
@@ -1381,15 +1381,15 @@ static obelisk_rt_status schedulerInertialPath(
         };
         if (leadingSequence == 0) {
           if (!enqueueAt(bit, dueTime, targetValue, targetUnknown))
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
         } else {
           bool negative = dueTime < leadingDue;
           uint64_t width =
               negative ? leadingDue - dueTime : dueTime - leadingDue;
           bool showCancelled =
-              (pulseFlags & OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED) != 0;
+              (pulseFlags & TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED) != 0;
           bool onDetect =
-              (pulseFlags & OBELISK_RT_INERTIAL_PATH_ON_DETECT) != 0;
+              (pulseFlags & TALOS_RT_INERTIAL_PATH_ON_DETECT) != 0;
 
           // IEEE 1800-2017 30.7: the trailing edge's limits classify the
           // pulse. Width >= error passes; reject <= width < error produces X;
@@ -1401,7 +1401,7 @@ static obelisk_rt_status schedulerInertialPath(
                         (negative && showCancelled);
           if (passPulse) {
             if (!enqueueAt(bit, dueTime, targetValue, targetUnknown))
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
           } else if (xPulse) {
             cancelScheduled(bit);
             uint64_t xDue = onDetect ? context->schedulerTime
@@ -1410,11 +1410,11 @@ static obelisk_rt_status schedulerInertialPath(
                 negative ? std::max(leadingDue, dueTime) : dueTime;
             if (!enqueueAt(bit, xDue, false, true) ||
                 !enqueueAt(bit, finalDue, targetValue, targetUnknown))
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
           } else {
             cancelScheduled(bit);
             if (!scheduleFinalIfNeeded(dueTime))
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
           }
         }
         if (Storage && !nonblocking && delay == 0) {
@@ -1425,20 +1425,20 @@ static obelisk_rt_status schedulerInertialPath(
       }
       pending.nextGroup = 0;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
-    return OBELISK_RT_OUT_OF_MEMORY;
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_OUT_OF_MEMORY);
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
-    return OBELISK_RT_INVALID_ARGUMENT;
+  TALOS_RT_CATCH_ALL {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_INVALID_ARGUMENT);
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver_pulse(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status talos_rt_v1_scheduler_inertial_path_driver_pulse(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t codeUnit, uint32_t component, uint32_t group, uint32_t groupCount,
     uint32_t flags, uint64_t riseDelay, uint64_t fallDelay,
@@ -1453,24 +1453,24 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver_pulse(
       activeMask, riseMask, fallMask, turnoffMask, pulseTransitionMasks, false);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_driver(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status talos_rt_v1_scheduler_inertial_path_driver(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t codeUnit, uint32_t component, uint32_t group, uint32_t groupCount,
     uint32_t flags, uint64_t riseDelay, uint64_t fallDelay,
     uint64_t turnoffDelay, const uint8_t *value, const uint8_t *unknown,
     const uint8_t *activeMask, const uint8_t *riseMask, const uint8_t *fallMask,
     const uint8_t *turnoffMask) {
-  return obelisk_rt_v1_scheduler_inertial_path_driver_pulse(
+  return talos_rt_v1_scheduler_inertial_path_driver_pulse(
       context, valuePlane, unknownPlane, planeBitCount, bitOffset, bitWidth,
       codeUnit, component, group, groupCount, flags, riseDelay, fallDelay,
       turnoffDelay, UINT64_MAX, UINT64_MAX, value, unknown, activeMask,
       riseMask, fallMask, turnoffMask, nullptr);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_inertial_path_storage_pulse(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_inertial_path_storage_pulse(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t siteID, uint32_t component, uint32_t group, uint32_t groupCount,
     uint32_t nonblocking, uint32_t pulseFlags, uint64_t riseDelay,
@@ -1480,10 +1480,10 @@ obelisk_rt_v1_scheduler_inertial_path_storage_pulse(
     const uint8_t *riseMask, const uint8_t *fallMask,
     const uint8_t *turnoffMask, const uint8_t *pulseTransitionMasks) {
   if (nonblocking > 1 ||
-      (pulseFlags & ~(OBELISK_RT_INERTIAL_PATH_ON_DETECT |
-                      OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED |
-                      OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS)) != 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
+      (pulseFlags & ~(TALOS_RT_INERTIAL_PATH_ON_DETECT |
+                      TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED |
+                      TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS)) != 0)
+    return TALOS_RT_INVALID_ARGUMENT;
   return schedulerInertialPath<true>(
       context, valuePlane, unknownPlane, planeBitCount, bitOffset, bitWidth,
       siteID, component, group, groupCount, pulseFlags, riseDelay, fallDelay,
@@ -1492,8 +1492,8 @@ obelisk_rt_v1_scheduler_inertial_path_storage_pulse(
       nonblocking != 0);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_storage(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status talos_rt_v1_scheduler_inertial_path_storage(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t siteID, uint32_t component, uint32_t group, uint32_t groupCount,
     uint32_t nonblocking, uint64_t riseDelay, uint64_t fallDelay,
@@ -1501,16 +1501,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_inertial_path_storage(
     const uint8_t *writeMask, const uint8_t *activeMask,
     const uint8_t *riseMask, const uint8_t *fallMask,
     const uint8_t *turnoffMask) {
-  return obelisk_rt_v1_scheduler_inertial_path_storage_pulse(
+  return talos_rt_v1_scheduler_inertial_path_storage_pulse(
       context, valuePlane, unknownPlane, planeBitCount, bitOffset, bitWidth,
       siteID, component, group, groupCount, nonblocking, 0, riseDelay,
       fallDelay, turnoffDelay, UINT64_MAX, UINT64_MAX, value, unknown,
       writeMask, activeMask, riseMask, fallMask, turnoffMask, nullptr);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_inertial_driver_strength_pair(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t lowBitOffset, uint64_t highBitOffset,
     uint64_t bitWidth, uint64_t codeUnit, uint32_t component,
     uint64_t riseDelay, uint64_t fallDelay, uint64_t turnoffDelay,
@@ -1519,13 +1519,13 @@ obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
     const uint8_t *transitionValue, const uint8_t *transitionUnknown) {
   if (!context || !context->execution || !valuePlane || !unknownPlane ||
       bitWidth == 0 || codeUnit == UINT64_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  OBELISK_RT_TRY {
+    return TALOS_RT_INVALID_ARGUMENT;
+  TALOS_RT_TRY {
     ContextTransaction transaction(context);
     ContextMutexLock lock(context);
     if (!validInertialStatePlanesUnlocked(context, valuePlane, unknownPlane,
                                           planeBitCount))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     InertialDriverSite site{codeUnit, component};
     auto cancelPending = [&] {
       context->scheduledNBAs.erase(
@@ -1539,14 +1539,14 @@ obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
     };
     if (lowBitOffset == UINT64_MAX || highBitOffset == UINT64_MAX) {
       cancelPending();
-      return lowBitOffset == highBitOffset ? OBELISK_RT_OK
-                                           : OBELISK_RT_INVALID_HANDLE;
+      return lowBitOffset == highBitOffset ? TALOS_RT_OK
+                                           : TALOS_RT_INVALID_HANDLE;
     }
     uint64_t byteCount = (bitWidth - 1) / 8 + 1;
     if (!lowValue || !lowUnknown || !highValue || !highUnknown ||
         !transitionValue || !transitionUnknown ||
         byteCount > std::numeric_limits<size_t>::max())
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
 
     struct Selection {
       uint32_t staticID = 0;
@@ -1578,7 +1578,7 @@ obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
       if (offsetWide < 0 || offsetWide > INT64_MAX)
         return std::nullopt;
       selected.offset = static_cast<int64_t>(offsetWide);
-      selected.handle = obelisk::designbytecode::encodeStaticHandle(
+      selected.handle = talos::designbytecode::encodeStaticHandle(
           selected.staticID, selected.offset);
       if (selected.handle == UINT64_MAX)
         return std::nullopt;
@@ -1587,22 +1587,22 @@ obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
     std::optional<Selection> low = select(lowBitOffset);
     std::optional<Selection> high = select(highBitOffset);
     if (!low || !high)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (low->width == 0 || high->width == 0) {
       cancelPending();
       return low->width == high->width && low->first == high->first
-                 ? OBELISK_RT_OK
-                 : OBELISK_RT_INVALID_HANDLE;
+                 ? TALOS_RT_OK
+                 : TALOS_RT_INVALID_HANDLE;
     }
     if (low->first != high->first || low->width != high->width)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (static_cast<__int128>(low->offset) + low->width - 1 > INT64_MAX ||
         static_cast<__int128>(high->offset) + high->width - 1 > INT64_MAX)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (!validInertialStrengthPairUnlocked(context, *low->state, low->offset,
                                            *high->state, high->offset,
                                            low->width))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
 
     uint64_t selectedBytes = (low->width - 1) / 8 + 1;
     auto copySelected = [&](const uint8_t *source) {
@@ -1628,7 +1628,7 @@ obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
         pending->second.unknown == targetLowUnknown &&
         pending->second.secondValue == targetHighValue &&
         pending->second.secondUnknown == targetHighUnknown)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
 
     cancelPending();
     auto currentBit = [&](const Selection &selection, bool unknown,
@@ -1653,12 +1653,12 @@ obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
       changedBits += lowChanged || highChanged;
     }
     if (changedBits == 0)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     __uint128_t updateCount = static_cast<__uint128_t>(changedBits) * 2;
     if (context->nextSchedulerSequence == 0 ||
         updateCount > static_cast<__uint128_t>(UINT64_MAX) -
                           context->nextSchedulerSequence)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
 
     auto delayFor = [&](uint64_t bit) {
       bool value = targetBit(targetTransitionValue, bit);
@@ -1674,13 +1674,13 @@ obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
       update.valuePlane = valuePlane;
       update.unknownPlane = unknownPlane;
       update.planeBitCount = planeBitCount;
-      update.bitOffset = obelisk::designbytecode::encodeStaticHandle(
+      update.bitOffset = talos::designbytecode::encodeStaticHandle(
           selection.staticID, selection.offset + static_cast<int64_t>(bit));
       update.bitWidth = 1;
       update.driver = true;
       update.deferDriverResolution = !final;
       update.forceDriverResolution = final;
-      update.execRegion = OBELISK_RT_REGION_ACTIVE;
+      update.execRegion = TALOS_RT_REGION_ACTIVE;
       update.sequence = context->nextSchedulerSequence++;
       update.dueTime = delay > UINT64_MAX - context->schedulerTime
                            ? UINT64_MAX
@@ -1716,21 +1716,21 @@ obelisk_rt_v1_scheduler_inertial_driver_strength_pair(
     pending.secondValue = std::move(targetHighValue);
     pending.secondUnknown = std::move(targetHighUnknown);
     context->inertialDriverPending.emplace(site, std::move(pending));
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
-    return OBELISK_RT_OUT_OF_MEMORY;
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_OUT_OF_MEMORY);
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
-    return OBELISK_RT_INVALID_ARGUMENT;
+  TALOS_RT_CATCH_ALL {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_INVALID_ARGUMENT);
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
 template <bool PulseControlled>
-static obelisk_rt_status schedulerInertialPathStrengthPair(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+static talos_rt_status schedulerInertialPathStrengthPair(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t lowBitOffset, uint64_t highBitOffset,
     uint64_t bitWidth, uint64_t codeUnit, uint32_t component, uint32_t group,
     uint32_t groupCount, uint32_t pulseFlags, uint64_t riseDelay,
@@ -1745,21 +1745,21 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
       group >= groupCount || !lowValue || !lowUnknown || !highValue ||
       !highUnknown || !transitionValue || !transitionUnknown || !activeMask ||
       !riseMask || !fallMask || !turnoffMask)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if constexpr (PulseControlled) {
-    if ((pulseFlags & ~(OBELISK_RT_INERTIAL_PATH_ON_DETECT |
-                        OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED |
-                        OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS)) != 0 ||
-        (pulseFlags & OBELISK_RT_INERTIAL_PATH_EXACT_TRANSITIONS) == 0 ||
+    if ((pulseFlags & ~(TALOS_RT_INERTIAL_PATH_ON_DETECT |
+                        TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED |
+                        TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS)) != 0 ||
+        (pulseFlags & TALOS_RT_INERTIAL_PATH_EXACT_TRANSITIONS) == 0 ||
         !pulseTransitionMasks)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
   }
-  OBELISK_RT_TRY {
+  TALOS_RT_TRY {
     ContextTransaction transaction(context);
     ContextMutexLock lock(context);
     if (!validInertialStatePlanesUnlocked(context, valuePlane, unknownPlane,
                                           planeBitCount))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
 
     struct Selection {
       uint32_t staticID = 0;
@@ -1791,7 +1791,7 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
       if (offset < 0 || offset > INT64_MAX)
         return std::nullopt;
       selected.offset = static_cast<int64_t>(offset);
-      selected.handle = obelisk::designbytecode::encodeStaticHandle(
+      selected.handle = talos::designbytecode::encodeStaticHandle(
           selected.staticID, selected.offset);
       if (selected.handle == UINT64_MAX)
         return std::nullopt;
@@ -1804,10 +1804,10 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
         !validInertialStrengthPairUnlocked(context, *low->state, low->offset,
                                            *high->state, high->offset,
                                            low->width))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     if (static_cast<__int128>(low->offset) + low->width - 1 > INT64_MAX ||
         static_cast<__int128>(high->offset) + high->width - 1 > INT64_MAX)
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
 
     InertialDriverSite site{codeUnit, component};
     InertialStrengthPathPending &pending =
@@ -1903,7 +1903,7 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
                pending.width != low->width ||
                pending.groupCount != groupCount || pending.nextGroup != group ||
                pending.pulseControlled != pulseControlled)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
 
     auto sourceBit = [&](const uint8_t *plane, uint64_t bit) {
       return byteBit(plane, low->first + bit);
@@ -1946,7 +1946,7 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
         update.valuePlane = valuePlane;
         update.unknownPlane = unknownPlane;
         update.planeBitCount = planeBitCount;
-        update.bitOffset = obelisk::designbytecode::encodeStaticHandle(
+        update.bitOffset = talos::designbytecode::encodeStaticHandle(
             selection.staticID, selection.offset + static_cast<int64_t>(bit));
         if (update.bitOffset == UINT64_MAX)
           return std::nullopt;
@@ -1954,7 +1954,7 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
         update.driver = true;
         update.deferDriverResolution = !final;
         update.forceDriverResolution = final;
-        update.execRegion = OBELISK_RT_REGION_ACTIVE;
+        update.execRegion = TALOS_RT_REGION_ACTIVE;
         update.sequence = context->nextSchedulerSequence++;
         update.dueTime = due;
         update.inertialSite = site;
@@ -2059,7 +2059,7 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
         else {
           cancelScheduled(bit, !PulseControlled);
           if (changed && !enqueuePair(bit, 0))
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
         }
       }
     }
@@ -2111,8 +2111,8 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
           pending.candidatePulseError[index] =
               pulseError == UINT64_MAX ? candidate : pulseError;
           pending.candidatePulseFlags[index] = static_cast<uint8_t>(
-              pulseFlags & (OBELISK_RT_INERTIAL_PATH_ON_DETECT |
-                            OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED));
+              pulseFlags & (TALOS_RT_INERTIAL_PATH_ON_DETECT |
+                            TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED));
         }
       }
     }
@@ -2124,7 +2124,7 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
       if (context->nextSchedulerSequence == 0 ||
           updateCount > static_cast<__uint128_t>(UINT64_MAX) -
                             context->nextSchedulerSequence)
-        return OBELISK_RT_OUT_OF_RESOURCES;
+        return TALOS_RT_OUT_OF_RESOURCES;
       for (uint64_t bit = 0; bit != low->width; ++bit) {
         size_t index = static_cast<size_t>(bit);
         if (!pending.needsSchedule[index])
@@ -2153,7 +2153,7 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
                              byteBit(pending.lowUnknown.data(), bit),
                              byteBit(pending.highValue.data(), bit),
                              byteBit(pending.highUnknown.data(), bit)))
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           pending.needsSchedule[index] = 0;
           continue;
         }
@@ -2164,7 +2164,7 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
           uint64_t error = pending.candidatePulseError[index];
           uint8_t flags = pending.candidatePulseFlags[index];
           if (reject == UINT64_MAX || error == UINT64_MAX || error < reject)
-            return OBELISK_RT_INVALID_ARGUMENT;
+            return TALOS_RT_INVALID_ARGUMENT;
           uint64_t dueTime = delay > UINT64_MAX - context->schedulerTime
                                  ? UINT64_MAX
                                  : context->schedulerTime + delay;
@@ -2190,14 +2190,14 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
           };
           if (leadingSequence == 0) {
             if (!enqueueTargetAt(dueTime))
-              return OBELISK_RT_OUT_OF_RESOURCES;
+              return TALOS_RT_OUT_OF_RESOURCES;
           } else {
             bool negative = dueTime < leadingDue;
             uint64_t pulseWidth =
                 negative ? leadingDue - dueTime : dueTime - leadingDue;
             bool showCancelled =
-                (flags & OBELISK_RT_INERTIAL_PATH_SHOW_CANCELLED) != 0;
-            bool onDetect = (flags & OBELISK_RT_INERTIAL_PATH_ON_DETECT) != 0;
+                (flags & TALOS_RT_INERTIAL_PATH_SHOW_CANCELLED) != 0;
+            bool onDetect = (flags & TALOS_RT_INERTIAL_PATH_ON_DETECT) != 0;
             // IEEE 1800-2017 30.7 applies the trailing transition's pulse
             // limits to the one logical strength-pair destination. Clauses
             // 30.7.4.1 and 30.7.4.2 place an inserted X at detection/event
@@ -2209,7 +2209,7 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
                 (negative && showCancelled);
             if (passPulse) {
               if (!enqueueTargetAt(dueTime))
-                return OBELISK_RT_OUT_OF_RESOURCES;
+                return TALOS_RT_OUT_OF_RESOURCES;
             } else if (xPulse) {
               cancelScheduled(bit, false);
               uint64_t xDue = onDetect ? context->schedulerTime
@@ -2218,11 +2218,11 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
                   negative ? std::max(leadingDue, dueTime) : dueTime;
               if (!enqueuePairAt(bit, xDue, false, true, false, true) ||
                   !enqueueTargetAt(finalDue))
-                return OBELISK_RT_OUT_OF_RESOURCES;
+                return TALOS_RT_OUT_OF_RESOURCES;
             } else {
               cancelScheduled(bit, false);
               if (!scheduleFinalIfNeeded(dueTime))
-                return OBELISK_RT_OUT_OF_RESOURCES;
+                return TALOS_RT_OUT_OF_RESOURCES;
             }
           }
           pending.needsSchedule[index] = 0;
@@ -2233,26 +2233,26 @@ static obelisk_rt_status schedulerInertialPathStrengthPair(
         // bank first with deferred resolution and force resolution only after
         // the matching high-bank event matures at the same time.
         if (!enqueuePair(bit, delay))
-          return OBELISK_RT_OUT_OF_RESOURCES;
+          return TALOS_RT_OUT_OF_RESOURCES;
         pending.needsSchedule[index] = 0;
       }
       pending.nextGroup = 0;
     }
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_OUT_OF_MEMORY);
-    return OBELISK_RT_OUT_OF_MEMORY;
+  TALOS_RT_CATCH(const std::bad_alloc &) {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_OUT_OF_MEMORY);
+    return TALOS_RT_OUT_OF_MEMORY;
   }
-  OBELISK_RT_CATCH_ALL {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
-    return OBELISK_RT_INVALID_ARGUMENT;
+  TALOS_RT_CATCH_ALL {
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_INVALID_ARGUMENT);
+    return TALOS_RT_INVALID_ARGUMENT;
   }
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_inertial_path_strength_pair_pulse(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t lowBitOffset, uint64_t highBitOffset,
     uint64_t bitWidth, uint64_t codeUnit, uint32_t component, uint32_t group,
     uint32_t groupCount, uint32_t pulseFlags, uint64_t riseDelay,
@@ -2271,9 +2271,9 @@ obelisk_rt_v1_scheduler_inertial_path_strength_pair_pulse(
       pulseTransitionMasks);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_scheduler_inertial_path_strength_pair(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status
+talos_rt_v1_scheduler_inertial_path_strength_pair(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t lowBitOffset, uint64_t highBitOffset,
     uint64_t bitWidth, uint64_t codeUnit, uint32_t component, uint32_t group,
     uint32_t groupCount, uint64_t riseDelay, uint64_t fallDelay,
@@ -2290,44 +2290,44 @@ obelisk_rt_v1_scheduler_inertial_path_strength_pair(
       activeMask, riseMask, fallMask, turnoffMask, nullptr);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_clocking_nba(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status talos_rt_v1_scheduler_clocking_nba(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t delay, const uint8_t *value, const uint8_t *unknown,
     uint64_t clockingOutput) {
   if (clockingOutput == UINT64_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
                       bitOffset, bitWidth, delay, value, unknown, false,
                       UINT64_MAX, false, clockingOutput);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_clocking_driver_nba(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
+extern "C" talos_rt_status talos_rt_v1_scheduler_clocking_driver_nba(
+    talos_rt_context *context, uint8_t *valuePlane, uint8_t *unknownPlane,
     uint64_t planeBitCount, uint64_t bitOffset, uint64_t bitWidth,
     uint64_t delay, const uint8_t *value, const uint8_t *unknown,
     uint64_t clockingOutput) {
   if (clockingOutput == UINT64_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
                       bitOffset, bitWidth, delay, value, unknown, false,
                       UINT64_MAX, true, clockingOutput);
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_eval_nba_reserve(obelisk_rt_context *context,
-                               obelisk::runtime::EvalNBAQueue *queue) {
-  using obelisk::runtime::EvalNBARecord;
+extern "C" talos_rt_status
+talos_rt_v1_eval_nba_reserve(talos_rt_context *context,
+                               talos::runtime::EvalNBAQueue *queue) {
+  using talos::runtime::EvalNBARecord;
   if (!context || !queue || queue->size > queue->capacity ||
       (queue->data == nullptr) != (queue->capacity == 0))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (queue->size < queue->capacity)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   uint64_t limit =
       std::min<uint64_t>(UINT32_MAX, SIZE_MAX / sizeof(EvalNBARecord));
   if (queue->size >= limit)
-    return OBELISK_RT_OUT_OF_RESOURCES;
-  OBELISK_RT_TRY {
+    return TALOS_RT_OUT_OF_RESOURCES;
+  TALOS_RT_TRY {
     // Register before allocation so every successful allocation has a cleanup
     // owner, including when a later grow fails. The descriptor is compiler-
     // owned and remains alive until its native plan is released.
@@ -2340,16 +2340,16 @@ obelisk_rt_v1_eval_nba_reserve(obelisk_rt_context *context,
     void *grown =
         std::realloc(queue->data, size_t{capacity} * sizeof(EvalNBARecord));
     if (!grown)
-      return OBELISK_RT_OUT_OF_MEMORY;
+      return TALOS_RT_OUT_OF_MEMORY;
     queue->data = static_cast<EvalNBARecord *>(grown);
     queue->capacity = capacity;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
-  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
-  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+  TALOS_RT_CATCH(const std::bad_alloc &) { return TALOS_RT_OUT_OF_MEMORY; }
+  TALOS_RT_CATCH_ALL { return TALOS_RT_INVALID_ARGUMENT; }
 }
 
-void obelisk_rt_release_eval_nba_queues(obelisk_rt_context *context) noexcept {
+void talos_rt_release_eval_nba_queues(talos_rt_context *context) noexcept {
   for (auto *queue : context->nativeEvalNBAQueues) {
     std::free(queue->data);
     *queue = {};
@@ -2357,40 +2357,40 @@ void obelisk_rt_release_eval_nba_queues(obelisk_rt_context *context) noexcept {
   context->nativeEvalNBAQueues.clear();
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_static_nba(
-    obelisk_rt_context *context, uint64_t site, uint8_t *valuePlane,
+extern "C" talos_rt_status talos_rt_v1_scheduler_static_nba(
+    talos_rt_context *context, uint64_t site, uint8_t *valuePlane,
     uint8_t *unknownPlane, uint64_t planeBitCount, uint64_t bitOffset,
     uint64_t bitWidth, const uint8_t *value, const uint8_t *unknown) {
   if (site == UINT64_MAX)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   return schedulerNBA(context, valuePlane, unknownPlane, planeBitCount,
                       bitOffset, bitWidth, 0, value, unknown, false, site);
 }
 
-static obelisk_rt_status stageStaticNBAPacked(
-    obelisk_rt_context *context, uint32_t rootIndex, uint8_t *valuePlane,
+static talos_rt_status stageStaticNBAPacked(
+    talos_rt_context *context, uint32_t rootIndex, uint8_t *valuePlane,
     uint8_t *unknownPlane, uint64_t planeBitCount, uint64_t rootOffset,
     uint64_t bitWidth, uint64_t value, uint64_t unknown, bool guardedClaim) {
   if (!context || activeNativeAOTContext != context || !valuePlane ||
       bitWidth == 0 || bitWidth > 64 ||
       rootIndex >= context->staticNBAAccumulators.size() ||
       rootIndex >= context->nativeScheduleNBARootCount)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   if (guardedClaim ? !context->nativeSchedulePlan ||
                          (context->nativeSchedulePlan->flags &
-                          OBELISK_RT_NATIVE_SCHEDULE_STATIC_NBA) == 0 ||
+                          TALOS_RT_NATIVE_SCHEDULE_STATIC_NBA) == 0 ||
                          context->nativeScheduleDeoptimized
                    : !isStaticControlAOT(context) ||
                          context->nativeScheduleDeoptimized ||
                          context->nativeScheduleExternalWritePending)
-    return OBELISK_RT_TIER_UNAVAILABLE;
-  if (context->schedulerStatus != OBELISK_RT_OK)
+    return TALOS_RT_TIER_UNAVAILABLE;
+  if (context->schedulerStatus != TALOS_RT_OK)
     return context->schedulerStatus;
-  const obelisk_rt_static_nba_root &root =
+  const talos_rt_static_nba_root &root =
       context->nativeScheduleNBARoots[rootIndex];
   const NativeStaticState *staticState =
       findNativeStaticState(context, root.static_state);
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   if (!staticState || staticState->bitWidth != root.bit_width ||
       staticState->bitOffset > planeBitCount ||
       root.bit_width > planeBitCount - staticState->bitOffset || !plan ||
@@ -2398,12 +2398,12 @@ static obelisk_rt_status stageStaticNBAPacked(
       (unknownPlane && unknownPlane != plan->state_unknown) ||
       planeBitCount != plan->state_bit_count || rootOffset > root.bit_width ||
       bitWidth > root.bit_width - rootOffset) {
-    context->schedulerStatus = OBELISK_RT_LAYOUT_MISMATCH;
+    context->schedulerStatus = TALOS_RT_LAYOUT_MISMATCH;
     return context->schedulerStatus;
   }
   if (guardedClaim) {
     if (rootIndex >= context->staticNBASlowRoots.size()) {
-      context->schedulerStatus = OBELISK_RT_INVALID_DESIGN;
+      context->schedulerStatus = TALOS_RT_INVALID_DESIGN;
       return context->schedulerStatus;
     }
     if (nativeStaticRootDirty(context, root.static_state) ||
@@ -2412,23 +2412,23 @@ static obelisk_rt_status stageStaticNBAPacked(
       context->staticNBASlowRootsPresent = true;
     }
     if (context->staticNBASlowRoots[rootIndex] != 0) {
-      uint32_t execRegion = obelisk_rt_commit_region(
+      uint32_t execRegion = talos_rt_commit_region(
           context->activeHomeRegion == UINT32_MAX
-              ? static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE)
+              ? static_cast<uint32_t>(TALOS_RT_REGION_ACTIVE)
               : context->activeHomeRegion);
       if (execRegion == UINT32_MAX) {
-        context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+        context->schedulerStatus = TALOS_RT_INVALID_LIFECYCLE;
         return context->schedulerStatus;
       }
-      if (obelisk_rt_status status = materializeGeneratedNBAAccumulatorUnlocked(
+      if (talos_rt_status status = materializeGeneratedNBAAccumulatorUnlocked(
               context, rootIndex, execRegion);
-          status != OBELISK_RT_OK) {
+          status != TALOS_RT_OK) {
         context->schedulerStatus = status;
         return status;
       }
       invalidateNativeStaticSpecializationFastUnlocked(context);
-      uint64_t rootHandle = obelisk_rt_stable_handle_encode(
-          OBELISK_RT_STABLE_HANDLE_STATIC, root.static_state, 0);
+      uint64_t rootHandle = talos_rt_stable_handle_encode(
+          TALOS_RT_STABLE_HANDLE_STATIC, root.static_state, 0);
       uint64_t destination =
           nativeHandleOffset(rootHandle, static_cast<int64_t>(rootOffset));
       return schedulerNBA(
@@ -2438,20 +2438,20 @@ static obelisk_rt_status stageStaticNBAPacked(
           false);
     }
   }
-  uint32_t execRegion = obelisk_rt_commit_region(
+  uint32_t execRegion = talos_rt_commit_region(
       context->activeHomeRegion == UINT32_MAX
-          ? static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE)
+          ? static_cast<uint32_t>(TALOS_RT_REGION_ACTIVE)
           : context->activeHomeRegion);
   if (execRegion == UINT32_MAX || context->nextSchedulerSequence == 0) {
     context->schedulerStatus = execRegion == UINT32_MAX
-                                   ? OBELISK_RT_INVALID_LIFECYCLE
-                                   : OBELISK_RT_OUT_OF_RESOURCES;
+                                   ? TALOS_RT_INVALID_LIFECYCLE
+                                   : TALOS_RT_OUT_OF_RESOURCES;
     return context->schedulerStatus;
   }
   if (guardedClaim) {
-    obelisk_rt_status status = materializeGeneratedNBAAccumulatorUnlocked(
+    talos_rt_status status = materializeGeneratedNBAAccumulatorUnlocked(
         context, rootIndex, execRegion);
-    if (status != OBELISK_RT_OK) {
+    if (status != TALOS_RT_OK) {
       context->schedulerStatus = status;
       return status;
     }
@@ -2462,7 +2462,7 @@ static obelisk_rt_status stageStaticNBAPacked(
                             accumulator.unknownPlane != unknownPlane ||
                             accumulator.planeBitCount != planeBitCount ||
                             accumulator.execRegion != execRegion)) {
-    context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+    context->schedulerStatus = TALOS_RT_INVALID_LIFECYCLE;
     return context->schedulerStatus;
   }
   accumulator.valuePlane = valuePlane;
@@ -2496,11 +2496,11 @@ static obelisk_rt_status stageStaticNBAPacked(
   }
   accumulator.sequence = context->nextSchedulerSequence++;
   ++context->signalDiagnostics.aotNBAStages;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_static_nba_packed(
-    obelisk_rt_context *context, uint32_t rootIndex, uint8_t *valuePlane,
+extern "C" talos_rt_status talos_rt_v1_scheduler_static_nba_packed(
+    talos_rt_context *context, uint32_t rootIndex, uint8_t *valuePlane,
     uint8_t *unknownPlane, uint64_t planeBitCount, uint64_t rootOffset,
     uint64_t bitWidth, uint64_t value, uint64_t unknown) {
   return stageStaticNBAPacked(context, rootIndex, valuePlane, unknownPlane,
@@ -2508,27 +2508,27 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_static_nba_packed(
                               unknown, false);
 }
 
-obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
-    obelisk_rt_context *context, uint32_t rootIndex, uint32_t execRegion) {
+talos_rt_status materializeGeneratedNBAAccumulatorUnlocked(
+    talos_rt_context *context, uint32_t rootIndex, uint32_t execRegion) {
   if (rootIndex >= context->nativeScheduleNBARootCount ||
       rootIndex >= context->staticNBAAccumulators.size())
-    return OBELISK_RT_INVALID_DESIGN;
-  const obelisk_rt_static_nba_root &root =
+    return TALOS_RT_INVALID_DESIGN;
+  const talos_rt_static_nba_root &root =
       context->nativeScheduleNBARoots[rootIndex];
   if (hasGeneratedNBASlots(root)) {
     const auto *plan = context->nativeSchedulePlan;
     StaticNBAAccumulator &accumulator =
         context->staticNBAAccumulators[rootIndex];
-    if (!plan || execRegion != OBELISK_RT_REGION_NBA ||
+    if (!plan || execRegion != TALOS_RT_REGION_NBA ||
         (accumulator.valid && accumulator.execRegion != execRegion))
-      return OBELISK_RT_INVALID_LIFECYCLE;
+      return TALOS_RT_INVALID_LIFECYCLE;
     accumulator.valuePlane = plan->state_value;
     accumulator.unknownPlane = plan->state_unknown;
     accumulator.planeBitCount = plan->state_bit_count;
     accumulator.execRegion = execRegion;
     auto status = consumeGeneratedNBASlots(
         root, [&](uint64_t offset, uint64_t width, uint64_t value,
-                  uint64_t unknown, const obelisk_rt_generated_nba_slot &) {
+                  uint64_t unknown, const talos_rt_generated_nba_slot &) {
           size_t word = offset / 64;
           unsigned shift = offset % 64;
           uint64_t mask = packedWidthMask(width);
@@ -2545,35 +2545,35 @@ obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
             merge(word + 1, mask >> (64 - shift), value >> (64 - shift),
                   unknown >> (64 - shift));
           if (!context->nextSchedulerSequence)
-            return OBELISK_RT_OUT_OF_RESOURCES;
+            return TALOS_RT_OUT_OF_RESOURCES;
           accumulator.sequence = context->nextSchedulerSequence++;
           markStaticNBAAccumulatorPending(context, rootIndex, accumulator);
           ++context->signalDiagnostics.aotNBAStages;
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
         });
-    if (status != OBELISK_RT_OK)
+    if (status != TALOS_RT_OK)
       return status;
   }
   GeneratedNBAStorage generated(root.generated_accumulator,
                                 context->twoState());
   if (!generated || !hasGeneratedNBAStages(*generated))
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   std::optional<uint64_t> stageCount =
-      root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS
+      root.bit_width <= TALOS_RT_SCALAR_NBA_MAX_BITS
           ? std::optional<uint64_t>{1}
           : countGeneratedNBAStages(*generated);
   if (!stageCount || generated->exec_region != execRegion ||
-      root.bit_width > OBELISK_RT_GENERATED_NBA_MAX_BITS)
-    return OBELISK_RT_INVALID_DESIGN;
+      root.bit_width > TALOS_RT_GENERATED_NBA_MAX_BITS)
+    return TALOS_RT_INVALID_DESIGN;
   StaticNBAAccumulator &accumulator = context->staticNBAAccumulators[rootIndex];
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   if (!plan)
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   if (!accumulator.valid) {
     if (context->nextSchedulerSequence == 0)
-      return OBELISK_RT_OUT_OF_RESOURCES;
+      return TALOS_RT_OUT_OF_RESOURCES;
     accumulator.valuePlane = plan->state_value;
-    accumulator.unknownPlane = root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS
+    accumulator.unknownPlane = root.bit_width <= TALOS_RT_SCALAR_NBA_MAX_BITS
                                    ? plan->state_unknown
                                    : nullptr;
     accumulator.planeBitCount = plan->state_bit_count;
@@ -2582,10 +2582,10 @@ obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
     markStaticNBAAccumulatorPending(context, rootIndex, accumulator);
   } else if (accumulator.execRegion != execRegion ||
              accumulator.valuePlane != plan->state_value ||
-             (root.bit_width <= OBELISK_RT_SCALAR_NBA_MAX_BITS &&
+             (root.bit_width <= TALOS_RT_SCALAR_NBA_MAX_BITS &&
               accumulator.unknownPlane != plan->state_unknown) ||
              accumulator.planeBitCount != plan->state_bit_count) {
-    return OBELISK_RT_INVALID_LIFECYCLE;
+    return TALOS_RT_INVALID_LIFECYCLE;
   }
   size_t words = static_cast<size_t>((root.bit_width + 63) / 64);
   for (size_t word = 0; word != words; ++word) {
@@ -2605,11 +2605,11 @@ obelisk_rt_status materializeGeneratedNBAAccumulatorUnlocked(
   }
   generated->valid = 0;
   context->signalDiagnostics.aotNBAStages += *stageCount;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-extern "C" void obelisk_rt_v1_static_nba_stage_wide(
-    obelisk_rt_context *context, uint32_t rootIndex, uint64_t rootOffset,
+extern "C" void talos_rt_v1_static_nba_stage_wide(
+    talos_rt_context *context, uint32_t rootIndex, uint64_t rootOffset,
     uint64_t bitWidth, uint64_t value, uint64_t unknown, uint32_t hasUnknown) {
   if (!context)
     return;
@@ -2617,34 +2617,34 @@ extern "C" void obelisk_rt_v1_static_nba_stage_wide(
       bitWidth > 64 || rootIndex >= context->nativeScheduleNBARootCount ||
       rootIndex >= context->staticNBAAccumulators.size() ||
       !context->nativeSchedulePlan || context->nativeScheduleDeoptimized) {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_INVALID_ARGUMENT);
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_INVALID_ARGUMENT);
     return;
   }
-  const obelisk_rt_static_nba_root &root =
+  const talos_rt_static_nba_root &root =
       context->nativeScheduleNBARoots[rootIndex];
   if (rootOffset > root.bit_width || bitWidth > root.bit_width - rootOffset) {
-    obelisk_rt_v1_scheduler_fail(context, OBELISK_RT_LAYOUT_MISMATCH);
+    talos_rt_v1_scheduler_fail(context, TALOS_RT_LAYOUT_MISMATCH);
     return;
   }
-  uint32_t execRegion = obelisk_rt_commit_region(
+  uint32_t execRegion = talos_rt_commit_region(
       context->activeHomeRegion == UINT32_MAX
-          ? static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE)
+          ? static_cast<uint32_t>(TALOS_RT_REGION_ACTIVE)
           : context->activeHomeRegion);
   if (execRegion == UINT32_MAX) {
-    context->schedulerStatus = OBELISK_RT_INVALID_LIFECYCLE;
+    context->schedulerStatus = TALOS_RT_INVALID_LIFECYCLE;
     return;
   }
-  if (obelisk_rt_status status = materializeGeneratedNBAAccumulatorUnlocked(
+  if (talos_rt_status status = materializeGeneratedNBAAccumulatorUnlocked(
           context, rootIndex, execRegion);
-      status != OBELISK_RT_OK) {
+      status != TALOS_RT_OK) {
     context->schedulerStatus = status;
     return;
   }
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   StaticNBAAccumulator &accumulator = context->staticNBAAccumulators[rootIndex];
   if (!accumulator.valid) {
     if (context->nextSchedulerSequence == 0) {
-      context->schedulerStatus = OBELISK_RT_OUT_OF_RESOURCES;
+      context->schedulerStatus = TALOS_RT_OUT_OF_RESOURCES;
       return;
     }
     accumulator.valuePlane = plan->state_value;
@@ -2680,8 +2680,8 @@ extern "C" void obelisk_rt_v1_static_nba_stage_wide(
   ++context->signalDiagnostics.aotNBAStages;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_claim(
-    obelisk_rt_context *context, uint32_t rootIndex, uint8_t *valuePlane,
+extern "C" talos_rt_status talos_rt_v1_static_nba_claim(
+    talos_rt_context *context, uint32_t rootIndex, uint8_t *valuePlane,
     uint8_t *unknownPlane, uint64_t planeBitCount, uint64_t rootOffset,
     uint64_t bitWidth, uint64_t value, uint64_t unknown) {
   return stageStaticNBAPacked(context, rootIndex, valuePlane, unknownPlane,
@@ -2689,9 +2689,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_claim(
                               unknown, true);
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_string_nba(
-    obelisk_rt_context *context, uint8_t *valuePlane, uint64_t planeBitCount,
-    uint64_t bitOffset, uint64_t delay, obelisk_rt_string_v1 value) {
+extern "C" talos_rt_status talos_rt_v1_scheduler_string_nba(
+    talos_rt_context *context, uint8_t *valuePlane, uint64_t planeBitCount,
+    uint64_t bitOffset, uint64_t delay, talos_rt_string_v1 value) {
   return schedulerNBA(context, valuePlane, nullptr, planeBitCount, bitOffset,
                       64, delay, reinterpret_cast<const uint8_t *>(&value),
                       nullptr, true);
@@ -2904,7 +2904,7 @@ __attribute__((target("avx2"))) bool commitStaticNBA256AVX2(
 #if defined(__x86_64__) || defined(_M_X64)
 // The vector commits below write the generated planes directly.
 static void
-markGeneratedNBA256UnknownUnlocked(const obelisk_rt_context *context,
+markGeneratedNBA256UnknownUnlocked(const talos_rt_context *context,
                                    const GeneratedNBAStorage &generated,
                                    uint64_t planeBit) {
   for (unsigned word = 0; word != 4; ++word)
@@ -2914,7 +2914,7 @@ markGeneratedNBA256UnknownUnlocked(const obelisk_rt_context *context,
 }
 
 static bool
-validBoundNativeStateRangeUnlocked(const obelisk_rt_context *context,
+validBoundNativeStateRangeUnlocked(const talos_rt_context *context,
                                    uint64_t bitOffset, uint64_t bitWidth) {
   if (!context->nativeStateValue && !context->nativeStateUnknown &&
       context->nativeStateBitCount == 0)
@@ -2924,20 +2924,20 @@ validBoundNativeStateRangeUnlocked(const obelisk_rt_context *context,
          bitWidth <= context->nativeStateBitCount - bitOffset;
 }
 
-static obelisk_rt_status syncBoundNativeStateFromScheduleUnlocked(
-    obelisk_rt_context *context, uint64_t bitOffset, uint64_t bitWidth) {
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+static talos_rt_status syncBoundNativeStateFromScheduleUnlocked(
+    talos_rt_context *context, uint64_t bitOffset, uint64_t bitWidth) {
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   if (!context->nativeStateValue && !context->nativeStateUnknown &&
       context->nativeStateBitCount == 0)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (!plan || !plan->state_value || !plan->state_unknown ||
       bitOffset > plan->state_bit_count ||
       bitWidth > plan->state_bit_count - bitOffset ||
       !validBoundNativeStateRangeUnlocked(context, bitOffset, bitWidth))
-    return OBELISK_RT_LAYOUT_MISMATCH;
+    return TALOS_RT_LAYOUT_MISMATCH;
   if (context->nativeStateValue == plan->state_value &&
       context->nativeStateUnknown == plan->state_unknown)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   for (uint64_t local = 0; local < bitWidth; local += 64) {
     uint64_t width = std::min<uint64_t>(64, bitWidth - local);
     uint64_t offset = bitOffset + local;
@@ -2945,13 +2945,13 @@ static obelisk_rt_status syncBoundNativeStateFromScheduleUnlocked(
     uint64_t unknown = loadPackedBytes(plan->state_unknown, offset, width);
     if (!storeNativeScheduleStateUnlocked(context, offset, width, value,
                                           unknown))
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 #endif
 
-obelisk_rt_status tryCommitGeneratedNBA256Unlocked(obelisk_rt_context *context,
+talos_rt_status tryCommitGeneratedNBA256Unlocked(talos_rt_context *context,
                                                    uint32_t rootIndex,
                                                    uint32_t barrierRegion,
                                                    bool &changed,
@@ -2962,8 +2962,8 @@ obelisk_rt_status tryCommitGeneratedNBA256Unlocked(obelisk_rt_context *context,
       rootIndex >= context->nativeScheduleNBARootCount ||
       rootIndex >= context->staticNBAAccumulators.size() ||
       rootIndex >= context->staticNBASlowRoots.size())
-    return OBELISK_RT_OK;
-  const obelisk_rt_static_nba_root &root =
+    return TALOS_RT_OK;
+  const talos_rt_static_nba_root &root =
       context->nativeScheduleNBARoots[rootIndex];
   StaticNBAAccumulator &accumulator = context->staticNBAAccumulators[rootIndex];
   GeneratedNBAStorage generated(root.generated_accumulator,
@@ -2973,13 +2973,13 @@ obelisk_rt_status tryCommitGeneratedNBA256Unlocked(obelisk_rt_context *context,
       nativeStaticRootDirty(context, root.static_state) ||
       generated->exec_region != barrierRegion ||
       staticNBARootNeedsTransitions(context, rootIndex))
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   std::optional<uint64_t> stageCount = countGeneratedNBAStages(*generated);
   if (!stageCount)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   const NativeStaticState *staticState =
       findNativeStaticState(context, root.static_state);
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   bool synchronizeCanonical =
       activeNativeAOTContext != context || !canUseStaticAOTFanout(context);
   bool canonical = plan && context->execution &&
@@ -2992,7 +2992,7 @@ obelisk_rt_status tryCommitGeneratedNBA256Unlocked(obelisk_rt_context *context,
       (synchronizeCanonical &&
        (context->stateValue.size() != (plan->state_bit_count + 63) / 64 ||
         context->stateUnknown.size() != context->stateValue.size())))
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   auto loadOverrideMask = [&](const std::vector<uint64_t> &plane,
                               uint64_t offset, uint64_t width) {
     return plane.empty() ? uint64_t{0}
@@ -3005,10 +3005,10 @@ obelisk_rt_status tryCommitGeneratedNBA256Unlocked(obelisk_rt_context *context,
       uint64_t planeBit = staticState->bitOffset + local;
       if ((loadOverrideMask(context->forceMask, planeBit, 64) |
            loadOverrideMask(context->assignMask, planeBit, 64)) != 0)
-        return OBELISK_RT_OK;
+        return TALOS_RT_OK;
     }
   if (context->nextSchedulerSequence == 0)
-    return OBELISK_RT_OUT_OF_RESOURCES;
+    return TALOS_RT_OUT_OF_RESOURCES;
   ++context->nextSchedulerSequence;
   markGeneratedNBA256UnknownUnlocked(context, *generated,
                                      staticState->bitOffset);
@@ -3017,9 +3017,9 @@ obelisk_rt_status tryCommitGeneratedNBA256Unlocked(obelisk_rt_context *context,
       nullptr, nullptr, staticState->bitOffset, plan->state_bit_count,
       plan->state_value, plan->state_unknown, context->stateValue.data(),
       context->stateUnknown.data(), synchronizeCanonical, false, false);
-  if (obelisk_rt_status status = syncBoundNativeStateFromScheduleUnlocked(
+  if (talos_rt_status status = syncBoundNativeStateFromScheduleUnlocked(
           context, staticState->bitOffset, root.bit_width);
-      status != OBELISK_RT_OK)
+      status != TALOS_RT_OK)
     return status;
   changed |= rootChanged;
   context->signalDiagnostics.aotNBAStages += *stageCount;
@@ -3034,18 +3034,18 @@ obelisk_rt_status tryCommitGeneratedNBA256Unlocked(obelisk_rt_context *context,
   (void)barrierRegion;
   (void)changed;
 #endif
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
-    obelisk_rt_context *context, uint32_t rootIndex, uint32_t barrierRegion,
+talos_rt_status tryCommitGeneratedNBAScalarUnlocked(
+    talos_rt_context *context, uint32_t rootIndex, uint32_t barrierRegion,
     bool &changed, bool &handled, bool trustedStaticFanout = false) {
   handled = false;
   if (rootIndex >= context->nativeScheduleNBARootCount ||
       rootIndex >= context->staticNBAAccumulators.size() ||
       rootIndex >= context->staticNBASlowRoots.size())
-    return OBELISK_RT_OK;
-  const obelisk_rt_static_nba_root &root =
+    return TALOS_RT_OK;
+  const talos_rt_static_nba_root &root =
       context->nativeScheduleNBARoots[rootIndex];
   StaticNBAAccumulator &accumulator = context->staticNBAAccumulators[rootIndex];
   GeneratedNBAStorage generated(root.generated_accumulator,
@@ -3059,12 +3059,12 @@ obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
       generated->exec_region != barrierRegion ||
       (!trustedStaticFanout &&
        (activeNativeAOTContext != context || !canUseStaticAOTFanout(context))))
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   // A scalar record represents one final root update regardless of its bit
   // width. Unlike the 256-bit lane form, its mask need not consist of full
   // 32-bit lanes.
   constexpr uint64_t stageCount = 1;
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   uint64_t stateOffset =
       rootIndex < context->nativeScheduleGeneratedNBAOffsets.size()
           ? context->nativeScheduleGeneratedNBAOffsets[rootIndex]
@@ -3072,7 +3072,7 @@ obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
   if (!plan || stateOffset == UINT64_MAX ||
       stateOffset > plan->state_bit_count ||
       root.bit_width > plan->state_bit_count - stateOffset)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   uint64_t widthMask = packedWidthMask(root.bit_width);
   uint64_t writeMask = generated->write_mask[0] & widthMask;
   auto loadOverrideMask = [&](const std::vector<uint64_t> &plane) {
@@ -3093,7 +3093,7 @@ obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
       (oldUnknown & ~writeMask) | (generated->unknown[0] & writeMask);
   if (!storeNativeScheduleStateUnlocked(context, stateOffset, root.bit_width,
                                         newValue, newUnknown, oldUnknown))
-    return OBELISK_RT_LAYOUT_MISMATCH;
+    return TALOS_RT_LAYOUT_MISMATCH;
   bool rootChanged = ((oldValue ^ newValue) | (oldUnknown ^ newUnknown)) != 0;
   changed |= rootChanged;
   context->signalDiagnostics.aotNBAStages += stageCount;
@@ -3102,7 +3102,7 @@ obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
   ++context->signalDiagnostics.aotNBACommits;
   handled = true;
   if (rootChanged)
-    obelisk_rt_v1_scheduler_static_transition(context, root.static_state, 0,
+    talos_rt_v1_scheduler_static_transition(context, root.static_state, 0,
                                               root.bit_width, oldValue,
                                               oldUnknown, newValue, newUnknown);
   return context->schedulerStatus;
@@ -3110,8 +3110,8 @@ obelisk_rt_status tryCommitGeneratedNBAScalarUnlocked(
 
 // Certified independent fixed slots publish their final transitions at the
 // common NBA barrier. This traverses static storage, never a runtime queue.
-static obelisk_rt_status
-commitGeneratedNBASlotsUnlocked(obelisk_rt_context *context, uint32_t rootIndex,
+static talos_rt_status
+commitGeneratedNBASlotsUnlocked(talos_rt_context *context, uint32_t rootIndex,
                                 bool &changed) {
   const auto &root = context->nativeScheduleNBARoots[rootIndex];
   const auto *plan = context->nativeSchedulePlan;
@@ -3119,13 +3119,13 @@ commitGeneratedNBASlotsUnlocked(obelisk_rt_context *context, uint32_t rootIndex,
   if (!plan || !state || state->bitWidth != root.bit_width ||
       state->bitOffset > plan->state_bit_count ||
       root.bit_width > plan->state_bit_count - state->bitOffset)
-    return OBELISK_RT_LAYOUT_MISMATCH;
+    return TALOS_RT_LAYOUT_MISMATCH;
   bool canonical = context->execution &&
                    context->execution->state_bit_count == plan->state_bit_count;
   if (canonical &&
       (context->stateValue.size() != (plan->state_bit_count + 63) / 64 ||
        context->stateUnknown.size() != context->stateValue.size()))
-    return OBELISK_RT_LAYOUT_MISMATCH;
+    return TALOS_RT_LAYOUT_MISMATCH;
   const bool sharedCanonical =
       canonical &&
       reinterpret_cast<const uint8_t *>(context->stateValue.data()) ==
@@ -3141,7 +3141,7 @@ commitGeneratedNBASlotsUnlocked(obelisk_rt_context *context, uint32_t rootIndex,
   auto status = consumeGeneratedNBASlots(
       root,
       [&](uint64_t offset, uint64_t width, uint64_t value, uint64_t unknown,
-          const obelisk_rt_generated_nba_slot &slot) {
+          const talos_rt_generated_nba_slot &slot) {
         uint64_t planeBit = state->bitOffset + offset;
         auto overrideMask = [&](const std::vector<uint64_t> &plane) {
           return plane.empty()
@@ -3174,7 +3174,7 @@ commitGeneratedNBASlotsUnlocked(obelisk_rt_context *context, uint32_t rootIndex,
         // change event. Detached canonical/native mirrors still need a copy.
         if (sharedCanonical && sharedNative && oldValue == newValue &&
             oldUnknown == newUnknown)
-          return OBELISK_RT_OK;
+          return TALOS_RT_OK;
         // Runtime actors can read the canonical planes after a handover even
         // when they no longer share the generated storage. Commit both images,
         // as the ordinary root accumulator does, before publishing any chunk.
@@ -3188,15 +3188,15 @@ commitGeneratedNBASlotsUnlocked(obelisk_rt_context *context, uint32_t rootIndex,
         }
         if (!storeNativeScheduleStateUnlocked(context, planeBit, width,
                                               newValue, newUnknown, oldUnknown))
-          return OBELISK_RT_LAYOUT_MISMATCH;
-        return OBELISK_RT_OK;
+          return TALOS_RT_LAYOUT_MISMATCH;
+        return TALOS_RT_OK;
       },
       false);
-  if (status != OBELISK_RT_OK)
+  if (status != TALOS_RT_OK)
     return status;
   return consumeGeneratedNBASlots(
       root, [&](uint64_t offset, uint64_t width, uint64_t, uint64_t,
-                const obelisk_rt_generated_nba_slot &slot) {
+                const talos_rt_generated_nba_slot &slot) {
         uint64_t oldValue = slot.transition[0];
         uint64_t oldUnknown = context->twoState() ? 0 : slot.transition[1];
         uint64_t newValue = slot.transition[context->twoState() ? 1 : 2];
@@ -3205,57 +3205,57 @@ commitGeneratedNBASlotsUnlocked(obelisk_rt_context *context, uint32_t rootIndex,
             ((oldValue ^ newValue) | (oldUnknown ^ newUnknown)) != 0;
         changed |= transition;
         if (transition)
-          obelisk_rt_v1_scheduler_static_transition(
+          talos_rt_v1_scheduler_static_transition(
               context, root.static_state, offset, width, oldValue, oldUnknown,
               newValue, newUnknown);
         return context->schedulerStatus;
       });
 }
 
-obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
+talos_rt_status commitStaticNBARootUnlocked(talos_rt_context *context,
                                               uint32_t rootIndex,
                                               uint32_t barrierRegion,
                                               bool &changed,
                                               bool allowGeneratedFast = true) {
   if (!context->nativeSchedulePlan)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (rootIndex >= context->staticNBAAccumulators.size() ||
       rootIndex >= context->nativeScheduleNBARootCount)
-    return OBELISK_RT_INVALID_DESIGN;
-  const obelisk_rt_static_nba_root &root =
+    return TALOS_RT_INVALID_DESIGN;
+  const talos_rt_static_nba_root &root =
       context->nativeScheduleNBARoots[rootIndex];
   StaticNBAAccumulator &accumulator = context->staticNBAAccumulators[rootIndex];
   GeneratedNBAStorage generated(root.generated_accumulator,
                                 context->twoState());
-  if (barrierRegion == OBELISK_RT_REGION_NBA && hasGeneratedNBASlots(root)) {
+  if (barrierRegion == TALOS_RT_REGION_NBA && hasGeneratedNBASlots(root)) {
     if (!accumulator.valid)
       return commitGeneratedNBASlotsUnlocked(context, rootIndex, changed);
     if (auto status = materializeGeneratedNBAAccumulatorUnlocked(
             context, rootIndex, barrierRegion);
-        status != OBELISK_RT_OK)
+        status != TALOS_RT_OK)
       return status;
   }
   if ((!generated || !hasGeneratedNBAStages(*generated)) &&
       (!accumulator.valid || accumulator.execRegion != barrierRegion))
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   if (allowGeneratedFast) {
     bool generatedHandled = false;
-    if (obelisk_rt_status status = tryCommitGeneratedNBAScalarUnlocked(
+    if (talos_rt_status status = tryCommitGeneratedNBAScalarUnlocked(
             context, rootIndex, barrierRegion, changed, generatedHandled);
-        status != OBELISK_RT_OK || generatedHandled)
+        status != TALOS_RT_OK || generatedHandled)
       return status;
-    if (obelisk_rt_status status = tryCommitGeneratedNBA256Unlocked(
+    if (talos_rt_status status = tryCommitGeneratedNBA256Unlocked(
             context, rootIndex, barrierRegion, changed, generatedHandled);
-        status != OBELISK_RT_OK || generatedHandled)
+        status != TALOS_RT_OK || generatedHandled)
       return status;
   }
   bool trackTransitions = staticNBARootNeedsTransitions(context, rootIndex);
-  if (obelisk_rt_status status = materializeGeneratedNBAAccumulatorUnlocked(
+  if (talos_rt_status status = materializeGeneratedNBAAccumulatorUnlocked(
           context, rootIndex, barrierRegion);
-      status != OBELISK_RT_OK)
+      status != TALOS_RT_OK)
     return status;
   if (!accumulator.valid || accumulator.execRegion != barrierRegion)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   // A round trip leaves old == new, so only per-bit publication reports it.
   trackTransitions |=
       std::any_of(accumulator.transient.begin(), accumulator.transient.end(),
@@ -3265,17 +3265,17 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
   if (!staticState || staticState->bitWidth != root.bit_width ||
       staticState->bitOffset > accumulator.planeBitCount ||
       root.bit_width > accumulator.planeBitCount - staticState->bitOffset)
-    return OBELISK_RT_LAYOUT_MISMATCH;
+    return TALOS_RT_LAYOUT_MISMATCH;
   bool canonical = context->execution && context->execution->state_bit_count ==
                                              accumulator.planeBitCount;
   if (canonical &&
       (context->stateValue.size() != (accumulator.planeBitCount + 63) / 64 ||
        context->stateUnknown.size() != context->stateValue.size()))
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   auto *workingValue = accumulator.valuePlane;
   auto *workingUnknown = accumulator.unknownPlane;
   if (!workingValue)
-    return OBELISK_RT_INVALID_DESIGN;
+    return TALOS_RT_INVALID_DESIGN;
   auto loadMask = [&](const std::vector<uint64_t> &plane, uint64_t offset,
                       uint64_t width) {
     return !canonical || plane.empty()
@@ -3320,7 +3320,7 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
       uint64_t newUnknown = loadPackedBytes(canonicalUnknown, planeBit, 64);
       if (!storeNativeScheduleStateUnlocked(context, planeBit, 64, newValue,
                                             newUnknown))
-        return OBELISK_RT_LAYOUT_MISMATCH;
+        return TALOS_RT_LAYOUT_MISMATCH;
     }
   } else
 #endif
@@ -3380,17 +3380,17 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
         nativeOldUnknown = oldUnknown;
       if (!storeNativeScheduleStateUnlocked(context, planeBit, width, newValue,
                                             newUnknown, nativeOldUnknown))
-        return OBELISK_RT_LAYOUT_MISMATCH;
+        return TALOS_RT_LAYOUT_MISMATCH;
     }
   if (rootChanged) {
     if (!trackTransitions) {
       changed = true;
     } else {
-      uint64_t rootHandle = obelisk_rt_stable_handle_encode(
-          OBELISK_RT_STABLE_HANDLE_STATIC, root.static_state, 0);
+      uint64_t rootHandle = talos_rt_stable_handle_encode(
+          TALOS_RT_STABLE_HANDLE_STATIC, root.static_state, 0);
       uint64_t sequence = 0;
       if (rootHandle == UINT64_MAX ||
-          !obelisk_rt_publish_signal_transition_batch_unlocked(
+          !talos_rt_publish_signal_transition_batch_unlocked(
               context, rootHandle, root.bit_width,
               reinterpret_cast<uint8_t *>(accumulator.changed.data()),
               reinterpret_cast<uint8_t *>(accumulator.posedge.data()),
@@ -3399,9 +3399,9 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
               reinterpret_cast<const uint8_t *>(accumulator.value.data()),
               reinterpret_cast<const uint8_t *>(accumulator.unknown.data())))
         return context->schedulerStatus;
-      obelisk_rt_invalidate_signal_snapshots_unlocked(context, rootHandle,
+      talos_rt_invalidate_signal_snapshots_unlocked(context, rootHandle,
                                                       root.bit_width);
-      if (obelisk_rt_has_conditional_signal_waiters(context)) {
+      if (talos_rt_has_conditional_signal_waiters(context)) {
         for (uint64_t bit = 0; bit != root.bit_width; ++bit) {
           uint64_t mask = uint64_t{1} << (bit % 64);
           if ((accumulator.changed[bit / 64] & mask) == 0)
@@ -3411,17 +3411,17 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
           context->signalValueSnapshots[eventHandle] = {
               sequence, (accumulator.value[bit / 64] & mask) != 0,
               (accumulator.unknown[bit / 64] & mask) != 0};
-          uint32_t edges = OBELISK_RT_SIGNAL_CHANGE;
+          uint32_t edges = TALOS_RT_SIGNAL_CHANGE;
           if ((accumulator.posedge[bit / 64] & mask) != 0)
-            edges |= OBELISK_RT_SIGNAL_POSEDGE;
+            edges |= TALOS_RT_SIGNAL_POSEDGE;
           if ((accumulator.negedge[bit / 64] & mask) != 0)
-            edges |= OBELISK_RT_SIGNAL_NEGEDGE;
-          if (!obelisk_rt_latch_conditional_signal_waiters_unlocked(
+            edges |= TALOS_RT_SIGNAL_NEGEDGE;
+          if (!talos_rt_latch_conditional_signal_waiters_unlocked(
                   context, eventHandle, edges))
             return context->schedulerStatus;
         }
       }
-      if (!obelisk_rt_notify_observer_signal_unlocked(context, rootHandle,
+      if (!talos_rt_notify_observer_signal_unlocked(context, rootHandle,
                                                       root.bit_width))
         return context->schedulerStatus;
       changed = true;
@@ -3436,15 +3436,15 @@ obelisk_rt_status commitStaticNBARootUnlocked(obelisk_rt_context *context,
   --context->staticNBAPendingAccumulatorCount;
   accumulator.sequence = 0;
   ++context->signalDiagnostics.aotNBACommits;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
 #if defined(__x86_64__) || defined(_M_X64)
-obelisk_rt_status tryCommitGeneratedNBA256BatchUnlocked(
-    obelisk_rt_context *context, uint32_t rootCount, uint32_t barrierRegion,
+talos_rt_status tryCommitGeneratedNBA256BatchUnlocked(
+    talos_rt_context *context, uint32_t rootCount, uint32_t barrierRegion,
     bool &changed, bool &handled) {
   handled = false;
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   if (!plan || activeNativeAOTContext != context ||
       !context->nativeScheduleAVX2 || !canUseStaticAOTFanout(context) ||
       context->nativeScheduleDirtyRootsPresent ||
@@ -3456,13 +3456,13 @@ obelisk_rt_status tryCommitGeneratedNBA256BatchUnlocked(
       rootCount != context->nativeScheduleGeneratedNBAOffsets.size() ||
       context->nextSchedulerSequence == 0 ||
       context->nextSchedulerSequence > UINT64_MAX - rootCount)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
 
   // Validate dynamic slot state before mutating any root. Root layout,
   // transition fanout, and generated-accumulator eligibility were proven once
   // when the revision-coupled plan was installed.
   for (uint32_t index = 0; index != rootCount; ++index) {
-    const obelisk_rt_static_nba_root &root =
+    const talos_rt_static_nba_root &root =
         context->nativeScheduleNBARoots[index];
     const StaticNBAAccumulator &accumulator =
         context->staticNBAAccumulators[index];
@@ -3474,16 +3474,16 @@ obelisk_rt_status tryCommitGeneratedNBA256BatchUnlocked(
         !countGeneratedNBA256StagesAVX2(*generated, stageCount) ||
         accumulator.valid || context->staticNBASlowRoots[index] != 0 ||
         generated->exec_region != barrierRegion)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     uint64_t offset = context->nativeScheduleGeneratedNBAOffsets[index];
     if (!validBoundNativeStateRangeUnlocked(context, offset, root.bit_width))
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
     context->nativeScheduleGeneratedNBAStageCounts[index] = stageCount;
   }
 
   uint64_t totalStages = 0;
   for (uint32_t index = 0; index != rootCount; ++index) {
-    const obelisk_rt_static_nba_root &root =
+    const talos_rt_static_nba_root &root =
         context->nativeScheduleNBARoots[index];
     GeneratedNBAStorage generated(root.generated_accumulator,
                                   context->twoState());
@@ -3503,9 +3503,9 @@ obelisk_rt_status tryCommitGeneratedNBA256BatchUnlocked(
           generated.value, generated.unknown, generated.write_mask, nullptr,
           nullptr, nullptr, offset, plan->state_bit_count, plan->state_value,
           plan->state_unknown, nullptr, nullptr, false, false, false);
-    if (obelisk_rt_status status = syncBoundNativeStateFromScheduleUnlocked(
+    if (talos_rt_status status = syncBoundNativeStateFromScheduleUnlocked(
             context, offset, root.bit_width);
-        status != OBELISK_RT_OK)
+        status != TALOS_RT_OK)
       return status;
     generated.write_mask[0] = 0;
     generated.write_mask[1] = 0;
@@ -3517,15 +3517,15 @@ obelisk_rt_status tryCommitGeneratedNBA256BatchUnlocked(
   context->signalDiagnostics.aotNBAStages += totalStages;
   context->signalDiagnostics.aotNBACommits += rootCount;
   handled = true;
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 #endif
 
-obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
+talos_rt_status commitStaticNBARootRangeUnlocked(talos_rt_context *context,
                                                    uint32_t rootCount,
                                                    uint32_t barrierRegion,
                                                    bool &changed) {
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
   bool indexed = plan && plan->nba_dirty_roots && plan->nba_dirty_summary &&
                  rootCount <= plan->nba_root_count;
   bool trustedStaticFanout =
@@ -3533,21 +3533,21 @@ obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
 #if defined(__x86_64__) || defined(_M_X64)
   if (!indexed) {
     bool batchHandled = false;
-    if (obelisk_rt_status status = tryCommitGeneratedNBA256BatchUnlocked(
+    if (talos_rt_status status = tryCommitGeneratedNBA256BatchUnlocked(
             context, rootCount, barrierRegion, changed, batchHandled);
-        status != OBELISK_RT_OK || batchHandled)
+        status != TALOS_RT_OK || batchHandled)
       return status;
   }
 #endif
-  auto commitRoot = [&](uint32_t root) -> obelisk_rt_status {
+  auto commitRoot = [&](uint32_t root) -> talos_rt_status {
     // A generated callback may already have consumed the root while leaving
     // its dirty bit for this canonical index owner to clear. Avoid descending
     // through all three commit variants merely to rediscover that neither
     // accumulator has pending state.
     if (root >= context->nativeScheduleNBARootCount ||
         root >= context->staticNBAAccumulators.size())
-      return OBELISK_RT_INVALID_DESIGN;
-    const obelisk_rt_static_nba_root &rootPlan =
+      return TALOS_RT_INVALID_DESIGN;
+    const talos_rt_static_nba_root &rootPlan =
         context->nativeScheduleNBARoots[root];
     bool generatedPending =
         hasGeneratedNBASlots(rootPlan) ||
@@ -3556,29 +3556,29 @@ obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
              rootPlan.generated_accumulator, context->twoState())));
     bool accumulatorPending = context->staticNBAAccumulators[root].valid;
     if (!generatedPending && !accumulatorPending)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     bool generatedHandled = false;
-    if (obelisk_rt_status status = tryCommitGeneratedNBAScalarUnlocked(
+    if (talos_rt_status status = tryCommitGeneratedNBAScalarUnlocked(
             context, root, barrierRegion, changed, generatedHandled,
             trustedStaticFanout);
-        status != OBELISK_RT_OK)
+        status != TALOS_RT_OK)
       return status;
     if (generatedHandled)
-      return OBELISK_RT_OK;
-    if (obelisk_rt_status status = tryCommitGeneratedNBA256Unlocked(
+      return TALOS_RT_OK;
+    if (talos_rt_status status = tryCommitGeneratedNBA256Unlocked(
             context, root, barrierRegion, changed, generatedHandled);
-        status != OBELISK_RT_OK)
+        status != TALOS_RT_OK)
       return status;
     if (generatedHandled)
-      return OBELISK_RT_OK;
+      return TALOS_RT_OK;
     return commitStaticNBARootUnlocked(context, root, barrierRegion, changed,
                                        false);
   };
   if (!indexed) {
     for (uint32_t root = 0; root != rootCount; ++root)
-      if (obelisk_rt_status status = commitRoot(root); status != OBELISK_RT_OK)
+      if (talos_rt_status status = commitRoot(root); status != TALOS_RT_OK)
         return status;
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   }
 
   // Traverse the compiler-owned bitmap like a tiny ordered radix index. The
@@ -3599,10 +3599,10 @@ obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
         uint32_t root = leafIndex * 64 + rootBit;
         if (root >= rootCount)
           break;
-        if (obelisk_rt_status status = commitRoot(root);
-            status != OBELISK_RT_OK)
+        if (talos_rt_status status = commitRoot(root);
+            status != TALOS_RT_OK)
           return status;
-        const obelisk_rt_static_nba_root &rootPlan =
+        const talos_rt_static_nba_root &rootPlan =
             context->nativeScheduleNBARoots[root];
         bool generatedPending =
             hasGeneratedNBASlots(rootPlan) ||
@@ -3623,18 +3623,18 @@ obelisk_rt_status commitStaticNBARootRangeUnlocked(obelisk_rt_context *context,
       summary &= summary - 1;
     }
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }
 
-obelisk_rt_status
-commitStaticNBAAccumulatorsUnlocked(obelisk_rt_context *context,
+talos_rt_status
+commitStaticNBAAccumulatorsUnlocked(talos_rt_context *context,
                                     uint32_t barrierRegion, bool &changed) {
   if (!context->nativeSchedulePlan)
-    return OBELISK_RT_OK;
-  obelisk_rt_status status = OBELISK_RT_OK;
+    return TALOS_RT_OK;
+  talos_rt_status status = TALOS_RT_OK;
   bool orderedPending = context->nativeSchedulePlan->nba_ordered_count &&
                         *context->nativeSchedulePlan->nba_ordered_count != 0 &&
-                        barrierRegion == OBELISK_RT_REGION_NBA;
+                        barrierRegion == TALOS_RT_REGION_NBA;
   // A compiled barrier publishes through its Tier-1 state/fanout contract.
   // After whole-plan fallback, native fragments can still stage generated
   // accumulators, but their commits must use canonical runtime publication.
@@ -3654,34 +3654,34 @@ commitStaticNBAAccumulatorsUnlocked(obelisk_rt_context *context,
         context, static_cast<uint32_t>(context->staticNBAAccumulators.size()),
         barrierRegion, changed);
   }
-  if (status == OBELISK_RT_OK)
+  if (status == TALOS_RT_OK)
     refreshStaticNBAAccumulatorsPending(context);
   // Generated queue publication sets owner bits directly. Re-enter Active
   // after the barrier before advancing time or running testbench observers
   // (LRM 4.5), just as canonical static fanout does for fixed slots.
-  if (status == OBELISK_RT_OK && orderedPending &&
+  if (status == TALOS_RT_OK && orderedPending &&
       !context->nativeScheduleDeoptimized &&
       (context->nativeSchedulePlan->flags &
-       OBELISK_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL))
+       TALOS_RT_NATIVE_SCHEDULE_RUNTIME_CALENDAR_EVAL))
     context->nativeScheduleClockIngressPending = true;
   return status;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_ordered(
-    obelisk_rt_context *context, uint32_t rootIndex, int64_t offset,
+extern "C" talos_rt_status talos_rt_v1_static_nba_commit_ordered(
+    talos_rt_context *context, uint32_t rootIndex, int64_t offset,
     uint64_t width, uint64_t value, uint64_t unknown) {
   if (!context || !context->nativeSchedulePlan || width == 0 || width > 64 ||
       rootIndex >= context->nativeScheduleNBARootCount)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const auto &root = context->nativeScheduleNBARoots[rootIndex];
   const auto *plan = context->nativeSchedulePlan;
   const auto *state = findNativeStaticState(context, root.static_state);
   if (!state || state->bitWidth != root.bit_width ||
       state->bitOffset > plan->state_bit_count ||
       root.bit_width > plan->state_bit_count - state->bitOffset)
-    return OBELISK_RT_LAYOUT_MISMATCH;
+    return TALOS_RT_LAYOUT_MISMATCH;
   if (offset <= -int64_t(width) || offset >= int64_t(root.bit_width))
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   uint64_t source = offset < 0 ? uint64_t(-offset) : 0;
   uint64_t destination = offset < 0 ? 0 : uint64_t(offset);
   width = std::min(width - source, root.bit_width - destination);
@@ -3709,52 +3709,52 @@ extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_ordered(
   }
   if (!storeNativeScheduleStateUnlocked(context, planeBit, width, newValue,
                                         newUnknown, oldUnknown))
-    return OBELISK_RT_LAYOUT_MISMATCH;
+    return TALOS_RT_LAYOUT_MISMATCH;
   ++context->signalDiagnostics.aotNBAStages;
   ++context->signalDiagnostics.aotNBACommits;
   if (((oldValue ^ newValue) | (oldUnknown ^ newUnknown)) != 0)
-    obelisk_rt_v1_scheduler_static_transition(context, root.static_state,
+    talos_rt_v1_scheduler_static_transition(context, root.static_state,
                                               destination, width, oldValue,
                                               oldUnknown, newValue, newUnknown);
   return context->schedulerStatus;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_static_nba_commit_root(obelisk_rt_context *context,
+extern "C" talos_rt_status
+talos_rt_v1_static_nba_commit_root(talos_rt_context *context,
                                      uint32_t rootIndex, uint32_t barrierRegion,
                                      uint32_t *outChanged) {
   if (!context || !outChanged || !context->nativeSchedulePlan)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   bool changed = *outChanged != 0;
-  obelisk_rt_status status =
+  talos_rt_status status =
       commitStaticNBARootUnlocked(context, rootIndex, barrierRegion, changed);
   *outChanged = changed ? 1u : 0u;
   return status;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_roots(
-    obelisk_rt_context *context, uint32_t rootCount, uint32_t barrierRegion,
+extern "C" talos_rt_status talos_rt_v1_static_nba_commit_roots(
+    talos_rt_context *context, uint32_t rootCount, uint32_t barrierRegion,
     uint32_t *outChanged) {
   if (!context || !outChanged ||
       rootCount > context->staticNBAAccumulators.size() ||
       rootCount > context->nativeScheduleNBARootCount)
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   bool changed = *outChanged != 0;
-  obelisk_rt_status status = commitStaticNBARootRangeUnlocked(
+  talos_rt_status status = commitStaticNBARootRangeUnlocked(
       context, rootCount, barrierRegion, changed);
   *outChanged = changed ? 1u : 0u;
   return status;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_batch(
-    obelisk_rt_context *context, const uint32_t *roots, uint32_t count,
+extern "C" talos_rt_status talos_rt_v1_static_nba_commit_batch(
+    talos_rt_context *context, const uint32_t *roots, uint32_t count,
     uint32_t barrierRegion, uint32_t *outChanged) {
   if (!context || !outChanged || (count && !roots))
-    return OBELISK_RT_INVALID_ARGUMENT;
+    return TALOS_RT_INVALID_ARGUMENT;
   const auto *plan = context->nativeSchedulePlan;
   // A failed guard consumes nothing. The canonical barrier immediately after
   // this region retains force, external observation and mixed-tier semantics.
-  if (!plan || barrierRegion != OBELISK_RT_REGION_NBA ||
+  if (!plan || barrierRegion != TALOS_RT_REGION_NBA ||
       activeNativeAOTContext != context || lockedNativeAOTContext != context ||
       !canUseStaticAOTFanout(context) ||
       !nativeAOTTransientBoundaryClean(context) ||
@@ -3765,7 +3765,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_batch(
       reinterpret_cast<uint8_t *>(context->stateUnknown.data()) !=
           plan->state_unknown ||
       !plan->nba_dirty_roots || !plan->nba_dirty_summary)
-    return OBELISK_RT_OK;
+    return TALOS_RT_OK;
   ++context->signalDiagnostics.aotNBABatches;
   const bool sharedNative =
       (!context->nativeStateValue && !context->nativeStateUnknown &&
@@ -3782,7 +3782,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_batch(
         index >= context->nativeScheduleGeneratedNBAOffsets.size() ||
         index / 64 >= plan->nba_dirty_word_count ||
         index / 4096 >= plan->nba_dirty_summary_word_count)
-      return OBELISK_RT_INVALID_ARGUMENT;
+      return TALOS_RT_INVALID_ARGUMENT;
     uint64_t dirtyMask = uint64_t{1} << (index % 64);
     if (!(plan->nba_dirty_roots[index / 64] & dirtyMask))
       continue;
@@ -3796,7 +3796,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_batch(
     uint64_t offset = context->nativeScheduleGeneratedNBAOffsets[index];
     if (offset > plan->state_bit_count ||
         root.bit_width > plan->state_bit_count - offset)
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
     // A private root can have generated change consumers, but no runtime or
     // edge consumer. Validate the executable fanout before changing storage.
     // The dense range index ends at the last state with a consumer. A later
@@ -3806,13 +3806,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_batch(
             ? context->nativeScheduleFanoutRanges[root.static_state]
             : std::pair<uint64_t, uint64_t>{0, 0};
     if (first > last || last > context->nativeScheduleFanoutEntryCount)
-      return OBELISK_RT_INVALID_DESIGN;
+      return TALOS_RT_INVALID_DESIGN;
     bool direct = true;
     for (uint64_t f = first; f != last; ++f) {
       const auto &entry = context->nativeScheduleFanoutEntries[f];
-      if ((entry.reserved & OBELISK_RT_FANOUT_ROUTE_MASK) !=
-              OBELISK_RT_FANOUT_DIRECT ||
-          entry.edge != OBELISK_RT_WAIT_EDGE_CHANGE ||
+      if ((entry.reserved & TALOS_RT_FANOUT_ROUTE_MASK) !=
+              TALOS_RT_FANOUT_DIRECT ||
+          entry.edge != TALOS_RT_WAIT_EDGE_CHANGE ||
           entry.kernel >= plan->clock_kernel_count ||
           !plan->clock_kernels[entry.kernel].ingress_mask ||
           entry.merged_bit / 64 >=
@@ -3839,7 +3839,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_batch(
     if ((!sharedNative || oldValue != value || oldUnknown != unknown) &&
         !storeNativeScheduleStateUnlocked(context, offset, root.bit_width,
                                           value, unknown, oldUnknown))
-      return OBELISK_RT_LAYOUT_MISMATCH;
+      return TALOS_RT_LAYOUT_MISMATCH;
     staged->write_mask[0] = 0;
     staged->transient[0] = 0;
     staged->valid = 0;
@@ -3873,13 +3873,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_static_nba_commit_batch(
   return context->schedulerStatus;
 }
 
-extern "C" uint32_t obelisk_rt_v1_static_nba_batch_guard(
-    obelisk_rt_context *context, const obelisk_rt_native_schedule_plan *plan,
+extern "C" uint32_t talos_rt_v1_static_nba_batch_guard(
+    talos_rt_context *context, const talos_rt_native_schedule_plan *plan,
     uint32_t barrierRegion) {
   if (!context || !plan || plan != context->nativeSchedulePlan ||
-      barrierRegion != OBELISK_RT_REGION_NBA ||
+      barrierRegion != TALOS_RT_REGION_NBA ||
       activeNativeAOTContext != context || lockedNativeAOTContext != context ||
-      context->schedulerStatus != OBELISK_RT_OK ||
+      context->schedulerStatus != TALOS_RT_OK ||
       context->staticNBAAccumulatorsPending ||
       context->staticNBASlowRootsPresent || !canUseStaticAOTFanout(context) ||
       !nativeAOTTransientBoundaryClean(context) ||
@@ -3899,8 +3899,8 @@ extern "C" uint32_t obelisk_rt_v1_static_nba_batch_guard(
           context->nativeStateBitCount == plan->state_bit_count);
 }
 
-extern "C" void obelisk_rt_v1_static_nba_batch_knownness(
-    obelisk_rt_context *context, uint64_t offset, uint64_t width,
+extern "C" void talos_rt_v1_static_nba_batch_knownness(
+    talos_rt_context *context, uint64_t offset, uint64_t width,
     uint64_t oldUnknown, uint64_t newUnknown) {
   markNativeUnknownBitsUnlocked(context, offset, width, newUnknown);
   publishNativeKnownnessChangeUnlocked(context->nativeSchedulePlan, offset,
@@ -3908,7 +3908,7 @@ extern "C" void obelisk_rt_v1_static_nba_batch_knownness(
 }
 
 extern "C" void
-obelisk_rt_v1_static_nba_batch_finish(obelisk_rt_context *context,
+talos_rt_v1_static_nba_batch_finish(talos_rt_context *context,
                                       uint64_t stages, uint64_t commits,
                                       uint32_t ingressPending) {
   ++context->signalDiagnostics.aotNBABatches;
@@ -3919,13 +3919,13 @@ obelisk_rt_v1_static_nba_batch_finish(obelisk_rt_context *context,
 }
 
 extern "C" uint32_t
-obelisk_rt_v1_static_nba_direct_commit_guard(obelisk_rt_context *context) {
+talos_rt_v1_static_nba_direct_commit_guard(talos_rt_context *context) {
   if (!context || activeNativeAOTContext != context ||
       lockedNativeAOTContext != context || !context->nativeSchedulePlan)
     return 0;
-  const obelisk_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
-  return (plan->flags & (OBELISK_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
-                         OBELISK_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND)) != 0 &&
+  const talos_rt_native_schedule_plan *plan = context->nativeSchedulePlan;
+  return (plan->flags & (TALOS_RT_NATIVE_SCHEDULE_CLEAN_SUPERSTEP |
+                         TALOS_RT_NATIVE_SCHEDULE_STATIC_EVAL_ISLAND)) != 0 &&
          canUseStaticAOTFanout(context) &&
          !context->nativeScheduleExternalWritePending &&
          !context->nativeScheduleDirtyRootsPresent &&
@@ -3934,7 +3934,7 @@ obelisk_rt_v1_static_nba_direct_commit_guard(obelisk_rt_context *context) {
 }
 
 extern "C" void
-obelisk_rt_v1_static_nba_account_generated_commits(obelisk_rt_context *context,
+talos_rt_v1_static_nba_account_generated_commits(talos_rt_context *context,
                                                    uint32_t count) {
   if (!context || count == 0)
     return;
@@ -3942,8 +3942,8 @@ obelisk_rt_v1_static_nba_account_generated_commits(obelisk_rt_context *context,
   context->signalDiagnostics.aotNBACommits += count;
 }
 
-obelisk_rt_status
-resolveClockingDriveConflictsUnlocked(obelisk_rt_context *context,
+talos_rt_status
+resolveClockingDriveConflictsUnlocked(talos_rt_context *context,
                                       uint32_t barrierRegion) {
   struct RootPosition {
     uint32_t kind;
@@ -4008,7 +4008,7 @@ resolveClockingDriveConflictsUnlocked(obelisk_rt_context *context,
       continue;
     RootPosition lhsPosition{};
     if (!locate(lhs, lhsPosition))
-      return OBELISK_RT_INVALID_HANDLE;
+      return TALOS_RT_INVALID_HANDLE;
     for (size_t rhsIndex = lhsIndex + 1;
          rhsIndex != context->scheduledNBAs.size(); ++rhsIndex) {
       ScheduledNBA &rhs = context->scheduledNBAs[rhsIndex];
@@ -4017,7 +4017,7 @@ resolveClockingDriveConflictsUnlocked(obelisk_rt_context *context,
         continue;
       RootPosition rhsPosition{};
       if (!locate(rhs, rhsPosition))
-        return OBELISK_RT_INVALID_HANDLE;
+        return TALOS_RT_INVALID_HANDLE;
       if (lhsPosition.kind != rhsPosition.kind ||
           lhsPosition.id != rhsPosition.id)
         continue;
@@ -4034,5 +4034,5 @@ resolveClockingDriveConflictsUnlocked(obelisk_rt_context *context,
       }
     }
   }
-  return OBELISK_RT_OK;
+  return TALOS_RT_OK;
 }

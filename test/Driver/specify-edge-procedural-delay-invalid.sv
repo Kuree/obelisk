@@ -1,4 +1,4 @@
-// RUN: obelisk -emit-sim %s -o - | FileCheck %s
+// RUN: talos -emit-sim %s -o - | FileCheck %s
 module delayed(input wire clock, data, output logic q);
   always @(posedge clock)
     #1 q = data;

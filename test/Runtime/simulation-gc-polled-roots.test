@@ -1,7 +1,7 @@
-// RUN: obelisk -emit-slang %S/../Conversion/simulation-gc-polled-roots.sv | obelisk-opt --test-obelisk-native-backend='scheduler=auto sim-opt-level=0 opt-level=0 closed-executable=false stop-after=lowering' -o %t.sim.mlir
-// RUN: obelisk-opt %t.sim.mlir --pass-pipeline='builtin.module(obelisk-sim-insert-gc-polls,simulation.design(simulation.func(obelisk-sim-thread-process-cfg)),encode-obelisk-sim-to-bytecode{vpi=off prune-native=true},simulation.design(obelisk-sim-optimize-native-regions),simulation.design(obelisk-sim-plan-native-partitions),convert-obelisk-sim-processes-to-llvm-coroutines,materialize-runtime-byte-globals)' | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.roots.o
+// RUN: talos -emit-slang %S/../Conversion/simulation-gc-polled-roots.sv | talos-opt --test-talos-native-backend='scheduler=auto sim-opt-level=0 opt-level=0 closed-executable=false stop-after=lowering' -o %t.sim.mlir
+// RUN: talos-opt %t.sim.mlir --pass-pipeline='builtin.module(talos-sim-insert-gc-polls,simulation.design(simulation.func(talos-sim-thread-process-cfg)),encode-talos-sim-to-bytecode{vpi=off prune-native=true},simulation.design(talos-sim-optimize-native-regions),simulation.design(talos-sim-plan-native-partitions),convert-talos-sim-processes-to-llvm-coroutines,materialize-runtime-byte-globals)' | talos-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.roots.o
 // RUN: %target_cxx %t.roots.o %runtime_link_flags -o %t.roots.exe
-// RUN: env OBELISK_RT_GC_THRESHOLD=1 OBELISK_RT_GC_DIAGNOSTICS=1 %t.roots.exe 2>&1 | FileCheck %s --check-prefix=ROOTS
+// RUN: env TALOS_RT_GC_THRESHOLD=1 TALOS_RT_GC_DIAGNOSTICS=1 %t.roots.exe 2>&1 | FileCheck %s --check-prefix=ROOTS
 
 // UVM-shaped class testbenches run with a GC threshold small enough that the
 // heap collects many times. Every collection must keep each strongly
@@ -10,4 +10,4 @@
 // Handles held only in the initial block's registers survive collections
 // inside every callee: loops, recursion, string churn and a virtual call.
 // ROOTS: {{^}}keep=42 len=100 s=499500 r=1275 w=33 label=label42 t=40{{$}}
-// ROOTS: obelisk-gc-diagnostics collections={{[1-9][0-9]*}} designated=0 {{.*}} polled=1
+// ROOTS: talos-gc-diagnostics collections={{[1-9][0-9]*}} designated=0 {{.*}} polled=1

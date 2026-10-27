@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = Path(__file__).with_name("nba8.sv")
 TIME_RE = re.compile(r"^__TIME__ ([0-9.]+) ([0-9]+)$", re.MULTILINE)
-DIAGNOSTIC_RE = re.compile(r"^obelisk-signal-diagnostics (.+)$", re.MULTILINE)
+DIAGNOSTIC_RE = re.compile(r"^talos-signal-diagnostics (.+)$", re.MULTILINE)
 
 
 def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -38,7 +38,7 @@ def parse_diagnostics(stderr: str) -> dict[str, int]:
 
 def measure(binary: Path, runs: int) -> tuple[list[dict[str, object]], list[str]]:
     environment = os.environ.copy()
-    environment["OBELISK_RT_SIGNAL_DIAGNOSTICS"] = "1"
+    environment["TALOS_RT_SIGNAL_DIAGNOSTICS"] = "1"
     records: list[dict[str, object]] = []
     expected_output: list[str] | None = None
     for iteration in range(runs + 1):
@@ -119,7 +119,7 @@ def summarize(
     }
 
 
-def build_obelisk(
+def build_talos(
     compiler: Path,
     output: Path,
     tier: str,
@@ -170,9 +170,9 @@ def build_verilator(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--obelisk",
+        "--talos",
         type=Path,
-        default=ROOT / "build/tools/driver/obelisk",
+        default=ROOT / "build/tools/driver/talos",
     )
     parser.add_argument(
         "--tier", choices=("native", "bytecode", "all"), default="all"
@@ -205,7 +205,7 @@ def main() -> int:
             "--runs/cycles must be positive and waiters must be in [0, 3072]"
         )
 
-    temporary = tempfile.TemporaryDirectory(prefix="obelisk-nba8-")
+    temporary = tempfile.TemporaryDirectory(prefix="talos-nba8-")
     work = Path(temporary.name)
     results: dict[str, list[dict[str, object]]] = {tier: [] for tier in tiers}
     for waiters in arguments.waiters:
@@ -213,8 +213,8 @@ def main() -> int:
             reference = expected_output(cycles)
             for tier in tiers:
                 binary = work / f"nba8-{tier}-{cycles}-{waiters}"
-                build_obelisk(
-                    arguments.obelisk,
+                build_talos(
+                    arguments.talos,
                     binary,
                     tier,
                     arguments.native_scheduler,

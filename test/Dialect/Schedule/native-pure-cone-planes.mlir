@@ -1,9 +1,9 @@
-// RUN: obelisk-opt %s --schedule-cache-pure-cones='minimum-cost=2 maximum-cost=30' -o %t.cache
-// RUN: obelisk-opt %t.cache | FileCheck %s
-// RUN: %llvm_dist/bin/mlir-opt %t.cache --convert-arith-to-llvm --convert-cf-to-llvm | obelisk-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: talos-opt %s --schedule-cache-pure-cones='minimum-cost=2 maximum-cost=30' -o %t.cache
+// RUN: talos-opt %t.cache | FileCheck %s
+// RUN: %llvm_dist/bin/mlir-opt %t.cache --convert-arith-to-llvm --convert-cf-to-llvm | talos-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang %t.o -o %t.exe
 // RUN: %t.exe
-// RUN: %llvm_dist/bin/mlir-opt %s --convert-arith-to-llvm --convert-cf-to-llvm | obelisk-opt --schedule-cache-pure-cones='minimum-cost=2 maximum-cost=30' | obelisk-translate --mlir-to-llvmir -o %t.late.ll
+// RUN: %llvm_dist/bin/mlir-opt %s --convert-arith-to-llvm --convert-cf-to-llvm | talos-opt --schedule-cache-pure-cones='minimum-cost=2 maximum-cost=30' | talos-translate --mlir-to-llvmir -o %t.late.ll
 !planes = !llvm.struct<(i64, i64)>
 module {
   // CHECK-LABEL: llvm.func internal @planes

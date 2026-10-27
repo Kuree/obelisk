@@ -19,7 +19,7 @@ for (const match of app.matchAll(/from\s+'(\.\/[^']+)'/g)) {
   await access(new URL(match[1], web));
 }
 assert.match(html, /<script\s+type="module"\s+src="\.\/app\.js"><\/script>/);
-assert.match(html, /<title>Obelisk: SystemVerilog simulator in the browser<\/title>/);
+assert.match(html, /<title>Talos: SystemVerilog simulator in the browser<\/title>/);
 assert.doesNotMatch(html, /<title>[^<]*—[^<]*<\/title>/);
 assert.match(html, /<option\s+value="">Custom design<\/option>/);
 assert.match(html, /<iframe[^>]+id="surfer"[^>]+sandbox="allow-scripts"/s);
@@ -70,7 +70,7 @@ assert.match(app, /showSchedule\(text\)/);
 assert.match(app, /const\s+request\s*=\s*\+\+waveformRequest/);
 assert.match(app, /request\s*!==\s*waveformRequest\s*\|\|\s*activeStage\s*!==\s*'waveform'/);
 assert.match(app, /onDidChangeModelContent\(\(\)\s*=>\s*{[\s\S]*if\s*\(activeStage\s*===\s*'waveform'\s*\|\|\s*activeStage\s*===\s*'coverage'\)[\s\S]*activeStage\s*=\s*'run';[\s\S]*showConsole\(\);/s);
-// coverage-view.js shows obelisk-cov's page; the app hands it each run's report.
+// coverage-view.js shows talos-cov's page; the app hands it each run's report.
 assert.match(app, /coverage\.update\(result\.coverage\)/);
 assert.match(app, /coverage\.show\(options\.coverage === 'on'\)/);
 assert.match(app, /ui\.downloadCoverage\.addEventListener\('click',\s*\(\)\s*=>\s*coverage\.save\(document\)\)/);

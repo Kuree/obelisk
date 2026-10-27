@@ -1,0 +1,42 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+
+// IEEE 1800-2017 8.8: a class property declaration initializer is assigned to
+// the property when the object is constructed, so the value is converted to
+// the property's own type. `bit x = 1'b0` is the case that shows it: the
+// literal is self-determined `bit [0:0]` while the property is a scalar
+// `bit`, and the field reference has to name the property's type either way.
+
+module {
+  talos.sv.symbol.definition @s0.m attributes {definition_kind = 0 : i32, hierarchical_name = "m", name = "m", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+      talos.sv.type.class_type @s3.Cls attributes {bitstream_width = 1 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "Cls", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "Cls", node_id = 3 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Cls>, this_variable_path = "Cls::this", this_variable_symbol = @s1.$root::@s2::@s3.Cls::@s5.this} {
+        talos.sv.symbol.class_property @s4.x attributes {hierarchical_name = "Cls::x", name = "x", node_id = 4 : i64, semantic_type = !talos.integral<1, false, false, 0 : 0, bit>} {
+          talos.sv.expression.integer_literal attributes {constant_value = "1'b0", node_id = 5 : i64, semantic_type = !talos.ranged_packed_array<0 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+          }
+        }
+        talos.sv.symbol.variable @s5.this attributes {hierarchical_name = "Cls::this", is_compiler_generated, is_const, name = "this", node_id = 6 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Cls>} {
+        }
+      }
+    }
+    talos.sv.symbol.instance @s6.m attributes {hierarchical_name = "m", is_uninstantiated = false, name = "m", node_id = 7 : i64, referenced_path = "m", referenced_symbol = @s0.m} {
+      talos.sv.symbol.instance_body @s7.m attributes {hierarchical_name = "m", name = "m", node_id = 8 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        talos.sv.symbol.variable @s8.c attributes {hierarchical_name = "m.c", lifetime = 1 : i32, name = "c", node_id = 9 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Cls>} {
+        }
+        talos.sv.symbol.procedural_block @s9 attributes {hierarchical_name = "m", node_id = 10 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.expression_statement attributes {node_id = 11 : i64} {
+            talos.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 12 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Cls>} {
+              talos.sv.expression.named_value attributes {node_id = 13 : i64, referenced_path = "m.c", referenced_symbol = @s1.$root::@s6.m::@s7.m::@s8.c, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Cls>} {
+              }
+              talos.sv.expression.new_class attributes {is_super_class = false, node_id = 14 : i64, semantic_type = !talos.class_handle<@s1.$root::@s2::@s3.Cls>} {
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// CHECK: simulation.class.field_ref %{{.*}}[@__talos_class_s3_Cls_field_0] : !simulation.class_handle<@__talos_class_s3_Cls> -> !simulation.managed_ref<i1, @__talos_class_s3_Cls>

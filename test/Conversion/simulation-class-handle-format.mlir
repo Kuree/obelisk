@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s | FileCheck %s
-// RUN: obelisk-opt %s '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN: talos-opt %s | FileCheck %s
+// RUN: talos-opt %s '--encode-talos-sim-to-bytecode=vpi=off' -o /dev/null
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines \
 // RUN:   -o /dev/null
 
 module attributes {

@@ -1,7 +1,7 @@
 #include "AnalysisTestPasses.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
-#include "obelisk/Analysis/LocalStorageAnalysis.h"
+#include "talos/Analysis/LocalStorageAnalysis.h"
 
 using namespace mlir;
 namespace {
@@ -21,20 +21,20 @@ public:
   Option<bool> coroutine{*this, "coroutine",
                          llvm::cl::desc("Use coroutine local lifetimes"),
                          llvm::cl::init(false)};
-  StringRef getArgument() const final { return "test-obelisk-local-storage"; }
+  StringRef getArgument() const final { return "test-talos-local-storage"; }
   StringRef getDescription() const final {
     return "print private storage snapshot conflicts";
   }
   void runOnOperation() final {
-    getOperation().walk([&](obelisk::sim::SimFuncOp function) {
+    getOperation().walk([&](talos::sim::SimFuncOp function) {
       if (!functions.empty() && function.getSymName() != functions)
         return;
-      using Analysis = obelisk::analysis::LocalStorageAnalysis;
+      using Analysis = talos::analysis::LocalStorageAnalysis;
       Analysis locals(function, coroutine ? Analysis::Lifetime::Coroutine
                                           : Analysis::Lifetime::Invocation);
       if (allocations) {
         llvm::errs() << "function " << function.getSymName() << '\n';
-        function.walk([&](obelisk::sim::SimRefAllocOp allocation) {
+        function.walk([&](talos::sim::SimRefAllocOp allocation) {
           if (locals.lookup(allocation.getResult())) {
             llvm::errs() << "local allocation\n";
             return;
@@ -49,8 +49,8 @@ public:
           }
         });
       }
-      SmallVector<obelisk::sim::SimRefLoadOp> loads;
-      function.walk([&](obelisk::sim::SimRefLoadOp load) {
+      SmallVector<talos::sim::SimRefLoadOp> loads;
+      function.walk([&](talos::sim::SimRefLoadOp load) {
         if (load->hasAttr("test.snapshot"))
           loads.push_back(load);
       });
@@ -65,6 +65,6 @@ public:
   }
 };
 } // namespace
-void obelisk::registerLocalStorageAnalysisTestPass() {
+void talos::registerLocalStorageAnalysisTestPass() {
   PassRegistration<LocalStorageTestPass>();
 }

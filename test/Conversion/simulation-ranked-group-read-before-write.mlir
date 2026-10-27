@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(talos-sim-thread-process-cfg),talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),encode-talos-sim-to-bytecode{vpi=off},convert-talos-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
 // IEEE 1800-2023 9.2.2.2.1: a written variable is excluded from
@@ -6,10 +6,10 @@
 // must not become an algebraic fixpoint or forward the replacement backward.
 // Only the two downstream actors form a ranked helper; step3 retains its
 // ordinary executor. The output lags one activation at both O0 and O3.
-// PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_1(
+// PLAN-LABEL: llvm.func @__talos_eval_ranked_group_1(
 // PLAN-SAME: schedule.eval.ranked_members = array<i32: 3, 4>
-// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1(
-// PLAN: llvm.call @__obelisk_eval_ranked_group_1
+// PLAN-LABEL: llvm.func @__talos_eval_dispatch_v1(
+// PLAN: llvm.call @__talos_eval_ranked_group_1
 !ref = !simulation.ref<i1>
 !vref = !simulation.ref<i8>
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 3 : i32} {

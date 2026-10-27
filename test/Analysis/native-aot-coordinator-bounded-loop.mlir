@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(test-obelisk-native-aot-analysis)' \
+// RUN: talos-opt %s -o /dev/null \
+// RUN:   --pass-pipeline='builtin.module(test-talos-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s
 
 // A Clause 31 coordinator joins an ordinary actor in one control-loop SCC.

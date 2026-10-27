@@ -2,8 +2,8 @@
 
 #include "AnalysisTestPasses.h"
 
-#include "obelisk/Analysis/ClassBitstreamAnalysis.h"
-#include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
+#include "talos/Analysis/ClassBitstreamAnalysis.h"
+#include "talos/Analysis/ManagedClassLayoutAnalysis.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -24,7 +24,7 @@ public:
       ManagedClassLayoutAnalysisTestPass)
 
   StringRef getArgument() const final {
-    return "test-obelisk-managed-class-layout-analysis";
+    return "test-talos-managed-class-layout-analysis";
   }
   StringRef getDescription() const final {
     return "print shared managed class layout facts";
@@ -45,27 +45,27 @@ public:
       return signalPassFailure();
     }
 
-    SmallVector<obelisk::sim::SimDesignOp> designs;
+    SmallVector<talos::sim::SimDesignOp> designs;
     module.walk(
-        [&](obelisk::sim::SimDesignOp design) { designs.push_back(design); });
+        [&](talos::sim::SimDesignOp design) { designs.push_back(design); });
     if (designs.size() != 1) {
       module.emitError(
           "managed class analysis test requires one simulation design");
       return signalPassFailure();
     }
-    FailureOr<obelisk::analysis::ManagedClassLayoutAnalysis> analysis =
-        obelisk::analysis::ManagedClassLayoutAnalysis::compute(designs.front(),
+    FailureOr<talos::analysis::ManagedClassLayoutAnalysis> analysis =
+        talos::analysis::ManagedClassLayoutAnalysis::compute(designs.front(),
                                                                *dataLayout);
     if (failed(analysis))
       return signalPassFailure();
     for (const auto &layout : analysis->classes) {
-      obelisk::sim::SimClassDeclOp declaration = layout.declaration;
+      talos::sim::SimClassDeclOp declaration = layout.declaration;
       if (analysis->lookup(declaration.getId()) != &layout) {
         declaration.emitOpError("class ID lookup disagrees with layout");
         return signalPassFailure();
       }
       FailureOr<SmallVector<
-          const obelisk::analysis::ManagedClassLayoutAnalysis::Field *>>
+          const talos::analysis::ManagedClassLayoutAnalysis::Field *>>
           bitstreamFields = analysis->getBitstreamFields(layout);
       if (failed(bitstreamFields)) {
         declaration.emitOpError("cannot determine object bit-stream fields");
@@ -80,7 +80,7 @@ public:
         llvm::errs() << " bitstream-fields=[";
         llvm::interleaveComma(*bitstreamFields, llvm::errs(),
                               [&](const auto *field) {
-                                obelisk::sim::SimClassFieldDeclOp declaration =
+                                talos::sim::SimClassFieldDeclOp declaration =
                                     field->declaration;
                                 llvm::errs() << declaration.getSymName();
                               });
@@ -88,18 +88,18 @@ public:
       }
       llvm::errs() << "\n";
       for (const auto &field : layout.fields) {
-        obelisk::sim::SimClassFieldDeclOp fieldDeclaration = field.declaration;
+        talos::sim::SimClassFieldDeclOp fieldDeclaration = field.declaration;
         llvm::errs() << "  field " << fieldDeclaration.getSymName()
                      << " offset=" << field.offset
                      << " size=" << field.storage.size
                      << " alignment=" << field.storage.alignment << " planes="
-                     << obelisk::analysis::getSimulationPhysicalStorageCount(
+                     << talos::analysis::getSimulationPhysicalStorageCount(
                             field.storage)
                      << " roots=[";
         llvm::interleaveComma(field.storage.managedRootOffsets, llvm::errs());
         llvm::errs() << "]";
         bool firstCandidate = true;
-        for (const obelisk::sim::ManagedHandleSlot &slot :
+        for (const talos::sim::ManagedHandleSlot &slot :
              field.storage.managedRootSlots) {
           if (!slot.conditional)
             continue;
@@ -114,14 +114,14 @@ public:
     }
     if (auto source = module->getAttrOfType<FlatSymbolRefAttr>(
             "test.class_bitstream_source")) {
-      FailureOr<obelisk::analysis::ClassBitstreamAnalysis> bitstream =
-          obelisk::analysis::ClassBitstreamAnalysis::compute(designs.front(),
+      FailureOr<talos::analysis::ClassBitstreamAnalysis> bitstream =
+          talos::analysis::ClassBitstreamAnalysis::compute(designs.front(),
                                                              *dataLayout);
       if (failed(bitstream))
         return signalPassFailure();
       auto sourceType =
-          obelisk::sim::ClassHandleType::get(module.getContext(), source);
-      FailureOr<const obelisk::analysis::ClassBitstreamAnalysis::CastClosure *>
+          talos::sim::ClassHandleType::get(module.getContext(), source);
+      FailureOr<const talos::analysis::ClassBitstreamAnalysis::CastClosure *>
           closure = bitstream->getCastClosure(
               sourceType, module->hasAttr("test.class_bitstream_allow_hidden"));
       if (failed(closure))
@@ -135,14 +135,14 @@ public:
       llvm::errs() << "class-bitstream roots=[";
       llvm::interleaveComma((*closure)->roots, llvm::errs(),
                             [](const auto *item) {
-                              obelisk::sim::SimClassDeclOp declaration =
+                              talos::sim::SimClassDeclOp declaration =
                                   item->layout->declaration;
                               llvm::errs() << declaration.getSymName();
                             });
       llvm::errs() << "] schemas=[";
       llvm::interleaveComma((*closure)->schemas, llvm::errs(),
                             [](const auto *item) {
-                              obelisk::sim::SimClassDeclOp declaration =
+                              talos::sim::SimClassDeclOp declaration =
                                   item->layout->declaration;
                               llvm::errs() << declaration.getSymName();
                             });
@@ -154,10 +154,10 @@ public:
 
 } // namespace
 
-namespace obelisk {
+namespace talos {
 
 void registerManagedClassLayoutAnalysisTestPass() {
   PassRegistration<ManagedClassLayoutAnalysisTestPass>();
 }
 
-} // namespace obelisk
+} // namespace talos

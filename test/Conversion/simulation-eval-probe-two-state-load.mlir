@@ -1,11 +1,11 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir 2>&1 | FileCheck %s --check-prefix=TRACE --allow-empty
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-build-compute-graph,talos-sim-verify-compute-graph,talos-sim-materialize-graph-regions,talos-sim-materialize-compute-fusion,talos-sim-specialize-static-state-nba,talos-sim-plan-static-superstep),convert-talos-sim-processes-to-llvm-coroutines)' -o %t.mlir 2>&1 | FileCheck %s --check-prefix=TRACE --allow-empty
 // RUN: FileCheck %s < %t.mlir
 
 // A two-state packed vector (`bit [7:0]`) has no unknown plane, so it cannot
 // constrain the path-known predicate of a checkpoint owner (IEEE 1800-2023
 // 6.11.2). Only the four-state register is probed; the owner keeps its
 // generated two-state route and forced generated eval stays enabled.
-// TRACE-NOT: obelisk eval probe rejected
+// TRACE-NOT: talos eval probe rejected
 // TRACE-NOT: unguarded runtime leaf
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -70,5 +70,5 @@ module attributes {
   }
 }
 
-// CHECK-DAG: llvm.func @lane.__obelisk_eval_body_0.__obelisk_path_known
-// CHECK-DAG: llvm.func @lane.__obelisk_eval_body_0.__obelisk_two_state
+// CHECK-DAG: llvm.func @lane.__talos_eval_body_0.__talos_path_known
+// CHECK-DAG: llvm.func @lane.__talos_eval_body_0.__talos_two_state

@@ -1,6 +1,6 @@
-// RUN: obelisk-opt %s | obelisk-opt | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s '--encode-obelisk-sim-to-bytecode=vpi=full' -o /dev/null
+// RUN: talos-opt %s | talos-opt | FileCheck %s
+// RUN: talos-opt %s --convert-talos-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
+// RUN: talos-opt %s '--encode-talos-sim-to-bytecode=vpi=full' -o /dev/null
 module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   simulation.design @boxed {
     simulation.scope.decl 0 hierarchy "top"
@@ -16,4 +16,4 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
     }
   }
 }
-// NATIVE: llvm.call @obelisk_rt_v1_box_bind_type
+// NATIVE: llvm.call @talos_rt_v1_box_bind_type

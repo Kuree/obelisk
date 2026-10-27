@@ -1,10 +1,10 @@
 // REQUIRES: native-elf
 // RUN: %split-file %s %t
 // RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -o %t/plugin.so
-// RUN: obelisk -O3 --vpi=full --native-scheduler=generic %t/design.sv %t/plugin.so -o %t/o3
+// RUN: talos -O3 --vpi=full --native-scheduler=generic %t/design.sv %t/plugin.so -o %t/o3
 // RUN: %t/o3 | FileCheck %s
-// RUN: obelisk -O3 --vpi=full --native-scheduler=generic -emit-llvm %t/design.sv -o - | FileCheck %s --check-prefix=GUARD --check-prefix=DYNAMIC
-// RUN: obelisk -O3 --vpi=full --execution-tier=bytecode %t/design.sv %t/plugin.so -o %t/bytecode
+// RUN: talos -O3 --vpi=full --native-scheduler=generic -emit-llvm %t/design.sv -o - | FileCheck %s --check-prefix=GUARD --check-prefix=DYNAMIC
+// RUN: talos -O3 --vpi=full --execution-tier=bytecode %t/design.sv %t/plugin.so -o %t/bytecode
 // RUN: %t/bytecode | FileCheck %s
 // PARTIAL: native eligibility: eligible=1 fully_eligible=0 cost_effective=1
 
@@ -20,16 +20,16 @@
 // CHECK: unknown xxxx0101 xxxx0101 xxxx0101
 // CHECK: retained xxxx0101 xxxx0101
 // CHECK: recovered 12 12
-// GUARD-DAG: call i32 @obelisk_rt_v1_native_state_bind_continuous
-// GUARD-DAG: call i32 @obelisk_rt_v1_native_state_bind_specialization
+// GUARD-DAG: call i32 @talos_rt_v1_native_state_bind_continuous
+// GUARD-DAG: call i32 @talos_rt_v1_native_state_bind_specialization
 // WASM-DAG: target triple = "wasm32-unknown-emscripten"
 // Each unpacked element owns an LLVM byte slot in both planes, with the VPI
 // guard and invalid-index value retained. The index directly addresses it.
 // DYNAMIC: icmp ult i32 {{.*}}, 4
-// DYNAMIC: getelementptr i8, ptr @__obelisk_state_value, i64 %
+// DYNAMIC: getelementptr i8, ptr @__talos_state_value, i64 %
 // DYNAMIC: [[VALUE:%.*]] = load i8, ptr
 // DYNAMIC: trunc i8 [[VALUE]] to i4
-// DYNAMIC: getelementptr i8, ptr @__obelisk_state_unknown, i64 %
+// DYNAMIC: getelementptr i8, ptr @__talos_state_unknown, i64 %
 // DYNAMIC: [[UNKNOWN:%.*]] = load i8, ptr
 // DYNAMIC: trunc i8 [[UNKNOWN]] to i4
 

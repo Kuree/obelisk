@@ -1,7 +1,7 @@
 //===- NativeSymbolUses.h - Immutable symbol-use inventory ----------------===//
 
-#ifndef OBELISK_CONVERSION_SIMULATIONTOLLVM_NATIVE_SYMBOL_USES_H
-#define OBELISK_CONVERSION_SIMULATIONTOLLVM_NATIVE_SYMBOL_USES_H
+#ifndef TALOS_CONVERSION_SIMULATIONTOLLVM_NATIVE_SYMBOL_USES_H
+#define TALOS_CONVERSION_SIMULATIONTOLLVM_NATIVE_SYMBOL_USES_H
 
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Threading.h"
@@ -12,7 +12,7 @@
 #include <optional>
 #include <vector>
 
-namespace obelisk::detail {
+namespace talos::detail {
 
 /// Enumerate immutable symbol scopes at operation boundaries. MLIR's symbol
 /// API includes each root's attributes and stops at nested symbol tables, just
@@ -49,6 +49,6 @@ collectNativeSymbolUses(mlir::MLIRContext *context,
   return mlir::SymbolTable::UseRange(std::move(uses));
 }
 
-} // namespace obelisk::detail
+} // namespace talos::detail
 
 #endif

@@ -1,0 +1,147 @@
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=0' | FileCheck %s
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=3' -o /dev/null
+// RUN: talos-opt %s '--lower-talos-to-sim=opt-level=3' '--encode-talos-sim-to-bytecode=vpi=off' -o /dev/null
+// REQUIRES: z3
+
+// One-cycle concurrent action controls snapshot the action mask once at each
+// assertion clock.  The overlapped implication distinguishes vacuous pass,
+// nonvacuous pass, and failure.  Boolean branching remains solver-minimized
+// before the action-class gates are applied.
+
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
+  talos.sv.symbol.definition @s0.action_control_onecycle attributes {definition_kind = 0 : i32, hierarchical_name = "action_control_onecycle", name = "action_control_onecycle", node_id = 0 : i64} {
+  }
+  talos.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
+    talos.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
+    }
+    talos.sv.symbol.instance @s3.action_control_onecycle attributes {hierarchical_name = "action_control_onecycle", is_uninstantiated = false, name = "action_control_onecycle", node_id = 3 : i64, referenced_path = "action_control_onecycle", referenced_symbol = @s0.action_control_onecycle} {
+      talos.sv.symbol.instance_body @s4.action_control_onecycle attributes {hierarchical_name = "action_control_onecycle", name = "action_control_onecycle", node_id = 4 : i64, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+        talos.sv.symbol.port @s5.clk attributes {direction = 0 : i32, hierarchical_name = "action_control_onecycle.clk", name = "clk", node_id = 5 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s6.clk attributes {hierarchical_name = "action_control_onecycle.clk", lifetime = 1 : i32, name = "clk", node_id = 6 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.port @s7.a attributes {direction = 0 : i32, hierarchical_name = "action_control_onecycle.a", name = "a", node_id = 7 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s8.a attributes {hierarchical_name = "action_control_onecycle.a", lifetime = 1 : i32, name = "a", node_id = 8 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.port @s9.b attributes {direction = 0 : i32, hierarchical_name = "action_control_onecycle.b", name = "b", node_id = 9 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.variable @s10.b attributes {hierarchical_name = "action_control_onecycle.b", lifetime = 1 : i32, name = "b", node_id = 10 : i64, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+        }
+        talos.sv.symbol.procedural_block @s11 attributes {hierarchical_name = "action_control_onecycle", node_id = 11 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.block attributes {node_id = 12 : i64} {
+            talos.sv.statement.list attributes {node_id = 13 : i64} {
+              talos.sv.statement.expression_statement attributes {node_id = 14 : i64} {
+                talos.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "$assertpassoff", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 15 : i64, semantic_type = !talos.void, subroutine_kind = 1 : i32, system_library_cell = "work.action_control_onecycle", system_scope_path = "action_control_onecycle", system_scope_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle} {
+                  talos.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 16 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                  }
+                  talos.sv.expression.arbitrary_symbol attributes {is_signed = false, node_id = 17 : i64, referenced_path = "action_control_onecycle.target", referenced_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle::@s12.target, semantic_type = !talos.void} {
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 18 : i64} {
+                talos.sv.expression.call attributes {argument_count = 2 : i64, callee_name = "$assertpassoff", constraint_restrictions = [], defaulted_arguments = array<i64: 0, 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 19 : i64, semantic_type = !talos.void, subroutine_kind = 1 : i32, system_library_cell = "work.action_control_onecycle", system_scope_path = "action_control_onecycle", system_scope_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle} {
+                  talos.sv.expression.integer_literal attributes {constant_value = "0", is_declared_unsized = true, is_signed = true, node_id = 20 : i64, semantic_type = !talos.integral<32, true, false, 31 : 0, int>} {
+                  }
+                  talos.sv.expression.arbitrary_symbol attributes {is_signed = false, node_id = 21 : i64, referenced_path = "action_control_onecycle.branch_p", referenced_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle::@s14.branch_p, semantic_type = !talos.void} {
+                  }
+                }
+              }
+            }
+          }
+        }
+        talos.sv.symbol.statement_block @s12.target attributes {block_kind = 0 : i32, hierarchical_name = "action_control_onecycle.target", name = "target", node_id = 22 : i64} {
+        }
+        talos.sv.symbol.procedural_block @s13 attributes {hierarchical_name = "action_control_onecycle", node_id = 23 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.block attributes {block_path = "action_control_onecycle.target", block_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle::@s12.target, node_id = 24 : i64} {
+            talos.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 25 : i64} {
+              talos.sv.assertion.clocking attributes {node_id = 26 : i64} {
+                talos.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 27 : i64} {
+                  talos.sv.expression.named_value attributes {is_signed = false, node_id = 28 : i64, referenced_path = "action_control_onecycle.clk", referenced_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle::@s6.clk, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+                talos.sv.assertion.binary attributes {node_id = 29 : i64, operator_kind = 11 : i32} {
+                  talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 30 : i64, repetition_is_unbounded = false} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 31 : i64, referenced_path = "action_control_onecycle.a", referenced_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle::@s8.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 32 : i64, repetition_is_unbounded = false} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 33 : i64, referenced_path = "action_control_onecycle.b", referenced_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle::@s10.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 34 : i64} {
+                talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 35 : i64, semantic_type = !talos.void, subroutine_kind = 1 : i32, system_library_cell = "work.action_control_onecycle", system_scope_path = "action_control_onecycle.target", system_scope_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle::@s12.target} {
+                  talos.sv.expression.string_literal attributes {constant_value = "pass", is_signed = false, node_id = 36 : i64, semantic_type = !talos.ranged_packed_array<31 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                }
+              }
+            }
+          }
+        }
+        talos.sv.symbol.statement_block @s14.branch_p attributes {block_kind = 0 : i32, hierarchical_name = "action_control_onecycle.branch_p", name = "branch_p", node_id = 37 : i64} {
+        }
+        talos.sv.symbol.procedural_block @s15 attributes {hierarchical_name = "action_control_onecycle", node_id = 38 : i64, procedure_kind = 2 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
+          talos.sv.statement.block attributes {block_path = "action_control_onecycle.branch_p", block_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle::@s14.branch_p, node_id = 39 : i64} {
+            talos.sv.statement.concurrent_assertion attributes {assertion_kind = 0 : i32, has_default_disable = false, has_fail_action = false, has_pass_action = true, node_id = 40 : i64} {
+              talos.sv.assertion.clocking attributes {node_id = 41 : i64} {
+                talos.sv.timing.signal_event attributes {edge_kind = 1 : i32, has_iff = false, node_id = 42 : i64} {
+                  talos.sv.expression.named_value attributes {is_signed = false, node_id = 43 : i64, referenced_path = "action_control_onecycle.clk", referenced_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle::@s6.clk, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                  }
+                }
+                talos.sv.assertion.binary attributes {node_id = 44 : i64, operator_kind = 1 : i32} {
+                  talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 45 : i64, repetition_is_unbounded = false} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 46 : i64, referenced_path = "action_control_onecycle.a", referenced_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle::@s8.a, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                  talos.sv.assertion.simple attributes {has_repetition = false, is_null = false, node_id = 47 : i64, repetition_is_unbounded = false} {
+                    talos.sv.expression.named_value attributes {is_signed = false, node_id = 48 : i64, referenced_path = "action_control_onecycle.b", referenced_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle::@s10.b, semantic_type = !talos.integral<1, false, true, 0 : 0, logic>} {
+                    }
+                  }
+                }
+              }
+              talos.sv.statement.expression_statement attributes {node_id = 49 : i64} {
+                talos.sv.expression.call attributes {argument_count = 1 : i64, callee_name = "$display", constraint_restrictions = [], defaulted_arguments = array<i64: 0>, has_inline_constraints = false, has_iterator_expression = false, has_output_arguments = false, has_this_class = false, is_signed = false, is_super_class = false, is_system_call = true, node_id = 50 : i64, semantic_type = !talos.void, subroutine_kind = 1 : i32, system_library_cell = "work.action_control_onecycle", system_scope_path = "action_control_onecycle.branch_p", system_scope_symbol = @s1.$root::@s3.action_control_onecycle::@s4.action_control_onecycle::@s14.branch_p} {
+                  talos.sv.expression.string_literal attributes {constant_value = "branch", is_signed = false, node_id = 51 : i64, semantic_type = !talos.ranged_packed_array<47 : 0 x !talos.integral<1, false, false, 0 : 0, bit>>} {
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// CHECK-COUNT-2: simulation.assert.control {{.*}} action <pass_off> assertion
+// CHECK-NOT: simulation.assert.control
+
+// CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.assertion_target_id = [[IMPL_ID:[0-9]+]] : i64
+// CHECK: [[IMPL_ACTION:%.*]] = simulation.assert.action_state {{.*}} assertion [[IMPL_ID]] {simulation.concurrent_attempt_action_state}
+// CHECK: [[VAC_MASK:%.*]] = arith.constant {{.*}} 2 : i32
+// CHECK: arith.andi [[IMPL_ACTION]], [[VAC_MASK]] : i32
+// CHECK: arith.andi {{.*}} {simulation.concurrent_action_class = "vacuous-pass", simulation.concurrent_action_control} : i1
+// CHECK: [[FAIL_MASK:%.*]] = arith.constant {{.*}} 4 : i32
+// CHECK: arith.andi [[IMPL_ACTION]], [[FAIL_MASK]] : i32
+// CHECK: arith.andi {{.*}} {simulation.concurrent_action_class = "fail", simulation.concurrent_action_control} : i1
+// CHECK: [[PASS_MASK:%.*]] = arith.constant {{.*}} 1 : i32
+// CHECK: arith.andi [[IMPL_ACTION]], [[PASS_MASK]] : i32
+// CHECK: arith.andi {{.*}} {simulation.concurrent_action_class = "nonvacuous-pass", simulation.concurrent_action_control} : i1
+// CHECK-NOT: simulation.assert.action_state
+
+// CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.assertion_target_id = [[BRANCH_ID:[0-9]+]] : i64
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = {{[0-9]+}} -> {{[0-9]+}}, literals = {{[0-9]+}} -> {{[0-9]+}}>]
+// CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
+// CHECK-SAME: simulation.branching_sequence_monitor
+// CHECK: [[BRANCH_ACTION:%.*]] = simulation.assert.action_state {{.*}} assertion [[BRANCH_ID]] {simulation.concurrent_attempt_action_state}
+// CHECK: [[BRANCH_PASS:%.*]] = arith.constant {{.*}} 1 : i32
+// CHECK: arith.andi [[BRANCH_ACTION]], [[BRANCH_PASS]] : i32
+// CHECK: arith.andi {{.*}} {simulation.concurrent_action_class = "nonvacuous-pass", simulation.concurrent_action_control} : i1
+// CHECK: [[BRANCH_FAIL:%.*]] = arith.constant {{.*}} 4 : i32
+// CHECK: arith.andi [[BRANCH_ACTION]], [[BRANCH_FAIL]] : i32
+// CHECK: arith.andi {{.*}} {simulation.concurrent_action_class = "fail", simulation.concurrent_action_control} : i1
+// CHECK-NOT: simulation.assert.action_state

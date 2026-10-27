@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=16}))' | FileCheck %s
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions{max-acyclic-cost=10}))' | FileCheck %s --check-prefix=LIMIT
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-materialize-graph-regions{max-acyclic-cost=16}))' | FileCheck %s
+// RUN: talos-opt %s --pass-pipeline='builtin.module(simulation.design(talos-sim-materialize-graph-regions{max-acyclic-cost=10}))' | FileCheck %s --check-prefix=LIMIT
 
 module {
   // Adjacent native acyclic groups form one coarse kernel. The bytecode group

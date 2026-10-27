@@ -1,22 +1,22 @@
-// RUN: obelisk-opt %s --verify-roundtrip -o %t
-// RUN: FileCheck %s --implicit-check-not='"slang.' --implicit-check-not='"obelisk.' --implicit-check-not='"runtime.' --implicit-check-not='"schedule.' --implicit-check-not='"obelisk_sdf.' < %t
-// RUN: obelisk-opt %t -o %t.again
+// RUN: talos-opt %s --verify-roundtrip -o %t
+// RUN: FileCheck %s --implicit-check-not='"slang.' --implicit-check-not='"talos.' --implicit-check-not='"runtime.' --implicit-check-not='"schedule.' --implicit-check-not='"talos_sdf.' < %t
+// RUN: talos-opt %t -o %t.again
 // RUN: diff %t %t.again
 
 // Symbols use MLIR's @name spelling, including quoted names when necessary.
 // CHECK: slang.symbol.root @slang_root attributes {node_id = 0 : i64}
 // CHECK: slang.type.string_type @"string with spaces" attributes {node_id = 1 : i64, semantic_type = !slang.string}
-// CHECK: obelisk.sv.symbol.root @obelisk_root attributes {node_id = 0 : i64}
-// CHECK: obelisk.sv.type.string_type @"string with spaces" attributes {node_id = 1 : i64, semantic_type = !obelisk.string}
+// CHECK: talos.sv.symbol.root @talos_root attributes {node_id = 0 : i64}
+// CHECK: talos.sv.type.string_type @"string with spaces" attributes {node_id = 1 : i64, semantic_type = !talos.string}
 module {
   slang.symbol.root @slang_root attributes {node_id = 0 : i64} {
     slang.type.string_type @"string with spaces" attributes {
       node_id = 1 : i64, semantic_type = !slang.string
     } {}
   }
-  obelisk.sv.symbol.root @obelisk_root attributes {node_id = 0 : i64} {
-    obelisk.sv.type.string_type @"string with spaces" attributes {
-      node_id = 1 : i64, semantic_type = !obelisk.string
+  talos.sv.symbol.root @talos_root attributes {node_id = 0 : i64} {
+    talos.sv.type.string_type @"string with spaces" attributes {
+      node_id = 1 : i64, semantic_type = !talos.string
     } {}
   }
 
